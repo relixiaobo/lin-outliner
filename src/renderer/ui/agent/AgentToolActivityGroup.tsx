@@ -1,11 +1,12 @@
 import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import { ChevronRightIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { isToolCallRowActive } from './AgentProcessTimeline';
-import { AgentToolCallBlock, childRunToolStatus, getToolCallStatus } from './AgentToolCallBlock';
+import { AgentToolCallBlock, runToolStatus, getToolCallStatus } from './AgentToolCallBlock';
 import type { AgentExpandState } from './agentProcessTypes';
 import { summarizeToolActivity } from './agentRenderGroups';
 import type { AgentTurnToolCallItem } from './agentTurnProjection';
@@ -18,15 +19,16 @@ interface AgentToolActivityGroupProps {
   index: DocumentIndex;
   members: AgentTurnToolCallItem[];
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
+  subRunsByParentToolCallId?: ReadonlyMap<string, AgentRenderRunEntity>;
 }
 
 // A run of consecutive tool calls, folded into one counted-summary disclosure
 // ("Ran 3 commands · read 2 files"), expandable to the individual tool rows.
-// This is the transcript's interactive activity disclosure; the top-level
-// "Working/Worked for" work divider remains non-interactive.
+// This is the transcript's interactive activity disclosure; the completed
+// top-level "Worked for ..." divider owns a separate process-level disclosure.
 export function AgentToolActivityGroup({
   conversationId,
   expandState,
@@ -35,24 +37,30 @@ export function AgentToolActivityGroup({
   index,
   members,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   pendingToolCallIds,
   results,
+  subRunsByParentToolCallId,
 }: AgentToolActivityGroupProps) {
   const t = useT();
   const expanded = expandState.isExpanded(id, false);
-  const memberStatuses = members.map((member) => ({
-    status: member.childRun
-      ? childRunToolStatus(member.childRun)
-      : getToolCallStatus(
-          member.toolCall.id,
-          results.get(member.toolCall.id),
-          pendingToolCallIds,
-          isToolCallRowActive(member, pendingToolCallIds, results, member.childRun, turnActive),
-          member.outcome,
-        ),
-    toolCall: member.toolCall,
-  }));
+  const subRunForMember = (member: AgentTurnToolCallItem) =>
+    member.subRun ?? subRunsByParentToolCallId?.get(member.toolCall.id);
+  const memberStatuses = members.map((member) => {
+    const subRun = subRunForMember(member);
+    return {
+      status: subRun
+        ? runToolStatus(subRun)
+        : getToolCallStatus(
+            member.toolCall.id,
+            results.get(member.toolCall.id),
+            pendingToolCallIds,
+            isToolCallRowActive(member, pendingToolCallIds, results, subRun, turnActive),
+            member.outcome,
+          ),
+      toolCall: member.toolCall,
+    };
+  });
   const summary = summarizeToolActivity(memberStatuses, t.agent.process);
 
   return (
@@ -84,14 +92,14 @@ export function AgentToolActivityGroup({
                 expandState.toggle(toolId, expandState.isExpanded(toolId, false), anchorElement);
               }}
               onNodeReferenceOpen={onNodeReferenceOpen}
-              onOpenChildRunTranscript={onOpenChildRunTranscript}
+              onOpenRunTranscript={onOpenRunTranscript}
               pendingToolCallIds={pendingToolCallIds}
               result={results.get(member.toolCall.id)}
               conversationId={conversationId}
-              childRun={member.childRun}
+              subRun={subRunForMember(member)}
               toolCall={member.toolCall}
               outcome={member.outcome}
-              turnActive={isToolCallRowActive(member, pendingToolCallIds, results, member.childRun, turnActive)}
+              turnActive={isToolCallRowActive(member, pendingToolCallIds, results, subRunForMember(member), turnActive)}
             />
           ))}
         </div>

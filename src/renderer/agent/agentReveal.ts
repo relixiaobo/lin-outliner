@@ -12,7 +12,7 @@ import type { ReferenceTarget } from '../api/types';
 
 export interface AgentRevealOptions {
   /** Also open the Work panel (where command runs surface as Runs). A command Run
-   *  spawns a parentless child run, which lands in Work rather than the main
+   *  creates a parentless delegated Run, which lands in Work rather than the main
    *  transcript, so the Run flow asks for it. */
   openWork?: boolean;
   /** Scroll/highlight a chat-source citation inside the revealed transcript. */

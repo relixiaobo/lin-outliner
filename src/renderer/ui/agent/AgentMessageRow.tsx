@@ -7,7 +7,7 @@ import type {
   TextContent,
   UserMessage,
 } from '../../../core/agentTypes';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import { splitFileReferenceMarkers } from '../../../core/referenceMarkup';
 import {
   isHiddenAgentContextBlock,
@@ -65,7 +65,7 @@ import { AgentUsageHoverCard, formatUsageCostValue } from './AgentUsageBreakdown
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
-const EMPTY_CHILD_RUN_MAP: ReadonlyMap<string, AgentRenderChildRunEntity> = new Map();
+const EMPTY_SUB_RUN_MAP: ReadonlyMap<string, AgentRenderRunEntity> = new Map();
 const EMPTY_OVERRIDES: Readonly<Record<string, boolean>> = Object.freeze({});
 const NOOP_UNSUBSCRIBE = () => {};
 
@@ -86,17 +86,19 @@ interface AgentMessageRowProps {
   onRegenerate?: (nodeId: string) => void | Promise<void>;
   onRetry?: (nodeId: string) => void | Promise<void>;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   onOpenRunDetails?: (runId: string) => boolean | void;
   onDisclosureToggle?: () => void;
   onSwitchBranch?: (nodeId: string) => void | Promise<void>;
   pendingToolCallIds: ReadonlySet<string>;
   conversationId?: string | null;
   streaming?: boolean;
-  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  subRunsByParentToolCallId?: Map<string, AgentRenderRunEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
   /** True in a Channel: turns deliver atomically and fold result-first rather than surfacing resultless process inline. */
   isChannel?: boolean;
+  showProcessStatus?: boolean;
+  showFinalMessages?: boolean;
   turnPhase?: AgentTurnPhase;
   speakerLabel?: string | null;
   speakerMention?: string | null;
@@ -489,14 +491,16 @@ function AgentMessageRowComponent({
   onRegenerate,
   onRetry,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   onOpenRunDetails,
   onDisclosureToggle,
   onSwitchBranch,
   pendingToolCallIds,
   conversationId,
   streaming: streamingOverride,
-  childRunsByParentToolCallId,
+  showFinalMessages = true,
+  showProcessStatus = true,
+  subRunsByParentToolCallId,
   toolResults,
   isChannel = false,
   turnPhase = 'idle',
@@ -741,20 +745,23 @@ function AgentMessageRowComponent({
     index,
     expandState,
     onNodeReferenceOpen,
-    onOpenChildRunTranscript,
+    onOpenRunTranscript,
     pendingToolCallIds,
     conversationId,
     streaming,
-    childRunsByParentToolCallId,
+    subRunsByParentToolCallId,
     toolResults,
     turnActive,
     entry.turnInterrupted,
     isChannel,
     entry.runDurationMs,
     entry.runStartedAtMs,
+    showProcessStatus,
+    showFinalMessages,
+    entry.directSubRuns,
     entry.toolCallOutcomes,
   );
-  const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
+  const showToolbar = !turnActive && isLastInTurn;
   const openAssistantDetails = () => {
     setUsageHoverOpen(false);
     if (entry.runId && onOpenRunDetails) {
@@ -763,7 +770,7 @@ function AgentMessageRowComponent({
     }
     setDetailsOpen(true);
   };
-  // A sealed assistant turn whose only content was a child run spawn renders no
+  // A sealed assistant turn whose only content was a sub-run spawn renders no
   // blocks (the run is shown as the boundary that follows) — skip the empty bubble
   // entirely rather than leave a blank frame.
   if (assistantBlocks.length === 0 && !hasError && !turnActive && !stopped) return null;
@@ -877,6 +884,12 @@ function sameReadonlyMap<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>
   return true;
 }
 
+function sameReadonlyArray<T>(left: readonly T[], right: readonly T[]): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
 function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): boolean {
   return left === right || (
     left.id === right.id
@@ -886,6 +899,7 @@ function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): bo
     && left.streaming === right.streaming
     && left.actor === right.actor
     && left.runId === right.runId
+    && sameReadonlyArray(left.directSubRuns ?? [], right.directSubRuns ?? [])
     && left.runUsage === right.runUsage
     && left.runDurationMs === right.runDurationMs
     && left.runStartedAtMs === right.runStartedAtMs
@@ -908,12 +922,14 @@ function sameAgentMessageRowProps(prev: AgentMessageRowProps, next: AgentMessage
     && prev.onRegenerate === next.onRegenerate
     && prev.onRetry === next.onRetry
     && prev.onNodeReferenceOpen === next.onNodeReferenceOpen
-    && prev.onOpenChildRunTranscript === next.onOpenChildRunTranscript
+    && prev.onOpenRunTranscript === next.onOpenRunTranscript
     && prev.onSwitchBranch === next.onSwitchBranch
     && sameReadonlySet(prev.pendingToolCallIds, next.pendingToolCallIds)
     && prev.conversationId === next.conversationId
     && prev.streaming === next.streaming
-    && sameReadonlyMap(prev.childRunsByParentToolCallId ?? EMPTY_CHILD_RUN_MAP, next.childRunsByParentToolCallId ?? EMPTY_CHILD_RUN_MAP)
+    && prev.showFinalMessages === next.showFinalMessages
+    && prev.showProcessStatus === next.showProcessStatus
+    && sameReadonlyMap(prev.subRunsByParentToolCallId ?? EMPTY_SUB_RUN_MAP, next.subRunsByParentToolCallId ?? EMPTY_SUB_RUN_MAP)
     && sameReadonlyMap(prev.toolResults, next.toolResults)
     && prev.isChannel === next.isChannel
     && prev.turnPhase === next.turnPhase

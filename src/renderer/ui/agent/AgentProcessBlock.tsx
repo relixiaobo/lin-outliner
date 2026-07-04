@@ -1,15 +1,17 @@
 import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  ChevronRightIcon,
   ICON_SIZE,
   LoaderIcon,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline, isToolCallRowActive } from './AgentProcessTimeline';
-import { childRunToolStatus, getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
+import { runToolStatus, getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import { sentenceFragment, summarizeToolActivity } from './agentRenderGroups';
 import type { AgentExpandState } from './agentProcessTypes';
 import { firstLine, formatRunDuration, previewText } from './agentProcessTypes';
@@ -19,12 +21,12 @@ import type { Messages } from '../../../core/i18n';
 
 export type { AgentExpandState } from './agentProcessTypes';
 
-function childRunMapFromToolItems(items: AgentTurnProcessItem[]): ReadonlyMap<string, AgentRenderChildRunEntity> | undefined {
-  let map: Map<string, AgentRenderChildRunEntity> | undefined;
+function subRunMapFromToolItems(items: AgentTurnProcessItem[]): ReadonlyMap<string, AgentRenderRunEntity> | undefined {
+  let map: Map<string, AgentRenderRunEntity> | undefined;
   for (const item of items) {
-    if (item.type === 'toolCall' && item.childRun) {
-      map ??= new Map<string, AgentRenderChildRunEntity>();
-      map.set(item.toolCall.id, item.childRun);
+    if (item.type === 'toolCall' && item.subRun) {
+      map ??= new Map<string, AgentRenderRunEntity>();
+      map.set(item.toolCall.id, item.subRun);
     }
   }
   return map;
@@ -34,17 +36,17 @@ interface AgentProcessBlockProps {
   expandState: AgentExpandState;
   index: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   process: AgentTurnProcessProjection;
   results: Map<string, AgentToolResultWithPayloads>;
   conversationId?: string | null;
-  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  subRunsByParentToolCallId?: Map<string, AgentRenderRunEntity>;
   turnActive: boolean;
 }
 
 interface ProcessSummaryFacts {
-  childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
+  subRunsByToolCallId?: ReadonlyMap<string, AgentRenderRunEntity>;
   toolCallOutcomes: ReadonlyMap<string, AgentToolCallOutcome>;
   firstThinkingText: string | null;
   thinkingCount: number;
@@ -67,7 +69,7 @@ function processSummaryFacts(items: AgentTurnProcessItem[]): ProcessSummaryFacts
     .filter((item): item is AgentTurnToolCallItem => item.type === 'toolCall')
     .map((item) => item.toolCall);
   return {
-    childRunsByToolCallId: childRunMapFromToolItems(items),
+    subRunsByToolCallId: subRunMapFromToolItems(items),
     toolCallOutcomes: toolCallOutcomeMap(items),
     firstThinkingText: firstLine(thinkingBlocks[0]?.text ?? ''),
     thinkingCount: thinkingBlocks.length,
@@ -80,7 +82,7 @@ export function summarizeProcess({
   thinkingCount,
   pendingToolCallIds,
   results,
-  childRunsByToolCallId,
+  subRunsByToolCallId,
   toolCallOutcomes,
   toolCalls,
   turnActive,
@@ -96,7 +98,7 @@ export function summarizeProcess({
   thinkingCount: number;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
-  childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
+  subRunsByToolCallId?: ReadonlyMap<string, AgentRenderRunEntity>;
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
   toolCalls: ToolCall[];
   /** Live wall-clock since the run started, for the "Working for {t}" ticker; null when unknown. */
@@ -111,8 +113,8 @@ export function summarizeProcess({
 }): string {
   const toolCount = toolCalls.length;
   const toolStatus = (toolCall: ToolCall) => {
-    const childRun = childRunsByToolCallId?.get(toolCall.id);
-    if (childRun) return childRunToolStatus(childRun);
+    const subRun = subRunsByToolCallId?.get(toolCall.id);
+    if (subRun) return runToolStatus(subRun);
     // Same rule as the per-row spinner (isToolCallRowActive): while the turn is
     // live every un-settled call is active, not just the most recent — else a
     // parallel batch's other calls would count as 'error' in the summary during
@@ -161,12 +163,12 @@ export function summarizeProcess({
   }
 
   // Result-first resting state: a sealed turn with a final answer gets a
-  // non-interactive "Worked for {duration}" divider. A resultless turn we're
-  // deliberately surfacing (a sealed DM turn, per #240) is excluded: "Worked for
-  // ..." would read as a clean unit of work and hide that there is no answer, so
-  // it falls through to the descriptive summary instead. The descriptive
-  // summaries below are also the fallback when the run's wall-clock is unknown
-  // (e.g. legacy records with no run timing).
+  // "Worked for {duration}" process divider. A resultless turn we're deliberately
+  // surfacing (a sealed DM turn) is excluded: "Worked for ..." would
+  // read as a clean unit of work and hide that there is no answer, so it falls
+  // through to the descriptive summary instead. The descriptive summaries below
+  // are also the fallback when the run's wall-clock is unknown (e.g. legacy
+  // records with no run timing).
   if (!turnActive && workedForMs !== null && !surfaceResultlessProcess) {
     return process.workedFor({ duration: formatRunDuration(workedForMs) });
   }
@@ -235,12 +237,12 @@ export function AgentProcessBlock({
   expandState,
   index,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   pendingToolCallIds,
   process,
   results,
   conversationId,
-  childRunsByParentToolCallId,
+  subRunsByParentToolCallId,
   turnActive,
 }: AgentProcessBlockProps) {
   const t = useT();
@@ -251,36 +253,61 @@ export function AgentProcessBlock({
   const facts = useMemo(() => processSummaryFacts(items), [items]);
   const liveSegment = turnActive && !sealed;
   const liveElapsedMs = useElapsedTick(liveStartedAtMs, liveSegment);
-  const showTimeline = items.length > 0;
+  const collapsibleWorkedDivider = showWorkDivider
+    && !turnActive
+    && !stopped
+    && !turnFailedWithoutProse
+    && !surfaceResultlessProcess
+    && workedForMs !== null
+    && items.length > 0;
+  const workedDividerExpanded = expandState.isExpanded(`${id}:worked`, false);
+  const showTimeline = items.length > 0 && (!collapsibleWorkedDivider || workedDividerExpanded);
   const showStatusRow = showWorkDivider || showSummaryRow || turnFailedWithoutProse || !showTimeline;
   const showDividerRule = showWorkDivider && !turnFailedWithoutProse;
+  const summary = summarizeProcess({
+    ...facts,
+    pendingToolCallIds,
+    results,
+    turnActive,
+    liveElapsedMs,
+    stopped,
+    turnFailedWithoutProse,
+    surfaceResultlessProcess,
+    workedForMs,
+    process: t.agent.process,
+    toolCallLabels: t.agent.toolCall,
+  });
 
   return (
     <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>
       {showStatusRow ? (
-        <div
-          className={showWorkDivider ? 'agent-work-divider' : 'agent-process-summary-row'}
-          data-agent-process-id={id}
-        >
-          <span className="agent-process-title">
-            {summarizeProcess({
-              ...facts,
-              pendingToolCallIds,
-              results,
-              turnActive,
-              liveElapsedMs,
-              stopped,
-              turnFailedWithoutProse,
-              surfaceResultlessProcess,
-              workedForMs,
-              process: t.agent.process,
-              toolCallLabels: t.agent.toolCall,
-            })}
-          </span>
-          {liveSegment ? (
-            <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
-          ) : null}
-        </div>
+        collapsibleWorkedDivider ? (
+          <ButtonControl
+            aria-expanded={workedDividerExpanded}
+            className="agent-work-divider agent-process-toggle"
+            data-agent-process-id={id}
+            onClick={(event) => {
+              expandState.toggle(`${id}:worked`, workedDividerExpanded, event.currentTarget);
+            }}
+          >
+            <span className="agent-process-title">{summary}</span>
+            <ChevronRightIcon
+              aria-hidden
+              className={`agent-process-chevron${workedDividerExpanded ? ' is-expanded' : ''}`}
+              size={14}
+            />
+          </ButtonControl>
+        ) : (
+          <div
+            className={showWorkDivider ? 'agent-work-divider' : 'agent-process-summary-row'}
+            data-agent-process-id={id}
+          >
+            <span className="agent-process-title">{summary}</span>
+            {liveSegment ? (
+              <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
+            ) : null}
+          </div>
+        )
       ) : null}
       {showDividerRule ? (
         <div aria-hidden className="agent-process-rule" />
@@ -293,11 +320,11 @@ export function AgentProcessBlock({
           index={index}
           items={items}
           onNodeReferenceOpen={onNodeReferenceOpen}
-          onOpenChildRunTranscript={onOpenChildRunTranscript}
+          onOpenRunTranscript={onOpenRunTranscript}
           pendingToolCallIds={pendingToolCallIds}
           results={results}
           conversationId={conversationId}
-          childRunsByParentToolCallId={childRunsByParentToolCallId}
+          subRunsByParentToolCallId={subRunsByParentToolCallId}
           turnActive={turnActive}
         />
       ) : null}

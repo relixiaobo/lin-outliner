@@ -1031,6 +1031,7 @@ describe('agent skills', () => {
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
       'data-analysis',
+      'data-cleanup',
       'document',
       'goal-launching',
       'memory-dream',
@@ -1085,9 +1086,9 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
       executeIsolatedSkill: async ({ renderedContent, readOnlyIsolated }) => ({
-        agentId: 'research-child',
-        // Isolated skills always fork the current agent (Neva) — there is no per-skill agent type.
-        agentType: 'fork',
+        runId: 'research-run',
+        // Isolated skills always use the current agent (Neva) with a run profile, not a per-skill agent type.
+        runProfile: 'default',
         status: readOnlyIsolated ? 'completed' : 'failed',
         result: renderedContent,
       }),
@@ -1150,7 +1151,7 @@ describe('agent skills', () => {
       argumentHint: '<objective and acceptance criteria>',
       argumentNames: ['objective'],
     });
-    expect(skill?.body).toContain('Use `spawn` with `objective`, explicit `criteria`, `detach:true`, `context:"brief"`, and a finite `budget`.');
+    expect(skill?.body).toContain('Use `spawn_run` with `objective`, explicit `criteria`, `detach:true`, `context:"brief"`, and a finite `budget`.');
     expect(skill?.body).toContain('Never claim completion from the worker result alone');
   });
 
@@ -1267,8 +1268,8 @@ describe('agent skills', () => {
       localRoot: root,
       includeUserSkills: false,
       executeIsolatedSkill: async ({ skill, renderedContent }) => ({
-        agentId: 'child-run-test',
-        agentType: skill.agent ?? 'isolated',
+        runId: 'isolated-run-test',
+        runProfile: skill.agent ?? 'isolated',
         status: 'completed',
         result: `isolated result: ${renderedContent}`,
       }),
@@ -1285,7 +1286,7 @@ describe('agent skills', () => {
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
     expect(invocation.execution).toBe('isolated');
-    expect(invocation.isolated?.agentId).toBe('child-run-test');
+    expect(invocation.isolated?.runId).toBe('isolated-run-test');
     expect(invocation.renderedContent).toContain('Requires isolated execution for demo.');
     expect(runtime.getActivePermissionRules()).toEqual([]);
     expect(runtime.consumePendingTurnEffect()).toBeNull();
@@ -1307,8 +1308,8 @@ describe('agent skills', () => {
       localRoot: root,
       includeUserSkills: false,
       executeIsolatedSkill: async ({ skill, renderedContent }) => ({
-        agentId: 'child-run-test',
-        agentType: skill.agent ?? 'general',
+        runId: 'isolated-run-test',
+        runProfile: skill.agent ?? 'general',
         status: 'completed',
         result: renderedContent,
       }),
@@ -1335,8 +1336,8 @@ describe('agent skills', () => {
       localRoot: root,
       includeUserSkills: false,
       executeIsolatedSkill: async ({ skill }) => ({
-        agentId: 'child-run-test',
-        agentType: skill.agent ?? 'general',
+        runId: 'isolated-run-test',
+        runProfile: skill.agent ?? 'general',
         status: 'completed',
         result: 'one-shot isolated result',
       }),

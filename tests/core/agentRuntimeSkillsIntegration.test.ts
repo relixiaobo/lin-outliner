@@ -1451,11 +1451,125 @@ describe('agent runtime skill integration', () => {
     expect(childTools).not.toContain('operation_history');
     expect(childTools).not.toContain('bash');
     expect(childTools).not.toContain('skill');
-    expect(childTools).not.toContain('Agent');
-    expect(childTools).not.toContain('AgentStatus');
-    expect(childTools).not.toContain('AgentSend');
-    expect(childTools).not.toContain('AgentStop');
+    expect(childTools).not.toContain('spawn_run');
+    expect(childTools).not.toContain('run_status');
+    expect(childTools).not.toContain('run_steer');
+    expect(childTools).not.toContain('run_stop');
     expect(parentContexts.join('\n')).toContain('Research child inspected available context.');
+    const runMetas = await new AgentEventStore(dataRoot).listConversationRunMetaProjections(created.conversationId);
+    const researchMeta = runMetas.find((meta) => meta.runProfile === 'research');
+    expect(researchMeta).toMatchObject({
+      context: 'none',
+      runProfile: 'research',
+      objective: {
+        role: 'worker',
+      },
+    });
+  });
+
+  test('direct slash isolated skills surface the user turn before the isolated run completes', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-slash-research-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-slash-research-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const childStarted = deferred<void>();
+    const releaseChild = deferred<void>();
+    const parentContexts: string[] = [];
+    let callCount = 0;
+    const streamFn: StreamFn = ((model: Model<Api>, context: Context) => {
+      callCount += 1;
+      const stream = createAssistantMessageEventStream();
+      if (callCount === 1) {
+        childStarted.resolve();
+        void releaseChild.promise.then(() => {
+          const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('Slash research result.')), model);
+          stream.push({ type: 'start', partial: { ...message, content: [] } });
+          stream.push({ type: 'done', reason: 'stop', message });
+          stream.end(message);
+        });
+        return stream;
+      }
+
+      parentContexts.push(JSON.stringify(context.messages));
+      queueMicrotask(() => {
+        const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('Parent consumed slash research.')), model);
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: 'stop', message });
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+        }),
+        streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, '/research map the agent run detail UI');
+    await childStarted.promise;
+    await waitFor(() => sink.events.some((event) => (
+      event.type === 'projection'
+      && projectionTexts(event.renderProjection).join('\n').includes('/research map the agent run detail UI')
+      && event.renderProjection.activeRunId !== null
+    )));
+    let directSlashSubRun: { parentRunId?: string; parentToolCallId?: string; runProfile?: string } | undefined;
+    await waitFor(() => {
+      for (const event of sink.events) {
+        if (event.type !== 'projection') continue;
+        const activeRunId = event.renderProjection.activeRunId;
+        const match = Object.values(event.renderProjection.entities.runs).find((run) => (
+          run.parentRunId === activeRunId
+          && !run.parentToolCallId
+          && run.runProfile === 'research'
+        ));
+        if (match) {
+          directSlashSubRun = match;
+          return true;
+        }
+      }
+      return false;
+    });
+
+    releaseChild.resolve();
+    await sendPromise;
+
+    expect(directSlashSubRun).toMatchObject({
+      parentToolCallId: undefined,
+      runProfile: 'research',
+    });
+    const runs = await runtime.listRuns();
+    const researchRun = runs.find((run) => run.runProfile === 'research');
+    expect(researchRun).toMatchObject({
+      conversationId: created.conversationId,
+      title: 'map the agent run detail UI',
+      kind: 'delegation',
+      runProfileLabel: 'Research',
+      status: 'completed',
+    });
+    expect(researchRun?.parentRunId).toBe(directSlashSubRun?.parentRunId);
+    expect(runs.some((run) => run.kind === 'turn')).toBe(false);
+    expect(parentContexts.join('\n')).toContain('Slash research result.');
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 
   test('asks for a read scope when research inspects an external folder', async () => {

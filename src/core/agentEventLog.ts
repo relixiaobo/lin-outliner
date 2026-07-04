@@ -9,6 +9,7 @@ import type {
   Usage,
   UserMessage,
 } from './agentTypes';
+import { assertValidRunExecutionStatusTransition } from './agentRunStateMachine';
 
 export const AGENT_EVENT_VERSION = 1;
 
@@ -206,8 +207,11 @@ export type AgentRunKind = 'turn' | 'background' | 'delegation' | 'scheduled' | 
 export type AgentRunDisposition = 'attended' | 'detached';
 export type AgentRunRetention = 'hot' | 'cold-archived' | 'summarized-only' | 'deleted';
 export type AgentRunPurpose = 'work' | 'verify';
+export type AgentRunObjectiveRole = 'controller' | 'worker' | 'verifier';
+export type AgentRunProfileId = 'default' | 'research' | 'verify' | 'browser' | 'coding' | 'writing' | 'dream';
 export type AgentObjectiveStatus = 'active' | 'verifying' | 'verified' | 'blocked' | 'budget_exhausted' | 'stopped';
 export type AgentRunContextMode = 'full' | 'brief' | 'none' | 'fork';
+export type AgentRunContextPolicy = 'full' | 'brief' | 'none';
 
 export interface AgentRunBudget {
   tokens?: number;
@@ -252,25 +256,54 @@ export type AgentRunAnchor =
   | { type: 'conversation'; agentId: AgentId; conversationId: string }
   | { type: 'principal'; principal: AgentPrincipal };
 
+export interface AgentRunExecutionMeta {
+  status: AgentRunStatus;
+  completedAt?: number;
+  usage?: Usage;
+  error?: string;
+}
+
+export interface AgentRunObjectiveMeta {
+  text: string;
+  criteria: string[];
+  role: AgentRunObjectiveRole;
+  status: AgentObjectiveStatus;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
+  blockedReason?: string;
+  latestVerifierGap?: string;
+  latestSubmissionSeq?: number;
+}
+
+export type AgentRunSubmissionSource = 'final_assistant_message' | 'structured_output' | 'tool_result';
+
+export interface AgentRunSubmissionProjection {
+  runId: string;
+  seq: number;
+  submittedAt: number;
+  summary: string;
+  contentRef?: AgentPayloadRef;
+  source: AgentRunSubmissionSource;
+}
+
 export interface AgentRunMeta {
   id: string;
   /** The executing agent (whose runtime/model ran this) — NOT the anchor subject. */
   agentId: AgentId;
   anchor: AgentRunAnchor;
   parentRunId?: string;
+  parentToolCallId?: string;
   disposition: AgentRunDisposition;
-  status: AgentRunStatus;
-  objective?: string;
-  criteria?: string[];
-  objectiveStatus?: AgentObjectiveStatus;
-  purpose?: AgentRunPurpose;
-  scope?: AgentRunScope;
-  budget?: AgentRunBudget;
+  context: AgentRunContextPolicy;
+  runProfile: AgentRunProfileId;
   trigger: AgentRunTrigger;
-  usage?: Usage;
   fingerprint: AgentRunFingerprint;
   retention: AgentRunRetention;
   createdAt: number;
+  updatedAt: number;
+  latestSeq: number;
+  execution: AgentRunExecutionMeta;
+  objective?: AgentRunObjectiveMeta;
 }
 
 export function conversationIdOfRun(run: Pick<AgentRunMeta, 'anchor'>): string | null {
@@ -290,6 +323,7 @@ export function agentIdOfRunAnchor(anchor: AgentRunAnchor): AgentId | undefined 
 
 export type AgentRunLogEventType =
   | 'run.started'
+  | 'run.result.submitted'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
@@ -397,6 +431,12 @@ export interface AskUserQuestionResult {
 
 export type AgentRunLogEvent =
   | (AgentRunEventBase & { type: 'run.started' })
+  | (AgentRunEventBase & {
+      type: 'run.result.submitted';
+      summary: string;
+      contentRef?: AgentPayloadRef;
+      source: AgentRunSubmissionSource;
+    })
   | (AgentRunEventBase & { type: 'run.completed'; usage?: Usage })
   | (AgentRunEventBase & { type: 'run.failed'; error: { code: string; message: string }; usage?: Usage })
   | (AgentRunEventBase & { type: 'run.cancelled'; reason?: string; usage?: Usage })
@@ -575,11 +615,10 @@ export type AgentEventType =
   | 'skill.rolled_back'
   | 'skill.curation.updated'
   | 'run.started'
+  | 'run.result.submitted'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
-  | 'child_run.started'
-  | 'child_run.updated'
   | 'compaction.completed'
   | 'context.cleared'
   | 'dream.finished'
@@ -850,8 +889,8 @@ export type AgentNotificationKind =
   | 'task_completed'
   | 'task_failed'
   // Reserved (no emitter yet): a conversation's own *foreground* agent awaiting a
-  // user decision while the user is elsewhere. Delegated child runs never ask the
-  // user mid-execution, so there is deliberately no child-run→user needs_input trigger.
+  // user decision while the user is elsewhere. Delegated Runs never ask the user
+  // mid-execution, so there is deliberately no Run→user needs_input trigger.
   | 'needs_input'
   // Reserved (no emitter yet): a cheap no-LLM progress post for a long run.
   | 'status'
@@ -865,7 +904,7 @@ export type AgentNotificationKind =
  * Provenance for a notification: the off-floor run whose terminal state (or
  * needs-input pause) produced it. Orthogonal to the delivery anchor
  * (`conversationId`) — a run anchored to conversation X still reports there.
- * One variant only: a delegated child run IS a run (run unification).
+ * One variant only: a delegated sub-run is a Run (run unification).
  */
 export type AgentRunNotificationSource = { type: 'run'; runId: string };
 
@@ -916,13 +955,20 @@ export interface RunStartedEvent extends AgentEventBase {
   runId: string;
   agentId?: AgentId;
   anchor?: AgentRunAnchor;
+  parentToolCallId?: string;
   disposition?: AgentRunDisposition;
+  context?: AgentRunContextPolicy;
+  runProfile?: AgentRunProfileId;
   objective?: string;
   criteria?: string[];
+  objectiveRole?: AgentRunObjectiveRole;
   objectiveStatus?: AgentObjectiveStatus;
   purpose?: AgentRunPurpose;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
+  blockedReason?: string;
+  latestVerifierGap?: string;
+  latestSubmissionSeq?: number;
   trigger?: AgentRunTrigger;
   fingerprint?: AgentRunFingerprint;
   retention?: AgentRunRetention;
@@ -934,55 +980,18 @@ export interface RunTerminalEvent extends AgentEventBase {
   errorMessage?: string;
   objectiveStatus?: AgentObjectiveStatus;
   budget?: AgentRunBudget;
+  blockedReason?: string;
+  latestVerifierGap?: string;
+  latestSubmissionSeq?: number;
   usage?: Usage;
 }
 
-/**
- * Conversation-log lifecycle marker for a delegated (child) run — the slim
- * projection feed for the boundary row + Work/Runs panel. The child's transcript
- * lives in its OWN run ledger (`runs/<childRunId>/events.jsonl`, replayed
- * alone); there is no transcript snapshot, message count, or evidence
- * boundary here (run unification — the boundary is `run.started`'s seq in
- * the child ledger).
- */
-export interface ChildRunStartedEvent extends AgentEventBase {
-  type: 'child_run.started';
-  childRunId: string;
-  /** The run that delegated this one — the parent side of the run tree. */
-  parentRunId?: string;
-  parentToolCallId?: string;
-  executingAgentId: AgentId | string;
-  parentAgentId: AgentId | string;
-  memoryOwnerAgentId: AgentId | string;
-  memoryOriginWorkspace?: string;
-  name?: string;
-  description: string;
-  prompt: string;
-  objective?: string;
-  criteria?: string[];
-  objectiveStatus?: AgentObjectiveStatus;
-  purpose?: AgentRunPurpose;
-  scope?: AgentRunScope;
-  budget?: AgentRunBudget;
-  disposition?: AgentRunDisposition;
-  agentType: string;
-  /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
-  contextMode: AgentRunContextMode;
-  /** Persisted so a cross-restart resume honors the unattended approval policy. */
-  unattended?: boolean;
-}
-
-export interface ChildRunUpdatedEvent extends AgentEventBase {
-  type: 'child_run.updated';
-  childRunId: string;
-  status: AgentRunStatus;
-  objectiveStatus?: AgentObjectiveStatus;
-  budget?: AgentRunBudget;
-  completedAt?: number;
-  result?: string;
-  error?: string;
-  blockedReason?: string;
-  latestVerifierGap?: string;
+export interface RunResultSubmittedEvent extends AgentEventBase {
+  type: 'run.result.submitted';
+  runId: string;
+  summary: string;
+  contentRef?: AgentPayloadRef;
+  source: AgentRunSubmissionSource;
 }
 
 export interface CompactionCompletedEvent extends AgentEventBase {
@@ -1068,9 +1077,8 @@ export type AgentEvent =
   | NotificationReadEvent
   | SkillAuditEvent
   | RunStartedEvent
+  | RunResultSubmittedEvent
   | RunTerminalEvent
-  | ChildRunStartedEvent
-  | ChildRunUpdatedEvent
   | CompactionCompletedEvent
   | ContextClearedEvent
   | DreamFinishedEvent
@@ -1136,13 +1144,9 @@ export interface AgentRunRecord {
 }
 
 /**
- * The canonical descriptive shape of a delegated (child) run: what was delegated
- * plus its current terminal state. The three near-duplicate run records all
- * derive from this single shape ([[agent-data-model]] "shape changes here once"):
- * the durable {@link AgentChildRunRecord} and the IPC `AgentChildRunSnapshot`
- * ARE a `DelegationDetail`; the in-memory runtime record embeds it plus live
- * execution state. The id fields are required — the spawn writer always sets
- * them, so every persisted/transported detail carries them.
+ * The live/descriptive shape used to restore delegated Run controller state from
+ * Run metadata. It is not a conversation-log record; durable lifecycle state
+ * lives in Run metadata and the Run ledger.
  */
 export interface DelegationDetail {
   id: string;
@@ -1157,8 +1161,9 @@ export interface DelegationDetail {
   budget?: AgentRunBudget;
   disposition?: AgentRunDisposition;
   agentType: string;
-  /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
+  /** The context mode selected for this same-agent isolated Run. */
   contextMode: AgentRunContextMode;
+  runProfile?: AgentRunProfileId;
   parentRunId?: string;
   executingAgentId: string;
   parentAgentId: string;
@@ -1175,18 +1180,13 @@ export interface DelegationDetail {
   parentToolCallId?: string;
   /**
    * Run with no interactive approval channel (a tool needing approval is denied
-   * instead of waiting for a human). Persisted durably on `child_run.started` so
-   * a cross-restart resume rebuilds the agent with the same flag.
+   * instead of waiting for a human). Scheduled command runs derive this from their
+   * Run trigger/profile.
    */
   unattended?: boolean;
 }
 
-/**
- * Conversation-level record of a delegated (child) run — the projection the
- * boundary row + Work/Runs panel read. The transcript is NOT here: it lives in the
- * child's own run ledger, replayed independently (run unification).
- */
-export type AgentChildRunRecord = DelegationDetail;
+export type DelegationRunRecord = DelegationDetail;
 
 export interface AgentCompactionRecord {
   id: string;
@@ -1267,7 +1267,6 @@ export interface AgentEventReplayState {
   payloads: Record<string, AgentPayloadRef>;
   derivedPayloadsBySourceId: Record<string, AgentPayloadRef[]>;
   runs: Record<string, AgentRunRecord>;
-  childRuns: Record<string, AgentChildRunRecord>;
   compactionsByMessageId: Record<string, AgentCompactionRecord>;
   contextClearsByMessageId: Record<string, AgentContextClearRecord>;
   dreamsByMessageId: Record<string, AgentDreamRecord>;
@@ -1305,7 +1304,6 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     payloads: {},
     derivedPayloadsBySourceId: {},
     runs: {},
-    childRuns: {},
     compactionsByMessageId: {},
     contextClearsByMessageId: {},
     dreamsByMessageId: {},
@@ -1636,82 +1634,42 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       requireMessage(state, event.leafMessageId);
       state.selectedLeafMessageId = event.leafMessageId;
       return;
-    case 'run.started':
+    case 'run.started': {
+      const existing = state.runs[event.runId];
+      assertValidRunExecutionStatusTransition(existing?.status, 'running', event.runId);
       state.runs[event.runId] = {
         id: event.runId,
-        agentId: event.agentId ?? (event.anchor ? agentIdOfRunAnchor(event.anchor) : undefined),
+        agentId: event.agentId ?? existing?.agentId ?? (event.anchor ? agentIdOfRunAnchor(event.anchor) : undefined),
         status: 'running',
         startedAt: event.createdAt,
         updatedAt: event.createdAt,
       };
       return;
+    }
     case 'run.completed':
     case 'run.failed':
     case 'run.cancelled': {
+      const nextStatus = event.type === 'run.completed'
+        ? 'completed'
+        : event.type === 'run.failed'
+          ? 'failed'
+          : 'cancelled';
+      assertValidRunExecutionStatusTransition(state.runs[event.runId]?.status, nextStatus, event.runId);
       const run = state.runs[event.runId] ?? {
         id: event.runId,
         status: 'running' as const,
         startedAt: event.createdAt,
         updatedAt: event.createdAt,
       };
-      run.status = event.type === 'run.completed'
-        ? 'completed'
-        : event.type === 'run.failed'
-          ? 'failed'
-          : 'cancelled';
+      run.status = nextStatus;
       run.updatedAt = event.createdAt;
       run.errorMessage = event.errorMessage;
       run.usage = event.usage ?? run.usage;
       state.runs[event.runId] = run;
       return;
     }
-    case 'child_run.started':
-      state.childRuns ??= {};
-      state.childRuns[event.childRunId] = {
-        id: event.childRunId,
-        name: event.name,
-        description: event.description,
-        prompt: event.prompt,
-        objective: event.objective,
-        criteria: event.criteria,
-        objectiveStatus: event.objectiveStatus,
-        purpose: event.purpose,
-        scope: event.scope,
-        budget: event.budget,
-        disposition: event.disposition,
-        agentType: event.agentType,
-        contextMode: event.contextMode,
-        parentRunId: event.parentRunId,
-        executingAgentId: event.executingAgentId,
-        parentAgentId: event.parentAgentId,
-        memoryOwnerAgentId: event.memoryOwnerAgentId,
-        memoryOriginWorkspace: event.memoryOriginWorkspace,
-        status: 'running',
-        startedAt: event.createdAt,
-        updatedAt: event.createdAt,
-        parentToolCallId: event.parentToolCallId,
-        unattended: event.unattended,
-      };
+    case 'run.result.submitted':
       return;
-    case 'child_run.updated': {
-      state.childRuns ??= {};
-      const run = state.childRuns[event.childRunId];
-      if (!run) return;
-      // Markers are applied in seq order, so a terminal→running transition at a
-      // later seq IS the resume of a detached run (agentDelegation `send`) —
-      // dropping it would hide the resumed run from Dream's running-skip,
-      // crash-recovery's interrupted scan, and the projection.
-      run.status = event.status;
-      run.objectiveStatus = event.objectiveStatus ?? run.objectiveStatus;
-      run.budget = event.budget ?? run.budget;
-      run.completedAt = event.completedAt;
-      run.result = event.result;
-      run.error = event.error;
-      run.blockedReason = event.blockedReason;
-      run.latestVerifierGap = event.latestVerifierGap;
-      run.updatedAt = event.createdAt;
-      return;
-    }
     case 'payload.created':
       state.payloads[event.payload.id] = event.payload;
       return;

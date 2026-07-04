@@ -10,18 +10,27 @@ import {
   type AgentId,
   type AgentPersistedContent,
   type AgentRunDisposition,
+  type AgentRunContextPolicy,
+  type AgentRunObjectiveRole,
   type AgentObjectiveStatus,
   type AgentRunBudget,
+  type AgentRunProfileId,
   type AgentRunPurpose,
+  type AgentRunSubmissionProjection,
+  type AgentRunSubmissionSource,
   type AgentRunScope,
   type AgentRunLogEventType,
   type AgentRunStatus,
 } from '../core/agentEventLog';
+import {
+  assertValidRunExecutionStatusTransition,
+  assertValidRunObjectiveStatusTransition,
+} from '../core/agentRunStateMachine';
 import type { AgentEventStore } from './agentEventStore';
 import { persistedContentModelText } from './agentToolOutputSlimming';
 
 // The write seam for a delegated (child) run's OWN ledger ([[agent-run-unification]]
-// Design 1). A child run is an ordinary Run: its transcript is append-only run-log
+// Design 1). A sub-run is an ordinary Run: its transcript is append-only run-log
 // events in `runs/<runId>/events.jsonl`, in the run's own seq space, replayed alone
 // into its own `AgentEventReplayState`. This module translates the live child
 // agent's pi messages into those events as they complete (coarse per-message
@@ -51,6 +60,8 @@ interface RunLedgerRunState {
   /** Active-path message ids since the last compaction — the next compaction's source range. */
   pathMessageIds: string[];
   toolCallMessageIds: Map<string, string>;
+  executionStatus?: AgentRunStatus;
+  objectiveStatus?: AgentObjectiveStatus;
   queue: Promise<void>;
 }
 
@@ -60,9 +71,13 @@ export interface AgentRunLedgerStartInput {
   agentId: AgentId;
   /** The delegating run; absent for runs spawned outside any run (system-triggered). */
   parentRunId?: string;
+  parentToolCallId?: string;
   disposition?: AgentRunDisposition;
+  context?: AgentRunContextPolicy;
+  runProfile?: AgentRunProfileId;
   objective?: string;
   criteria?: string[];
+  objectiveRole?: AgentRunObjectiveRole;
   objectiveStatus?: AgentObjectiveStatus;
   purpose?: AgentRunPurpose;
   scope?: AgentRunScope;
@@ -99,7 +114,7 @@ export class AgentRunLedgerWriter {
 
   constructor(private readonly options: AgentRunLedgerWriterOptions) {}
 
-  /** Seed a brand-new child run's ledger: context, `run.started`, directive. */
+  /** Seed a brand-new Run ledger: context, `run.started`, directive. */
   async runStarted(input: AgentRunLedgerStartInput): Promise<void> {
     const run: RunLedgerRunState = {
       conversationId: input.conversationId,
@@ -107,8 +122,14 @@ export class AgentRunLedgerWriter {
       tailMessageId: null,
       pathMessageIds: [],
       toolCallMessageIds: new Map(),
+      executionStatus: 'running',
+      objectiveStatus: input.objectiveStatus,
       queue: Promise.resolve(),
     };
+    assertValidRunExecutionStatusTransition(undefined, 'running', input.runId);
+    if (input.objectiveStatus) {
+      assertValidRunObjectiveStatusTransition(undefined, input.objectiveStatus, input.runId);
+    }
     this.runs.set(input.runId, run);
     await this.enqueue(input.runId, run, async () => {
       const events: AgentEvent[] = [];
@@ -121,9 +142,13 @@ export class AgentRunLedgerWriter {
         runId: input.runId,
         agentId: input.agentId,
         anchor: { type: 'conversation', agentId: input.agentId, conversationId: run.conversationId },
+        parentToolCallId: input.parentToolCallId,
         disposition: input.disposition ?? 'detached',
+        context: input.context,
+        runProfile: input.runProfile,
         objective: input.objective,
         criteria: input.criteria,
+        objectiveRole: input.objectiveRole,
         objectiveStatus: input.objectiveStatus,
         purpose: input.purpose,
         scope: input.scope,
@@ -168,6 +193,38 @@ export class AgentRunLedgerWriter {
       });
       await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
     });
+  }
+
+  async submitResult(
+    runId: string,
+    input: {
+      actor: AgentActor;
+      summary: string;
+      source: AgentRunSubmissionSource;
+    },
+  ): Promise<AgentRunSubmissionProjection | null> {
+    const summary = input.summary.trim();
+    if (!summary) return null;
+    const run = this.requireRun(runId);
+    let projection: AgentRunSubmissionProjection | null = null;
+    await this.enqueue(runId, run, async () => {
+      const event = this.buildEvent(run, runId, {
+        type: 'run.result.submitted',
+        actor: input.actor,
+        runId,
+        summary,
+        source: input.source,
+      });
+      projection = {
+        runId,
+        seq: event.seq,
+        submittedAt: event.createdAt,
+        summary,
+        source: input.source,
+      };
+      await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
+    });
+    return projection;
   }
 
   /**
@@ -225,10 +282,17 @@ export class AgentRunLedgerWriter {
       parentRunId?: string;
       objectiveStatus?: AgentObjectiveStatus;
       budget?: AgentRunBudget;
+      blockedReason?: string;
+      latestVerifierGap?: string;
+      latestSubmissionSeq?: number;
     },
   ): Promise<void> {
     const run = this.requireRun(runId);
     await this.enqueue(runId, run, async () => {
+      assertValidRunExecutionStatusTransition(run.executionStatus, status, runId);
+      if (options.objectiveStatus) {
+        assertValidRunObjectiveStatusTransition(run.objectiveStatus, options.objectiveStatus, runId);
+      }
       const event = status === 'running'
         ? this.buildEvent(run, runId, {
             type: 'run.started',
@@ -237,6 +301,11 @@ export class AgentRunLedgerWriter {
             agentId: options.agentId,
             anchor: { type: 'conversation', agentId: options.agentId, conversationId: run.conversationId },
             disposition: 'detached',
+            objectiveStatus: options.objectiveStatus,
+            budget: options.budget,
+            blockedReason: options.blockedReason,
+            latestVerifierGap: options.latestVerifierGap,
+            latestSubmissionSeq: options.latestSubmissionSeq,
             trigger: options.parentRunId ? { type: 'parent-run', parentRunId: options.parentRunId } : { type: 'system' },
           })
         : this.buildEvent(run, runId, {
@@ -246,8 +315,13 @@ export class AgentRunLedgerWriter {
             errorMessage: options.errorMessage,
             objectiveStatus: options.objectiveStatus,
             budget: options.budget,
+            blockedReason: options.blockedReason,
+            latestVerifierGap: options.latestVerifierGap,
+            latestSubmissionSeq: options.latestSubmissionSeq,
           });
       await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
+      run.executionStatus = status;
+      if (options.objectiveStatus) run.objectiveStatus = options.objectiveStatus;
     });
     // No eviction on terminal: a same-session resume reuses the live agent (and
     // this registration) directly. The map only ever holds runs spawned or
@@ -276,6 +350,7 @@ export class AgentRunLedgerWriter {
     }
     const run = this.requireRun(runId);
     await this.enqueue(runId, run, async () => {
+      assertValidRunExecutionStatusTransition(run.executionStatus, 'failed', runId);
       const event = this.buildEvent(run, runId, {
         type: 'run.failed',
         actor: options.actor,
@@ -283,6 +358,7 @@ export class AgentRunLedgerWriter {
         errorMessage: options.errorMessage,
       });
       await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
+      run.executionStatus = 'failed';
     });
     this.runs.delete(runId);
   }
@@ -305,6 +381,7 @@ export class AgentRunLedgerWriter {
           .filter((message) => message.role === 'toolResult' && message.toolCallId)
           .map((message) => [message.toolCallId!, message.id]),
       ),
+      executionStatus: state.runs[runId]?.status,
       queue: Promise.resolve(),
     };
     this.runs.set(runId, run);
@@ -326,6 +403,7 @@ export class AgentRunLedgerWriter {
       tailMessageId: null,
       pathMessageIds: [],
       toolCallMessageIds: new Map(),
+      executionStatus: undefined,
       queue: Promise.resolve(),
     });
   }
@@ -347,7 +425,7 @@ export class AgentRunLedgerWriter {
 
   private requireRun(runId: string): RunLedgerRunState {
     const run = this.runs.get(runId);
-    if (!run) throw new Error(`Unknown child-run ledger: ${runId}`);
+    if (!run) throw new Error(`Unknown Run ledger: ${runId}`);
     return run;
   }
 

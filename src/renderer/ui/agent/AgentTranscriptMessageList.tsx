@@ -9,7 +9,7 @@ import type {
   UserMessage,
 } from '../../../core/agentTypes';
 import { isSystemReminderBlock } from '../../../core/agentAttachments';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import type { AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import { AgentMessageRow } from './AgentMessageRow';
@@ -19,8 +19,8 @@ import { useT } from '../../i18n/I18nProvider';
 
 interface AgentTranscriptMessageListProps {
   active?: boolean;
-  childRun?: AgentRenderChildRunEntity;
-  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  run?: AgentRenderRunEntity;
+  subRunsByParentToolCallId?: Map<string, AgentRenderRunEntity>;
   className?: string;
   conversationId?: string | null;
   filePreviewPresentation?: 'reader';
@@ -28,8 +28,10 @@ interface AgentTranscriptMessageListProps {
   isChannel?: boolean;
   messages: readonly AgentMessage[];
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
+  showFinalMessages?: boolean;
+  showProcessStatus?: boolean;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }
 
@@ -78,21 +80,21 @@ function turnPhaseForMessage(
   return pendingToolCallIds.size > 0 ? 'waiting_for_tool' : 'streaming_text';
 }
 
-function runDurationMsForMessage(childRun: AgentRenderChildRunEntity | undefined, lastAssistant: boolean): number | null {
-  if (!childRun || !lastAssistant || childRun.completedAt === undefined) return null;
-  return Math.max(0, childRun.completedAt - childRun.startedAt);
+function runDurationMsForMessage(run: AgentRenderRunEntity | undefined, lastAssistant: boolean): number | null {
+  if (!run || !lastAssistant || run.completedAt === undefined) return null;
+  return Math.max(0, run.completedAt - run.startedAt);
 }
 
-// Child run's start for the live "Working for {t}" ticker — only while it is the
+// Run start for the live "Working for {t}" ticker — only while it is the
 // active last turn AND has not completed, so a sealed/failed run never keeps
 // ticking.
-function runStartedAtMsForMessage(childRun: AgentRenderChildRunEntity | undefined, lastAssistant: boolean): number | null {
-  if (!childRun || !lastAssistant || childRun.completedAt !== undefined) return null;
-  return childRun.startedAt;
+function runStartedAtMsForMessage(run: AgentRenderRunEntity | undefined, lastAssistant: boolean): number | null {
+  if (!run || !lastAssistant || run.completedAt !== undefined) return null;
+  return run.startedAt;
 }
 
-function turnInterruptedForMessage(childRun: AgentRenderChildRunEntity | undefined, lastAssistant: boolean): boolean {
-  return !!childRun && lastAssistant && (childRun.status === 'failed' || childRun.status === 'stopped');
+function turnInterruptedForMessage(run: AgentRenderRunEntity | undefined, lastAssistant: boolean): boolean {
+  return !!run && lastAssistant && (run.status === 'failed' || run.status === 'stopped');
 }
 
 function entryFromMessage(
@@ -100,7 +102,7 @@ function entryFromMessage(
   index: number,
   active: boolean,
   pendingToolCallIds: ReadonlySet<string>,
-  childRun: AgentRenderChildRunEntity | undefined,
+  run: AgentRenderRunEntity | undefined,
   lastAssistant: boolean,
 ): {
   entry: AgentMessageEntry;
@@ -117,9 +119,9 @@ function entryFromMessage(
       streaming: active,
       actor: null,
       runId: null,
-      runDurationMs: runDurationMsForMessage(childRun, lastAssistant),
-      runStartedAtMs: runStartedAtMsForMessage(childRun, lastAssistant),
-      turnInterrupted: turnInterruptedForMessage(childRun, lastAssistant),
+      runDurationMs: runDurationMsForMessage(run, lastAssistant),
+      runStartedAtMs: runStartedAtMsForMessage(run, lastAssistant),
+      turnInterrupted: turnInterruptedForMessage(run, lastAssistant),
     },
     turnPhase: turnPhaseForMessage(message, active, pendingToolCallIds),
   };
@@ -145,8 +147,8 @@ function OrphanToolResultRow({
 
 export function AgentTranscriptMessageList({
   active = false,
-  childRun,
-  childRunsByParentToolCallId,
+  run,
+  subRunsByParentToolCallId,
   className = 'agent-transcript-message-list',
   conversationId,
   filePreviewPresentation,
@@ -154,8 +156,10 @@ export function AgentTranscriptMessageList({
   isChannel = false,
   messages,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   pendingToolCallIds,
+  showFinalMessages = true,
+  showProcessStatus = true,
   toolResults,
 }: AgentTranscriptMessageListProps) {
   const assistantToolCallIds = useMemo(() => {
@@ -179,10 +183,9 @@ export function AgentTranscriptMessageList({
         const messageActive = active && isLastAssistantAt(messages, rowIndex);
         const lastAssistant = isLastAssistantAt(messages, rowIndex);
         if (message.role === 'user' && isHiddenOnlyUserMessage(message)) return null;
-        const { entry, turnPhase } = entryFromMessage(message, rowIndex, messageActive, pendingToolCallIds, childRun, lastAssistant);
+        const { entry, turnPhase } = entryFromMessage(message, rowIndex, messageActive, pendingToolCallIds, run, lastAssistant);
         return (
           <AgentMessageRow
-            childRunsByParentToolCallId={childRunsByParentToolCallId}
             contentKey={entry.id}
             conversationId={conversationId}
             entry={entry}
@@ -192,9 +195,12 @@ export function AgentTranscriptMessageList({
             isChannel={isChannel}
             key={entry.id}
             onNodeReferenceOpen={onNodeReferenceOpen}
-            onOpenChildRunTranscript={onOpenChildRunTranscript}
+            onOpenRunTranscript={onOpenRunTranscript}
             pendingToolCallIds={pendingToolCallIds}
+            showFinalMessages={showFinalMessages}
+            showProcessStatus={showProcessStatus}
             streaming={messageActive}
+            subRunsByParentToolCallId={subRunsByParentToolCallId}
             toolResults={toolResults}
             turnPhase={turnPhase}
           />

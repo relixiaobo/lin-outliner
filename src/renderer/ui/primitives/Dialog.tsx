@@ -83,7 +83,9 @@ export function Dialog({
     <div
       className={backdropClassName}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onBackdropMouseDown?.();
+        const target = event.target as Node;
+        if (surfaceRef.current?.contains(target)) return;
+        onBackdropMouseDown?.();
       }}
     >
       <section

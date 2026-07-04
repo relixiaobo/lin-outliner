@@ -68,7 +68,9 @@ export type {
   AgentApprovalResolutionScope,
   AgentAuthoringInput,
   AgentDefinitionView,
+  AgentRunDetailPayload,
   AgentRunListEntry,
+  AgentRunTranscriptPayload,
   AgentStorageLocation,
 } from '../../core/agentTypes';
 

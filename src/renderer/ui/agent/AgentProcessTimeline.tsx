@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMarkdown } from './AgentMarkdown';
@@ -18,7 +18,7 @@ import type { AgentTurnProcessItem, AgentTurnToolCallItem } from './agentTurnPro
  * most recent one. The runtime `pendingToolCallIds` set lags a freshly-dispatched
  * batch, and when one assistant fans out parallel tool calls there is a frame where
  * none is in-flight yet — narrowing the spinner to a single call flashed the rest red.
- * A call with a settled `outcome` (or a result, or a child run) is NOT un-settled, so
+ * A call with a settled `outcome` (or a result, or a sub-run) is NOT unsettled, so
  * a completed step never spins forever even if its result message never arrives; once
  * the turn settles `turnActive` goes false and a genuinely-unanswered call resolves to
  * its real error/incomplete state.
@@ -27,11 +27,11 @@ export function isToolCallRowActive(
   item: AgentTurnToolCallItem,
   pendingToolCallIds: ReadonlySet<string>,
   results: ReadonlyMap<string, AgentToolResultWithPayloads>,
-  childRun: AgentRenderChildRunEntity | undefined,
+  subRun: AgentRenderRunEntity | undefined,
   turnActive: boolean,
 ): boolean {
   if (pendingToolCallIds.has(item.toolCall.id)) return true;
-  return turnActive && !item.outcome && !results.has(item.toolCall.id) && !childRun;
+  return turnActive && !item.outcome && !results.has(item.toolCall.id) && !subRun;
 }
 
 interface AgentProcessTimelineProps {
@@ -41,11 +41,11 @@ interface AgentProcessTimelineProps {
   index: DocumentIndex;
   items: AgentTurnProcessItem[];
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   conversationId?: string | null;
-  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  subRunsByParentToolCallId?: Map<string, AgentRenderRunEntity>;
   turnActive: boolean;
 }
 
@@ -56,11 +56,11 @@ export function AgentProcessTimeline({
   index,
   items,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   pendingToolCallIds,
   results,
   conversationId,
-  childRunsByParentToolCallId,
+  subRunsByParentToolCallId,
   turnActive,
 }: AgentProcessTimelineProps) {
   // A sealed reasoning item that streamed to empty text carries nothing to show
@@ -120,7 +120,7 @@ export function AgentProcessTimeline({
         </div>
       );
     }
-    const childRun = item.childRun ?? childRunsByParentToolCallId?.get(item.toolCall.id);
+    const subRun = item.subRun ?? subRunsByParentToolCallId?.get(item.toolCall.id);
     return (
       <AgentToolCallBlock
         expanded={expandState.isExpanded(`tool:${item.toolCall.id}`, false)}
@@ -131,14 +131,14 @@ export function AgentProcessTimeline({
           expandState.toggle(toolId, expandState.isExpanded(toolId, false), anchorElement);
         }}
         onNodeReferenceOpen={onNodeReferenceOpen}
-        onOpenChildRunTranscript={onOpenChildRunTranscript}
+        onOpenRunTranscript={onOpenRunTranscript}
         pendingToolCallIds={pendingToolCallIds}
         result={results.get(item.toolCall.id)}
         conversationId={conversationId}
-        childRun={childRun}
+        subRun={subRun}
         toolCall={item.toolCall}
         outcome={item.outcome}
-        turnActive={isToolCallRowActive(item, pendingToolCallIds, results, childRun, turnActive)}
+        turnActive={isToolCallRowActive(item, pendingToolCallIds, results, subRun, turnActive)}
       />
     );
   };
@@ -168,9 +168,10 @@ export function AgentProcessTimeline({
                 key={group.id}
                 members={group.members}
                 onNodeReferenceOpen={onNodeReferenceOpen}
-                onOpenChildRunTranscript={onOpenChildRunTranscript}
+                onOpenRunTranscript={onOpenRunTranscript}
                 pendingToolCallIds={pendingToolCallIds}
                 results={results}
+                subRunsByParentToolCallId={subRunsByParentToolCallId}
               />
             );
           }

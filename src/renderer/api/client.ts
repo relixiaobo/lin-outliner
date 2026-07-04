@@ -46,7 +46,9 @@ import type {
   AgentDebugConversation,
   AgentDebugRun,
   AgentMessageAttachmentInput,
-  AgentChildRunActionResult,
+  AgentRunActionResult,
+  AgentRunDetailPayload,
+  AgentRunTranscriptPayload,
   AgentUserViewContext,
   AskUserQuestionResult,
 } from '../../core/agentTypes';
@@ -333,24 +335,20 @@ export const api = {
     command<AgentDebugRun | null>('agent_debug_run', { conversationId, runId }),
   agentPayloadText: (conversationId: string, payloadId: string) =>
     command<string | null>('agent_payload_text', { conversationId, payloadId }),
-  agentChildRunTranscript: (conversationId: string, runId: string) =>
-    command<{ messages: unknown[] } | null>('agent_child_run_transcript', { conversationId, runId }),
+  agentRunDetail: (conversationId: string, runId: string) =>
+    command<AgentRunDetailPayload | null>('agent_run_detail', { conversationId, runId }),
+  agentRunTranscript: (conversationId: string, runId: string) =>
+    command<AgentRunTranscriptPayload | null>('agent_run_transcript', { conversationId, runId }),
   agentRunConversationId: (runId: string) =>
     command<string | null>('agent_run_conversation_id', { runId }),
   agentRunStatus: (conversationId: string, runId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
-    command<AgentChildRunActionResult>('agent_run_status', { conversationId, runId, ...options }),
+    command<AgentRunActionResult>('agent_run_status', { conversationId, runId, ...options }),
   agentRunSteer: (conversationId: string, runId: string, message: string) =>
-    command<AgentChildRunActionResult>('agent_run_steer', { conversationId, runId, message }),
+    command<AgentRunActionResult>('agent_run_steer', { conversationId, runId, message }),
   agentRunAmend: (conversationId: string, runId: string, changes: unknown) =>
-    command<AgentChildRunActionResult>('agent_run_amend', { conversationId, runId, changes }),
+    command<AgentRunActionResult>('agent_run_amend', { conversationId, runId, changes }),
   agentRunStop: (conversationId: string, runId: string) =>
-    command<AgentChildRunActionResult>('agent_run_stop', { conversationId, runId }),
-  agentChildRunStatus: (conversationId: string, agentId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
-    command<AgentChildRunActionResult>('agent_run_status', { conversationId, runId: agentId, ...options }),
-  agentChildRunSend: (conversationId: string, agentId: string, message: string) =>
-    command<AgentChildRunActionResult>('agent_run_steer', { conversationId, runId: agentId, message }),
-  agentChildRunStop: (conversationId: string, agentId: string) =>
-    command<AgentChildRunActionResult>('agent_run_stop', { conversationId, runId: agentId }),
+    command<AgentRunActionResult>('agent_run_stop', { conversationId, runId }),
   agentSendMessage: (
     conversationId: string,
     message: string,

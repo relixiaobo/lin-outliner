@@ -3,15 +3,14 @@ import { act, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import type { AgentRunListEntry, ToolCall, Usage } from '../../src/core/agentTypes';
-import type {
-  AgentRenderChildRunEntity,
-} from '../../src/core/agentRenderProjection';
+import type { AgentRunDetailPayload, AgentRunListEntry, ToolCall, Usage } from '../../src/core/agentTypes';
+import type { AgentRenderRunEntity } from '../../src/core/agentRenderProjection';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { AgentToolActivityGroup } from '../../src/renderer/ui/agent/AgentToolActivityGroup';
-import { AgentChildRunDetailsPanel } from '../../src/renderer/ui/agent/AgentChildRunDetailsPanel';
+import { AgentRunDetailsPanel } from '../../src/renderer/ui/agent/AgentRunDetailsPanel';
 import { AgentRunsPanel } from '../../src/renderer/ui/agent/AgentRunsPanel';
+import { AgentRunStatusMarker } from '../../src/renderer/ui/agent/AgentRunRow';
 import { renderAssistantBlocks } from '../../src/renderer/ui/agent/AgentAssistantTurnContent';
 import type { AgentExpandState } from '../../src/renderer/ui/agent/agentProcessTypes';
 
@@ -35,6 +34,20 @@ const TEST_INDEX = {
   byId: new Map(),
 } as unknown as DocumentIndex;
 
+interface ChildRunFixture {
+  id: string;
+  description: string;
+  prompt: string;
+  executingAgentId: string;
+  status: AgentRunListEntry['status'];
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  result?: string;
+  parentRunId?: string;
+  parentToolCallId?: string;
+}
+
 afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
 });
@@ -44,19 +57,19 @@ describe('agent child run UI', () => {
     let openedChildRunId: string | null = null;
     const rendered = renderComponent(
       <AgentToolCallBlock
-        onOpenChildRunTranscript={(childRunId) => {
-          openedChildRunId = childRunId;
+        onOpenRunTranscript={(runId) => {
+          openedChildRunId = runId;
         }}
         pendingToolCallIds={new Set()}
         conversationId="conversation-1"
-        childRun={childRunEntity()}
+        subRun={renderRunEntity()}
         toolCall={agentToolCall()}
         turnActive={false}
       />,
     );
 
     expect(rendered.container.textContent).toContain('Ran agent run');
-    expect(rendered.container.textContent).toContain('Inspect child run UI');
+    expect(rendered.container.textContent).toContain('Inspect Run UI');
 
     await click(rendered, firstToolCallToggle(rendered));
 
@@ -69,10 +82,10 @@ describe('agent child run UI', () => {
   });
 
   test('uses child run status when summarizing ordinary tool activity groups', () => {
-    const runningChildRun = {
-      ...childRunEntity(),
+    const runningSubRun = {
+      ...renderRunEntity(),
       completedAt: undefined,
-      result: undefined,
+      objectiveStatus: 'active' as const,
       status: 'running' as const,
     };
     const rendered = renderComponent(
@@ -92,7 +105,7 @@ describe('agent child run UI', () => {
             id: 'tool:tool-agent-1',
             type: 'toolCall',
             toolCall: agentToolCall(),
-            childRun: runningChildRun,
+            subRun: runningSubRun,
           },
         ]}
         pendingToolCallIds={new Set()}
@@ -104,7 +117,7 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).toContain('Ran a command · managing an agent run');
   });
 
-  test('loads a child run transcript and keeps nested tool calls expandable', async () => {
+  test('loads a run transcript and keeps nested tool calls expandable', async () => {
     const payloadText = JSON.stringify({
       v: 1,
       runId: 'child-1',
@@ -149,11 +162,11 @@ describe('agent child run UI', () => {
       ],
     });
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={childRunEntity()}
+        runId="child-1"
       />,
       {
         payloads: { 'child-1': payloadText },
@@ -161,7 +174,10 @@ describe('agent child run UI', () => {
     );
 
     await waitForText(rendered, 'Inspect the current UI.');
-    expect(rendered.container.textContent).toContain('The UI path is ready.');
+    expect(processDisclosure(rendered).hasAttribute('open')).toBe(false);
+    expect(rendered.container.querySelector('.agent-run-detail-title-marker .checkbox-mark.checked')).not.toBeNull();
+    expect(rendered.container.textContent).toContain('Found the relevant UI path.');
+    expect(rendered.container.textContent).not.toContain('The UI path is ready.');
     expect(rendered.container.textContent).not.toContain('Daily note content.');
     // The thinking's first line shows as the dim gist beside the "Thought" label
     // (Codex `reasoning` preview); the full body is one click away.
@@ -173,14 +189,94 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).toContain('Daily note content.');
   });
 
-  test('child run transcript details can open nested child runs', async () => {
+  test('uses structured run submission as the detail result', async () => {
+    const payloadText = JSON.stringify({
+      messages: [
+        {
+          role: 'assistant',
+          timestamp: 180,
+          api: 'openai-completions',
+          provider: 'openai',
+          model: 'gpt-5.4',
+          usage: emptyUsage(),
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'Activity transcript text.' }],
+        },
+      ],
+      latestSubmission: {
+        runId: 'child-1',
+        seq: 7,
+        submittedAt: 200,
+        summary: 'Structured submitted result.',
+        source: 'final_assistant_message',
+      },
+    });
+    const rendered = renderComponent(
+      <AgentRunDetailsPanel
+        onClose={() => undefined}
+        conversationId="conversation-1"
+        index={TEST_INDEX}
+        runId="child-1"
+      />,
+      {
+        details: {
+          'child-1': runDetailPayload({
+            result: {
+              runId: 'child-1',
+              seq: 7,
+              submittedAt: 200,
+              summary: 'Structured submitted result.',
+              source: 'final_assistant_message',
+            },
+          }),
+        },
+        payloads: { 'child-1': payloadText },
+      },
+    );
+
+    await waitForText(rendered, 'Structured submitted result.');
+    expect(rendered.container.textContent).not.toContain('Old projected result.');
+  });
+
+  test('collapses long run results behind a local show-more control', async () => {
+    const longResult = Array.from({ length: 80 }, (_, index) => `Result sentence ${index + 1}.`).join(' ');
+    const rendered = renderComponent(
+      <AgentRunDetailsPanel
+        onClose={() => undefined}
+        conversationId="conversation-1"
+        index={TEST_INDEX}
+        runId="child-1"
+      />,
+      {
+        details: {
+          'child-1': runDetailPayload({
+            result: {
+              runId: 'child-1',
+              seq: 7,
+              submittedAt: 200,
+              summary: longResult,
+              source: 'final_assistant_message',
+            },
+          }),
+        },
+        payloads: {
+          'child-1': JSON.stringify({
+            messages: [],
+          }),
+        },
+      },
+    );
+
+    await waitForText(rendered, 'Show more');
+    expect(rendered.container.querySelector('.agent-run-detail-result-content.is-collapsed')).not.toBeNull();
+
+    await click(rendered, textButton(rendered, 'Show more'));
+    expect(rendered.container.textContent).toContain('Show less');
+    expect(rendered.container.querySelector('.agent-run-detail-result-content.is-collapsed')).toBeNull();
+  });
+
+  test('run transcript details can open nested runs', async () => {
     let openedChildRunId: string | null = null;
-    const nestedRun = {
-      ...childRunEntity(),
-      id: 'child-2',
-      description: 'Nested child run',
-      parentToolCallId: 'tool-nested-agent',
-    };
     const payloadText = JSON.stringify({
       v: 1,
       runId: 'child-1',
@@ -198,25 +294,35 @@ describe('agent child run UI', () => {
             {
               type: 'toolCall',
               id: 'tool-nested-agent',
-              name: 'Agent',
-              arguments: { description: 'Nested child run', prompt: 'Inspect the nested UI.' },
+              name: 'spawn_run',
+              arguments: { description: 'Nested sub-run', objective: 'Inspect the nested UI.' },
             },
           ],
         },
       ],
     });
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
-        onOpenChildRunTranscript={(childRunId) => {
-          openedChildRunId = childRunId;
+        onOpenRun={(runId) => {
+          openedChildRunId = runId;
         }}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={childRunEntity()}
-        childRunsByParentToolCallId={new Map([[nestedRun.parentToolCallId!, nestedRun]])}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            subRuns: [
+              runDetailChild({
+                runId: 'child-2',
+                title: 'Nested sub-run',
+                parentToolCallId: 'tool-nested-agent',
+              }),
+            ],
+          }),
+        },
         payloads: { 'child-1': payloadText },
       },
     );
@@ -228,20 +334,33 @@ describe('agent child run UI', () => {
     expect(openedChildRunId).toBe('child-2');
   });
 
-  test('threads child run duration and failure into shared transcript rows', async () => {
+  test('threads run duration and failure into shared transcript rows', async () => {
     const completedRun = {
       ...childRunEntity(),
       completedAt: 63_100,
       updatedAt: 63_100,
     };
     const completed = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={completedRun}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            updatedAt: completedRun.updatedAt,
+            completedAt: completedRun.completedAt,
+            result: {
+              runId: 'child-1',
+              seq: 1,
+              submittedAt: completedRun.completedAt,
+              summary: 'The UI path is ready.',
+              source: 'final_assistant_message',
+            },
+          }),
+        },
         payloads: {
           'child-1': JSON.stringify({
             v: 1,
@@ -277,6 +396,10 @@ describe('agent child run UI', () => {
     );
 
     await waitForText(completed, 'Worked for 1m 3s');
+    expect(textOccurrenceCount(completed, 'Worked for 1m 3s')).toBe(1);
+    await waitForText(completed, 'The UI path is ready.');
+    expect(textOccurrenceCount(completed, 'The UI path is ready.')).toBe(1);
+    expect(completed.container.querySelector('.agent-run-detail-transcript-list')?.textContent ?? '').not.toContain('The UI path is ready.');
 
     const failedRun = {
       ...childRunEntity(),
@@ -286,13 +409,21 @@ describe('agent child run UI', () => {
       updatedAt: 63_100,
     };
     const failed = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={failedRun}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            status: failedRun.status,
+            updatedAt: failedRun.updatedAt,
+            completedAt: failedRun.completedAt,
+            result: undefined,
+          }),
+        },
         payloads: {
           'child-1': JSON.stringify({
             v: 1,
@@ -322,11 +453,11 @@ describe('agent child run UI', () => {
   test('renders orphan tool results as capped plain text', async () => {
     const longOutput = `# not markdown\n${'stdout '.repeat(260)}`;
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={childRunEntity()}
+        runId="child-1"
       />,
       {
         payloads: {
@@ -354,20 +485,22 @@ describe('agent child run UI', () => {
     expect(rendered.container.querySelector('.agent-transcript-tool-result-row h1')).toBeNull();
   });
 
-  test('stops running childRuns from read-only details', async () => {
+  test('stops running runs from read-only details', async () => {
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={{
-          ...childRunEntity(),
-          completedAt: undefined,
-          result: undefined,
-          status: 'running',
-        }}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            completedAt: undefined,
+            result: undefined,
+            status: 'running',
+          }),
+        },
         payloads: {
           'child-1': JSON.stringify({
             v: 1,
@@ -415,17 +548,40 @@ describe('agent child run UI', () => {
       completedAt: 260,
     };
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
-        onOpenChildRunTranscript={(childRunId) => {
-          openedChildRunId = childRunId;
+        onOpenRun={(runId) => {
+          openedChildRunId = runId;
         }}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={parent}
-        childRuns={{ [parent.id]: parent, [nestedRun.id]: nestedRun }}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            result: {
+              runId: 'child-1',
+              seq: 2,
+              submittedAt: 260,
+              summary: parent.result!,
+              source: 'final_assistant_message',
+            },
+            verificationRuns: [
+              runDetailChild({
+                runId: nestedRun.id,
+                title: nestedRun.description,
+                objectiveRole: 'verifier',
+                runProfile: 'verify',
+                runProfileLabel: 'Verify',
+                parentToolCallId: nestedRun.parentToolCallId,
+                startedAt: nestedRun.startedAt,
+                updatedAt: nestedRun.updatedAt,
+                completedAt: nestedRun.completedAt,
+              }),
+            ],
+          }),
+        },
         payloads: {
           'child-1': JSON.stringify({
             v: 1,
@@ -437,20 +593,20 @@ describe('agent child run UI', () => {
       },
     );
 
-    await waitForText(rendered, 'Verification');
-    expect(rendered.container.textContent).toContain('Result');
+    await waitForText(rendered, 'Sub-runs 1/1');
+    expect(rendered.container.textContent).not.toContain('Result');
     expect(rendered.container.textContent).toContain('Complete testing.');
-    expect(rendered.container.querySelector('.agent-child-run-section-header [aria-label="Copy run result"]')).not.toBeNull();
-    expect(rendered.container.querySelector('.agent-child-run-result-actions')).toBeNull();
-    expect(rendered.container.querySelector('.agent-child-run-result-box .contains-task-list')).not.toBeNull();
-    expect(rendered.container.querySelectorAll('.agent-child-run-result-box .task-list-item')).toHaveLength(3);
+    expect(rendered.container.textContent).toContain('Details');
+    expect(rendered.container.querySelector('.agent-run-detail-result-actions [aria-label="Copy run result"]')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-detail-result-box .contains-task-list')).not.toBeNull();
+    expect(rendered.container.querySelectorAll('.agent-run-detail-result-box .task-list-item')).toHaveLength(3);
     expect(rendered.container.textContent).toContain('Verifier');
 
-    await click(rendered, textButton(rendered, 'Verifier'));
+    await click(rendered, textRoleButton(rendered, 'Verifier'));
     expect(openedChildRunId).toBe('child-2');
   });
 
-  test('lists run trees and stops a running run', async () => {
+  test('lists root runs with sub-run progress and opens details for drill-in', async () => {
     let openedRunId: string | null = null;
     const running = childRunEntity();
     running.status = 'running';
@@ -485,20 +641,20 @@ describe('agent child run UI', () => {
       />,
     );
 
-    expect(rendered.container.querySelector('[role="tree"]')).not.toBeNull();
-    expect(rendered.container.textContent).toContain('Inspect child run UI');
-    expect(rendered.container.textContent).toContain('Summarize notes');
-    expect(rendered.container.textContent).toContain('Verifier');
+    expect(rendered.container.querySelector('[role="tree"]')).toBeNull();
+    expect(rendered.container.textContent).toContain('Inspect Run UI');
+    expect(rendered.container.textContent).not.toContain('Summarize notes');
+    expect(rendered.container.textContent).not.toContain('Verifier');
     expect(rendered.container.textContent).not.toContain(verifierPrompt);
-    expect(rendered.container.textContent).toContain('Child runs 1/2');
+    expect(rendered.container.textContent).toContain('1/2');
     expect(rendered.container.textContent).not.toContain('General ·');
     expect(rendered.container.textContent).not.toContain('Verified ·');
-    expect(rendered.container.querySelector('.agent-run-child-toggle')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-child-toggle')).toBeNull();
+    const runningRunRow = textRoleButton(rendered, 'Inspect Run UI');
+    expect(runningRunRow.querySelector('.agent-run-marker.is-running .agent-run-status-spinner')).not.toBeNull();
+    expect(runningRunRow.querySelector('.agent-run-open-affordance')).not.toBeNull();
 
-    await click(rendered, textButton(rendered, 'Child runs 1/2'));
-    expect(openedRunId).toBeNull();
-
-    await click(rendered, textTreeItem(rendered, 'Inspect child run UI'));
+    await click(rendered, runningRunRow);
     expect(openedRunId).toBe('child-1');
 
     await click(rendered, ariaButton(rendered, 'Stop run'));
@@ -513,31 +669,86 @@ describe('agent child run UI', () => {
       }]);
   });
 
-  test('an open panel refetches the transcript when the projected entity changes', async () => {
-    // The conversation projection carries no per-message child data, so the
-    // panel must refetch on every entity change (status flips, updatedAt
-    // bumps) — the regression was a fetch keyed on childRun.id alone, which
-    // froze an open panel for the run's whole lifetime.
-    let setChildRun: (entity: AgentRenderChildRunEntity) => void = () => undefined;
-    function Wrapper() {
-      const [childRun, set] = useState<AgentRenderChildRunEntity>({
+  test('shows a completed run as complete even when its objective is still active', () => {
+    const completedAt = Date.now() - 60_000;
+    const completed = {
+      ...runEntry({
         ...childRunEntity(),
-        status: 'running',
-        completedAt: undefined,
-        result: undefined,
-        updatedAt: 100,
-      });
-      setChildRun = set;
+        status: 'completed',
+        startedAt: completedAt - 63_000,
+        updatedAt: completedAt,
+        completedAt,
+      }),
+      objectiveStatus: 'active' as const,
+    };
+    const rendered = renderComponent(
+      <AgentRunsPanel
+        error={null}
+        loading={false}
+        onOpenRun={() => undefined}
+        onRefresh={() => undefined}
+        runs={[completed]}
+      />,
+    );
+
+    expect(rendered.container.querySelector('.agent-run-marker.is-completed')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker .checkbox-mark.checked')).not.toBeNull();
+    expect(rendered.container.textContent).toContain('1 minute ago · 1m 3s');
+    expect(rendered.container.textContent).not.toContain('Worked for');
+  });
+
+  test('maps all run states to distinct status markers', () => {
+    const rendered = renderComponent(
+      <div>
+        <AgentRunStatusMarker status="running" />
+        <AgentRunStatusMarker status="active" />
+        <AgentRunStatusMarker status="verifying" />
+        <AgentRunStatusMarker status="completed" />
+        <AgentRunStatusMarker status="verified" />
+        <AgentRunStatusMarker status="blocked" />
+        <AgentRunStatusMarker status="budget_exhausted" />
+        <AgentRunStatusMarker status="failed" />
+        <AgentRunStatusMarker status="stopped" />
+      </div>,
+    );
+
+    expect(rendered.container.querySelector('.agent-run-marker.is-running .agent-run-status-spinner')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker.is-active .agent-run-status-spinner')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker.is-verifying .agent-run-status-spinner')).not.toBeNull();
+    expect(rendered.container.querySelectorAll('.agent-run-marker .checkbox-mark.checked')).toHaveLength(2);
+    expect(rendered.container.querySelector('.agent-run-marker.is-blocked svg')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker.is-budget-exhausted svg')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker.is-failed svg')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker.is-stopped svg')).not.toBeNull();
+  });
+
+  test('an open panel refetches the transcript when the run index entry changes', async () => {
+    // The Run detail payload carries no per-message transcript data, so the
+    // panel refetches when the Run index entry changes (status flips, updatedAt
+    // bumps) and keeps polling while the run is live.
+    let setRunUpdatedAt: (updatedAt: number) => void = () => undefined;
+    function Wrapper() {
+      const [runUpdatedAt, set] = useState(100);
+      setRunUpdatedAt = set;
       return (
-        <AgentChildRunDetailsPanel
+        <AgentRunDetailsPanel
           onClose={() => undefined}
           conversationId="conversation-1"
           index={TEST_INDEX}
-          childRun={childRun}
+          runId="child-1"
+          runUpdatedAt={runUpdatedAt}
         />
       );
     }
     const rendered = renderComponent(<Wrapper />, {
+      details: {
+        'child-1': runDetailPayload({
+          status: 'running',
+          completedAt: undefined,
+          result: undefined,
+          updatedAt: 100,
+        }),
+      },
       payloads: {
         'child-1': JSON.stringify({
           messages: [{ role: 'user', timestamp: 100, content: [{ type: 'text', text: 'Inspect the current UI.' }] }],
@@ -546,14 +757,14 @@ describe('agent child run UI', () => {
     });
 
     await waitForText(rendered, 'Inspect the current UI.');
-    const fetchCount = () => rendered.commands.filter((call) => call.cmd === 'agent_child_run_transcript').length;
+    const fetchCount = () => rendered.commands.filter((call) => call.cmd === 'agent_run_transcript').length;
     const before = fetchCount();
     expect(before).toBeGreaterThanOrEqual(1);
 
-    // The run completes: the projected entity's status/updatedAt change and
-    // the panel re-fetches without being closed and reopened.
+    // The run index entry changes and the panel re-fetches without being closed
+    // and reopened.
     await act(async () => {
-      setChildRun({ ...childRunEntity(), updatedAt: 300, completedAt: 300 });
+      setRunUpdatedAt(300);
       await Promise.resolve();
     });
     await waitForText(rendered, 'Inspect the current UI.');
@@ -620,10 +831,10 @@ function AssistantTurn({ turnActive, turnInterrupted }: { turnActive: boolean; t
 
 function renderComponent(
   element: ReactNode,
-  options: { payloads?: Record<string, string> } = {},
+  options: { details?: Record<string, AgentRunDetailPayload>; payloads?: Record<string, string> } = {},
 ): RenderedComponent {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
-  const { commands, restore } = installDomGlobals(window, options.payloads ?? {});
+  const { commands, restore } = installDomGlobals(window, options.payloads ?? {}, options.details ?? {});
 
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
@@ -646,7 +857,11 @@ function renderComponent(
   return rendered;
 }
 
-function installDomGlobals(window: Window, payloads: Record<string, string>) {
+function installDomGlobals(
+  window: Window,
+  payloads: Record<string, string>,
+  details: Record<string, AgentRunDetailPayload>,
+) {
   const commands: Array<{ cmd: string; args: Record<string, unknown> }> = [];
   const previousGlobalGetComputedStyle = Object.getOwnPropertyDescriptor(globalThis, 'getComputedStyle');
   const getComputedStyle = () => ({
@@ -697,34 +912,40 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
       if (cmd === 'agent_payload_text') {
         return (payloads[String(args.payloadId)] ?? null) as T;
       }
-      if (cmd === 'agent_child_run_transcript') {
+      if (cmd === 'agent_run_detail') {
+        const runId = String(args.runId);
+        return (details[runId] ?? (runId === 'child-1' ? runDetailPayload() : null)) as T;
+      }
+      if (cmd === 'agent_run_transcript') {
         const raw = payloads[String(args.runId)];
         if (!raw) return null as T;
-        return { messages: (JSON.parse(raw) as { messages: unknown[] }).messages } as T;
+        const parsed = JSON.parse(raw) as { messages: unknown[]; latestSubmission?: unknown };
+        return {
+          messages: parsed.messages,
+          latestSubmission: parsed.latestSubmission,
+        } as T;
       }
-      if (cmd === 'agent_run_steer' || cmd === 'agent_child_run_send') {
-        const runId = args.runId ?? args.agentId;
+      if (cmd === 'agent_run_steer') {
+        const runId = args.runId;
         return {
           status: 'queued',
-          agent_id: runId,
-          description: 'Inspect child run UI',
-          prompt: 'Inspect the current UI.',
-          agent_type: 'explorer',
-          context_mode: 'fork',
+          runId: runId,
+          description: 'Inspect Run UI',
+          runProfile: 'default',
+          context_mode: 'brief',
           started_at: 100,
           updated_at: 300,
           transcript_message_count: 1,
         } as T;
       }
-      if (cmd === 'agent_run_stop' || cmd === 'agent_child_run_stop') {
-        const runId = args.runId ?? args.agentId;
+      if (cmd === 'agent_run_stop') {
+        const runId = args.runId;
         return {
           status: 'cancelled',
-          agent_id: runId,
-          description: 'Inspect child run UI',
-          prompt: 'Inspect the current UI.',
-          agent_type: 'explorer',
-          context_mode: 'fork',
+          runId: runId,
+          description: 'Inspect Run UI',
+          runProfile: 'default',
+          context_mode: 'brief',
           started_at: 100,
           updated_at: 300,
           completed_at: 300,
@@ -770,11 +991,22 @@ function textButton(rendered: RenderedComponent, text: string): HTMLButtonElemen
   return found;
 }
 
-function textTreeItem(rendered: RenderedComponent, text: string): HTMLElement {
-  const found = Array.from(rendered.document.querySelectorAll<HTMLElement>('[role="treeitem"]'))
+function textRoleButton(rendered: RenderedComponent, text: string): HTMLElement {
+  const found = Array.from(rendered.document.querySelectorAll<HTMLElement>('[role="button"]'))
     .find((candidate) => candidate.textContent?.includes(text));
-  if (!found) throw new Error(`Missing tree item: ${text}`);
+  if (!found) throw new Error(`Missing role button: ${text}`);
   return found;
+}
+
+function processDisclosure(rendered: RenderedComponent): HTMLDetailsElement {
+  const found = rendered.document.querySelector<HTMLDetailsElement>('.agent-run-detail-disclosure-section.is-process');
+  if (!found) throw new Error('Missing process disclosure');
+  return found;
+}
+
+function textOccurrenceCount(rendered: RenderedComponent, text: string): number {
+  const chunks = rendered.container.textContent?.split(text);
+  return chunks ? chunks.length - 1 : 0;
 }
 
 function firstToolCallToggle(rendered: RenderedComponent): HTMLButtonElement {
@@ -803,24 +1035,41 @@ function agentToolCall(): ToolCall {
   return {
     type: 'toolCall',
     id: 'tool-agent-1',
-    name: 'Agent',
+    name: 'spawn_run',
     arguments: {
-      description: 'Inspect child run UI',
-      prompt: 'Inspect the current UI.',
+      description: 'Inspect Run UI',
+      objective: 'Inspect the current UI.',
     },
   };
 }
 
-function childRunEntity(): AgentRenderChildRunEntity {
+function renderRunEntity(overrides: Partial<AgentRenderRunEntity> = {}): AgentRenderRunEntity {
   return {
     id: 'child-1',
-    description: 'Inspect child run UI',
+    agentId: 'built-in:tenon:explorer',
+    anchor: { type: 'conversation', agentId: 'built-in:tenon:explorer', conversationId: 'conversation-1' },
+    conversationId: 'conversation-1',
+    title: 'Inspect Run UI',
+    parentToolCallId: 'tool-agent-1',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
+    status: 'completed',
+    objectiveStatus: 'verified',
+    objectiveRole: 'worker',
+    context: 'brief',
+    startedAt: 100,
+    updatedAt: 260,
+    completedAt: 260,
+    ...overrides,
+  };
+}
+
+function childRunEntity(): ChildRunFixture {
+  return {
+    id: 'child-1',
+    description: 'Inspect Run UI',
     prompt: 'Inspect the current UI.',
-    agentType: 'explorer',
-    contextMode: 'fork',
     executingAgentId: 'built-in:tenon:explorer',
-    parentAgentId: 'built-in:tenon:assistant',
-    memoryOwnerAgentId: 'built-in:tenon:assistant',
     status: 'completed',
     startedAt: 100,
     updatedAt: 260,
@@ -830,13 +1079,67 @@ function childRunEntity(): AgentRenderChildRunEntity {
   };
 }
 
-function runEntry(childRun: AgentRenderChildRunEntity): AgentRunListEntry {
+function runDetailPayload(overrides: Partial<AgentRunDetailPayload> = {}): AgentRunDetailPayload {
+  return {
+    runId: 'child-1',
+    conversationId: 'conversation-1',
+    agentId: 'built-in:tenon:explorer',
+    kind: 'delegation',
+    title: 'Inspect Run UI',
+    status: 'completed',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
+    context: 'brief',
+    disposition: 'attended',
+    parentToolCallId: 'tool-agent-1',
+    startedAt: 100,
+    updatedAt: 260,
+    completedAt: 260,
+    objective: {
+      text: 'Inspect the current UI.',
+      criteria: [],
+    },
+    result: {
+      runId: 'child-1',
+      seq: 1,
+      submittedAt: 260,
+      summary: 'Found the relevant UI path.',
+      source: 'final_assistant_message',
+    },
+    ancestors: [],
+    subRuns: [],
+    verificationRuns: [],
+    transcriptMessageCount: 1,
+    ...overrides,
+  };
+}
+
+function runDetailChild(overrides: Partial<AgentRunDetailPayload['subRuns'][number]> = {}): AgentRunDetailPayload['subRuns'][number] {
+  return {
+    runId: 'child-2',
+    title: 'Nested run',
+    status: 'completed',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
+    parentRunId: 'child-1',
+    startedAt: 180,
+    updatedAt: 260,
+    completedAt: 260,
+    childRunCount: 0,
+    completedChildRunCount: 0,
+    ...overrides,
+  };
+}
+
+function runEntry(childRun: ChildRunFixture): AgentRunListEntry {
   return {
     runId: childRun.id,
     conversationId: 'conversation-1',
     conversationTitle: 'General',
     agentId: childRun.executingAgentId,
     kind: 'delegation',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
     status: childRun.status,
     purpose: undefined,
     parentRunId: childRun.parentRunId ?? null,

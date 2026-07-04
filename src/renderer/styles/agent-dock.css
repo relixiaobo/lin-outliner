@@ -165,6 +165,26 @@ button.panel-resize-handle {
     calc(var(--rail-pad) + (var(--chrome-control-height) - var(--icon-size-md)) / 2 - var(--space-2));
 }
 
+.agent-chat-panel[data-work-panel-open="true"],
+.agent-chat-panel[data-work-panel-open="true"] .agent-dock-header {
+  background: var(--panel-bg);
+}
+
+.agent-dock-header[data-run-detail-open="true"] {
+  cursor: default;
+}
+
+.agent-dock-header[data-run-detail-open="true"] :is(button, [role="button"]) {
+  cursor: default;
+}
+
+.agent-dock-header[data-run-detail-open="true"] .agent-dock-run-back:hover,
+.agent-dock-header[data-run-detail-open="true"] .agent-dock-run-back:focus-visible,
+.agent-dock-header[data-run-detail-open="true"] .agent-run-panel-button:hover:not(:disabled),
+.agent-dock-header[data-run-detail-open="true"] .agent-run-panel-button:focus-visible:not(:disabled) {
+  color: var(--text-secondary);
+}
+
 .agent-dock-title-button {
   display: inline-flex;
   width: fit-content;

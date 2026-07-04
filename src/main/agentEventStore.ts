@@ -16,13 +16,16 @@ import type {
   AgentPayloadRole,
   AgentId,
   AgentRunAnchor,
+  AgentRunContextPolicy,
   AgentRunDisposition,
   AgentRunFingerprint,
   AgentRunKind,
   AgentObjectiveStatus,
   AgentRunBudget,
   AgentRunMeta,
+  AgentRunObjectiveRole,
   AgentRunPurpose,
+  AgentRunProfileId,
   AgentRunRetention,
   AgentRunScope,
   AgentRunStatus,
@@ -32,6 +35,10 @@ import type {
 import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, getAgentEventActivePath, mergeUniquePrincipals, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
 import { DEFAULT_DREAM_CHANNEL_ID } from '../core/agentChannel';
 import {
+  assertValidRunExecutionStatusTransition,
+  assertValidRunObjectiveStatusTransition,
+} from '../core/agentRunStateMachine';
+import {
   analyzeTextSearchQuery,
   normalizeSearchText,
   textSearchTextMatchesQuery,
@@ -40,6 +47,11 @@ import { nodeReferenceMarkersToText } from '../core/referenceMarkup';
 import type { ErrorReport, ErrorReportContext } from '../core/errorObservability';
 import { AppendOnlySeqLog, serializeJsonl, type AppendOnlySeqLogTail } from './appendOnlySeqLog';
 import { atomicWriteFile } from './jsonFileStore';
+import {
+  isRunProfileId,
+  objectiveRoleForRun,
+  runProfileFromStartedRun,
+} from './agentRunProfiles';
 
 const CONVERSATION_SEGMENT_FILE = '000001.jsonl';
 const CONVERSATION_RUN_INDEX_FILE = 'runs.json';
@@ -58,6 +70,13 @@ const SEARCH_INDEX_FILE = 'search-index.json';
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
+// v7 = agent-run-graph-cleanup: conversation logs no longer store
+// child_run.started/updated lifecycle markers. The Run index and each run's
+// ledger are the durable execution record; conversation logs keep only chat,
+// permissions, notifications, and other conversation-local events.
+// v6 = agent-run-graph-cleanup: run meta v2 stores nested execution/objective
+// state plus parentToolCallId, runProfile, and context. Old flat run metas are
+// pre-release data and are wiped by the sentinel.
 // v5 = agent-goal: run `kind` is no longer stored; run meta stores
 // `disposition` and derives presentation kind from provenance/lineage.
 // v4 = Dream channel PR-3: remove the principal memory event log/projection.
@@ -67,11 +86,9 @@ export const LAYOUT_SENTINEL_FILE = 'layout.json';
 // v3 = memory realignment PR-2: memory sources were a discriminated union and
 // principal-owned episode gist nodes were still persisted outside the outline.
 // v2 = run unification: a delegated run is its own ledger (`runs/<runId>/
-// events.jsonl`, own seq space) excluded from conversation replay; the
-// conversation stream keeps only the slim child_run.started/updated markers.
-// The pre-unification entity-grade events and transcript-snapshot payloads
-// are gone.
-export const STORAGE_LAYOUT_VERSION = 5;
+// events.jsonl`, own seq space) excluded from conversation replay. The
+// pre-unification entity-grade events and transcript-snapshot payloads are gone.
+export const STORAGE_LAYOUT_VERSION = 7;
 const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
@@ -117,9 +134,7 @@ export interface AgentRunEventStorePaths {
 }
 
 export interface AgentRunMetaProjection extends AgentRunMeta {
-  v: 1;
-  updatedAt: number;
-  latestSeq: number;
+  v: 2;
 }
 
 export function deriveAgentRunKind(meta: Pick<AgentRunMetaProjection, 'id' | 'anchor' | 'parentRunId' | 'trigger' | 'disposition'>): AgentRunKind {
@@ -404,8 +419,8 @@ export class AgentEventStore {
    * Read ONLY the conversation segment (not the joined run streams). The
    * run-grounded debug view ([[agent-debug-run-grounded]]) reads it once to recover
    * the conversation-stream events a run's own ledger lacks — the triggering user
-   * message, `child_run.started` parent links, and conversation-budget
-   * `tool_result.replaced` slimming — far cheaper than the full merged `readEvents`.
+   * message and conversation-budget `tool_result.replaced` slimming — far cheaper
+   * than the full merged `readEvents`.
    */
   async readConversationStreamEvents(conversationId: string): Promise<AgentEvent[]> {
     await this.ensureStorageLayout();
@@ -1127,7 +1142,7 @@ export class AgentEventStore {
   // Both run indexes are read-modify-write on a shared file reached from TWO
   // serial queues (the per-run ledger queue and the per-conversation event
   // queue), so the merge itself must serialize on `indexQueue` — otherwise a
-  // child-run append racing a parent conversation append writes back a stale
+  // delegated Run append racing a parent conversation append writes back a stale
   // runIds list and permanently drops a finished run from the index (cold
   // replay then silently misses that run's events; the index only self-heals
   // on a missing FILE, not a missing entry).
@@ -1179,35 +1194,99 @@ export class AgentEventStore {
     const existing = await this.readRunMeta(runId);
     const latest = events.at(-1);
     if (!latest) return null;
-    const terminal = [...events].reverse().find(isRunTerminalEvent);
     const started = events.find((event) => event.type === 'run.started');
     const agentId = asAgentId(existing?.agentId ?? (started?.type === 'run.started' ? started.agentId ?? (started.anchor ? agentIdOfRunAnchor(started.anchor) : undefined) : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant')!;
     const anchor = existing?.anchor ?? (started?.type === 'run.started' ? normalizeRunAnchor(started.anchor, agentId) : null) ?? conversationRunAnchor(agentId, conversationId);
     const trigger = existing?.trigger ?? (started?.type === 'run.started' ? started.trigger : undefined);
+    const parentRunId = existing?.parentRunId ?? (trigger?.type === 'parent-run' ? trigger.parentRunId : undefined);
+    const parentToolCallId = existing?.parentToolCallId ?? (started?.type === 'run.started' && typeof started.parentToolCallId === 'string' ? started.parentToolCallId : undefined);
+    const context = existing?.context ?? (started?.type === 'run.started' ? normalizeRunContextPolicy(started.context) : undefined) ?? 'full';
+    const runProfile = existing?.runProfile ?? (started?.type === 'run.started' ? normalizeRunProfileId(started.runProfile) : undefined) ?? runProfileFromStartedRun(started, anchor);
+    let executionStatus = existing?.execution.status;
+    let completedAt = existing?.execution.completedAt;
+    let usage = existing?.execution.usage;
+    let executionError = existing?.execution.error;
+    let objectiveStatus = existing?.objective?.status;
+    let budget = existing?.objective?.budget;
+    let blockedReason = existing?.objective?.blockedReason;
+    let latestVerifierGap = existing?.objective?.latestVerifierGap;
+    let latestSubmissionSeq = existing?.objective?.latestSubmissionSeq;
+    for (const event of events) {
+      if (event.type === 'run.started') {
+        assertValidRunExecutionStatusTransition(executionStatus, 'running', runId);
+        executionStatus = 'running';
+        completedAt = undefined;
+        executionError = undefined;
+        usage = undefined;
+      } else if (isRunTerminalEvent(event)) {
+        const nextStatus = runStatusFromTerminalEvent(event);
+        assertValidRunExecutionStatusTransition(executionStatus, nextStatus, runId);
+        executionStatus = nextStatus;
+        completedAt = event.createdAt;
+        usage = event.usage ?? usage;
+        executionError = event.type === 'run.failed' || event.type === 'run.cancelled'
+          ? event.errorMessage
+          : undefined;
+      } else if (isRunResultSubmittedEvent(event)) {
+        latestSubmissionSeq = event.seq;
+      }
+      if ((event.type === 'run.started' || isRunTerminalEvent(event)) && event.objectiveStatus) {
+        assertValidRunObjectiveStatusTransition(objectiveStatus, event.objectiveStatus, runId);
+        objectiveStatus = event.objectiveStatus;
+      }
+      if (event.type === 'run.started' || isRunTerminalEvent(event)) {
+        budget = event.budget ?? budget;
+        blockedReason = event.blockedReason ?? blockedReason;
+        latestVerifierGap = event.latestVerifierGap ?? latestVerifierGap;
+        latestSubmissionSeq = typeof event.latestSubmissionSeq === 'number' ? event.latestSubmissionSeq : latestSubmissionSeq;
+      }
+    }
+    executionStatus ??= 'running';
+    const objectiveText = existing?.objective?.text ?? (started?.type === 'run.started' ? started.objective : undefined);
+    const criteria = existing?.objective?.criteria ?? (started?.type === 'run.started' ? started.criteria : undefined);
+    const objectiveRole = existing?.objective?.role
+      ?? (started?.type === 'run.started' ? started.objectiveRole : undefined)
+      ?? objectiveRoleForRun(started, parentRunId);
+    const scope = existing?.objective?.scope ?? (started?.type === 'run.started' ? started.scope : undefined);
+    const objective = objectiveText || criteria?.length || objectiveStatus || scope || budget || blockedReason || latestVerifierGap || typeof latestSubmissionSeq === 'number'
+      ? {
+          text: objectiveText ?? '',
+          criteria: criteria?.slice() ?? [],
+          role: objectiveRole,
+          status: objectiveStatus ?? 'active',
+          ...(scope ? { scope } : {}),
+          ...(budget ? { budget } : {}),
+          ...(blockedReason ? { blockedReason } : {}),
+          ...(latestVerifierGap ? { latestVerifierGap } : {}),
+          ...(typeof latestSubmissionSeq === 'number' ? { latestSubmissionSeq } : {}),
+        }
+      : undefined;
     const meta: AgentRunMetaProjection = {
-      v: 1,
+      v: 2,
       id: runId,
       agentId,
       anchor,
       // The parent side of the run tree: a delegated run's trigger names the
       // run that spawned it ({type:'parent-run'}), and the meta mirrors it so
       // `runs WHERE parentRunId=X` is answerable from metas alone.
-      parentRunId: existing?.parentRunId ?? (trigger?.type === 'parent-run' ? trigger.parentRunId : undefined),
+      parentRunId,
+      parentToolCallId,
       disposition: existing?.disposition ?? (started?.type === 'run.started' ? normalizeRunDisposition(started.disposition, started) : undefined) ?? 'attended',
-      status: terminal ? runStatusFromTerminalEvent(terminal) : existing?.status ?? 'running',
-      objective: existing?.objective ?? (started?.type === 'run.started' ? started.objective : undefined),
-      criteria: existing?.criteria ?? (started?.type === 'run.started' ? started.criteria : undefined),
-      objectiveStatus: terminal?.objectiveStatus ?? existing?.objectiveStatus ?? (started?.type === 'run.started' ? started.objectiveStatus : undefined),
-      purpose: existing?.purpose ?? (started?.type === 'run.started' ? started.purpose : undefined),
-      scope: existing?.scope ?? (started?.type === 'run.started' ? started.scope : undefined),
-      budget: terminal?.budget ?? existing?.budget ?? (started?.type === 'run.started' ? started.budget : undefined),
+      context,
+      runProfile,
       trigger: trigger ?? { type: 'manual' },
-      usage: terminal?.usage ?? existing?.usage,
       fingerprint: existing?.fingerprint ?? (started?.type === 'run.started' ? started.fingerprint : undefined) ?? emptyRunFingerprint(),
       retention: existing?.retention ?? (started?.type === 'run.started' ? started.retention : undefined) ?? 'hot',
       createdAt: existing?.createdAt ?? started?.createdAt ?? events[0]!.createdAt,
       updatedAt: latest.createdAt,
       latestSeq: latest.seq,
+      execution: {
+        status: executionStatus,
+        ...(completedAt !== undefined ? { completedAt } : {}),
+        ...(usage ? { usage } : {}),
+        ...(executionError ? { error: executionError } : {}),
+      },
+      ...(objective ? { objective } : {}),
     };
     const runPaths = this.runPaths(runId);
     await mkdir(runPaths.runDir, { recursive: true });
@@ -1998,6 +2077,10 @@ function isRunTerminalEvent(event: AgentEvent): event is Extract<AgentEvent, { t
   return event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled';
 }
 
+function isRunResultSubmittedEvent(event: AgentEvent): event is Extract<AgentEvent, { type: 'run.result.submitted' }> {
+  return event.type === 'run.result.submitted';
+}
+
 function runStatusFromTerminalEvent(event: Extract<AgentEvent, { type: 'run.completed' | 'run.failed' | 'run.cancelled' }>): AgentRunStatus {
   if (event.type === 'run.completed') return 'completed';
   if (event.type === 'run.failed') return 'failed';
@@ -2089,7 +2172,7 @@ function normalizePrincipalRunIndex(value: unknown, expectedPrincipalKey: string
 }
 
 function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
-  if (!isRecord(value) || value.v !== 1) return null;
+  if (!isRecord(value) || value.v !== 2) return null;
   if (typeof value.agentId !== 'string') return null;
   if (typeof value.id !== 'string') return null;
   const anchor = normalizeRunAnchor(value.anchor, value.agentId) ?? (
@@ -2098,34 +2181,66 @@ function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
       : null
   );
   if (!anchor) return null;
-  if (!isAgentRunStatus(value.status) || !isAgentRunRetention(value.retention)) return null;
+  if (!isAgentRunRetention(value.retention)) return null;
   if (!isRecord(value.trigger) || typeof value.trigger.type !== 'string') return null;
   if (!isRecord(value.fingerprint)) return null;
+  const execution = normalizeRunExecution(value.execution);
+  if (!execution) return null;
+  const context = normalizeRunContextPolicy(value.context) ?? 'full';
+  const runProfile = normalizeRunProfileId(value.runProfile) ?? 'default';
+  const objective = normalizeRunObjective(value.objective);
   const createdAt = numberOrNull(value.createdAt);
   const updatedAt = numberOrNull(value.updatedAt);
   const latestSeq = numberOrNull(value.latestSeq);
   if (createdAt === null || updatedAt === null || latestSeq === null) return null;
   return {
-    v: 1,
+    v: 2,
     id: value.id,
     agentId: asAgentId(value.agentId)!,
     anchor,
     parentRunId: typeof value.parentRunId === 'string' ? value.parentRunId : undefined,
+    parentToolCallId: typeof value.parentToolCallId === 'string' ? value.parentToolCallId : undefined,
     disposition: normalizeRunDisposition(value.disposition, value),
-    status: value.status,
-    objective: typeof value.objective === 'string' ? value.objective : undefined,
-    criteria: Array.isArray(value.criteria) ? uniqueStrings(value.criteria.filter((item): item is string => typeof item === 'string')) : undefined,
-    objectiveStatus: isAgentObjectiveStatus(value.objectiveStatus) ? value.objectiveStatus : undefined,
-    purpose: isAgentRunPurpose(value.purpose) ? value.purpose : undefined,
-    scope: normalizeAgentRunScope(value.scope),
-    budget: normalizeAgentRunBudget(value.budget),
+    context,
+    runProfile,
     trigger: value.trigger as AgentRunTrigger,
-    usage: isRecord(value.usage) ? value.usage as unknown as Usage : undefined,
     fingerprint: value.fingerprint as unknown as AgentRunFingerprint,
     retention: value.retention,
     createdAt,
     updatedAt,
     latestSeq,
+    execution,
+    ...(objective ? { objective } : {}),
+  };
+}
+
+function normalizeRunExecution(value: unknown): AgentRunMetaProjection['execution'] | null {
+  if (!isRecord(value) || !isAgentRunStatus(value.status)) return null;
+  const completedAt = numberOrNull(value.completedAt);
+  return {
+    status: value.status,
+    ...(completedAt !== null ? { completedAt } : {}),
+    ...(isRecord(value.usage) ? { usage: value.usage as unknown as Usage } : {}),
+    ...(typeof value.error === 'string' ? { error: value.error } : {}),
+  };
+}
+
+function normalizeRunObjective(value: unknown): AgentRunMetaProjection['objective'] | undefined {
+  if (!isRecord(value)) return undefined;
+  if (typeof value.text !== 'string') return undefined;
+  const role = normalizeRunObjectiveRole(value.role);
+  if (!role || !isAgentObjectiveStatus(value.status)) return undefined;
+  const latestSubmissionSeq = numberOrNull(value.latestSubmissionSeq);
+  return {
+    text: value.text,
+    criteria: Array.isArray(value.criteria) ? uniqueStrings(value.criteria.filter((item): item is string => typeof item === 'string')) : [],
+    role,
+    status: value.status,
+    scope: normalizeAgentRunScope(value.scope),
+    budget: normalizeAgentRunBudget(value.budget),
+    ...(typeof value.blockedReason === 'string' ? { blockedReason: value.blockedReason } : {}),
+    ...(typeof value.latestVerifierGap === 'string' ? { latestVerifierGap: value.latestVerifierGap } : {}),
+    ...(latestSubmissionSeq !== null ? { latestSubmissionSeq } : {}),
   };
 }
 
@@ -2212,6 +2327,19 @@ function normalizeRunDisposition(value: unknown, legacy?: unknown): AgentRunDisp
   return legacyKind === 'background' || legacyKind === 'scheduled' || legacyKind === 'reflective'
     ? 'detached'
     : 'attended';
+}
+
+function normalizeRunContextPolicy(value: unknown): AgentRunContextPolicy | undefined {
+  if (value === 'full' || value === 'brief' || value === 'none') return value;
+  return undefined;
+}
+
+function normalizeRunProfileId(value: unknown): AgentRunProfileId | undefined {
+  return isRunProfileId(value) ? value : undefined;
+}
+
+function normalizeRunObjectiveRole(value: unknown): AgentRunObjectiveRole | undefined {
+  return value === 'controller' || value === 'worker' || value === 'verifier' ? value : undefined;
 }
 
 function isAgentRunStatus(value: unknown): value is AgentRunStatus {
@@ -2429,7 +2557,7 @@ function normalizeCheckpoint(value: unknown, conversationId: string): AgentEvent
   if (state.latestEventId !== latestEventId) return null;
   if (!isRecord(state.conversation) || state.conversation.id !== conversationId) return null;
   if (!isRecord(state.messages) || !isRecord(state.payloads) || !isRecord(state.runs)) return null;
-  if (!isRecord(state.childRuns) || !isRecord(state.compactionsByMessageId)) return null;
+  if (!isRecord(state.compactionsByMessageId)) return null;
   if (!isRecord(state.contextClearsByMessageId)) return null;
   if (!isRecord(state.dreamsByMessageId) || !isRecord(state.userQuestions)) return null;
   if (!Array.isArray(state.rootMessageIds)) return null;

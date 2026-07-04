@@ -20,7 +20,7 @@ import type {
   AgentRenderActiveDream,
   AgentRenderDreamEntity,
   AgentRenderProjection,
-  AgentRenderChildRunEntity,
+  AgentRenderRunEntity,
 } from '../../src/core/agentRenderProjection';
 import type { AgentPayloadRef, AgentPersistedContent } from '../../src/core/agentEventLog';
 import { systemReminder } from '../../src/core/agentAttachments';
@@ -78,8 +78,8 @@ function projection(
     activeRunId?: string | null;
     activeDream?: AgentRenderActiveDream | null;
     dreams?: Record<string, AgentRenderDreamEntity>;
-    childRuns?: Record<string, AgentRenderChildRunEntity>;
-    childRunIds?: string[];
+    runs?: Record<string, AgentRenderRunEntity>;
+    runIds?: string[];
   } = {},
 ): AgentRenderProjection {
   const rows = entries.map((entry) => ({
@@ -102,7 +102,7 @@ function projection(
     errorMessage: null,
     rows,
     transcriptRows: rows,
-    childRunIds: options.childRunIds ?? Object.keys(options.childRuns ?? {}),
+    runIds: options.runIds ?? Object.keys(options.runs ?? {}),
     entities: {
       messages: Object.fromEntries(entries.map((entry) => [entry.nodeId, {
         id: entry.nodeId,
@@ -119,7 +119,7 @@ function projection(
         stopReason: entry.message.role === 'assistant' ? entry.message.stopReason : undefined,
         usage: entry.message.role === 'assistant' ? entry.message.usage : undefined,
       }])),
-      childRuns: options.childRuns ?? {},
+      runs: options.runs ?? {},
       compactions: {},
       contextClears: {},
       dreams: options.dreams ?? {},
@@ -161,27 +161,6 @@ function persistedContent(message: UserMessage | AssistantMessage): AgentPersist
         };
       });
   return content;
-}
-
-function childRunEntity(
-  patch: Partial<AgentRenderChildRunEntity> & Pick<AgentRenderChildRunEntity, 'id'>,
-): AgentRenderChildRunEntity {
-  return {
-    description: 'Inspect child run UI',
-    prompt: 'Inspect the current UI.',
-    agentType: 'explorer',
-    contextMode: 'fork',
-    executingAgentId: 'built-in:tenon:explorer',
-    parentAgentId: 'built-in:tenon:assistant',
-    memoryOwnerAgentId: 'built-in:tenon:assistant',
-    status: 'completed',
-    startedAt: 100,
-    updatedAt: 260,
-    completedAt: 260,
-    result: 'Found the relevant UI path.',
-    parentToolCallId: 'tool-agent-1',
-    ...patch,
-  };
 }
 
 function conversation(conversationId: string, renderProjection: AgentRenderProjection): AgentConversation {
@@ -618,9 +597,9 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('filters hidden system reminder user rows from the visible conversation', async () => {
+  test('keeps hidden system reminder user rows as invisible turn boundaries', async () => {
     const restored = conversation('saved', projection([
-      { nodeId: 'system-notification', message: userMessage(systemReminder('Background child run completed.')), branches: null },
+      { nodeId: 'system-notification', message: userMessage(systemReminder('Background Run completed.')), branches: null },
       { nodeId: 'a1', message: assistantMessage('handled notification'), branches: null },
     ]));
     const fake = createFakeClient({ latestConversation: restored });
@@ -629,7 +608,11 @@ describe('agent runtime store', () => {
 
     await flushMicrotasks();
 
-    expect(store.getSnapshot().entries.map((entry) => entry.nodeId)).toEqual(['a1']);
+    expect(store.getSnapshot().entries.map((entry) => entry.kind)).toEqual([
+      'hidden-turn-boundary',
+      'message',
+    ]);
+    expect(store.getSnapshot().entries[1]?.kind === 'message' ? store.getSnapshot().entries[1].nodeId : null).toBe('a1');
     unsubscribe();
   });
 
@@ -1115,21 +1098,25 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('indexes childRuns by parent tool call id for renderer lookup', async () => {
-    const childRun = {
-      id: 'child-1',
-      description: 'Inspect child run UI',
-      prompt: 'Inspect the current UI.',
-      agentType: 'explorer',
-      contextMode: 'fork',
+  test('indexes sub-runs by parent tool call id for renderer lookup', async () => {
+    const subRun = {
+      id: 'run-1',
+      agentId: 'built-in:test:neva',
+      anchor: { type: 'conversation', agentId: 'built-in:test:neva', conversationId: 'saved' },
+      conversationId: 'saved',
+      title: 'Inspect Run UI',
+      parentRunId: 'parent-run-1',
+      parentToolCallId: 'tool-agent-1',
+      runProfile: 'default',
+      runProfileLabel: 'Default',
       status: 'completed',
+      objectiveStatus: 'verified',
+      objectiveRole: 'worker',
+      context: 'full',
       startedAt: 100,
       updatedAt: 250,
       completedAt: 250,
-      result: 'Found the relevant UI path.',
-      transcriptMessageCount: 4,
-      parentToolCallId: 'tool-agent-1',
-    } satisfies AgentRenderChildRunEntity;
+    } satisfies AgentRenderRunEntity;
     const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('inspect'), branches: null },
       {
@@ -1139,18 +1126,18 @@ describe('agent runtime store', () => {
           content: [{
             type: 'toolCall',
             id: 'tool-agent-1',
-            name: 'Agent',
+            name: 'spawn_run',
             arguments: {
-              description: 'Inspect child run UI',
-              prompt: 'Inspect the current UI.',
+              description: 'Inspect Run UI',
+              objective: 'Inspect the current UI.',
             },
           }],
         },
         branches: null,
       },
     ], {
-      childRuns: { [childRun.id]: childRun },
-      childRunIds: [childRun.id],
+      runs: { [subRun.id]: subRun },
+      runIds: [subRun.id],
     }));
     const fake = createFakeClient({ latestConversation: restored });
     const store = createAgentRuntimeStore(fake.client);
@@ -1159,9 +1146,66 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
 
     const snapshot = store.getSnapshot();
-    expect(snapshot.childRunIds).toEqual(['child-1']);
-    expect(snapshot.childRuns['child-1']).toEqual(childRun);
-    expect(snapshot.childRunsByParentToolCallId.get('tool-agent-1')).toEqual(childRun);
+    expect(snapshot.runIds).toEqual(['run-1']);
+    expect(snapshot.subRuns['run-1']).toEqual(subRun);
+    expect(snapshot.subRunsByParentToolCallId.get('tool-agent-1')).toEqual(subRun);
+    unsubscribe();
+  });
+
+  test('attaches direct sub-runs to the producing assistant entry', async () => {
+    const parentRun = {
+      id: 'run-parent',
+      agentId: 'built-in:test:neva',
+      anchor: { type: 'conversation', agentId: 'built-in:test:neva', conversationId: 'saved' },
+      conversationId: 'saved',
+      title: 'Parent turn',
+      runProfile: 'default',
+      runProfileLabel: 'Default',
+      status: 'completed',
+      context: 'full',
+      startedAt: 100,
+      updatedAt: 250,
+      completedAt: 250,
+    } satisfies AgentRenderRunEntity;
+    const researchRun = {
+      id: 'run-research',
+      agentId: 'built-in:test:neva',
+      anchor: { type: 'conversation', agentId: 'built-in:test:neva', conversationId: 'saved' },
+      conversationId: 'saved',
+      title: 'map the agent run detail UI',
+      parentRunId: parentRun.id,
+      runProfile: 'research',
+      runProfileLabel: 'Research',
+      status: 'completed',
+      objectiveStatus: 'completed',
+      objectiveRole: 'worker',
+      context: 'none',
+      startedAt: 120,
+      updatedAt: 220,
+      completedAt: 220,
+    } satisfies AgentRenderRunEntity;
+    const renderProjection = projection([
+      { nodeId: 'u1', message: userMessage('/research map the agent run detail UI'), branches: null },
+      { nodeId: 'a1', message: assistantMessage('Done.', 2), branches: null },
+    ], {
+      runs: {
+        [parentRun.id]: parentRun,
+        [researchRun.id]: researchRun,
+      },
+      runIds: [parentRun.id, researchRun.id],
+    });
+    renderProjection.entities.messages.a1!.runId = parentRun.id;
+    const restored = conversation('saved', renderProjection);
+    const fake = createFakeClient({ latestConversation: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    const assistantEntry = store.getSnapshot().entries.find((entry): entry is AgentMessageEntry => (
+      entry.kind === 'message' && entry.message.role === 'assistant'
+    ));
+    expect(assistantEntry?.directSubRuns).toEqual([researchRun]);
     unsubscribe();
   });
 

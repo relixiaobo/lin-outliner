@@ -180,11 +180,7 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
   past_chats: ['agent.memory.recall'],
   ask_user_question: ['agent.user_question.ask'],
   task_stop: ['task.stop'],
-  Agent: ['agent.delegate.spawn'],
-  AgentStatus: ['agent.delegate.status'],
-  AgentSend: ['agent.delegate.send'],
-  AgentStop: ['agent.delegate.stop'],
-  spawn: ['agent.delegate.spawn'],
+  spawn_run: ['agent.delegate.spawn'],
   run_status: ['agent.delegate.status'],
   run_steer: ['agent.delegate.send'],
   run_amend: ['agent.delegate.amend'],
@@ -268,10 +264,6 @@ function normalizeAgentToolProfileName(toolNameInput: string): string {
   if (normalized === 'edit') return 'file_edit';
   if (normalized === 'write') return 'file_write';
   if (normalized === 'delete') return 'file_delete';
-  if (normalized === 'agentstatus' || normalized === 'agent_status') return 'AgentStatus';
-  if (normalized === 'agentsend' || normalized === 'agent_send') return 'AgentSend';
-  if (normalized === 'agentstop' || normalized === 'agent_stop') return 'AgentStop';
-  if (normalized === 'agent') return 'Agent';
   return normalized;
 }
 

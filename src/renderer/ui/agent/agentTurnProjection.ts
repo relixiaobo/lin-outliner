@@ -1,6 +1,6 @@
-import type { AssistantMessage } from '../../../core/agentTypes';
+import type { AssistantMessage, ToolCall } from '../../../core/agentTypes';
 import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import { looksLikeRawAgentErrorPayload } from './agentErrorParse';
 
 type AssistantContentBlock = AssistantMessage['content'][number];
@@ -16,9 +16,9 @@ export type AgentTurnProcessItem =
   }
   | AgentTurnMessageItem
   | {
-    childRun?: AgentRenderChildRunEntity;
     id: string;
     outcome?: AgentToolCallOutcome;
+    subRun?: AgentRenderRunEntity;
     toolCall: AssistantToolCallBlock;
     type: 'toolCall';
   };
@@ -52,12 +52,14 @@ export interface AgentTurnProjection {
 }
 
 export interface ProjectAssistantTurnInput {
-  childRunsByParentToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
   contentKey: string;
+  directSubRuns?: readonly AgentRenderRunEntity[];
   isChannel: boolean;
   message: AssistantMessage;
   runStartedAtMs: number | null;
+  showProcessStatus?: boolean;
   streaming: boolean;
+  subRunsByParentToolCallId?: ReadonlyMap<string, AgentRenderRunEntity>;
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
   turnActive: boolean;
   turnInterrupted: boolean;
@@ -97,18 +99,18 @@ function visibleAssistantBlocks({
 }
 
 function processItemFromIndexedBlock({
-  childRunsByParentToolCallId,
   hasLater,
   indexed,
   processId,
   streaming,
+  subRunsByParentToolCallId,
   toolCallOutcomes,
 }: {
-  childRunsByParentToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
   hasLater: boolean;
   indexed: IndexedBlock;
   processId: string;
   streaming: boolean;
+  subRunsByParentToolCallId?: ReadonlyMap<string, AgentRenderRunEntity>;
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
 }): AgentTurnProcessItem {
   switch (indexed.block.type) {
@@ -121,9 +123,9 @@ function processItemFromIndexedBlock({
       };
     case 'toolCall':
       return {
-        childRun: childRunsByParentToolCallId?.get(indexed.block.id),
         id: `tool:${indexed.block.id}`,
         outcome: toolCallOutcomes?.get(indexed.block.id),
+        subRun: subRunsByParentToolCallId?.get(indexed.block.id),
         toolCall: indexed.block,
         type: 'toolCall',
       };
@@ -139,13 +141,38 @@ function processItemFromIndexedBlock({
   return exhaustive;
 }
 
+function syntheticSkillNameForRun(run: AgentRenderRunEntity): string {
+  if (run.runProfile === 'research') return 'research';
+  return run.runProfile;
+}
+
+function directSubRunProcessItem(run: AgentRenderRunEntity): AgentTurnProcessItem {
+  const toolCall: ToolCall = {
+    arguments: {
+      args: run.title,
+      skill: syntheticSkillNameForRun(run),
+    },
+    id: `direct-run:${run.id}`,
+    name: 'skill',
+    type: 'toolCall',
+  };
+  return {
+    id: `direct-run:${run.id}`,
+    subRun: run,
+    toolCall,
+    type: 'toolCall',
+  };
+}
+
 export function projectAssistantTurn({
-  childRunsByParentToolCallId,
   contentKey,
+  directSubRuns = [],
   isChannel,
   message,
   runStartedAtMs,
+  showProcessStatus = true,
   streaming,
+  subRunsByParentToolCallId,
   toolCallOutcomes,
   turnActive,
   turnInterrupted,
@@ -187,12 +214,15 @@ export function projectAssistantTurn({
     };
   });
 
-  const showWorkDivider = turnActive
+  const showWorkDivider = showProcessStatus && (
+    turnActive
     || stopped
-    || (workedForMs !== null && finalIsProse && !turnInterruptedAndSettled);
-  const showSummaryRow = lastProcessIndex >= 0 && !showWorkDivider && !turnFailedWithoutProse;
+    || (workedForMs !== null && finalIsProse && !turnInterruptedAndSettled)
+  );
+  const showSummaryRow = showProcessStatus && lastProcessIndex >= 0 && !showWorkDivider && !turnFailedWithoutProse;
+  const directSubRunItems = directSubRuns.map(directSubRunProcessItem);
 
-  if (lastProcessIndex < 0 && !showWorkDivider) {
+  if (lastProcessIndex < 0 && !showWorkDivider && directSubRunItems.length === 0) {
     return { finalMessages, process: null };
   }
 
@@ -200,13 +230,14 @@ export function projectAssistantTurn({
   const items = visibleBlocks
     .slice(0, processEntryEnd)
     .map((indexed, localIndex) => processItemFromIndexedBlock({
-      childRunsByParentToolCallId,
       hasLater: localIndex < visibleBlocks.length - 1,
       indexed,
       processId,
       streaming,
+      subRunsByParentToolCallId,
       toolCallOutcomes,
-    }));
+    }))
+    .concat(directSubRunItems);
 
   return {
     finalMessages,

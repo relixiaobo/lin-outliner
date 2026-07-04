@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentToolResultWithPayloads, ToolCall } from '../../src/core/agentTypes';
-import { getToolCallStatus, summarizeToolCall } from '../../src/renderer/ui/agent/AgentToolCallBlock';
+import type { AgentRenderRunEntity } from '../../src/core/agentRenderProjection';
+import { getToolCallStatus, runToolStatus, summarizeToolCall } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import {
   agentToolPresentation,
   getToolIcon,
@@ -38,6 +39,24 @@ import {
 import { getMessages } from '../../src/core/i18n';
 
 const labels = getMessages('en').agent.toolCall;
+
+function runEntity(overrides: Partial<AgentRenderRunEntity> = {}): AgentRenderRunEntity {
+  return {
+    id: 'run-1',
+    agentId: 'built-in:tenon:assistant',
+    anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId: 'conversation-1' },
+    conversationId: 'conversation-1',
+    title: 'Child run',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
+    status: 'completed',
+    context: 'brief',
+    startedAt: 1000,
+    updatedAt: 2000,
+    completedAt: 2000,
+    ...overrides,
+  };
+}
 
 function recallToolCall(args: Record<string, unknown>): ToolCall {
   return {
@@ -102,6 +121,16 @@ describe('agent tool call block', () => {
     expect(getToolCallStatus('tool-done', okResult, new Set(), false, 'failed')).toBe('done');
     // No outcome yet (still executing) keeps the active-turn spinner.
     expect(getToolCallStatus('tool-exec', undefined, new Set(['tool-exec']), true, undefined)).toBe('pending');
+  });
+
+  test('maps child run process status through the same display status as run rows', () => {
+    expect(runToolStatus(runEntity({ status: 'running' }))).toBe('pending');
+    expect(runToolStatus(runEntity({ objectiveStatus: 'verifying' }))).toBe('pending');
+    expect(runToolStatus(runEntity({ objectiveStatus: 'verified' }))).toBe('done');
+    expect(runToolStatus(runEntity({ objectiveStatus: 'blocked' }))).toBe('error');
+    expect(runToolStatus(runEntity({ objectiveStatus: 'budget_exhausted' }))).toBe('error');
+    expect(runToolStatus(runEntity({ status: 'failed' }))).toBe('error');
+    expect(runToolStatus(runEntity({ status: 'stopped' }))).toBe('error');
   });
 
   test('uses memory icon and summarizes recall', () => {
@@ -175,7 +204,7 @@ describe('agent tool call block', () => {
         pending: 'Asking user "Which scope should I use?"',
         done: 'Asked user "Which scope should I use?"',
       },
-      { name: 'spawn', args: { objective: 'Audit tool copy' }, pending: 'Running agent run "Audit tool copy"', done: 'Ran agent run "Audit tool copy"' },
+      { name: 'spawn_run', args: { objective: 'Audit tool copy' }, pending: 'Running agent run "Audit tool copy"', done: 'Ran agent run "Audit tool copy"' },
       { name: 'run_status', pending: 'Checking agent run', done: 'Checked agent run' },
       { name: 'run_steer', pending: 'Messaging agent run', done: 'Messaged agent run' },
       { name: 'run_amend', pending: 'Messaging agent run', done: 'Messaged agent run' },
@@ -228,15 +257,11 @@ describe('agent tool call block', () => {
       { name: 'skill', kind: 'skill', icon: SkillIcon },
       { name: 'skillify', kind: 'skill', icon: SkillAuthorToolIcon },
       { name: 'ask_user_question', kind: 'question', icon: QuestionToolIcon },
-      { name: 'spawn', kind: 'run', icon: RunSpawnToolIcon },
-      { name: 'Agent', kind: 'run', icon: RunSpawnToolIcon },
+      { name: 'spawn_run', kind: 'run', icon: RunSpawnToolIcon },
       { name: 'run_status', kind: 'run', icon: RunStatusToolIcon },
-      { name: 'AgentStatus', kind: 'run', icon: RunStatusToolIcon },
       { name: 'run_steer', kind: 'run', icon: RunMessageToolIcon },
       { name: 'run_amend', kind: 'run', icon: RunMessageToolIcon },
-      { name: 'AgentSend', kind: 'run', icon: RunMessageToolIcon },
       { name: 'run_stop', kind: 'run', icon: TaskStopToolIcon },
-      { name: 'AgentStop', kind: 'run', icon: TaskStopToolIcon },
       { name: 'mystery_tool', kind: 'other', icon: GenericToolIcon },
     ];
 

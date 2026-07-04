@@ -117,6 +117,11 @@ The old mutable chat snapshot store is no longer part of the runtime.
   message context menu's Details action opens an anchored popover with speaker,
   timestamp, model/provider, and token usage. These details are derived from the
   event log; no separate metadata store is introduced.
+- A sealed assistant transcript row keeps read-only actions even when it has no
+  editable outliner node id (for example archived messages, active placeholders
+  that later seal, or assistant-only background-run notifications). `nodeId`
+  gates mutating actions such as retry/regenerate; it must not gate Copy or
+  Details.
 - The composer footer's model control edits the **agent profile**, not a
   per-conversation model identity. A conversation talks to an agent identity
   (Neva), not to a single model, so the quick model/effort chip
@@ -306,8 +311,9 @@ Clean-cut startup policy (pre-release, no migration) — the storage-generation
 sentinel:
 
 - ONE root file `layout.json` `{"v": <generation>}` is written once per on-disk
-  format generation (`STORAGE_LAYOUT_VERSION`, currently `4` = Dream-channel
-  audit history + outline-only durable memory). First store access reads this single line; a
+  format generation (`STORAGE_LAYOUT_VERSION`, currently `7` = conversation logs
+  no longer store child-run lifecycle markers; Run index + Run ledgers are the
+  execution record). First store access reads this single line; a
   matching `v` proceeds with no per-conversation probing.
 - A stale `v` or a MISSING sentinel is positive proof of another generation:
   the WHOLE agent data root is hard-deleted (logged with the old generation) —
@@ -327,7 +333,9 @@ the JOINED run logs listed in `conversations/<id>/runs.json` (turn/background
 runs), then sorts by seq before replay. Runs the index marks `delegation` are
 EXCLUDED from this join — a delegated run's ledger is its own stream with its
 own seq space ([[agent-run-unification]]), so interleaving it would mix two seq
-spaces; the conversation carries only its slim `child_run.*` markers.
+spaces. Delegated run lifecycle and detail are surfaced through the Run index
+and each delegated run's own ledger; conversation logs carry no `child_run.*`
+lifecycle markers.
 
 ## Event Store
 
@@ -421,11 +429,10 @@ type AgentEventType =
   | 'skill.rolled_back'
   | 'skill.curation.updated'
   | 'run.started'
+  | 'run.result.submitted'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
-  | 'child_run.started'
-  | 'child_run.updated'
   | 'compaction.completed'
   | 'context.cleared'
   | 'dream.finished'
@@ -449,10 +456,10 @@ A `notification.created` is **anchored to exactly one conversation**
 carries a `kind` (`task_completed` / `task_failed`; `needs_input` and `status` are
 reserved with no emitter yet) plus an optional `source`
 (`{ type: 'run'; runId }`) naming the off-floor run that produced it. A
-detached child-run terminal emits one with an id keyed on the completion instant
+detached run terminal emits one with an id keyed on the completion instant
 (`notification-<runId>-<completedAt>`) so a *resumed* run that finishes again is
 delivered, not deduped; a **user-initiated stop** raises none (the user's own
-action); a child run left **running when the app dies** is marked failed and raises
+action); a run left **running when the app dies** is marked failed and raises
 its notification on the next restore. `needs_input` (reserved) would reuse the
 run-log `user_question.*` lifecycle for the actual pause/answer/resume; the
 notification only routes the attention signal to the origin conversation.
@@ -980,92 +987,137 @@ Rules:
   `agent_list_dream_history` IPC. Dream runs do not appear in the Work/Runs view;
   `AgentRenderDreamTaskEntity.principal` remains the Dream subject for audit
   labeling.
-- `child_run.*` events back `entities.childRuns` — the conversation's permanent
-  record of a run, whose final result is an expandable summary with a "View full
-  run" link into the full transcript. **Where** that record renders depends on
-  whether the run was spawned inside a turn:
+- Run metadata backs `entities.runs` and `runIds` — the compact Run projection
+  used by turn folding and other Run-aware renderer surfaces. It is derived from
+  the Run index, not from conversation lifecycle events. Conversation logs no
+  longer store child-run lifecycle markers, and the render projection does not
+  expose `entities.childRuns`, `childRunIds`, or a `kind: 'child-run'`
+  transcript row.
+- **Where** a spawned Run renders depends on whether it has a parent tool call:
   - **Turn fold (`parentToolCallId` set).** A
-    child run is the agent's own implicit behavior — it quietly delegated a slice
+    sub-run is the agent's own implicit behavior — it quietly delegated a slice
     of the current turn — so it gets **no conversation-level boundary row**.
     Instead it folds into the spawning turn's process: the `agent` tool-call block
-    is **kept** (not suppressed) and renders the child-run summary inline
-    (`childRunsByParentToolCallId` → "Agent run · {description}", expandable to the
-    result with the same "View full run" link). Because it lives inside the turn's
-    own message, it is turn-anchored and branch-pruned with that message — editing
-    the user message that started the turn removes it, with no orphan left at the
-    transcript end.
-  - **Boundary row (a parentless run).** A parentless run (a scheduled command
-    fire) becomes a dedicated **child-run boundary row** in `transcriptRows`
-    (kind `'child-run'`, keyed by run id), ordered by start time among the
-    messages.
-  - A running boundary row shows a live status line and is not yet expandable;
-    once it seals it expands to the result (or error) and the full-run link.
-    Boundary rows live only in `transcriptRows`, never in the active `rows` path.
+    is **kept** (not suppressed) and gets the matching Run from
+    `subRunsByParentToolCallId`, derived from `entities.runs`. The expanded tool
+    row exposes transcript/detail access for that Run. Because it lives inside the
+    turn's own message, it is turn-anchored and branch-pruned with that message —
+    editing the user message that started the turn removes it, with no orphan
+    left at the transcript end.
+  - **Parentless Run (`parentToolCallId` absent).** A detached, scheduled, or
+    manual command Run is not inserted into the conversation transcript. It
+    surfaces through Work/Runs and durable notifications; its detail view links to
+    the full Run transcript.
 - The Work/Runs view is a global run index backed by `agent_list_runs`, not a
   projection-only task list on the active conversation. Opening Work replaces the
   dock's channel header with a first-level `Back to chat · Runs` header and
-  replaces the chat body with the first-level run tree. The left header control
+  replaces the chat body with the first-level run list. The left header control
   closes Work directly; the index refreshes on open and from agent runtime events,
-  so it does not expose a persistent manual refresh button. Opening a row switches
-  that same body area to the second-level run detail view. The first level lists
-  non-turn, non-Dream runs across channels as a compact task-list tree using
-  `parentRunId`: each row shows the shared checkbox marker on the left, the run
-  title as the primary text. Rows with direct child runs add one muted secondary
-  line containing only an inline `Child run(s) completed/total` disclosure
-  control; that control alone expands/collapses children, while clicking the rest
-  of the row opens its detail view. Rows without child runs show no secondary
-  metadata. Running rows additionally reveal a Stop action on
-  hover/focus. Expanded child runs render as checklist-style subrows below the
-  parent content without separator lines or strong tree chrome; verifier
-  child runs display as the concise "Verifier" row rather than exposing their
-  internal verification prompt. There is no separate trailing disclosure column,
-  and hover never paints a separate subrow rectangle that fights the tree
-  alignment. The detail view is a read-only
-  drill-in, not a second chat surface: it reuses the same dock-header model with
-  the run-detail navigation row (`Back to runs · Agent run · status`) and the
-  Work/Runs toolbar icon still acting as the close affordance. The
-  detail body shows the run title, Result, direct child Runs (or Verification when
-  the only direct children are verifier runs), a collapsed Activity log, and
-  collapsed Technical details in a single scroll flow. Result is plain read-only markdown content:
-  its copy affordance belongs to the Result section header, and GFM task-list
-  output shows the checkbox without an extra bullet marker. Header metadata stays
-  user-facing (`messages · duration`); internal mode/type/id fields live in Technical details. The view
-  reads the selected conversation's `entities.childRuns` and lazily replays the
-  run transcript through `agent_child_run_transcript`; running detail views expose
-  Stop, while follow-up/steering remains an internal `run_steer` runtime/tool
-  capability instead of a permanent detail-page input.
+  so it does not expose a persistent manual refresh button. Opening a row overlays
+  a run detail drawer on the list rather than navigating the Work header. The
+  first level hides ordinary conversation turn wrappers and reflective/Dream
+  runs. A detached Run spawned directly by a chat turn therefore appears as its
+  own first-level compact task row even though its persisted `parentRunId` points
+  at the hidden turn wrapper. Runs nested under another visible Run stay hidden at
+  this level and are reached from the parent detail drawer. Each row uses the
+  shared Run row grammar: status icon on the left, the user-facing title as
+  primary text, one timing/status summary line, and a child-progress chip such as
+  `1/2` when direct sub-runs exist. When both are present, the progress chip and
+  the summary are separated by the same muted middle dot used between summary
+  fields, so blocked/failed rows do not visually merge `1/1` with their status.
+  The title is derived from the Run objective (with research `ARGUMENTS:` parsed
+  when present), not from the conversation/channel title or run profile label.
+  The chip is informational, not an inline tree disclosure. Clicking the row opens
+  a Run detail drawer above the list, leaving the first-level list in place behind
+  it. Running visible delegation rows reveal a Stop action on hover/focus.
+
+  The detail drawer is a read-only drill-in, not a second chat surface: it uses a
+  Todoist-style narrow drawer surface inside the agent rail. By default the drawer
+  occupies 80% of the Work/Runs content area under the Work header with a
+  transparent backdrop, so the parent list keeps its normal color rather than
+  being dimmed. The user's last dragged drawer height is remembered as a
+  content-height ratio and reused on later openings. Only sub-run navigation
+  advances inside the drawer. The top grabber is functional: pointer drag and
+  keyboard up/down resize the drawer within the Work surface. The drawer header
+  always includes the same page-back control used by outliner pane breadcrumbs
+  before the breadcrumb; it is disabled, not removed, when there is no deeper
+  drawer stack to pop. The header carries a one-line
+  breadcrumb above the selected run title, using the same segment/divider/button
+  grammar as outliner pane breadcrumbs. The breadcrumb root is the
+  channel/conversation name rendered with the channel hash icon (for example
+  `# General`), followed by ancestor runs only; the selected run itself is the
+  title below it. Ancestor breadcrumb segments always keep the muted breadcrumb
+  style; only the selected run title may become the current-color breadcrumb
+  segment, and only after it scrolls out of the header and docks to the end of
+  the breadcrumb. Long segments truncate instead of wrapping. The selected run
+  title sits below the breadcrumb with the shared Run status marker as its leading
+  icon; status text is kept out of the primary title and remains available in
+  Details. The header and body share the same text column: body rows start at the
+  selected run title's text edge, not at the drawer edge or status icon. The body
+  begins with one `Working for ...` / `Worked for ...`
+  process disclosure row. That row defaults collapsed and reuses the conversation
+  stream work-divider visual grammar; expanding it reveals the transcript/process.
+  The run duration appears there only once for the selected run. The result
+  content follows directly without a `Result` heading and uses a quieter detail
+  text register than assistant-chat answer prose. The detail result reads
+  `run.result.submitted` first and falls back to the selected completed Run's
+  final assistant text when no structured submission exists; running Runs do not
+  synthesize a result. Long results may collapse behind a local Show more/Show
+  less control so direct child structure remains discoverable. Detail body
+  sections use spacing and disclosure chevrons rather
+  than horizontal divider lines. The `Sub-runs {completed}/{total}` disclosure
+  lists the selected run's direct children, including verifier runs, using the same
+  Run rows and their status icons. Child rows open their own detail view instead
+  of expanding in place; if a child has descendants, its row shows direct child
+  progress until the user drills in. Collapsed Details hold internal
+  mode/type/id/status fields. Completed and verified run rows use the shared
+  Done/checkbox mark rather than a bespoke check icon. The
+  Run-backed API surface is
+  `agent_run_detail` plus `agent_run_transcript`: detail reads Run meta,
+  ancestor breadcrumb metadata, and direct sub-run metadata from the Run index,
+  while transcript replays the selected Run ledger. The renderer detail page uses
+  that API directly and does not require the selected Run to exist in the active
+  conversation projection. Turn folding uses `entities.runs` through
+  `subRunsByParentToolCallId`. Running detail views expose Stop, while
+  follow-up/steering remains an internal `run_steer` runtime/tool capability
+  instead of a permanent detail-page input.
 - Long output rows are collapsed by default.
 - **Result-first turn process (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last
   thinking/tool block and shows as prose. Earlier work renders above it as a flat
   `AgentProcessTimeline`: interim narration text ("let me check X first") is a row
   inside that timeline, reasoning renders as thinking rows, and adjacent tool calls
-  fold into counted tool-activity groups (below). There is **no top-level process
-  disclosure** around the whole turn. The turn partition (process vs final answer),
-  the synthetic Working/Worked-for divider, and stable inner disclosure ids are
-  computed by the pure `agentTurnProjection` module (`projectAssistantTurn` →
-  `AgentTurnProcessProjection`) between the `AgentRenderProjection` message and the
-  React components, so `AgentProcessBlock` / `AgentProcessTimeline` consume a ready
-  projection rather than re-deriving message-flow semantics. The timeline body has
+  fold into counted tool-activity groups (below). The turn partition (process vs
+  final answer), the synthetic Working/Worked-for divider, and stable disclosure
+  ids are computed by the pure `agentTurnProjection` module
+  (`projectAssistantTurn` → `AgentTurnProcessProjection`) between the
+  `AgentRenderProjection` message and the React components, so
+  `AgentProcessBlock` / `AgentProcessTimeline` consume a ready projection rather
+  than re-deriving message-flow semantics. The timeline body has
   **no left rail or indent**: every row's leading icon column left-aligns with the
   divider text above it, so the pre-answer body reads as a flat list under the
   "Working / Worked for {t}" row, not an indented sub-tree.
-- **Non-interactive work divider.** `AgentProcessBlock` renders the live/sealed run
-  status as a **non-interactive** divider, matching Codex.app's `Working for …` /
-  `Worked for …` row. While a turn is active, the row is **not collapsible**: it is
-  text plus a spinner, with no `aria-expanded`, no chevron, and no stored process
-  override. The timeline below remains visible; only the inner reasoning rows and
-  tool-activity groups are disclosures. When a completed visible process has no
-  work duration (or deliberately suppresses `Worked for …`, as resultless work
-  does), the same non-interactive position shows a static activity summary row
-  instead of a work-duration divider. Direct live answers still get the temporary
-  `Working` divider while their answer prose stays in the normal answer position,
-  so the same markdown subtree survives the live->sealed transition. Direct sealed
-  answers with run timing show `Worked for {duration}` above the answer even when
-  there were no thinking/tool items. Interactive disclosure state persists only for
-  those inner details via `agentDisclosureStore`, keyed by conversationId and
-  disclosure id. In the timeline, while the turn is live, **every un-settled tool
-  row** (no result, no `outcome`, no child run) spins, not just the most recent one
+- **Work divider disclosure.** `AgentProcessBlock` renders active run status as a
+  **non-interactive** live divider and sealed run status as an interactive
+  disclosure when process details exist, matching Codex.app's `Working for …` /
+  `Worked for …` behavior. While a turn is active, the row is **not collapsible**:
+  it is text plus a spinner, with no `aria-expanded`, no chevron, and no stored
+  process override. The live timeline below remains visible. Once the turn seals
+  with a `Worked for …` divider and process items, that row becomes a disclosure
+  with a chevron, defaults collapsed, and toggles the whole process timeline. The
+  final answer stays outside the fold. Inner reasoning rows and tool-activity
+  groups remain independent disclosures inside the expanded process timeline.
+  When a completed visible process has no work duration (or deliberately
+  suppresses `Worked for …`, as resultless work does), the same position shows a
+  static activity summary row instead of a work-duration disclosure. Direct live
+  answers still get the temporary `Working` divider while their answer prose stays
+  in the normal answer position, so the same markdown subtree survives the
+  live->sealed transition. Direct sealed answers with run timing show
+  `Worked for {duration}` above the answer even when there were no thinking/tool
+  items. Interactive disclosure state persists via `agentDisclosureStore`, keyed
+  by conversationId and disclosure id. In the timeline, while the turn is live,
+  **every un-settled tool row** (no result, no `outcome`, no child run) spins, not
+  just the most recent one
   — so when an assistant fans out a parallel tool batch, earlier calls never flash
   red in the frame before the runtime populates `pendingToolCallIds`. A call settles
   (and stops spinning) the instant it gains a result, an `outcome`, or a child run;
@@ -1142,7 +1194,7 @@ Rules:
 - **Consecutive tool calls fold into one counted activity group** (Codex's
   render-group split, `splitTimelineIntoGroups`/`summarizeToolActivity` in
   `agentRenderGroups.ts`). Inside the visible process timeline, a maximal run of
-  ≥2 adjacent tool calls, including child-run tool calls such as `Agent`/`spawn`,
+  ≥2 adjacent tool calls, including sub-run tool calls such as `spawn_run`,
   collapses into a single `AgentToolActivityGroup` disclosure whose header is the
   counted summary, expandable to the member rows. A thinking or narration block
   and a **loaded-skill chip** (a compact glanceable affordance, not an expandable
@@ -1223,17 +1275,20 @@ Rules:
   needs per-reasoning-item timing we do not track); the sealed label **is** adopted,
   with the full thinking kept one click away in the body so nothing the user watched
   stream is lost.
-- **One assistant-turn renderer.** The conversation transcript and the child-run
+- **One assistant-turn renderer.** The conversation transcript and the Run
   task detail timeline both render assistant content through the
   same assistant turn process components. The task detail panel reads a raw
-  child-run transcript, but only adapts it into normal transcript rows; it does
+  selected Run transcript, but only adapts it into normal transcript rows; it does
   not own separate thinking/tool/result UI. A running task only marks the
   transcript's last assistant turn live when that turn is actually unfinished
   (pending tool call or null stop reason); task-level running status stays in the
-  panel header/actions. The child-run adapter also threads the run terminal
+  panel header/actions. The Run-detail adapter also threads the run terminal
   status and wall-clock into the last assistant row, skips hidden-only context
   user rows, and renders orphan tool results as capped plain text rather than
-  markdown. This keeps the differences at the data-adapter boundary instead of
+  markdown. Hidden notification-only user rows remain invisible, but they are
+  preserved as logical turn boundaries so the resulting assistant continuation
+  renders as a separate response without a visible query row. This keeps the
+  differences at the data-adapter boundary instead of
   forking presentation behavior.
 - Large details are refs, not row payloads.
 - **Context slimming is invisible to the transcript.** Budget offload and
@@ -1404,19 +1459,19 @@ explicitly labelled in the UI because it is not the full provider input window.)
   delegates to a sub-agent never shows the transient sub-agent as a member. The
   agents that actually executed runs are surfaced separately by the renderer
   (derived from the runs) so a delegated sub-agent is still filterable. Run usage
-  is `meta.usage` when the run terminated, else **rolled up from the rounds** so an
-  in-flight run's totals stay live instead of reading zero. Reads the store
+  is `meta.execution.usage` when the run terminated, else **rolled up from the
+  rounds** so an in-flight run's totals stay live instead of reading zero. Reads the store
   directly, so it works on closed conversations. Believer-anchored Dream runs are
   excluded (they span conversations).
 - `agentDebugRun(conversationId, runId)` → one run's full detail (rounds + per-run
   snapshot), derived from `readRunStreamEvents(runId)` spliced with the conversation
   context (above) and cached by the run's `latestSeq` + the conversation context seq
-  (so it invalidates when slimming of its tool results lands). `parentToolCallId` is
-  sourced from the parent conversation's `child_run.started` (never in the child's
-  own ledger). The conversation context itself (trigger messages / parent links /
-  slimming) is read ONCE from the conversation segment (`readConversationStreamEvents`,
-  not the full merged `readEvents`) and cached by the conversation `latestSeq`, shared
-  across every run in the view. All three debug caches are bounded LRUs. Works for
+  (so it invalidates when slimming of its tool results lands). `parentToolCallId`
+  is sourced from Run meta v2. The conversation context itself
+  (trigger messages / parent links / slimming) is read ONCE from the conversation
+  segment (`readConversationStreamEvents`, not the full merged `readEvents`) and
+  cached by the conversation `latestSeq`, shared across every run in the view.
+  All three debug caches are bounded LRUs. Works for
   `turn` and `delegation` runs
   alike — the seq convention is irrelevant to a single-stream walk.
 
@@ -1671,6 +1726,8 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Split conversation/run filesystem layout with conversation segments,
   run-local `events.jsonl`, run meta, scoped payloads, and agent identity
   records.
+- Run meta v2 in `runs/<runId>/meta.json`: nested `execution` and `objective`,
+  `runProfile`, `context`, `parentToolCallId`, timestamps, and `latestSeq`.
 - Strict append ordering, per-conversation write queues, and replay reducers.
 - Parent-linked message chain with active branch projection.
 - pi-ai `Message[]` derivation from the joined conversation/run active event

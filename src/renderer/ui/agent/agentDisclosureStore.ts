@@ -1,9 +1,9 @@
 // Persisted per-conversation disclosure state for interactive agent transcript
-// details such as reasoning rows and tool-activity groups. The top-level
-// "Working/Worked for" work divider is intentionally not a disclosure. A user's
-// expand/collapse is keyed by conversationId then by disclosure id, and survives
-// reload, conversation switch, and row remounts. Absence of an entry means "use
-// the caller's default" until the user makes an explicit choice.
+// details such as completed "Worked for ..." process rows, reasoning rows, and
+// tool-activity groups. A user's expand/collapse is keyed by conversationId then
+// by disclosure id, and survives reload, conversation switch, and row remounts.
+// Absence of an entry means "use the caller's default" until the user makes an
+// explicit choice.
 
 type Overrides = Readonly<Record<string, boolean>>;
 

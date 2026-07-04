@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AssistantMessage, ToolCall } from '../../src/core/agentTypes';
-import type { AgentRenderChildRunEntity } from '../../src/core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../src/core/agentRenderProjection';
 import { projectAssistantTurn } from '../../src/renderer/ui/agent/agentTurnProjection';
 
 function assistant(content: AssistantMessage['content'], extra: Partial<AssistantMessage> = {}): AssistantMessage {
@@ -21,18 +21,18 @@ function toolCall(id = 'tool-a'): ToolCall {
   };
 }
 
-function childRun(id = 'child-run'): AgentRenderChildRunEntity {
+function run(id = 'run-1'): AgentRenderRunEntity {
   return {
-    agentType: 'default',
-    contextMode: 'fork',
-    description: 'Child run',
-    executingAgentId: 'agent-a',
+    agentId: 'built-in:test:neva',
+    anchor: { type: 'conversation', agentId: 'built-in:test:neva', conversationId: 'conversation-a' },
+    context: 'full',
+    conversationId: 'conversation-a',
     id,
-    memoryOwnerAgentId: 'agent-a',
-    parentAgentId: 'agent-a',
-    prompt: 'Check this',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
     startedAt: 0,
     status: 'running',
+    title: 'Sub-run',
     updatedAt: 0,
   };
 }
@@ -159,6 +159,67 @@ describe('projectAssistantTurn', () => {
     });
   });
 
+  test('surfaces direct slash sub-runs as process activity for a final answer', () => {
+    const researchRun = {
+      ...run('run-research'),
+      parentRunId: 'run-parent',
+      runProfile: 'research',
+      runProfileLabel: 'Research',
+      status: 'completed',
+      title: 'map the agent run detail UI',
+    } satisfies AgentRenderRunEntity;
+    const turn = project(assistant([{ type: 'text', text: 'Done.' }]), {
+      directSubRuns: [researchRun],
+      workedForMs: 22_000,
+    });
+
+    expect(turn.finalMessages.map((item) => item.text)).toEqual(['Done.']);
+    expect(turn.process?.showWorkDivider).toBe(true);
+    expect(turn.process?.items).toHaveLength(1);
+    expect(turn.process?.items[0]).toMatchObject({
+      subRun: researchRun,
+      toolCall: {
+        arguments: {
+          args: 'map the agent run detail UI',
+          skill: 'research',
+        },
+        id: 'direct-run:run-research',
+        name: 'skill',
+      },
+      type: 'toolCall',
+    });
+  });
+
+  test('surfaces direct slash sub-runs while the parent run is waiting for them', () => {
+    const researchRun = {
+      ...run('run-research'),
+      parentRunId: 'run-parent',
+      runProfile: 'research',
+      runProfileLabel: 'Research',
+      title: 'map the agent run detail UI',
+    } satisfies AgentRenderRunEntity;
+    const turn = project(assistant([]), {
+      directSubRuns: [researchRun],
+      runStartedAtMs: 10,
+      streaming: true,
+      turnActive: true,
+    });
+
+    expect(turn.finalMessages).toEqual([]);
+    expect(turn.process).toMatchObject({
+      answerStarted: false,
+      showWorkDivider: true,
+    });
+    expect(turn.process?.items[0]).toMatchObject({
+      subRun: researchRun,
+      toolCall: {
+        id: 'direct-run:run-research',
+        name: 'skill',
+      },
+      type: 'toolCall',
+    });
+  });
+
   test('surfaces a sealed resultless non-channel process without marking it interrupted', () => {
     const turn = project(assistant([toolCall('tool-a')]), {
       workedForMs: 5_000,
@@ -215,14 +276,14 @@ describe('projectAssistantTurn', () => {
       toolCall('child-tool'),
       { type: 'text', text: 'Follow-up answer' },
     ]), {
-      childRunsByParentToolCallId: new Map([['child-tool', childRun()]]),
+      subRunsByParentToolCallId: new Map([['child-tool', run()]]),
       isChannel: true,
     });
 
     expect(turn.process?.items.map((item) => item.type)).toEqual(['toolCall']);
     expect(turn.process?.items[0]).toMatchObject({
-      childRun: childRun(),
       id: 'tool:child-tool',
+      subRun: run(),
       type: 'toolCall',
     });
     expect(turn.finalMessages.map((item) => item.text)).toEqual(['Follow-up answer']);

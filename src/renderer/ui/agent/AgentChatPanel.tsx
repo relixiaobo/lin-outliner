@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -40,7 +41,6 @@ import type {
 } from '../../agent/runtime';
 import {
   AddIcon,
-  AgentIcon,
   BackIcon,
   ChevronDownIcon,
   CloseIcon,
@@ -67,12 +67,13 @@ import {
 } from './agentConversationRows';
 import type { AgentConversationRenderRow } from './agentConversationRows';
 import { systemLineText } from './agentSystemLine';
-import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
+import { AgentRunDetailsPanel } from './AgentRunDetailsPanel';
 import { AgentRunsPanel } from './AgentRunsPanel';
 import { composerCurrentNodeId } from './userViewContext';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { Dialog } from '../primitives/Dialog';
 import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { AnchoredActionMenu } from '../primitives/AnchoredActionMenu';
@@ -100,6 +101,11 @@ interface PendingTranscriptReveal {
   deferUntilDockOpen: boolean;
   reachedTargetConversation: boolean;
   target: AgentChatSourceRevealTarget;
+}
+
+interface RunDetailTarget {
+  conversationId: string | null;
+  runId: string;
 }
 
 function parseCssTimeMs(value: string): number | null {
@@ -310,7 +316,7 @@ function seqInChatSourceRange(seq: number | undefined, target: AgentChatSourceRe
 }
 
 function conversationRowMatchesChatSource(row: AgentConversationRenderRow, target: AgentChatSourceRevealTarget): boolean {
-  if (target.stream === 'run') return row.entry.kind === 'child-run' && row.entry.childRun.id === target.streamId;
+  if (target.stream === 'run') return false;
   return row.entry.kind === 'message' && row.sourceSeqs.some((seq) => seqInChatSourceRange(seq, target));
 }
 
@@ -474,8 +480,7 @@ export function AgentChatPanel({
     conversationTitle,
     members,
     steer: steerRuntime,
-    childRuns,
-    childRunsByParentToolCallId,
+    subRunsByParentToolCallId,
     switchBranch,
     stop,
     toolResults,
@@ -494,8 +499,7 @@ export function AgentChatPanel({
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
   const [rowActionMenu, setRowActionMenu] = useState<string | null>(null);
   const [workPanelOpen, setWorkPanelOpen] = useState(false);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [selectedRunConversationId, setSelectedRunConversationId] = useState<string | null>(null);
+  const [runDetailStack, setRunDetailStack] = useState<RunDetailTarget[]>([]);
   const [runIndex, setRunIndex] = useState<AgentRunListEntry[]>([]);
   const [runIndexLoading, setRunIndexLoading] = useState(false);
   const [runIndexError, setRunIndexError] = useState<string | null>(null);
@@ -515,6 +519,7 @@ export function AgentChatPanel({
   const runIndexRefreshTimerRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const bottomScrollFrameRef = useRef<number | null>(null);
+  const suppressHeaderClickRef = useRef(false);
   const revealAfterDockOpenTimerRef = useRef<number | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
@@ -559,9 +564,15 @@ export function AgentChatPanel({
     [entries, turnPhase],
   );
   const runningRunCount = useMemo(() => runIndex.filter((run) => run.status === 'running').length, [runIndex]);
-  const selectedRun = selectedRunId && selectedRunConversationId === conversationId
-    ? childRuns[selectedRunId] ?? null
-    : null;
+  const selectedRunTarget = runDetailStack.length > 0 ? runDetailStack[runDetailStack.length - 1]! : null;
+  const selectedRunEntry = useMemo(() => (
+    selectedRunTarget
+      ? runIndex.find((run) => (
+        run.runId === selectedRunTarget.runId
+        && run.conversationId === selectedRunTarget.conversationId
+      )) ?? null
+      : null
+  ), [runIndex, selectedRunTarget]);
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
   const agentDefinitionById = useMemo(() => {
     const map = new Map<string, AgentDefinitionView>();
@@ -926,22 +937,16 @@ export function AgentChatPanel({
     const blankProjection = revision === `${conversationId}-0-0-0-`;
 
     if (target.stream === 'run') {
-      if (childRuns[target.streamId]) {
-        setWorkPanelOpen(true);
-        setSelectedRunConversationId(conversationId);
-        setSelectedRunId(target.streamId);
-        if (rowIndex >= 0) revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
-        setPendingTranscriptReveal(null);
-        return;
-      }
-      if (!blankProjection) setPendingTranscriptReveal(null);
+      setWorkPanelOpen(true);
+      setRunDetailStack([{ conversationId, runId: target.streamId }]);
+      if (rowIndex >= 0) revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
+      if (!blankProjection || rowIndex >= 0) setPendingTranscriptReveal(null);
       return;
     }
 
     if (rowIndex >= 0) {
       setWorkPanelOpen(false);
-      setSelectedRunId(null);
-      setSelectedRunConversationId(null);
+      setRunDetailStack([]);
       revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
       setPendingTranscriptReveal(null);
       return;
@@ -949,7 +954,6 @@ export function AgentChatPanel({
 
     if (!blankProjection) setPendingTranscriptReveal(null);
   }, [
-    childRuns,
     conversationId,
     conversationRows,
     pendingTranscriptReveal,
@@ -1017,20 +1021,9 @@ export function AgentChatPanel({
     }
   }, [runActive]);
 
-  useEffect(() => {
-    if (
-      selectedRunId
-      && selectedRunConversationId === conversationId
-      && !childRuns[selectedRunId]
-    ) {
-      setSelectedRunId(null);
-      setSelectedRunConversationId(null);
-    }
-  }, [selectedRunId, selectedRunConversationId, conversationId, childRuns]);
-
-  // A command Run reveals its delivery conversation and asks for the Work panel —
-  // the run is a parentless child run, so it surfaces there (the open run panel
-  // persists across the conversation switch this same reveal triggers).
+  // A command Run reveals its delivery conversation and asks for the Work panel;
+  // the open run panel persists across the conversation switch this same reveal
+  // triggers.
   useEffect(() => onAgentRevealRequest((targetConversationId, options) => {
     if (options.transcriptTarget) {
       setPendingTranscriptReveal({
@@ -1041,24 +1034,53 @@ export function AgentChatPanel({
       });
     }
     if (!options.openWork) return;
-    setSelectedRunId(null);
-    setSelectedRunConversationId(null);
+    setRunDetailStack([]);
     setWorkPanelOpen(true);
     scheduleRunIndexRefresh();
   }), [scheduleRunIndexRefresh]);
 
-  const openRunFromWorkPanel = useCallback(async (run: AgentRunListEntry) => {
+  const openRunFromWorkPanel = useCallback((run: AgentRunListEntry) => {
     setWorkPanelOpen(true);
-    try {
-      if (run.conversationId !== conversationId) {
-        await selectConversation(run.conversationId);
-      }
-      setSelectedRunConversationId(run.conversationId);
-      setSelectedRunId(run.runId);
-    } catch (caught) {
-      setRunIndexError(caught instanceof Error ? caught.message : String(caught));
-    }
-  }, [conversationId, selectConversation]);
+    setRunDetailStack([{ conversationId: run.conversationId, runId: run.runId }]);
+  }, []);
+
+  const closeRunDetailDrawer = useCallback(() => {
+    setRunDetailStack([]);
+  }, []);
+
+  const handleDockHeaderMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    if (!selectedRunTarget) return;
+    suppressHeaderClickRef.current = true;
+    window.setTimeout(() => {
+      suppressHeaderClickRef.current = false;
+    }, 500);
+    event.preventDefault();
+    event.stopPropagation();
+    closeRunDetailDrawer();
+  }, [closeRunDetailDrawer, selectedRunTarget]);
+
+  const handleDockHeaderClickCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    if (!suppressHeaderClickRef.current && !selectedRunTarget) return;
+    suppressHeaderClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+    if (selectedRunTarget) closeRunDetailDrawer();
+  }, [closeRunDetailDrawer, selectedRunTarget]);
+
+  const goBackInRunDetailDrawer = useCallback(() => {
+    setRunDetailStack((stack) => stack.length > 1 ? stack.slice(0, -1) : []);
+  }, []);
+
+  const openRunInDetailDrawer = useCallback((runId: string, runConversationId: string | null) => {
+    const nextConversationId = runConversationId ?? selectedRunTarget?.conversationId ?? conversationId;
+    setRunDetailStack((stack) => {
+      const existingIndex = stack.findIndex((item) => (
+        item.runId === runId && item.conversationId === nextConversationId
+      ));
+      if (existingIndex >= 0) return stack.slice(0, existingIndex + 1);
+      return [...stack, { conversationId: nextConversationId, runId }];
+    });
+  }, [conversationId, selectedRunTarget?.conversationId]);
 
   useEffect(() => {
     if (historyOpen) void loadConversations();
@@ -1200,7 +1222,7 @@ export function AgentChatPanel({
     if (row.entry.kind === 'dream') {
       return <AgentDreamBoundary entry={row.entry} />;
     }
-    if (row.entry.kind === 'child-run') {
+    if (row.entry.kind === 'hidden-turn-boundary') {
       return null;
     }
 
@@ -1250,10 +1272,9 @@ export function AgentChatPanel({
         onDisclosureToggle={pauseStickToBottomForDisclosure}
         onEdit={editMessage}
         onNodeReferenceOpen={onOpenNodeReference}
-        onOpenChildRunTranscript={(childRunId) => {
+        onOpenRunTranscript={(runId) => {
           setWorkPanelOpen(true);
-          setSelectedRunConversationId(conversationId);
-          setSelectedRunId(childRunId);
+          setRunDetailStack([{ conversationId, runId }]);
         }}
         onOpenRunDetails={(runId) => onOpenRunDetailsPanel?.(conversationId, runId)}
         onRegenerate={regenerateMessage}
@@ -1263,7 +1284,7 @@ export function AgentChatPanel({
         conversationId={conversationId}
         highlighted={highlighted}
         streaming={row.streaming}
-        childRunsByParentToolCallId={childRunsByParentToolCallId}
+        subRunsByParentToolCallId={subRunsByParentToolCallId}
         toolResults={toolResults}
         isChannel={false}
         turnPhase={row.turnPhase}
@@ -1282,8 +1303,6 @@ export function AgentChatPanel({
   // Unnamed conversations read "untitled" in the header too, matching the conversation list
   // and delete-confirm — one fallback everywhere so inside/outside never disagree.
   const displayTitle = readableConversationTitle(conversationTitle, t.common.untitled);
-  const detailRunInHeader = workPanelOpen ? selectedRun : null;
-  const runIndexInHeader = workPanelOpen && !detailRunInHeader;
   const dockMenuAnchorRef = useMemo(() => ({
     current: {
       getBoundingClientRect: () => {
@@ -1321,32 +1340,25 @@ export function AgentChatPanel({
     getRestoreTarget: () => historyButtonRef.current,
   });
   return (
-    <div className="agent-chat-panel" data-turn-phase={turnPhase}>
-      <header className={detailRunInHeader ? 'agent-dock-header is-run-detail' : 'agent-dock-header'} ref={headerRef}>
-        {detailRunInHeader ? (
-          <ButtonControl
-            aria-label={t.agent.run.backToRuns}
-            className="agent-dock-run-back"
-            onClick={() => {
-              setSelectedRunId(null);
-              setSelectedRunConversationId(null);
-            }}
-            title={t.agent.run.backToRuns}
-          >
-            <BackIcon aria-hidden="true" size={ICON_SIZE.menu} />
-            <span className="agent-dock-title-leading">
-              <AgentIcon aria-hidden="true" size={ICON_SIZE.menu} />
-            </span>
-            <span className="agent-dock-run-label">{t.agent.childRun.heading}</span>
-            <span className={`agent-dock-run-status is-${detailRunInHeader.status}`}>{detailRunInHeader.status}</span>
-          </ButtonControl>
-        ) : runIndexInHeader ? (
+    <div
+      className="agent-chat-panel"
+      data-run-detail-open={selectedRunTarget ? 'true' : undefined}
+      data-turn-phase={turnPhase}
+      data-work-panel-open={workPanelOpen ? 'true' : undefined}
+    >
+      <header
+        className="agent-dock-header"
+        data-run-detail-open={selectedRunTarget ? 'true' : undefined}
+        onClickCapture={handleDockHeaderClickCapture}
+        onMouseDownCapture={handleDockHeaderMouseDownCapture}
+        ref={headerRef}
+      >
+        {workPanelOpen ? (
           <ButtonControl
             aria-label={t.agent.run.backToChat}
             className="agent-dock-run-back"
             onClick={() => {
-              setSelectedRunId(null);
-              setSelectedRunConversationId(null);
+              setRunDetailStack([]);
               setWorkPanelOpen(false);
             }}
             title={t.agent.run.backToChat}
@@ -1378,20 +1390,19 @@ export function AgentChatPanel({
           </ButtonControl>
         )}
         <div className="agent-dock-actions">
-          {detailRunInHeader ? (
+          {workPanelOpen ? (
             <ButtonControl
               aria-label={t.agent.run.closePanel}
               className="agent-run-panel-button"
               onClick={() => {
-                setSelectedRunId(null);
-                setSelectedRunConversationId(null);
+                setRunDetailStack([]);
                 setWorkPanelOpen(false);
               }}
               title={t.agent.run.closePanel}
             >
               <CloseIcon size={ICON_SIZE.toolbar} />
             </ButtonControl>
-          ) : !workPanelOpen ? (
+          ) : (
             <ButtonControl
               aria-expanded={workPanelOpen}
               aria-label={runningRunCount > 0
@@ -1399,8 +1410,7 @@ export function AgentChatPanel({
                 : t.agent.run.openPanel}
               className="agent-run-panel-button"
               onClick={() => {
-                setSelectedRunId(null);
-                setSelectedRunConversationId(null);
+                setRunDetailStack([]);
                 setWorkPanelOpen((open) => !open);
                 scheduleRunIndexRefresh();
               }}
@@ -1409,7 +1419,7 @@ export function AgentChatPanel({
               <RunsIcon size={ICON_SIZE.toolbar} />
               {runningRunCount > 0 ? <span className="agent-run-panel-badge">{runningRunCount}</span> : null}
             </ButtonControl>
-          ) : null}
+          )}
         </div>
         {!workPanelOpen && historyOpen ? createPortal(
           <div
@@ -1506,38 +1516,34 @@ export function AgentChatPanel({
 
       {workPanelOpen ? (
         <div className="agent-work-page">
-          {selectedRun ? (
-            <AgentChildRunDetailsPanel
-              onBack={() => {
-                setSelectedRunId(null);
-                setSelectedRunConversationId(null);
-              }}
-              onClose={() => {
-                setSelectedRunId(null);
-                setSelectedRunConversationId(null);
-                setWorkPanelOpen(false);
-              }}
-              conversationId={conversationId}
-              index={index}
-              childRun={selectedRun}
-              childRuns={childRuns}
-              childRunsByParentToolCallId={childRunsByParentToolCallId}
-              onNodeReferenceOpen={onOpenNodeReference}
-              onOpenChildRunTranscript={(childRunId) => {
-                setSelectedRunConversationId(conversationId);
-                setSelectedRunId(childRunId);
-              }}
-              showHeader={false}
-            />
-          ) : (
-            <AgentRunsPanel
-              error={runIndexError}
-              loading={runIndexLoading}
-              onOpenRun={(run) => void openRunFromWorkPanel(run)}
-              onRefresh={() => void loadRunIndex()}
-              runs={runIndex}
-            />
-          )}
+          <AgentRunsPanel
+            error={runIndexError}
+            loading={runIndexLoading}
+            onOpenRun={openRunFromWorkPanel}
+            onRefresh={() => void loadRunIndex()}
+            runs={runIndex}
+          />
+          {selectedRunTarget ? (
+            <Dialog
+              backdropClassName="agent-run-detail-drawer-backdrop"
+              label={t.agent.runDetail.detailsAriaLabel}
+              onBackdropMouseDown={closeRunDetailDrawer}
+              onEscapeKeyDown={closeRunDetailDrawer}
+              surfaceClassName="agent-run-detail-drawer"
+            >
+              <AgentRunDetailsPanel
+                breadcrumbRootLabel={selectedRunEntry?.conversationTitle ?? displayTitle}
+                onBack={runDetailStack.length > 1 ? goBackInRunDetailDrawer : undefined}
+                onClose={closeRunDetailDrawer}
+                conversationId={selectedRunTarget.conversationId}
+                index={index}
+                runId={selectedRunTarget.runId}
+                runUpdatedAt={selectedRunEntry?.updatedAt}
+                onNodeReferenceOpen={onOpenNodeReference}
+                onOpenRun={openRunInDetailDrawer}
+              />
+            </Dialog>
+          ) : null}
         </div>
       ) : (
         <>

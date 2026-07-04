@@ -509,7 +509,7 @@ test.describe('agent process disclosure', () => {
     const process = page.locator('.agent-process-block').first();
     await expect(process.locator('.agent-work-divider')).toHaveCount(0);
     await expect(process.locator('.agent-process-summary-row')).toHaveCount(1);
-    await expect(process.locator('.agent-process-title').first()).toHaveText('Thought · read a node · searched');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Thought · read a node · searched nodes');
     await expect(process.locator('.agent-process-toggle')).toHaveCount(0);
     await expect(page.getByText('Current outline focuses on design-system inventory')).toBeVisible();
 
@@ -549,16 +549,18 @@ test.describe('agent process disclosure', () => {
     const searchToolPanel = searchToolCall.locator('.agent-tool-call-panel');
     await expect(searchToolPanel.locator('.agent-code-block.agent-tool-code')).toHaveCount(2);
     await expect(searchToolPanel.locator('.agent-code-copy')).toHaveCount(2);
-    const toolCodeMetrics = await searchToolPanel.locator('.agent-code-block pre').first().evaluate((node) => {
-      const pre = node as HTMLElement;
-      const block = pre.closest<HTMLElement>('.agent-code-block');
-      if (!block) return null;
-      const preRect = pre.getBoundingClientRect();
+    const toolCodeMetrics = await searchToolPanel.locator('.agent-code-block.agent-tool-code').first().evaluate((node) => {
+      const block = node as HTMLElement;
+      const codeSurface = block.matches('pre')
+        ? block
+        : block.querySelector<HTMLElement>('pre') ?? block.querySelector<HTMLElement>('code');
+      if (!codeSurface) return null;
+      const preRect = codeSurface.getBoundingClientRect();
       const blockRect = block.getBoundingClientRect();
       return {
         bottomInset: blockRect.bottom - preRect.bottom,
         rightInset: blockRect.right - preRect.right,
-        whiteSpace: getComputedStyle(pre).whiteSpace,
+        whiteSpace: getComputedStyle(codeSurface).whiteSpace,
       };
     });
     expect(toolCodeMetrics).not.toBeNull();
@@ -567,7 +569,7 @@ test.describe('agent process disclosure', () => {
     expect(toolCodeMetrics!.whiteSpace).toBe('pre');
   });
 
-  test('renders a sealed turn with a non-interactive "Worked for {duration}" divider when run timing is known', async ({ page }) => {
+  test('renders a sealed turn with a collapsible "Worked for {duration}" divider when run timing is known', async ({ page }) => {
     const assistant = {
       role: 'assistant',
       api: 'responses',
@@ -613,12 +615,21 @@ test.describe('agent process disclosure', () => {
     });
 
     const process = page.locator('.agent-process-block').first();
+    const processToggle = process.locator('.agent-process-toggle').first();
     await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 1m 3s');
     await expect(process.locator('.agent-work-divider')).toHaveCount(1);
-    await expect(process.locator('.agent-process-toggle')).toHaveCount(0);
-    await expect(process.locator('.agent-process-timeline')).toHaveCount(1);
+    await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-process-chevron')).toHaveCount(1);
+    await expect(process.locator('.agent-process-timeline')).toHaveCount(0);
     // The final answer renders as prose OUTSIDE the fold.
     await expect(page.getByText('Done — the outline is updated.')).toBeVisible();
+
+    await processToggle.click();
+    await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(process.locator('.agent-process-timeline')).toHaveCount(1);
+    await processToggle.click();
+    await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-process-timeline')).toHaveCount(0);
   });
 
   test('keeps a lone reasoning item folded when the turn has a final answer', async ({ page }) => {
@@ -661,9 +672,15 @@ test.describe('agent process disclosure', () => {
     });
 
     const process = page.locator('.agent-process-block').first();
+    const processToggle = process.locator('.agent-process-toggle').first();
     const reasoning = process.locator('.agent-process-reasoning').first();
-    const reasoningToggle = reasoning.locator('.agent-reasoning-toggle');
     await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 4s');
+    await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(reasoning).toHaveCount(0);
+    await processToggle.click();
+    await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
+
+    const reasoningToggle = reasoning.locator('.agent-reasoning-toggle');
     await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(reasoning.locator('.agent-reasoning-headline')).toHaveText('Thought');
     await expect(reasoning.locator('.agent-reasoning-gist')).toContainText('Check whether this answer needs a source.');
@@ -741,10 +758,12 @@ test.describe('agent process disclosure', () => {
     const afterBox = await divider.boundingBox();
     expect(afterBox).toBeTruthy();
     expect(Math.abs(afterBox!.y - beforeBox!.y)).toBeLessThan(1);
+    await expect(process.locator('.agent-process-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-process-timeline')).toHaveCount(0);
     await expect(page.getByText('The answer stays outside the work divider.')).toBeVisible();
   });
 
-  test('keeps live DM process details visible while the work divider settles', async ({ page }) => {
+  test('keeps live DM process details visible, then folds them behind the settled work divider', async ({ page }) => {
     const assistant = {
       role: 'assistant',
       api: 'responses',
@@ -808,8 +827,8 @@ test.describe('agent process disclosure', () => {
 
     await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 1m 3s');
     await expect(process.locator('.agent-work-divider')).toHaveCount(1);
-    await expect(process.locator('.agent-process-toggle')).toHaveCount(0);
-    await expect(process.locator('.agent-process-timeline')).toHaveCount(1);
+    await expect(process.locator('.agent-process-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-process-timeline')).toHaveCount(0);
     await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
   });
 
@@ -1222,7 +1241,7 @@ test.describe('agent process disclosure', () => {
     await expect.poll(() => sourceShell.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
   });
 
-  test('opens a tool-derived child run panel from a run chat-source inline reference', async ({ page }) => {
+  test('opens a tool-derived Run panel from a run chat-source inline reference', async ({ page }) => {
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'General',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -1236,10 +1255,10 @@ test.describe('agent process disclosure', () => {
           content: [{
             type: 'toolCall',
             id: 'tool-agent-source-e2e',
-            name: 'Agent',
+            name: 'spawn_run',
             arguments: {
               description: 'Inspect jump source run',
-              prompt: 'Inspect jump source run.',
+              objective: 'Inspect jump source run.',
             },
           }],
           timestamp: 1_800_000_001_500,
@@ -1264,7 +1283,7 @@ test.describe('agent process disclosure', () => {
       errorMessage: null,
     });
 
-    await expect(page.locator('.agent-child-run-boundary')).toHaveCount(0);
+    await expect(page.locator('.agent-run-detail-panel')).toHaveCount(0);
     await page.getByTitle('Collapse agent').click();
     await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'collapsed');
 
@@ -1296,7 +1315,7 @@ test.describe('agent process disclosure', () => {
 
     await rowEditor(page, ids.alpha).locator('[data-inline-ref-kind="chat-source"]').click();
 
-    const childRunPanel = page.locator('.agent-child-run-details-panel');
+    const childRunPanel = page.locator('.agent-run-detail-panel');
     await expect(childRunPanel).toContainText('Inspect jump source run');
     await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
   });

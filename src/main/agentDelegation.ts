@@ -2,7 +2,6 @@ import { Agent, type AfterToolCallResult, type AgentEvent, type AgentTool } from
 import { isContextOverflow } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, ImageContent, Model, TextContent, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
 import { randomUUID } from 'node:crypto';
-import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   coerceString,
@@ -10,18 +9,21 @@ import {
 } from '../core/agentMarkdown';
 import type {
   AgentMessage,
-  AgentChildRunActionResult,
-  AgentChildRunChildStatus,
-  AgentChildRunFileChanges,
-  AgentChildRunNodeChanges,
+  AgentRunActionResult,
+  AgentSubRunStatus,
+  AgentRunFileChanges,
+  AgentRunNodeChanges,
 } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
 import type {
-  AgentChildRunRecord,
+  DelegationRunRecord,
   AgentRunContextMode,
   AgentObjectiveStatus,
   AgentRunBudget,
+  AgentRunProfileId,
   AgentRunPurpose,
+  AgentRunSubmissionProjection,
+  AgentRunSubmissionSource,
   AgentRunScope,
   DelegationDetail,
   AgentPayloadRef,
@@ -39,7 +41,6 @@ import {
 import {
   agentToolResult,
   errorEnvelope,
-  isToolEnvelope,
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
@@ -59,9 +60,51 @@ import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
 } from './agentDelegationIdentity';
-import { agentToolNamesForActionKindScope, isReadOnlyActionKind, normalizeAgentToolActionKinds, readOnlyAgentToolNames } from '../core/agentPermissionModel';
+import {
+  isRunProfileId,
+  modelSelectableRunProfiles,
+  resolveRunProfile,
+  runProfileForIsolatedSkill,
+  runProfileForPurpose,
+} from './agentRunProfiles';
+import { readOnlyAgentToolNames } from '../core/agentPermissionModel';
+import {
+  admitRunBudget,
+  formatRunBudgetForPrompt,
+  formatRunScopeForPrompt,
+  narrowRunScope,
+  normalizeRunBudget,
+  normalizeRunBudgetInput,
+  normalizeRunScope,
+  releaseAdmittedRunBudget,
+  remainingBudgetMs,
+  retryBudgetSlice,
+  scopedAllowedToolNames,
+  settleRunBudget,
+  verifierBudgetForRun,
+  verifierRunScope,
+} from './agentDelegationRunPolicy';
+import {
+  buildControllerReplanPrompt,
+  buildReplacementWorkerObjective,
+  buildVerifierObjective,
+  captureWorkingSetSnapshot,
+  compactFileChanges,
+  compactNodeChanges,
+  latestRunSubmissionSummary,
+  parseVerifierVerdict,
+  recordFileToolChanges,
+  recordNodeToolChanges,
+  recordToolTrace,
+  recordWorkingSetDiff,
+  sameTailCount,
+  type AgentRunToolTraceEntry,
+  verifierGapSignature,
+} from './agentDelegationVerificationPolicy';
 
-export const AGENT_DELEGATE_TOOL_NAME = 'spawn';
+export { recordNodeToolChanges } from './agentDelegationVerificationPolicy';
+
+export const AGENT_DELEGATE_TOOL_NAME = 'spawn_run';
 export const AGENT_STATUS_TOOL_NAME = 'run_status';
 export const AGENT_SEND_TOOL_NAME = 'run_steer';
 export const AGENT_AMEND_TOOL_NAME = 'run_amend';
@@ -71,7 +114,7 @@ const AGENT_LISTING_CONTEXT_PERCENT = 0.01;
 const CHARS_PER_TOKEN = 4;
 const DEFAULT_AGENT_LISTING_CHAR_BUDGET = 8_000;
 const MAX_LISTING_DESCRIPTION_CHARS = 250;
-const MAX_CONCURRENT_CHILD_RUNS = 4;
+const MAX_CONCURRENT_SUB_RUNS = 4;
 const DEFAULT_MAX_DELEGATION_DEPTH = 12;
 const FORK_AGENT_TYPE = 'fork';
 const FORK_BOILERPLATE_TAG = 'lin-fork-child';
@@ -85,14 +128,10 @@ const CHILD_RUN_POST_COMPACT_MAX_FILES_TO_RESTORE = 5;
 const CHILD_RUN_POST_COMPACT_MAX_CHARS_PER_FILE = 20_000;
 const CHILD_RUN_POST_COMPACT_TOTAL_RESTORED_FILE_CHARS = 200_000;
 const DEFAULT_VERIFIER_RETRY_LIMIT = 2;
-const DEFAULT_CHILD_WALL_CLOCK_MINUTES = 30;
 const DEFAULT_VERIFIER_LIVELOCK_REPEAT_LIMIT = 2;
-const MAX_RECORDED_TOOL_TRACE_ENTRIES = 40;
-const MAX_WORKING_SET_SNAPSHOT_FILES = 500;
 // `setTimeout` stores its delay in a 32-bit int; a larger delay overflows and
 // fires (near-)immediately, so any timer is armed in clamped re-arming hops.
 const MAX_SETTIMEOUT_DELAY_MS = 2_147_483_647;
-const WORKING_SET_EXCLUDED_DIRS = new Set(['.git', 'node_modules', 'release']);
 
 const AGENT_TOOL_PARAMETERS = {
   type: 'object',
@@ -138,6 +177,11 @@ const AGENT_TOOL_PARAMETERS = {
       },
       description: 'Optional budget slice. Detached root goals should provide a ceiling.',
     },
+    runProfile: {
+      type: 'string',
+      enum: modelSelectableRunProfiles().map((profile) => profile.id),
+      description: 'Optional Run profile. Use research for read-only exploration; omit for default work.',
+    },
     context: {
       type: 'string',
       enum: ['full', 'brief', 'none'],
@@ -153,19 +197,10 @@ const AGENT_TOOL_PARAMETERS = {
       maxLength: 200,
       description: 'Optional short 3-5 word description for the Work/Runs panel.',
     },
-    prompt: {
-      type: 'string',
-      minLength: 1,
-      description: 'Legacy alias for objective. Prefer objective.',
-    },
     model: {
       type: 'string',
       minLength: 1,
       description: 'Optional model override. Takes precedence over the agent definition model. If omitted, uses the agent definition model or inherits the parent model.',
-    },
-    run_in_background: {
-      type: 'boolean',
-      description: 'Legacy alias for detach.',
     },
     name: {
       type: 'string',
@@ -180,9 +215,8 @@ const AGENT_STATUS_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
-    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
+    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
     wait: { type: 'boolean', description: 'If true, wait briefly for a running background agent to finish.' },
     timeout_ms: { type: 'integer', minimum: 1, maximum: 120000, description: 'Maximum wait time when wait is true. Default 30000.' },
   },
@@ -193,9 +227,8 @@ const AGENT_SEND_PARAMETERS = {
   additionalProperties: false,
   required: ['message'],
   properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
-    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
+    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
     message: { type: 'string', minLength: 1, description: 'Soft steering message to send to the existing background run.' },
   },
 };
@@ -204,9 +237,8 @@ const AGENT_STOP_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
-    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
+    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
   },
 };
 
@@ -215,8 +247,7 @@ const AGENT_AMEND_PARAMETERS = {
   additionalProperties: false,
   required: ['changes'],
   properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
-    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
     changes: {
       type: 'object',
       additionalProperties: false,
@@ -231,7 +262,7 @@ const AGENT_AMEND_PARAMETERS = {
 
 
 
-export type AgentDelegateToolData = AgentChildRunActionResult;
+export type AgentDelegateToolData = AgentRunActionResult;
 
 export interface AgentChildAgentCreateInput {
   conversationId: string;
@@ -284,26 +315,31 @@ export interface AgentDelegationRuntimeHost {
   getActiveRunId(): string | null;
   getRuntimeSettings(): Promise<AgentRuntimeSettings>;
   /**
-   * A child run started: append the slim `child_run.started` conversation marker
-   * and seed the child's OWN run ledger ([[agent-run-unification]] Design 1) —
-   * context messages (fork prefix) before `run.started`, the directive after it.
+   * A sub-run started: update Run metadata and seed the run's OWN ledger
+   * ([[agent-run-unification]] Design 1) — context messages (fork prefix)
+   * before `run.started`, the directive after it.
    */
-  childRunStarted(
-    snapshot: AgentChildRunSnapshot,
+  runStarted(
+    snapshot: AgentRunSnapshot,
     seed: { contextMessages: readonly AgentMessage[]; evidenceMessages: readonly AgentMessage[] },
   ): Promise<void>;
   /** A completed child message (user / assistant / toolResult) → child ledger. */
-  childRunMessage(snapshot: AgentChildRunSnapshot, message: AgentMessage): Promise<void>;
+  runMessage(snapshot: AgentRunSnapshot, message: AgentMessage): Promise<void>;
   /** A slimming replacement of an earlier tool result → `tool_result.replaced` in the child ledger. */
-  childRunToolResultReplaced(snapshot: AgentChildRunSnapshot, toolCallId: string, text: string): Promise<void>;
-  /** Event-sourced child compaction (Design 4). */
-  childRunCompacted(
-    snapshot: AgentChildRunSnapshot,
+  runToolResultReplaced(snapshot: AgentRunSnapshot, toolCallId: string, text: string): Promise<void>;
+  /** Event-sourced run compaction (Design 4). */
+  runCompacted(
+    snapshot: AgentRunSnapshot,
     input: { postCompactMessage: AgentMessage; summary: string; trigger: 'auto' | 'reactive' },
   ): Promise<void>;
-  /** Status transition: `child_run.updated` (conversation) + run lifecycle event (child ledger). */
-  childRunStatusChanged(snapshot: AgentChildRunSnapshot): Promise<void>;
-  notifyChildRun(snapshot: AgentChildRunSnapshot): Promise<void>;
+  runResultSubmitted(
+    snapshot: AgentRunSnapshot,
+    input: { summary: string; source: AgentRunSubmissionSource },
+  ): Promise<AgentRunSubmissionProjection | null>;
+  readLatestRunSubmission?(runId: string): Promise<AgentRunSubmissionProjection | undefined>;
+  /** Status transition: Run metadata + run lifecycle event in the run ledger. */
+  runStatusChanged(snapshot: AgentRunSnapshot): Promise<void>;
+  notifyRun(snapshot: AgentRunSnapshot): Promise<void>;
   reportError?(report: ErrorReport): void;
   /**
    * Re-register the run's ledger writer and re-derive its transcript from the
@@ -311,7 +347,7 @@ export interface AgentDelegationRuntimeHost {
    * only; transcripts load lazily here). Null when no ledger exists; the
    * writer is then registered empty so the continuation can still record.
    */
-  restoreChildRunLedger(runId: string): Promise<AgentMessage[] | null>;
+  restoreRunLedger(runId: string): Promise<AgentMessage[] | null>;
   persistToolOutputPayload(
     toolCallId: string,
     toolName: string,
@@ -386,10 +422,13 @@ interface DelegationRunState extends DelegationDetail {
   incomplete?: boolean;
   preapprovedToolRules?: string[];
   toolResultBudgetState: ToolResultBudgetState;
-  nodeChanges: AgentChildRunNodeChanges;
-  fileChanges: AgentChildRunFileChanges;
-  toolTrace: AgentChildRunToolTraceEntry[];
+  nodeChanges: AgentRunNodeChanges;
+  fileChanges: AgentRunFileChanges;
+  toolTrace: AgentRunToolTraceEntry[];
   verifierGapSignatures: string[];
+  latestSubmission?: AgentRunSubmissionProjection;
+  submittedResult?: string;
+  summarizedDetachedChildRunKey?: string;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
   skillRuntime?: AgentSkillRuntime;
@@ -399,46 +438,27 @@ interface DelegationRunState extends DelegationDetail {
 
 type RunningSlotReservation = () => void;
 
-interface AgentChildRunToolTraceEntry {
-  toolName: string;
-  isError: boolean;
-  status?: string;
-  summary?: string;
-}
-
-interface WorkingSetFileSnapshot {
-  filePath: string;
-  relativePath: string;
-  size: number;
-  mtimeMs: number;
-}
-
-interface WorkingSetSnapshot {
-  files: Map<string, WorkingSetFileSnapshot>;
-  truncated: boolean;
-}
-
 /**
  * The IPC-facing view of a delegated run — the {@link DelegationDetail} verbatim
  * (the runtime record's persistable half), carried to the host callbacks that
  * write the conversation markers and notifications.
  */
-export type AgentChildRunSnapshot = DelegationDetail;
+export type AgentRunSnapshot = DelegationDetail;
 
 interface AgentToolParams {
   objective: string;
   criteria?: string[];
   verify: boolean;
   description: string;
-  prompt: string;
+  runPrompt: string;
   purpose: AgentRunPurpose;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
   context: AgentRunContextMode;
+  runProfile?: AgentRunProfileId;
   detach?: boolean;
   model?: string;
   effort?: string;
-  run_in_background?: boolean;
   name?: string;
   allowedTools?: string[];
   preapprovedToolRules?: string[];
@@ -458,7 +478,7 @@ interface AgentToolParams {
   unattended?: boolean;
 }
 
-export interface AgentChildRunSkillInput {
+export interface AgentRunSkillInput {
   skillName: string;
   description: string;
   renderedContent: string;
@@ -533,7 +553,7 @@ export class AgentDelegationRuntime {
     if (!listing) return null;
     for (const agent of newAgents) this.listedAgents.set(agent.name, agentListingIdentity(agent));
     return [
-      `You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} forks the current conversation context into an isolated worker that runs as this same agent — it does not select or switch to a different agent:`,
+      `You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} creates a same-agent sub-run in an isolated worker — it does not select or switch to a different agent:`,
       '',
       listing,
     ].join('\n');
@@ -571,12 +591,12 @@ export class AgentDelegationRuntime {
   }
 
   /**
-   * Register persisted child-run records on conversation restore. Records only
+   * Register persisted delegated Run records on conversation restore. Records only
    * — no transcript IO: a run's messages are replayed from its own ledger
-   * lazily, on first resume (`send` → host.restoreChildRunLedger). Drill-in
+   * lazily, on first resume (`send` → host.restoreRunLedger). Drill-in
    * reads never touch this state (they replay the ledger directly).
    */
-  restorePersistedRuns(records: readonly AgentChildRunRecord[]): void {
+  restorePersistedRuns(records: readonly DelegationRunRecord[]): void {
     for (const record of records) {
       if (this.runs.has(record.id)) continue;
       // The descriptive half carries over verbatim — the durable record IS a
@@ -628,7 +648,7 @@ export class AgentDelegationRuntime {
   }
 
   async invokeSkillChildAgent(
-    input: AgentChildRunSkillInput,
+    input: AgentRunSkillInput,
     signal?: AbortSignal,
     parentToolCallId?: string,
   ): Promise<AgentDelegateToolData> {
@@ -639,12 +659,12 @@ export class AgentDelegationRuntime {
         criteria: undefined,
         verify: false,
         description: compactInlineText(input.description) || `skill ${input.skillName}`,
-        prompt: input.renderedContent,
+        runPrompt: input.renderedContent,
         purpose: 'work',
         context: 'none',
+        runProfile: runProfileForIsolatedSkill(input.readOnlyIsolated),
         model: input.model,
         effort: input.effort,
-        run_in_background: false,
         allowedTools: input.readOnlyIsolated ? readOnlyAgentToolNames(input.allowedTools) : undefined,
         preapprovedToolRules: input.allowedTools,
       }, releaseStartupSlot, signal, parentToolCallId);
@@ -660,6 +680,7 @@ export class AgentDelegationRuntime {
     if (params.wait && run.status === 'running') {
       await waitWithTimeout(run.completion ?? Promise.resolve(), params.timeout_ms ?? 30000);
     }
+    await this.hydrateLatestSubmission(run);
     return runToToolData(run, this.directChildrenOf(run));
   }
 
@@ -687,7 +708,7 @@ export class AgentDelegationRuntime {
       // transcript actually loads. A missing ledger degrades to an empty
       // context (the writer is registered empty), keeping the run resumable.
       if (!run.agent) {
-        const restored = await this.host.restoreChildRunLedger(run.id);
+        const restored = await this.host.restoreRunLedger(run.id);
         run.messages = (restored ?? []).map(cloneAgentMessage);
         run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(run.messages);
       }
@@ -702,6 +723,8 @@ export class AgentDelegationRuntime {
       // Clear the prior terminal's salvaged/completed result so a resumed run
       // that stops or fails again cannot surface the previous run's stale output.
       run.result = undefined;
+      run.latestSubmission = undefined;
+      run.submittedResult = undefined;
       run.completedAt = undefined;
       run.detached = true;
       run.terminalNotificationSent = false;
@@ -710,7 +733,7 @@ export class AgentDelegationRuntime {
       // salvage on a later `stop` starts after it (the new prompt + response
       // appended by `runChildAgent` below come after this floor).
       run.salvageFromIndex = run.agent ? run.agent.state.messages.length : 0;
-      await this.host.childRunStatusChanged(snapshotRun(run));
+      await this.host.runStatusChanged(snapshotRun(run));
       releaseStartupSlot();
       run.completion = this.runChildAgent(run, [message], undefined, true);
       return { ...runToToolData(run), status: 'queued', instructions: 'Agent continuation started in the background.' };
@@ -722,7 +745,7 @@ export class AgentDelegationRuntime {
 
   async amend(rawParams: unknown): Promise<AgentDelegateToolData> {
     const params = normalizeAmendParams(rawParams);
-    const run = this.resolveRun({ agent_id: params.runId });
+    const run = this.resolveRun({ runId: params.runId });
     this.assertRunControllable(run, 'amend');
     if (params.changes.objective !== undefined) {
       run.objective = params.changes.objective;
@@ -754,7 +777,7 @@ export class AgentDelegationRuntime {
     run.blockedReason = undefined;
     run.latestVerifierGap = undefined;
     run.updatedAt = Date.now();
-    await this.host.childRunStatusChanged(snapshotRun(run));
+    await this.host.runStatusChanged(snapshotRun(run));
     return {
       ...runToToolData(run),
       instructions: 'Run objective metadata was amended. Existing verifier conclusions are invalidated; use run_steer to provide execution guidance if needed.',
@@ -789,7 +812,7 @@ export class AgentDelegationRuntime {
       // (`run.agent === agent`) fail, so its settleRunBudget never runs and the
       // parent's token reservation would otherwise leak permanently.
       settleRunBudget(run);
-      await this.host.childRunStatusChanged(snapshotRun(run));
+      await this.host.runStatusChanged(snapshotRun(run));
       if (run.detached) void this.notifyTerminalRun(run).catch(() => undefined);
     }
     return runToToolData(run);
@@ -819,7 +842,7 @@ export class AgentDelegationRuntime {
     const executingAgentId = parentAgentId;
     const memoryOwnerAgentId = parentMemoryOwnerAgentId;
     const memoryOriginWorkspace = memoryWorkspaceIdForRoot(this.localRoot);
-    const background = params.detach === true || params.run_in_background === true || definition.background === true;
+    const background = params.detach === true || definition.background === true;
     const now = Date.now();
     const parentBudget = params.parentBudget ?? this.inheritedBudget;
     const budget = admitRunBudget(parentBudget, params.budget, now, background);
@@ -867,7 +890,7 @@ export class AgentDelegationRuntime {
       id: runId,
       name,
       description: params.description,
-      prompt: params.prompt,
+      prompt: params.runPrompt,
       objective: params.objective,
       criteria: params.criteria,
       objectiveStatus: params.verify ? 'active' : undefined,
@@ -877,6 +900,7 @@ export class AgentDelegationRuntime {
       disposition: background ? 'detached' : 'attended',
       agentType: definition.name,
       contextMode,
+      runProfile: params.runProfile ?? runProfileForPurpose(params.purpose),
       definition,
       executingAgentId,
       parentAgentId,
@@ -920,7 +944,7 @@ export class AgentDelegationRuntime {
     this.subscribeToChild(run);
     this.installRunContextTransform(run);
     try {
-      await this.host.childRunStarted(snapshotRun(run), { contextMessages, evidenceMessages });
+      await this.host.runStarted(snapshotRun(run), { contextMessages, evidenceMessages });
     } catch (error) {
       // runChildAgent has not been wired yet, so settle here to avoid leaking the
       // parent reservation if the start announcement throws.
@@ -933,7 +957,7 @@ export class AgentDelegationRuntime {
       return {
         ...runToToolData(run),
         status: 'async_launched',
-        instructions: `The run is running in the background. Tenon will notify you automatically when it finishes. Use ${AGENT_STATUS_TOOL_NAME} with agent_id "${run.id}" only when you need an explicit progress check, ${AGENT_SEND_TOOL_NAME} to steer it, ${AGENT_AMEND_TOOL_NAME} to change objective/criteria/budget, or ${AGENT_STOP_TOOL_NAME} to stop it.`,
+        instructions: `The run is running in the background. Tenon will notify you automatically when it finishes. Use ${AGENT_STATUS_TOOL_NAME} with runId "${run.id}" only when you need an explicit progress check, ${AGENT_SEND_TOOL_NAME} to steer it, ${AGENT_AMEND_TOOL_NAME} to change objective/criteria/budget, or ${AGENT_STOP_TOOL_NAME} to stop it.`,
       };
     }
 
@@ -972,7 +996,7 @@ export class AgentDelegationRuntime {
   }> {
     const childConversationId = `${this.hostConversationPrefix()}-${input.runId}`;
     const runtimeSettings = await this.host.getRuntimeSettings();
-    let childRuntime: AgentDelegationRuntime;
+    let subRunRuntime: AgentDelegationRuntime;
     let childAgent: Agent | null = null;
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.localRoot,
@@ -980,7 +1004,7 @@ export class AgentDelegationRuntime {
       provenanceStore: createAgentSkillProvenanceStore(),
       conversationId: childConversationId,
       executeIsolatedSkill: async ({ skill, renderedContent, parentToolCallId, readOnlyIsolated }) => {
-        const data = await childRuntime.invokeSkillChildAgent({
+        const data = await subRunRuntime.invokeSkillChildAgent({
           skillName: skill.name,
           description: skill.description,
           renderedContent,
@@ -990,8 +1014,8 @@ export class AgentDelegationRuntime {
           readOnlyIsolated,
         }, undefined, parentToolCallId);
         return {
-          agentId: data.agent_id,
-          agentType: data.agent_type,
+          runId: data.runId,
+          runProfile: data.runProfile,
           status: data.status,
           result: data.result,
           error: data.error,
@@ -1000,11 +1024,10 @@ export class AgentDelegationRuntime {
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, this.scratchRoot, skillRuntime);
-    // A fork runs AS its spawner, so it INHERITS the spawner's approval attribution
-    // (undefined when the spawner is the user's own top agent). The child's runtime
-    // carries it so the child's OWN forks inherit it in turn.
+    // A sub-run runs AS its spawner, so it inherits the spawner's approval
+    // attribution. The nested runtime carries it so deeper sub-runs inherit it.
     const requestedByAgentId = this.requestedByAgentId;
-    childRuntime = new AgentDelegationRuntime({
+    subRunRuntime = new AgentDelegationRuntime({
       conversationId: childConversationId,
       executingAgentId: input.executingAgentId,
       memoryOwnerAgentId: input.memoryOwnerAgentId,
@@ -1016,10 +1039,10 @@ export class AgentDelegationRuntime {
       ancestry: [...this.ancestry, input.definition.name],
       scope: input.scope,
       budget: input.budget,
-      // A grandchild's parent run is THIS child run — the run tree chains.
+      // A nested sub-run's parent run is THIS Run; the run tree chains.
       host: this.buildChildHost(() => input.runId, () => childAgent),
     });
-    childRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
+    subRunRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     const systemPrompt = this.host.getParentSystemPrompt();
     childAgent = this.host.createChildAgent({
       conversationId: childConversationId,
@@ -1036,7 +1059,7 @@ export class AgentDelegationRuntime {
       maxTurns: input.definition.maxTurns,
       skillRuntime,
       localWorkspace,
-      delegationRuntime: childRuntime,
+      delegationRuntime: subRunRuntime,
       allowedTools: input.definition.tools,
       disallowedTools: input.definition.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
@@ -1086,15 +1109,15 @@ export class AgentDelegationRuntime {
           // Best-effort (a ledger write must not abort the live run), but never
           // silent: a persistently failing append means the drill-in transcript
           // and Dream evidence silently fall behind the live run.
-          void this.host.childRunMessage(snapshotRun(run), event.message as AgentMessage).catch((error) => {
-            const message = `Failed to append a child-run message to the ${run.id} ledger: ${error instanceof Error ? error.message : String(error)}`;
+          void this.host.runMessage(snapshotRun(run), event.message as AgentMessage).catch((error) => {
+            const message = `Failed to append a Run message to the ${run.id} ledger: ${error instanceof Error ? error.message : String(error)}`;
             if (this.host.reportError) {
               this.host.reportError({
                 domain: 'persistence',
                 severity: 'warn',
-                code: 'child-run-message-ledger-failed',
+                code: 'run-message-ledger-failed',
                 message,
-                context: { runId: run.id, operation: 'childRunMessage' },
+                context: { runId: run.id, operation: 'runMessage' },
                 error,
               });
             } else {
@@ -1158,16 +1181,23 @@ export class AgentDelegationRuntime {
       ? await captureWorkingSetSnapshot(this.localRoot, run.scope).catch(() => undefined)
       : undefined;
     try {
-      if (run.status === 'running') await agent.prompt(messages);
-      if (run.agent !== agent) return;
-      const terminalAssistant = lastAssistantMessage(agent.state.messages as AgentMessage[]);
-      if (terminalAssistant && isContextOverflow(terminalAssistant, agent.state.model.contextWindow)) {
-        const compacted = await this.compactRunMessages(run, agent.state.messages as AgentMessage[], 'reactive', signal);
-        if (compacted) {
-          await agent.continue();
-          if (run.agent !== agent) return;
+      let nextMessages = messages;
+      while (run.status === 'running') {
+        await agent.prompt(nextMessages);
+        if (run.agent !== agent) return;
+        const terminalAssistant = lastAssistantMessage(agent.state.messages as AgentMessage[]);
+        if (terminalAssistant && isContextOverflow(terminalAssistant, agent.state.model.contextWindow)) {
+          const compacted = await this.compactRunMessages(run, agent.state.messages as AgentMessage[], 'reactive', signal);
+          if (compacted) {
+            await agent.continue();
+            if (run.agent !== agent) return;
+          }
         }
+        const detachedChildSummary = await this.completedDetachedChildRunContinuation(run, agent, signal);
+        if (!detachedChildSummary) break;
+        nextMessages = detachedChildSummary;
       }
+      if (run.agent !== agent) return;
       if (run.status === 'running') {
         const errorMessage = agent.state.errorMessage;
         if (errorMessage) {
@@ -1176,6 +1206,7 @@ export class AgentDelegationRuntime {
         } else {
           run.status = 'completed';
           run.result = extractFinalAssistantText(agent.state.messages as AgentMessage[]);
+          await this.submitCompletedRunResult(run);
           // A run can reach 'completed' without the model deciding it was done.
           // The maxTurns abort already flags run.incomplete inline (:814). The
           // other truncation is an unresolved context overflow: the final turn is
@@ -1210,10 +1241,69 @@ export class AgentDelegationRuntime {
       if (signal && !detached) signal.removeEventListener('abort', abort);
       if (run.agent === agent) {
         if (run.status !== 'running') settleRunBudget(run);
-        await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+        await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
         if (detached) void this.notifyTerminalRun(run).catch(() => undefined);
       }
     }
+  }
+
+  private async submitCompletedRunResult(run: DelegationRunState): Promise<void> {
+    if (run.status !== 'completed') return;
+    if (run.purpose === 'verify') return;
+    const summary = run.result?.trim();
+    if (!summary) return;
+    if (run.submittedResult === summary) return;
+    try {
+      const submission = await this.host.runResultSubmitted(snapshotRun(run), {
+        summary,
+        source: 'final_assistant_message',
+      });
+      if (!submission) return;
+      run.latestSubmission = submission;
+      run.submittedResult = summary;
+    } catch (error) {
+      this.host.reportError?.({
+        domain: 'persistence',
+        severity: 'warn',
+        code: 'run-result-submission-ledger-failed',
+        message: `Failed to append run result submission for ${run.id}: ${errorMessage(error)}`,
+        context: { conversationId: this.conversationId, runId: run.id, operation: 'run.result.submitted' },
+        error,
+      });
+    }
+  }
+
+  private async completedDetachedChildRunContinuation(
+    run: DelegationRunState,
+    agent: Agent,
+    signal: AbortSignal | undefined,
+  ): Promise<AgentMessage[] | null> {
+    const detachedChildren = () => this.directChildrenOf(run).filter((child) => (
+      child.purpose !== 'verify' && child.disposition === 'detached'
+    ));
+    let children = detachedChildren();
+    if (children.length === 0) return null;
+
+    while (
+      run.agent === agent
+      && run.status === 'running'
+      && children.some((child) => !isDetachedChildReadyForParentSummary(child))
+    ) {
+      throwIfAborted(signal);
+      await delay(50);
+      children = detachedChildren();
+    }
+    if (run.agent !== agent || run.status !== 'running') return null;
+
+    const summaryChildren = children.filter((child) => !isSupersededDetachedChildAttempt(child));
+    if (summaryChildren.length === 0) return null;
+
+    for (const child of summaryChildren) await this.hydrateLatestSubmission(child);
+    const summaryKey = detachedChildRunSummaryKey(summaryChildren);
+    if (run.summarizedDetachedChildRunKey === summaryKey) return null;
+    run.summarizedDetachedChildRunKey = summaryKey;
+
+    return [createHiddenUserMessage(buildDetachedChildRunCompletionPrompt(summaryChildren))];
   }
 
   private async verifyCompletedRun(
@@ -1236,7 +1326,7 @@ export class AgentDelegationRuntime {
     if (run.objectiveStatus === 'verified') return;
     run.objectiveStatus = 'verifying';
     run.updatedAt = Date.now();
-    await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+    await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
 
     run.verificationAttempts += 1;
     // The verifier runs AFTER the work completed, so the work run's wall-clock
@@ -1258,12 +1348,12 @@ export class AgentDelegationRuntime {
         criteria: ['Return a JSON verdict that independently checks every acceptance criterion.'],
         verify: false,
         description: `verify ${run.description}`,
-        prompt: verifierObjective,
+        runPrompt: verifierObjective,
         purpose: 'verify',
         context: 'none',
+        runProfile: 'verify',
         scope: verifierRunScope(this.inheritedScope),
         budget: verifierBudgetForRun(run),
-        run_in_background: false,
         allowedTools: readOnlyAgentToolNames(),
         parentRunId: run.id,
         parentBudget: run.budget,
@@ -1274,11 +1364,11 @@ export class AgentDelegationRuntime {
       run.objectiveStatus = 'blocked';
       run.blockedReason = `Verifier failed to start: ${errorMessage(error)}`;
       run.updatedAt = Date.now();
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       return;
     }
 
-    run.verifierRunIds.push(verifier.agent_id);
+    run.verifierRunIds.push(verifier.runId);
     // A verifier that did not itself complete (model error, context overflow,
     // abort) produced no verdict. Treat that as inconclusive — block for triage
     // — never as a `fail` verdict, which would fabricate a phantom gap and burn
@@ -1287,7 +1377,7 @@ export class AgentDelegationRuntime {
       run.objectiveStatus = 'blocked';
       run.blockedReason = `Verification could not complete: ${verifier.error?.trim() || 'verifier returned no verdict'}.`;
       run.updatedAt = Date.now();
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       return;
     }
     const verdict = parseVerifierVerdict(verifier.result);
@@ -1336,7 +1426,7 @@ export class AgentDelegationRuntime {
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
       if (!run.agent) {
-        const restored = await this.host.restoreChildRunLedger(run.id);
+        const restored = await this.host.restoreRunLedger(run.id);
         run.messages = (restored ?? []).map(cloneAgentMessage);
         run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(run.messages);
       }
@@ -1346,12 +1436,14 @@ export class AgentDelegationRuntime {
       run.error = undefined;
       run.blockedReason = undefined;
       run.result = undefined;
+      run.latestSubmission = undefined;
+      run.submittedResult = undefined;
       run.completedAt = undefined;
       run.incomplete = undefined;
       run.terminalNotificationSent = false;
       run.updatedAt = Date.now();
       run.salvageFromIndex = run.agent ? run.agent.state.messages.length : 0;
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       releaseStartupSlot();
       run.completion = this.runChildAgent(
         run,
@@ -1365,7 +1457,7 @@ export class AgentDelegationRuntime {
       run.objectiveStatus = 'blocked';
       run.blockedReason = `Verifier rejected this controller, and re-plan failed to start: ${errorMessage(error)}`;
       run.updatedAt = Date.now();
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       return;
     }
   }
@@ -1376,11 +1468,8 @@ export class AgentDelegationRuntime {
     signal: AbortSignal | undefined,
     detached: boolean,
   ): Promise<AgentDelegateToolData | void> {
-    run.objectiveStatus = 'blocked';
-    run.blockedReason = `Verifier rejected this worker attempt: ${verifierGap || 'unspecified gap'}`;
-    run.updatedAt = Date.now();
+    const blockedReason = `Verifier rejected this worker attempt: ${verifierGap || 'unspecified gap'}`;
     settleRunBudget(run);
-    await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
 
     const releaseStartupSlot = this.reserveRunningSlot();
     const objective = run.objective ?? run.prompt ?? run.description ?? 'Continue the verified run objective.';
@@ -1391,15 +1480,15 @@ export class AgentDelegationRuntime {
         criteria: run.criteria,
         verify: true,
         description: run.description,
-        prompt: buildObjectivePrompt(retryObjective, run.criteria),
+        runPrompt: buildObjectivePrompt(retryObjective, run.criteria),
         purpose: 'work',
         scope: run.scope,
         budget: retryBudgetSlice(run.budget),
         context: 'none',
+        runProfile: run.runProfile,
         detach: detached,
         model: run.definition?.model === 'inherit' ? undefined : run.definition?.model,
         effort: run.definition?.effort,
-        run_in_background: detached,
         allowedTools: run.definition?.tools,
         preapprovedToolRules: run.preapprovedToolRules,
         parentRunId: run.parentRunId,
@@ -1408,19 +1497,21 @@ export class AgentDelegationRuntime {
         inheritedVerifierRunIds: run.verifierRunIds,
         unattended: run.unattended,
       }, releaseStartupSlot, signal, run.parentToolCallId);
-      run.blockedReason = `${run.blockedReason}; replacement run ${replacement.agent_id} started.`;
+      run.objectiveStatus = 'blocked';
+      run.blockedReason = `${blockedReason}; replacement run ${replacement.runId} started.`;
       // The replacement carries the objective forward and will fire its own
       // terminal notification; suppress this superseded attempt's so the user is
       // not told a rejected run "completed" and then notified again.
       run.terminalNotificationSent = true;
       run.updatedAt = Date.now();
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       return replacement;
     } catch (error) {
       releaseStartupSlot();
+      run.objectiveStatus = 'blocked';
       run.blockedReason = `Verifier rejected this worker attempt, and replacement failed to start: ${errorMessage(error)}`;
       run.updatedAt = Date.now();
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       return;
     }
   }
@@ -1429,7 +1520,7 @@ export class AgentDelegationRuntime {
     if (run.status === 'running') return;
     if (run.terminalNotificationSent) return;
     run.terminalNotificationSent = true;
-    await this.host.notifyChildRun(snapshotRun(run));
+    await this.host.notifyRun(snapshotRun(run));
   }
 
   private installRunContextTransform(run: DelegationRunState): void {
@@ -1452,7 +1543,7 @@ export class AgentDelegationRuntime {
     if (!text || text.length <= DEFAULT_MAX_TOOL_RESULT_CHARS) return undefined;
 
     try {
-      const persisted = await this.host.persistToolOutputPayload(childRunToolOutputPayloadId(run, toolCallId), toolName, text);
+      const persisted = await this.host.persistToolOutputPayload(runToolOutputPayloadId(run, toolCallId), toolName, text);
       run.toolResultBudgetState.seenIds.add(toolCallId);
       run.toolResultBudgetState.replacements.set(toolCallId, persisted.label);
       return {
@@ -1486,7 +1577,7 @@ export class AgentDelegationRuntime {
       if (!message || message.role !== 'toolResult') continue;
       if (toolResultText(message) === candidate.replacement) continue;
       replaceToolResultText(message, candidate.replacement);
-      void this.host.childRunToolResultReplaced(snapshotRun(run), candidate.toolCallId, candidate.replacement).catch(() => undefined);
+      void this.host.runToolResultReplaced(snapshotRun(run), candidate.toolCallId, candidate.replacement).catch(() => undefined);
       changed = true;
     }
 
@@ -1496,7 +1587,7 @@ export class AgentDelegationRuntime {
       if (!message || message.role !== 'toolResult') continue;
       try {
         const persisted = await this.host.persistToolOutputPayload(
-          childRunToolOutputPayloadId(run, candidate.toolCallId),
+          runToolOutputPayloadId(run, candidate.toolCallId),
           candidate.toolName,
           candidate.contentText,
         );
@@ -1504,7 +1595,7 @@ export class AgentDelegationRuntime {
         run.toolResultBudgetState.seenIds.add(candidate.toolCallId);
         run.toolResultBudgetState.replacements.set(candidate.toolCallId, persisted.label);
         // The ledger records what the model sees from here on (`tool_result.replaced`).
-        void this.host.childRunToolResultReplaced(snapshotRun(run), candidate.toolCallId, persisted.label).catch(() => undefined);
+        void this.host.runToolResultReplaced(snapshotRun(run), candidate.toolCallId, persisted.label).catch(() => undefined);
         changed = true;
       } catch {
         run.toolResultBudgetState.seenIds.add(candidate.toolCallId);
@@ -1558,10 +1649,10 @@ export class AgentDelegationRuntime {
         `${this.conversationId}-${run.id}-${trigger}-compact`,
         messages,
         model,
-        // Every child run is a fork (the one-Neva invariant): omit copied parent
+        // Every sub-run follows the one-Neva invariant: omit copied parent
         // context that only predates the fork assignment; preserve the assignment,
-        // child run actions, user follow-ups, and final result.
-        'This is a fork child run transcript. Omit copied parent conversation context that only predates the fork assignment; preserve the fork assignment, child run actions, user follow-ups, and final result.',
+        // sub-run actions, user follow-ups, and final result.
+        'This is a same-agent sub-run transcript. Omit copied parent conversation context that only predates the sub-run assignment; preserve the sub-run assignment, sub-run actions, user follow-ups, and final result.',
         signal,
       );
       throwIfAborted(signal);
@@ -1594,7 +1685,7 @@ export class AgentDelegationRuntime {
       // compaction event + the post-compact message as a new root; the compacted
       // span stays in the ledger off-path. The in-memory working state above is
       // exactly its replay.
-      await this.host.childRunCompacted(snapshotRun(run), {
+      await this.host.runCompacted(snapshotRun(run), {
         postCompactMessage,
         summary,
         trigger,
@@ -1641,7 +1732,7 @@ export class AgentDelegationRuntime {
   }
 
   /**
-   * The grandchild runtime's host: every callback forwards to THIS runtime's
+   * The sub-run runtime's host: every callback forwards to THIS runtime's
    * host (one wiring, shared by the spawn and the restart-continuation paths —
    * a forwarder added in one and missed in the other would break only the
    * resume path, the one tests exercise least). Only the run identity and the
@@ -1657,24 +1748,26 @@ export class AgentDelegationRuntime {
       getParentSystemPrompt: () => getChildAgent()?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
       getActiveRunId: () => getRunId(),
       getRuntimeSettings: () => this.host.getRuntimeSettings(),
-      childRunStarted: (snapshot, seed) => {
+      runStarted: (snapshot, seed) => {
         if (snapshot.purpose !== 'verify') {
           const parent = this.runs.get(getRunId());
           if (parent) parent.hasWorkChildren = true;
         }
         this.upsertObservedRun(snapshot);
-        return this.host.childRunStarted(snapshot, seed);
+        return this.host.runStarted(snapshot, seed);
       },
-      childRunMessage: (snapshot, message) => this.host.childRunMessage(snapshot, message),
-      childRunToolResultReplaced: (snapshot, toolCallId, text) => this.host.childRunToolResultReplaced(snapshot, toolCallId, text),
-      childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
-      childRunStatusChanged: (snapshot) => {
+      runMessage: (snapshot, message) => this.host.runMessage(snapshot, message),
+      runToolResultReplaced: (snapshot, toolCallId, text) => this.host.runToolResultReplaced(snapshot, toolCallId, text),
+      runCompacted: (snapshot, input) => this.host.runCompacted(snapshot, input),
+      runResultSubmitted: (snapshot, input) => this.host.runResultSubmitted(snapshot, input),
+      readLatestRunSubmission: (runId) => this.host.readLatestRunSubmission?.(runId) ?? Promise.resolve(undefined),
+      runStatusChanged: (snapshot) => {
         this.upsertObservedRun(snapshot);
-        return this.host.childRunStatusChanged(snapshot);
+        return this.host.runStatusChanged(snapshot);
       },
-      notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
+      notifyRun: (snapshot) => this.host.notifyRun(snapshot),
       reportError: (report) => this.host.reportError?.(report),
-      restoreChildRunLedger: (runId) => this.host.restoreChildRunLedger(runId),
+      restoreRunLedger: (runId) => this.host.restoreRunLedger(runId),
       persistToolOutputPayload: (toolCallId, toolName, text) => (
         this.host.persistToolOutputPayload(toolCallId, toolName, text)
       ),
@@ -1686,14 +1779,14 @@ export class AgentDelegationRuntime {
 
   private async resolveDefinitionForRun(run: DelegationRunState): Promise<AgentDefinition> {
     if (run.definition) return run.definition;
-    // Every child run is a fork of Neva (the one-Neva invariant) — there is no
+    // Every sub-run is Neva continuing in isolation (the one-Neva invariant); there is no
     // by-name agent to resolve.
     return createForkAgentDefinition();
   }
 
   private reserveRunningSlot(): RunningSlotReservation {
-    if (this.runningCount() + this.reservedRunningSlots >= MAX_CONCURRENT_CHILD_RUNS) {
-      throw new Error(`Too many child runs are already running in this session. Limit: ${MAX_CONCURRENT_CHILD_RUNS}.`);
+    if (this.runningCount() + this.reservedRunningSlots >= MAX_CONCURRENT_SUB_RUNS) {
+      throw new Error(`Too many sub-runs are already running in this session. Limit: ${MAX_CONCURRENT_SUB_RUNS}.`);
     }
     this.reservedRunningSlots += 1;
     let released = false;
@@ -1708,11 +1801,11 @@ export class AgentDelegationRuntime {
     return [...this.runs.values()].filter((run) => run.status === 'running').length;
   }
 
-  private resolveRun(selector: { agent_id?: string; name?: string }): DelegationRunState {
-    const id = selector.agent_id || (selector.name ? this.names.get(selector.name) : undefined);
-    if (!id) throw new Error('Provide agent_id or name.');
+  private resolveRun(selector: { runId?: string; name?: string }): DelegationRunState {
+    const id = selector.runId || (selector.name ? this.names.get(selector.name) : undefined);
+    if (!id) throw new Error('Provide runId or name.');
     const run = this.runs.get(id);
-    if (!run) throw new Error(`Unknown agent: ${id}`);
+    if (!run) throw new Error(`Unknown run: ${id}`);
     return run;
   }
 
@@ -1721,13 +1814,21 @@ export class AgentDelegationRuntime {
     throw new Error(`Cannot ${action} run ${run.id} from this controller; steer, amend, or stop it through its direct parent controller.`);
   }
 
+  private async hydrateLatestSubmission(run: DelegationRunState): Promise<void> {
+    if (run.latestSubmission || run.status !== 'completed') return;
+    const submission = await this.host.readLatestRunSubmission?.(run.id);
+    if (!submission) return;
+    run.latestSubmission = submission;
+    run.submittedResult = submission.summary;
+  }
+
   private directChildrenOf(run: DelegationRunState): DelegationRunState[] {
     return [...this.runs.values()]
       .filter((child) => child.parentRunId === run.id)
       .sort((left, right) => left.startedAt - right.startedAt);
   }
 
-  private upsertObservedRun(snapshot: AgentChildRunSnapshot): void {
+  private upsertObservedRun(snapshot: AgentRunSnapshot): void {
     const existing = this.runs.get(snapshot.id);
     if (existing) {
       Object.assign(existing, snapshot);
@@ -1769,7 +1870,7 @@ export class AgentDelegationRuntime {
 
   private assertCanDescend(nextAgentName: string): void {
     if (this.depth >= this.maxDepth) {
-      throw new Error(`Child run nesting limit reached (${this.maxDepth}). Complete the task directly.`);
+      throw new Error(`Sub-run nesting limit reached (${this.maxDepth}). Complete the task directly.`);
     }
     void nextAgentName;
   }
@@ -1785,7 +1886,7 @@ export function createAgentDelegationTools(runtime: AgentDelegationRuntime): Age
       name: AGENT_DELEGATE_TOOL_NAME,
       label: 'Spawn Run',
       description: [
-        'Spawn an isolated child Run for a focused objective with explicit acceptance criteria.',
+        'Create a same-agent sub-run for a focused objective with explicit acceptance criteria.',
         'Use context to choose full, brief, or no inherited parent context.',
         'Launch multiple runs in the same turn when independent work can run in parallel.',
         `For long work, set detach and use ${AGENT_STATUS_TOOL_NAME}, ${AGENT_SEND_TOOL_NAME}, ${AGENT_AMEND_TOOL_NAME}, or ${AGENT_STOP_TOOL_NAME} with the returned runId.`,
@@ -1976,7 +2077,7 @@ function buildBriefRunContextMessages(parentMessages: readonly AgentMessage[]): 
 }
 
 function buildRunDirective(params: AgentToolParams): string {
-  if (params.purpose === 'verify') return params.prompt;
+  if (params.purpose === 'verify') return params.runPrompt;
   const criteria = params.criteria?.length
     ? params.criteria.map((criterion, index) => `${index + 1}. ${criterion}`).join('\n')
     : 'No acceptance criteria were provided because verify is false.';
@@ -1986,12 +2087,12 @@ function buildRunDirective(params: AgentToolParams): string {
     `<${FORK_BOILERPLATE_TAG}>`,
     'STOP. READ THIS FIRST.',
     '',
-    'You are a Tenon child Run. You may decompose your objective by spawning child Runs when that is the most reliable way to finish.',
+    'You are a Tenon child Run. You may decompose your objective by creating sub-runs when that is the most reliable way to finish.',
     '',
     'Controller rules:',
     '1. Stay strictly within the objective and acceptance criteria.',
-    `2. When spawning child Runs, use ${AGENT_DELEGATE_TOOL_NAME} with explicit objective and criteria.`,
-    '3. Verify child results before accepting them as done; spawn replacement work for rejected child results when budget remains.',
+    `2. When creating sub-runs, use ${AGENT_DELEGATE_TOOL_NAME} with explicit objective and criteria.`,
+    '3. Verify sub-run results before accepting them as done; create replacement work for rejected results when budget remains.',
     '4. Do not ask the user questions from this child Run; block with a concise reason if owner input is genuinely required.',
     '5. Keep the final report factual and concise, naming what was verified and any residual gaps.',
     `</${FORK_BOILERPLATE_TAG}>`,
@@ -2013,64 +2114,6 @@ function buildObjectivePrompt(objective: string, criteria?: readonly string[]): 
     '',
     'Acceptance criteria:',
     ...criteria.map((criterion, index) => `${index + 1}. ${criterion}`),
-  ].join('\n');
-}
-
-function buildVerifierObjective(run: DelegationRunState): string {
-  const nodeChanges = compactNodeChanges(run.nodeChanges) ?? {};
-  const fileChanges = compactFileChanges(run.fileChanges) ?? {};
-  return [
-    'You are an independent verifier Run. Inspect the submitted child Run result and return only compact JSON with this exact shape:',
-    '{"verdict":"pass"|"fail","gap":"short reason when fail"}',
-    '',
-    'Rules:',
-    '1. Do not accept claims without evidence in the result or inspectable state.',
-    '2. Use only read-only tools when inspection is needed.',
-    '3. Fail if any acceptance criterion is incomplete, ambiguous, or unverifiable.',
-    '4. Your final message MUST be the JSON object and nothing else — no prose, no code fences. A passing run REQUIRES "verdict":"pass"; any other final message is read as a failure.',
-    '',
-    `Run id: ${run.id}`,
-    `Objective:\n${run.objective ?? run.prompt}`,
-    '',
-    'Acceptance criteria:',
-    ...(run.criteria ?? []).map((criterion, index) => `${index + 1}. ${criterion}`),
-    '',
-    `Execution status: ${run.status}`,
-    `Objective status before verification: ${run.objectiveStatus ?? 'unknown'}`,
-    run.incomplete ? 'The worker was marked incomplete.' : '',
-    run.error ? `Worker error:\n${run.error}` : '',
-    '',
-    `Worker result:\n${run.result ?? 'No text result.'}`,
-    '',
-    `Node changes:\n${JSON.stringify(nodeChanges, null, 2)}`,
-    '',
-    `File changes:\n${JSON.stringify(fileChanges, null, 2)}`,
-    '',
-    `Tool trace:\n${JSON.stringify(run.toolTrace, null, 2)}`,
-  ].filter(Boolean).join('\n');
-}
-
-function buildControllerReplanPrompt(run: DelegationRunState, gap: string): string {
-  return [
-    'Your previous submission did not pass independent verification.',
-    '',
-    `Verifier gap: ${gap || 'The verifier rejected the result without a detailed gap.'}`,
-    '',
-    'Continue the same objective. Address the verifier gap directly, then submit a concise final result that maps to the acceptance criteria.',
-    '',
-    `Objective:\n${run.objective ?? run.prompt}`,
-    '',
-    'Acceptance criteria:',
-    ...(run.criteria ?? []).map((criterion, index) => `${index + 1}. ${criterion}`),
-  ].join('\n');
-}
-
-function buildReplacementWorkerObjective(objective: string, gap: string): string {
-  return [
-    objective,
-    '',
-    `Verifier gap from the previous worker attempt: ${gap || 'The verifier rejected the result without a detailed gap.'}`,
-    'Produce a fresh result that directly closes this gap.',
   ].join('\n');
 }
 
@@ -2104,19 +2147,19 @@ export function delegateToolResult(toolName: string, data: AgentDelegateToolData
   // to the envelope's instructions field so it sits beside status/error like
   // every other tool, rather than nested inside the result payload.
   const envelope = successEnvelope(toolName, data, data.instructions ? { instructions: data.instructions } : {});
-  return agentToolResult(envelope, visibleChildRunResult(data));
+  return agentToolResult(envelope, visibleRunResult(data));
 }
 
 // Model-visible projection. The full AgentDelegateToolData stays on the envelope
 // (details); the parent agent needs lifecycle state, addressability, verdict
 // blockers, one-level child summaries for controllers, and produced result/error.
 // Next-step instructions are carried by the envelope's instructions field.
-// Echoed launch arguments (prompt, description, agent_type, context_mode) and
+// Echoed launch arguments (description, context_mode) and
 // timestamps/transcript counts are dropped.
-export function visibleChildRunResult(data: AgentDelegateToolData): unknown {
+export function visibleRunResult(data: AgentDelegateToolData): unknown {
   const visible: Record<string, unknown> = {
     status: data.status,
-    agent_id: data.agent_id,
+    runId: data.runId,
   };
   if (data.name) visible.name = data.name;
   if (data.objective_status) visible.objective_status = data.objective_status;
@@ -2129,322 +2172,15 @@ export function visibleChildRunResult(data: AgentDelegateToolData): unknown {
   return visible;
 }
 
-export function recordNodeToolChanges(
-  changes: AgentChildRunNodeChanges,
-  toolName: string,
-  result: unknown,
-  isError: boolean,
-): void {
-  if (isError) return;
-  if (toolName === 'node_delete') {
-    const details = isPlainRecord(result) ? result.details : undefined;
-    if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isPlainRecord(details.data)) return;
-    appendUniqueNodeIds(changes, 'trashedNodeIds', stringArray(details.data.deletedNodeIds));
-    appendUniqueNodeIds(changes, 'updatedNodeIds', stringArray(details.data.restoredNodeIds));
-    return;
-  }
-  if (toolName !== 'node_create' && toolName !== 'node_edit') return;
-  const details = isPlainRecord(result) ? result.details : undefined;
-  if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isPlainRecord(details.data)) return;
-
-  const created = stringArray(details.data.createdNodeIds);
-  appendUniqueNodeIds(changes, 'createdNodeIds', created);
-
-  if (toolName !== 'node_edit') return;
-  if (details.data.status !== 'updated') return;
-  const trashed = stringArray(details.data.trashedNodeIds);
-  appendUniqueNodeIds(changes, 'trashedNodeIds', trashed);
-  const changedExisting = stringArray(details.data.affectedNodeIds)
-    .filter((nodeId) => !created.includes(nodeId) && !trashed.includes(nodeId));
-  appendUniqueNodeIds(changes, 'updatedNodeIds', changedExisting);
-}
-
-function recordFileToolChanges(
-  changes: AgentChildRunFileChanges,
-  toolName: string,
-  result: unknown,
-  isError: boolean,
-): void {
-  if (isError) return;
-  if (toolName !== 'file_edit' && toolName !== 'file_write' && toolName !== 'file_delete') return;
-  const details = isPlainRecord(result) ? result.details : undefined;
-  if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isPlainRecord(details.data)) return;
-
-  const filePath = coerceString(details.data.filePath);
-  if (!filePath) return;
-  if (toolName === 'file_delete') {
-    appendUniqueStrings(changes, 'deletedPaths', [filePath]);
-    appendFilePatch(changes, {
-      filePath,
-      operation: 'delete',
-      trashPath: coerceString(details.data.trashPath),
-      kind: coerceString(details.data.kind),
-    });
-    return;
-  }
-
-  const operation = toolName === 'file_write' && details.data.type === 'create' ? 'create' : 'update';
-  appendUniqueStrings(changes, operation === 'create' ? 'createdPaths' : 'updatedPaths', [filePath]);
-  appendFilePatch(changes, {
-    filePath,
-    operation,
-    structuredPatch: normalizeStructuredPatch(details.data.structuredPatch),
-  });
-}
-
-function recordToolTrace(
-  trace: AgentChildRunToolTraceEntry[],
-  toolName: string,
-  result: unknown,
-  isError: boolean,
-): void {
-  const details = isPlainRecord(result) ? result.details : undefined;
-  const entry: AgentChildRunToolTraceEntry = { toolName, isError };
-  if (isToolEnvelope(details)) {
-    entry.status = details.status;
-    entry.summary = summarizeToolEnvelopeForVerifier(details);
-  } else if (isPlainRecord(result) && Array.isArray(result.content)) {
-    entry.summary = truncate(piToolResultTextContent(result.content as Array<TextContent | ImageContent>) ?? '', 500);
-  }
-  trace.push(entry);
-  if (trace.length > MAX_RECORDED_TOOL_TRACE_ENTRIES) {
-    trace.splice(0, trace.length - MAX_RECORDED_TOOL_TRACE_ENTRIES);
-  }
-}
-
-function compactNodeChanges(changes: AgentChildRunNodeChanges): AgentChildRunNodeChanges | undefined {
-  const compacted: AgentChildRunNodeChanges = {};
-  if (changes.createdNodeIds?.length) compacted.createdNodeIds = changes.createdNodeIds;
-  if (changes.updatedNodeIds?.length) compacted.updatedNodeIds = changes.updatedNodeIds;
-  if (changes.trashedNodeIds?.length) compacted.trashedNodeIds = changes.trashedNodeIds;
-  return Object.keys(compacted).length ? compacted : undefined;
-}
-
-function compactFileChanges(changes: AgentChildRunFileChanges): AgentChildRunFileChanges | undefined {
-  const compacted: AgentChildRunFileChanges = {};
-  if (changes.createdPaths?.length) compacted.createdPaths = changes.createdPaths;
-  if (changes.updatedPaths?.length) compacted.updatedPaths = changes.updatedPaths;
-  if (changes.deletedPaths?.length) compacted.deletedPaths = changes.deletedPaths;
-  if (changes.patches?.length) compacted.patches = changes.patches;
-  return Object.keys(compacted).length ? compacted : undefined;
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
-}
-
-function normalizeStructuredPatch(value: unknown): unknown {
-  if (!Array.isArray(value)) return undefined;
-  return value.slice(0, 50).map((entry) => isPlainRecord(entry) ? { ...entry } : entry);
-}
-
-async function captureWorkingSetSnapshot(localRoot: string, scope: AgentRunScope | undefined): Promise<WorkingSetSnapshot> {
-  const root = path.resolve(localRoot);
-  const startPaths = scope?.resources?.paths?.length
-    ? scope.resources.paths.map((entry) => resolveScopedPath(root, entry)).filter((entry): entry is string => entry !== null)
-    : [root];
-  const snapshot: WorkingSetSnapshot = { files: new Map(), truncated: false };
-  for (const startPath of startPaths) {
-    if (snapshot.truncated) break;
-    await walkWorkingSetPath(root, startPath, snapshot);
-  }
-  return snapshot;
-}
-
-async function recordWorkingSetDiff(
-  changes: AgentChildRunFileChanges,
-  localRoot: string,
-  before: WorkingSetSnapshot,
-  scope: AgentRunScope | undefined,
-): Promise<void> {
-  const after = await captureWorkingSetSnapshot(localRoot, scope);
-  if (before.truncated || after.truncated) {
-    appendFilePatch(changes, {
-      filePath: '<working-set-snapshot>',
-      operation: 'update',
-      structuredPatch: [{
-        source: 'working-set-snapshot',
-        warning: 'Snapshot file limit reached; indirect file evidence may be incomplete.',
-        maxFiles: MAX_WORKING_SET_SNAPSHOT_FILES,
-      }],
-    });
-  }
-
-  // Files the file tools already recorded carry precise structured patches; the
-  // snapshot exists only to surface out-of-band edits (shell scripts, etc.).
-  // Skip the tool-recorded paths so the verifier isn't handed the same file twice
-  // in two divergent formats. Tool paths and snapshot keys are both absolute.
-  const toolRecorded = new Set<string>([
-    ...(changes.createdPaths ?? []),
-    ...(changes.updatedPaths ?? []),
-    ...(changes.deletedPaths ?? []),
-  ]);
-
-  for (const [filePath, afterFile] of after.files) {
-    if (toolRecorded.has(filePath)) continue;
-    const beforeFile = before.files.get(filePath);
-    if (!beforeFile) {
-      appendUniqueStrings(changes, 'createdPaths', [filePath]);
-      appendFilePatch(changes, {
-        filePath,
-        operation: 'create',
-        structuredPatch: [workingSetPatch('created', undefined, afterFile)],
-      });
-      continue;
-    }
-    if (workingSetFileChanged(beforeFile, afterFile)) {
-      appendUniqueStrings(changes, 'updatedPaths', [filePath]);
-      appendFilePatch(changes, {
-        filePath,
-        operation: 'update',
-        structuredPatch: [workingSetPatch('updated', beforeFile, afterFile)],
-      });
-    }
-  }
-
-  for (const [filePath, beforeFile] of before.files) {
-    if (after.files.has(filePath) || toolRecorded.has(filePath)) continue;
-    appendUniqueStrings(changes, 'deletedPaths', [filePath]);
-    appendFilePatch(changes, {
-      filePath,
-      operation: 'delete',
-      structuredPatch: [workingSetPatch('deleted', beforeFile, undefined)],
-    });
-  }
-}
-
-async function walkWorkingSetPath(root: string, targetPath: string, snapshot: WorkingSetSnapshot): Promise<void> {
-  if (snapshot.truncated || !isInsidePath(root, targetPath)) return;
-  let entryStat;
-  try {
-    entryStat = await stat(targetPath);
-  } catch {
-    return;
-  }
-  if (entryStat.isDirectory()) {
-    if (WORKING_SET_EXCLUDED_DIRS.has(path.basename(targetPath))) return;
-    let entries;
-    try {
-      entries = await readdir(targetPath, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (snapshot.truncated) return;
-      if (entry.isDirectory() && WORKING_SET_EXCLUDED_DIRS.has(entry.name)) continue;
-      await walkWorkingSetPath(root, path.join(targetPath, entry.name), snapshot);
-    }
-    return;
-  }
-  if (!entryStat.isFile()) return;
-  if (snapshot.files.size >= MAX_WORKING_SET_SNAPSHOT_FILES) {
-    snapshot.truncated = true;
-    return;
-  }
-  const relativePath = path.relative(root, targetPath) || path.basename(targetPath);
-  // Stat only — no content hashing. Hashing every file in the tree twice (before
-  // and after each verified run) was the dominant snapshot cost; size + mtime is
-  // a cheap, reliable change signal for the out-of-band edits this snapshot is
-  // meant to catch (tool edits already carry precise patches and are deduped out).
-  snapshot.files.set(targetPath, {
-    filePath: targetPath,
-    relativePath,
-    size: entryStat.size,
-    mtimeMs: Math.trunc(entryStat.mtimeMs),
-  });
-}
-
-function resolveScopedPath(root: string, input: string): string | null {
-  const resolved = path.resolve(path.isAbsolute(input) ? input : path.join(root, input));
-  return isInsidePath(root, resolved) ? resolved : null;
-}
-
-function isInsidePath(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-function workingSetFileChanged(before: WorkingSetFileSnapshot, after: WorkingSetFileSnapshot): boolean {
-  return before.size !== after.size || before.mtimeMs !== after.mtimeMs;
-}
-
-function workingSetPatch(
-  change: 'created' | 'updated' | 'deleted',
-  before: WorkingSetFileSnapshot | undefined,
-  after: WorkingSetFileSnapshot | undefined,
-): Record<string, unknown> {
-  return {
-    source: 'working-set-snapshot',
-    change,
-    relativePath: after?.relativePath ?? before?.relativePath,
-    before: before ? { size: before.size } : undefined,
-    after: after ? { size: after.size } : undefined,
-  };
-}
-
-function summarizeToolEnvelopeForVerifier(details: ToolEnvelope): string | undefined {
-  if (details.error) return truncate(`${details.error.code}: ${details.error.message}`, 500);
-  if (!isPlainRecord(details.data)) return undefined;
-  const summary: Record<string, unknown> = {};
-  for (const key of ['filePath', 'trashPath', 'type', 'kind', 'status', 'nodeId', 'createdNodeIds', 'affectedNodeIds', 'deletedNodeIds', 'restoredNodeIds']) {
-    if (details.data[key] !== undefined) summary[key] = details.data[key];
-  }
-  if (Array.isArray(details.data.structuredPatch)) summary.structuredPatch = details.data.structuredPatch.slice(0, 10);
-  return Object.keys(summary).length ? truncate(JSON.stringify(summary), 1_000) : undefined;
-}
-
-function appendUniqueStrings(
-  changes: AgentChildRunFileChanges,
-  key: 'createdPaths' | 'updatedPaths' | 'deletedPaths',
-  values: readonly string[],
-): void {
-  if (values.length === 0) return;
-  const current = changes[key] ?? [];
-  const existing = new Set(current);
-  const next = [...current];
-  for (const value of values) {
-    if (existing.has(value)) continue;
-    existing.add(value);
-    next.push(value);
-  }
-  changes[key] = next;
-}
-
-function appendFilePatch(
-  changes: AgentChildRunFileChanges,
-  patch: NonNullable<AgentChildRunFileChanges['patches']>[number],
-): void {
-  changes.patches ??= [];
-  changes.patches.push(patch);
-  if (changes.patches.length > 50) changes.patches.splice(0, changes.patches.length - 50);
-}
-
-function appendUniqueNodeIds(
-  changes: AgentChildRunNodeChanges,
-  key: keyof AgentChildRunNodeChanges,
-  nodeIds: readonly string[],
-): void {
-  if (nodeIds.length === 0) return;
-  const current = changes[key] ?? [];
-  const existing = new Set(current);
-  const next = [...current];
-  for (const nodeId of nodeIds) {
-    if (existing.has(nodeId)) continue;
-    existing.add(nodeId);
-    next.push(nodeId);
-  }
-  changes[key] = next;
-}
-
 function runToToolData(run: DelegationRunState, children: readonly DelegationRunState[] = []): AgentDelegateToolData {
   const nodeChanges = compactNodeChanges(run.nodeChanges);
   const fileChanges = compactFileChanges(run.fileChanges);
+  const result = latestRunSubmissionSummary(run) ?? run.result;
   return {
     status: run.status,
-    agent_id: run.id,
+    runId: run.id,
     name: run.name,
     description: run.description,
-    prompt: run.prompt,
     objective: run.objective,
     criteria: run.criteria,
     objective_status: run.objectiveStatus,
@@ -2452,12 +2188,9 @@ function runToToolData(run: DelegationRunState, children: readonly DelegationRun
     scope: run.scope,
     budget: run.budget,
     blocked_reason: run.blockedReason,
-    agent_type: run.agentType,
+    runProfile: run.runProfile ?? runProfileForPurpose(run.purpose ?? 'work'),
     context_mode: run.contextMode,
-    executing_agent_id: run.executingAgentId,
-    parent_agent_id: run.parentAgentId,
-    memory_owner_agent_id: run.memoryOwnerAgentId,
-    result: run.result,
+    result,
     error: run.error,
     started_at: run.startedAt,
     updated_at: run.updatedAt,
@@ -2471,7 +2204,7 @@ function runToToolData(run: DelegationRunState, children: readonly DelegationRun
   };
 }
 
-function runToChildStatus(run: DelegationRunState): AgentChildRunChildStatus {
+function runToChildStatus(run: DelegationRunState): AgentSubRunStatus {
   return {
     runId: run.id,
     role: derivedRunRole(run),
@@ -2483,13 +2216,13 @@ function runToChildStatus(run: DelegationRunState): AgentChildRunChildStatus {
   };
 }
 
-function derivedRunRole(run: DelegationRunState): AgentChildRunChildStatus['role'] {
+function derivedRunRole(run: DelegationRunState): AgentSubRunStatus['role'] {
   if (run.purpose === 'verify') return 'verifier';
   if (run.hasWorkChildren) return 'controller';
   return 'worker';
 }
 
-function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {
+function snapshotRun(run: DelegationRunState): AgentRunSnapshot {
   return {
     id: run.id,
     name: run.name,
@@ -2504,6 +2237,7 @@ function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {
     disposition: run.disposition,
     agentType: run.agentType,
     contextMode: run.contextMode,
+    runProfile: run.runProfile,
     executingAgentId: run.executingAgentId,
     parentAgentId: run.parentAgentId,
     parentRunId: run.parentRunId,
@@ -2522,7 +2256,7 @@ function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {
   };
 }
 
-function childRunToolOutputPayloadId(run: DelegationRunState, toolCallId: string): string {
+function runToolOutputPayloadId(run: DelegationRunState, toolCallId: string): string {
   return `${run.id}-${toolCallId}`;
 }
 
@@ -2562,7 +2296,7 @@ export function extractPartialAssistantText(messages: readonly AgentMessage[]): 
 }
 
 function extractFinalAssistantText(messages: readonly AgentMessage[]): string {
-  return extractPartialAssistantText(messages) ?? 'Child run completed without a text result.';
+  return extractPartialAssistantText(messages) ?? 'Run completed without a text result.';
 }
 
 function isRecordableAgentMessage(message: unknown): message is AgentMessage {
@@ -2583,16 +2317,16 @@ function replaceToolResultText(message: ToolResultMessage, text: string): void {
 }
 
 function normalizeAgentToolParams(raw: unknown): AgentToolParams {
-  if (!isPlainRecord(raw)) throw new Error('Agent input must be an object.');
-  const objective = coerceString(raw.objective)?.trim() || coerceString(raw.prompt)?.trim();
-  if (!objective) throw new Error('spawn input requires objective.');
+  if (!isPlainRecord(raw)) throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input must be an object.`);
+  const objective = coerceString(raw.objective)?.trim();
+  if (!objective) throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input requires objective.`);
   const verify = raw.verify !== false;
   const criteria = coerceStringArray(raw.criteria);
   if (verify && (!criteria || criteria.length === 0)) {
-    throw new Error('spawn input requires at least one criterion unless verify is false.');
+    throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input requires at least one criterion unless verify is false.`);
   }
   const description = coerceString(raw.description)?.trim() || truncate(compactInlineText(objective), 120);
-  const prompt = coerceString(raw.prompt)?.trim() || buildObjectivePrompt(objective, criteria);
+  const runPrompt = coerceString(raw.runPrompt)?.trim() || buildObjectivePrompt(objective, criteria);
   const allowedTools = Array.isArray(raw.allowedTools)
     ? normalizeAgentToolNames(raw.allowedTools) ?? []
     : undefined;
@@ -2601,14 +2335,14 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
     criteria,
     verify,
     description,
-    prompt,
+    runPrompt,
     purpose: normalizeRunPurpose(raw.purpose),
     scope: normalizeRunScope(raw.scope),
     budget: normalizeRunBudgetInput(raw.budget),
+    runProfile: normalizeRequestedRunProfile(raw.runProfile),
     context: normalizeRunContext(raw.context),
     detach: raw.detach === true,
     model: coerceString(raw.model),
-    run_in_background: raw.run_in_background === true,
     name: coerceString(raw.name),
     allowedTools,
     preapprovedToolRules: coerceStringArray(raw.preapprovedToolRules),
@@ -2624,241 +2358,19 @@ function normalizeRunContext(value: unknown): AgentRunContextMode {
   return value === 'none' || value === 'brief' || value === 'full' ? value : 'full';
 }
 
-function normalizeRunScope(value: unknown): AgentRunScope | undefined {
-  if (!isPlainRecord(value)) return undefined;
-  const capabilities = normalizeAgentToolActionKinds(coerceStringArray(value.capabilities));
-  const resources = isPlainRecord(value.resources) ? {
-    docs: coerceStringArray(value.resources.docs),
-    paths: coerceStringArray(value.resources.paths),
-  } : undefined;
-  const compactResources = resources && (resources.docs?.length || resources.paths?.length)
-    ? resources
-    : undefined;
-  return capabilities?.length || compactResources
-    ? { capabilities, resources: compactResources }
-    : undefined;
-}
-
-function normalizeRunBudgetInput(value: unknown): AgentRunBudget | undefined {
-  if (!isPlainRecord(value)) return undefined;
-  const tokens = parsePositiveInteger(value.tokens);
-  const wallClockMinutes = parsePositiveInteger(value.wallClockMinutes);
-  return tokens || wallClockMinutes ? { tokens, wallClockMinutes } : undefined;
-}
-
-function normalizeRunBudget(
-  next: AgentRunBudget | undefined,
-  existing: AgentRunBudget | undefined,
-  now: number,
-): AgentRunBudget | undefined {
-  // Merge field-by-field, not by spread: `normalizeRunBudgetInput` yields explicit
-  // `undefined` for the field a partial amend did not touch, and `{...existing,
-  // ...next}` would let that `undefined` wipe the untouched limit (e.g. amending
-  // only wallClockMinutes would erase the token cap, leaking its reservation).
-  const budget: AgentRunBudget = { ...existing };
-  if (next?.tokens !== undefined) budget.tokens = next.tokens;
-  if (next?.wallClockMinutes !== undefined) budget.wallClockMinutes = next.wallClockMinutes;
-  if (!budget.tokens && !budget.wallClockMinutes && !budget.reservedTokens && !budget.spentTokens) return undefined;
-  budget.startedAt ??= now;
-  if (budget.wallClockMinutes) {
-    budget.deadlineAt = budget.startedAt + budget.wallClockMinutes * 60_000;
-  }
-  return budget;
-}
-
-function admitRunBudget(
-  parent: AgentRunBudget | undefined,
-  requested: AgentRunBudget | undefined,
-  now: number,
-  detached: boolean,
-): AgentRunBudget | undefined {
-  const parentRemainingWallClockMinutes = parent?.deadlineAt && parent.deadlineAt > now
-    ? Math.max(1, Math.ceil((parent.deadlineAt - now) / 60_000))
-    : undefined;
-  if (
-    parentRemainingWallClockMinutes !== undefined
-    && requested?.wallClockMinutes
-    && requested.wallClockMinutes > parentRemainingWallClockMinutes
-  ) {
-    throw new Error('Run budget exceeds parent remaining wall-clock budget.');
-  }
-  const fallback = requested
-    ?? (parentRemainingWallClockMinutes ? { wallClockMinutes: parentRemainingWallClockMinutes } : undefined)
-    ?? (detached ? { wallClockMinutes: DEFAULT_CHILD_WALL_CLOCK_MINUTES } : undefined);
-  const budget = normalizeRunBudget(fallback, undefined, now);
-  if (!budget) return undefined;
-  if (parent?.deadlineAt && budget.deadlineAt && budget.deadlineAt > parent.deadlineAt) {
-    budget.deadlineAt = parent.deadlineAt;
-    if (parentRemainingWallClockMinutes !== undefined) budget.wallClockMinutes = parentRemainingWallClockMinutes;
-  }
-  if (parent?.tokens && budget.tokens) {
-    const parentHeadroom = Math.max(0, parent.tokens - (parent.reservedTokens ?? 0) - (parent.spentTokens ?? 0));
-    if (budget.tokens > parentHeadroom) throw new Error('Run budget exceeds parent remaining token budget.');
-    parent.reservedTokens = (parent.reservedTokens ?? 0) + budget.tokens;
-  }
-  return budget;
-}
-
-// Reverse admitRunBudget's parent token reservation for a run that never came to
-// exist (e.g. the harness build threw), so a setup failure cannot permanently
-// inflate the parent's reservedTokens.
-function releaseAdmittedRunBudget(parent: AgentRunBudget | undefined, budget: AgentRunBudget | undefined): void {
-  if (parent?.tokens && budget?.tokens) {
-    parent.reservedTokens = Math.max(0, (parent.reservedTokens ?? 0) - budget.tokens);
-  }
-}
-
-function settleRunBudget(run: DelegationRunState): void {
-  if (run.budgetSettled) return;
-  if (!run.parentBudgetRef || !run.budget?.tokens) return;
-  const reserved = run.parentBudgetRef.reservedTokens ?? 0;
-  run.parentBudgetRef.reservedTokens = Math.max(0, reserved - run.budget.tokens);
-  const spent = Math.min(run.budget.tokens, runUsageTokens(run));
-  run.parentBudgetRef.spentTokens = (run.parentBudgetRef.spentTokens ?? 0) + spent;
-  run.budgetSettled = true;
-}
-
-function runUsageTokens(run: DelegationRunState): number {
-  let total = 0;
-  for (const message of run.messages) {
-    if (message.role === 'assistant') total += message.usage?.totalTokens ?? 0;
-  }
-  return total;
-}
-
-// A verifier reads to confirm the work; its capabilities are the read-only
-// subset of the controller's own scope (or all read-only kinds when the
-// controller is unrestricted), so narrowing never rejects it as widening.
-function verifierRunScope(inheritedScope: AgentRunScope | undefined): AgentRunScope {
-  const parentCapabilities = normalizeAgentToolActionKinds(inheritedScope?.capabilities);
-  const capabilities = parentCapabilities?.length
-    ? parentCapabilities.filter((kind) => isReadOnlyActionKind(kind))
-    : normalizeAgentToolActionKinds(readOnlyAgentToolNames());
-  return { capabilities: capabilities ?? [] };
-}
-
-// The verifier's wall-clock request must fit the parent run's *remaining* time
-// (its deadline has been counting down since the work started), capped at the
-// default, so admission never rejects a budgeted run's verification.
-function verifierBudgetForRun(run: DelegationRunState): AgentRunBudget {
-  const deadlineAt = run.budget?.deadlineAt;
-  const remainingMinutes = deadlineAt && deadlineAt > Date.now()
-    ? Math.max(1, Math.ceil((deadlineAt - Date.now()) / 60_000))
-    : undefined;
-  const wallClockMinutes = Math.min(
-    DEFAULT_CHILD_WALL_CLOCK_MINUTES,
-    run.budget?.wallClockMinutes ?? DEFAULT_CHILD_WALL_CLOCK_MINUTES,
-    remainingMinutes ?? DEFAULT_CHILD_WALL_CLOCK_MINUTES,
-  );
-  return { wallClockMinutes };
-}
-
-function narrowRunScope(parent: AgentRunScope | undefined, requested: AgentRunScope | undefined): AgentRunScope | undefined {
-  const parentCapabilities = normalizeAgentToolActionKinds(parent?.capabilities);
-  const requestedCapabilities = normalizeAgentToolActionKinds(requested?.capabilities);
-  const capabilities = parentCapabilities?.length
-    ? (requestedCapabilities?.length ? assertScopeSubset(requestedCapabilities, parentCapabilities, 'capabilities') : parentCapabilities)
-    : requestedCapabilities;
-  const resources = narrowRunResources(parent?.resources, requested?.resources);
-  return capabilities?.length || resources
-    ? { capabilities, resources }
-    : undefined;
-}
-
-function assertScopeSubset(values: readonly string[], parentValues: readonly string[], label: string): string[] {
-  const parentSet = new Set(parentValues);
-  const denied = values.filter((value) => !parentSet.has(value));
-  if (denied.length > 0) {
-    throw new Error(`Run scope cannot widen ${label}: ${denied.join(', ')}`);
-  }
-  return [...new Set(values)];
-}
-
-function narrowRunResources(parent: AgentRunScope['resources'] | undefined, requested: AgentRunScope['resources'] | undefined): AgentRunScope['resources'] | undefined {
-  const docs = parent?.docs?.length
-    ? (requested?.docs?.length ? assertScopeSubset(requested.docs, parent.docs, 'docs') : parent.docs)
-    : requested?.docs;
-  const paths = parent?.paths?.length
-    ? (requested?.paths?.length ? assertScopeSubset(requested.paths, parent.paths, 'paths') : parent.paths)
-    : requested?.paths;
-  return docs?.length || paths?.length ? { docs, paths } : undefined;
-}
-
-function scopedAllowedToolNames(allowedTools: readonly string[] | undefined, scope: AgentRunScope | undefined): string[] | undefined {
-  const scopeTools = agentToolNamesForActionKindScope(scope?.capabilities, allowedTools);
-  if (scope?.capabilities?.length) return scopeTools ?? [];
-  return allowedTools ? [...allowedTools] : undefined;
-}
-
-function remainingBudgetMs(run: DelegationRunState): number | null {
-  const deadlineAt = run.budget?.deadlineAt;
-  if (!deadlineAt) return null;
-  return Math.max(0, deadlineAt - Date.now());
-}
-
-function retryBudgetSlice(budget: AgentRunBudget | undefined): AgentRunBudget | undefined {
-  if (!budget) return undefined;
-  const next: AgentRunBudget = {};
-  if (budget.tokens) next.tokens = budget.tokens;
-  if (budget.wallClockMinutes) next.wallClockMinutes = budget.wallClockMinutes;
-  return next.tokens || next.wallClockMinutes ? next : undefined;
-}
-
-function formatRunBudgetForPrompt(budget: AgentRunBudget | undefined): string | null {
-  if (!budget) return null;
-  const lines: string[] = [];
-  if (budget.tokens) lines.push(`- token budget: ${budget.tokens}`);
-  if (budget.wallClockMinutes) lines.push(`- wall-clock budget: ${budget.wallClockMinutes} minutes`);
-  return lines.length ? lines.join('\n') : null;
-}
-
-function formatRunScopeForPrompt(scope: AgentRunScope | undefined): string | null {
-  if (!scope) return null;
-  const lines: string[] = [];
-  if (scope.capabilities?.length) lines.push(`- capabilities: ${scope.capabilities.join(', ')}`);
-  if (scope.resources?.docs?.length) lines.push(`- docs: ${scope.resources.docs.join(', ')}`);
-  if (scope.resources?.paths?.length) lines.push(`- paths: ${scope.resources.paths.join(', ')}`);
-  return lines.length ? lines.join('\n') : null;
-}
-
-function parseVerifierVerdict(text: string): { verdict: 'pass' | 'fail'; gap: string } {
-  const trimmed = text.trim();
-  const jsonMatch = /\{[\s\S]*\}/.exec(trimmed);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]) as unknown;
-      if (isPlainRecord(parsed)) {
-        const verdict = coerceString(parsed.verdict)?.trim().toLowerCase();
-        const gap = coerceString(parsed.gap)?.trim() ?? '';
-        if (verdict === 'pass') return { verdict: 'pass', gap };
-        if (verdict === 'fail') return { verdict: 'fail', gap };
-      }
-    } catch {
-      // Fall through to the text heuristic.
-    }
-  }
-  if (/\bverdict\s*[:=]\s*pass\b/i.test(trimmed) || /"verdict"\s*:\s*"pass"/i.test(trimmed)) {
-    return { verdict: 'pass', gap: '' };
-  }
-  const gap = trimmed || 'Verifier did not return a parseable pass verdict.';
-  return { verdict: 'fail', gap: truncate(gap, 1_000) };
-}
-
-function verifierGapSignature(gap: string): string {
-  return gap.toLowerCase().replace(/\s+/g, ' ').replace(/[^\p{L}\p{N} ]/gu, '').trim().slice(0, 240) || 'unknown-gap';
-}
-
-function sameTailCount(values: readonly string[], value: string): number {
-  let count = 0;
-  for (let index = values.length - 1; index >= 0 && values[index] === value; index -= 1) {
-    count += 1;
-  }
-  return count;
+function normalizeRequestedRunProfile(value: unknown): AgentRunProfileId | undefined {
+  if (value === undefined) return undefined;
+  const profileId = coerceString(value)?.trim();
+  if (!profileId) return undefined;
+  if (!isRunProfileId(profileId)) throw new Error(`Unknown runProfile: ${profileId}`);
+  const profile = resolveRunProfile(profileId);
+  if (profile.modelSelectable !== true) throw new Error(`Run profile is not model-selectable: ${profile.id}`);
+  return profile.id;
 }
 
 function normalizeAmendParams(raw: unknown): { runId: string; changes: { objective?: string; criteria?: string[]; budget?: AgentRunBudget } } {
   if (!isPlainRecord(raw)) throw new Error('run_amend input must be an object.');
-  const runId = coerceString(raw.runId)?.trim() || coerceString(raw.agent_id)?.trim();
+  const runId = coerceString(raw.runId)?.trim();
   if (!runId) throw new Error('run_amend input requires runId.');
   if (!isPlainRecord(raw.changes)) throw new Error('run_amend input requires changes.');
   const objective = coerceString(raw.changes.objective)?.trim();
@@ -2878,22 +2390,22 @@ function coerceStringArray(value: unknown): string[] | undefined {
     .filter(Boolean);
 }
 
-function normalizeRunSelector(raw: unknown): { agent_id?: string; name?: string; wait?: boolean; timeout_ms?: number } {
+function normalizeRunSelector(raw: unknown): { runId?: string; name?: string; wait?: boolean; timeout_ms?: number } {
   if (!isPlainRecord(raw)) return {};
   return {
-    agent_id: coerceString(raw.runId) ?? coerceString(raw.agent_id),
+    runId: coerceString(raw.runId),
     name: coerceString(raw.name),
     wait: raw.wait === true,
     timeout_ms: parsePositiveInteger(raw.timeout_ms),
   };
 }
 
-function normalizeSendParams(raw: unknown): { agent_id?: string; name?: string; message: string } {
+function normalizeSendParams(raw: unknown): { runId?: string; name?: string; message: string } {
   if (!isPlainRecord(raw)) throw new Error('run_steer input must be an object.');
   const message = coerceString(raw.message)?.trim();
   if (!message) throw new Error('run_steer input requires message.');
   return {
-    agent_id: coerceString(raw.runId) ?? coerceString(raw.agent_id),
+    runId: coerceString(raw.runId),
     name: coerceString(raw.name),
     message,
   };
@@ -2944,7 +2456,7 @@ function parsePersistedAgentListingStateLine(line: string): { name: string; iden
 
 function parseLiveAgentListing(text: string): string[] {
   const body = unwrapSystemReminder(text);
-  if (!body.includes(`You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} forks`)) {
+  if (!body.includes(`You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} creates`)) {
     return [];
   }
   return body
@@ -2978,6 +2490,67 @@ function waitWithTimeout(promise: Promise<unknown>, timeoutMs: number): Promise<
       resolve();
     });
   });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function detachedChildRunSummaryKey(children: readonly DelegationRunState[]): string {
+  return children
+    .map((child) => [
+      child.id,
+      child.status,
+      child.objectiveStatus ?? '',
+      child.updatedAt,
+      child.latestSubmission?.seq ?? '',
+    ].join(':'))
+    .join('|');
+}
+
+function isDetachedChildReadyForParentSummary(child: DelegationRunState): boolean {
+  if (child.status === 'running') return false;
+  if (child.status === 'failed' || child.status === 'cancelled') return true;
+  if (!child.verify) return true;
+  switch (child.objectiveStatus) {
+    case 'verified':
+    case 'blocked':
+    case 'budget_exhausted':
+    case 'stopped':
+      return true;
+    case 'active':
+    case 'verifying':
+      return false;
+    default:
+      return child.status !== 'completed';
+  }
+}
+
+function isSupersededDetachedChildAttempt(child: DelegationRunState): boolean {
+  return child.objectiveStatus === 'blocked'
+    && /\breplacement run \S+ started\b/.test(child.blockedReason ?? '');
+}
+
+function buildDetachedChildRunCompletionPrompt(children: readonly DelegationRunState[]): string {
+  const childResults = children.map((child) => ({
+    runId: child.id,
+    name: child.name,
+    description: child.description,
+    objective: child.objective,
+    status: child.status,
+    objective_status: child.objectiveStatus,
+    result: latestRunSubmissionSummary(child) ?? child.result ?? null,
+    error: child.error ?? null,
+  }));
+  return [
+    'Detached sub-runs launched by this Run have now reached their parent-summary state.',
+    'Use their results below to continue the original Run objective.',
+    'Do not report only that sub-runs were started. Produce the final parent Run result, or explain the blocker if any sub-run failed or returned no usable result.',
+    '',
+    '<detached-sub-run-results>',
+    JSON.stringify(childResults, null, 2),
+    '</detached-sub-run-results>',
+  ].join('\n');
 }
 
 function normalizeAgentName(name: string): string {

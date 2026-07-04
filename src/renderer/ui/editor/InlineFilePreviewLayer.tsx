@@ -19,8 +19,8 @@ import {
 // ancestor is in the live transcript. That marker is set ONCE per live transcript
 // message frame (user or assistant), so user attachment chips, answer prose, interim
 // narration, and file_write/file_edit result chips all open in the workspace reader,
-// while the same components on meta surfaces (compaction/child-run summaries, the
-// child-run details + PoV inspector panels) have no such ancestor and keep the normal
+// while the same components on meta surfaces (compaction/sub-run summaries, the
+// Run details + PoV inspector panels) have no such ancestor and keep the normal
 // workspace preview. An outliner file reference is a node-model field, never under
 // this marker, so it too keeps its workspace preview behavior.
 const TRANSCRIPT_CHIP_CONTAINER_SELECTOR = '[data-agent-transcript-chips]';

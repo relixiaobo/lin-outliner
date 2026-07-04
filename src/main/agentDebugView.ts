@@ -35,9 +35,8 @@ interface DerivedRunContext {
   meta: AgentRunMetaProjection;
   snapshot?: AgentDebugRunSnapshot | null;
   /**
-   * The parent tool call this run answers, read from the PARENT stream's
-   * `child_run.started`. It is never in the child's own ledger, so the caller
-   * (which holds both streams) supplies it; null for top-level runs.
+   * The parent tool call this run answers, read from Run metadata. It is never
+   * in the child's own ledger; null marks top-level runs.
    */
   parentToolCallId?: string | null;
 }
@@ -46,7 +45,7 @@ export function deriveDebugRounds(events: readonly AgentEvent[]): AgentDebugRoun
   const rounds: AgentDebugRound[] = [];
   let pendingWindow: AgentDebugMessageRow[] = [];
   let current: AgentDebugRound | null = null;
-  // Rounds begin only after the run's OWN `run.started`. A child run's ledger
+  // Rounds begin only after the run's OWN `run.started`. A sub-run's ledger
   // opens with the fork prefix (the inherited transcript), whose assistant
   // messages emit `assistant_message.started` BEFORE `run.started` — those are
   // context, not provider rounds, so we fold them into the first round's window.
@@ -167,7 +166,7 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
     runId: meta.id,
     agentId: meta.agentId,
     kind: deriveAgentRunKind(meta),
-    status: runStatus(meta.status),
+    status: runStatus(meta.execution.status),
     parentRunId: meta.parentRunId ?? null,
     parentToolCallId: context.parentToolCallId ?? null,
     provider: lastRound?.provider ?? null,
@@ -175,7 +174,7 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
     // `meta.usage` is only written when a run terminates; while it streams, roll
     // up the rounds' own usage so the summary/totals stay live (and never lag the
     // per-round detail the user can already see).
-    usage: usageToDebugUsage(meta.usage) ?? aggregateRoundUsage(rounds),
+    usage: usageToDebugUsage(meta.execution.usage) ?? aggregateRoundUsage(rounds),
     createdAt: meta.createdAt,
     systemPrompt: snapshot?.systemPrompt ?? null,
     tools: snapshot?.tools ?? [],
@@ -243,12 +242,12 @@ export function summarizeRunStream(
     runId: meta.id,
     agentId: meta.agentId,
     kind: deriveAgentRunKind(meta),
-    status: runStatus(meta.status),
+    status: runStatus(meta.execution.status),
     parentRunId: meta.parentRunId ?? null,
     parentToolCallId,
     provider,
     modelId,
-    usage: usageToDebugUsage(meta.usage) ?? sumUsages(roundUsages),
+    usage: usageToDebugUsage(meta.execution.usage) ?? sumUsages(roundUsages),
     createdAt: meta.createdAt,
     roundCount,
   };

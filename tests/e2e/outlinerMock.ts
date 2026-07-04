@@ -551,8 +551,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
     ];
     const debugUsage = debugUsageFixture;
-    // Replayed transcript for the delegated run's own ledger — served whole by
-    // `agent_child_run_transcript` (the payload-pinned snapshot is gone).
+    // Replayed transcript for the delegated run's own ledger, served whole by
+    // `agent_run_transcript` (the payload-pinned snapshot is gone).
     const childRunTranscriptMessages = [
         {
           role: 'user',
@@ -590,7 +590,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           toolCallId: 'child-run-tool-read-1',
           toolName: 'node_read',
           timestamp: now - 300,
-          content: [{ type: 'text', text: 'Daily note content from child run.' }],
+          content: [{ type: 'text', text: 'Daily note content from the Run.' }],
           isError: false,
         },
         {
@@ -614,7 +614,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             },
           },
           stopReason: 'stop',
-          content: [{ type: 'text', text: 'The child run finished inspecting the UI.' }],
+          content: [{ type: 'text', text: 'The Run finished inspecting the UI.' }],
         },
       ];
     // Run Details fixture: the reply Details button opens this concrete run via
@@ -1746,8 +1746,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         errorMessage: null,
         rows,
         transcriptRows: rows,
-        childRunIds: [],
-        entities: { messages, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} },
+        runIds: [],
+        entities: { messages, runs: {}, compactions: {}, contextClears: {}, dreams: {} },
         streaming: null,
         dmStreaming: null,
       };
@@ -2141,54 +2141,106 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (payloadId === 'payload-full-output') return clone('Full persisted tool output from payload') as T;
           return clone(null) as T;
         }
-        if (cmd === 'agent_child_run_transcript') {
-          return clone(String(args.runId) === 'child-run-1'
-            || (String(args.runId) === 'child-run-source-e2e' && String(args.conversationId) === generalChannelId)
+        if (cmd === 'agent_run_detail') {
+          const runId = String(args.runId);
+          const requestedConversationId = args.conversationId === undefined ? '' : String(args.conversationId);
+          const runEntry = agentRuns.find((entry): entry is Record<string, any> => (
+            typeof entry === 'object'
+            && entry !== null
+            && String((entry as any).runId) === runId
+            && (!requestedConversationId || String((entry as any).conversationId) === requestedConversationId)
+          ));
+          const fixtureConversationId = runId === 'child-run-1' ? ASSISTANT_DM_ID : generalChannelId;
+          const conversationId = String(runEntry?.conversationId ?? fixtureConversationId);
+          return clone((!requestedConversationId || requestedConversationId === conversationId)
+            && (runEntry || runId === 'child-run-1' || runId === 'child-run-source-e2e')
+            ? {
+                runId,
+                conversationId,
+                agentId: String(runEntry?.agentId ?? 'built-in:tenon:assistant'),
+                kind: 'delegation',
+                title: String(runEntry?.title ?? 'Mock Run'),
+                status: runEntry?.status ?? 'completed',
+                runProfile: 'default',
+                runProfileLabel: 'Default',
+                context: 'full',
+                disposition: 'attended',
+                startedAt: Number(runEntry?.startedAt ?? 1),
+                updatedAt: Number(runEntry?.updatedAt ?? 2),
+                completedAt: runEntry?.completedAt ?? (runEntry?.status === 'running' ? undefined : 2),
+                ancestors: [],
+                subRuns: [],
+                verificationRuns: [],
+                transcriptMessageCount: childRunTranscriptMessages.length,
+              }
+            : null) as T;
+        }
+        if (cmd === 'agent_run_transcript') {
+          const runId = String(args.runId);
+          const requestedConversationId = args.conversationId === undefined ? '' : String(args.conversationId);
+          const runEntry = agentRuns.find((entry): entry is Record<string, any> => (
+            typeof entry === 'object'
+            && entry !== null
+            && String((entry as any).runId) === runId
+            && (!requestedConversationId || String((entry as any).conversationId) === requestedConversationId)
+          ));
+          const fixtureConversationId = runId === 'child-run-1' ? ASSISTANT_DM_ID : generalChannelId;
+          const conversationId = String(runEntry?.conversationId ?? fixtureConversationId);
+          return clone((runId === 'child-run-1' || runId === 'child-run-source-e2e')
+            && (!requestedConversationId || requestedConversationId === conversationId)
             ? { messages: childRunTranscriptMessages }
             : null) as T;
         }
         if (cmd === 'agent_run_conversation_id') {
           const runId = String(args.runId);
-          return clone(runId === 'child-run-1' || runId === 'child-run-source-e2e' ? generalChannelId : null) as T;
+          const runEntry = agentRuns.find((entry): entry is Record<string, any> => (
+            typeof entry === 'object'
+            && entry !== null
+            && String((entry as any).runId) === runId
+          ));
+          return clone(runEntry
+            ? String(runEntry.conversationId)
+            : runId === 'child-run-1'
+              ? ASSISTANT_DM_ID
+              : runId === 'child-run-source-e2e'
+                ? generalChannelId
+                : null) as T;
         }
-        if (cmd === 'agent_run_status' || cmd === 'agent_child_run_status') {
-          const runId = String(args.runId ?? args.agentId);
+        if (cmd === 'agent_run_status') {
+          const runId = String(args.runId);
           return clone({
             status: 'running',
-            agent_id: runId,
-            description: 'Inspect child run UI',
-            prompt: 'Inspect the current UI.',
-            agent_type: 'explorer',
-            context_mode: 'fork',
+            runId,
+            description: 'Inspect Run UI',
+            runProfile: 'default',
+            context_mode: 'brief',
             started_at: now - 500,
             updated_at: now,
             transcript_message_count: 4,
           }) as T;
         }
-        if (cmd === 'agent_run_steer' || cmd === 'agent_child_run_send') {
-          const runId = String(args.runId ?? args.agentId);
+        if (cmd === 'agent_run_steer') {
+          const runId = String(args.runId);
           return clone({
             status: 'queued',
-            agent_id: runId,
-            description: 'Inspect child run UI',
-            prompt: 'Inspect the current UI.',
-            agent_type: 'explorer',
-            context_mode: 'fork',
+            runId,
+            description: 'Inspect Run UI',
+            runProfile: 'default',
+            context_mode: 'brief',
             started_at: now - 500,
             updated_at: now,
             transcript_message_count: 4,
             instructions: 'Message queued for the running background agent.',
           }) as T;
         }
-        if (cmd === 'agent_run_stop' || cmd === 'agent_child_run_stop') {
-          const runId = String(args.runId ?? args.agentId);
+        if (cmd === 'agent_run_stop') {
+          const runId = String(args.runId);
           return clone({
             status: 'cancelled',
-            agent_id: runId,
-            description: 'Inspect child run UI',
-            prompt: 'Inspect the current UI.',
-            agent_type: 'explorer',
-            context_mode: 'fork',
+            runId,
+            description: 'Inspect Run UI',
+            runProfile: 'default',
+            context_mode: 'brief',
             started_at: now - 500,
             updated_at: now,
             completed_at: now,
@@ -3276,14 +3328,41 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
   const childRuns = Array.isArray(rawChildRuns)
     ? Object.fromEntries(rawChildRuns.map((childRun: any) => [childRun.id, childRun]))
     : rawChildRuns;
-  const childRunIds = state.childRunIds
-    ?? (Array.isArray(rawChildRuns) ? rawChildRuns.map((childRun: any) => childRun.id) : Object.keys(childRuns));
+  const contextPolicyForRun = (run: any) => {
+    const context = run.context ?? run.contextMode;
+    return context === 'brief' || context === 'none' || context === 'full' ? context : 'full';
+  };
+  const runEntities = Object.fromEntries(Object.values(childRuns).map((childRun: any) => {
+    const agentId = childRun.executingAgentId ?? 'built-in:tenon:assistant';
+    return [childRun.id, {
+      id: childRun.id,
+      agentId,
+      anchor: { type: 'conversation', agentId, conversationId },
+      conversationId,
+      title: (childRun.objective ?? childRun.description ?? '').trim() || childRun.id,
+      parentRunId: childRun.parentRunId,
+      parentToolCallId: childRun.parentToolCallId,
+      runProfile: childRun.runProfile ?? 'default',
+      runProfileLabel: childRun.runProfileLabel ?? 'Default',
+      status: childRun.status,
+      objectiveStatus: childRun.objectiveStatus,
+      objectiveRole: childRun.objectiveRole,
+      context: contextPolicyForRun(childRun),
+      startedAt: childRun.startedAt,
+      updatedAt: childRun.updatedAt,
+      completedAt: childRun.completedAt,
+    }];
+  }));
+  const runIds = state.runIds
+    ?? (Array.isArray(rawChildRuns) ? rawChildRuns.map((childRun: any) => childRun.id) : Object.keys(runEntities));
   const runListEntries = Object.values(childRuns).map((childRun: any) => ({
     runId: childRun.id,
     conversationId,
     conversationTitle: state.conversationTitle ?? 'General',
     agentId: childRun.executingAgentId ?? 'built-in:tenon:assistant',
     kind: 'delegation',
+    runProfile: childRun.runProfile ?? 'default',
+    runProfileLabel: childRun.runProfileLabel ?? 'Default',
     status: childRun.status,
     objectiveStatus: childRun.objectiveStatus,
     purpose: childRun.purpose,
@@ -3421,31 +3500,6 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     };
   }
 
-  // Mirror the core projection's insertChildRunRows: the full transcript carries
-  // an inline boundary row per child run (the active `rows` stays clean). A
-  // parented run anchors after its tool_result row, else after the assistant
-  // message that issued the call; a parentless run is ordered by start time.
-  const messageHasToolCall = (entity: any, toolCallId: string) =>
-    !!entity?.content?.some((block: any) => block.type === 'toolCall' && block.id === toolCallId);
-  const childRunInsertIndex = (currentRows: typeof rows, run: any) => {
-    if (run.parentToolCallId) {
-      const resultIndex = currentRows.findIndex(
-        (row) => row.kind === 'tool_result' && entities[row.messageId ?? '']?.toolCallId === run.parentToolCallId,
-      );
-      if (resultIndex >= 0) return resultIndex + 1;
-      const callIndex = currentRows.findIndex(
-        (row) => row.kind === 'message' && messageHasToolCall(entities[row.messageId ?? ''], run.parentToolCallId),
-      );
-      return callIndex >= 0 ? callIndex + 1 : -1;
-    }
-    let index = -1;
-    for (let position = 0; position < currentRows.length; position += 1) {
-      const messageId = currentRows[position]!.messageId;
-      const message = messageId ? entities[messageId] : undefined;
-      if (message && message.createdAt <= run.startedAt) index = position;
-    }
-    return index < 0 ? -1 : index + 1;
-  };
   const projectionMembers = state.members ?? [
     { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
     {
@@ -3467,31 +3521,11 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
   );
   if (activeRunId) activeRunIds.add(activeRunId);
 
-  const childRunRows = [...rows];
-  const orderedRuns = Object.values(childRuns).sort(
-    (left: any, right: any) => left.startedAt - right.startedAt || String(left.id).localeCompare(String(right.id)),
-  );
-  for (const run of orderedRuns as any[]) {
-    // Mirror insertChildRunRows: a DM child run spawned by a tool
-    // call folds into its spawning turn's process (the tool-call row renders it
-    // inline), so it gets NO conversation-level boundary row. The boundary stays for
-    // a Channel turn and a parentless command fire.
-    if (!projectionChannel && run.parentToolCallId) continue;
-    if (projectionChannel && run.parentRunId && activeRunIds.has(run.parentRunId)) continue;
-    const row = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
-    const insertAt = childRunInsertIndex(childRunRows, run);
-    if (insertAt < 0) childRunRows.push(row);
-    else childRunRows.splice(insertAt, 0, row);
-  }
   const projectionChannelActivity = state.channelActivityEntries ?? state.activityEntries ?? [];
-  const transcriptRows = state.transcriptRows ?? childRunRows;
+  const transcriptRows = (state.transcriptRows ?? rows).filter((row: any) => row.kind !== 'child-run');
   const projectedTranscriptRows = projectionChannel && activeRunIds.size > 0
     ? transcriptRows.filter((row) => {
         if (row.kind === 'message') return !activeRunIds.has(entities[row.messageId ?? '']?.runId);
-        if (row.kind === 'child-run') {
-          const run = childRuns[row.childRunId ?? ''];
-          return !(run?.parentRunId && activeRunIds.has(run.parentRunId));
-        }
         return true;
       })
     : transcriptRows;
@@ -3524,8 +3558,8 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       errorMessage: state.errorMessage ?? null,
       rows,
       transcriptRows: projectedTranscriptRows,
-      childRunIds,
-      entities: { messages: entities, childRuns, compactions, contextClears: {}, dreams: {} },
+      runIds,
+      entities: { messages: entities, runs: runEntities, compactions, contextClears: {}, dreams: {} },
       streaming: projectionChannel ? null : streaming,
       dmStreaming: projectionChannel ? null : streaming,
     },

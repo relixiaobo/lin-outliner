@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentToolResultPayloadPart, AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import { basenameForPath } from '../../../core/referenceMarkup';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
@@ -28,6 +28,7 @@ import {
 } from './AgentInlineReferenceText';
 import { PlainReadOnlyCodeBlock, ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
 import { AgentToolCallDisclosure } from './AgentToolCallDisclosure';
+import { displayRunStatus } from './AgentRunRow';
 import { getToolIcon } from './agentToolPresentation';
 
 interface AgentToolCallBlockProps {
@@ -36,11 +37,11 @@ interface AgentToolCallBlockProps {
   index?: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onToggle?: (anchorElement?: HTMLElement | null) => void;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   result?: AgentToolResultWithPayloads;
   conversationId?: string | null;
-  childRun?: AgentRenderChildRunEntity;
+  subRun?: AgentRenderRunEntity;
   toolCall: ToolCall;
   outcome?: AgentToolCallOutcome;
   turnActive?: boolean;
@@ -144,13 +145,13 @@ function firstQuestionSubject(args: Record<string, unknown>): string | null {
 
 export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels: ToolCallLabels): string {
   const verbs = labels.verbs;
-  if (toolCall.name === 'Agent' || toolCall.name === 'spawn') {
-    const subject = pickSubject(toolCall.arguments, 'description', 'objective', 'agent_type');
+  if (toolCall.name === 'spawn_run') {
+    const subject = pickSubject(toolCall.arguments, 'description', 'objective', 'runProfile');
     return withSubject(verbByStatus(verbs.runChildAgent, status, labels), subject, labels);
   }
-  if (toolCall.name === 'AgentStatus' || toolCall.name === 'run_status') return verbByStatus(verbs.checkChildAgent, status, labels);
-  if (toolCall.name === 'AgentSend' || toolCall.name === 'run_steer') return verbByStatus(verbs.messageChildAgent, status, labels);
-  if (toolCall.name === 'AgentStop' || toolCall.name === 'run_stop') return verbByStatus(verbs.stopChildRun, status, labels);
+  if (toolCall.name === 'run_status') return verbByStatus(verbs.checkChildAgent, status, labels);
+  if (toolCall.name === 'run_steer') return verbByStatus(verbs.messageChildAgent, status, labels);
+  if (toolCall.name === 'run_stop') return verbByStatus(verbs.stopChildRun, status, labels);
   if (toolCall.name === 'run_amend') return verbByStatus(verbs.messageChildAgent, status, labels);
   const args = toolCall.arguments;
   if (toolCall.name === 'recall') {
@@ -241,20 +242,17 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
 }
 
 function isRunControlTool(toolName: string): boolean {
-  return toolName === 'Agent'
-    || toolName === 'AgentStatus'
-    || toolName === 'AgentSend'
-    || toolName === 'AgentStop'
-    || toolName === 'spawn'
+  return toolName === 'spawn_run'
     || toolName === 'run_status'
     || toolName === 'run_steer'
     || toolName === 'run_amend'
     || toolName === 'run_stop';
 }
 
-export function childRunToolStatus(childRun: AgentRenderChildRunEntity): ToolStatus {
-  if (childRun.status === 'running') return 'pending';
-  if (childRun.status === 'failed' || childRun.status === 'stopped') return 'error';
+export function runToolStatus(run: AgentRenderRunEntity): ToolStatus {
+  const status = displayRunStatus(run);
+  if (status === 'running' || status === 'active' || status === 'verifying') return 'pending';
+  if (status === 'failed' || status === 'stopped' || status === 'blocked' || status === 'budget_exhausted') return 'error';
   return 'done';
 }
 
@@ -393,10 +391,10 @@ function num(value: unknown): number {
 function ToolResultFileChip({ output }: { output: FileToolOutput }) {
   return (
     // Whether this chip opens in the workspace file-only reader (live transcript) or
-    // the normal workspace preview pane (child-run details panel) is decided by location, not here: the
+    // the normal workspace preview pane (Run details panel) is decided by location, not here: the
     // app-wide inline-file layer routes by a `[data-agent-transcript-chips]` ancestor,
     // which the live transcript message frame sets once (see AgentMessageFrame). In
-    // the child-run-details panel this same block has no such ancestor, so its result
+    // the Run details panel this same block has no such ancestor, so its result
     // chips keep the workspace preview — matching every other meta surface.
     <div className="agent-tool-file-output">
       <InlineFileReference
@@ -719,18 +717,18 @@ export function AgentToolCallBlock({
   index,
   onNodeReferenceOpen,
   onToggle,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   pendingToolCallIds,
   result,
   conversationId,
-  childRun,
+  subRun,
   toolCall,
   outcome,
   turnActive,
 }: AgentToolCallBlockProps) {
   const t = useT();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
-  const status = childRun ? childRunToolStatus(childRun) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive, outcome);
+  const status = subRun ? runToolStatus(subRun) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive, outcome);
   // Per-step glyph by exception (Codex machine A): a running spinner, a red ✕ on a
   // confirmed failure, otherwise the plain tool-type icon. A successful `done` step
   // gets NO green check — the past-tense verb ("Fetched web …") already reads as
@@ -756,10 +754,10 @@ export function AgentToolCallBlock({
     () => (fileOutput ? [] : resultParts(result, isExpanded)),
     [fileOutput, result, isExpanded],
   );
-  const canOpenChildRunTranscript = Boolean(childRun && onOpenChildRunTranscript);
+  const canOpenRunTranscript = Boolean(subRun && onOpenRunTranscript);
   const hasDetails = fileOutput
-    ? fileOutput.diff.length > 0 || Boolean(childRun)
-    : inputText !== '{}' || outputText.length > 0 || Boolean(childRun);
+    ? fileOutput.diff.length > 0 || Boolean(subRun)
+    : inputText !== '{}' || outputText.length > 0 || Boolean(subRun);
   const hasOutputDetails = outputText.length > 0;
   const loadedSkillDetails = getLoadedSkillDetails(toolCall, result);
 
@@ -788,22 +786,22 @@ export function AgentToolCallBlock({
       statusIconClassName={status === 'pending' ? 'agent-tool-call-spinner' : undefined}
       summary={summarizeToolCall(toolCall, status, t.agent.toolCall)}
     >
-      {childRun ? (
+      {subRun ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">{t.agent.childRun.heading}</div>
+            <div className="agent-tool-call-section-title">{t.agent.runTool.heading}</div>
           </div>
-          <div className="agent-child-run-inline-actions">
+          <div className="agent-run-inline-actions">
             <Button
-              disabled={!canOpenChildRunTranscript}
-              onClick={() => onOpenChildRunTranscript?.(childRun.id)}
+              disabled={!canOpenRunTranscript}
+              onClick={() => onOpenRunTranscript?.(subRun.id)}
               size="sm"
               variant="ghost"
             >
               <FileTextIcon size={ICON_SIZE.menu} />
-              <span>{t.agent.childRun.viewTranscript}</span>
+              <span>{t.agent.runTool.viewTranscript}</span>
             </Button>
-            <ToolCopyButton ariaLabel={t.agent.childRun.copyId} text={childRun.id} />
+            <ToolCopyButton ariaLabel={t.agent.runTool.copyId} text={subRun.id} />
           </div>
         </section>
       ) : null}

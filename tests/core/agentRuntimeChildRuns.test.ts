@@ -18,8 +18,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
-import { AgentEventStore } from '../../src/main/agentEventStore';
-import { getAgentEventActivePath, type AgentEvent } from '../../src/core/agentEventLog';
+import { AgentEventStore, type AgentRunMetaProjection } from '../../src/main/agentEventStore';
+import { getAgentEventActivePath } from '../../src/core/agentEventLog';
+import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const EMPTY_USAGE: Usage = {
@@ -91,6 +92,29 @@ function createWindowSink() {
 
 function latestProjection(events: AgentRuntimeEvent[]) {
   return [...events].reverse().find((event) => event.type === 'projection')?.renderProjection ?? null;
+}
+
+function projectedRunId(projection: AgentRenderProjection | null | undefined, parentToolCallId?: string) {
+  if (!projection) return undefined;
+  if (!parentToolCallId) return projection.runIds[0];
+  return projection.runIds.find((id) => projection.entities.runs[id]?.parentToolCallId === parentToolCallId);
+}
+
+function projectedRun(projection: AgentRenderProjection | null | undefined, parentToolCallId?: string) {
+  const runId = projectedRunId(projection, parentToolCallId);
+  return runId ? projection?.entities.runs[runId] : undefined;
+}
+
+async function conversationRunMetas(dataRoot: string, conversationId: string) {
+  return new AgentEventStore(dataRoot).listConversationRunMetaProjections(conversationId);
+}
+
+function workerRunsWithObjective(metas: readonly AgentRunMetaProjection[], objective: string) {
+  return metas.filter((run) => run.objective?.role === 'worker' && run.objective.text.startsWith(objective));
+}
+
+function verifierRun(metas: readonly AgentRunMetaProjection[]) {
+  return metas.find((run) => run.objective?.role === 'verifier');
 }
 
 async function flushProjectionCoalescing() {
@@ -223,6 +247,22 @@ function textFromContext(context: Context): string {
   });
 }
 
+function lastContextMessageText(context: Context): string {
+  const messages = context.messages ?? [];
+  const last = messages[messages.length - 1] as { content?: unknown } | undefined;
+  const content = last?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => (
+      part && typeof part === 'object' && 'type' in part && part.type === 'text' && 'text' in part && typeof part.text === 'string'
+        ? part.text
+        : ''
+    ))
+    .filter(Boolean)
+    .join('\n');
+}
+
 describe('agent runtime childRuns', () => {
   let roots: string[] = [];
 
@@ -234,16 +274,67 @@ describe('agent runtime childRuns', () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  test('a fork sub-run (no agent_type) leaves its gated approval unattributed', async () => {
+  test('submits completed turn run final assistant text as the canonical result', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-result-fallback-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-result-fallback-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('Final visible result.'))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(conversation.conversationId, 'Answer directly.');
+
+    const metas = await conversationRunMetas(dataRoot, conversation.conversationId);
+    const rootRun = metas.find((run) => !run.parentRunId);
+    expect(rootRun).toBeDefined();
+    expect(typeof rootRun?.objective?.latestSubmissionSeq).toBe('number');
+    const ledgerEvents = await new AgentEventStore(dataRoot).readRunStreamEvents(rootRun!.id);
+    const submissionIndex = ledgerEvents.findIndex((event) => event.type === 'run.result.submitted');
+    const terminalIndex = ledgerEvents.findIndex((event) => event.type === 'run.completed');
+    expect(submissionIndex).toBeGreaterThanOrEqual(0);
+    expect(terminalIndex).toBeGreaterThan(submissionIndex);
+    expect(ledgerEvents[submissionIndex]).toMatchObject({
+      type: 'run.result.submitted',
+      seq: rootRun?.objective?.latestSubmissionSeq,
+      summary: 'Final visible result.',
+      source: 'final_assistant_message',
+    });
+    const detail = await runtime.agentRunDetail(rootRun!.id, conversation.conversationId);
+    expect(detail).toMatchObject({
+      title: 'Answer directly.',
+      result: {
+        summary: 'Final visible result.',
+        source: 'final_assistant_message',
+      },
+    });
+  });
+
+  test('a default sub-run leaves its gated approval unattributed', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-fork-attribution-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-fork-attribution-data-'));
     roots.push(localRoot, dataRoot);
 
     const script = scriptedStream(
       [
-        // Parent forks its OWN context (no agent_type) — the fork runs AS the parent agent.
+        // Parent creates a same-agent sub-run; the sub-run runs AS the parent agent.
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'fork to inspect config',
             objective: 'Inspect the local config.',
             verify: false,
@@ -306,7 +397,7 @@ describe('agent runtime childRuns', () => {
     expect(attributions).toEqual([undefined]);
   });
 
-  test('omitting agent_type creates a fork with parent context and placeholder tool results', async () => {
+  test('spawn_run creates a same-agent sub-run with parent context and placeholder tool results', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-data-'));
     roots.push(localRoot, dataRoot);
@@ -315,7 +406,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'fork check',
             objective: 'Inspect inherited context.',
             verify: false,
@@ -370,11 +461,11 @@ describe('agent runtime childRuns', () => {
       }
       if (text.includes('Spawn a fork') && !text.includes('tool-agent-fork-owner')) {
         return fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'fork owned by Neva',
             objective: 'Do the fork work.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'fork-owner',
           }, { id: 'tool-agent-fork-owner' }),
         ], { stopReason: 'toolUse' });
@@ -397,17 +488,79 @@ describe('agent runtime childRuns', () => {
 
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a fork for this.', sink);
-    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+    const projection = latestProjection(sink.events);
+    const childRunId = projectedRunId(projection, 'tool-agent-fork-owner')!;
     expect(childRunId).toBeDefined();
-
-    const data = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    // A fork runs AS Neva: it inherits the parent's executing + memory-owner identity, and its
-    // recorded agent type is the fork pseudo-agent — never a second, separately-owned agent.
-    expect(data).toMatchObject({
-      memory_owner_agent_id: 'built-in:tenon:assistant',
-      executing_agent_id: 'built-in:tenon:assistant',
-      agent_type: 'fork',
+    expect(projection?.runIds).toContain(childRunId);
+    expect(projection?.entities.runs[childRunId]).toMatchObject({
+      id: childRunId,
+      parentToolCallId: 'tool-agent-fork-owner',
+      runProfile: 'default',
+      runProfileLabel: 'Default',
+      title: 'Do the fork work.',
     });
+
+    const data = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
+    // A sub-run runs AS Neva and exposes Run identity, not a second agent persona.
+    expect(data).toMatchObject({
+      runId: childRunId,
+      runProfile: 'default',
+    });
+  });
+
+  test('spawn_run accepts a model-selectable runProfile and persists the resolved profile', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-profile-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-profile-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'research run',
+            objective: 'Collect sources.',
+            criteria: ['Sources are summarized.'],
+            runProfile: 'research',
+            verify: false,
+          }, { id: 'tool-run-profile' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Research result.')),
+        fauxAssistantMessage(fauxText('Parent final.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a research run.', sink);
+
+    const projection = latestProjection(sink.events);
+    const childRunId = projectedRunId(projection, 'tool-run-profile')!;
+    expect(projection?.entities.runs[childRunId]).toMatchObject({
+      runProfile: 'research',
+      runProfileLabel: 'Research',
+      title: 'Collect sources.',
+    });
+
+    const metas = await conversationRunMetas(dataRoot, conversation.conversationId);
+    const worker = workerRunsWithObjective(metas, 'Collect sources.')[0];
+    expect(worker).toMatchObject({
+      runProfile: 'research',
+    });
+    const detail = worker ? await runtime.agentRunDetail(worker.id, conversation.conversationId) : null;
+    expect(detail?.title).toBe('Collect sources.');
   });
 
   test('slims large child run tool outputs before the child continues', async () => {
@@ -419,7 +572,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'large output',
             objective: 'Run a large-output tool call, then continue.',
             verify: false,
@@ -481,7 +634,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'compact sidechain',
             objective: 'Run large tool output, then continue after compaction.',
             verify: false,
@@ -560,7 +713,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'reactive compact',
             objective: 'Run until a context error, then recover.',
             verify: false,
@@ -626,7 +779,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'verified child',
             objective: 'Produce a verified child result.',
             criteria: ['The final result must include the phrase verified result.'],
@@ -678,15 +831,45 @@ describe('agent runtime childRuns', () => {
     expect(verifierContexts.join('\n')).toContain('File changes');
     expect(verifierContexts.join('\n')).toContain('verified-child.txt');
     expect(verifierContexts.join('\n')).toContain('Tool trace');
-    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    const childRuns = Object.values(replay.childRuns);
-    const workers = childRuns.filter((run) => run.description === 'verified child');
-    const verifier = childRuns.find((run) => run.purpose === 'verify');
+    const runMetas = await conversationRunMetas(dataRoot, conversation.conversationId);
+    const workers = workerRunsWithObjective(runMetas, 'Produce a verified child result.');
+    const verifier = verifierRun(runMetas);
     expect(workers).toHaveLength(2);
-    expect(workers[0]?.objectiveStatus).toBe('blocked');
-    expect(workers[1]?.objectiveStatus).toBe('verified');
-    expect(workers[1]?.result).toBe('verified result');
-    expect(verifier?.contextMode).toBe('none');
+    expect(workers[0]?.objective?.status).toBe('blocked');
+    expect(workers[1]?.objective?.status).toBe('verified');
+    expect(verifier?.context).toBe('none');
+    const verifierMeta = verifier ? await new AgentEventStore(dataRoot).readRunMetaProjection(verifier.id) : null;
+    expect(verifierMeta).toMatchObject({
+      context: 'none',
+      runProfile: 'verify',
+      objective: { role: 'verifier' },
+    });
+    const verifiedWorker = workers[1];
+    expect(verifiedWorker).toBeDefined();
+    const detail = verifiedWorker ? await runtime.agentRunDetail(verifiedWorker.id, conversation.conversationId) : null;
+    expect(detail).toMatchObject({
+      runId: verifiedWorker?.id,
+      conversationId: conversation.conversationId,
+      status: 'completed',
+      objectiveStatus: 'verified',
+      objectiveRole: 'worker',
+      runProfile: 'default',
+      result: {
+        summary: 'verified result',
+        source: 'final_assistant_message',
+      },
+    });
+    expect(detail?.title).toContain('Produce a verified child result.');
+    expect(typeof detail?.transcriptMessageCount).toBe('number');
+    const verifierDetail = detail?.verificationRuns.find((run) => run.runProfile === 'verify');
+    expect(verifierDetail).toMatchObject({
+      objectiveRole: 'verifier',
+      runProfile: 'verify',
+      runProfileLabel: 'Verify',
+    });
+    await expect(runtime.agentRunDetail(verifiedWorker!.id, 'wrong-conversation')).resolves.toBeNull();
+    const transcript = await runtime.agentRunTranscript(conversation.conversationId, verifiedWorker!.id);
+    expect(transcript?.latestSubmission?.summary).toBe('verified result');
   });
 
   test('settles a failed verified worker budget before spawning its replacement', async () => {
@@ -698,7 +881,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'budget verifier parent',
             objective: 'Supervise one exact-budget verified child.',
             verify: false,
@@ -706,7 +889,7 @@ describe('agent runtime childRuns', () => {
           }, { id: 'tool-agent-budget-verifier-parent' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'budget verified child',
             objective: 'Produce a verified child result within the exact parent token slice.',
             criteria: ['The final result must include the phrase verified result.'],
@@ -748,13 +931,16 @@ describe('agent runtime childRuns', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(replacementContexts.join('\n')).toContain('missing required phrase');
-    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    const workers = Object.values(replay.childRuns).filter((run) => run.description === 'budget verified child');
+    const workers = workerRunsWithObjective(
+      await conversationRunMetas(dataRoot, conversation.conversationId),
+      'Produce a verified child result within the exact parent token slice.',
+    );
     expect(workers).toHaveLength(2);
-    expect(workers[0]?.objectiveStatus).toBe('blocked');
-    expect(workers[1]?.objectiveStatus).toBe('verified');
-    expect(workers[1]?.result).toBe('verified result');
-    const failedWorkerStatus = await runtime.childRunStatus(conversation.conversationId, workers[0]!.id, { wait: true });
+    expect(workers[0]?.objective?.status).toBe('blocked');
+    expect(workers[1]?.objective?.status).toBe('verified');
+    const replacementDetail = await runtime.agentRunDetail(workers[1]!.id, conversation.conversationId);
+    expect(replacementDetail?.result?.summary).toBe('verified result');
+    const failedWorkerStatus = await runtime.runStatus(conversation.conversationId, workers[0]!.id, { wait: true });
     expect(failedWorkerStatus.latest_verifier_gap).toBe('missing required phrase');
   });
 
@@ -773,7 +959,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'budgeted verified child',
             objective: 'Produce a verified child result under a wall-clock budget.',
             criteria: ['The final result must include the phrase verified result.'],
@@ -812,13 +998,12 @@ describe('agent runtime childRuns', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(verifierContexts).toHaveLength(1);
-    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    const childRuns = Object.values(replay.childRuns);
-    const worker = childRuns.find((run) => run.description === 'budgeted verified child');
-    const verifier = childRuns.find((run) => run.purpose === 'verify');
-    expect(worker?.objectiveStatus).toBe('verified');
+    const runMetas = await conversationRunMetas(dataRoot, conversation.conversationId);
+    const worker = workerRunsWithObjective(runMetas, 'Produce a verified child result under a wall-clock budget.')[0];
+    const verifier = verifierRun(runMetas);
+    expect(worker?.objective?.status).toBe('verified');
     expect(verifier).toBeDefined();
-    expect(verifier?.purpose).toBe('verify');
+    expect(verifier?.objective?.role).toBe('verifier');
   });
 
   test('a controller with child runs replans in place instead of being replaced', async () => {
@@ -830,14 +1015,14 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'controller with child',
             objective: 'Integrate a child result into a verified controller result.',
             criteria: ['The final result must include the phrase controller verified result.'],
           }, { id: 'tool-agent-controller' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'controller leaf child',
             objective: 'Produce one leaf fact.',
             verify: false,
@@ -878,12 +1063,22 @@ describe('agent runtime childRuns', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(replanContexts.join('\n')).toContain('missing controller verified result');
-    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    const controllers = Object.values(replay.childRuns).filter((run) => run.description === 'controller with child');
+    const controllers = (await conversationRunMetas(dataRoot, conversation.conversationId))
+      .filter((run) => run.objective?.text === 'Integrate a child result into a verified controller result.');
     expect(controllers).toHaveLength(1);
-    expect(controllers[0]?.objectiveStatus).toBe('verified');
-    expect(controllers[0]?.result).toBe('controller verified result');
-    const controllerStatus = await runtime.childRunStatus(conversation.conversationId, controllers[0]!.id, { wait: true });
+    expect(controllers[0]?.objective?.status).toBe('verified');
+    const controllerDetail = await runtime.agentRunDetail(controllers[0]!.id, conversation.conversationId);
+    expect(controllerDetail?.result?.summary).toBe('controller verified result');
+    expect(controllerDetail?.ancestors.at(-1)).toMatchObject({
+      runId: controllers[0]?.parentRunId,
+      title: 'Spawn a verified controller run.',
+    });
+    const parentDetail = await runtime.agentRunDetail(controllers[0]!.parentRunId!, conversation.conversationId);
+    expect(parentDetail?.subRuns.find((run) => run.runId === controllers[0]!.id)).toMatchObject({
+      childRunCount: 3,
+      completedChildRunCount: 3,
+    });
+    const controllerStatus = await runtime.runStatus(conversation.conversationId, controllers[0]!.id, { wait: true });
     expect(controllerStatus.children?.map((child) => child.role).sort()).toEqual(['verifier', 'verifier', 'worker']);
     expect(controllerStatus.children?.find((child) => child.description === 'controller leaf child')).toMatchObject({
       objective: 'Produce one leaf fact.',
@@ -903,7 +1098,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'indirect evidence child',
             objective: 'Create indirect shell evidence.',
             criteria: ['The file indirect-output.txt exists with indirect evidence.'],
@@ -961,7 +1156,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             objective: 'Inspect only run status.',
             criteria: ['The child can read run status only.'],
             verify: false,
@@ -1001,7 +1196,7 @@ describe('agent runtime childRuns', () => {
     expect(script.pendingCount()).toBe(0);
     expect(childTools).toHaveLength(1);
     expect(childTools[0]).toContain('run_status');
-    expect(childTools[0]).not.toContain('spawn');
+    expect(childTools[0]).not.toContain('spawn_run');
     expect(childTools[0]).not.toContain('run_steer');
     expect(childTools[0]).not.toContain('run_amend');
     expect(childTools[0]).not.toContain('run_stop');
@@ -1017,7 +1212,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             objective: 'Try to overspend budget.',
             criteria: ['The child reports that excessive budget was rejected.'],
             verify: false,
@@ -1026,7 +1221,7 @@ describe('agent runtime childRuns', () => {
           }, { id: 'tool-agent-budget-parent' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             objective: 'Spend too much.',
             criteria: ['This should not launch.'],
             verify: false,
@@ -1076,7 +1271,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'budget parent',
             objective: 'Spawn token-budgeted sibling runs.',
             verify: false,
@@ -1084,13 +1279,13 @@ describe('agent runtime childRuns', () => {
           }, { id: 'tool-agent-budget-parent' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'first budget child',
             objective: 'Use most of the parent token slice.',
             verify: false,
             budget: { tokens: 80 },
           }, { id: 'tool-agent-budget-first' }),
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'second budget child',
             objective: 'Attempt to exceed the remaining parent token slice.',
             verify: false,
@@ -1140,11 +1335,11 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'background check',
             objective: 'Run in background.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'bg-check',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1187,6 +1382,28 @@ describe('agent runtime childRuns', () => {
     expect(script.pendingCount()).toBe(0);
     expect(contexts.join('\n')).toContain('Background result.');
     expect(contexts.join('\n')).toContain('\\"status\\": \\"completed\\"');
+
+    const store = new AgentEventStore(dataRoot);
+    const [backgroundMeta] = (await store.listConversationRunMetaProjections(conversation.conversationId))
+      .filter((meta) => meta.objective?.text === 'Run in background.');
+    expect(typeof backgroundMeta?.objective?.latestSubmissionSeq).toBe('number');
+    const ledgerEvents = backgroundMeta ? await store.readRunStreamEvents(backgroundMeta.id) : [];
+    const submissionIndex = ledgerEvents.findIndex((event) => event.type === 'run.result.submitted');
+    const terminalIndex = ledgerEvents.findIndex((event) => event.type === 'run.completed');
+    expect(submissionIndex).toBeGreaterThanOrEqual(0);
+    expect(terminalIndex).toBeGreaterThan(submissionIndex);
+    const submission = ledgerEvents[submissionIndex];
+    expect(submission).toMatchObject({
+      type: 'run.result.submitted',
+      seq: backgroundMeta?.objective?.latestSubmissionSeq,
+      summary: 'Background result.',
+      source: 'final_assistant_message',
+    });
+    const detail = backgroundMeta ? await runtime.agentRunTranscript(conversation.conversationId, backgroundMeta.id) : null;
+    expect(detail?.latestSubmission).toMatchObject({
+      seq: backgroundMeta?.objective?.latestSubmissionSeq,
+      summary: 'Background result.',
+    });
   });
 
   test('automatically returns completed background childRuns to the parent context', async () => {
@@ -1198,11 +1415,11 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'background notify',
             objective: 'Run in background.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'bg-notify',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1271,7 +1488,526 @@ describe('agent runtime childRuns', () => {
     expect(afterOpen[afterOpen.length - 1]?.unreadCount).toBe(0);
   });
 
-  test('lists Work runs across channels without surfacing ordinary turns', async () => {
+  test('returns direct sibling background childRuns as separate conversation replies', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-sibling-notify-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-sibling-notify-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const notificationContexts: string[] = [];
+    const streamFn = respondingStream((context) => {
+      const lastText = lastContextMessageText(context);
+      const text = textFromContext(context);
+      if (lastText.includes('<agent-run-notification>')) {
+        notificationContexts.push(lastText);
+        return fauxAssistantMessage(fauxText(`Consumed sibling notification ${notificationContexts.length}.`));
+      }
+      if (lastText.includes('First sibling work.')) {
+        return fauxAssistantMessage(fauxText('First sibling result.'));
+      }
+      if (lastText.includes('Second sibling work.')) {
+        return fauxAssistantMessage(fauxText('Second sibling result.'));
+      }
+      if (lastText.includes('Start two direct background siblings.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'first sibling',
+            objective: 'First sibling work.',
+            verify: false,
+            detach: true,
+            name: 'sibling-one',
+          }, { id: 'tool-sibling-one' }),
+          fauxToolCall('spawn_run', {
+            description: 'second sibling',
+            objective: 'Second sibling work.',
+            verify: false,
+            detach: true,
+            name: 'sibling-two',
+          }, { id: 'tool-sibling-two' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('tool-sibling-one') && text.includes('tool-sibling-two')) {
+        return fauxAssistantMessage(fauxText('Sibling runs launched.'));
+      }
+      return fauxAssistantMessage([], { stopReason: 'error', errorMessage: `Unexpected context: ${lastText}` });
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start two direct background siblings.', sink);
+    await waitFor(() => notificationContexts.length === 2, 2000);
+
+    const firstNotification = notificationContexts.find((context) => context.includes('sibling-one'));
+    const secondNotification = notificationContexts.find((context) => context.includes('sibling-two'));
+    expect(firstNotification).toContain('First sibling result.');
+    expect(firstNotification).not.toContain('sibling-two');
+    expect(secondNotification).toContain('Second sibling result.');
+    expect(secondNotification).not.toContain('sibling-one');
+
+    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    const notifications = Object.values(replay.notifications);
+    expect(notifications).toHaveLength(2);
+  });
+
+  test('a controller run folds detached child results before submitting its final result', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-nested-background-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-nested-background-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const continuationContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'nested controller',
+            objective: 'Coordinate a nested background result.',
+            verify: false,
+          }, { id: 'tool-agent-controller' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'nested worker',
+            objective: 'Produce the nested worker fact.',
+            verify: false,
+            detach: true,
+            name: 'nested-worker',
+          }, { id: 'tool-agent-worker' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Nested worker final fact.')),
+        fauxAssistantMessage(fauxText('I started the nested worker.')),
+        (context) => {
+          continuationContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('Controller final result uses Nested worker final fact.'));
+        },
+        fauxAssistantMessage(fauxText('Top-level accepted nested controller result.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a nested background controller.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    const continuationText = continuationContexts.join('\n');
+    expect(continuationText).toContain('<detached-sub-run-results>');
+    expect(continuationText).toContain('Nested worker final fact.');
+
+    const store = new AgentEventStore(dataRoot);
+    const runMetas = await store.listConversationRunMetaProjections(conversation.conversationId);
+    const controller = runMetas.find((run) => run.objective?.text === 'Coordinate a nested background result.');
+    expect(controller).toBeDefined();
+    if (!controller) throw new Error('Expected controller run metadata.');
+
+    const detail = await runtime.agentRunDetail(controller.id, conversation.conversationId);
+    expect(detail?.result?.summary).toBe('Controller final result uses Nested worker final fact.');
+    expect(detail?.subRuns).toHaveLength(1);
+    expect(detail?.subRuns[0]).toMatchObject({
+      title: 'Produce the nested worker fact.',
+      status: 'completed',
+    });
+
+    const controllerEvents = await store.readRunStreamEvents(controller.id);
+    const submissions = controllerEvents.filter((event) => event.type === 'run.result.submitted');
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      summary: 'Controller final result uses Nested worker final fact.',
+      source: 'final_assistant_message',
+    });
+  });
+
+  test('nested detached worker runs notify their parent run, not the conversation', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-nested-detached-notify-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-nested-detached-notify-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const notificationContexts: string[] = [];
+    const coordinatorContinuationContexts: string[] = [];
+    const streamFn = respondingStream((context) => {
+      const lastText = lastContextMessageText(context);
+      const text = textFromContext(context);
+      if (lastText.includes('<agent-run-notification>')) {
+        notificationContexts.push(lastText);
+        return fauxAssistantMessage(fauxText('Conversation consumed coordinator notification.'));
+      }
+      if (lastText.includes('<detached-sub-run-results>')) {
+        coordinatorContinuationContexts.push(lastText);
+        return fauxAssistantMessage(fauxText('Combined weather result from Beijing and Chengdu.'));
+      }
+      if (lastText.includes('Fetch Beijing weather.')) {
+        return fauxAssistantMessage(fauxText('Beijing weather result.'));
+      }
+      if (lastText.includes('Fetch Chengdu weather.')) {
+        return fauxAssistantMessage(fauxText('Chengdu weather result.'));
+      }
+      if (lastText.includes('Coordinate two weather workers.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'nested Beijing worker',
+            objective: 'Fetch Beijing weather.',
+            verify: false,
+            detach: true,
+            name: 'nested-beijing',
+          }, { id: 'tool-worker-beijing' }),
+          fauxToolCall('spawn_run', {
+            description: 'nested Chengdu worker',
+            objective: 'Fetch Chengdu weather.',
+            verify: false,
+            detach: true,
+            name: 'nested-chengdu',
+          }, { id: 'tool-worker-chengdu' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('tool-worker-beijing') && text.includes('tool-worker-chengdu')) {
+        return fauxAssistantMessage(fauxText('Nested workers launched.'));
+      }
+      if (lastText.includes('Start a detached weather coordinator.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'weather coordinator',
+            objective: 'Coordinate two weather workers.',
+            verify: false,
+            detach: true,
+            name: 'weather-coordinator',
+          }, { id: 'tool-agent-controller' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('tool-agent-controller')) {
+        return fauxAssistantMessage(fauxText('Coordinator launched.'));
+      }
+      return fauxAssistantMessage([], { stopReason: 'error', errorMessage: `Unexpected context: ${lastText}` });
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a detached weather coordinator.', sink);
+    await waitFor(() => notificationContexts.length > 0, 2000);
+
+    const coordinatorContext = coordinatorContinuationContexts.join('\n');
+    expect(coordinatorContext).toContain('<detached-sub-run-results>');
+    expect(coordinatorContext).toContain('Beijing weather result.');
+    expect(coordinatorContext).toContain('Chengdu weather result.');
+
+    const notificationText = notificationContexts.join('\n');
+    expect(notificationText).toContain('weather-coordinator');
+    expect(notificationText).toContain('Combined weather result from Beijing and Chengdu.');
+    expect(notificationText).not.toContain('nested-beijing');
+    expect(notificationText).not.toContain('nested-chengdu');
+
+    const store = new AgentEventStore(dataRoot);
+    const runMetas = await store.listConversationRunMetaProjections(conversation.conversationId);
+    const coordinator = runMetas.find((run) => run.objective?.text === 'Coordinate two weather workers.');
+    expect(coordinator).toBeDefined();
+    if (!coordinator) throw new Error('Expected coordinator run metadata.');
+    const workerMetas = runMetas.filter((run) => run.parentRunId === coordinator.id);
+    expect(workerMetas.map((run) => run.objective?.text).sort()).toEqual([
+      'Fetch Beijing weather.',
+      'Fetch Chengdu weather.',
+    ]);
+
+    const detail = await runtime.agentRunDetail(coordinator.id, conversation.conversationId);
+    expect(detail?.result?.summary).toBe('Combined weather result from Beijing and Chengdu.');
+    expect(detail?.subRuns.map((run) => run.title).sort()).toEqual([
+      'Fetch Beijing weather.',
+      'Fetch Chengdu weather.',
+    ]);
+
+    const replay = await store.replay(conversation.conversationId);
+    const notifications = Object.values(replay.notifications);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.title).toContain('weather coordinator');
+    expect(notifications[0]?.title).not.toContain('nested Beijing worker');
+    expect(notifications[0]?.title).not.toContain('nested Chengdu worker');
+  });
+
+  test('a controller waits for verified detached child replacement before folding results', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-detached-replacement-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-detached-replacement-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const coordinatorContinuationContexts: string[] = [];
+    const streamFn = respondingStream((context) => {
+      const lastText = lastContextMessageText(context);
+      const text = textFromContext(context);
+      if (lastText.includes('<detached-sub-run-results>')) {
+        coordinatorContinuationContexts.push(lastText);
+        return fauxAssistantMessage(fauxText('Controller summary uses final verified worker fact.'));
+      }
+      if (lastText.includes('Worker result:\nfinal verified worker fact')) {
+        return fauxAssistantMessage(fauxText('{"verdict":"pass","gap":""}'));
+      }
+      if (lastText.includes('Worker result:\nstale worker fact')) {
+        return fauxAssistantMessage(fauxText('{"verdict":"fail","gap":"missing final verified worker fact"}'));
+      }
+      if (lastText.includes('Verifier gap from the previous worker attempt: missing final verified worker fact')) {
+        return fauxAssistantMessage(fauxText('final verified worker fact'));
+      }
+      if (lastText.includes('Produce replacement-aware fact.')) {
+        return fauxAssistantMessage(fauxText('stale worker fact'));
+      }
+      if (lastText.includes('Coordinate replacement-aware worker.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'replacement-aware worker',
+            objective: 'Produce replacement-aware fact.',
+            criteria: ['The final result must include final verified worker fact.'],
+            detach: true,
+            name: 'replacement-aware-worker',
+          }, { id: 'tool-replacement-aware-worker' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (lastText.includes('Start a replacement-aware controller.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'replacement-aware controller',
+            objective: 'Coordinate replacement-aware worker.',
+            verify: false,
+          }, { id: 'tool-replacement-aware-controller' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('tool-replacement-aware-worker')) {
+        return fauxAssistantMessage(fauxText('Replacement-aware worker launched.'));
+      }
+      if (text.includes('tool-replacement-aware-controller')) {
+        return fauxAssistantMessage(fauxText('Top accepted replacement-aware controller.'));
+      }
+      return fauxAssistantMessage([], { stopReason: 'error', errorMessage: `Unexpected context: ${lastText}` });
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a replacement-aware controller.', sink);
+    await waitFor(() => coordinatorContinuationContexts.length > 0, 2000);
+
+    const coordinatorContext = coordinatorContinuationContexts.join('\n');
+    expect(coordinatorContext).toContain('<detached-sub-run-results>');
+    expect(coordinatorContext).toContain('final verified worker fact');
+    expect(coordinatorContext).not.toContain('"result": "stale worker fact"');
+
+    const store = new AgentEventStore(dataRoot);
+    const runMetas = await store.listConversationRunMetaProjections(conversation.conversationId);
+    const controller = runMetas.find((run) => run.objective?.text === 'Coordinate replacement-aware worker.');
+    expect(controller).toBeDefined();
+    if (!controller) throw new Error('Expected replacement-aware controller run metadata.');
+    const workers = workerRunsWithObjective(runMetas, 'Produce replacement-aware fact.');
+    expect(workers).toHaveLength(2);
+    expect(workers[0]?.objective?.status).toBe('blocked');
+    expect(workers[1]?.objective?.status).toBe('verified');
+
+    const detail = await runtime.agentRunDetail(controller.id, conversation.conversationId);
+    expect(detail?.result?.summary).toBe('Controller summary uses final verified worker fact.');
+  });
+
+  test('a controller folds a failed detached verified child as a blocker', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-detached-failed-child-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-detached-failed-child-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const coordinatorContinuationContexts: string[] = [];
+    const streamFn = respondingStream((context) => {
+      const lastText = lastContextMessageText(context);
+      const text = textFromContext(context);
+      if (lastText.includes('<detached-sub-run-results>')) {
+        coordinatorContinuationContexts.push(lastText);
+        return fauxAssistantMessage(fauxText('Controller reported the detached worker crash.'));
+      }
+      if (lastText.includes('Failing detached verified worker.')) {
+        throw new Error('worker crashed before verification');
+      }
+      if (lastText.includes('Coordinate a failing detached worker.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'failing detached worker',
+            objective: 'Failing detached verified worker.',
+            criteria: ['Return a successful worker fact.'],
+            detach: true,
+            name: 'failing-detached-worker',
+          }, { id: 'tool-failing-detached-worker' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (lastText.includes('Start a failing detached controller.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'failing detached controller',
+            objective: 'Coordinate a failing detached worker.',
+            verify: false,
+          }, { id: 'tool-failing-detached-controller' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('tool-failing-detached-worker')) {
+        return fauxAssistantMessage(fauxText('Failing detached worker launched.'));
+      }
+      if (text.includes('tool-failing-detached-controller')) {
+        return fauxAssistantMessage(fauxText('Top accepted failing detached controller.'));
+      }
+      return fauxAssistantMessage([], { stopReason: 'error', errorMessage: `Unexpected context: ${lastText}` });
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a failing detached controller.', sink);
+    await waitFor(() => coordinatorContinuationContexts.length > 0, 2000);
+
+    const coordinatorContext = coordinatorContinuationContexts.join('\n');
+    expect(coordinatorContext).toContain('<detached-sub-run-results>');
+    expect(coordinatorContext).toContain('"status": "failed"');
+    expect(coordinatorContext).toContain('"error": "worker crashed before verification"');
+
+    const store = new AgentEventStore(dataRoot);
+    const runMetas = await store.listConversationRunMetaProjections(conversation.conversationId);
+    const controller = runMetas.find((run) => run.objective?.text === 'Coordinate a failing detached worker.');
+    expect(controller).toBeDefined();
+    if (!controller) throw new Error('Expected failing detached controller run metadata.');
+    const detail = await runtime.agentRunDetail(controller.id, conversation.conversationId);
+    expect(detail?.result?.summary).toBe('Controller reported the detached worker crash.');
+  });
+
+  test('keeps a background run notification pending when response generation fails', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-notification-retry-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-notification-retry-data-'));
+    roots.push(localRoot, dataRoot);
+
+    let failedNotificationAttempts = 0;
+    const notificationContexts: string[] = [];
+    const streamFn = ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
+      const lastText = lastContextMessageText(context);
+      if (lastText.includes('<agent-run-notification>') && failedNotificationAttempts === 0) {
+        failedNotificationAttempts += 1;
+        throw new Error('transient notification response failure');
+      }
+      return respondingStream((innerContext) => {
+        const innerLastText = lastContextMessageText(innerContext);
+        const text = textFromContext(innerContext);
+        if (innerLastText.includes('<agent-run-notification>')) {
+          notificationContexts.push(innerLastText);
+          return fauxAssistantMessage(fauxText('Consumed retried notification.'));
+        }
+        if (innerLastText.includes('Retry notification worker.')) {
+          return fauxAssistantMessage(fauxText('Retry notification result.'));
+        }
+        if (innerLastText.includes('Start a retryable background run.')) {
+          return fauxAssistantMessage([
+            fauxToolCall('spawn_run', {
+              description: 'retryable background worker',
+              objective: 'Retry notification worker.',
+              verify: false,
+              detach: true,
+              name: 'retryable-background-worker',
+            }, { id: 'tool-retryable-background-worker' }),
+          ], { stopReason: 'toolUse' });
+        }
+        if (text.includes('tool-retryable-background-worker')) {
+          return fauxAssistantMessage(fauxText('Retryable background worker launched.'));
+        }
+        return fauxAssistantMessage([], { stopReason: 'error', errorMessage: `Unexpected context: ${innerLastText}` });
+      })(model, context, options);
+    }) as StreamFn;
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a retryable background run.', sink);
+    await waitFor(() => failedNotificationAttempts === 1, 2000);
+    await waitFor(() => notificationContexts.length === 1, 2000);
+    expect(notificationContexts[0]).toContain('retryable-background-worker');
+    expect(notificationContexts[0]).toContain('Retry notification result.');
+  });
+
+  test('lists Work runs across channels without conversation turn wrappers', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-list-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-list-data-'));
     roots.push(localRoot, dataRoot);
@@ -1279,7 +2015,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'alpha run',
             objective: 'Index alpha work.',
             verify: false,
@@ -1289,7 +2025,7 @@ describe('agent runtime childRuns', () => {
         fauxAssistantMessage(fauxText('Alpha background result.')),
         fauxAssistantMessage(fauxText('Alpha parent final.')),
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'beta run',
             objective: 'Index beta work.',
             verify: false,
@@ -1327,17 +2063,20 @@ describe('agent runtime childRuns', () => {
     expect(script.pendingCount()).toBe(0);
     const runs = await runtime.listRuns();
     expect(runs).toHaveLength(2);
-    expect(runs.some((run) => run.kind === 'turn')).toBe(false);
-    expect(runs.every((run) => run.kind === 'delegation')).toBe(true);
     expect(runs.every((run) => run.status === 'completed')).toBe(true);
-    expect(runs.every((run) => Boolean(run.parentRunId))).toBe(true);
+    const delegationRuns = runs.filter((run) => run.kind === 'delegation');
+    expect(delegationRuns).toHaveLength(2);
+    expect(delegationRuns.every((run) => Boolean(run.parentRunId))).toBe(true);
+    expect(delegationRuns.every((run) => run.runProfile === 'default')).toBe(true);
+    expect(delegationRuns.every((run) => run.runProfileLabel === 'Default')).toBe(true);
 
-    const byTitle = new Map(runs.map((run) => [run.title, run]));
+    const byTitle = new Map(delegationRuns.map((run) => [run.title, run]));
     expect([...byTitle.keys()].sort()).toEqual(['Index alpha work.', 'Index beta work.']);
     expect(byTitle.get('Index alpha work.')?.conversationId).toBe(alpha.conversationId);
     expect(byTitle.get('Index alpha work.')?.conversationTitle).toBe('Alpha Work');
     expect(byTitle.get('Index beta work.')?.conversationId).toBe(beta.conversationId);
     expect(byTitle.get('Index beta work.')?.conversationTitle).toBe('Beta Work');
+    expect(runs.some((run) => run.kind === 'turn')).toBe(false);
     await expect(runtime.listRuns({ limit: 1 })).resolves.toHaveLength(1);
   });
 
@@ -1350,11 +2089,11 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'background command',
             objective: 'Run in background.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'command-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1389,17 +2128,17 @@ describe('agent runtime childRuns', () => {
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a commandable background child run.', sink);
     const restored = await runtime.restoreConversation(conversation.conversationId);
-    const childRunId = restored.renderProjection.childRunIds[0]!;
+    const childRunId = projectedRunId(restored.renderProjection, 'tool-agent-1')!;
 
-    const queued = await runtime.childRunSend(conversation.conversationId, childRunId, 'Continue with risks.');
+    const queued = await runtime.runSteer(conversation.conversationId, childRunId, 'Continue with risks.');
     expect(queued).toMatchObject({
-      agent_id: childRunId,
+      runId: childRunId,
       status: 'queued',
     });
 
-    const status = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    const status = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
     expect(status).toMatchObject({
-      agent_id: childRunId,
+      runId: childRunId,
       result: 'Follow-up background result.',
       status: 'completed',
     });
@@ -1420,11 +2159,11 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'stoppable background',
             objective: 'Run until stopped.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'stoppable-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1462,11 +2201,11 @@ describe('agent runtime childRuns', () => {
 
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a stoppable background child run.', sink);
-    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+    const childRunId = projectedRunId(latestProjection(sink.events), 'tool-agent-1')!;
 
-    const stopped = await runtime.childRunStop(conversation.conversationId, childRunId);
+    const stopped = await runtime.runStop(conversation.conversationId, childRunId);
     expect(stopped).toMatchObject({
-      agent_id: childRunId,
+      runId: childRunId,
       status: 'cancelled',
     });
     await waitFor(() => script.pendingCount() === 2);
@@ -1477,15 +2216,15 @@ describe('agent runtime childRuns', () => {
     expect(afterStop.attentionByConversationId[conversation.conversationId]?.unreadCount ?? 0).toBe(0);
     expect(Object.values(afterStop.notifications)).toHaveLength(0);
 
-    const queued = await runtime.childRunSend(conversation.conversationId, childRunId, 'Resume after stop.');
+    const queued = await runtime.runSteer(conversation.conversationId, childRunId, 'Resume after stop.');
     expect(queued).toMatchObject({
-      agent_id: childRunId,
+      runId: childRunId,
       status: 'queued',
     });
 
-    const status = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    const status = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
     expect(status).toMatchObject({
-      agent_id: childRunId,
+      runId: childRunId,
       result: 'Resumed stopped result.',
       status: 'completed',
     });
@@ -1539,50 +2278,51 @@ describe('agent runtime childRuns', () => {
     const conversation = await runtime.restoreLatestConversation();
     runtime.closeConversation(conversation.conversationId);
 
-    // The crash window: the conversation records the run, but runs/<id>/ was
-    // never seeded (no events.jsonl). Pre-fix this run was permanently wedged —
-    // every send failed with "Unknown child-run ledger".
+    // The crash window: the Run index records the run, but runs/<id>/ was never
+    // seeded (no events.jsonl). Pre-fix this run was permanently wedged: every
+    // send failed with "Unknown child-run ledger".
     const store = new AgentEventStore(dataRoot);
-    const replay = await store.replay(conversation.conversationId);
-    await store.appendEvents(conversation.conversationId, [
-      {
-        v: 1,
-        eventId: `test-child-start-${runId}`,
-        seq: replay.latestSeq + 1,
-        conversationId: conversation.conversationId,
-        createdAt: Date.now(),
-        actor: { type: 'tool', toolName: 'Agent', toolCallId: 'tool-lost-seed' },
-        type: 'child_run.started',
-        childRunId: runId,
-        parentToolCallId: 'tool-lost-seed',
-        executingAgentId: 'built-in:tenon:assistant',
-        memoryOwnerAgentId: 'built-in:tenon:assistant',
-        description: 'lost seed run',
-        prompt: 'Verify the deployment pipeline.',
-        agentType: 'fork',
-        contextMode: 'fork',
+    const now = Date.now();
+    await store.writeRunMeta({
+      v: 2,
+      id: runId,
+      agentId: 'built-in:tenon:assistant',
+      anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId: conversation.conversationId },
+      parentToolCallId: 'tool-lost-seed',
+      disposition: 'detached',
+      context: 'full',
+      runProfile: 'default',
+      trigger: { type: 'system' },
+      fingerprint: {
+        appVersion: 'test',
+        promptHash: 'test',
+        toolSchemaHash: 'test',
+        skillBindings: [],
+        modelConfig: 'test',
       },
-      {
-        v: 1,
-        eventId: `test-child-failed-${runId}`,
-        seq: replay.latestSeq + 2,
-        conversationId: conversation.conversationId,
-        createdAt: Date.now() + 1,
-        actor: { type: 'system' },
-        type: 'child_run.updated',
-        childRunId: runId,
+      retention: 'hot',
+      createdAt: now,
+      updatedAt: now + 1,
+      latestSeq: 0,
+      execution: {
         status: 'failed',
-        completedAt: Date.now() + 1,
+        completedAt: now + 1,
         error: 'interrupted',
       },
-    ] as AgentEvent[]);
+      objective: {
+        text: 'Verify the deployment pipeline.',
+        criteria: [],
+        role: 'worker',
+        status: 'blocked',
+      },
+    });
     expect(await store.readRunStreamEvents(runId)).toEqual([]);
 
-    const queued = await runtime.childRunSend(conversation.conversationId, runId, 'Continue the lost run.');
-    expect(queued).toMatchObject({ agent_id: runId, status: 'queued' });
-    const status = await runtime.childRunStatus(conversation.conversationId, runId, { wait: true });
+    const queued = await runtime.runSteer(conversation.conversationId, runId, 'Continue the lost run.');
+    expect(queued).toMatchObject({ runId: runId, status: 'queued' });
+    const status = await runtime.runStatus(conversation.conversationId, runId, { wait: true });
     expect(status).toMatchObject({
-      agent_id: runId,
+      runId: runId,
       status: 'completed',
       result: 'Continued without the lost seed.',
     });
@@ -1600,7 +2340,7 @@ describe('agent runtime childRuns', () => {
     expect(ledgerEvents.at(-1)?.type).toBe('run.completed');
   });
 
-  test('persists child run sidechain metadata and restores status by name', async () => {
+  test('persists child run sidechain metadata and restores status by run id', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-restore-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-restore-data-'));
     roots.push(localRoot, dataRoot);
@@ -1608,11 +2348,11 @@ describe('agent runtime childRuns', () => {
     const firstScript = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'background restore',
             objective: 'Run in background.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'restored-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1650,9 +2390,10 @@ describe('agent runtime childRuns', () => {
     await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a restorable background child run.', firstSink);
     firstRuntime.closeConversation(conversation.conversationId);
     // The transcript is the child run's own ledger — no snapshot payloads exist.
-    const childRunId = Object.keys(
-      (await new AgentEventStore(dataRoot).replay(conversation.conversationId)).childRuns ?? {},
-    )[0]!;
+    const childRunId = (await conversationRunMetas(dataRoot, conversation.conversationId))
+      .find((run) => run.parentToolCallId === 'tool-agent-1')?.id;
+    expect(childRunId).toBeDefined();
+    if (!childRunId) throw new Error('Expected background run metadata.');
     const ledgerEvents = await new AgentEventStore(dataRoot).readRunStreamEvents(childRunId);
     expect(ledgerEvents.length).toBeGreaterThan(0);
     expect(ledgerEvents.some((event) => event.type === 'run.started')).toBe(true);
@@ -1662,7 +2403,7 @@ describe('agent runtime childRuns', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('run_status', {
-            name: 'restored-bg',
+            runId: childRunId,
             wait: true,
           }, { id: 'tool-agent-status-restored' }),
         ], { stopReason: 'toolUse' }),
@@ -1690,12 +2431,11 @@ describe('agent runtime childRuns', () => {
     );
 
     const restored = await secondRuntime.restoreConversation(conversation.conversationId);
-    expect(restored.renderProjection.childRunIds).toHaveLength(1);
-    const childRun = restored.renderProjection.entities.childRuns[restored.renderProjection.childRunIds[0]!];
+    const childRun = projectedRun(restored.renderProjection, 'tool-agent-1');
+    expect(childRun).toBeDefined();
     expect(childRun).toMatchObject({
-      name: 'restored-bg',
+      title: 'Run in background.',
       status: 'completed',
-      result: 'Restored background result.',
     });
 
 
@@ -1721,11 +2461,11 @@ describe('agent runtime childRuns', () => {
     const firstScript = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'interruptible background',
             objective: 'Run until the app dies.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'interrupted-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1757,11 +2497,12 @@ describe('agent runtime childRuns', () => {
 
     const conversation = await firstRuntime.restoreLatestConversation();
     await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start an interruptible background child run.', firstSink);
-    const childRunId = latestProjection(firstSink.events)?.childRunIds[0]!;
+    const childRunId = projectedRunId(latestProjection(firstSink.events), 'tool-agent-1')!;
     expect(childRunId).toBeTruthy();
     // The run is still alive (blocked) — persisted as running, no terminal yet.
+    const beforeRestartMeta = await new AgentEventStore(dataRoot).readRunMetaProjection(childRunId);
+    expect(beforeRestartMeta?.execution.status).toBe('running');
     const beforeRestart = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    expect(beforeRestart.childRuns[childRunId]?.status).toBe('running');
     expect(beforeRestart.attentionByConversationId[conversation.conversationId]?.unreadCount ?? 0).toBe(0);
 
     // Second runtime over the same data = a restart. Restoring marks the orphaned
@@ -1784,7 +2525,7 @@ describe('agent runtime childRuns', () => {
     );
 
     const restored = await secondRuntime.restoreConversation(conversation.conversationId);
-    const restoredChildRun = restored.renderProjection.entities.childRuns[childRunId];
+    const restoredChildRun = restored.renderProjection.entities.runs[childRunId];
     expect(restoredChildRun?.status).toBe('failed');
 
     // The terminal is mirrored into the run's OWN ledger too: the unified run
@@ -1818,11 +2559,11 @@ describe('agent runtime childRuns', () => {
     const firstScript = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'background seed',
             objective: 'Run in background.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'seed-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1947,11 +2688,11 @@ describe('agent runtime childRuns', () => {
       }
       if (text.includes('Spawn a child') && !text.includes('tool-agent-1')) {
         return fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'completes then fails on resume',
             objective: 'Do the first pass.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'resume-fail',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' });
@@ -1978,14 +2719,14 @@ describe('agent runtime childRuns', () => {
 
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that completes then fails.', sink);
-    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+    const childRunId = projectedRunId(latestProjection(sink.events), 'tool-agent-1')!;
 
-    const completed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    expect(completed).toMatchObject({ agent_id: childRunId, status: 'completed', result: 'first result' });
+    const completed = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(completed).toMatchObject({ runId: childRunId, status: 'completed', result: 'first result' });
 
-    await runtime.childRunSend(conversation.conversationId, childRunId, 'Now fail.');
-    const failed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    expect(failed).toMatchObject({ agent_id: childRunId, status: 'failed' });
+    await runtime.runSteer(conversation.conversationId, childRunId, 'Now fail.');
+    const failed = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(failed).toMatchObject({ runId: childRunId, status: 'failed' });
     expect((failed as { error?: string }).error).toBeDefined();
     // The fix: send() clears run.result on resume, so the failed continuation
     // cannot surface the completed first run's "first result".
@@ -2019,11 +2760,11 @@ describe('agent runtime childRuns', () => {
       }
       if (text.includes('Spawn a child') && !text.includes('tool-agent-1')) {
         return fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'completes then is stopped on resume',
             objective: 'Do the first pass.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'resume-stop',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' });
@@ -2050,23 +2791,23 @@ describe('agent runtime childRuns', () => {
 
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that completes then is stopped.', sink);
-    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+    const childRunId = projectedRunId(latestProjection(sink.events), 'tool-agent-1')!;
 
-    const completed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    expect(completed).toMatchObject({ agent_id: childRunId, status: 'completed', result: 'first result' });
+    const completed = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(completed).toMatchObject({ runId: childRunId, status: 'completed', result: 'first result' });
 
     // Resume, then stop once the continuation is genuinely in-flight (its model
     // call entered) but before it appends any new assistant text.
-    await runtime.childRunSend(conversation.conversationId, childRunId, 'Stop me now before any new output.');
+    await runtime.runSteer(conversation.conversationId, childRunId, 'Stop me now before any new output.');
     await waitFor(() => resumePickEntered);
-    const stopped = await runtime.childRunStop(conversation.conversationId, childRunId);
-    expect(stopped).toMatchObject({ agent_id: childRunId, status: 'cancelled' });
+    const stopped = await runtime.runStop(conversation.conversationId, childRunId);
+    expect(stopped).toMatchObject({ runId: childRunId, status: 'cancelled' });
 
     // The seeded history (carrying the completed "first result") sits below the
     // salvage floor, so the stop salvages nothing — result must NOT regress to
     // the prior round's text. This is the stop-side mirror of the resume→fail case.
-    const after = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    expect(after).toMatchObject({ agent_id: childRunId, status: 'cancelled' });
+    const after = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(after).toMatchObject({ runId: childRunId, status: 'cancelled' });
     expect((after as { result?: string }).result).toBeUndefined();
 
     releaseResume();

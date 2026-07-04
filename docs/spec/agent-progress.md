@@ -127,14 +127,15 @@ truth.
   - embedded skill shell expansion through the shared permission layer
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact
-  - same-conversation `spawn`, `run_status`, `run_steer`, `run_amend`, and
+  - same-conversation `spawn_run`, `run_status`, `run_steer`, `run_amend`, and
     `run_stop`
   - child runs with full/brief/none context modes, verifier retry, and their OWN
     run ledger (run unification; sidechain transcripts replay from the ledger)
     plus background notifications
   - Work/Runs view backed by the global `agent_list_runs` index: it replaces the
-    agent dock's chat body with a run tree and second-level detail view for
-    non-turn, non-Dream runs across channels with open-details/stop actions
+    agent dock's chat body with a top-level run list and shared drill-in detail
+    view for non-turn, non-Dream runs across channels with open-details/stop
+    actions, breadcrumb navigation, and sub-run progress chips
     (Dream history moved to the Settings → Agent "Memory & activity" panel)
   - skill `execution: isolated` routed through the delegation runtime
   - provider overflow detection, response debug capture, stream option pass-through,

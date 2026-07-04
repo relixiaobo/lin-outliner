@@ -2,6 +2,7 @@ import type { AssistantMessage } from '../../../core/agentTypes';
 import type {
   AgentConversationEntry,
   AgentMessageEntry,
+  AgentHiddenTurnBoundaryEntry,
   AgentTurnPhase,
 } from '../../agent/runtime';
 
@@ -22,16 +23,17 @@ export interface AgentConversationRenderRow {
 }
 
 export function isBoundaryEntry(entry: AgentConversationEntry): boolean {
-  return entry.kind === 'compaction' || entry.kind === 'context-clear' || entry.kind === 'dream' || entry.kind === 'child-run';
+  return entry.kind === 'compaction' || entry.kind === 'context-clear' || entry.kind === 'dream';
 }
 
 export function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' | 'system' {
+  if (entry.kind === 'hidden-turn-boundary') return 'system';
   return isBoundaryEntry(entry) ? 'system' : (entry as AgentMessageEntry).message.role;
 }
 
 export function getEntryTimestamp(entry: AgentConversationEntry): number {
+  if (entry.kind === 'hidden-turn-boundary') return entry.timestamp;
   if (entry.kind === 'dream') return entry.status === 'active' ? entry.dream.startedAt : entry.dream.createdAt;
-  if (entry.kind === 'child-run') return entry.childRun.startedAt;
   if (entry.kind === 'context-clear') return entry.contextClear.createdAt;
   if (entry.kind !== 'compaction') return entry.message.timestamp;
   return entry.status === 'active' ? entry.compaction.startedAt : entry.compaction.createdAt;
@@ -42,7 +44,12 @@ function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntr
 }
 
 export function isTurnBoundaryEntry(entry: AgentConversationEntry): boolean {
+  if (entry.kind === 'hidden-turn-boundary') return true;
   return isBoundaryEntry(entry) || (entry as AgentMessageEntry).message.role === 'user';
+}
+
+function isHiddenTurnBoundaryEntry(entry: AgentConversationEntry): entry is AgentHiddenTurnBoundaryEntry {
+  return entry.kind === 'hidden-turn-boundary';
 }
 
 // Channel relay puts back-to-back assistant turns from DIFFERENT agents in the
@@ -71,9 +78,13 @@ function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
   const runDurationMs = durationByRun.size > 0
     ? [...durationByRun.values()].reduce((sum, ms) => sum + ms, 0)
     : lastEntry.runDurationMs;
+  const directSubRunsById = new Map(
+    entries.flatMap((entry) => entry.directSubRuns ?? []).map((run) => [run.id, run] as const),
+  );
   return {
     ...lastEntry,
     runDurationMs,
+    directSubRuns: directSubRunsById.size > 0 ? [...directSubRunsById.values()] : lastEntry.directSubRuns,
     message: {
       ...lastEntry.message,
       content: entries.flatMap((entry) => entry.message.content),
@@ -117,6 +128,11 @@ export function buildConversationRenderRows(
   let index = 0;
   while (index < entries.length) {
     const entry = entries[index]!;
+
+    if (isHiddenTurnBoundaryEntry(entry)) {
+      index += 1;
+      continue;
+    }
 
     if (isAssistantEntry(entry)) {
       const assistantEntries: AssistantEntry[] = [];

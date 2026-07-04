@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AssistantMessage, UserMessage, Usage } from '../../src/core/agentTypes';
-import type { AgentMessageEntry } from '../../src/renderer/agent/runtime';
+import type { AgentConversationEntry, AgentMessageEntry } from '../../src/renderer/agent/runtime';
 import { buildConversationRenderRows } from '../../src/renderer/ui/agent/agentConversationRows';
 
 const EMPTY_USAGE: Usage = {
@@ -75,6 +75,14 @@ function userEntry(id: string, timestamp: number): AgentMessageEntry {
   };
 }
 
+function hiddenTurnBoundaryEntry(id: string, timestamp = 2): AgentConversationEntry {
+  return {
+    id,
+    kind: 'hidden-turn-boundary',
+    timestamp,
+  };
+}
+
 describe('buildConversationRenderRows — isLastInTurn', () => {
   test('back-to-back Channel turns from different agents each end their own turn', () => {
     const rows = buildConversationRenderRows(
@@ -108,6 +116,28 @@ describe('buildConversationRenderRows — isLastInTurn', () => {
       && (row.entry as AgentMessageEntry).message.role === 'assistant');
     expect(assistantRows).toHaveLength(1);
     expect(assistantRows[0]!.isLastInTurn).toBe(true);
+  });
+
+  test('hidden system reminders split same-agent assistant turns without rendering a query row', () => {
+    const rows = buildConversationRenderRows(
+      [
+        userEntry('user-1', 0),
+        assistantEntry({ id: 'a1', agentId: 'alpha', runId: 'run-1', text: 'first response' }),
+        hiddenTurnBoundaryEntry('hidden-notification', 2),
+        assistantEntry({ id: 'a2', agentId: 'alpha', runId: 'run-2', text: 'background response' }),
+      ],
+      'idle',
+    );
+
+    const assistantRows = rows.filter((row) => row.entry.kind === 'message'
+      && (row.entry as AgentMessageEntry).message.role === 'assistant');
+    expect(rows.map((row) => row.entry.kind)).toEqual(['message', 'message', 'message']);
+    expect(assistantRows).toHaveLength(2);
+    expect(assistantRows.map((row) => row.key)).toEqual([
+      'assistant-turn-run:run-1',
+      'assistant-turn-run:run-2',
+    ]);
+    expect(assistantRows.every((row) => row.isLastInTurn)).toBe(true);
   });
 
   test('an assistant turn followed by a different agent is still last-in-turn', () => {

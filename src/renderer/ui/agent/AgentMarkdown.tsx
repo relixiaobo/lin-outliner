@@ -327,7 +327,7 @@ export function AgentMarkdown({
     // location, NOT here: a `[data-agent-transcript-chips]` ancestor (set once on the
     // live transcript message frame — see AgentMessageFrame) routes chip clicks to
     // the file-only reader. This markdown renders in both the live transcript and meta
-    // surfaces (compaction/child-run summaries, the PoV inspector), so it stays neutral.
+    // surfaces (compaction/sub-run summaries, the PoV inspector), so it stays neutral.
     <div className="agent-markdown">
       {blocks.map((block, blockIndex) => {
         const blockKey = `${keyPrefix}-block-${blockIndex}`;

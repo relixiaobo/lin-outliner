@@ -63,8 +63,8 @@ describe('splitTimelineIntoGroups', () => {
     expect(groups.map((g) => g.kind)).toEqual(['toolActivity', 'item', 'toolActivity']);
   });
 
-  test('a child-run tool call folds like an ordinary tool call', () => {
-    const childItem = toolItem('child', 'Agent');
+  test('a sub-run tool call folds like an ordinary tool call', () => {
+    const childItem = toolItem('child', 'spawn_run');
     const groups = splitTimelineIntoGroups(
       [toolItem('a', 'bash'), childItem, toolItem('b', 'bash')],
       noBreaks,

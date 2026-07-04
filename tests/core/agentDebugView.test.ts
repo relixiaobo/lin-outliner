@@ -35,6 +35,37 @@ function ev(type: AgentEvent['type'], fields: Record<string, unknown>, actor: Ag
   } as AgentEvent;
 }
 
+function testRunMeta(
+  runId: string,
+  execution: Partial<AgentRunMetaProjection['execution']>,
+): AgentRunMetaProjection {
+  return {
+    v: 2,
+    id: runId,
+    agentId: 'built-in:tenon:assistant',
+    anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+    disposition: 'attended',
+    context: 'full',
+    runProfile: 'default',
+    trigger: { type: 'message', messageId: 'u1' },
+    fingerprint: {
+      appVersion: 'test',
+      promptHash: 'prompt',
+      toolSchemaHash: 'tools',
+      skillBindings: [],
+      modelConfig: 'model',
+    },
+    retention: 'hot',
+    createdAt: 1700,
+    updatedAt: 1800,
+    latestSeq: 6,
+    execution: {
+      status: execution.status ?? 'running',
+      ...execution,
+    },
+  };
+}
+
 describe('deriveDebugRounds', () => {
   test('splits a multi-round run with a tool exchange into rounds', () => {
     seqCounter = 0;
@@ -351,13 +382,10 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
       ev('run.completed', { runId }),
     ];
 
-    const meta = {
-      v: 1, id: runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', status: 'completed',
-      anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
-      trigger: { type: 'message', messageId: 'u1' },
+    const meta = testRunMeta(runId, {
+      status: 'completed',
       usage: { input: 10, output: 5, totalTokens: 15, cost: { total: 0.001 } },
-      fingerprint: {}, retention: 'hot', createdAt: 1700, updatedAt: 1800, latestSeq: 6,
-    } as unknown as AgentRunMetaProjection;
+    });
 
     const run = deriveDebugRun(events, { meta, snapshot: snapshotFromRunEvents(events), parentToolCallId: null });
     expect(run.systemPrompt).toBe('You are Tenon.');
@@ -390,12 +418,7 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     ];
     // meta has NO usage (run not terminated) — the run total must still reflect
     // the rounds the user can already see, not read zero.
-    const meta = {
-      v: 1, id: runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', status: 'running',
-      anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
-      trigger: { type: 'message', messageId: 'u1' },
-      fingerprint: {}, retention: 'hot', createdAt: 1700, updatedAt: 1800, latestSeq: 6,
-    } as unknown as AgentRunMetaProjection;
+    const meta = testRunMeta(runId, { status: 'running' });
 
     const run = deriveDebugRun(events, { meta, snapshot: null, parentToolCallId: null });
     expect(run.usage?.totalTokens).toBe(165);
