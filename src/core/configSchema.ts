@@ -52,7 +52,7 @@ export function isInternalConfigNode(node: { type?: NodeType }): boolean {
 // ─── Scalar codecs (transitional rule 5) ───
 // Scalars are stored as the value child's content text. The codec defines the
 // canonical text, parsing, and write-time validation, so number/bool/color
-// cannot hold "abc"/"maybe"/an invalid hex.
+// cannot hold "abc"/"maybe"/an invalid palette token.
 export interface ScalarCodec<T> {
   /** Parse stored text → value, or undefined when unset/invalid. */
   decode(text: string): T | undefined;
@@ -84,17 +84,22 @@ export const boolCodec: ScalarCodec<boolean> = {
   validate: () => null,
 };
 
-// Color is a free token: either a named palette key (`green`, `blue`, …) as
-// produced by auto-assignment, or a custom `#RRGGBB` hex from the swatch picker.
-// Resolution to concrete RGB happens at render time (renderer `resolveTagColor`),
-// so storage keeps the raw token and only normalizes whitespace.
+export const TAG_COLOR_TOKENS = ['red', 'orange', 'amber', 'green', 'blue', 'purple', 'pink', 'gray'] as const;
+export type TagColorToken = typeof TAG_COLOR_TOKENS[number];
+
+const TAG_COLOR_TOKEN_SET: ReadonlySet<string> = new Set(TAG_COLOR_TOKENS);
+
+// Color is a closed palette token. Concrete RGB/CSS variable resolution happens
+// at render time, but storage stays one of these canonical tokens so renderer
+// surfaces never need a raw-hex compatibility path.
 export const colorCodec: ScalarCodec<string> = {
   decode: (text) => {
     const t = text.trim();
-    return t === '' ? undefined : t;
+    if (t === '') return undefined;
+    return TAG_COLOR_TOKEN_SET.has(t) ? t : undefined;
   },
   encode: (value) => value,
-  validate: () => null,
+  validate: (value) => (TAG_COLOR_TOKEN_SET.has(value) ? null : 'value must be a canonical tag color token'),
 };
 
 // ─── Enum domains (system option subtrees, stable derived IDs) ───

@@ -24,6 +24,7 @@ import type { TextSearchIndex } from './textSearchIndex';
 import {
   CONFIG_SCHEMA,
   ENUM_DOMAINS,
+  TAG_COLOR_TOKENS,
   boolCodec,
   canonicalizeScalar,
   configKeysForDefType,
@@ -2820,39 +2821,69 @@ export class Core {
     if (!allowedKeys || !allowedKeys.includes(input.configKey)) {
       throw CoreError.invalidOperation(`config key ${input.configKey} does not apply to this definition`);
     }
-    const rowId = this.ensureConfigRowDirect(defId, input.configKey);
-    this.clearConfigValueChildrenDirect(rowId);
+
+    let scalarText: string | null = null;
+    let refTargetId: string | null = null;
+    let refTargetIds: string[] = [];
+    let enumOptionId: string | null = null;
+    let enumOptionIds: string[] = [];
 
     switch (input.kind) {
       case 'scalar': {
         if (input.text == null || input.text.trim() === '') break;
         const result = canonicalizeScalar(schema.domain, input.text);
         if ('error' in result) throw CoreError.invalidOperation(result.error);
-        this.createConfigValueNodeDirect(rowId, result.text, undefined, undefined);
+        scalarText = result.text;
         break;
       }
       case 'ref': {
         if (input.targetId == null) break;
         requiredNode(this.snapshot(), input.targetId);
-        this.createConfigValueNodeDirect(rowId, '', 'config', input.targetId);
+        refTargetId = input.targetId;
         break;
       }
       case 'refList': {
         for (const targetId of input.targetIds) {
           requiredNode(this.snapshot(), targetId);
+        }
+        refTargetIds = input.targetIds;
+        break;
+      }
+      case 'enum': {
+        if (input.value == null) break;
+        enumOptionId = this.resolveEnumOption(input.configKey, input.value);
+        break;
+      }
+      case 'enumList': {
+        enumOptionIds = input.values.map((value) => this.resolveEnumOption(input.configKey, value));
+        break;
+      }
+    }
+
+    const rowId = this.ensureConfigRowDirect(defId, input.configKey);
+    this.clearConfigValueChildrenDirect(rowId);
+
+    switch (input.kind) {
+      case 'scalar': {
+        if (scalarText != null) this.createConfigValueNodeDirect(rowId, scalarText, undefined, undefined);
+        break;
+      }
+      case 'ref': {
+        if (refTargetId != null) this.createConfigValueNodeDirect(rowId, '', 'config', refTargetId);
+        break;
+      }
+      case 'refList': {
+        for (const targetId of refTargetIds) {
           this.createConfigValueNodeDirect(rowId, '', 'config', targetId);
         }
         break;
       }
       case 'enum': {
-        if (input.value == null) break;
-        const optionId = this.resolveEnumOption(input.configKey, input.value);
-        this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
+        if (enumOptionId != null) this.createConfigValueNodeDirect(rowId, '', 'enum', enumOptionId);
         break;
       }
       case 'enumList': {
-        for (const value of input.values) {
-          const optionId = this.resolveEnumOption(input.configKey, value);
+        for (const optionId of enumOptionIds) {
           this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
         }
         break;
@@ -4439,9 +4470,8 @@ function findNamedChild(state: DocumentState, parentId: string, name: string) {
 }
 
 function nextTagColor(state: DocumentState) {
-  const colors = ['red', 'orange', 'amber', 'yellow', 'green', 'teal', 'blue', 'indigo', 'violet', 'brown'];
   const count = Object.values(state.nodes).filter((node) => node.type === 'tagDef').length;
-  return colors[count % colors.length];
+  return TAG_COLOR_TOKENS[count % TAG_COLOR_TOKENS.length];
 }
 
 function tagExtendsWouldCycle(state: DocumentState, tagId: string, parentTagId: string) {

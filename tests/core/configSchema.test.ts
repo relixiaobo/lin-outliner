@@ -43,12 +43,13 @@ describe('config schema (Stage 0 definitions)', () => {
     expect(boolCodec.decode('maybe')).toBeUndefined();
     expect(boolCodec.encode(false)).toBe('false');
 
-    // Color is a free token: hex or a named palette key both pass through;
-    // only blank text is "unset". Resolution to RGB happens at render time.
-    expect(colorCodec.decode('#7C9ABC')).toBe('#7C9ABC');
+    // Color is a closed palette token; blank text is "unset" and raw/custom
+    // colors are rejected before the renderer sees them.
+    expect(colorCodec.decode('#7C9ABC')).toBeUndefined();
     expect(colorCodec.decode('red')).toBe('red');
     expect(colorCodec.decode('   ')).toBeUndefined();
-    expect(colorCodec.validate('anything')).toBeNull();
+    expect(colorCodec.validate('red')).toBeNull();
+    expect(colorCodec.validate('anything')).not.toBeNull();
   });
 
   test('registry covers tag + field knobs with visibleWhen gating', () => {

@@ -541,8 +541,9 @@ User-defined tag palette:
   the live surface in light and dark mode.
 - Gray is neutral, not a hardcoded slate chip: text uses `--text-secondary` and
   background uses `--fill-3`.
-- Legacy raw-hex tag colors are still resolved through the same theme-aware
-  tinting algorithm; do not add baked light-mode chip backgrounds to the spec.
+- The palette is closed: raw-hex or alias tag values are invalid/unset and fall
+  back to deterministic identity tinting. Do not add legacy raw-hex readers or
+  baked light-mode chip backgrounds.
 
 ### Materials & Liquid Glass
 
