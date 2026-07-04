@@ -111,6 +111,24 @@ async function showViewToolbar(page: Page, nodeId = ids.today) {
   await page.locator('.view-toolbar').first().waitFor({ state: 'visible' });
 }
 
+async function showViewToolbarDisplayPopover(page: Page) {
+  await showViewToolbar(page);
+  const toolbar = page.locator('.view-toolbar').first();
+  await toolbar.getByRole('button', { name: 'Display', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Display' });
+  await dialog.waitFor({ state: 'visible' });
+  await expect(dialog.getByText('Created time')).toBeVisible();
+}
+
+async function showViewToolbarGroupPopover(page: Page) {
+  await showViewToolbar(page);
+  const toolbar = page.locator('.view-toolbar').first();
+  await toolbar.getByRole('button', { name: 'Group by', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Group by' });
+  await dialog.waitFor({ state: 'visible' });
+  await expect(dialog.getByRole('radio', { name: 'Done', exact: true })).toBeVisible();
+}
+
 async function showViewToolbarSortPopover(page: Page) {
   await showViewToolbar(page);
   const toolbar = page.locator('.view-toolbar').first();
@@ -854,6 +872,18 @@ const surfaces: SurfaceCase[] = [
       await page.getByRole('button', { name: 'Show query' }).click();
       await page.locator('[data-search-query-builder]').waitFor({ state: 'visible' });
     },
+  },
+  {
+    name: 'view toolbar display popover',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showViewToolbarDisplayPopover,
+  },
+  {
+    name: 'view toolbar group popover',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showViewToolbarGroupPopover,
   },
   {
     name: 'view toolbar sort popover',
