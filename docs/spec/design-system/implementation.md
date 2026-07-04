@@ -111,7 +111,8 @@ Expected checks for design-system changes:
   link, or status colour tokens outside the solid destructive-confirmation
   exception, and fails overlay `box-shadow` declarations that mix level-1/2
   shadow tokens with outline tokens. It also rejects the legacy generic
-  `--shadow` alias so surfaces name the actual elevation tier they use.
+  `--shadow` alias so surfaces name the actual elevation tier they use, and keeps
+  foundation token definitions unique in `tokens.css`.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change, including pointer-cursor scope and forced
   `user-select: none !important` suppression staying limited to active drag /

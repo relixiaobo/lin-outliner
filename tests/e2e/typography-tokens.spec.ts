@@ -620,6 +620,31 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps foundation token definitions unique', () => {
+    const violations: string[] = [];
+    const file = 'src/renderer/styles/tokens.css';
+    const text = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    const definitions = new Map<string, number[]>();
+
+    for (const match of text.matchAll(/^\s*(--[\w-]+)\s*:/gm)) {
+      const token = match[1]!;
+      const lineNumber = text.slice(0, match.index).split('\n').length;
+      const lines = definitions.get(token) ?? [];
+      lines.push(lineNumber);
+      definitions.set(token, lines);
+    }
+
+    for (const [token, lines] of definitions) {
+      if (lines.length <= 1) continue;
+      violations.push(`${file}: ${token} is defined on lines ${lines.join(', ')}`);
+    }
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps overlay elevation as pure shadows without outline strokes', () => {
     const violations: string[] = [];
 
