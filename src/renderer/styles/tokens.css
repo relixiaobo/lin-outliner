@@ -312,8 +312,7 @@
      content sits evenly inside the rail. Each rail's toggle is positioned to this same
      inset, so the toggle and the content under it share one edge. One source, no drift. */
   --rail-pad: var(--space-4);
-  --agent-dock-inset-x: var(--rail-pad);
-  /* The agent rail's TEXT reading column. --rail-pad / --agent-dock-inset-x is the
+  /* The agent rail's TEXT reading column. --rail-pad is the
      concentric BLOCK edge (where the composer card, hover fills and rail ring sit) —
      prose placed directly on it reads as glued to the edge. The composer's INPUT text
      already sits one reading gutter further in (card inset --agent-composer-corner-inset
@@ -321,7 +320,7 @@
      transcript messages, and the composer input all share ONE text column, instead of
      the title/messages hugging the block edge while the composer breathes. */
   --agent-content-x: calc(
-    var(--agent-dock-inset-x) + var(--agent-composer-corner-inset) + var(--space-2)
+    var(--rail-pad) + var(--agent-composer-corner-inset) + var(--space-2)
   );
   --outline-panel-min-width: 360px;
   --outline-panel-ideal-width: 520px;
