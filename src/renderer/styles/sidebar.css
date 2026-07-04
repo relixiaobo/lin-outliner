@@ -138,7 +138,7 @@
   height: var(--sidebar-row-height);
   align-items: center;
   border-radius: var(--radius-sm);
-  color: var(--text-body);
+  color: var(--text-primary);
   font-size: var(--font-ui-md);
   font-weight: 400;
   gap: var(--space-2);
@@ -195,7 +195,7 @@
 .sidebar-section.pin-dragover .sidebar-pin-dropzone {
   border-color: var(--border-strong);
   background: var(--fill-2);
-  color: var(--text-body);
+  color: var(--text-primary);
 }
 
 /* Pinned rows are drag-reorderable and accept drops at a position. The insertion point
@@ -259,7 +259,7 @@
 }
 
 .sidebar-root-button:hover {
-  color: var(--text-body);
+  color: var(--text-primary);
 }
 
 .sidebar-root-avatar {
@@ -294,7 +294,7 @@
   height: var(--sidebar-row-height);
   align-items: center;
   border-radius: var(--radius-sm);
-  color: var(--text-body);
+  color: var(--text-primary);
   /* Label starts right after the chevron gutter + a breathing gap, then one extra
      --sidebar-tree-indent per nesting depth. Derived from the chevron geometry so the
      label always clears the chevron with the same air, whatever the chevron size. */

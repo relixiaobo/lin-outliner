@@ -136,7 +136,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--fill-1);
-  color: var(--text-body);
+  color: var(--text-primary);
   font-family: var(--font-family-mono);
   font-size: var(--font-ui-2xs);
   line-height: var(--line-ui-2xs-tight);

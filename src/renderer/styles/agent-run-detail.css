@@ -229,7 +229,7 @@
   min-width: 0;
   overflow: hidden;
   overflow-wrap: anywhere;
-  color: var(--text-body);
+  color: var(--text-primary);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   -webkit-box-orient: vertical;
@@ -811,7 +811,7 @@
   position: relative;
   min-width: 0;
   max-width: 560px;
-  color: var(--text-body);
+  color: var(--text-primary);
 }
 
 .agent-run-detail-result .agent-markdown {
