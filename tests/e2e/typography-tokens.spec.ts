@@ -36,6 +36,11 @@ const STYLES_DIR = 'src/renderer/styles';
 const productStyleFiles = readdirSync(STYLES_DIR)
   .filter((file) => file.endsWith('.css'))
   .map((file) => join(STYLES_DIR, file));
+const darkMediaRuleFiles = new Map([
+  ['src/renderer/styles/theme-dark.css', 'Central OS-driven dark theme token layer.'],
+  ['src/renderer/styles/code.css', 'Generated Shiki token stream resolves --shiki-dark.'],
+  ['src/renderer/styles/panel.css', 'Documented blend-mode correction for panel header icons.'],
+]);
 
 function markdownFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -219,6 +224,22 @@ test.describe('typography tokens', () => {
 
   test('keeps renderer theming OS-driven without data-theme selectors', () => {
     const violations = collectCssTextViolations(/\[data-theme\b/);
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps dark media rules centralized or explicitly scoped', () => {
+    const violations: string[] = [];
+
+    for (const file of productStyleFiles) {
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
+      if (!/@media\s*\(\s*prefers-color-scheme:\s*dark\s*\)/.test(text)) continue;
+      if (darkMediaRuleFiles.has(file)) continue;
+      violations.push(`${file} has an unregistered prefers-color-scheme: dark rule`);
+    }
 
     expect(violations).toEqual([]);
   });
