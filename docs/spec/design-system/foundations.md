@@ -207,8 +207,8 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   `--fill-3`), keyboard focus uses neutral `--focus-ring`, and the default filled
   button uses the neutral inverse-surface pair (`--surface-inverse` /
   `--surface-inverse-strong`). Pre-launch means no compatibility burden: migrate
-  any remaining `--primary` / `--accent-brand`-as-action usage in live CSS to the
-  neutral contract and delete the alias outright, rather than keeping a rose shim.
+  any remaining `--primary` / accent-as-action usage in live CSS to the neutral
+  contract and delete the alias outright, rather than keeping a rose shim.
   The brand colour survives only for the sparse accent roles above (caret, brand
   marks, status badges).
 

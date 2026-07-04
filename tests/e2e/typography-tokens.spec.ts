@@ -903,6 +903,21 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps retired unused aliases out of live CSS', () => {
+    const retiredAliases = [
+      'app-bg',
+      'accent-brand',
+      'semantic-danger-muted',
+      'semantic-info',
+      'overlay-active-bg',
+    ].join('|');
+    const violations = collectCssTextViolations(
+      new RegExp(`(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\))`),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps rail chrome shadow routed through the shared surface token', () => {
     const violations = collectCssTextViolations(
       /box-shadow:\s*var\(--shadow-rail\),\s*inset 0 0 0 0\.5px var\(--rail-edge\)/,

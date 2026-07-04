@@ -116,11 +116,11 @@ Expected checks for design-system changes:
   exception, and fails overlay `box-shadow` declarations that mix level-1/2
   shadow tokens with outline tokens. It also rejects the legacy generic
   `--shadow` and `--danger` aliases so surfaces name the actual elevation tier
-  and semantic status role they use, keeps raw functional color literals inside
-  token declarations, fails undefined live token references outside named
-  runtime/generated inputs, keeps motion timing literals routed through motion
-  tokens outside zero delays, prevents design system docs from copying a second
-  `:root` token table, and keeps foundation
+  and semantic status role they use, keeps retired unused aliases out of live CSS,
+  keeps raw functional color literals inside token declarations, fails undefined
+  live token references outside named runtime/generated inputs, keeps motion
+  timing literals routed through motion tokens outside zero delays, prevents
+  design system docs from copying a second `:root` token table, and keeps foundation
   token definitions unique in `tokens.css`.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change, including pointer-cursor scope, help-cursor

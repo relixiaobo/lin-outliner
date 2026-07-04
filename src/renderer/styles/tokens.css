@@ -213,7 +213,6 @@
         There is no --primary family: action surfaces use neutral fill /
         focus-ring / outline tokens instead of the rose accent. ── */
   --deck-bg: var(--bg-window);
-  --app-bg: var(--bg-window);
   --panel-bg: var(--bg-content);
   --window-material-frost: color-mix(in srgb, var(--bg-window) 62%, transparent);
   --surface-soft: var(--bg-elevated);
@@ -230,18 +229,14 @@
   /* a strong control border (view-radio ring, etc.) — NOT the hairline divider;
      keep it a visible neutral that inverts with the theme */
   --border-strong: rgb(var(--ink) / 0.30);
-  --accent-brand: var(--accent);
   --semantic-success: var(--status-success);
   --semantic-success-strong: var(--status-success-strong);
-  --semantic-danger-muted: var(--status-danger-muted);
   --semantic-warning: var(--status-warning);
-  --semantic-info: var(--status-info);
   --surface-user-bubble: var(--fill-3);
   --surface-inverse: #2e2e32;
   --surface-inverse-strong: #1f1f23;
   --surface-disabled: var(--fill-3);
   --overlay-bg: var(--bg-elevated);
-  --overlay-active-bg: var(--fill-2);
   --overlay-backdrop: rgba(26, 26, 26, 0.30);
   --overlay-backdrop-strong: rgba(0, 0, 0, 0.82);
   --space-hairline: 1px;
