@@ -184,6 +184,21 @@ async function showFieldNameReusePopover(page: Page) {
   await expect(listbox.getByRole('option', { name: 'Created' })).toBeVisible();
 }
 
+async function showOptionsFieldValuePopover(page: Page) {
+  await trailingEditor(page, ids.priorityEntry).click();
+  const listbox = page.getByRole('listbox', { name: 'Field options' });
+  await listbox.waitFor({ state: 'visible' });
+  await expect(listbox.getByRole('option', { name: 'High' })).toBeVisible();
+}
+
+async function showReferenceFieldValuePopover(page: Page) {
+  await trailingEditor(page, ids.referencesEntry).click();
+  const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
+  await listbox.waitFor({ state: 'visible' });
+  await page.keyboard.type('Alpha');
+  await expect(listbox.getByRole('option', { name: 'Alpha' })).toBeVisible();
+}
+
 async function installLocalFileMentionFixture(page: Page) {
   await page.evaluate(() => {
     const win = window as typeof window & {
@@ -908,6 +923,20 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showFieldNameReusePopover,
+  },
+  {
+    name: 'options field value popover',
+    path: '/',
+    waitFor: `[data-node-id="${ids.priorityEntry}"]`,
+    options: { optionsField: true },
+    beforeProbe: showOptionsFieldValuePopover,
+  },
+  {
+    name: 'reference field value popover',
+    path: '/',
+    waitFor: `[data-node-id="${ids.referencesEntry}"]`,
+    options: { referenceField: true },
+    beforeProbe: showReferenceFieldValuePopover,
   },
   {
     name: 'inline file context menu',

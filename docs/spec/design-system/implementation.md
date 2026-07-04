@@ -86,11 +86,11 @@ Expected checks for design-system changes:
 - Focused Playwright tests for touched surfaces.
 - `tests/e2e/design-system-runtime.spec.ts` for representative shell, settings,
   launcher-renderer, overlay, outliner trigger, menu, tag-context,
-  field-reuse, floating-tool, panel-date-navigation, view-configuration,
-  schema-definition, code-block, inline-file, confirm-dialog, error-state,
-  file-preview, document-outline, agent-composer, dream-manual,
-  agent-message-details, agent-usage-tooltip, agent-process, and run-detail
-  surfaces staying bounded and OS-theme-native in light and dark.
+  field-reuse, field-value-popovers, floating-tool, panel-date-navigation,
+  view-configuration, schema-definition, code-block, inline-file,
+  confirm-dialog, error-state, file-preview, document-outline, agent-composer,
+  dream-manual, agent-message-details, agent-usage-tooltip, agent-process, and
+  run-detail surfaces staying bounded and OS-theme-native in light and dark.
 - `tests/e2e/typography-tokens.spec.ts` for token discipline.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change.
