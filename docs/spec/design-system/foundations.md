@@ -383,7 +383,7 @@ scale font size with viewport width.
 - **Text gutters:** outliner, agent, and settings body text starts are intentionally
   tiered by each surface's affordance width. Do not flatten them into one x-offset;
   converge within a surface instead.
-- **Dock widths:** sidebar `216px` (`180–280`); agent dock `330px` (`300–520`).
+- **Dock widths:** sidebar `196px` (`152px–280px`); agent dock `344px` (`280px–520px`).
 
 ### Elevation, Radius & Stroke
 

@@ -768,6 +768,34 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps documented dock widths aligned with live tokens', () => {
+    const tokenSource = readFileSync('src/renderer/styles/tokens.css', 'utf8');
+    const foundations = readFileSync('docs/spec/design-system/foundations.md', 'utf8');
+    const tokenValue = (name: string) => {
+      const match = new RegExp(`--${name}:\\s*([^;]+);`).exec(tokenSource);
+      expect(match, `missing --${name}`).not.toBeNull();
+      return match![1]!.trim();
+    };
+
+    const expected = [
+      '- **Dock widths:** sidebar `',
+      tokenValue('sidebar-width'),
+      '` (`',
+      tokenValue('sidebar-min-width'),
+      '–',
+      tokenValue('sidebar-max-width'),
+      '`); agent dock `',
+      tokenValue('agent-width'),
+      '` (`',
+      tokenValue('agent-min-width'),
+      '–',
+      tokenValue('agent-max-width'),
+      '`).',
+    ].join('');
+
+    expect(foundations).toContain(expected);
+  });
+
   test('keeps raw hex colors inside token declarations', () => {
     const violations: string[] = [];
 
