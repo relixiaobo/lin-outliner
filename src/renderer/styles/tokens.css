@@ -211,7 +211,6 @@
   /* ── Legacy product-token aliases → semantic layer. Migrate opportunistically.
         There is no --primary family: action surfaces use neutral fill /
         focus-ring / outline tokens instead of the rose accent. ── */
-  --window-material-frost: color-mix(in srgb, var(--bg-window) 62%, transparent);
   --text-strong: var(--text-primary);
   --text-soft: var(--text-secondary);
   --text-faint: var(--text-tertiary);
