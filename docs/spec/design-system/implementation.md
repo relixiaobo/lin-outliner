@@ -30,8 +30,11 @@ decision routing, exceptions, and validation.
   baseline); the sampled [decision audit](./decision-audit.md) proves at least
   80% derived decisions; component coverage is at least 80%; Exception Registry
   evidence coverage is 100%; raw hex outside token declarations stays 0 after
-  named exceptions. The raw-hex scan covers renderer CSS, TS, and TSX, so source
-  literals cannot hide outside stylesheet files.
+  named exceptions; and the runtime surface matrix remains discoverable by the
+  metrics script. The raw-hex scan covers renderer CSS, TS, and TSX, so source
+  literals cannot hide outside stylesheet files. Runtime surface counts are
+  reported as cases and light/dark theme checks, not as a completeness claim for
+  every possible UI state.
 - **Derivation audit.** For a new or changed UI, the PR must be able to answer
   four questions: which surface owns it, which component primitive or pattern it
   uses, which state-model row it maps to, and which foundation tokens carry its
@@ -81,8 +84,8 @@ Expected checks for design-system changes:
 - `bun run docs:check`
 - `bun scripts/design-system-metrics.ts --json` for the current compression,
   decision-derivation, component-coverage, exception-evidence, and
-  renderer-wide token-discipline baseline. Use `--check` before publishing a
-  design-system compression or contract PR.
+  renderer-wide token-discipline baseline, plus the runtime surface matrix size.
+  Use `--check` before publishing a design-system compression or contract PR.
 - Focused Playwright tests for touched surfaces.
 - `tests/e2e/design-system-runtime.spec.ts` for representative shell, settings,
   settings-row-menu, launcher-renderer, overlay, outliner trigger, menu,

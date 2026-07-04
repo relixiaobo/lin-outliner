@@ -17,11 +17,13 @@ const COMPONENTS_DOC = join(DESIGN_SYSTEM_DIR, 'components.md');
 const DECISION_AUDIT = join(DESIGN_SYSTEM_DIR, 'decision-audit.md');
 const RENDERER_DIR = join(ROOT, 'src', 'renderer');
 const UI_DIR = join(ROOT, 'src', 'renderer', 'ui');
+const RUNTIME_SURFACE_SPEC = join(ROOT, 'tests', 'e2e', 'design-system-runtime.spec.ts');
 
 const SURFACE_BASELINE_LINES = 672;
 const SURFACE_TARGET_LINES = Math.floor(SURFACE_BASELINE_LINES * 0.6);
 const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
+const RUNTIME_THEME_VARIANTS = 2;
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
 
 const componentContracts = [
@@ -434,8 +436,33 @@ function rawHexMetrics() {
   };
 }
 
+function runtimeSurfaceMetrics() {
+  const source = readFileSync(RUNTIME_SURFACE_SPEC, 'utf8');
+  const surfacesStart = source.indexOf('const surfaces: SurfaceCase[] = [');
+  const surfacesEnd = source.indexOf('async function probeSurface', surfacesStart);
+  const surfacesBlock = surfacesStart >= 0 && surfacesEnd > surfacesStart
+    ? source.slice(surfacesStart, surfacesEnd)
+    : '';
+  const surfaceNames = [...surfacesBlock.matchAll(/^\s+name: '([^']+)',/gm)]
+    .map((match) => match[1])
+    .sort();
+
+  return {
+    runtimeSurfaceMatrixFound: surfacesBlock.length > 0,
+    runtimeSurfaceCases: surfaceNames.length,
+    runtimeThemeVariants: RUNTIME_THEME_VARIANTS,
+    runtimeSurfaceThemeChecks: surfaceNames.length * RUNTIME_THEME_VARIANTS,
+    runtimeSurfaceNames: surfaceNames,
+  };
+}
+
 function main() {
-  if (!existsSync(DESIGN_SYSTEM_KERNEL) || !existsSync(DESIGN_SYSTEM_DIR) || !existsSync(DECISION_AUDIT)) {
+  if (
+    !existsSync(DESIGN_SYSTEM_KERNEL)
+    || !existsSync(DESIGN_SYSTEM_DIR)
+    || !existsSync(DECISION_AUDIT)
+    || !existsSync(RUNTIME_SURFACE_SPEC)
+  ) {
     throw new Error('Design-system spec files are missing.');
   }
 
@@ -445,6 +472,7 @@ function main() {
     exceptions: exceptionEvidenceMetrics(),
     components: componentCoverageMetrics(),
     tokens: rawHexMetrics(),
+    runtimeSurfaces: runtimeSurfaceMetrics(),
     targets: {
       surfaceTargetLines: SURFACE_TARGET_LINES,
       decisionDerivationTarget: DECISION_DERIVATION_TARGET,
@@ -468,6 +496,8 @@ function main() {
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
     console.log(`  named raw hex exceptions: ${metrics.tokens.rawHexExceptionUses.length}`);
+    console.log(`  runtime surface cases: ${metrics.runtimeSurfaces.runtimeSurfaceCases}`);
+    console.log(`  runtime theme checks: ${metrics.runtimeSurfaces.runtimeSurfaceThemeChecks}`);
   }
 
   if (process.argv.includes('--check')) {
@@ -503,6 +533,9 @@ function main() {
     }
     if (metrics.tokens.undocumentedRawHexExceptions.length > 0) {
       failures.push(`undocumented raw hex exceptions: ${metrics.tokens.undocumentedRawHexExceptions.join(', ')}`);
+    }
+    if (!metrics.runtimeSurfaces.runtimeSurfaceMatrixFound || metrics.runtimeSurfaces.runtimeSurfaceCases === 0) {
+      failures.push('runtime surface matrix missing or empty');
     }
     if (failures.length > 0) {
       console.error(`design-system metrics FAILED:\n  - ${failures.join('\n  - ')}`);

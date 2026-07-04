@@ -68,6 +68,7 @@ standard change that only hides one local violation is not accepted.
 | CA34 | Inline file hover previews were behavior-tested but absent from the shared runtime design-system guard, which only opened the inline file context menu. | Code drift | Runtime guard now inserts a local-file mention and opens its hover preview popover in light/dark through the real composer flow. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA35 | The composer model submenu was behavior-tested through model selection flows, while runtime coverage only opened the parent model menu and reasoning submenu. | Code drift | Runtime guard now opens the model submenu in light/dark through the real composer model control. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA36 | The implementation validation summary lagged behind the expanded runtime surface matrix. | Spec drift | Validation now summarizes the covered categories, including row menus, selected field values, inline-file preview/context, file-preview header menus, composer submenus, and agent/debug tooltips. | `implementation.md`, `tests/e2e/design-system-runtime.spec.ts` |
+| CA37 | The runtime surface guard had many representative cases, but the metrics report could not quantify the matrix or fail when the matrix became undiscoverable. | Code drift | Metrics now report runtime surface cases and light/dark theme checks, and `--check` fails if the matrix is missing or empty. | `scripts/design-system-metrics.ts --json`; `tests/e2e/design-system-runtime.spec.ts` |
 
 ## Named Exceptions Kept
 
