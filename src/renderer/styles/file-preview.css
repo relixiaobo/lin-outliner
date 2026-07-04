@@ -50,14 +50,14 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  color: color-mix(in srgb, var(--text) 44%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 44%, transparent);
   -webkit-app-region: no-drag;
 }
 
 .file-preview-reader-actions:hover,
 .file-preview-reader-actions:focus-visible,
 .file-preview-reader-actions[aria-expanded='true'] {
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .file-preview-message {
@@ -338,7 +338,7 @@
 
 .file-preview-html-mode-button:hover,
 .file-preview-html-mode-button:focus-visible {
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .file-preview-html-mode-button[aria-pressed='true'] {

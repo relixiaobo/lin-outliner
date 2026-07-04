@@ -70,12 +70,12 @@
   justify-content: center;
   justify-self: end;
   border-radius: var(--radius-pill);
-  color: color-mix(in srgb, var(--text) 42%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 42%, transparent);
 }
 
 .panel-breadcrumb-close:hover,
 .panel-breadcrumb-close:focus-visible {
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .panel-breadcrumb-leading {
@@ -92,12 +92,12 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  color: color-mix(in srgb, var(--text) 42%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 42%, transparent);
 }
 
 .panel-page-back-button:hover:not(:disabled),
 .panel-page-back-button:focus-visible:not(:disabled) {
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .panel-page-back-button:disabled {
@@ -129,13 +129,13 @@
   justify-content: center;
   justify-self: center;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text) 9%, transparent);
-  color: color-mix(in srgb, var(--text) 44%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 44%, transparent);
 }
 
 .panel-breadcrumb-origin:hover {
-  background: color-mix(in srgb, var(--text) 14%, transparent);
-  color: color-mix(in srgb, var(--text) 62%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
 }
 
 .panel-breadcrumb-segment {

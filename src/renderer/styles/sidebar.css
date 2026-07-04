@@ -271,7 +271,7 @@
   justify-content: center;
   overflow: hidden;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   color: var(--text-soft);
   font-size: var(--font-ui-xs);
   font-weight: 700;

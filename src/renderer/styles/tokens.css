@@ -403,7 +403,7 @@
   --row-selected: var(--fill-3);
   --row-selection-bg: var(--row-selected);
   --row-selection-frame-bg: color-mix(in srgb, var(--row-selected) 72%, transparent);
-  --row-selection-border: color-mix(in srgb, var(--text) 18%, transparent);
+  --row-selection-border: color-mix(in srgb, var(--text-primary) 18%, transparent);
   --z-base: 0;
   --z-raised: 10;
   --z-resize: 30;

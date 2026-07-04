@@ -53,7 +53,7 @@
 .command-item:hover,
 .command-item.active {
   background: var(--fill-2);
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .popover-item.disabled {
@@ -112,7 +112,7 @@
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--font-ui-sm);
   text-overflow: ellipsis;
   white-space: nowrap;

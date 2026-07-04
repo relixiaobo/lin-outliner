@@ -16,7 +16,7 @@
   flex: 0 0 var(--checkbox-mark-size);
   align-items: center;
   justify-content: center;
-  border: 1.5px solid color-mix(in srgb, var(--text) 28%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--text-primary) 28%, transparent);
   border-radius: var(--radius-xs);
   background: transparent;
   transition: background var(--motion-fast), border-color var(--motion-fast);
@@ -45,7 +45,7 @@
   flex: 0 0 var(--switch-mark-width);
   align-items: center;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text) 12%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
   transition: background var(--motion-fast);
 }
 

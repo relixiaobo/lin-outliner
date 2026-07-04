@@ -28,5 +28,5 @@
 
 .error-close-button:hover {
   background: var(--row-hover);
-  color: var(--text);
+  color: var(--text-primary);
 }

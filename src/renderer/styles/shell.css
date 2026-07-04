@@ -17,7 +17,7 @@
   height: 100vh;
   overflow: hidden;
   background: var(--bg-content);
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 /* The shell is no longer a grid that reserves rail width. It's a positioning

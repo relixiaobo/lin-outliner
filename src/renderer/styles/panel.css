@@ -71,7 +71,7 @@
 
 .panel-title-editor .row-editor {
   display: inline-block;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--title-display);
   font-weight: 600;
   line-height: var(--line-panel-title);
@@ -86,7 +86,7 @@
   overflow: hidden;
   min-width: 0;
   margin: 0;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--title-display);
   font-weight: 600;
   line-height: var(--line-panel-title);
@@ -344,12 +344,12 @@
 
 .panel-title-more-button:hover,
 .panel-title-more-button:focus-visible {
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .panel-title-more-button.is-active {
   background: var(--control-active);
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .panel-header-tag-icon {
