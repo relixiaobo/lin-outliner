@@ -97,6 +97,51 @@ async function showCodeBlockLanguageMenu(page: Page) {
   await page.getByRole('menuitemradio', { name: 'Plain text', exact: true }).waitFor({ state: 'visible' });
 }
 
+async function showAgentChannelPicker(page: Page) {
+  await page.getByRole('button', { name: 'Show conversations' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Channels' });
+  await dialog.waitFor({ state: 'visible' });
+  await expect(dialog.getByRole('button', { name: /Neva/ })).toBeVisible();
+}
+
+async function showAgentChannelOptionsMenu(page: Page) {
+  await page.getByRole('button', { name: 'Show conversations' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Channels' });
+  await dialog.waitFor({ state: 'visible' });
+  const channelRow = dialog.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
+  await channelRow.hover();
+  await channelRow.getByRole('button', { name: 'Channel options' }).click();
+  const menu = page.getByRole('menu', { name: 'Channel options' });
+  await menu.waitFor({ state: 'visible' });
+  await expect(menu.getByRole('menuitem', { name: 'Configure channel' })).toBeVisible();
+}
+
+async function showAgentMentionSuggestions(page: Page) {
+  const input = page.getByLabel('Agent message');
+  await input.click();
+  await page.keyboard.type('@');
+  const listbox = page.getByRole('listbox', { name: 'Agent mention suggestions' });
+  await listbox.waitFor({ state: 'visible' });
+  await expect(listbox.locator('.agent-composer-mention-section').first()).toBeVisible();
+}
+
+async function showAgentModelMenu(page: Page) {
+  await page.getByRole('button', { name: 'Model and reasoning' }).click();
+  const menu = page.getByRole('menu', { name: 'Model and reasoning' });
+  await menu.waitFor({ state: 'visible' });
+  await expect(menu.getByRole('menuitem', { name: /Reasoning/ })).toBeVisible();
+}
+
+async function showAgentReasoningMenu(page: Page) {
+  await page.getByRole('button', { name: 'Model and reasoning' }).click();
+  const parentMenu = page.getByRole('menu', { name: 'Model and reasoning' });
+  await parentMenu.waitFor({ state: 'visible' });
+  await parentMenu.getByRole('menuitem', { name: /Reasoning/ }).hover();
+  const reasoningMenu = page.getByRole('menu', { name: 'Reasoning', exact: true });
+  await reasoningMenu.waitFor({ state: 'visible' });
+  await expect(reasoningMenu.getByRole('menuitemradio').first()).toBeVisible();
+}
+
 async function showRowContextMenu(page: Page) {
   await rowBody(page, ids.alpha).click({ button: 'right' });
   await page.getByRole('menu', { name: 'Node actions' }).waitFor({ state: 'visible' });
@@ -345,6 +390,36 @@ const surfaces: SurfaceCase[] = [
       await page.keyboard.press('Meta+K');
       await page.getByRole('dialog', { name: 'Command palette' }).waitFor({ state: 'visible' });
     },
+  },
+  {
+    name: 'agent channel picker',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showAgentChannelPicker,
+  },
+  {
+    name: 'agent channel options menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showAgentChannelOptionsMenu,
+  },
+  {
+    name: 'agent mention suggestions',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showAgentMentionSuggestions,
+  },
+  {
+    name: 'agent model menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showAgentModelMenu,
+  },
+  {
+    name: 'agent reasoning menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showAgentReasoningMenu,
   },
   {
     name: 'search query builder',
