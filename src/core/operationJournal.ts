@@ -112,6 +112,10 @@ export class OperationJournal {
     this.entries.push(entry);
   }
 
+  findByOperationId(operationId: string): OperationHistoryEntry | undefined {
+    return findLastEntry(this.entries, operationId);
+  }
+
   list(
     query: Required<Pick<OperationHistoryQuery, 'origin' | 'limit' | 'offset'>>,
     stack: OperationStackState,

@@ -151,6 +151,8 @@ interface CoreTransaction {
   origin: string;
   before: DocumentState;
   metadata: CoreTransactionMetadata;
+  chunkedCommits: number;
+  chunkUndoValue?: OperationHistoryEntry;
 }
 
 interface SerializedLoroState extends SerializedLoroDocumentState {
@@ -410,6 +412,7 @@ export class Core {
       origin: commitOriginFor(origin),
       before,
       metadata,
+      chunkedCommits: 0,
     };
     try {
       const result = await fn();
@@ -440,7 +443,27 @@ export class Core {
   private commitActiveTransactionChunk(): void {
     const transaction = this.activeTransaction;
     if (!transaction) return;
-    this.loro.commit(transaction.origin);
+    this.loro.commit(transaction.origin, this.chunkUndoValueForTransaction(transaction));
+    transaction.chunkedCommits += 1;
+  }
+
+  private chunkUndoValueForTransaction(transaction: CoreTransaction): OperationHistoryEntry | undefined {
+    if (transaction.chunkUndoValue) return transaction.chunkUndoValue;
+    const origin = operationHistoryOriginForCommitOrigin(transaction.origin);
+    if (origin === 'system') return undefined;
+    transaction.metadata.operationId ??= `op:${crypto.randomUUID()}`;
+    const action = transaction.metadata.tool ?? transaction.metadata.command ?? 'document_operation';
+    transaction.chunkUndoValue = {
+      operationId: transaction.metadata.operationId,
+      origin,
+      command: transaction.metadata.command,
+      tool: transaction.metadata.tool,
+      action,
+      summary: transaction.metadata.summary ?? summarizeOperationHistoryAction(origin, action),
+      affectedNodeIds: [],
+      createdAt: new Date().toISOString(),
+    };
+    return transaction.chunkUndoValue;
   }
 
   createNode(
@@ -2448,9 +2471,15 @@ export class Core {
     return {
       canUndo: this.loro.canUndo(origin),
       canRedo: this.loro.canRedo(origin),
-      topUndo: operationHistoryEntryFromValue(this.loro.topUndoValue(origin)),
-      topRedo: operationHistoryEntryFromValue(this.loro.topRedoValue(origin)),
+      topUndo: this.resolveOperationHistoryStackValue(this.loro.topUndoValue(origin)),
+      topRedo: this.resolveOperationHistoryStackValue(this.loro.topRedoValue(origin)),
     };
+  }
+
+  private resolveOperationHistoryStackValue(value: unknown): OperationHistoryEntry | undefined {
+    const entry = operationHistoryEntryFromValue(value);
+    if (!entry) return undefined;
+    return this.history.findByOperationId(entry.operationId) ?? entry;
   }
 
   private snapshot() {
@@ -3619,6 +3648,18 @@ function commitOriginFor(origin: CommitOrigin) {
   if (origin === 'system') return SYSTEM_COMMIT_ORIGIN;
   if (origin === '__seed__') return '__seed__';
   return DEFAULT_COMMIT_ORIGIN;
+}
+
+function operationHistoryOriginForCommitOrigin(origin: string): 'agent' | 'user' | 'system' {
+  if (origin.startsWith('agent:')) return 'agent';
+  if (origin.startsWith('user:')) return 'user';
+  return 'system';
+}
+
+function summarizeOperationHistoryAction(origin: 'agent' | 'user' | 'system', action: string) {
+  if (origin === 'agent') return `Agent ${action.replace(/_/g, ' ')}.`;
+  if (origin === 'user') return `User ${action.replace(/_/g, ' ')}.`;
+  return `System ${action.replace(/_/g, ' ')}.`;
 }
 
 function focus(nodeId: string, options: FocusOptions = {}): FocusHint {

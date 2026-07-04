@@ -360,10 +360,15 @@ describe('Core', () => {
     expect(core.state().nodes[rootId].children).toHaveLength(5);
 
     const history = core.operationHistory({ action: 'list', origin: 'agent' });
-    expect(history.items?.filter((item) => item.operationId === 'op:import-test')).toHaveLength(1);
+    const item = history.items?.find((entry) => entry.operationId === 'op:import-test');
+    expect(item).toBeDefined();
+    expect(item?.canUndo).toBe(true);
+    expect(history.cursor?.topUndoOperationId).toBe('op:import-test');
+    expect(core.operationHistory({ action: 'undo', origin: 'agent', operationId: 'op:not-top' }).count).toBe(0);
 
-    const undo = core.operationHistory({ action: 'undo', origin: 'agent' });
+    const undo = core.operationHistory({ action: 'undo', origin: 'agent', operationId: 'op:import-test' });
     expect(undo.count).toBe(1);
+    expect(undo.undone?.[0]?.affectedNodeIds).toContain(rootId);
     expect(core.state().nodes[rootId]).toBeUndefined();
   });
 
