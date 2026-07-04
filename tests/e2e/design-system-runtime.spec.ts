@@ -632,6 +632,49 @@ async function showAgentMessageDetailsDialog(page: Page) {
   await expect(dialog).toContainText('openai/gpt-5.4');
 }
 
+async function showAgentUsageTooltip(page: Page) {
+  const hoverUsage = {
+    input: 2400,
+    output: 120,
+    cacheRead: 300,
+    cacheWrite: 40,
+    totalTokens: 2860,
+    cost: {
+      input: 0.012,
+      output: 0.018,
+      cacheRead: 0.001,
+      cacheWrite: 0.002,
+      total: 0.033,
+    },
+  };
+
+  await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+    conversationTitle: 'Planning Channel',
+    model: { id: 'gpt-5.4', provider: 'openai' },
+    conversation: [{
+      nodeId: 'assistant-usage-hover-design',
+      message: {
+        role: 'assistant',
+        timestamp: 1_800_000_000_100,
+        api: 'openai-completions',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        usage: hoverUsage,
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Usage hover surface for runtime design.' }],
+      },
+    }],
+  });
+
+  const messageRow = page.locator('.agent-message-row.assistant', { hasText: 'Usage hover surface for runtime design.' });
+  await messageRow.hover();
+  const detailsButton = messageRow.getByRole('button', { name: 'Details' });
+  await detailsButton.hover();
+  const tooltip = page.locator('.agent-message-usage-hover-card');
+  await tooltip.waitFor({ state: 'visible' });
+  await expect(tooltip).toContainText('Cost');
+}
+
 const surfaces: SurfaceCase[] = [
   {
     name: 'main app',
@@ -943,6 +986,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showAgentMessageDetailsDialog,
+  },
+  {
+    name: 'agent usage tooltip',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showAgentUsageTooltip,
   },
   {
     name: 'agent debug run details',
