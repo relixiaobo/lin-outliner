@@ -135,7 +135,7 @@
 .agent-compaction-line {
   min-width: 0;
   height: 1px;
-  background: var(--border-subtle);
+  background: var(--separator);
 }
 
 .agent-compaction-toggle {

@@ -86,7 +86,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--separator);
 }
 
 .file-preview-directory-row {
@@ -98,7 +98,7 @@
   align-items: center;
   gap: var(--space-3);
   border: 0;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--separator);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
@@ -257,7 +257,7 @@
 
 .file-preview-media-player--video .file-preview-media-controls {
   border-radius: var(--file-preview-flush-radius);
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--separator);
   box-shadow: none;
 }
 
@@ -318,7 +318,7 @@
   max-width: 100%;
   flex: 0 0 auto;
   gap: var(--space-1);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-1);
   padding: var(--space-1);
@@ -351,7 +351,7 @@
   width: 100%;
   min-height: 420px;
   flex: 1 1 auto;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: white;
 }
@@ -431,7 +431,7 @@
 
 .file-preview-markdown pre {
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-1);
   padding: var(--file-preview-content-inset, var(--space-4));
@@ -506,7 +506,7 @@
   width: min(720px, 100%);
   min-height: 320px;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--file-preview-page-radius);
   background: var(--bg-content);
 }
@@ -610,7 +610,7 @@
 .file-preview-pdf-canvas {
   grid-area: 1 / 1;
   max-width: 100%;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--file-preview-page-radius);
   background: var(--bg-content);
   box-shadow: var(--shadow-thumb);
@@ -824,8 +824,8 @@
 
 .file-preview-table td {
   max-width: 280px;
-  border-bottom: 1px solid var(--border-subtle);
-  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--separator);
+  border-right: 1px solid var(--separator);
   padding: var(--space-2) var(--space-3);
   vertical-align: top;
   white-space: pre-wrap;
@@ -1236,7 +1236,7 @@
 /* A quiet caption (type · size · pages) at the top of the `⋯` menu. */
 .file-preview-menu-meta {
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--separator);
   color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
@@ -1368,7 +1368,7 @@
   height: auto;
   max-width: min(320px, 100%);
   max-height: 240px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--bg-content);
   object-fit: contain;
@@ -1383,7 +1383,7 @@
   min-width: 160px;
   min-height: var(--control-size-lg, 40px);
   padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
 }

@@ -187,7 +187,7 @@
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-md);
   padding: var(--space-2) var(--space-3) var(--space-2) calc(var(--sidebar-content-start) - 1px);
-  border: 1px dashed var(--border-subtle);
+  border: 1px dashed var(--separator);
   border-radius: var(--radius-sm);
   transition: border-color var(--motion-fast), background var(--motion-fast), color var(--motion-fast);
 }

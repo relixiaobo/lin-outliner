@@ -73,7 +73,7 @@
   flex: 0 0 auto;
   width: 1px;
   height: calc(var(--chrome-control-height) - var(--space-4));
-  background: var(--border-subtle);
+  background: var(--separator);
 }
 
 .settings-toolbar-title {

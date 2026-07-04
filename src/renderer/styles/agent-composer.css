@@ -237,7 +237,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-sm);
   background: var(--bg-window);
   color: var(--text-strong);
@@ -273,7 +273,7 @@
   min-height: 84px;
   min-width: 0;
   resize: vertical;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-sm);
   outline: none;
   background: var(--bg-window);
@@ -698,7 +698,7 @@
   min-width: 0;
   align-items: center;
   gap: var(--space-3);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-2);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
@@ -1080,7 +1080,7 @@
 .agent-composer-model-divider {
   height: 1px;
   margin: var(--space-1) var(--space-2);
-  background: var(--border-subtle);
+  background: var(--separator);
 }
 
 .agent-composer-model-group {

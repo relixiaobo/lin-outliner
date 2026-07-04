@@ -7,7 +7,7 @@
   position: relative;
   overflow: hidden;
   margin: var(--space-1) 0;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   --code-block-content-inset: var(--space-5);

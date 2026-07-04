@@ -91,7 +91,7 @@
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--separator);
   color: var(--status-danger);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
@@ -476,7 +476,7 @@
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--separator);
   color: var(--status-danger);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
@@ -659,7 +659,7 @@
 
 .agent-transcript-tool-result-row {
   min-width: 0;
-  border-left: 2px solid var(--border-subtle);
+  border-left: 2px solid var(--separator);
   border-left-color: var(--status-warning);
   color: var(--text-soft);
   font-size: var(--font-meta);
@@ -731,7 +731,7 @@
 
 .agent-pov-inspector-message {
   min-width: 0;
-  border-left: 2px solid var(--border-subtle);
+  border-left: 2px solid var(--separator);
   padding-left: var(--space-5);
 }
 
@@ -777,7 +777,7 @@
 .agent-run-image-list img {
   max-width: min(240px, 100%);
   max-height: 180px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-sm);
   object-fit: contain;
 }
@@ -965,7 +965,7 @@
   display: block;
   overflow: hidden;
   max-width: min(100%, 420px);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-2);
 }

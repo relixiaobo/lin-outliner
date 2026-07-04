@@ -70,7 +70,7 @@
   bottom: 0;
   left: var(--inset-separator-inset, var(--space-4));
   height: 1px;
-  background: var(--border-subtle);
+  background: var(--separator);
   pointer-events: none;
 }
 

@@ -974,7 +974,7 @@
   left: var(--indent-guide-line-offset);
   width: 1px;
   border-radius: var(--radius-pill);
-  background: var(--border-subtle);
+  background: var(--separator);
   transform: translateX(-50%);
   transition: background var(--motion-fast), width var(--motion-fast);
 }
@@ -1857,7 +1857,7 @@
 
 .typed-field-date-recurrence-select {
   min-height: 24px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-sm);
   background: var(--fill-1);
   color: var(--text-primary);
@@ -2679,7 +2679,7 @@
 
 .node-context-separator {
   height: 1px;
-  background: var(--border-subtle);
+  background: var(--separator);
   margin: var(--space-2);
 }
 
@@ -2762,7 +2762,7 @@
 
 .tag-context-separator {
   height: 1px;
-  background: var(--border-subtle);
+  background: var(--separator);
   margin: var(--space-2);
 }
 

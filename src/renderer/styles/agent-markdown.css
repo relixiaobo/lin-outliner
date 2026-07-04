@@ -94,7 +94,7 @@
 .agent-markdown hr {
   margin: var(--space-6) 0;
   border: 0;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--separator);
 }
 
 .agent-inline-code {
