@@ -54,6 +54,27 @@ function collectForcedUserSelectViolations() {
   return violations;
 }
 
+function collectBareInputFocusSuppressionViolations() {
+  const violations: string[] = [];
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      if (selector !== '.input-bare:focus-visible') continue;
+      const body = match[2] ?? '';
+      if (!/\bbox-shadow\s*:\s*none\s*;/.test(body)) continue;
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector}`);
+    }
+  }
+
+  return violations;
+}
+
 // Strict-native cursor policy: chrome (buttons, toggles, rows, bullets) keeps the
 // default arrow cursor the way a native macOS/Windows app does. The pointing-hand
 // cursor is reserved for genuine content hyperlinks (inline references / links in
@@ -66,6 +87,10 @@ test.describe('cursor affordances', () => {
 
   test('keeps forced text-selection suppression limited to active gestures', () => {
     expect(collectForcedUserSelectViolations()).toEqual([]);
+  });
+
+  test('keeps shared bare inputs inheriting the keyboard focus ring', () => {
+    expect(collectBareInputFocusSuppressionViolations()).toEqual([]);
   });
 
   test('core controls keep the native arrow cursor', async ({ page }) => {
