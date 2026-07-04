@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import path from 'node:path';
+import { getBundledRipgrepBinDirForPath } from './agentRipgrep';
+import { buildAgentToolPathValue } from './agentToolPath';
 
 export interface AgentToolProcessResult {
   stdout: string;
@@ -18,30 +19,17 @@ interface AgentToolProcessOptions {
   maxStderrChars?: number;
 }
 
-const EXTRA_TOOL_PATH_ENV = 'LIN_AGENT_EXTRA_TOOL_PATH';
-const DEFAULT_AGENT_TOOL_PATH_SEGMENTS = [
-  '/opt/homebrew/bin',
-  '/opt/homebrew/sbin',
-  '/usr/local/bin',
-  '/usr/local/sbin',
-  '/usr/bin',
-  '/bin',
-  '/usr/sbin',
-  '/sbin',
-];
+export interface AgentLocalToolProcessEnvOptions {
+  bundledRipgrepBinDir?: string;
+  defaultToolPathSegments?: string[];
+}
 
-export function buildAgentLocalToolProcessEnv(): NodeJS.ProcessEnv {
-  const segments = [
-    ...pathSegments(process.env[EXTRA_TOOL_PATH_ENV]),
-    ...pathSegments(process.env.PATH),
-    ...DEFAULT_AGENT_TOOL_PATH_SEGMENTS,
-  ];
-  const seen = new Set<string>();
-  const pathValue = segments.filter((segment) => {
-    if (seen.has(segment)) return false;
-    seen.add(segment);
-    return true;
-  }).join(path.delimiter);
+export function buildAgentLocalToolProcessEnv(options: AgentLocalToolProcessEnvOptions = {}): NodeJS.ProcessEnv {
+  const bundledRipgrepBinDir = options.bundledRipgrepBinDir ?? getBundledRipgrepBinDirForPath();
+  const pathValue = buildAgentToolPathValue({
+    defaultToolPathSegments: options.defaultToolPathSegments,
+    trailingSegments: bundledRipgrepBinDir ? [bundledRipgrepBinDir] : [],
+  });
   return { ...process.env, PATH: pathValue };
 }
 
@@ -102,11 +90,4 @@ function appendBounded(current: string, chunk: string, maxChars: number | undefi
   const remaining = maxChars - current.length;
   if (chunk.length <= remaining) return { value: current + chunk, truncated: false };
   return { value: current + chunk.slice(0, remaining), truncated: true };
-}
-
-function pathSegments(value: string | undefined): string[] {
-  return (value ?? '')
-    .split(path.delimiter)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
 }

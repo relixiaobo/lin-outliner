@@ -64,12 +64,15 @@ truth.
     `.docx`, `.pptx`, `.xlsx`, `.xls`, and `.epub`
   - local tool subprocesses use the app environment plus
     `LIN_AGENT_EXTRA_TOOL_PATH` and common macOS Homebrew/system binary paths, so
-    GUI-launched app processes can still find installed tools like Poppler and
-    ripgrep; missing Poppler or MarkItDown errors tell the agent to use `bash`
+    GUI-launched app processes can still find optional conversion tools like
+    Poppler; Tenon's ripgrep provider also appends bundled `rg` after those paths
+    so Bash can discover it without shadowing an installed user/system `rg`;
+    missing Poppler or MarkItDown errors tell the agent to use `bash`
     to detect available local tooling, install the dependency without assuming
     Homebrew, then retry the same file tool call
   - `file_glob` and `file_grep` return local-root-relative paths
-  - `file_grep` backed by ripgrep with streamed paginated output modes
+  - `file_grep` backed by Tenon's ripgrep provider with streamed paginated
+    output modes
   - `file_edit` narrowed to exact non-empty replacements after a full read
     with compact local hunks
   - `bash` file-first bounded output capture and background task output files

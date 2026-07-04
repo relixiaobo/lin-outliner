@@ -34,6 +34,7 @@ import {
   requiredNormalizedString,
 } from './agentToolParams';
 import { buildAgentLocalToolProcessEnv, runAgentToolProcess } from './agentToolProcess';
+import { resolveRipgrepCommand, type ResolvedRipgrepCommand } from './agentRipgrep';
 
 export { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 
@@ -483,11 +484,11 @@ export const POPPLER_RECOVERY_INSTRUCTIONS = [
   'After installation, retry the same file_read call.',
 ].join(' ');
 export const RIPGREP_RECOVERY_INSTRUCTIONS = [
-  'ripgrep is required for file_grep.',
-  'Run bash to detect an available package manager and install ripgrep.',
-  'Do not assume Homebrew is available: use an installed manager such as `brew install ripgrep`, `sudo port install ripgrep`, `sudo apt-get update && sudo apt-get install -y ripgrep`, `sudo dnf install -y ripgrep`, or `sudo pacman -S --noconfirm ripgrep`.',
-  'If rg already exists outside this app, restart Tenon with LIN_AGENT_EXTRA_TOOL_PATH pointing at the directory that contains rg.',
-  'After installation or restart, retry the same file_grep call.',
+  'Tenon provides ripgrep for file_grep through its bundled ripgrep provider.',
+  'If ripgrep_unavailable appears, the app resource or configured LIN_AGENT_RIPGREP_COMMAND is broken or inaccessible.',
+  'Check the provider mode and source in the error, then report the packaging/runtime issue.',
+  'For path discovery, retry with file_glob because it has a TypeScript fallback.',
+  'For content search, do not install ripgrep as the primary remediation; the packaged app should include it.',
 ].join(' ');
 const IGNORED_DIRECTORIES = new Set(['.agent-trash', '.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);
 const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
@@ -1518,9 +1519,11 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   const mode = params.output_mode ?? 'files_with_matches';
   const args = buildRipgrepArgs(workspace, target, params);
   const page = grepPageParams(params.head_limit, params.offset);
-  const result = await runProcessLinesPage('rg', args, workspace.root, page.offset, page.limit, 60_000);
+  const ripgrep = await resolveRipgrepForTool();
+  const result = await runProcessLinesPage(ripgrep.command, [...ripgrep.argsPrefix, ...args], workspace.root, page.offset, page.limit, 60_000);
   if (result.error) {
-    throw new LocalToolFailure('ripgrep_unavailable', result.error.message, RIPGREP_RECOVERY_INSTRUCTIONS);
+    const detail = `${ripgrep.mode} provider at ${ripgrep.source} failed to start: ${result.error.message}`;
+    throw new LocalToolFailure('ripgrep_unavailable', detail, ripgrepRecoveryInstructions(detail));
   }
   if (result.exitCode !== 0 && result.exitCode !== 1 && !result.truncated) {
     const message = result.stderr.trim() || `rg exited with code ${result.exitCode}.`;
@@ -1669,6 +1672,19 @@ function clearReadStateForDeletedPath(workspace: WorkspaceContext, filePath: str
       workspace.readFileState.delete(cachedPath);
     }
   }
+}
+
+async function resolveRipgrepForTool(): Promise<ResolvedRipgrepCommand> {
+  try {
+    return await resolveRipgrepCommand();
+  } catch (error) {
+    const detail = errorMessage(error);
+    throw new LocalToolFailure('ripgrep_unavailable', detail, ripgrepRecoveryInstructions(detail));
+  }
+}
+
+function ripgrepRecoveryInstructions(detail: string): string {
+  return `${RIPGREP_RECOVERY_INSTRUCTIONS} Provider failure: ${detail}`;
 }
 
 async function runProcess(command: string, args: string[], cwd: string, timeoutMs = 60_000, options: ProcessOptions = {}): Promise<ProcessResult> {
@@ -2053,6 +2069,8 @@ async function collectFileGlobCandidates(searchRoot: string, pattern: string): P
 }
 
 async function collectFilesWithRipgrep(searchRoot: string, pattern: string): Promise<FileGlobCandidates | null> {
+  const ripgrep = await resolveRipgrepCommand().catch(() => null);
+  if (!ripgrep) return null;
   const args = ['--files', '--hidden', '--null'];
   const positiveGlob = ripgrepGlobForFileGlob(pattern, searchRoot);
   if (positiveGlob) args.push('--glob', positiveGlob);
@@ -2060,7 +2078,7 @@ async function collectFilesWithRipgrep(searchRoot: string, pattern: string): Pro
     args.push('--glob', `!**/${dir}/**`);
   }
 
-  const result = await runProcessItems('rg', args, searchRoot, '\0', FILE_GLOB_CANDIDATE_LIMIT, 30_000);
+  const result = await runProcessItems(ripgrep.command, [...ripgrep.argsPrefix, ...args], searchRoot, '\0', FILE_GLOB_CANDIDATE_LIMIT, 30_000);
   if (result.error || result.timedOut) return null;
   if (result.exitCode !== 0 && result.exitCode !== 1 && !result.truncated) return null;
   return {

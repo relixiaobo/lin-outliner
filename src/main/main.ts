@@ -95,6 +95,8 @@ import {
 } from '../core/commands';
 import { oauthLoginManager } from './agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
+import { resolveRipgrepCommand } from './agentRipgrep';
+import { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
 import {
@@ -2157,21 +2159,23 @@ async function commonDirectoryRecentFilePaths(limit: number): Promise<string[]> 
   return paths;
 }
 
-function rgFileNameMatches(query: string, limit: number): Promise<string[]> {
+async function rgFileNameMatches(query: string, limit: number): Promise<string[]> {
   const home = safeAppPath('home');
-  if (!home) return Promise.resolve([]);
+  if (!home) return [];
+  const ripgrep = await resolveRipgrepCommand().catch(() => null);
+  if (!ripgrep) return [];
   return new Promise((resolve) => {
     const results: string[] = [];
     const seen = new Set<string>();
     const lowerQuery = query.toLowerCase();
-    const child = spawn('rg', [
+    const child = spawn(ripgrep.command, [...ripgrep.argsPrefix,
       '--files',
       '--hidden',
       '--glob', '!**/.git/**',
       '--glob', '!**/node_modules/**',
       '--glob', '!**/Library/**',
       home,
-    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+    ], { env: buildAgentLocalToolProcessEnv(), stdio: ['ignore', 'pipe', 'ignore'] });
     let buffer = '';
     let settled = false;
     const finish = () => {

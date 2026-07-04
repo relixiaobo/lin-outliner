@@ -2064,13 +2064,19 @@ Result behavior:
 - Results should be sorted by modified time, newest first.
 - Returned filenames are local-root-relative, matching `file_grep` and saving
   model tokens.
+- Candidate enumeration may use Tenon's ripgrep provider for the fast path, but
+  `file_glob` keeps a TypeScript directory-walk fallback when ripgrep is
+  unavailable or times out.
 - TypeScript should cap result count and set `truncated` when needed.
 - Use `file_grep`, not `file_glob`, when the task is content search.
 
 ### `file_grep`
 
-Search file contents through ripgrep. Use this instead of running `grep`, `rg`,
-or similar commands through `bash`.
+Search file contents through Tenon's ripgrep provider. The provider resolves
+`LIN_AGENT_RIPGREP_COMMAND` first, then bundled app resources, then system `rg`
+as a development fallback. Missing `rg` on the user's shell `PATH` should not
+break `file_grep` in dev or packaged builds. Use this tool instead of running
+`grep`, `rg`, or similar commands through `bash`.
 
 Parameters:
 
@@ -2120,6 +2126,9 @@ Result behavior:
   "use the hard maximum page size", not truly unbounded output. If Lin needs to
   expose hard-page truncation beyond `appliedLimit`, put it in the common
   `ToolResult.metrics`, not inside `FileGrepData`.
+- `ripgrep_unavailable` means Tenon's configured/bundled provider is broken or
+  inaccessible. It is a packaging/runtime issue, not a primary instruction to
+  install ripgrep through the user's package manager.
 
 ### `file_edit`
 
@@ -2840,7 +2849,7 @@ coverage maps as follows:
 | `operation_history` | Loro UndoManager-backed `undo`/`redo` plus operation journal listing with origin metadata. |
 | `file_read` | Implemented TypeScript file read command with path normalization, text pagination, image content/dimensions, PDF page rendering, notebook parsing, and freshness tracking. |
 | `file_glob` | Implemented TypeScript glob command under allowed roots with local-root-relative output paths. |
-| `file_grep` | Implemented ripgrep-backed search command under allowed roots with relative paths, output modes, and streamed pagination. |
+| `file_grep` | Implemented ripgrep-backed search command under allowed roots through Tenon's ripgrep provider, with relative paths, output modes, and streamed pagination. |
 | `file_edit` | Implemented TypeScript exact-replacement command with read-before-edit freshness checks. |
 | `file_write` | Implemented TypeScript create/rewrite command with read-before-write freshness checks for existing files. |
 | `bash` | Implemented TypeScript command runner with timeout, output caps, background task support, and output persistence. |
