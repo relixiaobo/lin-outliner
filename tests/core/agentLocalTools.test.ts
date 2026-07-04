@@ -25,11 +25,16 @@ import { AgentSkillRuntime } from '../../src/main/agentSkills';
 import { agentAttachmentDir, materializePathBackedAttachment } from '../../src/main/agentAttachmentMaterialization';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 import { agentDerivedFileCache } from '../../src/main/agentFileIngestionCache';
+import {
+  clearRipgrepCommandCacheForTests,
+  getBundledRipgrepExecutablePath,
+} from '../../src/main/agentRipgrep';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
 
 beforeEach(() => {
   agentDerivedFileCache.clear();
+  clearRipgrepCommandCacheForTests();
   localToolSets.clear();
 });
 
@@ -60,19 +65,12 @@ const pdfTest = hasPdfTools ? test : test.skip;
 const hasPdfTextTools = commandExists('pdfinfo') && commandExists('pdftotext');
 const pdfTextTest = hasPdfTextTools ? test : test.skip;
 
-// file_grep shells out to a real `rg` binary; skip ripgrep-backed cases when the
-// binary is not on PATH (mirrors the pdfTest pattern).
-const hasRipgrep = commandExists('rg');
-const ripgrepTest = hasRipgrep ? test : test.skip;
+const hasBundledRipgrep = Boolean(getBundledRipgrepExecutablePath());
+const ripgrepTest = hasBundledRipgrep ? test : test.skip;
 const posixBashProcessTest = process.platform === 'win32' ? test.skip : test;
 
 function commandExists(command: string): boolean {
   return !spawnSync(command, ['--version'], { stdio: 'ignore' }).error;
-}
-
-function commandPath(command: string): string | null {
-  const result = spawnSync('which', [command], { encoding: 'utf8' });
-  return result.status === 0 ? result.stdout.trim() : null;
 }
 
 async function withPrependedPath<T>(binDir: string, fn: () => Promise<T>): Promise<T> {
@@ -89,19 +87,48 @@ async function withPrependedPath<T>(binDir: string, fn: () => Promise<T>): Promi
   }
 }
 
-test('agent local tool process env includes configured and standard tool paths', () => {
+test('agent local tool process env includes configured, standard, and bundled ripgrep paths', () => {
   const originalPath = process.env.PATH;
   const originalExtraPath = process.env.LIN_AGENT_EXTRA_TOOL_PATH;
   const extraPath = path.join(tmpdir(), 'lin-extra-tools');
+  const bundledRipgrepBinDir = path.join(tmpdir(), 'lin-bundled-rg');
   process.env.PATH = ['/usr/bin', '/opt/homebrew/bin'].join(path.delimiter);
   process.env.LIN_AGENT_EXTRA_TOOL_PATH = [extraPath, '/usr/bin'].join(path.delimiter);
   try {
-    const env = buildAgentLocalToolProcessEnv();
+    const env = buildAgentLocalToolProcessEnv({ bundledRipgrepBinDir });
     const segments = env.PATH?.split(path.delimiter) ?? [];
     expect(segments.slice(0, 3)).toEqual([extraPath, '/usr/bin', '/opt/homebrew/bin']);
     expect(segments).toContain('/usr/local/bin');
+    expect(segments.at(-1)).toBe(bundledRipgrepBinDir);
     expect(segments.filter((segment) => segment === '/usr/bin')).toHaveLength(1);
     expect(segments.filter((segment) => segment === '/opt/homebrew/bin')).toHaveLength(1);
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    if (originalExtraPath === undefined) {
+      delete process.env.LIN_AGENT_EXTRA_TOOL_PATH;
+    } else {
+      process.env.LIN_AGENT_EXTRA_TOOL_PATH = originalExtraPath;
+    }
+  }
+});
+
+test('agent local tool process env exposes bundled rg after user and system paths', () => {
+  const originalPath = process.env.PATH;
+  const originalExtraPath = process.env.LIN_AGENT_EXTRA_TOOL_PATH;
+  const extraPath = path.join(tmpdir(), 'lin-extra-tools');
+  const bundledRipgrepBinDir = path.join(tmpdir(), 'lin-bundled-rg');
+  process.env.PATH = ['/custom/bin'].join(path.delimiter);
+  process.env.LIN_AGENT_EXTRA_TOOL_PATH = extraPath;
+  try {
+    const env = buildAgentLocalToolProcessEnv({
+      bundledRipgrepBinDir,
+      defaultToolPathSegments: [],
+    });
+    expect(env.PATH?.split(path.delimiter)).toEqual([extraPath, '/custom/bin', bundledRipgrepBinDir]);
   } finally {
     if (originalPath === undefined) {
       delete process.env.PATH;
@@ -127,14 +154,13 @@ test('Poppler recovery instructions tell the agent to install with bash and retr
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('retry the same file_read call');
 });
 
-test('ripgrep recovery instructions tell the agent to install or expose rg and retry', () => {
-  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('Run bash to detect an available package manager');
-  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('Do not assume Homebrew is available');
-  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('`brew install ripgrep`');
-  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('`sudo port install ripgrep`');
-  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('`sudo apt-get update && sudo apt-get install -y ripgrep`');
-  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('LIN_AGENT_EXTRA_TOOL_PATH');
-  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('retry the same file_grep call');
+test('ripgrep recovery instructions point to bundled provider failures', () => {
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('bundled ripgrep provider');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('LIN_AGENT_RIPGREP_COMMAND');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('packaging/runtime issue');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('file_glob');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).not.toContain('brew install ripgrep');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).not.toContain('apt-get install');
 });
 
 async function waitForFileContent(filePath: string, predicate: (content: string) => boolean, timeoutMs = 1000): Promise<string> {
@@ -170,12 +196,17 @@ function killProcessIfAlive(pid: number | undefined) {
   }
 }
 
-async function withEnv<T>(overrides: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+async function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
   const previous = new Map<string, string | undefined>();
   for (const [key, value] of Object.entries(overrides)) {
     previous.set(key, process.env[key]);
-    process.env[key] = value;
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
   }
+  clearRipgrepCommandCacheForTests();
   try {
     return await fn();
   } finally {
@@ -186,6 +217,7 @@ async function withEnv<T>(overrides: Record<string, string>, fn: () => Promise<T
         process.env[key] = value;
       }
     }
+    clearRipgrepCommandCacheForTests();
   }
 }
 
@@ -1698,23 +1730,27 @@ describe('agent local tools', () => {
 
   ripgrepTest('file_grep finds workspace content without bash', async () => {
     await withWorkspace(async (workspaceRoot) => {
+      const emptyPathDir = path.join(workspaceRoot, 'empty-path');
+      await mkdir(emptyPathDir);
       await mkdir(path.join(workspaceRoot, 'src'), { recursive: true });
       await writeFile(path.join(workspaceRoot, 'src', 'alpha.ts'), 'export const city = "Chengdu";\n', 'utf8');
       await writeFile(path.join(workspaceRoot, 'src', 'beta.ts'), 'export const city = "Shanghai";\n', 'utf8');
 
-      const grep = await executeTool<{
-        mode: 'content';
-        content: string;
-        numFiles: number;
-      }>(workspaceRoot, 'file_grep', {
-        pattern: 'Chengdu',
-        path: path.join(workspaceRoot, 'src'),
-        glob: '**/*.ts',
-        output_mode: 'content',
+      await withEnv({ PATH: emptyPathDir, LIN_AGENT_EXTRA_TOOL_PATH: undefined }, async () => {
+        const grep = await executeTool<{
+          mode: 'content';
+          content: string;
+          numFiles: number;
+        }>(workspaceRoot, 'file_grep', {
+          pattern: 'Chengdu',
+          path: path.join(workspaceRoot, 'src'),
+          glob: '**/*.ts',
+          output_mode: 'content',
+        });
+        expect(grep.ok).toBe(true);
+        expect(grep.data!.numFiles).toBe(0);
+        expect(grep.data!.content).toContain('src/alpha.ts:1:export const city = "Chengdu";');
       });
-      expect(grep.ok).toBe(true);
-      expect(grep.data!.numFiles).toBe(0);
-      expect(grep.data!.content).toContain('src/alpha.ts:1:export const city = "Chengdu";');
     });
   });
 
@@ -1747,11 +1783,14 @@ describe('agent local tools', () => {
       await writeFile(path.join(workspaceRoot, 'src', 'from-rg.ts'), 'export const source = "rg";\n', 'utf8');
       await writeFile(path.join(workspaceRoot, 'src', 'fallback-only.ts'), 'export const source = "fallback";\n', 'utf8');
 
-      const realRg = commandPath('rg');
       const rgArgsLog = path.join(workspaceRoot, 'rg-args.log');
       const fakeRg = path.join(workspaceRoot, 'fake-bin', 'rg');
       await writeFile(fakeRg, [
         '#!/bin/sh',
+        'if [ "$1" = "--version" ]; then',
+        '  echo "ripgrep 15.1.0"',
+        '  exit 0',
+        'fi',
         'for arg in "$@"; do',
         '  if [ "$arg" = "--files" ]; then',
         '    printf \'%s\\n\' "$@" > "$RG_ARGS_LOG"',
@@ -1759,16 +1798,12 @@ describe('agent local tools', () => {
         '    exit 0',
         '  fi',
         'done',
-        realRg ? `exec ${JSON.stringify(realRg)} "$@"` : 'exit 127',
+        'exit 127',
         '',
       ].join('\n'), 'utf8');
       await chmod(fakeRg, 0o755);
 
-      const originalPath = process.env.PATH;
-      const originalLog = process.env.RG_ARGS_LOG;
-      process.env.PATH = [path.dirname(fakeRg), originalPath].filter(Boolean).join(path.delimiter);
-      process.env.RG_ARGS_LOG = rgArgsLog;
-      try {
+      await withEnv({ LIN_AGENT_RIPGREP_COMMAND: fakeRg, RG_ARGS_LOG: rgArgsLog }, async () => {
         const glob = await executeTool<{ filenames: string[] }>(workspaceRoot, 'file_glob', {
           pattern: 'src/**/*.ts',
         });
@@ -1779,18 +1814,7 @@ describe('agent local tools', () => {
         expect(args).toContain('--files');
         expect(args).toContain('--null');
         expect(args).toContain('src/**/*.ts');
-      } finally {
-        if (originalPath === undefined) {
-          delete process.env.PATH;
-        } else {
-          process.env.PATH = originalPath;
-        }
-        if (originalLog === undefined) {
-          delete process.env.RG_ARGS_LOG;
-        } else {
-          process.env.RG_ARGS_LOG = originalLog;
-        }
-      }
+      });
     });
   });
 
@@ -1800,11 +1824,14 @@ describe('agent local tools', () => {
       await mkdir(path.join(workspaceRoot, 'fake-bin'), { recursive: true });
       await writeFile(path.join(workspaceRoot, 'src', 'fallback.ts'), 'export const source = "fallback";\n', 'utf8');
 
-      const realRg = commandPath('rg');
       const rgArgsLog = path.join(workspaceRoot, 'rg-failed-args.log');
       const fakeRg = path.join(workspaceRoot, 'fake-bin', 'rg');
       await writeFile(fakeRg, [
         '#!/bin/sh',
+        'if [ "$1" = "--version" ]; then',
+        '  echo "ripgrep 15.1.0"',
+        '  exit 0',
+        'fi',
         'for arg in "$@"; do',
         '  if [ "$arg" = "--files" ]; then',
         '    printf \'%s\\n\' "$@" > "$RG_ARGS_LOG"',
@@ -1812,34 +1839,19 @@ describe('agent local tools', () => {
         '    exit 2',
         '  fi',
         'done',
-        realRg ? `exec ${JSON.stringify(realRg)} "$@"` : 'exit 127',
+        'exit 127',
         '',
       ].join('\n'), 'utf8');
       await chmod(fakeRg, 0o755);
 
-      const originalPath = process.env.PATH;
-      const originalLog = process.env.RG_ARGS_LOG;
-      process.env.PATH = [path.dirname(fakeRg), originalPath].filter(Boolean).join(path.delimiter);
-      process.env.RG_ARGS_LOG = rgArgsLog;
-      try {
+      await withEnv({ LIN_AGENT_RIPGREP_COMMAND: fakeRg, RG_ARGS_LOG: rgArgsLog }, async () => {
         const glob = await executeTool<{ filenames: string[] }>(workspaceRoot, 'file_glob', {
           pattern: 'src/**/*.ts',
         });
         expect(glob.ok).toBe(true);
         expect(glob.data!.filenames).toEqual(['src/fallback.ts']);
         expect(await readFile(rgArgsLog, 'utf8')).toContain('--files');
-      } finally {
-        if (originalPath === undefined) {
-          delete process.env.PATH;
-        } else {
-          process.env.PATH = originalPath;
-        }
-        if (originalLog === undefined) {
-          delete process.env.RG_ARGS_LOG;
-        } else {
-          process.env.RG_ARGS_LOG = originalLog;
-        }
-      }
+      });
     });
   });
 

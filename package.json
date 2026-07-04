@@ -92,6 +92,13 @@
         "to": "icon.png"
       },
       {
+        "from": "vendor/ripgrep",
+        "to": "ripgrep",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "build/generated/built-in-skills",
         "to": "built-in-skills",
         "filter": [
