@@ -57,6 +57,58 @@ async function todayChildren(page: Page) {
   return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
 }
 
+async function invokeDocumentCommand(page: Page, cmd: string, args: Record<string, unknown>) {
+  await page.evaluate(async ({ cmd, args }) => {
+    const win = window as typeof window & {
+      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
+    };
+    const outcome = await win.lin!.invoke<{ update: { projection: unknown } }>(cmd, args);
+    win.__LIN_E2E__?.emitDocumentEvent({ type: 'projection_changed', projection: outcome.update.projection });
+  }, { cmd, args });
+}
+
+async function openSchema(page: Page) {
+  await page.locator('.sidebar-primary-nav')
+    .getByRole('button', { name: 'Schema', exact: true })
+    .click();
+}
+
+async function showViewToolbar(page: Page, nodeId = ids.today) {
+  await invokeDocumentCommand(page, 'set_view_toolbar_visible', { nodeId, visible: true });
+  await page.locator('.view-toolbar').first().waitFor({ state: 'visible' });
+}
+
+async function showViewToolbarSortPopover(page: Page) {
+  await showViewToolbar(page);
+  const toolbar = page.locator('.view-toolbar').first();
+  await toolbar.getByRole('button', { name: 'Sort by', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Sort by' });
+  await dialog.waitFor({ state: 'visible' });
+  await expect(dialog.getByText('System fields')).toBeVisible();
+}
+
+async function showViewToolbarFilterPopover(page: Page) {
+  await showViewToolbar(page);
+  const toolbar = page.locator('.view-toolbar').first();
+  await toolbar.getByRole('button', { name: 'Filter by', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Filter by' });
+  await dialog.waitFor({ state: 'visible' });
+  await expect(dialog.getByRole('button', { name: /Created time/ })).toBeVisible();
+}
+
+async function showDefinitionConfigPanel(page: Page) {
+  await openSchema(page);
+  await row(page, ids.projectTag).getByRole('button', { name: 'Open' }).click();
+  await page.getByRole('region', { name: 'Definition configuration' }).waitFor({ state: 'visible' });
+}
+
+async function showDefinitionConfigPicker(page: Page) {
+  await showDefinitionConfigPanel(page);
+  await page.getByLabel('Extend from').click();
+  await page.getByRole('listbox', { name: 'Extend from options' }).waitFor({ state: 'visible' });
+}
+
 async function showTagSuggestions(page: Page) {
   await trailingEditor(page).click();
   await page.keyboard.type('#project');
@@ -432,6 +484,30 @@ const surfaces: SurfaceCase[] = [
       await page.getByRole('button', { name: 'Show query' }).click();
       await page.locator('[data-search-query-builder]').waitFor({ state: 'visible' });
     },
+  },
+  {
+    name: 'view toolbar sort popover',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showViewToolbarSortPopover,
+  },
+  {
+    name: 'view toolbar filter popover',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showViewToolbarFilterPopover,
+  },
+  {
+    name: 'definition config panel',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showDefinitionConfigPanel,
+  },
+  {
+    name: 'definition config picker',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showDefinitionConfigPicker,
   },
   {
     name: 'date picker overlay',
