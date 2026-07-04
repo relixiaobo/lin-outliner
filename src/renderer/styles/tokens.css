@@ -206,12 +206,15 @@
   --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.14);
   --shadow-thumb-strong: 0 1px 2px rgba(0, 0, 0, 0.18);
 
-  /* ── Legacy product-token aliases → semantic layer. Migrate opportunistically.
-        There is no --primary family: action surfaces use neutral fill /
-        focus-ring / outline tokens instead of the rose accent. ── */
+  /* Reading-register aliases over the foundation text ladder. These do not add
+     new alphas; they give transcript, tool, and dense chrome surfaces a shared
+     cross-surface vocabulary for bright / soft / faint content. */
   --text-strong: var(--text-primary);
   --text-soft: var(--text-secondary);
   --text-faint: var(--text-tertiary);
+  /* Product role tokens layered on the semantic foundation. There is no
+     --primary family: action surfaces use neutral fill / focus-ring / outline
+     tokens instead of the rose accent. */
   /* a strong control border (view-radio ring, etc.) — NOT the hairline divider;
      keep it a visible neutral that inverts with the theme */
   --border-strong: rgb(var(--ink) / 0.30);

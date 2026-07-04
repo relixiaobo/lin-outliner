@@ -192,6 +192,11 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   may use a solid danger fill (`--status-danger` with
   `--status-danger-solid-hover`) only when the command itself is destructive;
   ordinary destructive affordance hover remains neutral per the state table.
+- **Reading registers.** `--text-strong`, `--text-soft`, and `--text-faint` are
+  intentional register names over the `--text-primary / --text-secondary /
+  --text-tertiary` ladder. They do not introduce new colour values; they give
+  transcript, tool, and dense chrome surfaces one shared vocabulary for bright
+  assistant speech, softer reasoning/tool context, and faint preview/meta text.
 - **Dark-mode rules.** Avoid pure `#000`/`#fff`; lean on the alpha-on-ink levels
   and the `#1e1e1e` / `#2a2a2c` / `#2e2e30` surface seeds. Separators and outlines
   invert with `--ink` automatically; drop shadows deepen.
