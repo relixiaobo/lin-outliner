@@ -131,8 +131,9 @@ Expected checks for design-system changes:
   layout-transition allowlist; it keeps global z-index values on the `--z-*`
   ladder, keeps hidden scrollbars limited to the registered document-outline
   mini-rail exception, and keeps every `--material-*` background paired with the
-  shared `--material-backdrop` filter and scoped to registered chrome / overlay
-  surfaces; backdrop filters stay scoped to those material surfaces plus the
+  shared `--material-backdrop` filter, scoped to registered chrome / overlay
+  surfaces, and routed through the shared accessibility fallback path; backdrop
+  filters stay scoped to those material surfaces plus the
   registered preview-HUD exception, while preview HUD actions use
   `--preview-action-shadow` and rail chrome uses the shared
   `--rail-surface-shadow`. It also keeps level-2 focused overlays on the opaque

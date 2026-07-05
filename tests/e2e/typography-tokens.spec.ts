@@ -418,6 +418,44 @@ function collectMaterialBackdropScopeViolations() {
   return violations;
 }
 
+function collectMaterialFallbackViolations() {
+  const violations: string[] = [];
+  const usedMaterialSurfaceTokens = new Set<string>();
+  let usesMaterialBackdrop = false;
+
+  for (const file of productStyleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/\bbackground(?:-color)?\s*:\s*var\((--material-[\w-]+)\)\s*;/g)) {
+      usedMaterialSurfaceTokens.add(match[1]!);
+    }
+    if (/(?:^|[;\s])(?:-webkit-)?backdrop-filter\s*:\s*var\(--material-backdrop\)\s*;/.test(source)) {
+      usesMaterialBackdrop = true;
+    }
+  }
+
+  const fallbackSource = readFileSync('src/renderer/styles/a11y.css', 'utf8').replace(
+    /\/\*[\s\S]*?\*\//g,
+    (block) => block.replace(/[^\n]/g, ' '),
+  );
+  const fallbackTokens = new Map(
+    [...fallbackSource.matchAll(/^\s*(--material-[\w-]+)\s*:\s*([^;]+);/gm)]
+      .map((match) => [match[1]!, match[2]!.trim()]),
+  );
+
+  for (const token of usedMaterialSurfaceTokens) {
+    if (fallbackTokens.has(token)) continue;
+    violations.push(`${token} is used as a material background without an a11y opaque fallback`);
+  }
+  if (usesMaterialBackdrop && fallbackTokens.get('--material-backdrop') !== 'none') {
+    violations.push('--material-backdrop is used without a reduced-transparency fallback to none');
+  }
+
+  return violations;
+}
+
 function collectOverlayOuterBorderViolations() {
   const violations: string[] = [];
   const seen = new Set<string>();
@@ -767,6 +805,10 @@ test.describe('typography tokens', () => {
 
   test('keeps material backgrounds scoped to registered chrome and overlay surfaces', () => {
     expect(collectMaterialSurfaceScopeViolations()).toEqual([]);
+  });
+
+  test('keeps material tokens on the shared accessibility fallback path', () => {
+    expect(collectMaterialFallbackViolations()).toEqual([]);
   });
 
   test('keeps backdrop filters scoped to material surfaces and preview HUD controls', () => {
