@@ -129,9 +129,10 @@ Expected checks for design-system changes:
   `--primary` token family, viewport-independent font sizing, neutral
   letter-spacing, the static no-scale feedback guard, and the registered
   layout-transition and interactive-state layout-declaration allowlists; it keeps
-  global z-index values on the `--z-*` ladder without renderer inline `zIndex`,
-  keeps foundation typography/radius/shadow styling out of renderer inline style
-  objects,
+  global z-index values on the `--z-*` ladder without renderer source-owned
+  inline `zIndex` / `z-index`, keeps foundation typography/radius/shadow styling
+  out of renderer source-owned inline style objects, direct DOM style writes, and
+  inline style strings,
   keeps hidden scrollbars limited to the registered document-outline mini-rail
   exception, and keeps every
   `--material-*` background paired with the

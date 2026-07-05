@@ -524,7 +524,7 @@
 }
 
 .agent-question-back-button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 .agent-question-item {
@@ -672,7 +672,7 @@
 }
 
 .agent-question-discuss-button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 .agent-question-nav-actions {

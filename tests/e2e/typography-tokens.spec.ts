@@ -197,6 +197,15 @@ const inlineFoundationStyleProperties = new Set([
   'letterSpacing',
   'lineHeight',
 ]);
+const inlineFoundationStyleCssProperties = new Set([
+  'border-radius',
+  'box-shadow',
+  'font-size',
+  'letter-spacing',
+  'line-height',
+]);
+const inlineZIndexStyleProperties = new Set(['zIndex']);
+const inlineZIndexStyleCssProperties = new Set(['z-index']);
 
 function markdownFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -216,7 +225,47 @@ function collectFiles(dir: string, extensions: readonly string[]): string[] {
 
 function propertyNameText(name: ts.PropertyName, sourceFile: ts.SourceFile): string {
   if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+  if (ts.isComputedPropertyName(name) && ts.isStringLiteral(name.expression)) return name.expression.text;
   return name.getText(sourceFile);
+}
+
+function unwrapExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isAsExpression(current)
+    || ts.isParenthesizedExpression(current)
+    || ts.isSatisfiesExpression(current)
+    || ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function stringLiteralText(expression: ts.Expression): string | null {
+  const value = unwrapExpression(expression);
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) return value.text;
+  return null;
+}
+
+function stringLikeTextParts(expression: ts.Expression) {
+  const value = unwrapExpression(expression);
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) return [value.text];
+  if (ts.isTemplateExpression(value)) {
+    return [
+      value.head.text,
+      ...value.templateSpans.map((span) => span.literal.text),
+    ];
+  }
+  return [];
+}
+
+function cssDeclarationPropertyName(cssText: string, cssProperties: ReadonlySet<string>) {
+  for (const propertyName of cssProperties) {
+    const escapedName = propertyName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(?:^|[;{])\\s*${escapedName}\\s*:`, 'iu').test(cssText)) return propertyName;
+  }
+  return null;
 }
 
 const designSystemSpecFiles = [
@@ -625,7 +674,13 @@ function collectUndefinedLiveTokenReferenceViolations() {
   return violations;
 }
 
-function collectInlineZIndexViolations() {
+function collectSourceOwnedInlineStylePropertyViolations({
+  cssProperties,
+  styleProperties,
+}: {
+  cssProperties: ReadonlySet<string>;
+  styleProperties: ReadonlySet<string>;
+}) {
   const violations: string[] = [];
 
   for (const file of rendererSourceFiles.filter((sourceFile) => sourceFile.endsWith('.ts') || sourceFile.endsWith('.tsx'))) {
@@ -637,11 +692,116 @@ function collectInlineZIndexViolations() {
       true,
       file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
     );
+    const styleInitializers = new Map<string, ts.Expression>();
+
+    function isTrackedPropertyName(propertyName: string) {
+      return (
+        styleProperties.has(propertyName)
+        || cssProperties.has(propertyName.toLowerCase())
+      );
+    }
+
+    function inspectStyleStringExpression(expression: ts.Expression, seenIdentifiers = new Set<string>()) {
+      const styleString = unwrapExpression(expression);
+      for (const textPart of stringLikeTextParts(styleString)) {
+        const propertyName = cssDeclarationPropertyName(textPart, cssProperties);
+        if (!propertyName) continue;
+        const { line } = sourceFile.getLineAndCharacterOfPosition(styleString.getStart(sourceFile));
+        violations.push(`${file}:${line + 1} inline style string declares ${propertyName}`);
+      }
+      if (ts.isIdentifier(styleString)) {
+        if (seenIdentifiers.has(styleString.text)) return;
+        seenIdentifiers.add(styleString.text);
+        const initializer = styleInitializers.get(styleString.text);
+        if (initializer) inspectStyleStringExpression(initializer, seenIdentifiers);
+        return;
+      }
+      ts.forEachChild(styleString, (child) => {
+        if (ts.isExpression(child)) inspectStyleStringExpression(child, seenIdentifiers);
+      });
+    }
+
+    function trackedStyleWriteName(expression: ts.Expression) {
+      const target = unwrapExpression(expression);
+      let styleExpression: ts.Expression;
+      let propertyName: string | null;
+
+      if (ts.isPropertyAccessExpression(target)) {
+        styleExpression = target.expression;
+        propertyName = target.name.text;
+      } else if (ts.isElementAccessExpression(target)) {
+        styleExpression = target.expression;
+        propertyName = target.argumentExpression ? stringLiteralText(target.argumentExpression) : null;
+      } else {
+        return null;
+      }
+
+      const styleTarget = unwrapExpression(styleExpression);
+      if (
+        !propertyName
+        || !isTrackedPropertyName(propertyName)
+        || !ts.isPropertyAccessExpression(styleTarget)
+        || styleTarget.name.text !== 'style'
+      ) {
+        return null;
+      }
+      return propertyName;
+    }
+
+    function trackedStyleSetPropertyName(expression: ts.CallExpression) {
+      const callTarget = unwrapExpression(expression.expression);
+      if (!ts.isPropertyAccessExpression(callTarget) || callTarget.name.text !== 'setProperty') return null;
+      const styleTarget = unwrapExpression(callTarget.expression);
+      if (!ts.isPropertyAccessExpression(styleTarget) || styleTarget.name.text !== 'style') return null;
+      const propertyName = expression.arguments[0] ? stringLiteralText(expression.arguments[0]) : null;
+      if (!propertyName || !cssProperties.has(propertyName.toLowerCase())) return null;
+      return propertyName;
+    }
+
+    function isInlineStyleStringAssignment(expression: ts.Expression) {
+      const target = unwrapExpression(expression);
+      if (ts.isPropertyAccessExpression(target)) return target.name.text === 'style';
+      if (ts.isElementAccessExpression(target)) return target.argumentExpression
+        ? stringLiteralText(target.argumentExpression) === 'style'
+        : false;
+      return false;
+    }
+
+    function inlineStyleStringSetAttribute(expression: ts.CallExpression) {
+      const callTarget = unwrapExpression(expression.expression);
+      if (!ts.isPropertyAccessExpression(callTarget) || callTarget.name.text !== 'setAttribute') return null;
+      const attributeName = expression.arguments[0] ? stringLiteralText(expression.arguments[0]) : null;
+      if (attributeName !== 'style') return null;
+      return expression.arguments[1] ?? null;
+    }
 
     function visit(node: ts.Node) {
-      if (ts.isPropertyAssignment(node) && propertyNameText(node.name, sourceFile) === 'zIndex') {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        styleInitializers.set(node.name.text, node.initializer);
+      }
+      if (ts.isPropertyAssignment(node) && isTrackedPropertyName(propertyNameText(node.name, sourceFile))) {
         const { line } = sourceFile.getLineAndCharacterOfPosition(node.name.getStart(sourceFile));
         violations.push(`${file}:${line + 1} ${node.getText(sourceFile)}`);
+      }
+      if (ts.isPropertyAssignment(node) && propertyNameText(node.name, sourceFile) === 'style') {
+        inspectStyleStringExpression(node.initializer);
+      }
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        const propertyName = trackedStyleWriteName(node.left);
+        if (propertyName) {
+          const { line } = sourceFile.getLineAndCharacterOfPosition(node.left.getStart(sourceFile));
+          violations.push(`${file}:${line + 1} ${node.left.getText(sourceFile)}`);
+        }
+        if (isInlineStyleStringAssignment(node.left)) inspectStyleStringExpression(node.right);
+      }
+      if (ts.isCallExpression(node)) {
+        const propertyName = trackedStyleSetPropertyName(node);
+        if (propertyName) {
+          const { line } = sourceFile.getLineAndCharacterOfPosition(node.expression.getStart(sourceFile));
+          violations.push(`${file}:${line + 1} ${node.expression.getText(sourceFile)}('${propertyName}')`);
+        }
+        const inlineStyleValue = inlineStyleStringSetAttribute(node);
+        if (inlineStyleValue) inspectStyleStringExpression(inlineStyleValue);
       }
       ts.forEachChild(node, visit);
     }
@@ -652,31 +812,18 @@ function collectInlineZIndexViolations() {
   return violations;
 }
 
+function collectInlineZIndexViolations() {
+  return collectSourceOwnedInlineStylePropertyViolations({
+    cssProperties: inlineZIndexStyleCssProperties,
+    styleProperties: inlineZIndexStyleProperties,
+  });
+}
+
 function collectInlineFoundationStyleViolations() {
-  const violations: string[] = [];
-
-  for (const file of rendererSourceFiles.filter((sourceFile) => sourceFile.endsWith('.ts') || sourceFile.endsWith('.tsx'))) {
-    const text = readFileSync(file, 'utf8');
-    const sourceFile = ts.createSourceFile(
-      file,
-      text,
-      ts.ScriptTarget.Latest,
-      true,
-      file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-    );
-
-    function visit(node: ts.Node) {
-      if (ts.isPropertyAssignment(node) && inlineFoundationStyleProperties.has(propertyNameText(node.name, sourceFile))) {
-        const { line } = sourceFile.getLineAndCharacterOfPosition(node.name.getStart(sourceFile));
-        violations.push(`${file}:${line + 1} ${node.getText(sourceFile)}`);
-      }
-      ts.forEachChild(node, visit);
-    }
-
-    visit(sourceFile);
-  }
-
-  return violations;
+  return collectSourceOwnedInlineStylePropertyViolations({
+    cssProperties: inlineFoundationStyleCssProperties,
+    styleProperties: inlineFoundationStyleProperties,
+  });
 }
 
 test.describe('typography tokens', () => {
@@ -894,11 +1041,11 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
-  test('keeps renderer inline z-index out of source objects', () => {
+  test('keeps renderer source-owned inline z-index out of source styles', () => {
     expect(collectInlineZIndexViolations()).toEqual([]);
   });
 
-  test('keeps renderer inline foundation styling out of source objects', () => {
+  test('keeps renderer source-owned inline foundation styling out of source styles', () => {
     expect(collectInlineFoundationStyleViolations()).toEqual([]);
   });
 
