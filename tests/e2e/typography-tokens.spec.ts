@@ -106,6 +106,34 @@ const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/shell.css|.top-chrome-more-menu', 'Top chrome menu.'],
   ['src/renderer/styles/sidebar.css|:root[data-window-material] .sidebar-dock', 'Sidebar rail chrome material.'],
 ]);
+const borderlessOverlaySurfaceSelectors = new Map([
+  ['src/renderer/styles/agent-composer.css|.agent-composer-file-preview-popover', 'Inline file preview popover.'],
+  ['src/renderer/styles/agent-composer.css|.agent-composer-model-popover', 'Composer model/effort overlay.'],
+  ['src/renderer/styles/agent-debug.css|.agent-debug-cost::after', 'Debug cost tooltip.'],
+  ['src/renderer/styles/agent-debug.css|.agent-debug-usage-popover', 'Debug usage tooltip.'],
+  ['src/renderer/styles/agent-dock.css|.agent-conversation-menu', 'Agent conversation section menu.'],
+  ['src/renderer/styles/agent-dock.css|.agent-conversation-row-menu', 'Agent conversation row menu.'],
+  ['src/renderer/styles/agent-message.css|.agent-message-details-popover', 'Agent message details popover.'],
+  ['src/renderer/styles/agent-message.css|.agent-message-usage-hover-card', 'Agent message usage tooltip.'],
+  ['src/renderer/styles/agent-run-detail.css|.agent-run-detail-drawer', 'Agent run detail level-2 drawer.'],
+  ['src/renderer/styles/code.css|.code-block-language-menu', 'Code-block language menu.'],
+  ['src/renderer/styles/confirm-dialog.css|.confirm-dialog', 'Confirm dialog level-2 surface.'],
+  ['src/renderer/styles/file-preview.css|.document-outline-popover', 'Document outline popover.'],
+  ['src/renderer/styles/inline-ref.css|.inline-file-preview-popover', 'Inline file hover preview popover.'],
+  ['src/renderer/styles/overlay-palette.css|.command-palette', 'Command palette layout surface.'],
+  ['src/renderer/styles/outliner.css|.batch-tag-selector', 'Batch tag selector popover.'],
+  ['src/renderer/styles/outliner.css|.node-context-menu', 'Node context menu.'],
+  ['src/renderer/styles/outliner.css|.node-picker-popover', 'Node picker popover.'],
+  ['src/renderer/styles/outliner.css|.tag-context-menu', 'Tag context menu.'],
+  ['src/renderer/styles/outliner.css|.typed-field-date-popover', 'Field date picker popover.'],
+  ['src/renderer/styles/outliner.css|.view-toolbar-popover', 'View toolbar popover.'],
+  ['src/renderer/styles/outliner.css|.view-toolbar-tooltip', 'View toolbar tooltip.'],
+  ['src/renderer/styles/panel.css|.panel-date-popover', 'Panel date popover.'],
+  ['src/renderer/styles/popover-command.css|.command-palette', 'Command palette visual surface.'],
+  ['src/renderer/styles/popover-command.css|.trigger-popover', 'Trigger/reference/slash popover shell.'],
+  ['src/renderer/styles/settings-providers.css|.settings-row-menu', 'Settings provider row menu.'],
+  ['src/renderer/styles/shell.css|.top-chrome-more-menu', 'Top chrome menu.'],
+]);
 const previewHudBackdropSelectors = new Map([
   ['src/renderer/styles/file-preview.css|.file-preview-pill-primary', 'Preview HUD primary action over arbitrary document/media pixels.'],
   ['src/renderer/styles/file-preview.css|.file-preview-pill-more', 'Preview HUD more action over arbitrary document/media pixels.'],
@@ -385,6 +413,39 @@ function collectMaterialBackdropScopeViolations() {
   for (const [key, reason] of previewHudBackdropSelectors) {
     if (seenPreviewHud.has(key)) continue;
     violations.push(`${key} is registered as a preview HUD backdrop surface but no longer exists (${reason})`);
+  }
+
+  return violations;
+}
+
+function collectOverlayOuterBorderViolations() {
+  const violations: string[] = [];
+  const seen = new Set<string>();
+
+  for (const file of productStyleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      const key = `${file}|${selector}`;
+      if (!borderlessOverlaySurfaceSelectors.has(key)) continue;
+      seen.add(key);
+
+      const body = match[2] ?? '';
+      for (const declaration of body.matchAll(/\bborder(?:-(?:top|right|bottom|left))?\s*:\s*([^;]+);/g)) {
+        const value = declaration[1]!.trim();
+        if (/^(?:0|none)\b/.test(value)) continue;
+        const lineNumber = source.slice(0, match.index).split('\n').length;
+        violations.push(`${file}:${lineNumber} ${selector} declares an overlay outer border: ${value}`);
+      }
+    }
+  }
+
+  for (const [key, reason] of borderlessOverlaySurfaceSelectors) {
+    if (seen.has(key)) continue;
+    violations.push(`${key} is registered as a borderless overlay surface but no longer exists (${reason})`);
   }
 
   return violations;
@@ -710,6 +771,10 @@ test.describe('typography tokens', () => {
 
   test('keeps backdrop filters scoped to material surfaces and preview HUD controls', () => {
     expect(collectMaterialBackdropScopeViolations()).toEqual([]);
+  });
+
+  test('keeps overlay surfaces free of real outer borders', () => {
+    expect(collectOverlayOuterBorderViolations()).toEqual([]);
   });
 
   test('keeps level-2 focused overlays on the opaque elevated tier', () => {

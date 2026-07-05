@@ -139,8 +139,9 @@ Expected checks for design-system changes:
   elevated tier, not the material popover tier.
   It also keeps functional-state fills, borders, and rings from using brand,
   link, or status colour tokens outside the solid destructive-confirmation
-  exception, and fails overlay `box-shadow` declarations that mix level-1/2
-  shadow tokens with outline tokens. It also rejects the legacy generic
+  exception, keeps registered overlay root surfaces free of real outer borders,
+  and fails overlay `box-shadow` declarations that mix level-1/2 shadow tokens
+  with outline tokens. It also rejects the legacy generic
   `--shadow` and `--danger` aliases across renderer source evidence so surfaces
   name the actual elevation tier and semantic status role they use, keeps retired
   legacy aliases out of live CSS,
