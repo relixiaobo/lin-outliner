@@ -24,6 +24,7 @@ const SURFACE_TARGET_LINES = Math.floor(SURFACE_BASELINE_LINES * 0.6);
 const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
 const DECISION_EVIDENCE_COVERAGE_TARGET = 1;
+const CALIBRATION_EVIDENCE_COVERAGE_TARGET = 1;
 const DECISION_AUDIT_MIN_ROWS = 50;
 const calibrationFindingClasses = new Set([
   'Code drift',
@@ -259,6 +260,30 @@ function localMarkdownTargetExists(sourceFile: string, target: string): boolean 
   return existsSync(join(dirname(sourceFile), path));
 }
 
+function fileNameExistsUnder(dir: string, fileName: string): boolean {
+  if (!existsSync(dir)) return false;
+  return readdirSync(dir, { withFileTypes: true }).some((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return fileNameExistsUnder(path, fileName);
+    return entry.isFile() && entry.name === fileName;
+  });
+}
+
+function localEvidenceCodePathExists(reference: string): boolean {
+  if (existsSync(join(ROOT, reference))) return true;
+  if (reference.includes('/')) return false;
+
+  return [
+    DESIGN_SYSTEM_DIR,
+    join(ROOT, 'docs', 'spec'),
+    join(ROOT, 'docs', 'plans'),
+    join(ROOT, 'src', 'core'),
+    join(ROOT, 'src', 'renderer'),
+    join(ROOT, 'tests', 'e2e'),
+    join(ROOT, 'tests', 'renderer'),
+  ].some((dir) => fileNameExistsUnder(dir, reference));
+}
+
 function evidenceCodePathReferences(markdown: string): string[] {
   return [...markdown.matchAll(/`([^`]+)`/g)]
     .map((match) => match[1]?.trim() ?? '')
@@ -381,12 +406,29 @@ function calibrationAuditMetrics() {
     .filter((row) => !calibrationFindingClasses.has(row.classification))
     .map((row) => `${row.id} ${row.finding}: ${row.classification || 'missing classification'}`)
     .sort();
+  const evidenceRows = rows.filter((row) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(row.evidence));
+  const brokenReferences = new Set<string>();
+  for (const row of rows) {
+    for (const target of markdownLinkTargets(row.evidence)) {
+      if (!localMarkdownTargetExists(CALIBRATION_AUDIT, target)) {
+        brokenReferences.add(`${row.id} ${row.finding}: ${target}`);
+      }
+    }
+    for (const reference of evidenceCodePathReferences(row.evidence)) {
+      if (!localEvidenceCodePathExists(reference)) {
+        brokenReferences.add(`${row.id} ${row.finding}: ${reference}`);
+      }
+    }
+  }
 
   return {
     calibrationRows: rows.length,
     duplicateCalibrationIds,
     missingCalibrationIds,
     invalidCalibrationClasses,
+    calibrationEvidenceRows: evidenceRows.length,
+    calibrationEvidenceCoverage: rows.length === 0 ? 0 : Number((evidenceRows.length / rows.length).toFixed(3)),
+    calibrationBrokenReferences: [...brokenReferences].sort(),
   };
 }
 
@@ -790,6 +832,8 @@ function main() {
     console.log(`  surface lines: ${metrics.designSystem.surfaceLines}/${SURFACE_TARGET_LINES}`);
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
+    console.log(`  calibration evidence: ${(metrics.calibrationAudit.calibrationEvidenceCoverage * 100).toFixed(1)}%`);
+    console.log(`  calibration broken refs: ${metrics.calibrationAudit.calibrationBrokenReferences.length}`);
     console.log(`  invalid calibration classes: ${metrics.calibrationAudit.invalidCalibrationClasses.length}`);
     console.log(`  decision rows: ${metrics.decisionAudit.decisionRows}/${DECISION_AUDIT_MIN_ROWS}`);
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
@@ -833,6 +877,14 @@ function main() {
     }
     if (metrics.calibrationAudit.invalidCalibrationClasses.length > 0) {
       failures.push(`invalid calibration classes: ${metrics.calibrationAudit.invalidCalibrationClasses.join(', ')}`);
+    }
+    if (metrics.calibrationAudit.calibrationEvidenceCoverage < CALIBRATION_EVIDENCE_COVERAGE_TARGET) {
+      failures.push(
+        `calibration evidence ${metrics.calibrationAudit.calibrationEvidenceCoverage} < ${CALIBRATION_EVIDENCE_COVERAGE_TARGET}`,
+      );
+    }
+    if (metrics.calibrationAudit.calibrationBrokenReferences.length > 0) {
+      failures.push(`calibration evidence broken refs: ${metrics.calibrationAudit.calibrationBrokenReferences.join(', ')}`);
     }
     if (metrics.decisionAudit.decisionDerivationCoverage < DECISION_DERIVATION_TARGET) {
       failures.push(
