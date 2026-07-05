@@ -427,6 +427,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Ask user question stepper polish (PR #378, codex-4)** — the
+  multi-question `ask_user_question` composer stepper now uses compact
+  `Input needed · 1/2` title-row progress, moves Back into an icon-only header
+  control from step 2 onward, and lowers `Discuss first` into a left-side escape
+  hatch while keeping primary navigation on the right. Styling stays token-based,
+  and the spec/e2e coverage now pin the compact heading and icon Back behavior.
+  **Gate (main):** code review found no reportable findings. Verified with
+  typecheck, renderer tests, targeted stepper/discuss e2e coverage, docs check,
+  and `git diff --check`.
+
 - **Tana-style view toolbar polish (PR #350, codex-2)** — node and saved-search result toolbars now use a
   field-first interaction model: a real leading name-filter chip writes `sys:name contains` filter rules;
   Display/Group/Sort/Filter menus open as contextual popovers; filter summary chips target the exact saved

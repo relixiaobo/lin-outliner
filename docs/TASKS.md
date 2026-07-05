@@ -24,16 +24,17 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372**) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373, agent-bundled-search-tools #374, data-import-cli-api-boundary #375, ask-user-question-stepper #376) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373, agent-bundled-search-tools #374, data-import-cli-api-boundary #375, ask-user-question-stepper #376 + polish #378) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-05).** Open PR queue: none. Recently merged: #376
-(`codex-4/ask-user-question-stepper`) merged 2026-07-05 after main review;
-see *Recently completed*. #375
+**In flight (2026-07-05).** Open PR queue: none. Recently merged: #378
+(`codex-4/ask-user-question-stepper-polish`) merged 2026-07-05 after main review;
+see *Recently completed*. #376 (`codex-4/ask-user-question-stepper`) merged
+2026-07-05 after main review; see *Recently completed*. #375
 (`codex-4/data-import-cli-api-boundary`) merged 2026-07-04 after main review;
 see *Recently completed*. #374 (`codex-4/agent-bundled-search-tools`)
 merged 2026-07-04 after main review; see *Recently completed*. #373
@@ -465,6 +466,17 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **ask-user-question-stepper-polish** (`codex-4/ask-user-question-stepper-polish`,
+  PR #378, codex-4, merged 2026-07-05, fast-track) — tightens the shipped
+  multi-question `ask_user_question` stepper. Progress now sits compactly in the
+  title row, Back is an icon-only header control from step 2 onward, and
+  `Discuss first` is a lower-emphasis escape hatch with primary navigation on
+  the right. The styling stays token-based, and the spec/e2e coverage pin the
+  compact heading plus icon-back behavior. **Gate (main):** code review found no
+  reportable findings. Verified on the final PR head with typecheck, renderer
+  tests, targeted stepper/discuss e2e coverage, docs check, and `git diff
+  --check`.
 
 - **ask-user-question-stepper** (`codex-4/ask-user-question-stepper`,
   PR #376, codex-4, merged 2026-07-05, plan-track) — replaces the stacked
