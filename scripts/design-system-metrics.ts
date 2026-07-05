@@ -26,12 +26,13 @@ const DECISION_DERIVATION_TARGET = 0.8;
 const DECISION_EVIDENCE_COVERAGE_TARGET = 1;
 const CALIBRATION_EVIDENCE_COVERAGE_TARGET = 1;
 const DECISION_AUDIT_MIN_ROWS = 50;
-const calibrationFindingClasses = new Set([
+const calibrationFindingClassNames = [
   'Code drift',
   'Named exception',
   'Open design decision',
   'Spec drift',
-]);
+] as const;
+const calibrationFindingClasses = new Set(calibrationFindingClassNames);
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
 const RAW_FUNCTIONAL_COLOR_START_PATTERN = /\b(?:rgba?|hsla?)\s*\(/gi;
 const rawColorTokenDeclarationFiles = new Set([
@@ -327,6 +328,21 @@ function calibrationNamedExceptionRows(): Map<string, { scope: string; evidence:
   );
 }
 
+function calibrationClassificationRows() {
+  const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
+  const start = source.indexOf('## Classification Model');
+  const end = source.indexOf('## Calibration Rule', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return [...section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \|$/gm)]
+    .filter((match) => match[1] !== 'Class' && !match[1]?.startsWith('---'))
+    .map((match) => ({
+      name: match[1]?.trim() ?? '',
+      meaning: match[2] ?? '',
+      requiredResponse: match[3] ?? '',
+    }))
+    .filter((row) => Boolean(row.name));
+}
+
 function calibrationFindingRows() {
   const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
   return [...source.matchAll(/^\| (CA\d+) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
@@ -388,6 +404,18 @@ function exceptionEvidenceMetrics() {
 }
 
 function calibrationAuditMetrics() {
+  const classificationRows = calibrationClassificationRows();
+  const classificationNames = classificationRows.map((row) => row.name);
+  const duplicateClassificationModelClasses = classificationNames
+    .filter((name, index) => classificationNames.indexOf(name) !== index)
+    .filter((name, index, names) => names.indexOf(name) === index)
+    .sort();
+  const missingClassificationModelClasses = calibrationFindingClassNames
+    .filter((name) => !classificationNames.includes(name))
+    .sort();
+  const unexpectedClassificationModelClasses = classificationNames
+    .filter((name) => !calibrationFindingClasses.has(name))
+    .sort();
   const rows = calibrationFindingRows();
   const rowIds = rows.map((row) => row.id);
   const duplicateCalibrationIds = rowIds
@@ -422,6 +450,10 @@ function calibrationAuditMetrics() {
   }
 
   return {
+    calibrationClassificationRows: classificationRows.length,
+    duplicateClassificationModelClasses,
+    missingClassificationModelClasses,
+    unexpectedClassificationModelClasses,
     calibrationRows: rows.length,
     duplicateCalibrationIds,
     missingCalibrationIds,
@@ -831,6 +863,7 @@ function main() {
     console.log('design-system metrics');
     console.log(`  surface lines: ${metrics.designSystem.surfaceLines}/${SURFACE_TARGET_LINES}`);
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
+    console.log(`  calibration class rows: ${metrics.calibrationAudit.calibrationClassificationRows}`);
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
     console.log(`  calibration evidence: ${(metrics.calibrationAudit.calibrationEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  calibration broken refs: ${metrics.calibrationAudit.calibrationBrokenReferences.length}`);
@@ -868,6 +901,15 @@ function main() {
     const failures: string[] = [];
     if (metrics.designSystem.surfaceLines > SURFACE_TARGET_LINES) {
       failures.push(`surface lines ${metrics.designSystem.surfaceLines} > ${SURFACE_TARGET_LINES}`);
+    }
+    if (metrics.calibrationAudit.duplicateClassificationModelClasses.length > 0) {
+      failures.push(`duplicate calibration classification model classes: ${metrics.calibrationAudit.duplicateClassificationModelClasses.join(', ')}`);
+    }
+    if (metrics.calibrationAudit.missingClassificationModelClasses.length > 0) {
+      failures.push(`missing calibration classification model classes: ${metrics.calibrationAudit.missingClassificationModelClasses.join(', ')}`);
+    }
+    if (metrics.calibrationAudit.unexpectedClassificationModelClasses.length > 0) {
+      failures.push(`unexpected calibration classification model classes: ${metrics.calibrationAudit.unexpectedClassificationModelClasses.join(', ')}`);
     }
     if (metrics.calibrationAudit.duplicateCalibrationIds.length > 0) {
       failures.push(`duplicate calibration ids: ${metrics.calibrationAudit.duplicateCalibrationIds.join(', ')}`);
