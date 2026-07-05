@@ -355,6 +355,7 @@ function rawHexMetrics() {
   const files = filesByPattern(RENDERER_DIR, /\.(css|ts|tsx)$/);
   const violations: string[] = [];
   const exceptionUses: string[] = [];
+  const usedExceptions = new Set<string>();
   const kernel = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
   const undocumentedExceptions = Object.values(rawHexExceptions)
     .filter((exception) => !kernel.includes(`| ${exception.name} |`))
@@ -365,6 +366,7 @@ function rawHexMetrics() {
     const exception = rawHexExceptions[`${rel}:${value.toLowerCase()}`];
     const finding = `${rel}:${lineNumber} ${value} ${lineText.trim()}`;
     if (exception) {
+      usedExceptions.add(`${rel}:${value.toLowerCase()}`);
       exceptionUses.push(`${finding} (${exception.name})`);
     } else {
       violations.push(finding);
@@ -432,6 +434,10 @@ function rawHexMetrics() {
     rawHexOutsideTokenDeclarations: violations.length,
     rawHexViolations: violations,
     rawHexExceptionUses: exceptionUses,
+    staleRawHexExceptions: Object.entries(rawHexExceptions)
+      .filter(([key]) => !usedExceptions.has(key))
+      .map(([key, exception]) => `${key} (${exception.name})`)
+      .sort(),
     undocumentedRawHexExceptions: undocumentedExceptions,
   };
 }
@@ -496,6 +502,7 @@ function main() {
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
     console.log(`  named raw hex exceptions: ${metrics.tokens.rawHexExceptionUses.length}`);
+    console.log(`  stale raw hex exceptions: ${metrics.tokens.staleRawHexExceptions.length}`);
     console.log(`  runtime surface cases: ${metrics.runtimeSurfaces.runtimeSurfaceCases}`);
     console.log(`  runtime theme checks: ${metrics.runtimeSurfaces.runtimeSurfaceThemeChecks}`);
   }
@@ -533,6 +540,9 @@ function main() {
     }
     if (metrics.tokens.undocumentedRawHexExceptions.length > 0) {
       failures.push(`undocumented raw hex exceptions: ${metrics.tokens.undocumentedRawHexExceptions.join(', ')}`);
+    }
+    if (metrics.tokens.staleRawHexExceptions.length > 0) {
+      failures.push(`stale raw hex exceptions: ${metrics.tokens.staleRawHexExceptions.join(', ')}`);
     }
     if (!metrics.runtimeSurfaces.runtimeSurfaceMatrixFound || metrics.runtimeSurfaces.runtimeSurfaceCases === 0) {
       failures.push('runtime surface matrix missing or empty');

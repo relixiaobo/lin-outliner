@@ -74,7 +74,9 @@ decision routing, exceptions, and validation.
   internal semantics without hiding product-surface drift.
 - **Raw-hex exceptions.** Renderer raw hex belongs in token declarations. Any
   unavoidable source literal must be named in `scripts/design-system-metrics.ts`
-  and in the kernel Exception Registry, with a narrow scope and evidence.
+  and in the kernel Exception Registry, with a narrow scope and evidence. The
+  metrics script fails both undocumented entries and stale entries whose source
+  literal no longer exists.
 
 ## Validation
 
