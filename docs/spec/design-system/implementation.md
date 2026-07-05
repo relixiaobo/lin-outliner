@@ -28,7 +28,8 @@ decision routing, exceptions, and validation.
   satisfied. The ratified target is: surface-specific contract lines are at least
   40% below the post-split baseline (`surfaces.md` <= 403 lines from a 672-line
   baseline); the sampled [decision audit](./decision-audit.md) proves at least
-  80% derived decisions and names a kernel exception for every Exception row;
+  80% derived decisions, has 100% evidence coverage with no broken local
+  evidence references, and names a kernel exception for every Exception row;
   component coverage is at least 80%; Exception Registry evidence coverage is
   100% with no broken local evidence references; raw colour
   literals outside foundation token declarations stay 0 after named exceptions;
@@ -84,10 +85,11 @@ decision routing, exceptions, and validation.
   and in the kernel Exception Registry, with a narrow scope and evidence. The
   metrics script fails both undocumented entries and stale entries whose source
   literal no longer exists.
-- **Exception evidence references.** Exception Registry authority/evidence links
-  and path-like evidence code spans must resolve to current repo files. The
-  metrics script reports and fails broken local references so named exceptions do
-  not keep passing after their proof files move or disappear.
+- **Audit evidence references.** Exception Registry authority/evidence links,
+  decision-audit links, and path-like evidence code spans must resolve to current
+  repo files. The metrics script reports and fails broken local references so
+  named exceptions and Derived decisions do not keep passing after their proof
+  files move or disappear.
 
 ## Validation
 

@@ -22,6 +22,7 @@ const SURFACE_BASELINE_LINES = 672;
 const SURFACE_TARGET_LINES = Math.floor(SURFACE_BASELINE_LINES * 0.6);
 const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
+const DECISION_EVIDENCE_COVERAGE_TARGET = 1;
 const RUNTIME_THEME_VARIANTS = 2;
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
 const RAW_FUNCTIONAL_COLOR_START_PATTERN = /\b(?:rgba?|hsla?)\s*\(/gi;
@@ -270,6 +271,18 @@ function exceptionRegistryRows() {
     }));
 }
 
+function decisionAuditRows() {
+  const source = readFileSync(DECISION_AUDIT, 'utf8');
+  return [...source.matchAll(/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (Derived|Exception) \|$/gm)]
+    .map((match) => ({
+      id: match[1] ?? '',
+      decision: match[2] ?? '',
+      derivesFrom: match[3] ?? '',
+      evidence: match[4] ?? '',
+      result: match[5] ?? '',
+    }));
+}
+
 function exceptionEvidenceMetrics() {
   const rows = exceptionRegistryRows();
   const evidenceRows = rows.filter((row) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(row.evidence));
@@ -296,19 +309,35 @@ function exceptionEvidenceMetrics() {
 }
 
 function decisionAuditMetrics() {
-  const source = readFileSync(DECISION_AUDIT, 'utf8');
-  const rows = [...source.matchAll(/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (Derived|Exception) \|$/gm)];
-  const derivedRows = rows.filter((match) => match[5] === 'Derived');
-  const exceptionRows = rows.filter((match) => match[5] === 'Exception');
+  const rows = decisionAuditRows();
+  const derivedRows = rows.filter((row) => row.result === 'Derived');
+  const exceptionRows = rows.filter((row) => row.result === 'Exception');
+  const evidenceRows = rows.filter((row) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(row.evidence));
   const exceptionNames = exceptionRegistryRows().map((row) => row.name);
   const unnamedExceptionDecisions = exceptionRows
-    .filter((match) => !exceptionNames.some((name) => (match[3] ?? '').includes(name)))
-    .map((match) => `${match[1]} ${match[2]}`)
+    .filter((row) => !exceptionNames.some((name) => row.derivesFrom.includes(name)))
+    .map((row) => `${row.id} ${row.decision}`)
     .sort();
+  const brokenReferences = new Set<string>();
+  for (const row of rows) {
+    for (const target of markdownLinkTargets(`${row.derivesFrom} ${row.evidence}`)) {
+      if (!localMarkdownTargetExists(DECISION_AUDIT, target)) {
+        brokenReferences.add(`${row.id} ${row.decision}: ${target}`);
+      }
+    }
+    for (const reference of evidenceCodePathReferences(row.evidence)) {
+      if (!existsSync(join(ROOT, reference))) {
+        brokenReferences.add(`${row.id} ${row.decision}: ${reference}`);
+      }
+    }
+  }
   return {
     decisionRows: rows.length,
     derivedDecisionRows: derivedRows.length,
     exceptionDecisionRows: exceptionRows.length,
+    decisionEvidenceRows: evidenceRows.length,
+    decisionEvidenceCoverage: rows.length === 0 ? 0 : Number((evidenceRows.length / rows.length).toFixed(3)),
+    decisionBrokenReferences: [...brokenReferences].sort(),
     unnamedExceptionDecisions,
     decisionDerivationCoverage: rows.length === 0 ? 0 : Number((derivedRows.length / rows.length).toFixed(3)),
   };
@@ -599,6 +628,7 @@ function main() {
     targets: {
       surfaceTargetLines: SURFACE_TARGET_LINES,
       decisionDerivationTarget: DECISION_DERIVATION_TARGET,
+      decisionEvidenceCoverageTarget: DECISION_EVIDENCE_COVERAGE_TARGET,
       componentCoverageTarget: COMPONENT_COVERAGE_TARGET,
       exceptionEvidenceCoverageTarget: 1,
       rawHexOutsideTokenDeclarationsTarget: 0,
@@ -614,6 +644,8 @@ function main() {
     console.log(`  surface lines: ${metrics.designSystem.surfaceLines}/${SURFACE_TARGET_LINES}`);
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
+    console.log(`  decision evidence: ${(metrics.decisionAudit.decisionEvidenceCoverage * 100).toFixed(1)}%`);
+    console.log(`  decision broken refs: ${metrics.decisionAudit.decisionBrokenReferences.length}`);
     console.log(`  unnamed exception decisions: ${metrics.decisionAudit.unnamedExceptionDecisions.length}`);
     console.log(`  component coverage: ${(metrics.components.componentCoverage * 100).toFixed(1)}%`);
     console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
@@ -640,6 +672,14 @@ function main() {
     }
     if (metrics.decisionAudit.unnamedExceptionDecisions.length > 0) {
       failures.push(`unnamed exception decisions: ${metrics.decisionAudit.unnamedExceptionDecisions.join(', ')}`);
+    }
+    if (metrics.decisionAudit.decisionEvidenceCoverage < DECISION_EVIDENCE_COVERAGE_TARGET) {
+      failures.push(
+        `decision evidence ${metrics.decisionAudit.decisionEvidenceCoverage} < ${DECISION_EVIDENCE_COVERAGE_TARGET}`,
+      );
+    }
+    if (metrics.decisionAudit.decisionBrokenReferences.length > 0) {
+      failures.push(`decision evidence broken refs: ${metrics.decisionAudit.decisionBrokenReferences.join(', ')}`);
     }
     if (metrics.components.componentCoverage < COMPONENT_COVERAGE_TARGET) {
       failures.push(`component coverage ${metrics.components.componentCoverage} < ${COMPONENT_COVERAGE_TARGET}`);

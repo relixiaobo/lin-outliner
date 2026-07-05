@@ -78,9 +78,12 @@ or selected affordance.
 - Escape closes overlays; non-modal popovers close on outside pointer down;
   dialogs trap focus, restore focus on close, and keep focus-visible rings inside
   the overlay.
-- Tooltips are read-only names for controls: small opaque `--bg-elevated`
-  surfaces, `--font-meta`, level-1 shadow, delayed hover, instant dismiss, no
-  action content.
+- Tooltips are read-only names for controls on the level-1 elevated-overlay
+  tier: small `--material-popover` + `--material-backdrop` surfaces,
+  `--font-meta`, level-1 shadow, hover/focus reveal, instant dismiss, no action
+  content. Reduced-transparency mode makes the material opaque. Pointer-delayed
+  previews are a separate inline/file-preview pattern, not the general tooltip
+  contract.
 
 ### Form Controls
 
