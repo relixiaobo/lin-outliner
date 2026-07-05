@@ -167,8 +167,8 @@ Expected checks for design-system changes:
   focus token or explicitly named, keeps explicit `:focus-visible` indicator
   declarations routed through focus-named tokens, keeps resize cursors routed
   through the shared cursor tokens, keeps role-tooltip surfaces registered and
-  pointer-transparent, and keeps named chrome icon controls colour-only on hover,
-  focus, and press.
+  pointer-transparent with read-only content, and keeps named chrome icon controls
+  colour-only on hover, focus, and press.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
   behavior when material rules change.
 - `git diff --check`

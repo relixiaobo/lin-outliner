@@ -40,6 +40,11 @@ const tooltipSurfaceSelectors = new Map([
   ['.inline-file-preview-popover', 'Pointer-delayed inline file preview tooltip.'],
   ['.view-toolbar-tooltip', 'View toolbar tooltip.'],
 ]);
+const readOnlyTooltipComponents = new Map([
+  ['AgentUsageBreakdown', 'Read-only agent usage token/cost rows.'],
+  ['FilePreviewIcon', 'Read-only inline file identity glyph.'],
+  ['RoundInfoContent', 'Read-only agent debug round usage details.'],
+]);
 const chromeIconControlSelectors = [
   '.agent-dock-run-back',
   '.agent-dock-title-button',
@@ -564,6 +569,81 @@ function collectTooltipRoleRegistrationViolations() {
   return violations;
 }
 
+function jsxTagNameText(tagName: ts.JsxTagNameExpression, sourceFile: ts.SourceFile): string {
+  return tagName.getText(sourceFile);
+}
+
+function collectTooltipReadOnlyViolations() {
+  const violations: string[] = [];
+  const seenReadOnlyComponents = new Set<string>();
+  const nativeInteractiveTags = new Set(['a', 'button', 'input', 'select', 'textarea']);
+  const interactiveRoles = new Set(['button', 'checkbox', 'combobox', 'link', 'menuitem', 'option', 'radio', 'switch', 'textbox']);
+  const actionEventHandlers = new Set(['onChange', 'onClick', 'onInput', 'onKeyDown', 'onMouseDown', 'onPointerDown', 'onSubmit']);
+
+  for (const file of rendererSourceFiles.filter((sourceFile) => sourceFile.endsWith('.tsx'))) {
+    const text = readFileSync(file, 'utf8');
+    const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+    function inspectTooltipDescendant(node: ts.Node) {
+      if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+        const tagName = jsxTagNameText(node.tagName, sourceFile);
+        const attributes = node.attributes.properties.filter(ts.isJsxAttribute);
+        const attributeNames = new Set(attributes.map((attribute) => attribute.name.text.toString()));
+        const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+
+        if (/^[A-Z]/.test(tagName)) {
+          seenReadOnlyComponents.add(tagName);
+          if (!readOnlyTooltipComponents.has(tagName)) {
+            violations.push(`${file}:${line + 1} tooltip contains unregistered component <${tagName}>`);
+          }
+        } else {
+          if (nativeInteractiveTags.has(tagName)) {
+            violations.push(`${file}:${line + 1} tooltip contains native interactive <${tagName}>`);
+          }
+          if (attributes.some((attribute) => stringValuesFromJsxAttribute(attribute).some((value) => interactiveRoles.has(value)))) {
+            violations.push(`${file}:${line + 1} tooltip contains an interactive role on <${tagName}>`);
+          }
+          for (const handler of actionEventHandlers) {
+            if (!attributeNames.has(handler)) continue;
+            violations.push(`${file}:${line + 1} tooltip contains ${handler} on <${tagName}>`);
+          }
+          if (attributeNames.has('tabIndex')) {
+            violations.push(`${file}:${line + 1} tooltip contains tabIndex on <${tagName}>`);
+          }
+        }
+      }
+
+      ts.forEachChild(node, inspectTooltipDescendant);
+    }
+
+    function visit(node: ts.Node) {
+      if (ts.isJsxElement(node)) {
+        const attributes = node.openingElement.attributes.properties.filter(ts.isJsxAttribute);
+        const role = attributes.find((attribute) => attribute.name.text === 'role');
+        if (role && stringValuesFromJsxAttribute(role).includes('tooltip')) {
+          node.children.forEach(inspectTooltipDescendant);
+        }
+      } else if (ts.isJsxSelfClosingElement(node)) {
+        const attributes = node.attributes.properties.filter(ts.isJsxAttribute);
+        const role = attributes.find((attribute) => attribute.name.text === 'role');
+        if (role && stringValuesFromJsxAttribute(role).includes('tooltip')) {
+          // A self-closing tooltip has no content to audit.
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+  }
+
+  for (const [component, reason] of readOnlyTooltipComponents) {
+    if (seenReadOnlyComponents.has(component)) continue;
+    violations.push(`${component} is a stale read-only tooltip component exception (${reason})`);
+  }
+
+  return violations;
+}
+
 function collectChromeIconHoverBoxViolations() {
   const violations: string[] = [];
 
@@ -644,6 +724,7 @@ test.describe('cursor affordances', () => {
   test('keeps tooltip surfaces pointer-transparent', () => {
     expect([
       ...collectTooltipRoleRegistrationViolations(),
+      ...collectTooltipReadOnlyViolations(),
       ...collectTooltipPointerEventViolations(),
     ]).toEqual([]);
   });
