@@ -24,7 +24,7 @@ const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
 const RUNTIME_THEME_VARIANTS = 2;
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
-const RAW_FUNCTIONAL_COLOR_PATTERN = /\b(?:rgba?|hsla?)\s*\([^)]*\)/gi;
+const RAW_FUNCTIONAL_COLOR_START_PATTERN = /\b(?:rgba?|hsla?)\s*\(/gi;
 
 const componentContracts = [
   {
@@ -351,6 +351,37 @@ function componentCoverageMetrics() {
   };
 }
 
+function rawFunctionalColorMatches(value: string): string[] {
+  const matches: string[] = [];
+  RAW_FUNCTIONAL_COLOR_START_PATTERN.lastIndex = 0;
+
+  let match: RegExpExecArray | null;
+  while ((match = RAW_FUNCTIONAL_COLOR_START_PATTERN.exec(value)) !== null) {
+    const start = match.index;
+    let index = RAW_FUNCTIONAL_COLOR_START_PATTERN.lastIndex - 1;
+    let depth = 0;
+
+    for (; index < value.length; index += 1) {
+      const char = value[index];
+      if (char === '(') {
+        depth += 1;
+      } else if (char === ')') {
+        depth -= 1;
+        if (depth === 0) {
+          index += 1;
+          break;
+        }
+      }
+    }
+
+    matches.push(value.slice(start, index));
+    RAW_FUNCTIONAL_COLOR_START_PATTERN.lastIndex = Math.max(index, RAW_FUNCTIONAL_COLOR_START_PATTERN.lastIndex);
+  }
+
+  RAW_FUNCTIONAL_COLOR_START_PATTERN.lastIndex = 0;
+  return matches;
+}
+
 function rawColorMetrics() {
   const files = filesByPattern(RENDERER_DIR, /\.(css|ts|tsx)$/);
   const hexViolations: string[] = [];
@@ -386,8 +417,8 @@ function rawColorMetrics() {
   }
 
   function scanFunctionalColorText(file: string, lineNumber: number, lineText: string, value: string) {
-    for (const match of value.matchAll(RAW_FUNCTIONAL_COLOR_PATTERN)) {
-      recordFunctionalColorMatch(file, lineNumber, lineText, match[0]);
+    for (const valueMatch of rawFunctionalColorMatches(value)) {
+      recordFunctionalColorMatch(file, lineNumber, lineText, valueMatch);
     }
   }
 
@@ -423,13 +454,10 @@ function rawColorMetrics() {
         const { line } = sourceFile.getLineAndCharacterOfPosition(position);
         recordRawColorMatch(file, line + 1, lines[line] ?? value, match[0], hexViolations);
       }
-      if (RAW_FUNCTIONAL_COLOR_PATTERN.test(value)) {
-        const position = node.getStart(sourceFile);
-        const { line } = sourceFile.getLineAndCharacterOfPosition(position);
-        RAW_FUNCTIONAL_COLOR_PATTERN.lastIndex = 0;
-        scanFunctionalColorText(file, line + 1, lines[line] ?? value, value);
-      }
-      RAW_FUNCTIONAL_COLOR_PATTERN.lastIndex = 0;
+      if (rawFunctionalColorMatches(value).length === 0) return;
+      const position = node.getStart(sourceFile);
+      const { line } = sourceFile.getLineAndCharacterOfPosition(position);
+      scanFunctionalColorText(file, line + 1, lines[line] ?? value, value);
     }
 
     function visit(node: ts.Node) {
