@@ -10,6 +10,14 @@ const styleFiles = readdirSync(STYLES_DIR)
   .filter((file) => file.endsWith('.css'))
   .map((file) => join(STYLES_DIR, file));
 const rendererSourceFiles = collectFiles(RENDERER_DIR, ['.ts', '.tsx']);
+const inlineNativeAffordanceProperties = new Set([
+  'WebkitAppRegion',
+  'WebkitUserSelect',
+  'cursor',
+  'userSelect',
+  'webkitAppRegion',
+  'webkitUserSelect',
+]);
 const pointerCursorSelectors = new Set([
   '.inline-ref.agent-message-inline-ref[href]',
   '.inline-ref:hover',
@@ -120,7 +128,7 @@ function propertyNameText(name: ts.PropertyName, sourceFile: ts.SourceFile): str
   return name.getText(sourceFile);
 }
 
-function collectInlineCursorStyleViolations() {
+function collectInlineNativeAffordanceStyleViolations() {
   const violations: string[] = [];
 
   for (const file of rendererSourceFiles) {
@@ -138,7 +146,7 @@ function collectInlineCursorStyleViolations() {
       if (!ts.isObjectLiteralExpression(styleObject)) return;
       for (const property of styleObject.properties) {
         if (!ts.isPropertyAssignment(property)) continue;
-        if (propertyNameText(property.name, sourceFile) !== 'cursor') continue;
+        if (!inlineNativeAffordanceProperties.has(propertyNameText(property.name, sourceFile))) continue;
         const { line } = sourceFile.getLineAndCharacterOfPosition(property.name.getStart(sourceFile));
         violations.push(`${file}:${line + 1} ${property.getText(sourceFile)}`);
       }
@@ -410,8 +418,8 @@ test.describe('cursor affordances', () => {
     expect(collectPointerCursorViolations()).toEqual([]);
   });
 
-  test('keeps renderer inline styles from declaring cursors', () => {
-    expect(collectInlineCursorStyleViolations()).toEqual([]);
+  test('keeps renderer inline styles from declaring native affordance properties', () => {
+    expect(collectInlineNativeAffordanceStyleViolations()).toEqual([]);
   });
 
   test('keeps help cursor declarations limited to named diagnostics', () => {

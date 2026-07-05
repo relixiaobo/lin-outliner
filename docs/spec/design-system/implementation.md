@@ -142,8 +142,9 @@ Expected checks for design-system changes:
   diagnostics scope, text-cursor editor/text scope, and forced
   `user-select: none !important` suppression staying limited to active drag /
   resize gestures. It also keeps renderer JSX inline styles from declaring
-  cursors, keeps renderer drag regions from selecting chrome text, keeps the
-  shared bare input primitive from suppressing the global
+  cursor, user-select, or app-region affordance properties, keeps renderer drag
+  regions from selecting chrome text, keeps the shared bare input primitive from
+  suppressing the global
   keyboard focus ring, keeps local `:focus-visible` ring suppressions explicitly
   named, keeps explicit `:focus-visible` indicator declarations routed through
   focus-named tokens, keeps resize cursors routed through the shared cursor
