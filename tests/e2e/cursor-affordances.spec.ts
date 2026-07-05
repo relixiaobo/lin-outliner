@@ -34,6 +34,12 @@ const textCursorSelectors = new Map([
   ['src/renderer/styles/outliner.css|.node-description', 'Outliner node description textarea.'],
   ['src/renderer/styles/outliner.css|.row.ref-converting .row-editor .inline-ref:hover', 'Inline reference returns to text cursor while converting inside row text.'],
 ]);
+const tooltipSurfaceSelectors = new Map([
+  ['.agent-debug-usage-popover', 'Agent debug usage tooltip.'],
+  ['.agent-message-usage-hover-card', 'Agent message usage tooltip.'],
+  ['.inline-file-preview-popover', 'Pointer-delayed inline file preview tooltip.'],
+  ['.view-toolbar-tooltip', 'View toolbar tooltip.'],
+]);
 const chromeIconControlSelectors = [
   '.agent-dock-run-back',
   '.agent-dock-title-button',
@@ -380,6 +386,39 @@ function collectRawResizeCursorViolations() {
   return violations;
 }
 
+function collectTooltipPointerEventViolations() {
+  const violations: string[] = [];
+  const pointerTransparentSelectors = new Set<string>();
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      const body = match[2] ?? '';
+      const tooltipSelector = [...tooltipSurfaceSelectors.keys()]
+        .find((candidate) => selector.includes(candidate));
+      if (!tooltipSelector) continue;
+      if (/\bpointer-events\s*:\s*none\s*;/.test(body)) {
+        pointerTransparentSelectors.add(tooltipSelector);
+      }
+      if (!/\bpointer-events\s*:\s*auto\s*;/.test(body)) continue;
+
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector}`);
+    }
+  }
+
+  for (const [selector, reason] of tooltipSurfaceSelectors) {
+    if (pointerTransparentSelectors.has(selector)) continue;
+    violations.push(`${selector} has no pointer-events: none declaration (${reason})`);
+  }
+
+  return violations;
+}
+
 function collectChromeIconHoverBoxViolations() {
   const violations: string[] = [];
 
@@ -452,6 +491,10 @@ test.describe('cursor affordances', () => {
 
   test('keeps resize cursors routed through shared tokens', () => {
     expect(collectRawResizeCursorViolations()).toEqual([]);
+  });
+
+  test('keeps tooltip surfaces pointer-transparent', () => {
+    expect(collectTooltipPointerEventViolations()).toEqual([]);
   });
 
   test('keeps chrome icon hover feedback colour-only', () => {
