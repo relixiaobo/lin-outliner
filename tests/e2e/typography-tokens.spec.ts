@@ -693,6 +693,7 @@ function collectSourceOwnedInlineStylePropertyViolations({
       file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
     );
     const styleInitializers = new Map<string, ts.Expression>();
+    const styleAliases = new Set<string>();
 
     function isTrackedPropertyName(propertyName: string) {
       return (
@@ -740,8 +741,7 @@ function collectSourceOwnedInlineStylePropertyViolations({
       if (
         !propertyName
         || !isTrackedPropertyName(propertyName)
-        || !ts.isPropertyAccessExpression(styleTarget)
-        || styleTarget.name.text !== 'style'
+        || !isStyleObjectExpression(styleTarget)
       ) {
         return null;
       }
@@ -752,7 +752,7 @@ function collectSourceOwnedInlineStylePropertyViolations({
       const callTarget = unwrapExpression(expression.expression);
       if (!ts.isPropertyAccessExpression(callTarget) || callTarget.name.text !== 'setProperty') return null;
       const styleTarget = unwrapExpression(callTarget.expression);
-      if (!ts.isPropertyAccessExpression(styleTarget) || styleTarget.name.text !== 'style') return null;
+      if (!isStyleObjectExpression(styleTarget)) return null;
       const propertyName = expression.arguments[0] ? stringLiteralText(expression.arguments[0]) : null;
       if (!propertyName || !cssProperties.has(propertyName.toLowerCase())) return null;
       return propertyName;
@@ -774,6 +774,7 @@ function collectSourceOwnedInlineStylePropertyViolations({
 
     function isStyleObjectExpression(expression: ts.Expression) {
       const target = unwrapExpression(expression);
+      if (ts.isIdentifier(target)) return styleAliases.has(target.text);
       if (ts.isPropertyAccessExpression(target)) return target.name.text === 'style';
       if (ts.isElementAccessExpression(target)) return target.argumentExpression
         ? stringLiteralText(target.argumentExpression) === 'style'
@@ -792,6 +793,7 @@ function collectSourceOwnedInlineStylePropertyViolations({
     function visit(node: ts.Node) {
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
         styleInitializers.set(node.name.text, node.initializer);
+        if (isStyleObjectExpression(node.initializer)) styleAliases.add(node.name.text);
       }
       if (ts.isPropertyAssignment(node) && isTrackedPropertyName(propertyNameText(node.name, sourceFile))) {
         const { line } = sourceFile.getLineAndCharacterOfPosition(node.name.getStart(sourceFile));
@@ -806,12 +808,12 @@ function collectSourceOwnedInlineStylePropertyViolations({
           const { line } = sourceFile.getLineAndCharacterOfPosition(node.left.getStart(sourceFile));
           violations.push(`${file}:${line + 1} ${node.left.getText(sourceFile)}`);
         }
-        if (
-          (node.operatorToken.kind === ts.SyntaxKind.EqualsToken || node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken)
-          && isInlineStyleStringAssignment(node.left)
-        ) {
-          inspectStyleStringExpression(node.right);
-        }
+      }
+      if (
+        ts.isBinaryExpression(node)
+        && (node.operatorToken.kind === ts.SyntaxKind.EqualsToken || node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken)
+      ) {
+        if (isInlineStyleStringAssignment(node.left)) inspectStyleStringExpression(node.right);
       }
       if (ts.isCallExpression(node)) {
         const propertyName = trackedStyleSetPropertyName(node);

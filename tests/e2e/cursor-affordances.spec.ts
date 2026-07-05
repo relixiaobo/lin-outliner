@@ -218,6 +218,7 @@ function collectInlineNativeAffordanceStyleViolations() {
       file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
     );
     const styleInitializers = new Map<string, ts.Expression>();
+    const styleAliases = new Set<string>();
 
     function inspectStyleObject(styleObject: ts.ObjectLiteralExpression, seenIdentifiers: Set<string>) {
       for (const property of styleObject.properties) {
@@ -290,8 +291,7 @@ function collectInlineNativeAffordanceStyleViolations() {
       if (
         !propertyName
         || !isNativeAffordanceStylePropertyName(propertyName)
-        || !ts.isPropertyAccessExpression(styleTarget)
-        || styleTarget.name.text !== 'style'
+        || !isStyleObjectExpression(styleTarget)
       ) {
         return null;
       }
@@ -302,7 +302,7 @@ function collectInlineNativeAffordanceStyleViolations() {
       const callTarget = unwrapExpression(expression.expression);
       if (!ts.isPropertyAccessExpression(callTarget) || callTarget.name.text !== 'setProperty') return null;
       const styleTarget = unwrapExpression(callTarget.expression);
-      if (!ts.isPropertyAccessExpression(styleTarget) || styleTarget.name.text !== 'style') return null;
+      if (!isStyleObjectExpression(styleTarget)) return null;
       const propertyName = expression.arguments[0] ? stringLiteralText(expression.arguments[0]) : null;
       if (!propertyName || !inlineNativeAffordanceCssProperties.has(propertyName.toLowerCase())) return null;
       return propertyName;
@@ -324,6 +324,7 @@ function collectInlineNativeAffordanceStyleViolations() {
 
     function isStyleObjectExpression(expression: ts.Expression) {
       const target = unwrapExpression(expression);
+      if (ts.isIdentifier(target)) return styleAliases.has(target.text);
       if (ts.isPropertyAccessExpression(target)) return target.name.text === 'style';
       if (ts.isElementAccessExpression(target)) return target.argumentExpression
         ? stringLiteralText(target.argumentExpression) === 'style'
@@ -351,13 +352,14 @@ function collectInlineNativeAffordanceStyleViolations() {
       }
 
       const target = expression.arguments[0] ? unwrapExpression(expression.arguments[0]) : null;
-      if (!target || !ts.isPropertyAccessExpression(target) || target.name.text !== 'style') return [];
+      if (!target || !isStyleObjectExpression(target)) return [];
       return expression.arguments.slice(1);
     }
 
     function visit(node: ts.Node) {
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
         styleInitializers.set(node.name.text, node.initializer);
+        if (isStyleObjectExpression(node.initializer)) styleAliases.add(node.name.text);
       }
       if (ts.isPropertyAssignment(node) && propertyNameText(node.name, sourceFile) === 'style') {
         inspectStyleStringExpression(node.initializer);

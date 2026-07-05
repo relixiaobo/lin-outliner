@@ -132,8 +132,9 @@ Expected checks for design-system changes:
   layout-transition and interactive-state layout-declaration allowlists; it keeps
   global z-index values on the `--z-*` ladder without renderer source-owned
   inline `zIndex` / `z-index`, keeps foundation typography/radius/shadow styling
-  out of renderer source-owned inline style objects, direct DOM style writes,
-  inline style strings, and `cssText` strings,
+  out of renderer source-owned inline style objects, direct DOM style writes
+  including same-file style aliases, inline style strings, and `cssText`
+  assignment / append strings,
   keeps hidden scrollbars limited to the registered document-outline mini-rail
   exception, and keeps every
   `--material-*` background paired with the
@@ -164,9 +165,9 @@ Expected checks for design-system changes:
   diagnostics scope, text-cursor editor/text scope, and forced
   `user-select: none !important` suppression staying limited to active drag /
   resize gestures. It also keeps direct, named, conditional, and spread renderer
-  JSX inline styles, direct / object-assigned DOM style writes, inline style
-  strings, and `cssText` strings from declaring cursor, user-select, or
-  app-region affordance properties, keeps renderer drag
+  JSX inline styles, direct / object-assigned DOM style writes including
+  same-file style aliases, inline style strings, and `cssText` strings from
+  declaring cursor, user-select, or app-region affordance properties, keeps renderer drag
   regions from selecting chrome text, keeps the shared bare input primitive from
   suppressing the global
   keyboard focus ring, keeps local `:focus-visible` ring suppressions explicitly
