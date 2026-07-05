@@ -141,8 +141,9 @@ Expected checks for design-system changes:
   link, or status colour tokens outside the solid destructive-confirmation
   exception, and fails overlay `box-shadow` declarations that mix level-1/2
   shadow tokens with outline tokens. It also rejects the legacy generic
-  `--shadow` and `--danger` aliases so surfaces name the actual elevation tier
-  and semantic status role they use, keeps retired legacy aliases out of live CSS,
+  `--shadow` and `--danger` aliases across renderer source evidence so surfaces
+  name the actual elevation tier and semantic status role they use, keeps retired
+  legacy aliases out of live CSS,
   keeps stylesheet raw functional color literals inside token declarations, fails
   undefined live token references outside named runtime/generated inputs, keeps
   motion timing literals routed through motion tokens outside zero delays,
