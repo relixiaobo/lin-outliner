@@ -325,6 +325,22 @@ function collectInlineNativeAffordanceStyleViolations() {
       return expression.arguments[1] ?? null;
     }
 
+    function objectAssignedStyleExpressions(expression: ts.CallExpression) {
+      const callTarget = unwrapExpression(expression.expression);
+      if (
+        !ts.isPropertyAccessExpression(callTarget)
+        || callTarget.name.text !== 'assign'
+        || !ts.isIdentifier(callTarget.expression)
+        || callTarget.expression.text !== 'Object'
+      ) {
+        return [];
+      }
+
+      const target = expression.arguments[0] ? unwrapExpression(expression.arguments[0]) : null;
+      if (!target || !ts.isPropertyAccessExpression(target) || target.name.text !== 'style') return [];
+      return expression.arguments.slice(1);
+    }
+
     function visit(node: ts.Node) {
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
         styleInitializers.set(node.name.text, node.initializer);
@@ -359,6 +375,9 @@ function collectInlineNativeAffordanceStyleViolations() {
         }
         const inlineStyleValue = inlineStyleStringSetAttribute(node);
         if (inlineStyleValue) inspectStyleStringExpression(inlineStyleValue);
+        for (const styleExpression of objectAssignedStyleExpressions(node)) {
+          inspectStyleExpression(styleExpression);
+        }
       }
       ts.forEachChild(node, visit);
     }
