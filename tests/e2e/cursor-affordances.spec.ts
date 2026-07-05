@@ -162,6 +162,7 @@ function unwrapExpression(expression: ts.Expression): ts.Expression {
 
 function propertyNameText(name: ts.PropertyName, sourceFile: ts.SourceFile): string {
   if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+  if (ts.isComputedPropertyName(name) && ts.isStringLiteral(name.expression)) return name.expression.text;
   return name.getText(sourceFile);
 }
 
@@ -177,19 +178,43 @@ function collectInlineNativeAffordanceStyleViolations() {
       true,
       file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
     );
+    const styleInitializers = new Map<string, ts.Expression>();
 
-    function inspectStyleExpression(expression: ts.Expression) {
-      const styleObject = unwrapExpression(expression);
-      if (!ts.isObjectLiteralExpression(styleObject)) return;
+    function inspectStyleObject(styleObject: ts.ObjectLiteralExpression, seenIdentifiers: Set<string>) {
       for (const property of styleObject.properties) {
-        if (!ts.isPropertyAssignment(property)) continue;
+        if (ts.isSpreadAssignment(property)) {
+          inspectStyleExpression(property.expression, seenIdentifiers);
+          continue;
+        }
+        if (!('name' in property) || !property.name) continue;
         if (!inlineNativeAffordanceProperties.has(propertyNameText(property.name, sourceFile))) continue;
         const { line } = sourceFile.getLineAndCharacterOfPosition(property.name.getStart(sourceFile));
         violations.push(`${file}:${line + 1} ${property.getText(sourceFile)}`);
       }
     }
 
+    function inspectStyleExpression(expression: ts.Expression, seenIdentifiers = new Set<string>()) {
+      const styleObject = unwrapExpression(expression);
+      if (ts.isObjectLiteralExpression(styleObject)) {
+        inspectStyleObject(styleObject, seenIdentifiers);
+        return;
+      }
+      if (ts.isIdentifier(styleObject)) {
+        if (seenIdentifiers.has(styleObject.text)) return;
+        seenIdentifiers.add(styleObject.text);
+        const initializer = styleInitializers.get(styleObject.text);
+        if (initializer) inspectStyleExpression(initializer, seenIdentifiers);
+        return;
+      }
+      ts.forEachChild(styleObject, (child) => {
+        if (ts.isExpression(child)) inspectStyleExpression(child, seenIdentifiers);
+      });
+    }
+
     function visit(node: ts.Node) {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        styleInitializers.set(node.name.text, node.initializer);
+      }
       if (
         ts.isJsxAttribute(node)
         && node.name.text === 'style'
