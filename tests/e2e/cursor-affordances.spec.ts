@@ -18,6 +18,12 @@ const inlineNativeAffordanceProperties = new Set([
   'webkitAppRegion',
   'webkitUserSelect',
 ]);
+const inlineNativeAffordanceCssProperties = new Set([
+  '-webkit-app-region',
+  '-webkit-user-select',
+  'cursor',
+  'user-select',
+]);
 const pointerCursorSelectors = new Set([
   '.inline-ref.agent-message-inline-ref[href]',
   '.inline-ref:hover',
@@ -166,6 +172,19 @@ function propertyNameText(name: ts.PropertyName, sourceFile: ts.SourceFile): str
   return name.getText(sourceFile);
 }
 
+function stringLiteralText(expression: ts.Expression): string | null {
+  const value = unwrapExpression(expression);
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) return value.text;
+  return null;
+}
+
+function isNativeAffordanceStylePropertyName(propertyName: string) {
+  return (
+    inlineNativeAffordanceProperties.has(propertyName)
+    || inlineNativeAffordanceCssProperties.has(propertyName.toLowerCase())
+  );
+}
+
 function collectInlineNativeAffordanceStyleViolations() {
   const violations: string[] = [];
 
@@ -187,7 +206,7 @@ function collectInlineNativeAffordanceStyleViolations() {
           continue;
         }
         if (!('name' in property) || !property.name) continue;
-        if (!inlineNativeAffordanceProperties.has(propertyNameText(property.name, sourceFile))) continue;
+        if (!isNativeAffordanceStylePropertyName(propertyNameText(property.name, sourceFile))) continue;
         const { line } = sourceFile.getLineAndCharacterOfPosition(property.name.getStart(sourceFile));
         violations.push(`${file}:${line + 1} ${property.getText(sourceFile)}`);
       }
@@ -211,6 +230,43 @@ function collectInlineNativeAffordanceStyleViolations() {
       });
     }
 
+    function nativeAffordanceStyleWriteName(expression: ts.Expression) {
+      const target = unwrapExpression(expression);
+      let styleExpression: ts.Expression;
+      let propertyName: string | null;
+
+      if (ts.isPropertyAccessExpression(target)) {
+        styleExpression = target.expression;
+        propertyName = target.name.text;
+      } else if (ts.isElementAccessExpression(target)) {
+        styleExpression = target.expression;
+        propertyName = target.argumentExpression ? stringLiteralText(target.argumentExpression) : null;
+      } else {
+        return null;
+      }
+
+      const styleTarget = unwrapExpression(styleExpression);
+      if (
+        !propertyName
+        || !isNativeAffordanceStylePropertyName(propertyName)
+        || !ts.isPropertyAccessExpression(styleTarget)
+        || styleTarget.name.text !== 'style'
+      ) {
+        return null;
+      }
+      return propertyName;
+    }
+
+    function nativeAffordanceStyleSetPropertyName(expression: ts.CallExpression) {
+      const callTarget = unwrapExpression(expression.expression);
+      if (!ts.isPropertyAccessExpression(callTarget) || callTarget.name.text !== 'setProperty') return null;
+      const styleTarget = unwrapExpression(callTarget.expression);
+      if (!ts.isPropertyAccessExpression(styleTarget) || styleTarget.name.text !== 'style') return null;
+      const propertyName = expression.arguments[0] ? stringLiteralText(expression.arguments[0]) : null;
+      if (!propertyName || !inlineNativeAffordanceCssProperties.has(propertyName.toLowerCase())) return null;
+      return propertyName;
+    }
+
     function visit(node: ts.Node) {
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
         styleInitializers.set(node.name.text, node.initializer);
@@ -223,6 +279,20 @@ function collectInlineNativeAffordanceStyleViolations() {
         && node.initializer.expression
       ) {
         inspectStyleExpression(node.initializer.expression);
+      }
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        const propertyName = nativeAffordanceStyleWriteName(node.left);
+        if (propertyName) {
+          const { line } = sourceFile.getLineAndCharacterOfPosition(node.left.getStart(sourceFile));
+          violations.push(`${file}:${line + 1} ${node.left.getText(sourceFile)}`);
+        }
+      }
+      if (ts.isCallExpression(node)) {
+        const propertyName = nativeAffordanceStyleSetPropertyName(node);
+        if (propertyName) {
+          const { line } = sourceFile.getLineAndCharacterOfPosition(node.expression.getStart(sourceFile));
+          violations.push(`${file}:${line + 1} ${node.expression.getText(sourceFile)}('${propertyName}')`);
+        }
       }
       ts.forEachChild(node, visit);
     }
@@ -707,7 +777,7 @@ test.describe('cursor affordances', () => {
     expect(collectPointerCursorViolations()).toEqual([]);
   });
 
-  test('keeps renderer inline styles from declaring native affordance properties', () => {
+  test('keeps renderer source-owned inline styles from declaring native affordance properties', () => {
     expect(collectInlineNativeAffordanceStyleViolations()).toEqual([]);
   });
 
