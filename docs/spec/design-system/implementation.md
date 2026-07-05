@@ -135,6 +135,7 @@ Expected checks for design-system changes:
   motion timing literals routed through motion tokens outside zero delays,
   prevents design system docs from copying a second `:root` token table, and
   keeps component shadow custom properties routed through token-layer shadows,
+  keeps component `color-mix()` recipes derived from tokens or `currentColor`,
   and keeps foundation token definitions unique in `tokens.css`.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change, including pointer-cursor scope, help-cursor

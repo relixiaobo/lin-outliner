@@ -38,7 +38,8 @@ Core token families:
   custom properties and source-owned style strings in TS/TSX derive from tokens
   or use a named exception.
 - Component CSS may use `color-mix()` for local alpha states, but the base color
-  comes from a token.
+  comes from a token or `currentColor` when the stroke should follow inherited
+  text colour.
 - Primary text parity matters: outliner row text, field values, agent assistant
   prose, user bubbles, and the agent composer use
   `--font-content / --line-content`.

@@ -892,6 +892,26 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps component color mixes derived from tokens or currentColor', () => {
+    const violations: string[] = [];
+
+    for (const file of productStyleFiles) {
+      if (foundationTokenDeclarationFiles.has(file)) continue;
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
+      const lines = text.split('\n');
+      for (const [index, line] of lines.entries()) {
+        if (!/color-mix\(/.test(line)) continue;
+        if (/color-mix\([^,]+,\s*(?:var\(--|currentColor\b)/.test(line)) continue;
+        violations.push(`${file}:${index + 1} ${line.trim()}`);
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps foundation token definitions unique', () => {
     const violations: string[] = [];
     const file = 'src/renderer/styles/tokens.css';
