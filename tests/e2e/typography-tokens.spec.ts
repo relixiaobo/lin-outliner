@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import * as ts from 'typescript';
 import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 import { emitAgentProjection, ids, openMockedApp } from './outlinerMock';
 
@@ -204,6 +205,11 @@ function collectFiles(dir: string, extensions: readonly string[]): string[] {
     if (entry.isDirectory()) return collectFiles(filePath, extensions);
     return entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension)) ? [filePath] : [];
   }).sort();
+}
+
+function propertyNameText(name: ts.PropertyName, sourceFile: ts.SourceFile): string {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+  return name.getText(sourceFile);
 }
 
 const designSystemSpecFiles = [
@@ -612,6 +618,33 @@ function collectUndefinedLiveTokenReferenceViolations() {
   return violations;
 }
 
+function collectInlineZIndexViolations() {
+  const violations: string[] = [];
+
+  for (const file of rendererSourceFiles.filter((sourceFile) => sourceFile.endsWith('.ts') || sourceFile.endsWith('.tsx'))) {
+    const text = readFileSync(file, 'utf8');
+    const sourceFile = ts.createSourceFile(
+      file,
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+
+    function visit(node: ts.Node) {
+      if (ts.isPropertyAssignment(node) && propertyNameText(node.name, sourceFile) === 'zIndex') {
+        const { line } = sourceFile.getLineAndCharacterOfPosition(node.name.getStart(sourceFile));
+        violations.push(`${file}:${line + 1} ${node.getText(sourceFile)}`);
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+  }
+
+  return violations;
+}
+
 test.describe('typography tokens', () => {
   test('keeps product font declarations tokenized outside proportional glyph exceptions', () => {
     const allowedValues = new Set([
@@ -825,6 +858,10 @@ test.describe('typography tokens', () => {
     );
 
     expect(violations).toEqual([]);
+  });
+
+  test('keeps renderer inline z-index out of source objects', () => {
+    expect(collectInlineZIndexViolations()).toEqual([]);
   });
 
   test('keeps hidden scrollbars limited to registered non-content rails', () => {
