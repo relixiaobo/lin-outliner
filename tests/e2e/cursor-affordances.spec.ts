@@ -1,12 +1,15 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import * as ts from 'typescript';
 import { ids, installElectronMock, openMockedApp, row } from './outlinerMock';
 
 const STYLES_DIR = 'src/renderer/styles';
+const RENDERER_DIR = 'src/renderer';
 const styleFiles = readdirSync(STYLES_DIR)
   .filter((file) => file.endsWith('.css'))
   .map((file) => join(STYLES_DIR, file));
+const rendererSourceFiles = collectFiles(RENDERER_DIR, ['.ts', '.tsx']);
 const pointerCursorSelectors = new Set([
   '.inline-ref.agent-message-inline-ref[href]',
   '.inline-ref:hover',
@@ -70,6 +73,14 @@ const focusVisibleRingSuppressionExceptions = new Map([
   ],
 ]);
 
+function collectFiles(dir: string, extensions: readonly string[]): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const filePath = join(dir, entry.name);
+    if (entry.isDirectory()) return collectFiles(filePath, extensions);
+    return entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension)) ? [filePath] : [];
+  }).sort();
+}
+
 function collectPointerCursorViolations() {
   const violations: string[] = [];
 
@@ -86,6 +97,67 @@ function collectPointerCursorViolations() {
       if (pointerCursorSelectors.has(selector)) continue;
       violations.push(`${file}:${lineNumber} ${selector}`);
     }
+  }
+
+  return violations;
+}
+
+function unwrapExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isAsExpression(current)
+    || ts.isParenthesizedExpression(current)
+    || ts.isSatisfiesExpression(current)
+    || ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function propertyNameText(name: ts.PropertyName, sourceFile: ts.SourceFile): string {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+  return name.getText(sourceFile);
+}
+
+function collectInlineCursorStyleViolations() {
+  const violations: string[] = [];
+
+  for (const file of rendererSourceFiles) {
+    const text = readFileSync(file, 'utf8');
+    const sourceFile = ts.createSourceFile(
+      file,
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+
+    function inspectStyleExpression(expression: ts.Expression) {
+      const styleObject = unwrapExpression(expression);
+      if (!ts.isObjectLiteralExpression(styleObject)) return;
+      for (const property of styleObject.properties) {
+        if (!ts.isPropertyAssignment(property)) continue;
+        if (propertyNameText(property.name, sourceFile) !== 'cursor') continue;
+        const { line } = sourceFile.getLineAndCharacterOfPosition(property.name.getStart(sourceFile));
+        violations.push(`${file}:${line + 1} ${property.getText(sourceFile)}`);
+      }
+    }
+
+    function visit(node: ts.Node) {
+      if (
+        ts.isJsxAttribute(node)
+        && node.name.text === 'style'
+        && node.initializer
+        && ts.isJsxExpression(node.initializer)
+        && node.initializer.expression
+      ) {
+        inspectStyleExpression(node.initializer.expression);
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
   }
 
   return violations;
@@ -336,6 +408,10 @@ function collectChromeIconHoverBoxViolations() {
 test.describe('cursor affordances', () => {
   test('reserves pointer cursor declarations for inline content references', () => {
     expect(collectPointerCursorViolations()).toEqual([]);
+  });
+
+  test('keeps renderer inline styles from declaring cursors', () => {
+    expect(collectInlineCursorStyleViolations()).toEqual([]);
   });
 
   test('keeps help cursor declarations limited to named diagnostics', () => {

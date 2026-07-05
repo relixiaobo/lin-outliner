@@ -29,7 +29,7 @@
 }
 
 .inline-ref[data-inline-ref-kind="local-file"]:focus-visible {
-  box-shadow: var(--inline-ref-hover-shadow);
+  box-shadow: var(--inline-ref-focus-shadow);
 }
 
 .inline-ref.ProseMirror-selectednode {
