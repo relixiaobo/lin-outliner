@@ -710,8 +710,6 @@
 }
 
 .document-outline-rail-marker {
-  --document-outline-marker-shadow: 0 0 0 1px var(--preview-action-outline);
-
   flex: 0 0 auto;
   width: var(--document-outline-marker-width);
   height: 2px;

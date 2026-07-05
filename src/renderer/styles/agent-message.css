@@ -24,8 +24,6 @@
 }
 
 .agent-user-content-shell {
-  --agent-user-highlight-shadow: 0 0 0 1px var(--border-emphasis);
-
   display: flex;
   max-width: 100%;
   min-width: 0;
@@ -45,7 +43,7 @@
 
 .agent-user-content-shell.is-highlighted {
   background: var(--fill-4);
-  box-shadow: var(--agent-user-highlight-shadow);
+  box-shadow: var(--message-user-highlight-shadow);
 }
 
 .agent-user-content-body {
@@ -303,8 +301,6 @@
 }
 
 .agent-user-edit-card {
-  --agent-user-highlight-shadow: 0 0 0 1px var(--border-emphasis);
-
   display: flex;
   width: min(88%, 520px);
   flex-direction: column;
@@ -320,7 +316,7 @@
 
 .agent-user-edit-card.is-highlighted {
   background: var(--fill-2);
-  box-shadow: var(--agent-user-highlight-shadow);
+  box-shadow: var(--message-user-highlight-shadow);
 }
 
 .agent-user-edit-input {
@@ -342,8 +338,6 @@
 }
 
 .agent-assistant-content {
-  --agent-assistant-highlight-shadow: 0 0 0 1px var(--fill-3);
-
   position: relative;
   display: flex;
   max-width: 100%;
@@ -361,7 +355,7 @@
 
 .agent-assistant-content.is-highlighted {
   background: var(--fill-1);
-  box-shadow: var(--agent-assistant-highlight-shadow);
+  box-shadow: var(--message-assistant-highlight-shadow);
 }
 
 .agent-assistant-text {

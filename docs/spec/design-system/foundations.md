@@ -103,6 +103,10 @@ Core token families:
   error or destructive action.
 - Product CSS references elevation, outline, size, spacing, and motion tokens
   instead of writing one-off system values.
+- Component-private custom properties may own local component geometry, but
+  colour, elevation, stroke, motion, and typography semantics derive from
+  foundation tokens. Component `--*shadow*` variables must reference token-layer
+  shadows rather than hand-writing shadow recipes.
 
 ### Color & Appearance
 

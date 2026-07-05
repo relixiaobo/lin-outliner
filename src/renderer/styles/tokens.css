@@ -95,6 +95,7 @@
   --preview-action-fg: rgba(255, 255, 255, 0.94);
   --preview-action-outline: rgba(255, 255, 255, 0.12);
   --preview-action-shadow: var(--shadow-thumb-strong), inset 0 0 0 1px var(--preview-action-outline);
+  --document-outline-marker-shadow: 0 0 0 1px var(--preview-action-outline);
   /* The shared backdrop-filter for every translucent material surface. Surfaces
      opt in with `background: var(--material-*)` + `backdrop-filter:
      var(--material-backdrop)`; the a11y layer (a11y.css) then swaps both tokens
@@ -189,8 +190,11 @@
   --outline-focus: inset 0 0 0 1px var(--focus-ring);
   --underline-focus-shadow: inset 0 -1px 0 rgb(var(--ink) / 0.20);
   --tag-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
+  --inline-ref-hover-shadow: 0 0 0 var(--space-1) var(--fill-1);
   --inline-ref-selection-shadow: inset 0 0 0 1px var(--row-selection-border);
   --inline-ref-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--inline-ref-accent, var(--inline-ref-default)) 22%, transparent);
+  --message-user-highlight-shadow: 0 0 0 1px var(--border-emphasis);
+  --message-assistant-highlight-shadow: 0 0 0 1px var(--fill-3);
   --view-radio-shadow: inset 0 0 0 1.5px var(--separator-opaque);
   --view-radio-checked-shadow: inset 0 0 0 1.5px var(--text-primary);
   /* Selected colour swatch: a strong ink ring with a surface-coloured gap so the

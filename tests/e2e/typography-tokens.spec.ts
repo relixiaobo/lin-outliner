@@ -37,11 +37,12 @@ const productStyleFiles = readdirSync(STYLES_DIR)
   .filter((file) => file.endsWith('.css'))
   .map((file) => join(STYLES_DIR, file));
 const rendererSourceFiles = collectFiles('src/renderer', ['.css', '.ts', '.tsx']);
-const rawColorTokenDeclarationFiles = new Set([
+const foundationTokenDeclarationFiles = new Set([
   'src/renderer/styles/a11y.css',
   'src/renderer/styles/theme-dark.css',
   'src/renderer/styles/tokens.css',
 ]);
+const rawColorTokenDeclarationFiles = foundationTokenDeclarationFiles;
 const darkMediaRuleFiles = new Map([
   ['src/renderer/styles/theme-dark.css', 'Central OS-driven dark theme token layer.'],
   ['src/renderer/styles/code.css', 'Generated Shiki token stream resolves --shiki-dark.'],
@@ -862,6 +863,28 @@ test.describe('typography tokens', () => {
       for (const [index, line] of lines.entries()) {
         const match = /(--[\w-]+):\s*var\((--[\w-]+)\)/.exec(line);
         if (!match || match[1] !== match[2]) continue;
+        violations.push(`${file}:${index + 1} ${line.trim()}`);
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps component shadow custom properties routed through token shadows', () => {
+    const violations: string[] = [];
+
+    for (const file of productStyleFiles) {
+      if (foundationTokenDeclarationFiles.has(file)) continue;
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
+      const lines = text.split('\n');
+      for (const [index, line] of lines.entries()) {
+        const match = /^\s*(--[\w-]*shadow[\w-]*):\s*([^;]+);/.exec(line);
+        if (!match) continue;
+        const value = match[2]!.trim();
+        if (value.startsWith('var(')) continue;
         violations.push(`${file}:${index + 1} ${line.trim()}`);
       }
     }
