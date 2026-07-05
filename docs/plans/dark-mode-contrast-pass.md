@@ -62,7 +62,7 @@ The fix shape is already proven twice in the repo:
   pass only touches color/contrast *values*.
 - **No `settings-*.css` edits** (see Collision check) — status-color fixes there,
   if any, land as token nudges in `theme-dark.css`. (#118 is merged; its tokens —
-  added `--inset-hairline`, uses `--border-subtle` — don't affect this pass's
+  added `--inset-hairline`, routed through `--separator` — don't affect this pass's
   targets.)
 - Not a WCAG-AA certification effort — the bar is "reads cleanly in the product on
   a real dark screen", judged by eye, consistent with the design system's
@@ -108,7 +108,7 @@ run time.
 | S3 | editor `<mark>` highlight | `--highlight-mark` dark `rgba(120,100,30,0.55)` under `color: inherit` body text | `outliner.css:2046-2052`; token `theme-dark.css:15` | Black-text trap already fixed (`color: inherit`); the olive-over-dark *fill* + inherited ~0.88 white text needs an eye for legibility/aesthetics. | If murky: adjust the dark `--highlight-mark` literal (lighter/less-olive) in `theme-dark.css`. Token-only. |
 | S3 | launcher row bullet (a *filled dot*, not text) | `background: var(--text-tertiary)` (0.30) | `launcher.css:190` | A 5px dot painted with 0.30 ink: faint on the launcher's `--bg-elevated` in dark; small enough that low contrast hurts findability. | Auto-improves with the `--text-tertiary` dark lift. If still faint at dot size, that is a tier-assignment call (point the dot at `--text-secondary`) — flag, don't custom-color. |
 | S3 | scrollbar thumb on translucent rails | `--scrollbar-thumb` 0.22 ink over `--material-*` | `base.css:25` | 0.22 white thumb on see-through dark material — confirm it's visible at all before the 0.34 hover fade-in. | If invisible at rest: small dark lift of `--scrollbar-thumb` (e.g. 0.22 → 0.28) in `theme-dark.css`. |
-| S3 | disabled labels/controls | `--text-disabled` = `--text-quaternary` (0.16 ink) | `breadcrumb.css:106,151`, `shell.css:129,230`, `agent-composer.css:187`, `agent-subagent.css:235` | 0.16 white on dark is near-invisible. Acceptable as "disabled", but flag any spot where a disabled value must still be *read*. | Tied to the `--text-quaternary` decision above. Likely leave at disabled-faint unless a disabled value must remain readable. |
+| S3 | disabled labels/controls | `--text-quaternary` (0.16 ink) | `breadcrumb.css:106,151`, `shell.css:129,230`, `agent-composer.css:187`, `agent-subagent.css:235` | 0.16 white on dark is near-invisible. Acceptable as "disabled", but flag any spot where a disabled value must still be *read*. | Tied to the `--text-quaternary` decision above. Likely leave at disabled-faint unless a disabled value must remain readable. |
 | S3 (likely-OK) | drop shadows on dark floor | `--shadow-rail` / `--overlay-shadow-level-*` (deepened in dark) | `tokens.css:123-125`; `theme-dark.css:24,40-42` | Dark shadow on near-black floor adds little; elevation reads via the lighter elevated *surface* step (`#2e2e30` vs `#1e1e1e`). | Confirm floating chrome still reads as raised. If flat: nudge the elevated-surface step, not the shadow. Probably no change. |
 | S4 (likely-OK) | inverse-on-fill hover color flip | `color: var(--surface-inverse)` on `background: var(--control-hover)` | `agent-composer.css:173,469,543`, `code.css:219`, many | Deliberate label flip; readable in both themes by construction. Listed only so the pass confirms the flip isn't jarring. | None expected. |
 
@@ -153,7 +153,7 @@ default so the pass isn't blocked.
 - Last refreshed 2026-07-01: no open PR currently claims this dark-mode contrast
   pass. The historical adjacent PRs #119 (cc/incremental-projection — core↔renderer
   projection protocol, no CSS) and #118 (codex/settings-macOS-clarity) are both
-  merged; #118's tokens (added `--inset-hairline`, uses `--border-subtle`) don't
+  merged; #118's tokens (added `--inset-hairline`, routed through `--separator`) don't
   affect this pass's targets.
 - **Settings sites:** the report cites `settings-provider-sheet.css:202,408`
   (plain-success text) and other `settings-*.css` sites. This pass's fix is a
