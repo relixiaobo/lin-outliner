@@ -86,6 +86,32 @@ const focusVisibleRingSuppressionExceptions = new Map([
     'Clipped inset-card inputs transfer the keyboard ring to the row.',
   ],
 ]);
+const focusVisibleOutlineSuppressionExceptions = new Map([
+  [
+    'src/renderer/styles/base.css|input:focus-visible, textarea:focus-visible, select:focus-visible',
+    'Text controls suppress the UA outline; the modality-gated keyboard rule adds the shared focus ring.',
+  ],
+  [
+    'src/renderer/styles/file-preview.css|.file-node-image-button:focus-visible',
+    'The hidden image-row anchor transfers keyboard focus to the visible image frame.',
+  ],
+  [
+    'src/renderer/styles/input.css|.input-bare:focus-visible',
+    'Bare inputs suppress the UA outline while keeping the shared keyboard focus ring available.',
+  ],
+  [
+    'src/renderer/styles/launcher.css|.launcher-input:focus, .launcher-input:focus-visible',
+    'Single-field launcher focus is carried by the caret and active launcher surface.',
+  ],
+  [
+    'src/renderer/styles/outliner.css|.indent-guide:focus, .indent-guide:focus-visible, .indent-guide:active',
+    'Outliner indent guide is a non-tabstop structural hit target.',
+  ],
+  [
+    'src/renderer/styles/outliner.css|.row-chevron-button:focus, .row-chevron-button:focus-visible, .row-chevron-button:active, .row-bullet-button:focus, .row-bullet-button:focus-visible, .row-bullet-button:active',
+    'Outliner marker controls are non-tabstop structural controls.',
+  ],
+]);
 
 function collectFiles(dir: string, extensions: readonly string[]): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -309,6 +335,7 @@ function collectBareInputFocusSuppressionViolations() {
 
 function collectFocusVisibleRingSuppressionViolations() {
   const violations: string[] = [];
+  const seen = new Set<string>();
 
   for (const file of styleFiles) {
     const source = readFileSync(file, 'utf8').replace(
@@ -324,11 +351,53 @@ function collectFocusVisibleRingSuppressionViolations() {
       if (!/\bbox-shadow\s*:\s*none\s*;/.test(body)) continue;
 
       const key = `${file}|${selector}`;
+      seen.add(key);
       if (focusVisibleRingSuppressionExceptions.has(key)) continue;
 
       const lineNumber = source.slice(0, match.index).split('\n').length;
       violations.push(`${file}:${lineNumber} ${selector}`);
     }
+  }
+
+  for (const [key, reason] of focusVisibleRingSuppressionExceptions) {
+    if (seen.has(key)) continue;
+    violations.push(`${key} is a stale focus-visible ring-suppression exception (${reason})`);
+  }
+
+  return violations;
+}
+
+function collectFocusVisibleOutlineSuppressionViolations() {
+  const violations: string[] = [];
+  const seen = new Set<string>();
+  const focusToken = /--[\w-]*focus[\w-]*/;
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      if (!/:focus-visible\b/.test(selector)) continue;
+      if (/:not\(:focus-visible\)/.test(selector)) continue;
+
+      const body = match[2] ?? '';
+      if (!/\boutline\s*:\s*(?:none|0)\s*;/.test(body)) continue;
+      if (focusToken.test(body)) continue;
+
+      const key = `${file}|${selector}`;
+      seen.add(key);
+      if (focusVisibleOutlineSuppressionExceptions.has(key)) continue;
+
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector}`);
+    }
+  }
+
+  for (const [key, reason] of focusVisibleOutlineSuppressionExceptions) {
+    if (seen.has(key)) continue;
+    violations.push(`${key} is a stale focus-visible outline-suppression exception (${reason})`);
   }
 
   return violations;
@@ -557,8 +626,11 @@ test.describe('cursor affordances', () => {
     expect(collectBareInputFocusSuppressionViolations()).toEqual([]);
   });
 
-  test('keeps focus-visible ring suppressions explicitly named', () => {
-    expect(collectFocusVisibleRingSuppressionViolations()).toEqual([]);
+  test('keeps focus-visible suppressions explicitly named', () => {
+    expect([
+      ...collectFocusVisibleRingSuppressionViolations(),
+      ...collectFocusVisibleOutlineSuppressionViolations(),
+    ]).toEqual([]);
   });
 
   test('keeps focus-visible indicators routed through focus tokens', () => {
