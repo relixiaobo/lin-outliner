@@ -185,6 +185,26 @@ function isNativeAffordanceStylePropertyName(propertyName: string) {
   );
 }
 
+function nativeAffordanceCssTextPropertyName(cssText: string) {
+  for (const propertyName of inlineNativeAffordanceCssProperties) {
+    const escapedName = propertyName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(?:^|[;{])\\s*${escapedName}\\s*:`, 'iu').test(cssText)) return propertyName;
+  }
+  return null;
+}
+
+function stringLikeTextParts(expression: ts.Expression) {
+  const value = unwrapExpression(expression);
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) return [value.text];
+  if (ts.isTemplateExpression(value)) {
+    return [
+      value.head.text,
+      ...value.templateSpans.map((span) => span.literal.text),
+    ];
+  }
+  return [];
+}
+
 function collectInlineNativeAffordanceStyleViolations() {
   const violations: string[] = [];
 
@@ -212,12 +232,33 @@ function collectInlineNativeAffordanceStyleViolations() {
       }
     }
 
+    function inspectStyleStringExpression(expression: ts.Expression, seenIdentifiers = new Set<string>()) {
+      const styleString = unwrapExpression(expression);
+      for (const textPart of stringLikeTextParts(styleString)) {
+        const propertyName = nativeAffordanceCssTextPropertyName(textPart);
+        if (!propertyName) continue;
+        const { line } = sourceFile.getLineAndCharacterOfPosition(styleString.getStart(sourceFile));
+        violations.push(`${file}:${line + 1} inline style string declares ${propertyName}`);
+      }
+      if (ts.isIdentifier(styleString)) {
+        if (seenIdentifiers.has(styleString.text)) return;
+        seenIdentifiers.add(styleString.text);
+        const initializer = styleInitializers.get(styleString.text);
+        if (initializer) inspectStyleStringExpression(initializer, seenIdentifiers);
+        return;
+      }
+      ts.forEachChild(styleString, (child) => {
+        if (ts.isExpression(child)) inspectStyleStringExpression(child, seenIdentifiers);
+      });
+    }
+
     function inspectStyleExpression(expression: ts.Expression, seenIdentifiers = new Set<string>()) {
       const styleObject = unwrapExpression(expression);
       if (ts.isObjectLiteralExpression(styleObject)) {
         inspectStyleObject(styleObject, seenIdentifiers);
         return;
       }
+      inspectStyleStringExpression(styleObject);
       if (ts.isIdentifier(styleObject)) {
         if (seenIdentifiers.has(styleObject.text)) return;
         seenIdentifiers.add(styleObject.text);
@@ -267,9 +308,29 @@ function collectInlineNativeAffordanceStyleViolations() {
       return propertyName;
     }
 
+    function isInlineStyleStringAssignment(expression: ts.Expression) {
+      const target = unwrapExpression(expression);
+      if (ts.isPropertyAccessExpression(target)) return target.name.text === 'style';
+      if (ts.isElementAccessExpression(target)) return target.argumentExpression
+        ? stringLiteralText(target.argumentExpression) === 'style'
+        : false;
+      return false;
+    }
+
+    function inlineStyleStringSetAttribute(expression: ts.CallExpression) {
+      const callTarget = unwrapExpression(expression.expression);
+      if (!ts.isPropertyAccessExpression(callTarget) || callTarget.name.text !== 'setAttribute') return null;
+      const attributeName = expression.arguments[0] ? stringLiteralText(expression.arguments[0]) : null;
+      if (attributeName !== 'style') return null;
+      return expression.arguments[1] ?? null;
+    }
+
     function visit(node: ts.Node) {
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
         styleInitializers.set(node.name.text, node.initializer);
+      }
+      if (ts.isPropertyAssignment(node) && propertyNameText(node.name, sourceFile) === 'style') {
+        inspectStyleStringExpression(node.initializer);
       }
       if (
         ts.isJsxAttribute(node)
@@ -287,12 +348,17 @@ function collectInlineNativeAffordanceStyleViolations() {
           violations.push(`${file}:${line + 1} ${node.left.getText(sourceFile)}`);
         }
       }
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        if (isInlineStyleStringAssignment(node.left)) inspectStyleStringExpression(node.right);
+      }
       if (ts.isCallExpression(node)) {
         const propertyName = nativeAffordanceStyleSetPropertyName(node);
         if (propertyName) {
           const { line } = sourceFile.getLineAndCharacterOfPosition(node.expression.getStart(sourceFile));
           violations.push(`${file}:${line + 1} ${node.expression.getText(sourceFile)}('${propertyName}')`);
         }
+        const inlineStyleValue = inlineStyleStringSetAttribute(node);
+        if (inlineStyleValue) inspectStyleStringExpression(inlineStyleValue);
       }
       ts.forEachChild(node, visit);
     }
