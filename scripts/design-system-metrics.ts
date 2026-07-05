@@ -273,13 +273,13 @@ function exceptionRegistryRows() {
 
 function decisionAuditRows() {
   const source = readFileSync(DECISION_AUDIT, 'utf8');
-  return [...source.matchAll(/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (Derived|Exception) \|$/gm)]
+  return [...source.matchAll(/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
     .map((match) => ({
       id: match[1] ?? '',
       decision: match[2] ?? '',
       derivesFrom: match[3] ?? '',
       evidence: match[4] ?? '',
-      result: match[5] ?? '',
+      result: match[5]?.trim() ?? '',
     }));
 }
 
@@ -312,6 +312,10 @@ function decisionAuditMetrics() {
   const rows = decisionAuditRows();
   const derivedRows = rows.filter((row) => row.result === 'Derived');
   const exceptionRows = rows.filter((row) => row.result === 'Exception');
+  const invalidDecisionResults = rows
+    .filter((row) => row.result !== 'Derived' && row.result !== 'Exception')
+    .map((row) => `${row.id} ${row.decision}: ${row.result || 'missing result'}`)
+    .sort();
   const evidenceRows = rows.filter((row) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(row.evidence));
   const exceptionNames = exceptionRegistryRows().map((row) => row.name);
   const unnamedExceptionDecisions = exceptionRows
@@ -338,6 +342,7 @@ function decisionAuditMetrics() {
     decisionEvidenceRows: evidenceRows.length,
     decisionEvidenceCoverage: rows.length === 0 ? 0 : Number((evidenceRows.length / rows.length).toFixed(3)),
     decisionBrokenReferences: [...brokenReferences].sort(),
+    invalidDecisionResults,
     unnamedExceptionDecisions,
     decisionDerivationCoverage: rows.length === 0 ? 0 : Number((derivedRows.length / rows.length).toFixed(3)),
   };
@@ -646,6 +651,7 @@ function main() {
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
     console.log(`  decision evidence: ${(metrics.decisionAudit.decisionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  decision broken refs: ${metrics.decisionAudit.decisionBrokenReferences.length}`);
+    console.log(`  invalid decision results: ${metrics.decisionAudit.invalidDecisionResults.length}`);
     console.log(`  unnamed exception decisions: ${metrics.decisionAudit.unnamedExceptionDecisions.length}`);
     console.log(`  component coverage: ${(metrics.components.componentCoverage * 100).toFixed(1)}%`);
     console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
@@ -669,6 +675,9 @@ function main() {
       failures.push(
         `decision derivation ${metrics.decisionAudit.decisionDerivationCoverage} < ${DECISION_DERIVATION_TARGET}`,
       );
+    }
+    if (metrics.decisionAudit.invalidDecisionResults.length > 0) {
+      failures.push(`invalid decision results: ${metrics.decisionAudit.invalidDecisionResults.join(', ')}`);
     }
     if (metrics.decisionAudit.unnamedExceptionDecisions.length > 0) {
       failures.push(`unnamed exception decisions: ${metrics.decisionAudit.unnamedExceptionDecisions.join(', ')}`);

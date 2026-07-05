@@ -28,8 +28,9 @@ decision routing, exceptions, and validation.
   satisfied. The ratified target is: surface-specific contract lines are at least
   40% below the post-split baseline (`surfaces.md` <= 403 lines from a 672-line
   baseline); the sampled [decision audit](./decision-audit.md) proves at least
-  80% derived decisions, has 100% evidence coverage with no broken local
-  evidence references, and names a kernel exception for every Exception row;
+  80% derived decisions, uses only valid `Derived` / `Exception` result values,
+  has 100% evidence coverage with no broken local evidence references, and names
+  a kernel exception for every Exception row;
   component coverage is at least 80%; Exception Registry evidence coverage is
   100% with no broken local evidence references; raw colour
   literals outside foundation token declarations stay 0 after named exceptions;
