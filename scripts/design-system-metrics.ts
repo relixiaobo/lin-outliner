@@ -23,6 +23,7 @@ const SURFACE_TARGET_LINES = Math.floor(SURFACE_BASELINE_LINES * 0.6);
 const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
 const DECISION_EVIDENCE_COVERAGE_TARGET = 1;
+const DECISION_AUDIT_MIN_ROWS = 50;
 const RUNTIME_THEME_VARIANTS = 2;
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
 const RAW_FUNCTIONAL_COLOR_START_PATTERN = /\b(?:rgba?|hsla?)\s*\(/gi;
@@ -310,6 +311,19 @@ function exceptionEvidenceMetrics() {
 
 function decisionAuditMetrics() {
   const rows = decisionAuditRows();
+  const rowIds = rows.map((row) => row.id);
+  const duplicateDecisionIds = rowIds
+    .filter((id, index) => rowIds.indexOf(id) !== index)
+    .filter((id, index, ids) => ids.indexOf(id) === index)
+    .sort();
+  const maxDecisionId = Math.max(
+    DECISION_AUDIT_MIN_ROWS,
+    ...rowIds.map((id) => Number(id.slice(1))).filter((value) => Number.isFinite(value)),
+  );
+  const missingDecisionIds = Array.from({ length: maxDecisionId }, (_, index) => {
+    const id = `D${String(index + 1).padStart(2, '0')}`;
+    return rowIds.includes(id) ? '' : id;
+  }).filter(Boolean);
   const derivedRows = rows.filter((row) => row.result === 'Derived');
   const exceptionRows = rows.filter((row) => row.result === 'Exception');
   const invalidDecisionResults = rows
@@ -337,6 +351,9 @@ function decisionAuditMetrics() {
   }
   return {
     decisionRows: rows.length,
+    decisionRowMinimumTarget: DECISION_AUDIT_MIN_ROWS,
+    duplicateDecisionIds,
+    missingDecisionIds,
     derivedDecisionRows: derivedRows.length,
     exceptionDecisionRows: exceptionRows.length,
     decisionEvidenceRows: evidenceRows.length,
@@ -648,6 +665,7 @@ function main() {
     console.log('design-system metrics');
     console.log(`  surface lines: ${metrics.designSystem.surfaceLines}/${SURFACE_TARGET_LINES}`);
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
+    console.log(`  decision rows: ${metrics.decisionAudit.decisionRows}/${DECISION_AUDIT_MIN_ROWS}`);
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
     console.log(`  decision evidence: ${(metrics.decisionAudit.decisionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  decision broken refs: ${metrics.decisionAudit.decisionBrokenReferences.length}`);
@@ -675,6 +693,15 @@ function main() {
       failures.push(
         `decision derivation ${metrics.decisionAudit.decisionDerivationCoverage} < ${DECISION_DERIVATION_TARGET}`,
       );
+    }
+    if (metrics.decisionAudit.decisionRows < DECISION_AUDIT_MIN_ROWS) {
+      failures.push(`decision rows ${metrics.decisionAudit.decisionRows} < ${DECISION_AUDIT_MIN_ROWS}`);
+    }
+    if (metrics.decisionAudit.duplicateDecisionIds.length > 0) {
+      failures.push(`duplicate decision ids: ${metrics.decisionAudit.duplicateDecisionIds.join(', ')}`);
+    }
+    if (metrics.decisionAudit.missingDecisionIds.length > 0) {
+      failures.push(`missing decision ids: ${metrics.decisionAudit.missingDecisionIds.join(', ')}`);
     }
     if (metrics.decisionAudit.invalidDecisionResults.length > 0) {
       failures.push(`invalid decision results: ${metrics.decisionAudit.invalidDecisionResults.join(', ')}`);
