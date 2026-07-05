@@ -12,6 +12,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Ask user question stepper (PR #376, codex-4)** — multi-question
+  `ask_user_question` requests now render as a one-question-at-a-time composer
+  stepper instead of a stacked form. Back/Next navigation preserves rich answer
+  drafts, validation is scoped to the active question, final submission keeps the
+  existing structured result shape, and `Discuss first` remains a whole-request
+  escape hatch. **Gate (main):** code review found no reportable findings.
+  Verified with typecheck, renderer tests, targeted stepper/discuss e2e coverage,
+  docs check, and `git diff --check`.
 - **Data import CLI/API boundary (PR #375, codex-4)** — moves bulk import from
   the default model-visible `data_import` tool to a Tenon-owned Import Pack
   CLI/API workflow. `/data-cleanup` now runs `tenon-import` for inspect,
