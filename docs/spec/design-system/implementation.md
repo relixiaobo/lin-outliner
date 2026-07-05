@@ -128,9 +128,10 @@ Expected checks for design-system changes:
   / reduced-transparency / increased-contrast rule allowlists, the absent
   `--primary` token family, viewport-independent font sizing, neutral
   letter-spacing, the static no-scale feedback guard, and the registered
-  layout-transition allowlist; it keeps global z-index values on the `--z-*`
-  ladder, keeps hidden scrollbars limited to the registered document-outline
-  mini-rail exception, and keeps every `--material-*` background paired with the
+  layout-transition and interactive-state layout-declaration allowlists; it keeps
+  global z-index values on the `--z-*` ladder, keeps hidden scrollbars limited to
+  the registered document-outline mini-rail exception, and keeps every
+  `--material-*` background paired with the
   shared `--material-backdrop` filter, scoped to registered chrome / overlay
   surfaces, and routed through the shared accessibility fallback path; backdrop
   filters stay scoped to those material surfaces plus the

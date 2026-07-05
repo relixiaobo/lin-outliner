@@ -76,6 +76,14 @@ const layoutTransitionAllowlist = new Map([
   ['src/renderer/styles/canvas.css|.workspace-canvas|padding', 'Workspace canvas pads around rails during open/close layout motion.'],
   ['src/renderer/styles/outliner.css|.indent-guide-line|width', 'Absolute decorative guide stroke thickens without changing row layout.'],
 ]);
+const interactiveStateSelector = /(:hover|:active|:focus|:focus-visible|:focus-within|\.is-selected|\.selected|\.is-active|\[aria-selected)/;
+const stateLayoutDeclarationAllowlist = new Map([
+  ['src/renderer/styles/outliner.css|.indent-guide:hover > .indent-guide-line|width', 'Absolute decorative guide stroke thickens without changing row layout.'],
+  ['src/renderer/styles/outliner.css|.row.selected:not(.drop-before):not(.drop-after)::before|top', 'Absolute selection overlay insets within the existing row box.'],
+  ['src/renderer/styles/outliner.css|.row.selected:not(.drop-before):not(.drop-after)::before|right', 'Absolute selection overlay insets within the existing row box.'],
+  ['src/renderer/styles/outliner.css|.row.selected:not(.drop-before):not(.drop-after)::before|bottom', 'Absolute selection overlay insets within the existing row box.'],
+  ['src/renderer/styles/outliner.css|.row.selected:not(.drop-before):not(.drop-after)::before|left', 'Absolute selection overlay insets within the existing row box.'],
+]);
 const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/agent-composer.css|.agent-composer-file-preview-popover', 'Inline file preview popover.'],
   ['src/renderer/styles/agent-composer.css|.agent-composer-model-popover', 'Composer model/effort overlay.'],
@@ -174,6 +182,12 @@ const layoutTransitionProperties = new Set([
   'row-gap',
   'column-gap',
   'flex-basis',
+]);
+const stateLayoutDeclarationProperties = new Set([
+  ...layoutTransitionProperties,
+  'font-size',
+  'letter-spacing',
+  'line-height',
 ]);
 
 function markdownFiles(dir: string): string[] {
@@ -519,6 +533,42 @@ function collectLayoutTransitionViolations() {
   return violations;
 }
 
+function collectStateLayoutDeclarationViolations() {
+  const violations: string[] = [];
+  const seenAllowlist = new Set<string>();
+
+  for (const file of productStyleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      if (!interactiveStateSelector.test(selector)) continue;
+      const body = match[2] ?? '';
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      for (const declaration of body.matchAll(/\b([\w-]+)\s*:\s*([^;]+);/g)) {
+        const property = declaration[1]!;
+        if (!stateLayoutDeclarationProperties.has(property)) continue;
+        const key = `${file}|${selector}|${property}`;
+        if (stateLayoutDeclarationAllowlist.has(key)) {
+          seenAllowlist.add(key);
+          continue;
+        }
+        const value = declaration[2]!.replace(/\s+/g, ' ').trim();
+        violations.push(`${file}:${lineNumber} ${selector} changes ${property}: ${value}`);
+      }
+    }
+  }
+
+  for (const [key, reason] of stateLayoutDeclarationAllowlist) {
+    if (seenAllowlist.has(key)) continue;
+    violations.push(`${key} is a stale interactive-state layout exception (${reason})`);
+  }
+
+  return violations;
+}
+
 function collectUndefinedLiveTokenReferenceViolations() {
   const violations: string[] = [];
   const definitions = new Set<string>();
@@ -741,6 +791,10 @@ test.describe('typography tokens', () => {
 
   test('keeps layout-affecting transitions registered', () => {
     expect(collectLayoutTransitionViolations()).toEqual([]);
+  });
+
+  test('keeps interactive state layout declarations registered', () => {
+    expect(collectStateLayoutDeclarationViolations()).toEqual([]);
   });
 
   test('keeps motion timing literals tokenized outside zero delays', () => {
