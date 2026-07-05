@@ -310,6 +310,20 @@ function collectInlineNativeAffordanceStyleViolations() {
 
     function isInlineStyleStringAssignment(expression: ts.Expression) {
       const target = unwrapExpression(expression);
+      if (ts.isPropertyAccessExpression(target)) {
+        if (target.name.text === 'style') return true;
+        return target.name.text === 'cssText' && isStyleObjectExpression(target.expression);
+      }
+      if (ts.isElementAccessExpression(target)) {
+        const propertyName = target.argumentExpression ? stringLiteralText(target.argumentExpression) : null;
+        if (propertyName === 'style') return true;
+        return propertyName === 'cssText' && isStyleObjectExpression(target.expression);
+      }
+      return false;
+    }
+
+    function isStyleObjectExpression(expression: ts.Expression) {
+      const target = unwrapExpression(expression);
       if (ts.isPropertyAccessExpression(target)) return target.name.text === 'style';
       if (ts.isElementAccessExpression(target)) return target.argumentExpression
         ? stringLiteralText(target.argumentExpression) === 'style'
@@ -364,7 +378,10 @@ function collectInlineNativeAffordanceStyleViolations() {
           violations.push(`${file}:${line + 1} ${node.left.getText(sourceFile)}`);
         }
       }
-      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      if (
+        ts.isBinaryExpression(node)
+        && (node.operatorToken.kind === ts.SyntaxKind.EqualsToken || node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken)
+      ) {
         if (isInlineStyleStringAssignment(node.left)) inspectStyleStringExpression(node.right);
       }
       if (ts.isCallExpression(node)) {

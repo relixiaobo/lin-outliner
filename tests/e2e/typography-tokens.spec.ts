@@ -760,6 +760,20 @@ function collectSourceOwnedInlineStylePropertyViolations({
 
     function isInlineStyleStringAssignment(expression: ts.Expression) {
       const target = unwrapExpression(expression);
+      if (ts.isPropertyAccessExpression(target)) {
+        if (target.name.text === 'style') return true;
+        return target.name.text === 'cssText' && isStyleObjectExpression(target.expression);
+      }
+      if (ts.isElementAccessExpression(target)) {
+        const propertyName = target.argumentExpression ? stringLiteralText(target.argumentExpression) : null;
+        if (propertyName === 'style') return true;
+        return propertyName === 'cssText' && isStyleObjectExpression(target.expression);
+      }
+      return false;
+    }
+
+    function isStyleObjectExpression(expression: ts.Expression) {
+      const target = unwrapExpression(expression);
       if (ts.isPropertyAccessExpression(target)) return target.name.text === 'style';
       if (ts.isElementAccessExpression(target)) return target.argumentExpression
         ? stringLiteralText(target.argumentExpression) === 'style'
@@ -792,7 +806,12 @@ function collectSourceOwnedInlineStylePropertyViolations({
           const { line } = sourceFile.getLineAndCharacterOfPosition(node.left.getStart(sourceFile));
           violations.push(`${file}:${line + 1} ${node.left.getText(sourceFile)}`);
         }
-        if (isInlineStyleStringAssignment(node.left)) inspectStyleStringExpression(node.right);
+        if (
+          (node.operatorToken.kind === ts.SyntaxKind.EqualsToken || node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken)
+          && isInlineStyleStringAssignment(node.left)
+        ) {
+          inspectStyleStringExpression(node.right);
+        }
       }
       if (ts.isCallExpression(node)) {
         const propertyName = trackedStyleSetPropertyName(node);
