@@ -118,6 +118,8 @@ interface AgentComposerEditorProps {
   allowSlashCommands?: boolean;
   currentNodeId: NodeId | null;
   index: DocumentIndex;
+  initialSnapshot?: AgentComposerEditorSnapshot | null;
+  initialText?: string;
   isStreaming: boolean;
   /** Channel agent members for the `@` typeahead; empty in a DM (no member items). */
   members: readonly AgentComposerMemberCandidate[];
@@ -548,11 +550,17 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
       const mount = mountRef.current;
       if (!mount) return;
 
+      const initialState = propsRef.current.initialSnapshot
+        ? editorStateFromSnapshot(propsRef.current.initialSnapshot)
+        : propsRef.current.initialText
+          ? editorStateFromText(propsRef.current.initialText)
+          : emptyEditorState();
+
       const view = new EditorView(mount, {
         attributes: {
           'aria-label': editorAriaLabelRef.current,
         },
-        state: emptyEditorState(),
+        state: initialState,
         dispatchTransaction(transaction) {
           const nextState = view.state.apply(transaction);
           view.updateState(nextState);
@@ -663,7 +671,7 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
       });
 
       viewRef.current = view;
-      propsRef.current.onChange(EMPTY_DRAFT);
+      syncDraft(view);
       return () => {
         view.destroy();
         viewRef.current = null;
