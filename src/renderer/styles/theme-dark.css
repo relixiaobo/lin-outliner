@@ -11,6 +11,11 @@
     color-scheme: dark;
     --ink: 255 255 255;
 
+    /* Tertiary text at the light-mode 0.30 alpha reads below 3:1 on dark
+       content/material surfaces. Lift it centrally so text-faint remains a
+       readable preview/meta tier without per-surface colour patches. */
+    --text-tertiary: rgb(var(--ink) / 0.40);
+
     --separator-opaque: #3a3a3c;
     --highlight-mark: rgba(120, 100, 30, 0.55);
 

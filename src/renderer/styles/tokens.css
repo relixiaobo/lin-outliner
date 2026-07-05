@@ -60,7 +60,8 @@
      ════════════════════════════════════════════════════════════════════════ */
   --ink: 0 0 0;
 
-  /* text (label) levels — alpha on ink, identical alphas in both themes */
+  /* text (label) levels — alpha on ink; dark mode may centrally lift low tiers
+     in theme-dark.css when the same alpha reads too faint on dark surfaces. */
   --text-primary: rgb(var(--ink) / 0.88);
   --text-secondary: rgb(var(--ink) / 0.55);
   --text-tertiary: rgb(var(--ink) / 0.30);
