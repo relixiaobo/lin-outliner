@@ -255,23 +255,33 @@ function evidenceCodePathReferences(markdown: string): string[] {
     });
 }
 
-function exceptionEvidenceMetrics() {
+function exceptionRegistryRows() {
   const kernel = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
   const start = kernel.indexOf('## Exception Registry');
   const end = kernel.indexOf('## Foundations', start);
   const section = start >= 0 && end > start ? kernel.slice(start, end) : '';
-  const rows = [...section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
-    .filter((match) => match[1] !== 'Exception' && !match[1]?.startsWith('---'));
-  const evidenceRows = rows.filter((match) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(match[4] ?? ''));
+  return [...section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
+    .filter((match) => match[1] !== 'Exception' && !match[1]?.startsWith('---'))
+    .map((match) => ({
+      name: match[1] ?? '',
+      scope: match[2] ?? '',
+      authority: match[3] ?? '',
+      evidence: match[4] ?? '',
+    }));
+}
+
+function exceptionEvidenceMetrics() {
+  const rows = exceptionRegistryRows();
+  const evidenceRows = rows.filter((row) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(row.evidence));
   const brokenReferences = new Set<string>();
-  for (const match of rows) {
-    const name = match[1] ?? 'unknown exception';
-    for (const target of markdownLinkTargets(`${match[3] ?? ''} ${match[4] ?? ''}`)) {
+  for (const row of rows) {
+    const name = row.name || 'unknown exception';
+    for (const target of markdownLinkTargets(`${row.authority} ${row.evidence}`)) {
       if (!localMarkdownTargetExists(DESIGN_SYSTEM_KERNEL, target)) {
         brokenReferences.add(`${name}: ${target}`);
       }
     }
-    for (const reference of evidenceCodePathReferences(match[4] ?? '')) {
+    for (const reference of evidenceCodePathReferences(row.evidence)) {
       if (!existsSync(join(ROOT, reference))) {
         brokenReferences.add(`${name}: ${reference}`);
       }
@@ -290,10 +300,16 @@ function decisionAuditMetrics() {
   const rows = [...source.matchAll(/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (Derived|Exception) \|$/gm)];
   const derivedRows = rows.filter((match) => match[5] === 'Derived');
   const exceptionRows = rows.filter((match) => match[5] === 'Exception');
+  const exceptionNames = exceptionRegistryRows().map((row) => row.name);
+  const unnamedExceptionDecisions = exceptionRows
+    .filter((match) => !exceptionNames.some((name) => (match[3] ?? '').includes(name)))
+    .map((match) => `${match[1]} ${match[2]}`)
+    .sort();
   return {
     decisionRows: rows.length,
     derivedDecisionRows: derivedRows.length,
     exceptionDecisionRows: exceptionRows.length,
+    unnamedExceptionDecisions,
     decisionDerivationCoverage: rows.length === 0 ? 0 : Number((derivedRows.length / rows.length).toFixed(3)),
   };
 }
@@ -598,6 +614,7 @@ function main() {
     console.log(`  surface lines: ${metrics.designSystem.surfaceLines}/${SURFACE_TARGET_LINES}`);
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
+    console.log(`  unnamed exception decisions: ${metrics.decisionAudit.unnamedExceptionDecisions.length}`);
     console.log(`  component coverage: ${(metrics.components.componentCoverage * 100).toFixed(1)}%`);
     console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
     console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
@@ -620,6 +637,9 @@ function main() {
       failures.push(
         `decision derivation ${metrics.decisionAudit.decisionDerivationCoverage} < ${DECISION_DERIVATION_TARGET}`,
       );
+    }
+    if (metrics.decisionAudit.unnamedExceptionDecisions.length > 0) {
+      failures.push(`unnamed exception decisions: ${metrics.decisionAudit.unnamedExceptionDecisions.join(', ')}`);
     }
     if (metrics.components.componentCoverage < COMPONENT_COVERAGE_TARGET) {
       failures.push(`component coverage ${metrics.components.componentCoverage} < ${COMPONENT_COVERAGE_TARGET}`);

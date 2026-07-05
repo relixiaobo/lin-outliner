@@ -28,8 +28,9 @@ decision routing, exceptions, and validation.
   satisfied. The ratified target is: surface-specific contract lines are at least
   40% below the post-split baseline (`surfaces.md` <= 403 lines from a 672-line
   baseline); the sampled [decision audit](./decision-audit.md) proves at least
-  80% derived decisions; component coverage is at least 80%; Exception Registry
-  evidence coverage is 100% with no broken local evidence references; raw colour
+  80% derived decisions and names a kernel exception for every Exception row;
+  component coverage is at least 80%; Exception Registry evidence coverage is
+  100% with no broken local evidence references; raw colour
   literals outside foundation token declarations stay 0 after named exceptions;
   and the runtime surface matrix remains discoverable by the metrics script. The
   raw-colour scan covers renderer CSS, TS, and TSX, and only the foundation token
