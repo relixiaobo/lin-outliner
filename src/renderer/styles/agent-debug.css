@@ -451,7 +451,6 @@
 .agent-debug-usage-hover:hover .agent-debug-usage-popover,
 .agent-debug-usage-hover:focus-within .agent-debug-usage-popover {
   opacity: 1;
-  pointer-events: auto;
   transform: translateY(0);
   visibility: visible;
 }
