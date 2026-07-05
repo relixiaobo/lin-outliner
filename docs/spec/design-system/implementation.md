@@ -35,7 +35,8 @@ decision routing, exceptions, and validation.
   component coverage is at least 80%; Exception Registry evidence coverage is
   100% with no broken local evidence references; raw colour
   literals outside foundation token declarations stay 0 after named exceptions;
-  and the runtime surface matrix remains discoverable by the metrics script. The
+  and the runtime surface matrix plus its light/dark theme variants remain
+  discoverable by the metrics script. The
   raw-colour scan covers renderer CSS, TS, and TSX, and only the foundation token
   layer may declare raw-colour custom properties, so source literals cannot hide
   outside stylesheet files or behind component-private variables. Runtime surface
@@ -111,7 +112,8 @@ Expected checks for design-system changes:
 - `bun scripts/design-system-metrics.ts --json` for the current compression,
   decision-derivation, component-coverage, exception-evidence, and
   renderer-wide token-discipline baseline, including raw colour literals in CSS,
-  TS, and TSX, plus the runtime surface matrix size. Use `--check` before
+  TS, and TSX, plus the runtime surface matrix size and light/dark variant
+  discovery. Use `--check` before
   publishing a design-system compression or contract PR.
 - Focused Playwright tests for touched surfaces.
 - `tests/e2e/design-system-runtime.spec.ts` for representative shell, settings,

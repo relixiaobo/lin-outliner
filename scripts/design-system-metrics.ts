@@ -25,7 +25,6 @@ const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
 const DECISION_EVIDENCE_COVERAGE_TARGET = 1;
 const DECISION_AUDIT_MIN_ROWS = 50;
-const RUNTIME_THEME_VARIANTS = 2;
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
 const RAW_FUNCTIONAL_COLOR_START_PATTERN = /\b(?:rgba?|hsla?)\s*\(/gi;
 const rawColorTokenDeclarationFiles = new Set([
@@ -682,12 +681,18 @@ function runtimeSurfaceMetrics() {
   const surfaceNames = [...surfacesBlock.matchAll(/^\s+name: '([^']+)',/gm)]
     .map((match) => match[1])
     .sort();
+  const themeVariantMatch = /for\s*\(\s*const\s+colorScheme\s+of\s+\[([^\]]+)\]\s+as\s+const\s*\)/.exec(source);
+  const themeVariantNames = themeVariantMatch
+    ? [...themeVariantMatch[1]!.matchAll(/'([^']+)'/g)].map((match) => match[1]!).sort()
+    : [];
 
   return {
     runtimeSurfaceMatrixFound: surfacesBlock.length > 0,
     runtimeSurfaceCases: surfaceNames.length,
-    runtimeThemeVariants: RUNTIME_THEME_VARIANTS,
-    runtimeSurfaceThemeChecks: surfaceNames.length * RUNTIME_THEME_VARIANTS,
+    runtimeThemeVariantsFound: themeVariantNames.length > 0,
+    runtimeThemeVariants: themeVariantNames.length,
+    runtimeThemeVariantNames: themeVariantNames,
+    runtimeSurfaceThemeChecks: surfaceNames.length * themeVariantNames.length,
     runtimeSurfaceNames: surfaceNames,
   };
 }
@@ -843,6 +848,13 @@ function main() {
     }
     if (!metrics.runtimeSurfaces.runtimeSurfaceMatrixFound || metrics.runtimeSurfaces.runtimeSurfaceCases === 0) {
       failures.push('runtime surface matrix missing or empty');
+    }
+    if (
+      !metrics.runtimeSurfaces.runtimeThemeVariantsFound
+      || !metrics.runtimeSurfaces.runtimeThemeVariantNames.includes('light')
+      || !metrics.runtimeSurfaces.runtimeThemeVariantNames.includes('dark')
+    ) {
+      failures.push(`runtime theme variants missing light/dark: ${metrics.runtimeSurfaces.runtimeThemeVariantNames.join(', ') || 'none'}`);
     }
     if (failures.length > 0) {
       console.error(`design-system metrics FAILED:\n  - ${failures.join('\n  - ')}`);
