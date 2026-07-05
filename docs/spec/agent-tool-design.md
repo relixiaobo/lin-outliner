@@ -189,8 +189,10 @@ at the top level; conditional rules are enforced in TypeScript normalizers.
 The renderer presents a request with more than one question as a one-question-at-a-time
 stepper inside the composer surface. The user can move forward and back through
 the local draft, but only the active question's prompt/options/editor are visible
-at any time. `Discuss first` remains a whole-request escape hatch from every
-step. The backend event model stays one pending request and one final resolution.
+at any time. The stepper keeps the progress compact in the title row, shows Back
+as an icon-only control from the second step onward, and keeps `Discuss first` as
+a lower-emphasis whole-request escape hatch from every step. The backend event
+model stays one pending request and one final resolution.
 
 Result:
 

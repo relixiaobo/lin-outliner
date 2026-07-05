@@ -985,7 +985,7 @@ commandPalette: {
       userQuestionSubmit: 'Submit answer',
       userQuestionNext: 'Next',
       userQuestionBack: 'Back',
-      userQuestionProgress: ({ current, total }: { current: number; total: number }) => `Question ${current} of ${total}`,
+      userQuestionProgress: ({ current, total }: { current: number; total: number }) => `${current}/${total}`,
       userQuestionDiscuss: 'Discuss first',
       userQuestionDiscussMessage: 'I want to discuss this before answering.',
       userQuestionAnswerPlaceholder: 'Type your answer...',
