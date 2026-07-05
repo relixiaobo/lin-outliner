@@ -24,7 +24,7 @@ const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
 const RUNTIME_THEME_VARIANTS = 2;
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
-const RAW_FUNCTIONAL_COLOR_PATTERN = /\b(?:rgba?|hsla?)\s*\(/gi;
+const RAW_FUNCTIONAL_COLOR_PATTERN = /\b(?:rgba?|hsla?)\s*\([^)]*\)/gi;
 
 const componentContracts = [
   {
@@ -162,7 +162,7 @@ const nativeControlExceptions: Record<string, string> = {
   'src/renderer/ui/outliner/NodeValuePicker.tsx': 'Input is an anchored filtering control with caller-owned query semantics.',
 };
 
-const rawHexExceptions: Record<string, { name: string; reason: string }> = {
+const rawColorExceptions: Record<string, { name: string; reason: string }> = {
   'src/renderer/ui/agent/AgentComposer.tsx:#ffffff': {
     name: 'Model-upload JPEG alpha matting may force a white canvas.',
     reason: 'Transparent image pixels are composited against white before JPEG encoding for model upload.',
@@ -358,25 +358,31 @@ function rawColorMetrics() {
   const exceptionUses: string[] = [];
   const usedExceptions = new Set<string>();
   const kernel = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
-  const undocumentedExceptions = Object.values(rawHexExceptions)
+  const undocumentedExceptions = Object.values(rawColorExceptions)
     .filter((exception) => !kernel.includes(`| ${exception.name} |`))
     .map((exception) => exception.name);
 
-  function recordMatch(file: string, lineNumber: number, lineText: string, value: string) {
+  function recordRawColorMatch(
+    file: string,
+    lineNumber: number,
+    lineText: string,
+    value: string,
+    violations: string[],
+  ) {
     const rel = relative(ROOT, file);
-    const exception = rawHexExceptions[`${rel}:${value.toLowerCase()}`];
+    const exceptionKey = `${rel}:${value.toLowerCase()}`;
+    const exception = rawColorExceptions[exceptionKey];
     const finding = `${rel}:${lineNumber} ${value} ${lineText.trim()}`;
     if (exception) {
-      usedExceptions.add(`${rel}:${value.toLowerCase()}`);
+      usedExceptions.add(exceptionKey);
       exceptionUses.push(`${finding} (${exception.name})`);
     } else {
-      hexViolations.push(finding);
+      violations.push(finding);
     }
   }
 
   function recordFunctionalColorMatch(file: string, lineNumber: number, lineText: string, value: string) {
-    const rel = relative(ROOT, file);
-    functionalColorViolations.push(`${rel}:${lineNumber} ${value} ${lineText.trim()}`);
+    recordRawColorMatch(file, lineNumber, lineText, value, functionalColorViolations);
   }
 
   function scanFunctionalColorText(file: string, lineNumber: number, lineText: string, value: string) {
@@ -395,7 +401,7 @@ function rawColorMetrics() {
       const trimmed = line.trim();
       if (trimmed.startsWith('--')) return;
       for (const match of line.matchAll(RAW_HEX_PATTERN)) {
-        recordMatch(file, index + 1, originalLines[index] ?? line, match[0]);
+        recordRawColorMatch(file, index + 1, originalLines[index] ?? line, match[0], hexViolations);
       }
       scanFunctionalColorText(file, index + 1, originalLines[index] ?? line, line);
     });
@@ -415,7 +421,7 @@ function rawColorMetrics() {
       for (const match of value.matchAll(RAW_HEX_PATTERN)) {
         const position = node.getStart(sourceFile);
         const { line } = sourceFile.getLineAndCharacterOfPosition(position);
-        recordMatch(file, line + 1, lines[line] ?? value, match[0]);
+        recordRawColorMatch(file, line + 1, lines[line] ?? value, match[0], hexViolations);
       }
       if (RAW_FUNCTIONAL_COLOR_PATTERN.test(value)) {
         const position = node.getStart(sourceFile);
@@ -455,12 +461,12 @@ function rawColorMetrics() {
     rawHexViolations: hexViolations,
     rawFunctionalColorOutsideTokenDeclarations: functionalColorViolations.length,
     rawFunctionalColorViolations: functionalColorViolations,
-    rawHexExceptionUses: exceptionUses,
-    staleRawHexExceptions: Object.entries(rawHexExceptions)
+    rawColorExceptionUses: exceptionUses,
+    staleRawColorExceptions: Object.entries(rawColorExceptions)
       .filter(([key]) => !usedExceptions.has(key))
       .map(([key, exception]) => `${key} (${exception.name})`)
       .sort(),
-    undocumentedRawHexExceptions: undocumentedExceptions,
+    undocumentedRawColorExceptions: undocumentedExceptions,
   };
 }
 
@@ -525,8 +531,8 @@ function main() {
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
     console.log(`  raw functional colors outside tokens: ${metrics.tokens.rawFunctionalColorOutsideTokenDeclarations}`);
-    console.log(`  named raw hex exceptions: ${metrics.tokens.rawHexExceptionUses.length}`);
-    console.log(`  stale raw hex exceptions: ${metrics.tokens.staleRawHexExceptions.length}`);
+    console.log(`  named raw colour exceptions: ${metrics.tokens.rawColorExceptionUses.length}`);
+    console.log(`  stale raw colour exceptions: ${metrics.tokens.staleRawColorExceptions.length}`);
     console.log(`  runtime surface cases: ${metrics.runtimeSurfaces.runtimeSurfaceCases}`);
     console.log(`  runtime theme checks: ${metrics.runtimeSurfaces.runtimeSurfaceThemeChecks}`);
   }
@@ -565,11 +571,11 @@ function main() {
     if (metrics.tokens.rawFunctionalColorOutsideTokenDeclarations !== 0) {
       failures.push(`raw functional colors outside tokens ${metrics.tokens.rawFunctionalColorOutsideTokenDeclarations} !== 0`);
     }
-    if (metrics.tokens.undocumentedRawHexExceptions.length > 0) {
-      failures.push(`undocumented raw hex exceptions: ${metrics.tokens.undocumentedRawHexExceptions.join(', ')}`);
+    if (metrics.tokens.undocumentedRawColorExceptions.length > 0) {
+      failures.push(`undocumented raw colour exceptions: ${metrics.tokens.undocumentedRawColorExceptions.join(', ')}`);
     }
-    if (metrics.tokens.staleRawHexExceptions.length > 0) {
-      failures.push(`stale raw hex exceptions: ${metrics.tokens.staleRawHexExceptions.join(', ')}`);
+    if (metrics.tokens.staleRawColorExceptions.length > 0) {
+      failures.push(`stale raw colour exceptions: ${metrics.tokens.staleRawColorExceptions.join(', ')}`);
     }
     if (!metrics.runtimeSurfaces.runtimeSurfaceMatrixFound || metrics.runtimeSurfaces.runtimeSurfaceCases === 0) {
       failures.push('runtime surface matrix missing or empty');
