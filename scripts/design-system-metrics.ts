@@ -16,7 +16,6 @@ const DESIGN_SYSTEM_KERNEL = join(ROOT, 'docs', 'spec', 'design-system.md');
 const COMPONENTS_DOC = join(DESIGN_SYSTEM_DIR, 'components.md');
 const DECISION_AUDIT = join(DESIGN_SYSTEM_DIR, 'decision-audit.md');
 const RENDERER_DIR = join(ROOT, 'src', 'renderer');
-const UI_DIR = join(ROOT, 'src', 'renderer', 'ui');
 const RUNTIME_SURFACE_SPEC = join(ROOT, 'tests', 'e2e', 'design-system-runtime.spec.ts');
 
 const SURFACE_BASELINE_LINES = 672;
@@ -257,7 +256,7 @@ function decisionAuditMetrics() {
 }
 
 function componentCoverageMetrics() {
-  const files = sourceFiles(UI_DIR);
+  const files = sourceFiles(RENDERER_DIR);
   const componentTags = new Set(componentContracts.flatMap((contract) => contract.jsxTags));
   const componentImplementationFiles = new Set(
     componentContracts.flatMap((contract) => contract.implementationFiles),

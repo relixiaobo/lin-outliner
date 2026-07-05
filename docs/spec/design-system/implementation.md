@@ -69,6 +69,7 @@ decision routing, exceptions, and validation.
   outside component implementations must either migrate to a primitive or appear
   in `scripts/design-system-metrics.ts` with a named reason. The reason must be a
   real semantic/native requirement, not a styling shortcut. The metrics script
+  scans renderer TS/TSX, including entry surfaces outside `src/renderer/ui`,
   reports named exception files and reasons in `--json`, fails stale exception
   entries, and reports component-implementation native controls separately from
   product-surface direct native controls, so a reusable primitive can own its
