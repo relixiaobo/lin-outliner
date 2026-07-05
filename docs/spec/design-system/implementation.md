@@ -29,12 +29,13 @@ decision routing, exceptions, and validation.
   40% below the post-split baseline (`surfaces.md` <= 403 lines from a 672-line
   baseline); the sampled [decision audit](./decision-audit.md) proves at least
   80% derived decisions; component coverage is at least 80%; Exception Registry
-  evidence coverage is 100%; raw colour literals outside token declarations stay 0 after
-  named exceptions; and the runtime surface matrix remains discoverable by the
-  metrics script. The raw-colour scan covers renderer CSS, TS, and TSX, so source
-  literals cannot hide outside stylesheet files. Runtime surface counts are
-  reported as cases and light/dark theme checks, not as a completeness claim for
-  every possible UI state.
+  evidence coverage is 100% with no broken local evidence references; raw colour
+  literals outside token declarations stay 0 after named exceptions; and the
+  runtime surface matrix remains discoverable by the metrics script. The
+  raw-colour scan covers renderer CSS, TS, and TSX, so source literals cannot
+  hide outside stylesheet files. Runtime surface counts are reported as cases and
+  light/dark theme checks, not as a completeness claim for every possible UI
+  state.
 - **Derivation audit.** For a new or changed UI, the PR must be able to answer
   four questions: which surface owns it, which component primitive or pattern it
   uses, which state-model row it maps to, and which foundation tokens carry its
@@ -79,6 +80,10 @@ decision routing, exceptions, and validation.
   `scripts/design-system-metrics.ts` and in the kernel Exception Registry, with a
   narrow scope and evidence. The metrics script fails both undocumented entries
   and stale entries whose source literal no longer exists.
+- **Exception evidence references.** Exception Registry authority/evidence links
+  and path-like evidence code spans must resolve to current repo files. The
+  metrics script reports and fails broken local references so named exceptions do
+  not keep passing after their proof files move or disappear.
 
 ## Validation
 

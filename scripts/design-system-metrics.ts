@@ -7,7 +7,7 @@
  * ratified as hard gates.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import * as ts from 'typescript';
 
 const ROOT = join(import.meta.dir, '..');
@@ -228,6 +228,28 @@ function documentedComponentNames(): Set<string> {
   return names;
 }
 
+function markdownLinkTargets(markdown: string): string[] {
+  return [...markdown.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
+    .map((match) => match[1]?.trim() ?? '')
+    .filter(Boolean);
+}
+
+function localMarkdownTargetExists(sourceFile: string, target: string): boolean {
+  if (target.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(target)) return true;
+  const path = target.split('#')[0]?.trim();
+  if (!path) return true;
+  return existsSync(join(dirname(sourceFile), path));
+}
+
+function evidenceCodePathReferences(markdown: string): string[] {
+  return [...markdown.matchAll(/`([^`]+)`/g)]
+    .map((match) => match[1]?.trim() ?? '')
+    .filter((value) => {
+      if (!value || value.startsWith('--') || value.includes(' ')) return false;
+      return /^(docs|scripts|src|tests)\//.test(value) || /\.(?:css|md|ts|tsx)$/.test(value);
+    });
+}
+
 function exceptionEvidenceMetrics() {
   const kernel = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
   const start = kernel.indexOf('## Exception Registry');
@@ -236,10 +258,25 @@ function exceptionEvidenceMetrics() {
   const rows = [...section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
     .filter((match) => match[1] !== 'Exception' && !match[1]?.startsWith('---'));
   const evidenceRows = rows.filter((match) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(match[4] ?? ''));
+  const brokenReferences = new Set<string>();
+  for (const match of rows) {
+    const name = match[1] ?? 'unknown exception';
+    for (const target of markdownLinkTargets(`${match[3] ?? ''} ${match[4] ?? ''}`)) {
+      if (!localMarkdownTargetExists(DESIGN_SYSTEM_KERNEL, target)) {
+        brokenReferences.add(`${name}: ${target}`);
+      }
+    }
+    for (const reference of evidenceCodePathReferences(match[4] ?? '')) {
+      if (!existsSync(join(ROOT, reference))) {
+        brokenReferences.add(`${name}: ${reference}`);
+      }
+    }
+  }
   return {
     exceptionRows: rows.length,
     exceptionEvidenceRows: evidenceRows.length,
     exceptionEvidenceCoverage: rows.length === 0 ? 1 : Number((evidenceRows.length / rows.length).toFixed(3)),
+    exceptionBrokenReferences: [...brokenReferences].sort(),
   };
 }
 
@@ -557,6 +594,7 @@ function main() {
     console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
     console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
+    console.log(`  exception broken refs: ${metrics.exceptions.exceptionBrokenReferences.length}`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
     console.log(`  raw functional colors outside tokens: ${metrics.tokens.rawFunctionalColorOutsideTokenDeclarations}`);
     console.log(`  named raw colour exceptions: ${metrics.tokens.rawColorExceptionUses.length}`);
@@ -592,6 +630,9 @@ function main() {
     }
     if (metrics.exceptions.exceptionEvidenceCoverage < 1) {
       failures.push(`exception evidence ${metrics.exceptions.exceptionEvidenceCoverage} < 1`);
+    }
+    if (metrics.exceptions.exceptionBrokenReferences.length > 0) {
+      failures.push(`exception evidence broken refs: ${metrics.exceptions.exceptionBrokenReferences.join(', ')}`);
     }
     if (metrics.tokens.rawHexOutsideTokenDeclarations !== 0) {
       failures.push(`raw hex outside tokens ${metrics.tokens.rawHexOutsideTokenDeclarations} !== 0`);
