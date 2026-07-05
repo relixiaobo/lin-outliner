@@ -24,6 +24,7 @@ const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
 const RUNTIME_THEME_VARIANTS = 2;
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
+const RAW_FUNCTIONAL_COLOR_PATTERN = /\b(?:rgba?|hsla?)\s*\(/gi;
 
 const componentContracts = [
   {
@@ -350,9 +351,10 @@ function componentCoverageMetrics() {
   };
 }
 
-function rawHexMetrics() {
+function rawColorMetrics() {
   const files = filesByPattern(RENDERER_DIR, /\.(css|ts|tsx)$/);
-  const violations: string[] = [];
+  const hexViolations: string[] = [];
+  const functionalColorViolations: string[] = [];
   const exceptionUses: string[] = [];
   const usedExceptions = new Set<string>();
   const kernel = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
@@ -368,7 +370,18 @@ function rawHexMetrics() {
       usedExceptions.add(`${rel}:${value.toLowerCase()}`);
       exceptionUses.push(`${finding} (${exception.name})`);
     } else {
-      violations.push(finding);
+      hexViolations.push(finding);
+    }
+  }
+
+  function recordFunctionalColorMatch(file: string, lineNumber: number, lineText: string, value: string) {
+    const rel = relative(ROOT, file);
+    functionalColorViolations.push(`${rel}:${lineNumber} ${value} ${lineText.trim()}`);
+  }
+
+  function scanFunctionalColorText(file: string, lineNumber: number, lineText: string, value: string) {
+    for (const match of value.matchAll(RAW_FUNCTIONAL_COLOR_PATTERN)) {
+      recordFunctionalColorMatch(file, lineNumber, lineText, match[0]);
     }
   }
 
@@ -384,6 +397,7 @@ function rawHexMetrics() {
       for (const match of line.matchAll(RAW_HEX_PATTERN)) {
         recordMatch(file, index + 1, originalLines[index] ?? line, match[0]);
       }
+      scanFunctionalColorText(file, index + 1, originalLines[index] ?? line, line);
     });
   }
 
@@ -403,6 +417,13 @@ function rawHexMetrics() {
         const { line } = sourceFile.getLineAndCharacterOfPosition(position);
         recordMatch(file, line + 1, lines[line] ?? value, match[0]);
       }
+      if (RAW_FUNCTIONAL_COLOR_PATTERN.test(value)) {
+        const position = node.getStart(sourceFile);
+        const { line } = sourceFile.getLineAndCharacterOfPosition(position);
+        RAW_FUNCTIONAL_COLOR_PATTERN.lastIndex = 0;
+        scanFunctionalColorText(file, line + 1, lines[line] ?? value, value);
+      }
+      RAW_FUNCTIONAL_COLOR_PATTERN.lastIndex = 0;
     }
 
     function visit(node: ts.Node) {
@@ -430,8 +451,10 @@ function rawHexMetrics() {
   }
 
   return {
-    rawHexOutsideTokenDeclarations: violations.length,
-    rawHexViolations: violations,
+    rawHexOutsideTokenDeclarations: hexViolations.length,
+    rawHexViolations: hexViolations,
+    rawFunctionalColorOutsideTokenDeclarations: functionalColorViolations.length,
+    rawFunctionalColorViolations: functionalColorViolations,
     rawHexExceptionUses: exceptionUses,
     staleRawHexExceptions: Object.entries(rawHexExceptions)
       .filter(([key]) => !usedExceptions.has(key))
@@ -476,7 +499,7 @@ function main() {
     decisionAudit: decisionAuditMetrics(),
     exceptions: exceptionEvidenceMetrics(),
     components: componentCoverageMetrics(),
-    tokens: rawHexMetrics(),
+    tokens: rawColorMetrics(),
     runtimeSurfaces: runtimeSurfaceMetrics(),
     targets: {
       surfaceTargetLines: SURFACE_TARGET_LINES,
@@ -484,6 +507,7 @@ function main() {
       componentCoverageTarget: COMPONENT_COVERAGE_TARGET,
       exceptionEvidenceCoverageTarget: 1,
       rawHexOutsideTokenDeclarationsTarget: 0,
+      rawFunctionalColorOutsideTokenDeclarationsTarget: 0,
     },
   };
 
@@ -500,6 +524,7 @@ function main() {
     console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
+    console.log(`  raw functional colors outside tokens: ${metrics.tokens.rawFunctionalColorOutsideTokenDeclarations}`);
     console.log(`  named raw hex exceptions: ${metrics.tokens.rawHexExceptionUses.length}`);
     console.log(`  stale raw hex exceptions: ${metrics.tokens.staleRawHexExceptions.length}`);
     console.log(`  runtime surface cases: ${metrics.runtimeSurfaces.runtimeSurfaceCases}`);
@@ -536,6 +561,9 @@ function main() {
     }
     if (metrics.tokens.rawHexOutsideTokenDeclarations !== 0) {
       failures.push(`raw hex outside tokens ${metrics.tokens.rawHexOutsideTokenDeclarations} !== 0`);
+    }
+    if (metrics.tokens.rawFunctionalColorOutsideTokenDeclarations !== 0) {
+      failures.push(`raw functional colors outside tokens ${metrics.tokens.rawFunctionalColorOutsideTokenDeclarations} !== 0`);
     }
     if (metrics.tokens.undocumentedRawHexExceptions.length > 0) {
       failures.push(`undocumented raw hex exceptions: ${metrics.tokens.undocumentedRawHexExceptions.join(', ')}`);

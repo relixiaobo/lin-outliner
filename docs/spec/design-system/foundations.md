@@ -32,8 +32,9 @@ Core token families:
 
 ### Token Rules
 
-- Product CSS keeps raw hex and raw functional color literals (`rgb()`, `rgba()`,
-  `hsl()`, `hsla()`) inside token declarations only.
+- Product renderer styling keeps raw hex and raw functional color literals
+  (`rgb()`, `rgba()`, `hsl()`, `hsla()`) inside token declarations only,
+  including source-owned style strings in TS/TSX.
 - Component CSS may use `color-mix()` for local alpha states, but the base color
   comes from a token.
 - Primary text parity matters: outliner row text, field values, agent assistant
