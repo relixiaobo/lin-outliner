@@ -37,6 +37,11 @@ const productStyleFiles = readdirSync(STYLES_DIR)
   .filter((file) => file.endsWith('.css'))
   .map((file) => join(STYLES_DIR, file));
 const rendererSourceFiles = collectFiles('src/renderer', ['.css', '.ts', '.tsx']);
+const rawColorTokenDeclarationFiles = new Set([
+  'src/renderer/styles/a11y.css',
+  'src/renderer/styles/theme-dark.css',
+  'src/renderer/styles/tokens.css',
+]);
 const darkMediaRuleFiles = new Map([
   ['src/renderer/styles/theme-dark.css', 'Central OS-driven dark theme token layer.'],
   ['src/renderer/styles/code.css', 'Generated Shiki token stream resolves --shiki-dark.'],
@@ -196,6 +201,10 @@ function collectCssDeclarationViolations(
     violations.push(`${file}:${startLine + index} ${trimmed}`);
   }
   return violations;
+}
+
+function isRawColorTokenDeclaration(file: string, line: string): boolean {
+  return line.trim().startsWith('--') && rawColorTokenDeclarationFiles.has(file);
 }
 
 function collectUndefinedTokenReferences(file: string, css: string, startLine: number) {
@@ -811,7 +820,7 @@ test.describe('typography tokens', () => {
       const lines = text.split('\n');
       for (const [index, line] of lines.entries()) {
         const trimmed = line.trim();
-        if (trimmed.startsWith('--')) continue;
+        if (isRawColorTokenDeclaration(file, line)) continue;
         if (!/#(?:[0-9a-fA-F]{3,8})\b/.test(line)) continue;
         violations.push(`${file}:${index + 1} ${trimmed}`);
       }
@@ -831,7 +840,7 @@ test.describe('typography tokens', () => {
       const lines = text.split('\n');
       for (const [index, line] of lines.entries()) {
         const trimmed = line.trim();
-        if (trimmed.startsWith('--')) continue;
+        if (isRawColorTokenDeclaration(file, line)) continue;
         if (!/\b(?:rgba?|hsla?)\s*\(/i.test(line)) continue;
         violations.push(`${file}:${index + 1} ${trimmed}`);
       }

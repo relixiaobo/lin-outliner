@@ -25,6 +25,11 @@ const DECISION_DERIVATION_TARGET = 0.8;
 const RUNTIME_THEME_VARIANTS = 2;
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
 const RAW_FUNCTIONAL_COLOR_START_PATTERN = /\b(?:rgba?|hsla?)\s*\(/gi;
+const rawColorTokenDeclarationFiles = new Set([
+  'src/renderer/styles/a11y.css',
+  'src/renderer/styles/theme-dark.css',
+  'src/renderer/styles/tokens.css',
+]);
 
 const componentContracts = [
   {
@@ -419,6 +424,10 @@ function rawFunctionalColorMatches(value: string): string[] {
   return matches;
 }
 
+function isRawColorTokenDeclaration(file: string, line: string): boolean {
+  return line.trim().startsWith('--') && rawColorTokenDeclarationFiles.has(relative(ROOT, file));
+}
+
 function rawColorMetrics() {
   const files = filesByPattern(RENDERER_DIR, /\.(css|ts|tsx)$/);
   const hexViolations: string[] = [];
@@ -466,8 +475,7 @@ function rawColorMetrics() {
     );
     const originalLines = text.split('\n');
     uncommented.split('\n').forEach((line, index) => {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('--')) return;
+      if (isRawColorTokenDeclaration(file, line)) return;
       for (const match of line.matchAll(RAW_HEX_PATTERN)) {
         recordRawColorMatch(file, index + 1, originalLines[index] ?? line, match[0], hexViolations);
       }
