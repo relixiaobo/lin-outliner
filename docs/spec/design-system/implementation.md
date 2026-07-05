@@ -31,7 +31,8 @@ decision routing, exceptions, and validation.
   current 50-row sample with unique contiguous `Dxx` ids, proves at least 80%
   derived decisions, uses only valid `Derived` / `Exception` result values, has
   100% evidence coverage with no broken local evidence references, and names a
-  kernel exception for every Exception row;
+  kernel exception for every Exception row; the calibration ledger uses unique
+  contiguous `CAxx` ids and only the four ratified finding classes;
   component coverage is at least 80%; Exception Registry evidence coverage is
   100% with no broken local evidence references; raw colour
   literals outside foundation token declarations stay 0 after named exceptions;
@@ -110,10 +111,10 @@ Expected checks for design-system changes:
 - `bun run typecheck`
 - `bun run docs:check`
 - `bun scripts/design-system-metrics.ts --json` for the current compression,
-  decision-derivation, component-coverage, exception-evidence, and
-  renderer-wide token-discipline baseline, including raw colour literals in CSS,
-  TS, and TSX, plus the runtime surface matrix size, duplicate-name check, and
-  light/dark variant discovery. Use `--check` before
+  calibration-ledger integrity, decision-derivation, component-coverage,
+  exception-evidence, and renderer-wide token-discipline baseline, including raw
+  colour literals in CSS, TS, and TSX, plus the runtime surface matrix size,
+  duplicate-name check, and light/dark variant discovery. Use `--check` before
   publishing a design-system compression or contract PR.
 - Focused Playwright tests for touched surfaces.
 - `tests/e2e/design-system-runtime.spec.ts` for representative shell, settings,

@@ -25,6 +25,12 @@ const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
 const DECISION_EVIDENCE_COVERAGE_TARGET = 1;
 const DECISION_AUDIT_MIN_ROWS = 50;
+const calibrationFindingClasses = new Set([
+  'Code drift',
+  'Named exception',
+  'Open design decision',
+  'Spec drift',
+]);
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
 const RAW_FUNCTIONAL_COLOR_START_PATTERN = /\b(?:rgba?|hsla?)\s*\(/gi;
 const rawColorTokenDeclarationFiles = new Set([
@@ -296,6 +302,18 @@ function calibrationNamedExceptionRows(): Map<string, { scope: string; evidence:
   );
 }
 
+function calibrationFindingRows() {
+  const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
+  return [...source.matchAll(/^\| (CA\d+) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
+    .map((match) => ({
+      id: match[1] ?? '',
+      finding: match[2] ?? '',
+      classification: match[3]?.trim() ?? '',
+      resolution: match[4] ?? '',
+      evidence: match[5] ?? '',
+    }));
+}
+
 function decisionAuditRows() {
   const source = readFileSync(DECISION_AUDIT, 'utf8');
   return [...source.matchAll(/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
@@ -341,6 +359,34 @@ function exceptionEvidenceMetrics() {
     localCalibrationExceptionEntriesMissing: [...localCalibrationExceptionNames]
       .filter((name) => !calibrationNames.has(name))
       .sort(),
+  };
+}
+
+function calibrationAuditMetrics() {
+  const rows = calibrationFindingRows();
+  const rowIds = rows.map((row) => row.id);
+  const duplicateCalibrationIds = rowIds
+    .filter((id, index) => rowIds.indexOf(id) !== index)
+    .filter((id, index, ids) => ids.indexOf(id) === index)
+    .sort();
+  const maxCalibrationId = Math.max(
+    0,
+    ...rowIds.map((id) => Number(id.slice(2))).filter((value) => Number.isFinite(value)),
+  );
+  const missingCalibrationIds = Array.from({ length: maxCalibrationId }, (_, index) => {
+    const id = `CA${String(index + 1).padStart(2, '0')}`;
+    return rowIds.includes(id) ? '' : id;
+  }).filter(Boolean);
+  const invalidCalibrationClasses = rows
+    .filter((row) => !calibrationFindingClasses.has(row.classification))
+    .map((row) => `${row.id} ${row.finding}: ${row.classification || 'missing classification'}`)
+    .sort();
+
+  return {
+    calibrationRows: rows.length,
+    duplicateCalibrationIds,
+    missingCalibrationIds,
+    invalidCalibrationClasses,
   };
 }
 
@@ -719,6 +765,7 @@ function main() {
 
   const metrics = {
     designSystem: designSystemLineMetrics(),
+    calibrationAudit: calibrationAuditMetrics(),
     decisionAudit: decisionAuditMetrics(),
     exceptions: exceptionEvidenceMetrics(),
     components: componentCoverageMetrics(),
@@ -742,6 +789,8 @@ function main() {
     console.log('design-system metrics');
     console.log(`  surface lines: ${metrics.designSystem.surfaceLines}/${SURFACE_TARGET_LINES}`);
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
+    console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
+    console.log(`  invalid calibration classes: ${metrics.calibrationAudit.invalidCalibrationClasses.length}`);
     console.log(`  decision rows: ${metrics.decisionAudit.decisionRows}/${DECISION_AUDIT_MIN_ROWS}`);
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
     console.log(`  decision evidence: ${(metrics.decisionAudit.decisionEvidenceCoverage * 100).toFixed(1)}%`);
@@ -775,6 +824,15 @@ function main() {
     const failures: string[] = [];
     if (metrics.designSystem.surfaceLines > SURFACE_TARGET_LINES) {
       failures.push(`surface lines ${metrics.designSystem.surfaceLines} > ${SURFACE_TARGET_LINES}`);
+    }
+    if (metrics.calibrationAudit.duplicateCalibrationIds.length > 0) {
+      failures.push(`duplicate calibration ids: ${metrics.calibrationAudit.duplicateCalibrationIds.join(', ')}`);
+    }
+    if (metrics.calibrationAudit.missingCalibrationIds.length > 0) {
+      failures.push(`missing calibration ids: ${metrics.calibrationAudit.missingCalibrationIds.join(', ')}`);
+    }
+    if (metrics.calibrationAudit.invalidCalibrationClasses.length > 0) {
+      failures.push(`invalid calibration classes: ${metrics.calibrationAudit.invalidCalibrationClasses.join(', ')}`);
     }
     if (metrics.decisionAudit.decisionDerivationCoverage < DECISION_DERIVATION_TARGET) {
       failures.push(
