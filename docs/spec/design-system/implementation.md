@@ -94,6 +94,12 @@ decision routing, exceptions, and validation.
   repo files. The metrics script reports and fails broken local references so
   named exceptions and Derived decisions do not keep passing after their proof
   files move or disappear.
+- **Named exception summaries.** The calibration audit's Named Exceptions Kept
+  table is a summary, not a second source of truth. Every Kernel Exception
+  Registry entry must appear there, and any non-kernel entry must be named in the
+  metrics script as a local calibration exception. The metrics script fails
+  missing registry entries, unregistered summary entries, and missing local
+  entries.
 
 ## Validation
 

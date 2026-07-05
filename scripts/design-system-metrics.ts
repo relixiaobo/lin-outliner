@@ -177,6 +177,10 @@ const rawColorExceptions: Record<string, { name: string; reason: string }> = {
   },
 };
 
+const localCalibrationExceptionNames = new Set([
+  'Local focus-ring suppression uses a named replacement indicator.',
+]);
+
 function lineCount(file: string): number {
   return readFileSync(file, 'utf8').split('\n').length;
 }
@@ -273,6 +277,25 @@ function exceptionRegistryRows() {
     }));
 }
 
+function calibrationNamedExceptionRows(): Map<string, { scope: string; evidence: string }> {
+  const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
+  const start = source.indexOf('## Named Exceptions Kept');
+  const end = source.indexOf('## Native-Control Exceptions', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return new Map(
+    [...section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \|$/gm)]
+      .filter((match) => match[1] !== 'Exception' && !match[1]?.startsWith('---'))
+      .map((match) => [
+        match[1] ?? '',
+        {
+          scope: match[2] ?? '',
+          evidence: match[3] ?? '',
+        },
+      ] as const)
+      .filter(([name]) => Boolean(name)),
+  );
+}
+
 function decisionAuditRows() {
   const source = readFileSync(DECISION_AUDIT, 'utf8');
   return [...source.matchAll(/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
@@ -287,6 +310,8 @@ function decisionAuditRows() {
 
 function exceptionEvidenceMetrics() {
   const rows = exceptionRegistryRows();
+  const registryNames = new Set(rows.map((row) => row.name));
+  const calibrationNames = calibrationNamedExceptionRows();
   const evidenceRows = rows.filter((row) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(row.evidence));
   const brokenReferences = new Set<string>();
   for (const row of rows) {
@@ -307,6 +332,15 @@ function exceptionEvidenceMetrics() {
     exceptionEvidenceRows: evidenceRows.length,
     exceptionEvidenceCoverage: rows.length === 0 ? 1 : Number((evidenceRows.length / rows.length).toFixed(3)),
     exceptionBrokenReferences: [...brokenReferences].sort(),
+    registryExceptionsMissingFromCalibration: [...registryNames]
+      .filter((name) => !calibrationNames.has(name))
+      .sort(),
+    calibrationExceptionsMissingFromRegistry: [...calibrationNames.keys()]
+      .filter((name) => !registryNames.has(name) && !localCalibrationExceptionNames.has(name))
+      .sort(),
+    localCalibrationExceptionEntriesMissing: [...localCalibrationExceptionNames]
+      .filter((name) => !calibrationNames.has(name))
+      .sort(),
   };
 }
 
@@ -709,6 +743,11 @@ function main() {
     console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  exception broken refs: ${metrics.exceptions.exceptionBrokenReferences.length}`);
+    console.log(`  named exception summary drift: ${
+      metrics.exceptions.registryExceptionsMissingFromCalibration.length
+      + metrics.exceptions.calibrationExceptionsMissingFromRegistry.length
+      + metrics.exceptions.localCalibrationExceptionEntriesMissing.length
+    }`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
     console.log(`  raw functional colors outside tokens: ${metrics.tokens.rawFunctionalColorOutsideTokenDeclarations}`);
     console.log(`  named raw colour exceptions: ${metrics.tokens.rawColorExceptionUses.length}`);
@@ -779,6 +818,15 @@ function main() {
     }
     if (metrics.exceptions.exceptionBrokenReferences.length > 0) {
       failures.push(`exception evidence broken refs: ${metrics.exceptions.exceptionBrokenReferences.join(', ')}`);
+    }
+    if (metrics.exceptions.registryExceptionsMissingFromCalibration.length > 0) {
+      failures.push(`registry exceptions missing from calibration: ${metrics.exceptions.registryExceptionsMissingFromCalibration.join(', ')}`);
+    }
+    if (metrics.exceptions.calibrationExceptionsMissingFromRegistry.length > 0) {
+      failures.push(`calibration exceptions missing from registry: ${metrics.exceptions.calibrationExceptionsMissingFromRegistry.join(', ')}`);
+    }
+    if (metrics.exceptions.localCalibrationExceptionEntriesMissing.length > 0) {
+      failures.push(`local calibration exceptions missing: ${metrics.exceptions.localCalibrationExceptionEntriesMissing.join(', ')}`);
     }
     if (metrics.tokens.rawHexOutsideTokenDeclarations !== 0) {
       failures.push(`raw hex outside tokens ${metrics.tokens.rawHexOutsideTokenDeclarations} !== 0`);
