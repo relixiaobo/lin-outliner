@@ -459,27 +459,32 @@ function useAgentComposerAttachmentManager({
   allowAttachments = true,
   editorRef,
   fileInputRef,
+  initialAttachments = [],
   onLocalFileSelected,
+  revokeAttachmentsOnUnmount = true,
 }: {
   allowAttachments?: boolean;
   editorRef: { current: AgentComposerEditorHandle | null };
   fileInputRef: { current: HTMLInputElement | null };
+  initialAttachments?: readonly ComposerAttachment[];
   onLocalFileSelected?: (file: AgentComposerLocalFileCandidate) => void;
+  revokeAttachmentsOnUnmount?: boolean;
 }) {
   const t = useT();
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>(() => [...initialAttachments]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const attachmentsRef = useRef<ComposerAttachment[]>([]);
+  const attachmentsRef = useRef<ComposerAttachment[]>(attachments);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
 
   useEffect(() => () => {
+    if (!revokeAttachmentsOnUnmount) return;
     for (const attachment of attachmentsRef.current) {
       revokeAttachmentPreview(attachment);
     }
-  }, []);
+  }, [revokeAttachmentsOnUnmount]);
 
   // Attachment errors are transient hints; auto-clear them to avoid stale banners.
   useEffect(() => {
@@ -927,9 +932,58 @@ function AgentUserQuestionCard({
 }) {
   const t = useT();
   const [submitting, setSubmitting] = useState(false);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [draft, setDraft] = useState<Record<string, AgentQuestionAnswerDraft>>(() => (
     Object.fromEntries(pendingQuestion.request.questions.map((question) => [question.id, emptyQuestionAnswerDraft()]))
   ));
+  const draftRef = useRef(draft);
+  const focusStepOnChangeRef = useRef(false);
+  const questionStepRef = useRef<HTMLDivElement>(null);
+  const questions = pendingQuestion.request.questions;
+  const questionCount = questions.length;
+  const currentQuestion = questions[Math.min(currentQuestionIndex, questionCount - 1)];
+  const currentValue = currentQuestion
+    ? draft[currentQuestion.id] ?? emptyQuestionAnswerDraft()
+    : emptyQuestionAnswerDraft();
+  const currentQuestionIsReady = currentQuestion
+    ? isQuestionAnswerComplete(currentQuestion, currentValue)
+    : false;
+  const isLastStep = currentQuestionIndex >= questionCount - 1;
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => () => {
+    const revoked = new Set<string>();
+    for (const value of Object.values(draftRef.current)) {
+      for (const attachment of value.attachments) {
+        const key = attachment.previewUrl ?? attachment.id;
+        if (revoked.has(key)) continue;
+        revoked.add(key);
+        revokeAttachmentPreview(attachment);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentQuestionIndex < questionCount) return;
+    setCurrentQuestionIndex(Math.max(0, questionCount - 1));
+  }, [currentQuestionIndex, questionCount]);
+
+  useEffect(() => {
+    if (!focusStepOnChangeRef.current) return;
+    focusStepOnChangeRef.current = false;
+    const frame = window.requestAnimationFrame(() => {
+      const step = questionStepRef.current;
+      if (!step) return;
+      const focusTarget = step.querySelector<HTMLElement>(
+        '.agent-question-option input:not(:disabled), .agent-question-editor-shell .ProseMirror',
+      );
+      (focusTarget ?? step).focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentQuestionIndex]);
 
   function updateSelection(questionId: string, optionId: string, checked: boolean, multi: boolean) {
     setDraft((current) => {
@@ -950,16 +1004,24 @@ function AgentUserQuestionCard({
     });
   }
 
-  const canSubmit = pendingQuestion.request.questions.every((question) => {
-    if (question.required === false) return true;
-    const value = draft[question.id];
-    if (!value) return false;
-    if (question.type === 'free_text') return hasQuestionAnswerDraftContent(value);
-    return value.selectedOptionIds.length > 0 || (question.allowOther && hasQuestionAnswerDraftContent(value));
-  });
+  function focusAfterStepChange() {
+    focusStepOnChangeRef.current = true;
+  }
+
+  function goBack() {
+    if (currentQuestionIndex === 0 || submitting) return;
+    focusAfterStepChange();
+    setCurrentQuestionIndex((current) => Math.max(0, current - 1));
+  }
+
+  function goNext() {
+    if (!currentQuestionIsReady || isLastStep || submitting) return;
+    focusAfterStepChange();
+    setCurrentQuestionIndex((current) => Math.min(questionCount - 1, current + 1));
+  }
 
   async function submit() {
-    if (!canSubmit || submitting) return;
+    if (!currentQuestionIsReady || !isLastStep || submitting) return;
     setSubmitting(true);
     try {
       await onResolve(pendingQuestion.requestId, {
@@ -1002,61 +1064,100 @@ function AgentUserQuestionCard({
     }
   }
 
+  if (!currentQuestion) return null;
+
+  const multi = currentQuestion.type === 'multi_choice';
+  const allowReferences = currentQuestion.allowReferences ?? currentQuestion.type === 'free_text';
+  const allowAttachments = (currentQuestion.allowAttachments ?? currentQuestion.type === 'free_text') || allowReferences;
+  const usesRichAnswer = currentQuestion.type === 'free_text'
+    || currentQuestion.allowOther
+    || allowReferences
+    || allowAttachments;
+
   return (
     <div className="agent-question-card" role="group" aria-label={t.agent.composer.userQuestionTitle}>
-      <div className="agent-question-title">{t.agent.composer.userQuestionTitle}</div>
-      {pendingQuestion.request.questions.map((question) => {
-        const value = draft[question.id] ?? emptyQuestionAnswerDraft();
-        const multi = question.type === 'multi_choice';
-        const allowReferences = question.allowReferences ?? question.type === 'free_text';
-        const allowAttachments = (question.allowAttachments ?? question.type === 'free_text') || allowReferences;
-        const usesRichAnswer = question.type === 'free_text' || question.allowOther || allowReferences || allowAttachments;
-        return (
-          <div className="agent-question-item" key={question.id}>
-            {question.header ? <div className="agent-question-header">{question.header}</div> : null}
-            <div className="agent-question-prompt">{question.question}</div>
-            {question.options?.length ? (
-              <div className="agent-question-options">
-                {question.options.map((option) => (
-                  <label className="agent-question-option" key={option.id}>
-                    <input
-                      checked={value.selectedOptionIds.includes(option.id)}
-                      name={`agent-question-${pendingQuestion.requestId}-${question.id}`}
-                      onChange={(event) => updateSelection(question.id, option.id, event.currentTarget.checked, multi)}
-                      type={multi ? 'checkbox' : 'radio'}
-                    />
-                    <span>
-                      <span className="agent-question-option-label">{option.label}</span>
-                      {option.description ? <span className="agent-question-option-description">{option.description}</span> : null}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            ) : null}
-            {usesRichAnswer ? (
-              <AgentQuestionAnswerEditor
-                allowAttachments={allowAttachments}
-                allowReferences={allowReferences}
-                currentNodeId={currentNodeId}
-                index={index}
-                onChange={(update) => updateAnswerDraft(question.id, update)}
-                onNodeReferenceOpen={onNodeReferenceOpen}
-                placeholder={question.type === 'free_text' ? t.agent.composer.userQuestionAnswerPlaceholder : t.agent.composer.userQuestionOtherPlaceholder}
-                recentLocalFiles={recentLocalFiles}
-              />
-            ) : null}
+      <div className="agent-question-heading">
+        <div className="agent-question-title">{t.agent.composer.userQuestionTitle}</div>
+        {questionCount > 1 ? (
+          <div className="agent-question-progress">
+            {t.agent.composer.userQuestionProgress({
+              current: currentQuestionIndex + 1,
+              total: questionCount,
+            })}
           </div>
-        );
-      })}
+        ) : null}
+      </div>
+      <div
+        ref={questionStepRef}
+        className="agent-question-item"
+        key={currentQuestion.id}
+        tabIndex={-1}
+      >
+        {currentQuestion.header ? <div className="agent-question-header">{currentQuestion.header}</div> : null}
+        <div className="agent-question-prompt">{currentQuestion.question}</div>
+        {currentQuestion.options?.length ? (
+          <div className="agent-question-options">
+            {currentQuestion.options.map((option) => (
+              <label className="agent-question-option" key={option.id}>
+                <input
+                  checked={currentValue.selectedOptionIds.includes(option.id)}
+                  disabled={submitting}
+                  name={`agent-question-${pendingQuestion.requestId}-${currentQuestion.id}`}
+                  onChange={(event) => updateSelection(currentQuestion.id, option.id, event.currentTarget.checked, multi)}
+                  type={multi ? 'checkbox' : 'radio'}
+                />
+                <span>
+                  <span className="agent-question-option-label">{option.label}</span>
+                  {option.description ? <span className="agent-question-option-description">{option.description}</span> : null}
+                </span>
+              </label>
+            ))}
+          </div>
+        ) : null}
+        {usesRichAnswer ? (
+          <AgentQuestionAnswerEditor
+            allowAttachments={allowAttachments}
+            allowReferences={allowReferences}
+            currentNodeId={currentNodeId}
+            index={index}
+            onChange={(update) => updateAnswerDraft(currentQuestion.id, update)}
+            onNodeReferenceOpen={onNodeReferenceOpen}
+            placeholder={currentQuestion.type === 'free_text' ? t.agent.composer.userQuestionAnswerPlaceholder : t.agent.composer.userQuestionOtherPlaceholder}
+            recentLocalFiles={recentLocalFiles}
+            value={currentValue}
+          />
+        ) : null}
+      </div>
       <div className="agent-question-actions">
-        <button
-          className="agent-approval-button is-primary"
-          disabled={!canSubmit || submitting}
-          onClick={() => void submit()}
-          type="button"
-        >
-          {pendingQuestion.request.submitLabel ?? t.agent.composer.userQuestionSubmit}
-        </button>
+        {currentQuestionIndex > 0 ? (
+          <button
+            className="agent-approval-button"
+            disabled={submitting}
+            onClick={goBack}
+            type="button"
+          >
+            {t.agent.composer.userQuestionBack}
+          </button>
+        ) : null}
+        {isLastStep ? (
+          <button
+            className="agent-approval-button is-primary"
+            disabled={!currentQuestionIsReady || submitting}
+            onClick={() => void submit()}
+            type="button"
+          >
+            {pendingQuestion.request.submitLabel ?? t.agent.composer.userQuestionSubmit}
+          </button>
+        ) : (
+          <button
+            className="agent-approval-button is-primary"
+            disabled={!currentQuestionIsReady || submitting}
+            onClick={goNext}
+            type="button"
+          >
+            {t.agent.composer.userQuestionNext}
+          </button>
+        )}
         <button
           className="agent-approval-button"
           disabled={submitting}
@@ -1071,6 +1172,7 @@ function AgentUserQuestionCard({
 }
 
 interface AgentQuestionAnswerDraft {
+  editorSnapshot: AgentComposerEditorSnapshot | null;
   selectedOptionIds: string[];
   text: string;
   nodeRefs: AgentComposerNodeReference[];
@@ -1080,6 +1182,7 @@ interface AgentQuestionAnswerDraft {
 
 function emptyQuestionAnswerDraft(): AgentQuestionAnswerDraft {
   return {
+    editorSnapshot: null,
     selectedOptionIds: [],
     text: '',
     nodeRefs: [],
@@ -1095,6 +1198,17 @@ function hasQuestionAnswerDraftContent(value: AgentQuestionAnswerDraft): boolean
     || value.attachments.length > 0;
 }
 
+type AgentQuestionView = AgentUserQuestionPendingView['request']['questions'][number];
+
+function isQuestionAnswerComplete(
+  question: AgentQuestionView,
+  value: AgentQuestionAnswerDraft,
+): boolean {
+  if (question.required === false) return true;
+  return (question.type !== 'free_text' && value.selectedOptionIds.length > 0)
+    || hasQuestionAnswerDraftContent(value);
+}
+
 function AgentQuestionAnswerEditor({
   allowAttachments,
   allowReferences,
@@ -1104,6 +1218,7 @@ function AgentQuestionAnswerEditor({
   onNodeReferenceOpen,
   placeholder,
   recentLocalFiles,
+  value,
 }: {
   allowAttachments: boolean;
   allowReferences: boolean;
@@ -1113,6 +1228,7 @@ function AgentQuestionAnswerEditor({
   onNodeReferenceOpen: AgentNodeReferenceOpenHandler;
   placeholder: string;
   recentLocalFiles: readonly AgentComposerLocalFileCandidate[];
+  value: AgentQuestionAnswerDraft;
 }) {
   const editorRef = useRef<AgentComposerEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1131,10 +1247,13 @@ function AgentQuestionAnswerEditor({
     allowAttachments,
     editorRef,
     fileInputRef,
+    initialAttachments: value.attachments,
+    revokeAttachmentsOnUnmount: false,
   });
 
   function emitDraft(nextDraft: AgentComposerDraft, nextAttachments = attachmentsRef.current) {
     onChange({
+      editorSnapshot: editorRef.current?.snapshot() ?? value.editorSnapshot,
       text: nextDraft.text,
       nodeRefs: nextDraft.nodeRefs,
       fileRefs: nextDraft.fileRefs,
@@ -1163,6 +1282,8 @@ function AgentQuestionAnswerEditor({
           allowSlashCommands={false}
           currentNodeId={currentNodeId}
           index={index}
+          initialSnapshot={value.editorSnapshot}
+          initialText={value.text}
           isStreaming={false}
           members={[]}
           onChange={handleDraftChange}

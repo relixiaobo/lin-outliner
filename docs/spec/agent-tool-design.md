@@ -186,6 +186,12 @@ option ids/labels per question, 2-6 options for choice questions, no options for
 free-text questions, and no preview field. OpenAI function schemas stay permissive
 at the top level; conditional rules are enforced in TypeScript normalizers.
 
+The renderer presents a request with more than one question as a one-question-at-a-time
+stepper inside the composer surface. The user can move forward and back through
+the local draft, but only the active question's prompt/options/editor are visible
+at any time. `Discuss first` remains a whole-request escape hatch from every
+step. The backend event model stays one pending request and one final resolution.
+
 Result:
 
 ```ts
