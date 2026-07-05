@@ -910,7 +910,7 @@ commandPalette: {
       userQuestionSubmit: '提交答案',
       userQuestionNext: '下一题',
       userQuestionBack: '上一题',
-      userQuestionProgress: ({ current, total }) => `第 ${current} / ${total} 题`,
+      userQuestionProgress: ({ current, total }) => `${current}/${total}`,
       userQuestionDiscuss: '先讨论',
       userQuestionDiscussMessage: '我想先讨论一下，再回答这个问题。',
       userQuestionAnswerPlaceholder: '输入你的答案……',

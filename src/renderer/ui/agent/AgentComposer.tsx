@@ -33,6 +33,7 @@ import {
 } from './AgentComposerControls';
 import { AgentComposerModelControl } from './AgentComposerModelControl';
 import { resolveUsableActiveProvider } from './providerCatalog';
+import { BackIcon, ICON_SIZE } from '../icons';
 import {
   AgentComposerEditor,
   type AgentComposerDraft,
@@ -1073,18 +1074,36 @@ function AgentUserQuestionCard({
     || currentQuestion.allowOther
     || allowReferences
     || allowAttachments;
+  const progress = questionCount > 1
+    ? t.agent.composer.userQuestionProgress({
+        current: currentQuestionIndex + 1,
+        total: questionCount,
+      })
+    : null;
 
   return (
     <div className="agent-question-card" role="group" aria-label={t.agent.composer.userQuestionTitle}>
       <div className="agent-question-heading">
-        <div className="agent-question-title">{t.agent.composer.userQuestionTitle}</div>
-        {questionCount > 1 ? (
-          <div className="agent-question-progress">
-            {t.agent.composer.userQuestionProgress({
-              current: currentQuestionIndex + 1,
-              total: questionCount,
-            })}
-          </div>
+        <div className="agent-question-title">
+          {t.agent.composer.userQuestionTitle}
+          {progress ? (
+            <>
+              <span className="agent-question-title-separator" aria-hidden="true">·</span>
+              <span className="agent-question-progress">{progress}</span>
+            </>
+          ) : null}
+        </div>
+        {currentQuestionIndex > 0 ? (
+          <button
+            aria-label={t.agent.composer.userQuestionBack}
+            className="agent-question-back-button"
+            disabled={submitting}
+            onClick={goBack}
+            title={t.agent.composer.userQuestionBack}
+            type="button"
+          >
+            <BackIcon aria-hidden="true" size={ICON_SIZE.menu} strokeWidth={2} />
+          </button>
         ) : null}
       </div>
       <div
@@ -1129,43 +1148,35 @@ function AgentUserQuestionCard({
         ) : null}
       </div>
       <div className="agent-question-actions">
-        {currentQuestionIndex > 0 ? (
-          <button
-            className="agent-approval-button"
-            disabled={submitting}
-            onClick={goBack}
-            type="button"
-          >
-            {t.agent.composer.userQuestionBack}
-          </button>
-        ) : null}
-        {isLastStep ? (
-          <button
-            className="agent-approval-button is-primary"
-            disabled={!currentQuestionIsReady || submitting}
-            onClick={() => void submit()}
-            type="button"
-          >
-            {pendingQuestion.request.submitLabel ?? t.agent.composer.userQuestionSubmit}
-          </button>
-        ) : (
-          <button
-            className="agent-approval-button is-primary"
-            disabled={!currentQuestionIsReady || submitting}
-            onClick={goNext}
-            type="button"
-          >
-            {t.agent.composer.userQuestionNext}
-          </button>
-        )}
         <button
-          className="agent-approval-button"
+          className="agent-question-discuss-button"
           disabled={submitting}
           onClick={() => void discuss()}
           type="button"
         >
           {t.agent.composer.userQuestionDiscuss}
         </button>
+        <div className="agent-question-nav-actions">
+          {isLastStep ? (
+            <button
+              className="agent-approval-button is-primary"
+              disabled={!currentQuestionIsReady || submitting}
+              onClick={() => void submit()}
+              type="button"
+            >
+              {pendingQuestion.request.submitLabel ?? t.agent.composer.userQuestionSubmit}
+            </button>
+          ) : (
+            <button
+              className="agent-approval-button is-primary"
+              disabled={!currentQuestionIsReady || submitting}
+              onClick={goNext}
+              type="button"
+            >
+              {t.agent.composer.userQuestionNext}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

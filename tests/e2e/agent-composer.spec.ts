@@ -624,10 +624,10 @@ test.describe('agent composer controls', () => {
 
     const card = page.locator('.agent-question-card');
     await expect(card).toBeVisible();
-    await expect(card.getByText('Input needed')).toBeVisible();
-    await expect(card.getByText('Question 1 of 2')).toBeVisible();
+    await expect(card.locator('.agent-question-title')).toHaveText('Input needed·1/2');
     await expect(card.getByText('Which implementation path should the agent use')).toBeVisible();
     await expect(card.getByText('Anything else the implementation should preserve?')).toHaveCount(0);
+    await expect(card.getByRole('button', { name: 'Back' })).toHaveCount(0);
     await expect(card.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
     await expect(card.getByRole('button', { name: 'Use this path' })).toHaveCount(0);
 
@@ -656,20 +656,23 @@ test.describe('agent composer controls', () => {
     await card.getByLabel('Verify existing UI').check();
     await expect(card.getByRole('button', { name: 'Next', exact: true })).toBeEnabled();
     await card.getByRole('button', { name: 'Next', exact: true }).click();
-    await expect(card.getByText('Question 2 of 2')).toBeVisible();
+    await expect(card.locator('.agent-question-title')).toHaveText('Input needed·2/2');
     await expect(card.getByText('Anything else the implementation should preserve?')).toBeVisible();
     await expect(card.getByText('Which implementation path should the agent use')).toHaveCount(0);
     await expect(card.getByRole('button', { name: 'Use this path' })).toBeEnabled();
+    const back = card.getByRole('button', { name: 'Back' });
+    await expect(back.locator('svg')).toBeVisible();
+    await expect(back).toHaveText('');
 
     const notesEditor = card.locator('.agent-composer-editor .ProseMirror');
     await notesEditor.click();
     await page.keyboard.type('Keep current keyboard flow.');
-    await card.getByRole('button', { name: 'Back' }).click();
-    await expect(card.getByText('Question 1 of 2')).toBeVisible();
+    await back.click();
+    await expect(card.locator('.agent-question-title')).toHaveText('Input needed·1/2');
     await expect(card.getByRole('radio', { name: /Verify existing UI/ })).toBeChecked();
     await card.getByRole('radio', { name: /Rebuild the pane/ }).check();
     await card.getByRole('button', { name: 'Next', exact: true }).click();
-    await expect(card.getByText('Question 2 of 2')).toBeVisible();
+    await expect(card.locator('.agent-question-title')).toHaveText('Input needed·2/2');
     await expect(notesEditor).toContainText('Keep current keyboard flow.');
 
     await card.getByRole('button', { name: 'Use this path' }).click();
@@ -804,7 +807,7 @@ test.describe('agent composer controls', () => {
     await expect(card.getByText('What should the agent consider?')).toBeVisible();
     await card.locator('.agent-composer-editor .ProseMirror').click();
     await page.keyboard.type('Partial answer should not submit');
-    await page.getByRole('button', { name: 'Discuss first' }).click();
+    await card.getByRole('button', { name: 'Discuss first' }).click();
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
