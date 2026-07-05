@@ -419,6 +419,82 @@ function collectTooltipPointerEventViolations() {
   return violations;
 }
 
+function stringValuesFromExpression(expression: ts.Expression): string[] {
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+    return [expression.text];
+  }
+
+  const values: string[] = [];
+  function visit(node: ts.Node) {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      values.push(node.text);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(expression);
+  return values;
+}
+
+function stringValuesFromJsxAttribute(attribute: ts.JsxAttribute): string[] {
+  const initializer = attribute.initializer;
+  if (!initializer) return [];
+  if (ts.isStringLiteral(initializer)) return [initializer.text];
+  if (ts.isJsxExpression(initializer) && initializer.expression) {
+    return stringValuesFromExpression(initializer.expression);
+  }
+  return [];
+}
+
+function collectTooltipRoleRegistrationViolations() {
+  const violations: string[] = [];
+  const selectorByClass = new Map(
+    [...tooltipSurfaceSelectors.keys()].map((selector) => [selector.replace(/^\./, ''), selector]),
+  );
+  const seenSelectors = new Set<string>();
+
+  for (const file of rendererSourceFiles.filter((sourceFile) => sourceFile.endsWith('.tsx'))) {
+    const text = readFileSync(file, 'utf8');
+    const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+    function visit(node: ts.Node) {
+      if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+        const attributes = node.attributes.properties.filter(ts.isJsxAttribute);
+        const role = attributes.find((attribute) => attribute.name.text === 'role');
+        if (!role || !stringValuesFromJsxAttribute(role).includes('tooltip')) {
+          ts.forEachChild(node, visit);
+          return;
+        }
+
+        const className = attributes.find((attribute) => attribute.name.text === 'className');
+        const classNames = new Set(
+          className
+            ? stringValuesFromJsxAttribute(className).flatMap((value) => value.split(/\s+/).filter(Boolean))
+            : [],
+        );
+        const matchedSelectors = [...classNames]
+          .map((name) => selectorByClass.get(name))
+          .filter((selector): selector is string => Boolean(selector));
+        for (const selector of matchedSelectors) seenSelectors.add(selector);
+        if (matchedSelectors.length === 0) {
+          const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+          violations.push(`${file}:${line + 1} tooltip role is not registered (${[...classNames].join(' ') || 'no className'})`);
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+  }
+
+  for (const [selector, reason] of tooltipSurfaceSelectors) {
+    if (seenSelectors.has(selector)) continue;
+    violations.push(`${selector} is registered as a tooltip surface but no role="tooltip" JSX remains (${reason})`);
+  }
+
+  return violations;
+}
+
 function collectChromeIconHoverBoxViolations() {
   const violations: string[] = [];
 
@@ -494,7 +570,10 @@ test.describe('cursor affordances', () => {
   });
 
   test('keeps tooltip surfaces pointer-transparent', () => {
-    expect(collectTooltipPointerEventViolations()).toEqual([]);
+    expect([
+      ...collectTooltipRoleRegistrationViolations(),
+      ...collectTooltipPointerEventViolations(),
+    ]).toEqual([]);
   });
 
   test('keeps chrome icon hover feedback colour-only', () => {
