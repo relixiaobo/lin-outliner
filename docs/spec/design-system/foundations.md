@@ -200,10 +200,11 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
 - **Dark-mode rules.** Avoid pure `#000`/`#fff`; lean on the alpha-on-ink levels
   and the `#1e1e1e` / `#2a2a2c` / `#2e2e30` surface seeds. Separators and outlines
   invert with `--ink` automatically; drop shadows deepen.
-- **Legacy aliases.** Remaining compatibility aliases are mapped onto this layer
-  so existing components keep working; migrate to semantic tokens
-  opportunistically. Retired aliases stay guarded by the token tests rather than
-  reintroduced as shims.
+- **Alias discipline.** A token that only maps to another token is valid only
+  when it names a reusable role contract (reading registers, selection state,
+  row density, panel width, chrome timing, etc.). Compatibility shims without a
+  current role are retired and guarded by token tests rather than reintroduced
+  to keep old call sites working.
 - **There is no `--primary` token — do not reintroduce it.** Its name implies a
   primary-action colour, but it historically mapped to the rose accent, so every
   surface that read it (many old primary buttons, active rows, focus surfaces) stayed
