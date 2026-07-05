@@ -77,9 +77,11 @@ decision routing, exceptions, and validation.
   real semantic/native requirement, not a styling shortcut. The metrics script
   scans renderer TS/TSX, including entry surfaces outside `src/renderer/ui`,
   reports named exception files and reasons in `--json`, fails stale exception
-  entries, and reports component-implementation native controls separately from
-  product-surface direct native controls, so a reusable primitive can own its
-  internal semantics without hiding product-surface drift.
+  entries, fails drift between the metrics exception map and the calibration
+  audit's Native-Control Exceptions table, and reports component-implementation
+  native controls separately from product-surface direct native controls, so a
+  reusable primitive can own its internal semantics without hiding
+  product-surface drift.
 - **Raw-colour exceptions.** Renderer raw hex and raw functional colour literals
   belong in the foundation token declaration layer. Component-private CSS
   variables are product styling, so they derive from existing tokens. Any

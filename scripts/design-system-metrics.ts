@@ -14,6 +14,7 @@ const ROOT = join(import.meta.dir, '..');
 const DESIGN_SYSTEM_DIR = join(ROOT, 'docs', 'spec', 'design-system');
 const DESIGN_SYSTEM_KERNEL = join(ROOT, 'docs', 'spec', 'design-system.md');
 const COMPONENTS_DOC = join(DESIGN_SYSTEM_DIR, 'components.md');
+const CALIBRATION_AUDIT = join(DESIGN_SYSTEM_DIR, 'calibration-audit.md');
 const DECISION_AUDIT = join(DESIGN_SYSTEM_DIR, 'decision-audit.md');
 const RENDERER_DIR = join(ROOT, 'src', 'renderer');
 const RUNTIME_SURFACE_SPEC = join(ROOT, 'tests', 'e2e', 'design-system-runtime.spec.ts');
@@ -365,6 +366,18 @@ function decisionAuditMetrics() {
   };
 }
 
+function nativeControlExceptionAuditRows(): Map<string, string> {
+  const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
+  const start = source.indexOf('## Native-Control Exceptions');
+  const end = source.indexOf('## Open Design Decisions', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return new Map(
+    [...section.matchAll(/^\| `([^`]+)` \| (.+?) \|$/gm)]
+      .map((match) => [match[1] ?? '', match[2]?.trim() ?? ''] as const)
+      .filter(([file]) => Boolean(file)),
+  );
+}
+
 function componentCoverageMetrics() {
   const files = sourceFiles(RENDERER_DIR);
   const componentTags = new Set(componentContracts.flatMap((contract) => contract.jsxTags));
@@ -441,6 +454,17 @@ function componentCoverageMetrics() {
   const staleNativeControlExceptions = Object.keys(nativeControlExceptions)
     .filter((file) => !exceptedNativeFiles.has(file))
     .sort();
+  const auditedNativeControlExceptions = nativeControlExceptionAuditRows();
+  const nativeControlExceptionsMissingFromAudit = Object.keys(nativeControlExceptions)
+    .filter((file) => !auditedNativeControlExceptions.has(file))
+    .sort();
+  const nativeControlAuditEntriesMissingFromMetrics = [...auditedNativeControlExceptions.keys()]
+    .filter((file) => !(file in nativeControlExceptions))
+    .sort();
+  const nativeControlExceptionReasonMismatches = Object.entries(nativeControlExceptions)
+    .filter(([file, reason]) => auditedNativeControlExceptions.has(file) && auditedNativeControlExceptions.get(file) !== reason)
+    .map(([file, reason]) => `${file}: metrics="${reason}" audit="${auditedNativeControlExceptions.get(file) ?? ''}"`)
+    .sort();
   const accountableControls = primitiveUses + nativeUses;
   return {
     primitiveUses,
@@ -457,6 +481,9 @@ function componentCoverageMetrics() {
     componentImplementationFilesMissing,
     mappedContractsMissingFromDocs,
     unmappedDocumentedContracts,
+    nativeControlExceptionsMissingFromAudit,
+    nativeControlAuditEntriesMissingFromMetrics,
+    nativeControlExceptionReasonMismatches,
   };
 }
 
@@ -634,6 +661,7 @@ function main() {
   if (
     !existsSync(DESIGN_SYSTEM_KERNEL)
     || !existsSync(DESIGN_SYSTEM_DIR)
+    || !existsSync(CALIBRATION_AUDIT)
     || !existsSync(DECISION_AUDIT)
     || !existsSync(RUNTIME_SURFACE_SPEC)
   ) {
@@ -673,6 +701,11 @@ function main() {
     console.log(`  unnamed exception decisions: ${metrics.decisionAudit.unnamedExceptionDecisions.length}`);
     console.log(`  component coverage: ${(metrics.components.componentCoverage * 100).toFixed(1)}%`);
     console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
+    console.log(`  native control audit drift: ${
+      metrics.components.nativeControlExceptionsMissingFromAudit.length
+      + metrics.components.nativeControlAuditEntriesMissingFromMetrics.length
+      + metrics.components.nativeControlExceptionReasonMismatches.length
+    }`);
     console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  exception broken refs: ${metrics.exceptions.exceptionBrokenReferences.length}`);
@@ -731,6 +764,15 @@ function main() {
     }
     if (metrics.components.staleNativeControlExceptions.length > 0) {
       failures.push(`stale native control exceptions: ${metrics.components.staleNativeControlExceptions.join(', ')}`);
+    }
+    if (metrics.components.nativeControlExceptionsMissingFromAudit.length > 0) {
+      failures.push(`native control exceptions missing from audit: ${metrics.components.nativeControlExceptionsMissingFromAudit.join(', ')}`);
+    }
+    if (metrics.components.nativeControlAuditEntriesMissingFromMetrics.length > 0) {
+      failures.push(`native control audit entries missing from metrics: ${metrics.components.nativeControlAuditEntriesMissingFromMetrics.join(', ')}`);
+    }
+    if (metrics.components.nativeControlExceptionReasonMismatches.length > 0) {
+      failures.push(`native control exception reason mismatches: ${metrics.components.nativeControlExceptionReasonMismatches.join(', ')}`);
     }
     if (metrics.exceptions.exceptionEvidenceCoverage < 1) {
       failures.push(`exception evidence ${metrics.exceptions.exceptionEvidenceCoverage} < 1`);
