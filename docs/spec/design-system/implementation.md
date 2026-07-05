@@ -57,9 +57,10 @@ decision routing, exceptions, and validation.
 - **Naming:** tokens are semantic-role names (`--text-primary`, `--fill-3`,
   `--material-sidebar`), never raw-value names (`--gray-200`). Component contracts
   use the component name matching the source file.
-- **Migration:** legacy aliases bridge old names onto the semantic layer; remove
-  an alias once all usages migrate. Pre-launch, so no compatibility burden —
-  cut over directly rather than keeping shims.
+- **Alias discipline:** aliases are allowed only when they name a reusable role
+  contract over the foundation layer. Retired compatibility names are guarded
+  from returning; pre-launch means we cut callers to the owning semantic token
+  instead of keeping shims.
 - **Change discipline:** the smallest owning design-system layer is updated
   before or with any UI change that alters a system contract (Implementation Rule
   2). The main agent records notable system changes in `CHANGELOG.md` on merge.
