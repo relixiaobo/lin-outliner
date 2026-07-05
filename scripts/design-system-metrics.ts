@@ -679,21 +679,30 @@ function runtimeSurfaceMetrics() {
     ? source.slice(surfacesStart, surfacesEnd)
     : '';
   const surfaceNames = [...surfacesBlock.matchAll(/^\s+name: '([^']+)',/gm)]
-    .map((match) => match[1])
+    .map((match) => match[1]!);
+  const duplicateSurfaceNames = surfaceNames
+    .filter((name, index) => surfaceNames.indexOf(name) !== index)
+    .filter((name, index, names) => names.indexOf(name) === index)
     .sort();
   const themeVariantMatch = /for\s*\(\s*const\s+colorScheme\s+of\s+\[([^\]]+)\]\s+as\s+const\s*\)/.exec(source);
   const themeVariantNames = themeVariantMatch
-    ? [...themeVariantMatch[1]!.matchAll(/'([^']+)'/g)].map((match) => match[1]!).sort()
+    ? [...themeVariantMatch[1]!.matchAll(/'([^']+)'/g)].map((match) => match[1]!)
     : [];
+  const duplicateThemeVariantNames = themeVariantNames
+    .filter((name, index) => themeVariantNames.indexOf(name) !== index)
+    .filter((name, index, names) => names.indexOf(name) === index)
+    .sort();
 
   return {
     runtimeSurfaceMatrixFound: surfacesBlock.length > 0,
     runtimeSurfaceCases: surfaceNames.length,
+    duplicateRuntimeSurfaceNames: duplicateSurfaceNames,
     runtimeThemeVariantsFound: themeVariantNames.length > 0,
     runtimeThemeVariants: themeVariantNames.length,
-    runtimeThemeVariantNames: themeVariantNames,
+    runtimeThemeVariantNames: [...themeVariantNames].sort(),
+    duplicateRuntimeThemeVariantNames: duplicateThemeVariantNames,
     runtimeSurfaceThemeChecks: surfaceNames.length * themeVariantNames.length,
-    runtimeSurfaceNames: surfaceNames,
+    runtimeSurfaceNames: [...surfaceNames].sort(),
   };
 }
 
@@ -849,12 +858,18 @@ function main() {
     if (!metrics.runtimeSurfaces.runtimeSurfaceMatrixFound || metrics.runtimeSurfaces.runtimeSurfaceCases === 0) {
       failures.push('runtime surface matrix missing or empty');
     }
+    if (metrics.runtimeSurfaces.duplicateRuntimeSurfaceNames.length > 0) {
+      failures.push(`duplicate runtime surface names: ${metrics.runtimeSurfaces.duplicateRuntimeSurfaceNames.join(', ')}`);
+    }
     if (
       !metrics.runtimeSurfaces.runtimeThemeVariantsFound
       || !metrics.runtimeSurfaces.runtimeThemeVariantNames.includes('light')
       || !metrics.runtimeSurfaces.runtimeThemeVariantNames.includes('dark')
     ) {
       failures.push(`runtime theme variants missing light/dark: ${metrics.runtimeSurfaces.runtimeThemeVariantNames.join(', ') || 'none'}`);
+    }
+    if (metrics.runtimeSurfaces.duplicateRuntimeThemeVariantNames.length > 0) {
+      failures.push(`duplicate runtime theme variants: ${metrics.runtimeSurfaces.duplicateRuntimeThemeVariantNames.join(', ')}`);
     }
     if (failures.length > 0) {
       console.error(`design-system metrics FAILED:\n  - ${failures.join('\n  - ')}`);
