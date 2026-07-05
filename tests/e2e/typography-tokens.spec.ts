@@ -190,6 +190,13 @@ const stateLayoutDeclarationProperties = new Set([
   'letter-spacing',
   'line-height',
 ]);
+const inlineFoundationStyleProperties = new Set([
+  'borderRadius',
+  'boxShadow',
+  'fontSize',
+  'letterSpacing',
+  'lineHeight',
+]);
 
 function markdownFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -645,6 +652,33 @@ function collectInlineZIndexViolations() {
   return violations;
 }
 
+function collectInlineFoundationStyleViolations() {
+  const violations: string[] = [];
+
+  for (const file of rendererSourceFiles.filter((sourceFile) => sourceFile.endsWith('.ts') || sourceFile.endsWith('.tsx'))) {
+    const text = readFileSync(file, 'utf8');
+    const sourceFile = ts.createSourceFile(
+      file,
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+
+    function visit(node: ts.Node) {
+      if (ts.isPropertyAssignment(node) && inlineFoundationStyleProperties.has(propertyNameText(node.name, sourceFile))) {
+        const { line } = sourceFile.getLineAndCharacterOfPosition(node.name.getStart(sourceFile));
+        violations.push(`${file}:${line + 1} ${node.getText(sourceFile)}`);
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+  }
+
+  return violations;
+}
+
 test.describe('typography tokens', () => {
   test('keeps product font declarations tokenized outside proportional glyph exceptions', () => {
     const allowedValues = new Set([
@@ -862,6 +896,10 @@ test.describe('typography tokens', () => {
 
   test('keeps renderer inline z-index out of source objects', () => {
     expect(collectInlineZIndexViolations()).toEqual([]);
+  });
+
+  test('keeps renderer inline foundation styling out of source objects', () => {
+    expect(collectInlineFoundationStyleViolations()).toEqual([]);
   });
 
   test('keeps hidden scrollbars limited to registered non-content rails', () => {

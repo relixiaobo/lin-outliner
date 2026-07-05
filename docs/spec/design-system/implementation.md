@@ -130,6 +130,8 @@ Expected checks for design-system changes:
   letter-spacing, the static no-scale feedback guard, and the registered
   layout-transition and interactive-state layout-declaration allowlists; it keeps
   global z-index values on the `--z-*` ladder without renderer inline `zIndex`,
+  keeps foundation typography/radius/shadow styling out of renderer inline style
+  objects,
   keeps hidden scrollbars limited to the registered document-outline mini-rail
   exception, and keeps every
   `--material-*` background paired with the
