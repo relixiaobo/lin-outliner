@@ -88,8 +88,9 @@ Expected checks for design-system changes:
 - `bun run docs:check`
 - `bun scripts/design-system-metrics.ts --json` for the current compression,
   decision-derivation, component-coverage, exception-evidence, and
-  renderer-wide token-discipline baseline, plus the runtime surface matrix size.
-  Use `--check` before publishing a design-system compression or contract PR.
+  renderer-wide token-discipline baseline, including raw colour literals in CSS,
+  TS, and TSX, plus the runtime surface matrix size. Use `--check` before
+  publishing a design-system compression or contract PR.
 - Focused Playwright tests for touched surfaces.
 - `tests/e2e/design-system-runtime.spec.ts` for representative shell, settings,
   settings-row-menu, launcher-renderer, overlay, outliner trigger, menu,
@@ -121,11 +122,11 @@ Expected checks for design-system changes:
   shadow tokens with outline tokens. It also rejects the legacy generic
   `--shadow` and `--danger` aliases so surfaces name the actual elevation tier
   and semantic status role they use, keeps retired legacy aliases out of live CSS,
-  keeps raw functional color literals inside token declarations, fails undefined
-  live token references outside named runtime/generated inputs, keeps motion
-  timing literals routed through motion tokens outside zero delays, prevents
-  design system docs from copying a second `:root` token table, and keeps foundation
-  token definitions unique in `tokens.css`.
+  keeps stylesheet raw functional color literals inside token declarations, fails
+  undefined live token references outside named runtime/generated inputs, keeps
+  motion timing literals routed through motion tokens outside zero delays,
+  prevents design system docs from copying a second `:root` token table, and
+  keeps foundation token definitions unique in `tokens.css`.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change, including pointer-cursor scope, help-cursor
   diagnostics scope, text-cursor editor/text scope, and forced
