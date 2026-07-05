@@ -170,10 +170,11 @@ const nativeControlExceptions: Record<string, string> = {
   'src/renderer/ui/outliner/NodeValuePicker.tsx': 'Input is an anchored filtering control with caller-owned query semantics.',
 };
 
-const rawColorExceptions: Record<string, { name: string; reason: string }> = {
+const rawColorExceptions: Record<string, { name: string; reason: string; sourcePattern: RegExp }> = {
   'src/renderer/ui/agent/AgentComposer.tsx:#ffffff': {
     name: 'Model-upload JPEG alpha matting may force a white canvas.',
     reason: 'Transparent image pixels are composited against white before JPEG encoding for model upload.',
+    sourcePattern: /\bcontext\.fillStyle\s*=\s*['"]#ffffff['"]/,
   },
 };
 
@@ -578,7 +579,7 @@ function rawColorMetrics() {
     const exceptionKey = `${rel}:${value.toLowerCase()}`;
     const exception = rawColorExceptions[exceptionKey];
     const finding = `${rel}:${lineNumber} ${value} ${lineText.trim()}`;
-    if (exception) {
+    if (exception && exception.sourcePattern.test(lineText)) {
       usedExceptions.add(exceptionKey);
       exceptionUses.push(`${finding} (${exception.name})`);
     } else {

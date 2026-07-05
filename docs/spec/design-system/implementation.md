@@ -86,9 +86,10 @@ decision routing, exceptions, and validation.
   belong in the foundation token declaration layer. Component-private CSS
   variables are product styling, so they derive from existing tokens. Any
   unavoidable source literal must be named in `scripts/design-system-metrics.ts`
-  and in the kernel Exception Registry, with a narrow scope and evidence. The
-  metrics script fails both undocumented entries and stale entries whose source
-  literal no longer exists.
+  and in the kernel Exception Registry, with a narrow source-context scope and
+  evidence. The metrics script fails undocumented entries, stale entries whose
+  source literal no longer exists, and same-file/same-literal uses outside the
+  named source context.
 - **Audit evidence references.** Exception Registry authority/evidence links,
   decision-audit links, and path-like evidence code spans must resolve to current
   repo files. The metrics script reports and fails broken local references so
