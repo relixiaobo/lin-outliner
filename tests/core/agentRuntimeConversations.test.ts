@@ -364,6 +364,12 @@ describe('agent runtime conversations', () => {
     expect(renamed).toMatchObject({ title: 'Project Alpha', goal: 'Project Alpha' });
     expect(channels.find((entry) => entry.id === channel.conversationId))
       .toMatchObject({ title: 'Project Alpha', goal: 'Project Alpha' });
+    const blankRenamed = await runtime.renameConversation(channel.conversationId, '   ');
+    channels = await runtime.listConversations();
+
+    expect(blankRenamed).toMatchObject({ title: 'Untitled', goal: 'Untitled' });
+    expect(channels.find((entry) => entry.id === channel.conversationId))
+      .toMatchObject({ title: 'Untitled', goal: 'Untitled' });
     await expectRejects(() => runtime.renameConversation(DEFAULT_GENERAL_CHANNEL_ID, 'Town Square'), '#General cannot be renamed');
     await expectRejects(() => runtime.renameConversation(DEFAULT_DREAM_CHANNEL_ID, 'Night Log'), '#Dream cannot be renamed');
     await expectRejects(() => runtime.deleteConversation(DEFAULT_GENERAL_CHANNEL_ID), '#General cannot be deleted');
@@ -394,7 +400,7 @@ describe('agent runtime conversations', () => {
       .toEqual([DEFAULT_GENERAL_CHANNEL_ID, DEFAULT_DREAM_CHANNEL_ID]);
   });
 
-  test('Channel creation requires a name; a channel always has exactly {user, Neva}', async () => {
+  test('Channel creation can be untitled; a channel always has exactly {user, Neva}', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-local-'));
     roots.push(dataRoot, localRoot);
@@ -403,14 +409,12 @@ describe('agent runtime conversations', () => {
     await createProjectAgent(localRoot);
     const { runtime } = await createRuntime(dataRoot, localRoot);
 
-    await expectRejects(
-      () => runtime.createConversation(),
-      'requires a name',
-    );
+    const untitledChannel = await runtime.createConversation();
+    const untitledState = await new AgentEventStore(dataRoot).replay(untitledChannel.conversationId);
+    expect(untitledState.conversation?.title).toBe('Untitled');
+    expect(Object.keys(untitledState.messages)).toHaveLength(0);
 
-    const soloChannel = await runtime.createConversation({
-      title: 'Solo channel',
-    });
+    const soloChannel = await runtime.createConversation({ title: 'Solo channel' });
     const state = await new AgentEventStore(dataRoot).replay(soloChannel.conversationId);
 
     expect(state.conversation?.goal).toBe('Solo channel');

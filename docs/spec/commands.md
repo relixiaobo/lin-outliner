@@ -305,11 +305,12 @@ DM. The Agent Dock conversation menu lists Channels before Direct Messages so th
 primary surface recommends `#General`/named Channels first. Restoring a canonical
 DM id is find-or-create; DMs are never user-created, renamed, deleted, or
 membership-edited.
-`agent_create_conversation` is the user-facing New Channel command: it requires a
-Channel name, with optional invited agents and an optional opening message. DMs
-never convert into Channels, and their transcript is never shared into a Channel.
-Channel member removal keeps the same runtime guards: the coordinator cannot be
-removed, and removal is blocked while a run is active.
+`agent_create_conversation` is the user-facing New Channel command: title is
+optional, blank creation stores the untitled display sentinel, and creation does
+not accept an opening message. DMs never convert into Channels, and their
+transcript is never shared into a Channel. `agent_rename_conversation` accepts a
+blank title and restores the untitled display sentinel. Protected default
+Channels cannot be renamed or deleted.
 
 ### Agent — messaging
 `agent_send_message`, `agent_edit_message`, `agent_regenerate_message`,

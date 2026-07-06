@@ -350,16 +350,14 @@ async function showAgentChannelPicker(page: Page) {
   await expect(dialog.getByRole('button', { name: /Neva/ })).toBeVisible();
 }
 
-async function showAgentChannelOptionsMenu(page: Page) {
+async function showAgentChannelInlineRename(page: Page) {
   await page.getByRole('button', { name: 'Show conversations' }).click();
   const dialog = page.getByRole('dialog', { name: 'Channels' });
   await dialog.waitFor({ state: 'visible' });
   const channelRow = dialog.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
   await channelRow.hover();
-  await channelRow.getByRole('button', { name: 'Channel options' }).click();
-  const menu = page.getByRole('menu', { name: 'Channel options' });
-  await menu.waitFor({ state: 'visible' });
-  await expect(menu.getByRole('menuitem', { name: 'Configure channel' })).toBeVisible();
+  await channelRow.getByRole('button', { name: 'Rename channel' }).click();
+  await expect(dialog.getByRole('textbox', { name: 'Rename channel' })).toBeFocused();
 }
 
 async function showAgentMentionSuggestions(page: Page) {
@@ -913,10 +911,10 @@ const surfaces: SurfaceCase[] = [
     beforeProbe: showAgentChannelPicker,
   },
   {
-    name: 'agent channel options menu',
+    name: 'agent channel inline rename',
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showAgentChannelOptionsMenu,
+    beforeProbe: showAgentChannelInlineRename,
   },
   {
     name: 'agent mention suggestions',

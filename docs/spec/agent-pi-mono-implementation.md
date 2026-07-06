@@ -174,7 +174,7 @@ Conceptual shape:
 interface AgentRuntimeClient {
   restoreLatestConversation(): Promise<AgentConversation>;
   restoreConversation(conversationId: string): Promise<AgentConversation>;
-  createConversation(options: { title: string; seedText?: string }): Promise<AgentConversation>;
+  createConversation(options: { title?: string }): Promise<AgentConversation>;
   closeConversation(conversationId: string): Promise<void>;
   sendMessage(conversationId: string, message: string, attachments?: AgentMessageAttachmentInput[]): Promise<void>;
   editMessage(conversationId: string, nodeId: string, message: string): Promise<void>;

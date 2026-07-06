@@ -481,9 +481,11 @@ test.describe('agent and Channel config windows', () => {
 
   test('uses design-system controls inside the Channel config window', async ({ page }) => {
     const config = await openChannelConfig(page, '', 'create');
-    await expect(config.locator('.channel-config-seed.settings-sheet-row-input')).toBeVisible();
-    // The one-Neva collapse removed the member roster, so the window is name + seed
-    // only — no raw checkboxes, just design-system controls.
+    await expect(config.getByLabel('Channel name')).toBeVisible();
+    await expect(config.getByLabel('Opening message')).toHaveCount(0);
+    await expect(config.locator('.channel-config-seed')).toHaveCount(0);
+    // Channel settings no longer expose a create-time seed or member roster; any
+    // remaining toggles must use design-system controls, not raw checkboxes.
     await expect(config.locator('input[type="checkbox"]:not(.agent-settings-checkbox input)')).toHaveCount(0);
 
     const shadows = await config.locator('.settings-sheet-actions').evaluate((element) => {
