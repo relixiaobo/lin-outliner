@@ -120,7 +120,7 @@ function withSubject(verb: string, subject: string | null, labels: ToolCallLabel
   return subject ? labels.withSubject({ verb, subject: quoteSubject(subject, labels) }) : verb;
 }
 
-function operationHistoryVerb(args: Record<string, unknown>, verbs: ToolCallLabels['verbs']): ToolVerbForms {
+function outlineUndoStackVerb(args: Record<string, unknown>, verbs: ToolCallLabels['verbs']): ToolVerbForms {
   if (args.action === 'undo') return verbs.undoOperation;
   if (args.action === 'redo') return verbs.redoOperation;
   return verbs.checkHistory;
@@ -194,7 +194,7 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
     const firstLine = command?.split('\n').map((line) => line.trim()).find(Boolean) ?? null;
     return withSubject(verbByStatus(verbs.runBash, status, labels), firstLine, labels);
   }
-  if (toolCall.name === 'task_stop') {
+  if (toolCall.name === 'bash_stop') {
     return withSubject(verbByStatus(verbs.stopTask, status, labels), pickSubject(args, 'task_id'), labels);
   }
   if (toolCall.name === 'file_read') {
@@ -217,8 +217,8 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   if (toolCall.name === 'file_delete') {
     return withSubject(verbByStatus(verbs.deleteFile, status, labels), pickSubject(args, 'file_path', 'path'), labels);
   }
-  if (toolCall.name === 'operation_history') {
-    return verbByStatus(operationHistoryVerb(args, verbs), status, labels);
+  if (toolCall.name === 'outline_undo_stack') {
+    return verbByStatus(outlineUndoStackVerb(args, verbs), status, labels);
   }
   if (toolCall.name === 'past_chats') {
     return withSubject(verbByStatus(pastChatsVerb(args, verbs), status, labels), pickSubject(args, 'query', 'message_id'), labels);

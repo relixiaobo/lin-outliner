@@ -202,7 +202,7 @@ export class AgentImportService {
       throw new ImportServiceFailure(
         'verification_failed',
         'Import wrote a staging subtree, but post-import verification found mismatched counts.',
-        'Inspect the staging root, use operation_history to undo if needed, and report the mismatch before retrying.',
+        'Inspect the staging root, use outline_undo_stack to undo if needed, and report the mismatch before retrying.',
         data,
         verification.mismatches,
       );

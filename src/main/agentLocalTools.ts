@@ -302,11 +302,11 @@ export interface LocalBashRunResult {
   completedAt?: string;
 }
 
-interface TaskStopParams {
+interface BashStopParams {
   task_id: string;
 }
 
-export interface TaskStopData {
+export interface BashStopData {
   message: string;
   task_id: string;
   task_type: string;
@@ -596,7 +596,7 @@ const BASH_PARAMETERS = {
   },
 };
 
-const TASK_STOP_PARAMETERS = {
+const BASH_STOP_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
   required: ['task_id'],
@@ -615,7 +615,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
     createFileWriteTool(workspace),
     createFileDeleteTool(workspace),
     createBashTool(workspace),
-    createTaskStopTool(),
+    createBashStopTool(),
   ];
 }
 
@@ -1338,7 +1338,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
       'Executes a shell command in the default file area.',
       'Use file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.',
       'For document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).',
-      'Use run_in_background for long-running commands. You do not need to append "&"; use task_stop if the task needs to be stopped.',
+      'Use run_in_background for long-running commands. You do not need to append "&"; use bash_stop if the task needs to be stopped.',
       'Commands should include a clear description of what they do in active voice.',
     ].join('\n'),
     parameters: BASH_PARAMETERS,
@@ -1350,7 +1350,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
         if (params.run_in_background) {
           const data = await startBackgroundCommand(workspace, params);
           return agentToolResult(successEnvelope('bash', data, {
-            instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_stop with task_id if it needs to be stopped.`,
+            instructions: `Command is running in the background as ${data.backgroundTaskId}. Use bash_stop with task_id if it needs to be stopped.`,
             metrics: metrics(started, data),
           }), visibleBash(data));
         }
@@ -1360,7 +1360,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
         const envelope = ok
           ? successEnvelope('bash', result, {
             instructions: result.backgroundTaskId
-              ? `Command is still running in the background as ${result.backgroundTaskId}. Read ${result.persistedOutputPath} with file_read to check output, or use task_stop with task_id if it needs to be stopped.`
+              ? `Command is still running in the background as ${result.backgroundTaskId}. Read ${result.persistedOutputPath} with file_read to check output, or use bash_stop with task_id if it needs to be stopped.`
               : undefined,
             metrics: metrics(started, result),
           })
@@ -1377,21 +1377,21 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
   };
 }
 
-function createTaskStopTool(): AgentTool<any, ToolEnvelope<TaskStopData>> {
+function createBashStopTool(): AgentTool<any, ToolEnvelope<BashStopData>> {
   return {
-    name: 'task_stop',
-    label: 'Task Stop',
+    name: 'bash_stop',
+    label: 'Bash Stop',
     description: [
       'Stops a running background task by its ID.',
       'Use this tool when you need to terminate a long-running task created by bash.',
       'Only task_id is supported; shell_id is not accepted.',
     ].join('\n'),
-    parameters: TASK_STOP_PARAMETERS,
+    parameters: BASH_STOP_PARAMETERS,
     executionMode: 'sequential',
     execute: async (_toolCallId, rawParams: unknown) => {
       const started = Date.now();
       try {
-        const params = normalizeTaskStopParams(rawParams);
+        const params = normalizeBashStopParams(rawParams);
         pruneBackgroundTasks();
         const task = backgroundTasks.get(params.task_id);
         if (!task) {
@@ -1407,17 +1407,17 @@ function createTaskStopTool(): AgentTool<any, ToolEnvelope<TaskStopData>> {
         await waitForOutputClosed(task.outputClosed);
         await finalizeBackgroundTaskOutput(task);
         pruneBackgroundTasks();
-        const data: TaskStopData = {
-          message: `Successfully stopped task: ${task.taskId} (${task.command})`,
+        const data: BashStopData = {
+          message: `Successfully stopped bash task: ${task.taskId} (${task.command})`,
           task_id: task.taskId,
           task_type: 'bash',
           command: task.command,
           status: task.status,
           outputPath: task.outputPath,
         };
-        return agentToolResult(successEnvelope('task_stop', data, { metrics: metrics(started, data) }), visibleTaskStop(data));
+        return agentToolResult(successEnvelope('bash_stop', data, { metrics: metrics(started, data) }), visibleBashStop(data));
       } catch (error) {
-        return localErrorResult('task_stop', error, started);
+        return localErrorResult('bash_stop', error, started);
       }
     },
   };
@@ -1502,7 +1502,7 @@ function normalizeBashParams(rawParams: unknown): BashParams {
   };
 }
 
-function normalizeTaskStopParams(rawParams: unknown): TaskStopParams {
+function normalizeBashStopParams(rawParams: unknown): BashStopParams {
   const input = asRecord(rawParams);
   return { task_id: requiredLocalString(input.task_id, 'task_id') };
 }
@@ -3162,7 +3162,7 @@ export function visibleFileDelete(data: FileDeleteData): unknown {
   };
 }
 
-export function visibleTaskStop(data: TaskStopData) {
+export function visibleBashStop(data: BashStopData) {
   // `task_id` echoes the sole arg; `status` is a constant 'stopped' beside the
   // envelope status. `outputPath` (where to read captured output) is the new bit.
   return {

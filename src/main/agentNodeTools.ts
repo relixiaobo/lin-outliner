@@ -24,7 +24,7 @@ import {
   NODE_EDIT_PARAMETERS,
   NODE_READ_PARAMETERS,
   NODE_SEARCH_PARAMETERS,
-  OPERATION_HISTORY_PARAMETERS,
+  OUTLINE_UNDO_STACK_PARAMETERS,
 } from './agentNodeToolSchemas';
 import {
   NODE_CREATE_DESCRIPTION,
@@ -32,7 +32,7 @@ import {
   NODE_EDIT_DESCRIPTION,
   NODE_READ_DESCRIPTION,
   NODE_SEARCH_DESCRIPTION,
-  OPERATION_HISTORY_DESCRIPTION,
+  OUTLINE_UNDO_STACK_DESCRIPTION,
 } from './agentNodeToolGuidance';
 import {
   buildReadItem,
@@ -133,8 +133,8 @@ export function createNodeTools(host: OutlinerToolHost, options: NodeToolsOption
     createNodeCreateTool(agentHost, options),
     createNodeEditTool(agentHost, options),
     createNodeDeleteTool(agentHost),
-    createOperationHistoryTool(agentHost),
-  ].map((tool) => tool.name === 'operation_history' ? tool : withAgentToolTransaction(tool, agentHost));
+    createOutlineUndoStackTool(agentHost),
+  ].map((tool) => tool.name === 'outline_undo_stack' ? tool : withAgentToolTransaction(tool, agentHost));
 }
 
 function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {
@@ -169,34 +169,34 @@ function withAgentToolTransaction(tool: AgentTool<any>, host: OutlinerToolHost):
   };
 }
 
-function createOperationHistoryTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<OperationHistoryData>> {
+function createOutlineUndoStackTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<OperationHistoryData>> {
   return {
-    name: 'operation_history',
-    label: 'Operation History',
-    description: OPERATION_HISTORY_DESCRIPTION,
-    parameters: OPERATION_HISTORY_PARAMETERS,
+    name: 'outline_undo_stack',
+    label: 'Outline Undo Stack',
+    description: OUTLINE_UNDO_STACK_DESCRIPTION,
+    parameters: OUTLINE_UNDO_STACK_PARAMETERS,
     executionMode: 'sequential',
     execute: async (_toolCallId, rawParams: unknown) => {
       const started = Date.now();
-      const params = normalizeOperationHistoryParams(rawParams);
+      const params = normalizeOutlineUndoStackParams(rawParams);
       if (params.error) {
-        return agentToolResult(errorEnvelope<OperationHistoryData>('operation_history', 'invalid_args', params.error, {
-          instructions: 'Call operation_history with action "list", "undo", or "redo".',
+        return agentToolResult(errorEnvelope<OperationHistoryData>('outline_undo_stack', 'invalid_args', params.error, {
+          instructions: 'Call outline_undo_stack with action "list", "undo", or "redo".',
           metrics: { durationMs: elapsed(started) },
         }));
       }
       if (!host.operationHistory) {
-        return agentToolResult(errorEnvelope<OperationHistoryData>('operation_history', 'history_unavailable', 'The host does not expose Loro operation history.', {
-          instructions: 'Retry after the document service has initialized operation history support.',
+        return agentToolResult(errorEnvelope<OperationHistoryData>('outline_undo_stack', 'outline_undo_stack_unavailable', 'The host does not expose Loro outline undo stack support.', {
+          instructions: 'Retry after the document service has initialized outline undo stack support.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
 
       const data = await host.operationHistory(params);
-      return agentToolResult(successEnvelope('operation_history', data, {
+      return agentToolResult(successEnvelope('outline_undo_stack', data, {
         status: params.action === 'list' || data.count > 0 ? 'success' : 'unchanged',
         metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-      }), visibleOperationHistory(data));
+      }), visibleOutlineUndoStack(data));
     },
   };
 }
@@ -205,7 +205,7 @@ function createOperationHistoryTool(host: OutlinerToolHost): AgentTool<any, Tool
 // (details). The model needs the entries plus undo/redo affordances, not the
 // derivable count, the internal historyMode, the Loro cursor, or each item's
 // raw command name (tool/action/summary already describe the operation).
-export function visibleOperationHistory(data: OperationHistoryData): unknown {
+export function visibleOutlineUndoStack(data: OperationHistoryData): unknown {
   const visible: Record<string, unknown> = { action: data.action };
   if (data.total !== undefined) visible.total = data.total;
   if (data.hasMore) visible.hasMore = true;
@@ -1207,7 +1207,7 @@ function invalidEditOperationFields(operation: 'replace_outline' | 'move' | 'mer
   return extras;
 }
 
-function normalizeOperationHistoryParams(rawParams: unknown): Required<Pick<OperationHistoryParams, 'action' | 'steps' | 'origin' | 'limit' | 'offset'>>
+function normalizeOutlineUndoStackParams(rawParams: unknown): Required<Pick<OperationHistoryParams, 'action' | 'steps' | 'origin' | 'limit' | 'offset'>>
   & Pick<OperationHistoryParams, 'operationId'>
   & { error?: string } {
   const input = asRecord(rawParams);

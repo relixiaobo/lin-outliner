@@ -45,7 +45,7 @@ truth.
   - `node_create`
   - `node_edit`
   - `node_delete`
-  - `operation_history`
+  - `outline_undo_stack`
 - [x] Lin Outline parser shared by create, edit, and search flows.
 - [x] Agent node tool docs, return value docs, and command protocol updates.
 - [x] Local agent tool roles wired into the agent runtime:
@@ -55,7 +55,7 @@ truth.
   - `file_edit`
   - `file_write`
   - `bash`
-  - `task_stop`
+  - `bash_stop`
 - [x] Local tool capability parity pass:
   - `file_read` image dimensions, runtime PDF text extraction via `pdftotext`,
     PDF page rendering via `pdftoppm`, provider-neutral PDF tool results, and

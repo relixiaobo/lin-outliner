@@ -66,7 +66,7 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'git.publish_remote',
   'deploy.publish_remote',
   'external.message.send',
-  'task.stop',
+  'shell.stop',
   'agent.memory.recall',
   'agent.user_question.ask',
   'agent.skill.invoke',
@@ -107,7 +107,7 @@ const READ_ONLY_ACTION_KIND_FLAGS = {
   'git.publish_remote': false,
   'deploy.publish_remote': false,
   'external.message.send': false,
-  'task.stop': false,
+  'shell.stop': false,
   'agent.memory.recall': true,
   'agent.user_question.ask': false,
   'agent.skill.invoke': false,
@@ -175,10 +175,10 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
   node_create: ['outline.edit'],
   node_edit: ['outline.edit'],
   node_delete: ['outline.delete'],
-  operation_history: ['outline.read', 'outline.edit'],
+  outline_undo_stack: ['outline.read', 'outline.edit'],
   past_chats: ['agent.memory.recall'],
   ask_user_question: ['agent.user_question.ask'],
-  task_stop: ['task.stop'],
+  bash_stop: ['shell.stop'],
   spawn_run: ['agent.delegate.spawn'],
   run_status: ['agent.delegate.status'],
   run_steer: ['agent.delegate.send'],
@@ -200,7 +200,7 @@ export function isReadOnlyActionKind(actionKind: AgentToolActionKind): boolean {
 
 export function agentToolActionKindProfile(toolNameInput: string, args?: unknown): readonly AgentToolActionKind[] | null {
   const toolName = normalizeAgentToolProfileName(toolNameInput);
-  if (toolName === 'operation_history') return operationHistoryActionKindProfile(args);
+  if (toolName === 'outline_undo_stack') return outlineUndoStackActionKindProfile(args);
   return AGENT_TOOL_ACTION_KIND_PROFILE_MAP[toolName] ?? null;
 }
 
@@ -266,7 +266,7 @@ function normalizeAgentToolProfileName(toolNameInput: string): string {
   return normalized;
 }
 
-function operationHistoryActionKindProfile(args: unknown): readonly AgentToolActionKind[] {
+function outlineUndoStackActionKindProfile(args: unknown): readonly AgentToolActionKind[] {
   const record = args && typeof args === 'object' && !Array.isArray(args)
     ? args as Record<string, unknown>
     : null;

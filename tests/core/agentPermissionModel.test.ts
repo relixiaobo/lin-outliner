@@ -54,7 +54,7 @@ describe('agent permission model', () => {
     expect(tools).not.toContain('file_write');
     expect(tools).not.toContain('file_edit');
     expect(tools).not.toContain('node_edit');
-    expect(tools).not.toContain('operation_history');
+    expect(tools).not.toContain('outline_undo_stack');
     expect(tools).not.toContain('bash');
     expect(tools).not.toContain('skill');
     expect(tools).not.toContain('spawn_run');
@@ -65,8 +65,8 @@ describe('agent permission model', () => {
       'file_read',
       'run_status',
     ]);
-    expect(agentToolActionKindProfile('operation_history', { action: 'list' })).toEqual(['outline.read']);
-    expect(agentToolActionKindProfile('operation_history', { action: 'undo' })).toEqual(['outline.edit']);
+    expect(agentToolActionKindProfile('outline_undo_stack', { action: 'list' })).toEqual(['outline.read']);
+    expect(agentToolActionKindProfile('outline_undo_stack', { action: 'undo' })).toEqual(['outline.edit']);
     expect(agentToolActionKindProfile('data_import')).toBeNull();
     expect(readOnlyAgentToolNames()).not.toContain('data_import');
   });

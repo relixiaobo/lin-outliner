@@ -5,7 +5,7 @@ import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
 import { plainText, replaceAllRichTextPatch, TRASH_ID } from '../../src/core/types';
-import { createNodeTools, visibleOperationHistory, type OutlinerToolHost } from '../../src/main/agentNodeTools';
+import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agentNodeTools';
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 import { formatChatSourceReferenceMarker, formatFileReferenceMarker, formatNodeReferenceMarker, splitChatSourceReferenceMarkers, splitFileReferenceMarkers } from '../../src/core/referenceMarkup';
@@ -119,7 +119,7 @@ describe('agent node tools', () => {
     const nodeCreate = tools.find((tool) => tool.name === 'node_create')!;
     const nodeEdit = tools.find((tool) => tool.name === 'node_edit')!;
     const nodeSearch = tools.find((tool) => tool.name === 'node_search')!;
-    const history = tools.find((tool) => tool.name === 'operation_history')!;
+    const history = tools.find((tool) => tool.name === 'outline_undo_stack')!;
     const nodeCreateOutlineDescription = (nodeCreate.parameters as any).properties.outline.description as string;
 
     expect(nodeRead.description).toContain('Use node_read before node_edit');
@@ -1450,7 +1450,7 @@ describe('agent node tools', () => {
     expect(core.state().nodes[referenceId]!.targetId).toBe(target);
   });
 
-  test('operation_history undo and redo use the agent Loro stack', async () => {
+  test('outline_undo_stack undo and redo use the agent Loro stack', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const nodeId = mustFocus(core.createNode(today, null, 'Undo me'));
@@ -1462,7 +1462,7 @@ describe('agent node tools', () => {
       action: 'undo' | 'redo' | 'list';
       count: number;
       undone?: Array<{ affectedNodeIds: string[] }>;
-    }>(core, 'operation_history', { action: 'undo' });
+    }>(core, 'outline_undo_stack', { action: 'undo' });
 
     expect(undo.ok).toBe(true);
     expect(undo.data!.count).toBe(1);
@@ -1473,7 +1473,7 @@ describe('agent node tools', () => {
       action: 'undo' | 'redo' | 'list';
       count: number;
       redone?: Array<{ affectedNodeIds: string[] }>;
-    }>(core, 'operation_history', { action: 'redo' });
+    }>(core, 'outline_undo_stack', { action: 'redo' });
 
     expect(redo.ok).toBe(true);
     expect(redo.data!.count).toBe(1);
@@ -1481,7 +1481,7 @@ describe('agent node tools', () => {
     expect(core.state().nodes[nodeId]!.parentId).toBe(TRASH_ID);
   });
 
-  test('operation_history list returns stored tool metadata', async () => {
+  test('outline_undo_stack list returns stored tool metadata', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
@@ -1494,7 +1494,7 @@ describe('agent node tools', () => {
       count: number;
       items?: Array<{ origin: string; tool?: string; action: string; affectedNodeIds: string[]; canUndo: boolean }>;
       canUndo: boolean;
-    }>(core, 'operation_history', { action: 'list', origin: 'agent' });
+    }>(core, 'outline_undo_stack', { action: 'list', origin: 'agent' });
 
     expect(history.ok).toBe(true);
     expect(history.data!.count).toBeGreaterThanOrEqual(1);
@@ -1508,7 +1508,7 @@ describe('agent node tools', () => {
     expect(history.data!.items![0]!.affectedNodeIds).toContain(created.data!.createdRootIds[0]!);
   });
 
-  test('operation_history model view drops derivable count, historyMode, cursor, and item command', () => {
+  test('outline_undo_stack model view drops derivable count, historyMode, cursor, and item command', () => {
     const data: OperationHistoryData = {
       action: 'list',
       historyMode: 'journal',
@@ -1534,7 +1534,7 @@ describe('agent node tools', () => {
       ],
     };
 
-    expect(visibleOperationHistory(data)).toEqual({
+    expect(visibleOutlineUndoStack(data)).toEqual({
       action: 'list',
       total: 5,
       hasMore: true,
@@ -1556,7 +1556,7 @@ describe('agent node tools', () => {
     });
   });
 
-  test('operation_history defaults to listing all origins', async () => {
+  test('outline_undo_stack defaults to listing all origins', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     core.withOrigin('user', () => core.createNode(today, null, 'User note'), {
@@ -1570,7 +1570,7 @@ describe('agent node tools', () => {
 
     const history = await executeTool<{
       items?: Array<{ origin: string }>;
-    }>(core, 'operation_history', {});
+    }>(core, 'outline_undo_stack', {});
 
     expect(history.ok).toBe(true);
     expect(history.data!.items?.map((item) => item.origin)).toContain('user');
@@ -1592,7 +1592,7 @@ describe('agent node tools', () => {
     const rootId = created.data!.createdRootIds[0]!;
     expect(core.state().nodes[rootId]).toBeDefined();
 
-    const undo = await executeTool<{ count: number }>(core, 'operation_history', { action: 'undo' });
+    const undo = await executeTool<{ count: number }>(core, 'outline_undo_stack', { action: 'undo' });
 
     expect(undo.ok).toBe(true);
     expect(undo.data!.count).toBe(1);

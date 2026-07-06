@@ -144,11 +144,11 @@ export const NODE_DELETE_DESCRIPTION = [
   '- Use preview_only to inspect affected nodes before mutating the document.',
 ].join('\n');
 
-export const OPERATION_HISTORY_DESCRIPTION = [
+export const OUTLINE_UNDO_STACK_DESCRIPTION = [
   'Inspect, undo, or redo outliner operations.',
   '',
   'Usage:',
-  '- Use action "list" first when you need to see recent user and agent operations before deciding what to undo or redo.',
+  '- Use action "list" first when you need to see recent user and agent outline operations before deciding what to undo or redo.',
   '- Undo/redo uses the Loro-backed operation stack. Agent calls default to the agent-origin stack so agent undo does not unexpectedly undo user work.',
   '- Use operation_id as a guard when undoing or redoing a specific visible operation.',
 ].join('\n');
