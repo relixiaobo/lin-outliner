@@ -1551,7 +1551,9 @@ function main() {
     console.log(`  component source refs: ${metrics.components.componentSourceReferences}`);
     console.log(`  component contract refs: ${metrics.components.componentContractReferences}`);
     console.log(`  component doc drift: ${
-      metrics.components.malformedComponentDocRows.length
+      (metrics.components.componentSourceReferences < COMPONENT_SOURCE_REFERENCES_MIN ? 1 : 0)
+      + (metrics.components.componentContractReferences === 0 ? 1 : 0)
+      + metrics.components.malformedComponentDocRows.length
       + metrics.components.duplicateDocumentedComponentNames.length
       + metrics.components.incompleteComponentDocRows.length
       + metrics.components.componentSourceBrokenReferences.length
