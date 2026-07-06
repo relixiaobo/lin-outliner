@@ -32,8 +32,9 @@ decision routing, exceptions, and validation.
   derived decisions, uses only valid `Derived` / `Exception` result values, has
   100% evidence coverage with no broken local evidence references, and names a
   kernel exception for every Exception row; the calibration Classification Model
-  table stays limited to the four ratified classes, and the calibration ledger
-  uses unique contiguous `CAxx` ids, those same classes, and 100%
+  table stays limited to the four ratified classes with non-empty meaning and
+  response cells, and the calibration ledger uses unique contiguous `CAxx` ids,
+  those same classes, and 100%
   evidence coverage with no broken local evidence references;
   component coverage is at least 80%; Exception Registry evidence coverage is
   100% with no broken local evidence references; raw colour

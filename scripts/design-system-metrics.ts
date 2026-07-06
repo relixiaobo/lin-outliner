@@ -337,10 +337,10 @@ function calibrationClassificationRows() {
     .filter((match) => match[1] !== 'Class' && !match[1]?.startsWith('---'))
     .map((match) => ({
       name: match[1]?.trim() ?? '',
-      meaning: match[2] ?? '',
-      requiredResponse: match[3] ?? '',
+      meaning: match[2]?.trim() ?? '',
+      requiredResponse: match[3]?.trim() ?? '',
     }))
-    .filter((row) => Boolean(row.name));
+    .filter((row) => Boolean(row.name || row.meaning || row.requiredResponse));
 }
 
 function calibrationFindingRows() {
@@ -414,7 +414,11 @@ function calibrationAuditMetrics() {
     .filter((name) => !classificationNames.includes(name))
     .sort();
   const unexpectedClassificationModelClasses = classificationNames
-    .filter((name) => !calibrationFindingClasses.has(name))
+    .filter((name) => name && !calibrationFindingClasses.has(name))
+    .sort();
+  const incompleteClassificationModelRows = classificationRows
+    .filter((row) => !row.name || !row.meaning || !row.requiredResponse)
+    .map((row) => row.name || 'missing class name')
     .sort();
   const rows = calibrationFindingRows();
   const rowIds = rows.map((row) => row.id);
@@ -454,6 +458,7 @@ function calibrationAuditMetrics() {
     duplicateClassificationModelClasses,
     missingClassificationModelClasses,
     unexpectedClassificationModelClasses,
+    incompleteClassificationModelRows,
     calibrationRows: rows.length,
     duplicateCalibrationIds,
     missingCalibrationIds,
@@ -864,6 +869,7 @@ function main() {
     console.log(`  surface lines: ${metrics.designSystem.surfaceLines}/${SURFACE_TARGET_LINES}`);
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
     console.log(`  calibration class rows: ${metrics.calibrationAudit.calibrationClassificationRows}`);
+    console.log(`  incomplete calibration class rows: ${metrics.calibrationAudit.incompleteClassificationModelRows.length}`);
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
     console.log(`  calibration evidence: ${(metrics.calibrationAudit.calibrationEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  calibration broken refs: ${metrics.calibrationAudit.calibrationBrokenReferences.length}`);
@@ -910,6 +916,9 @@ function main() {
     }
     if (metrics.calibrationAudit.unexpectedClassificationModelClasses.length > 0) {
       failures.push(`unexpected calibration classification model classes: ${metrics.calibrationAudit.unexpectedClassificationModelClasses.join(', ')}`);
+    }
+    if (metrics.calibrationAudit.incompleteClassificationModelRows.length > 0) {
+      failures.push(`incomplete calibration classification model rows: ${metrics.calibrationAudit.incompleteClassificationModelRows.join(', ')}`);
     }
     if (metrics.calibrationAudit.duplicateCalibrationIds.length > 0) {
       failures.push(`duplicate calibration ids: ${metrics.calibrationAudit.duplicateCalibrationIds.join(', ')}`);
