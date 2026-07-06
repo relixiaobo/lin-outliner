@@ -31,7 +31,9 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-06).** Open PR queue: none. Recently merged: #381
+**In flight (2026-07-06).** Open PR queue: #382
+(`codex-3/channel-create-inline-rename`) is in main review/gate; plan:
+`docs/plans/channel-create-inline-rename.md`. Recently merged: #381
 (`codex-3/agent-tool-clarity-names`) and #380
 (`codex-3/performance-hotspots`) merged 2026-07-06 after main review; see
 *Recently completed*. #377 (`codex/design-system-calibration-audit`) and #379
