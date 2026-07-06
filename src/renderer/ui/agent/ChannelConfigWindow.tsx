@@ -13,15 +13,14 @@ import { CheckboxControl } from '../primitives/CheckboxControl';
 import { EmptyState } from '../primitives/FeedbackState';
 import { Field } from '../primitives/Field';
 import { Input } from '../primitives/Input';
-import { Textarea } from '../primitives/Textarea';
 import { HashIcon, ICON_SIZE, LoaderIcon, WarningIcon } from '../icons';
 
 const RUNTIME_UNTITLED_SENTINEL = 'Untitled';
 
 /**
  * Single-agent collapse: a conversation has exactly {user, Neva}, so this window
- * is the channel create / rename dialog — a name (plus an optional opening seed
- * on create). There is no member roster to manage.
+ * is the remaining Channel settings surface. Primary create/rename now happens
+ * inline from the dock, but this route can still edit the name and Dream setting.
  */
 export function ChannelConfigWindow() {
   const t = useT();
@@ -32,7 +31,6 @@ export function ChannelConfigWindow() {
   const [saving, setSaving] = useState(false);
   const [title, setTitle] = useState('');
   const [includeInDreamData, setIncludeInDreamData] = useState(true);
-  const [seedText, setSeedText] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const close = () => { void window.lin?.closeChannelConfig?.(); };
@@ -77,25 +75,18 @@ export function ChannelConfigWindow() {
   const canRename = mode === 'configure' && !!conversation && !isProtectedDefault;
   const canEditDreamData = mode === 'configure' && !!conversation && conversation.id !== DEFAULT_DREAM_CHANNEL_ID;
   const hasEditableSettings = mode === 'create' || canRename || canEditDreamData;
-  const saveDisabled = !hasEditableSettings || ((mode === 'create' || canRename) && !title.trim()) || saving;
+  const saveDisabled = !hasEditableSettings || saving;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     const trimmed = title.trim();
     if (!hasEditableSettings) return;
-    if ((mode === 'create' || canRename) && !trimmed) {
-      setError(t.agent.chat.channelNameRequired);
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
       let createdConversationId: string | null = null;
       if (mode === 'create') {
-        const created = await api.agentCreateConversation({
-          title: trimmed,
-          ...(seedText.trim() ? { seedText: seedText.trim() } : {}),
-        });
+        const created = await api.agentCreateConversation(trimmed ? { title: trimmed } : {});
         createdConversationId = created.conversationId;
       } else {
         if (canRename) await api.agentRenameConversation(conversationId, trimmed);
@@ -149,19 +140,6 @@ export function ChannelConfigWindow() {
                   variant="bare"
                 />
               </Field>
-              {mode === 'create' ? (
-                <Field as="label" className="settings-sheet-row settings-sheet-row-stack" label={t.agent.chat.channelSeed} labelClassName="settings-sheet-row-label">
-                  <Textarea
-                    className="settings-sheet-row-input channel-config-seed"
-                    label={t.agent.chat.channelSeed}
-                    onChange={(event) => setSeedText(event.target.value)}
-                    placeholder={t.agent.chat.channelSeedPlaceholder}
-                    rows={3}
-                    value={seedText}
-                    variant="bare"
-                  />
-                </Field>
-              ) : null}
               {mode === 'configure' ? (
                 <div className="settings-sheet-row settings-sheet-row-switch">
                   <span className="settings-sheet-row-text">

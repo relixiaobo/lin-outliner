@@ -748,8 +748,7 @@ export interface AgentConversation {
 }
 
 export interface AgentCreateConversationOptions {
-  title: string;
-  seedText?: string;
+  title?: string;
 }
 
 export interface AgentConversationListMeta {

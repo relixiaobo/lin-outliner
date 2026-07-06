@@ -1102,15 +1102,10 @@ export class AgentRuntime {
   async createConversation(options: {
     title?: string;
     goal?: string;
-    seedText?: string;
   } = {}) {
     const conversationId = this.createChannelId();
     const eventState = createEmptyAgentEventReplayState();
-    const normalizedTitle = sanitizeConversationTitle(options.title ?? options.goal);
-    if (!normalizedTitle) {
-      throw new Error('A Channel requires a name.');
-    }
-    const title = normalizedTitle;
+    const title = normalizeConversationTitle(options.title ?? options.goal ?? '');
     // Single-agent collapse: a conversation always has exactly {user, Neva}.
     const members = this.defaultConversationMembers();
     const inputs: AgentEventInput[] = [{
@@ -1120,18 +1115,6 @@ export class AgentRuntime {
       members,
       goal: title,
     }];
-    // New-member onboarding floor (ratified): shared substrates only. The optional
-    // seed is the Channel's opening context for every member — never a DM transcript.
-    const seedText = options.seedText?.trim();
-    if (seedText) {
-      inputs.push({
-        type: 'user_message.created',
-        actor: userActor(),
-        messageId: this.createMessageId('user'),
-        parentMessageId: null,
-        content: textPersistedContent(seedText),
-      });
-    }
     const created = this.buildEvents(eventState, conversationId, inputs);
     await this.getEventStore().appendEvents(conversationId, created);
     for (const event of created) appendAgentEventToReplayState(eventState, event);

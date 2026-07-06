@@ -180,13 +180,13 @@ affordances rather than fake rows. Rows are scan-first and single-line; DMs show
 avatar + name, Channels show hash + name, active rows suppress unread badges, and
 row actions hang from one trailing More menu.
 
-**Config windows.** New/edit Agent and New/edit Channel use dedicated native child
-windows (`?surface=agent-config` / `?surface=channel-config`) opened through the
-main process. The dock and Settings list are launch points only; they never embed
-authoring forms inline. Agent config reuses the shared AgentEditor surface and
-capability-driven model/effort selector. Channel config uses the settings
-sheet/inset-list language for name, opening message, Dream-data inclusion, members,
-and add-member actions.
+**Config and inline edits.** Agent authoring uses a dedicated native child window
+(`?surface=agent-config`) opened through the main process. Channel creation is
+inline-lightweight: the Channels `+` creates an untitled Channel immediately and
+focuses the composer. Ordinary Channel rows expose a trailing edit icon for inline
+rename; protected default Channels do not show rename controls. Channel settings
+surfaces, when opened directly, use the settings sheet/inset-list language for
+remaining per-Channel settings such as Dream-data inclusion.
 
 **Transcript.** Agent UI uses Tenon foundations: neutral text, translucent chrome,
 opaque content surfaces, sparse semantic colour, low elevation, and compact

@@ -273,8 +273,8 @@ a Channel-vs-DM distinction, no peer agents, and no `@`-routing. Removed:
 - POV / independence cut + the per-agent POV inspector;
 - the channel activity surface and channel permission gates;
 - multi-agent channel-turn execution + the parallel-channel runtime;
-- the `ChannelConfigWindow` **member-management** plumbing (the window itself
-  survives as a name-only **create / rename** dialog — see below);
+- the `ChannelConfigWindow` **member-management** and blocking create/rename
+  plumbing;
 - the dead message-addressing protocol fields;
 - `canonicalDmAgentId`, the `lin-agent-dm-` prefix, and DM-vs-Channel branching;
 - the two conversation-list sections + two "+" buttons (now one conversation
@@ -287,15 +287,17 @@ environment reminder is single-agent. Only the multi-*agent* semantics are gone 
 conversation is an id-namespaced (`lin-agent-channel-…`) single-agent thread with
 members `{user, Neva}`; **General** (`lin-agent-channel-general`,
 `restoreOrCreateGeneralChannel`) is the default landing, sorted first in the one flat
-conversation list; and the user can **create / rename** further channels from that
-list's single `+` button (the surviving `ChannelConfigWindow` create/rename dialog — a
-title plus an optional opening seed, no member roster). Channel configuration also
-owns the per-channel **include in Dream data** setting: ordinary channels default
-included, the protected Dream channel is forced excluded, and protected default
-channel names stay immutable while their editable settings can still use the same
-configuration surface. Protected default invariants are table-driven in the
-runtime so General and Dream share the same restore/name/member/settings repair
-path. The surviving seams are
+conversation list; and the user can create further Channels from that list's
+single `+` button. Creation is immediate: a blank title stores the untitled
+display sentinel, no opening message is persisted, the new Channel is selected,
+and the composer receives focus. Ordinary Channel rows expose a direct edit icon
+for inline rename; blank rename restores the untitled display sentinel. Channel
+configuration also owns the per-channel **include in Dream data** setting:
+ordinary channels default included, the protected Dream channel is forced
+excluded, and protected default channel names stay immutable while their editable
+settings can still use the same configuration surface. Protected default
+invariants are table-driven in the runtime so General and Dream share the same
+restore/name/member/settings repair path. The surviving seams are
 `isChannelConversationId` (id-prefix test) and `usesChannelActivitySurface()`
 (hardcoded `false`, so every channel-surface branch takes its single-agent inline side).
 There is no agent-facing `channel_create`/`channel_update` tool — channel creation is a

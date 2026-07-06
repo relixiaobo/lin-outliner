@@ -1700,7 +1700,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       options: {
         title?: string | null;
         agentIds?: string[];
-        seedText?: string;
       } = {},
     ) => {
       const agentIds = options.agentIds ?? agentIdsForConversation(conversationId);
@@ -1727,7 +1726,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           actor,
         };
       };
-      if (options.seedText) addMessage('seed-note-e2e', options.seedText, { type: 'user', userId: 'local-user' }, now - 10);
       return {
         conversationId,
         revision: 1,
@@ -1828,8 +1826,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_create_conversation') {
           const agentIds = Array.isArray(args.agentIds) ? args.agentIds.map(String) : [];
-          const title = String(args.title ?? args.goal ?? '').trim();
-          if (!title) throw new Error('A Channel requires a name.');
+          const title = String(args.title ?? args.goal ?? '').trim() || 'Untitled';
           const conversationId = `lin-agent-channel-created-${++sequence}`;
           const members = [
             { type: 'user', userId: 'local-user' },
@@ -1842,8 +1839,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             goal: title,
             createdAt: now,
             updatedAt: now += 1,
-            messageCount: typeof args.seedText === 'string' ? 1 : 0,
-            lastMessageSnippet: typeof args.seedText === 'string' ? args.seedText : null,
+            messageCount: 0,
+            lastMessageSnippet: null,
             lastMessageAt: now,
             unreadCount: 0,
           });
@@ -1852,7 +1849,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             renderProjection: agentProjection(conversationId, {
               title,
               agentIds: Array.from(new Set(agentIds)),
-              seedText: typeof args.seedText === 'string' ? args.seedText : undefined,
             }),
           }) as T;
         }
@@ -1887,10 +1883,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_rename_conversation') {
           const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
           if (target) {
-            target.title = String(args.title ?? '');
+            const title = String(args.title ?? '').trim() || 'Untitled';
+            target.title = title;
+            target.goal = title;
             target.updatedAt = now += 1;
           }
-          return clone({ ok: true }) as T;
+          return clone(target ?? null) as T;
         }
         if (cmd === 'agent_add_conversation_member') {
           const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
