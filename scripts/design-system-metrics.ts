@@ -1578,6 +1578,18 @@ function main() {
     console.log(`  stale raw colour exceptions: ${metrics.tokens.staleRawColorExceptions.length}`);
     console.log(`  runtime surface cases: ${metrics.runtimeSurfaces.runtimeSurfaceCases}`);
     console.log(`  runtime theme checks: ${metrics.runtimeSurfaces.runtimeSurfaceThemeChecks}`);
+    console.log(`  runtime surface drift: ${
+      (!metrics.runtimeSurfaces.runtimeSurfaceMatrixFound || metrics.runtimeSurfaces.runtimeSurfaceCases === 0 ? 1 : 0)
+      + metrics.runtimeSurfaces.duplicateRuntimeSurfaceNames.length
+      + (
+        !metrics.runtimeSurfaces.runtimeThemeVariantsFound
+        || !metrics.runtimeSurfaces.runtimeThemeVariantNames.includes('light')
+        || !metrics.runtimeSurfaces.runtimeThemeVariantNames.includes('dark')
+        ? 1
+        : 0
+      )
+      + metrics.runtimeSurfaces.duplicateRuntimeThemeVariantNames.length
+    }`);
   }
 
   if (process.argv.includes('--check')) {
