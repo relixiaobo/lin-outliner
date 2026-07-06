@@ -22,6 +22,7 @@ const RUNTIME_SURFACE_SPEC = join(ROOT, 'tests', 'e2e', 'design-system-runtime.s
 const SURFACE_BASELINE_LINES = 672;
 const SURFACE_TARGET_LINES = Math.floor(SURFACE_BASELINE_LINES * 0.6);
 const COMPONENT_COVERAGE_TARGET = 0.8;
+const COMPONENT_SOURCE_REFERENCES_MIN = 1;
 const DECISION_DERIVATION_TARGET = 0.8;
 const DECISION_EVIDENCE_COVERAGE_TARGET = 1;
 const CALIBRATION_EVIDENCE_COVERAGE_TARGET = 1;
@@ -309,18 +310,66 @@ function sourceMapMetrics() {
 }
 
 function documentedComponentNames(): Set<string> {
-  const source = readFileSync(COMPONENTS_DOC, 'utf8');
-  const start = source.indexOf('| Component | Sources | Contract |');
-  const end = source.indexOf('## Contract Shape', start);
-  const section = start >= 0 && end > start ? source.slice(start, end) : '';
   const names = new Set<string>();
-  for (const match of section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \|$/gm)) {
-    if (match[1] === 'Component' || match[1]?.startsWith('---')) continue;
-    for (const name of match[1].matchAll(/`([^`]+)`/g)) {
+  for (const row of componentDocRows()) {
+    for (const name of row.component.matchAll(/`([^`]+)`/g)) {
       names.add(name[1]);
     }
   }
   return names;
+}
+
+function componentDocRows() {
+  const source = readFileSync(COMPONENTS_DOC, 'utf8');
+  const start = source.indexOf('| Component | Sources | Contract |');
+  const end = source.indexOf('## Contract Shape', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return [...section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \|$/gm)]
+    .filter((match) => match[1] !== 'Component' && !match[1]?.startsWith('---'))
+    .map((match) => ({
+      component: match[1] ?? '',
+      sources: match[2] ?? '',
+      contract: match[3] ?? '',
+    }));
+}
+
+function malformedComponentDocRows(): string[] {
+  const source = readFileSync(COMPONENTS_DOC, 'utf8');
+  const start = source.indexOf('| Component | Sources | Contract |');
+  const end = source.indexOf('## Contract Shape', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('| '))
+    .filter((line) => line !== '| Component | Sources | Contract |' && !line.startsWith('| ---'))
+    .filter((line) => !/^\| (.+?) \| (.+?) \| (.+?) \|$/.test(line))
+    .sort();
+}
+
+function componentSourceReferenceMetrics() {
+  const brokenReferences: string[] = [];
+  const ambiguousReferences: string[] = [];
+  let referenceCount = 0;
+  for (const row of componentDocRows()) {
+    for (const match of row.sources.matchAll(/`([^`]+)`/g)) {
+      const reference = match[1]?.trim() ?? '';
+      if (!reference) continue;
+      referenceCount += 1;
+      const matches = sourceMapReferenceMatches(reference);
+      if (matches.length === 0) {
+        brokenReferences.push(`${row.component}: ${reference}`);
+      } else if (!reference.includes('*') && matches.length > 1) {
+        ambiguousReferences.push(`${row.component}: ${reference} matched multiple files (${matches.join(', ')})`);
+      }
+    }
+  }
+  return {
+    componentSourceReferences: referenceCount,
+    malformedComponentDocRows: malformedComponentDocRows(),
+    componentSourceBrokenReferences: brokenReferences.sort(),
+    componentSourceAmbiguousReferences: ambiguousReferences.sort(),
+  };
 }
 
 function markdownLinkTargets(markdown: string): string[] {
@@ -729,6 +778,7 @@ function componentCoverageMetrics() {
   const componentImplementationFilesMissing = [...componentImplementationFiles]
     .filter((file) => !existsSync(join(ROOT, file)))
     .sort();
+  const componentSourceReferences = componentSourceReferenceMetrics();
   let primitiveUses = 0;
   let nativeUses = 0;
   let exceptedNativeUses = 0;
@@ -812,6 +862,7 @@ function componentCoverageMetrics() {
     componentImplementationNativeUses,
     componentCoverage: accountableControls === 0 ? 1 : Number((primitiveUses / accountableControls).toFixed(3)),
     componentContractRows: componentContracts.length,
+    ...componentSourceReferences,
     componentTagNames: [...componentTags].sort(),
     directNativeFiles: Object.fromEntries([...directNativeFiles.entries()].sort()),
     exceptedNativeFiles: Object.fromEntries([...exceptedNativeFiles.entries()].sort()),
@@ -1045,6 +1096,10 @@ function main() {
       decisionDerivationTarget: DECISION_DERIVATION_TARGET,
       decisionEvidenceCoverageTarget: DECISION_EVIDENCE_COVERAGE_TARGET,
       componentCoverageTarget: COMPONENT_COVERAGE_TARGET,
+      componentSourceReferencesMinimumTarget: COMPONENT_SOURCE_REFERENCES_MIN,
+      malformedComponentDocRowsTarget: 0,
+      componentSourceBrokenReferencesTarget: 0,
+      componentSourceAmbiguousReferencesTarget: 0,
       exceptionEvidenceCoverageTarget: 1,
       rawHexOutsideTokenDeclarationsTarget: 0,
       rawFunctionalColorOutsideTokenDeclarationsTarget: 0,
@@ -1078,6 +1133,7 @@ function main() {
     console.log(`  invalid decision results: ${metrics.decisionAudit.invalidDecisionResults.length}`);
     console.log(`  unnamed exception decisions: ${metrics.decisionAudit.unnamedExceptionDecisions.length}`);
     console.log(`  component coverage: ${(metrics.components.componentCoverage * 100).toFixed(1)}%`);
+    console.log(`  component source refs: ${metrics.components.componentSourceReferences}`);
     console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
     console.log(`  native control audit drift: ${
       metrics.components.nativeControlExceptionsMissingFromAudit.length
@@ -1188,6 +1244,20 @@ function main() {
     }
     if (metrics.components.componentCoverage < COMPONENT_COVERAGE_TARGET) {
       failures.push(`component coverage ${metrics.components.componentCoverage} < ${COMPONENT_COVERAGE_TARGET}`);
+    }
+    if (metrics.components.componentSourceReferences < COMPONENT_SOURCE_REFERENCES_MIN) {
+      failures.push(
+        `component source references ${metrics.components.componentSourceReferences} < ${COMPONENT_SOURCE_REFERENCES_MIN}`,
+      );
+    }
+    if (metrics.components.malformedComponentDocRows.length > 0) {
+      failures.push(`malformed component doc rows: ${metrics.components.malformedComponentDocRows.join(', ')}`);
+    }
+    if (metrics.components.componentSourceBrokenReferences.length > 0) {
+      failures.push(`component source broken refs: ${metrics.components.componentSourceBrokenReferences.join(', ')}`);
+    }
+    if (metrics.components.componentSourceAmbiguousReferences.length > 0) {
+      failures.push(`component source ambiguous refs: ${metrics.components.componentSourceAmbiguousReferences.join(', ')}`);
     }
     if (metrics.components.unmappedDocumentedContracts.length > 0) {
       failures.push(`documented component contracts missing from metrics: ${metrics.components.unmappedDocumentedContracts.join(', ')}`);
