@@ -1547,6 +1547,9 @@ function main() {
       + metrics.components.componentSourceBrokenReferences.length
       + metrics.components.componentSourceAmbiguousReferences.length
       + metrics.components.componentContractBrokenReferences.length
+      + metrics.components.unmappedDocumentedContracts.length
+      + metrics.components.mappedContractsMissingFromDocs.length
+      + metrics.components.componentImplementationFilesMissing.length
     }`);
     console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
     console.log(`  native control audit drift: ${

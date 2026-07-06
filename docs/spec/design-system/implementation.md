@@ -84,7 +84,8 @@ decision routing, exceptions, and validation.
   contract link must resolve to a current design-system markdown target. The
   component doc drift summary includes row shape, duplicate names, missing
   semantic columns, broken source references, ambiguous source references, and
-  broken contract links.
+  broken contract links, plus drift between documented contracts, the metrics
+  contract map, and live implementation files.
 - **Calibration audit.** A design-system calibration pass records findings in
   [calibration-audit.md](./calibration-audit.md) as code drift, spec drift, named
   exception, or open design decision. The audit's open-design-decision table must
