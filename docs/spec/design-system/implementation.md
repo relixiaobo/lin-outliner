@@ -62,8 +62,8 @@ decision routing, exceptions, and validation.
   targets, including anchors. Product-source failures and contract-link failures
   are reported separately. Short source names must resolve uniquely unless the
   code span is an intentional wildcard. The Source Map drift summary includes
-  malformed rows, duplicate areas, incomplete rows, broken or ambiguous product
-  sources, and broken contract links.
+  a missing or empty map, malformed rows, duplicate areas, incomplete rows,
+  broken or ambiguous product sources, and broken contract links.
 - **Current spec reference accountability.** Current design-system contract docs
   must keep path-like code spans resolvable. This covers the kernel, foundations,
   patterns, surfaces, components, implementation notes, and decision audit. The

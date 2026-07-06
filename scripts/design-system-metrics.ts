@@ -1495,7 +1495,14 @@ function main() {
     console.log(`  source map broken refs: ${metrics.sourceMap.sourceMapBrokenReferences.length}`);
     console.log(`  source map contract broken refs: ${metrics.sourceMap.sourceMapContractBrokenReferences.length}`);
     console.log(`  source map drift: ${
-      metrics.sourceMap.malformedSourceMapRows.length
+      (
+        metrics.sourceMap.sourceMapRows === 0
+        || metrics.sourceMap.sourceMapReferences === 0
+        || metrics.sourceMap.sourceMapContractReferences === 0
+        ? 1
+        : 0
+      )
+      + metrics.sourceMap.malformedSourceMapRows.length
       + metrics.sourceMap.duplicateSourceMapAreas.length
       + metrics.sourceMap.incompleteSourceMapRows.length
       + metrics.sourceMap.sourceMapBrokenReferences.length
