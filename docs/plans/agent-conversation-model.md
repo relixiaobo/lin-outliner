@@ -619,7 +619,7 @@ AgentStop` (`agentSubagents.ts:86-117,206`); a terminal-state callback
 `notifyTerminalRun` (`:473,718`); a completion queue `pendingSubagentNotifications`
 drained **only when the session is idle** (`agentRuntime.ts:1356,1364-1382`); a
 background-shell `BackgroundTask` registry with `running/completed/failed/stopped` +
-`task_stop` (`agentLocalTools.ts:274-289,335`); `AbortController` cancellation
+`bash_stop` (`agentLocalTools.ts:274-289,335`); `AbortController` cancellation
 (`agentStreamAbort.ts`).
 
 **What the redesign adds:**

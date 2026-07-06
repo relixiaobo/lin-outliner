@@ -160,7 +160,7 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'past_chats',
   'ask_user_question',
   'skill',
-  'task_stop',
+  'bash_stop',
   'run_status',
   'node_read',
   'node_search',
@@ -190,7 +190,7 @@ const TOOL_ALIASES = new Map<string, string>([
   ['ask_user_question', 'ask_user_question'],
   ['askuserquestion', 'ask_user_question'],
   ['skill', 'skill'],
-  ['task_stop', 'task_stop'],
+  ['bash_stop', 'bash_stop'],
   ['spawn_run', 'spawn_run'],
   ['runstatus', 'run_status'],
   ['run_status', 'run_status'],
@@ -205,7 +205,7 @@ const TOOL_ALIASES = new Map<string, string>([
   ['node_create', 'node_create'],
   ['node_edit', 'node_edit'],
   ['node_delete', 'node_delete'],
-  ['operation_history', 'operation_history'],
+  ['outline_undo_stack', 'outline_undo_stack'],
 ]);
 
 interface BashDenyRule {
@@ -612,13 +612,16 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
-  if (toolName === 'node_read' || toolName === 'node_search' || toolName === 'operation_history') {
+  if (toolName === 'node_read' || toolName === 'node_search' || toolName === 'outline_undo_stack') {
     const actionKind = firstActionKindForTool(toolName, input.args, 'outline.read');
     const writes = actionKind === 'outline.edit';
+    const readSummary = toolName === 'outline_undo_stack'
+      ? 'Inspect the local outline undo stack.'
+      : 'Read local outliner data.';
     return [descriptor(toolName, actionKind, {
       accessScope: 'allowed_file_area',
       title: writes ? 'local document edit' : 'local document read',
-      summary: writes ? 'Undo or redo local outliner operations.' : 'Read local outliner or agent history data.',
+      summary: writes ? 'Undo or redo local outliner operations.' : readSummary,
       consequence: writes ? 'This changes local documents inside Lin.' : 'This reads local product data without changing it.',
       reversible: !writes,
       externalEffect: false,
@@ -665,10 +668,10 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
-  if (toolName === 'task_stop' || toolName === 'run_stop') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, toolName === 'run_stop' ? 'agent.delegate.stop' : 'task.stop'), {
+  if (toolName === 'bash_stop' || toolName === 'run_stop') {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, toolName === 'run_stop' ? 'agent.delegate.stop' : 'shell.stop'), {
       accessScope: 'none',
-      title: toolName === 'run_stop' ? 'run stop' : 'background task stop',
+      title: toolName === 'run_stop' ? 'run stop' : 'bash task stop',
       summary: toolName === 'run_stop' ? 'Stop a background Run.' : 'Stop a background task launched by the agent.',
       consequence: toolName === 'run_stop'
         ? 'This controls a local background Run; downstream Run actions keep their own permission gates.'
@@ -2119,9 +2122,9 @@ export function toolPathArgumentName(toolNameInput: string): string | null {
 
 function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'task_stop' || toolName === 'spawn_run' || toolName === 'run_status' || toolName === 'run_steer' || toolName === 'run_amend' || toolName === 'run_stop' || toolName === 'skill' || toolName === 'ask_user_question') return 'control';
+  if (toolName === 'bash_stop' || toolName === 'spawn_run' || toolName === 'run_status' || toolName === 'run_steer' || toolName === 'run_amend' || toolName === 'run_stop' || toolName === 'skill' || toolName === 'ask_user_question') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete' || toolName === 'data_import') return 'write';
-  if (toolName === 'operation_history') {
+  if (toolName === 'outline_undo_stack') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
   }
   if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search') return 'read';
@@ -2129,7 +2132,7 @@ function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAc
 }
 
 function isRestrictedBaseAllowed(toolName: string, args: unknown): boolean {
-  if (toolName === 'operation_history') {
+  if (toolName === 'outline_undo_stack') {
     return agentToolActionKindProfile(toolName, args)?.every(isReadOnlyActionKind) === true;
   }
   return RESTRICTED_BASE_ALLOWED_TOOLS.has(toolName) || toolName.startsWith('node_');

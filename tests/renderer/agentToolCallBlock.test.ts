@@ -22,7 +22,7 @@ import {
   NodeEditToolIcon,
   NodeReadToolIcon,
   NodeSearchToolIcon,
-  OperationHistoryToolIcon,
+  OutlineUndoStackToolIcon,
   PastChatsToolIcon,
   QuestionToolIcon,
   RestoreIcon,
@@ -31,7 +31,7 @@ import {
   RunStatusToolIcon,
   SkillAuthorToolIcon,
   SkillIcon,
-  TaskStopToolIcon,
+  BashStopToolIcon,
   TerminalIcon,
   WebFetchToolIcon,
   WebSearchToolIcon,
@@ -173,7 +173,7 @@ describe('agent tool call block', () => {
       pending: string;
     }> = [
       { name: 'bash', args: { command: 'git status\npwd' }, pending: 'Running command "git status"', done: 'Ran command "git status"' },
-      { name: 'task_stop', args: { task_id: 'task-1' }, pending: 'Stopping task "task-1"', done: 'Stopped task "task-1"' },
+      { name: 'bash_stop', args: { task_id: 'task-1' }, pending: 'Stopping bash task "task-1"', done: 'Stopped bash task "task-1"' },
       { name: 'file_read', args: { file_path: 'notes.md' }, pending: 'Reading file "notes.md"', done: 'Read file "notes.md"' },
       { name: 'file_glob', args: { pattern: '**/*.ts' }, pending: 'Finding files "**/*.ts"', done: 'Found files "**/*.ts"' },
       { name: 'file_grep', args: { pattern: 'needle' }, pending: 'Searching file contents "needle"', done: 'Searched file contents "needle"' },
@@ -186,9 +186,9 @@ describe('agent tool call block', () => {
       { name: 'node_delete', args: { node_id: 'node-1' }, pending: 'Deleting node "node-1"', done: 'Deleted node "node-1"' },
       { name: 'node_delete', args: { node_id: 'node-1', restore: true }, pending: 'Restoring node "node-1"', done: 'Restored node "node-1"' },
       { name: 'node_search', args: { outline: 'status' }, pending: 'Searching nodes "status"', done: 'Searched nodes "status"' },
-      { name: 'operation_history', args: { action: 'list' }, pending: 'Checking operation history', done: 'Checked operation history' },
-      { name: 'operation_history', args: { action: 'undo' }, pending: 'Undoing operation', done: 'Undid operation' },
-      { name: 'operation_history', args: { action: 'redo' }, pending: 'Redoing operation', done: 'Redid operation' },
+      { name: 'outline_undo_stack', args: { action: 'list' }, pending: 'Checking outline undo stack', done: 'Checked outline undo stack' },
+      { name: 'outline_undo_stack', args: { action: 'undo' }, pending: 'Undoing operation', done: 'Undid operation' },
+      { name: 'outline_undo_stack', args: { action: 'redo' }, pending: 'Redoing operation', done: 'Redid operation' },
       { name: 'web_search', args: { query: 'lucide icons' }, pending: 'Searching the web "lucide icons"', done: 'Searched the web "lucide icons"' },
       { name: 'web_fetch', args: { url: 'https://example.com/docs' }, pending: 'Fetching web page https://example.com/docs', done: 'Fetched web page https://example.com/docs' },
       { name: 'recall', args: { query: 'preferences' }, pending: 'Recalling memory "preferences"', done: 'Recalled memory "preferences"' },
@@ -235,7 +235,7 @@ describe('agent tool call block', () => {
       name: string;
     }> = [
       { name: 'bash', kind: 'command', icon: TerminalIcon },
-      { name: 'task_stop', kind: 'command', icon: TaskStopToolIcon },
+      { name: 'bash_stop', kind: 'command', icon: BashStopToolIcon },
       { name: 'file_read', kind: 'fileRead', icon: FileReadToolIcon },
       { name: 'file_glob', kind: 'fileSearch', icon: FileGlobToolIcon },
       { name: 'file_grep', kind: 'fileSearch', icon: FileGrepToolIcon },
@@ -248,7 +248,7 @@ describe('agent tool call block', () => {
       { name: 'node_delete', kind: 'nodeDelete', icon: NodeDeleteToolIcon },
       { name: 'node_delete', args: { restore: true }, kind: 'nodeRestore', icon: RestoreIcon },
       { name: 'node_search', kind: 'nodeSearch', icon: NodeSearchToolIcon },
-      { name: 'operation_history', kind: 'history', icon: OperationHistoryToolIcon },
+      { name: 'outline_undo_stack', kind: 'history', icon: OutlineUndoStackToolIcon },
       { name: 'web_search', kind: 'web', icon: WebSearchToolIcon },
       { name: 'web_fetch', kind: 'web', icon: WebFetchToolIcon },
       { name: 'recall', kind: 'memory', icon: BrainIcon },
@@ -261,7 +261,7 @@ describe('agent tool call block', () => {
       { name: 'run_status', kind: 'run', icon: RunStatusToolIcon },
       { name: 'run_steer', kind: 'run', icon: RunMessageToolIcon },
       { name: 'run_amend', kind: 'run', icon: RunMessageToolIcon },
-      { name: 'run_stop', kind: 'run', icon: TaskStopToolIcon },
+      { name: 'run_stop', kind: 'run', icon: BashStopToolIcon },
       { name: 'mystery_tool', kind: 'other', icon: GenericToolIcon },
     ];
 

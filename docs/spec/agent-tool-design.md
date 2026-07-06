@@ -41,14 +41,15 @@ These tools are required for the first useful local agent.
 | `node_create` | outliner | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
 | `node_edit` | outliner | Yes | Usually yes | Edit one known node's own content, fields, field values, or saved-search config using exact string replacement, or perform explicit by-id operations such as move and merge. |
 | `node_delete` | outliner | Yes | Usually yes | Trash or restore one or more nodes. |
-| `operation_history` | outliner | Yes for undo/redo | Usually yes | Inspect, undo, or redo user and agent operations. |
+| `outline_undo_stack` | outliner | Yes for undo/redo | Usually yes | Inspect, undo, or redo user and agent outline operations. |
 | `file_read` | local | No | Usually no | Read local files with bounded output. |
 | `file_glob` | local | No | No | Find files by glob or path pattern. |
 | `file_grep` | local | No | No | Search file contents under allowed roots. |
 | `file_edit` | local | Yes | Yes | Apply exact string replacements to files. |
 | `file_write` | local | Yes | Yes | Create files or rewrite whole files. |
+| `file_delete` | local | Yes | Yes | Move local files or directories to agent trash. |
 | `bash` | local | Depends | Usually yes | Run local commands with timeout and output limits. |
-| `task_stop` | local | Yes | Usually yes | Stop background commands created by `bash`. |
+| `bash_stop` | local | Yes | Usually yes | Stop background commands created by `bash`. |
 | `web_search` | web | No | Depends | Search the web for current external information, or for images with `kind: "image"`. |
 | `web_fetch` | web | No | Depends | Fetch and read a specific URL with pagination or snippet search. |
 
@@ -133,7 +134,7 @@ permission behavior harder to reason about.
 - Use `node_*` for outliner graph operations, following nodex.
 - Use `file_*` for local filesystem operations.
 - Use `bash` for shell execution.
-- Use `task_stop` for stopping background commands created by `bash`.
+- Use `bash_stop` for stopping background commands created by `bash`.
 - Use `web_*` for network read tools.
 - Use `node_search` / `node_read` for durable memory nodes on the timeline.
 - Use `past_chats` for visible prior conversation history and raw stream spans.
@@ -587,7 +588,7 @@ not node text, and the parser strips it before applying content changes. Do not
 embed internal CRDT metadata, timestamps, or other implementation markers in
 outline text.
 
-`operation_history` is a Lin extension over nodex's AI-only `undo` tool. Keep it
+`outline_undo_stack` is a Lin extension over nodex's AI-only `undo` tool. Keep it
 separate from the `node_*` tools.
 
 Read/create/edit symmetry:
@@ -1417,7 +1418,7 @@ Result behavior:
 - Batch delete is supported by `node_ids`. This is not a generic batch protocol;
   it is the natural shape of the delete operation.
 
-### `operation_history`
+### `outline_undo_stack`
 
 Inspect, undo, or redo operations. Unlike nodex's AI-only `undo`, Lin should
 support both user and agent operations because the agent may need to reason about
@@ -1426,7 +1427,7 @@ recent user edits or redo a user action on request.
 Parameters:
 
 ```ts
-interface OperationHistoryParams {
+interface OutlineUndoStackParams {
   action?: "list" | "undo" | "redo"; // default "list"
   steps?: number; // default 1, max 10 for undo/redo
   operation_id?: string; // stack-top guard, not arbitrary history jumping
@@ -1439,15 +1440,15 @@ interface OperationHistoryParams {
 Return data:
 
 ```ts
-interface OperationHistoryData {
+interface OutlineUndoStackData {
   action: "list" | "undo" | "redo";
   historyMode?: "journal" | "undo_stack";
   count: number;
   total?: number;
   hasMore?: boolean;
-  items?: OperationHistoryItem[];
-  undone?: OperationHistoryItem[];
-  redone?: OperationHistoryItem[];
+  items?: OutlineUndoStackItem[];
+  undone?: OutlineUndoStackItem[];
+  redone?: OutlineUndoStackItem[];
   canUndo: boolean;
   canRedo: boolean;
   cursor?: {
@@ -1456,7 +1457,7 @@ interface OperationHistoryData {
   };
 }
 
-interface OperationHistoryItem {
+interface OutlineUndoStackItem {
   operationId: string;
   origin: "agent" | "user" | "system";
   tool?: string;
@@ -2302,7 +2303,7 @@ Result behavior:
 - Running background task files record the stdout/stderr capture file paths; when
   the task completes, fails, or is stopped, Lin composes the returned output file
   with stdout, stderr, and a final status footer.
-- `bash` timeout, cancellation, `task_stop`, and output watchdog termination must
+- `bash` timeout, cancellation, `bash_stop`, and output watchdog termination must
   stop the shell process tree, not only the shell wrapper process.
 - Completion of a background command should be surfaced through the agent
   runtime event stream with the same output path. Do not add a polling-first
@@ -2314,7 +2315,7 @@ Result behavior:
 - Do not use `bash` to read, edit, write, glob, or grep files when the dedicated
   file tool fits the task.
 
-### `task_stop`
+### `bash_stop`
 
 Stop a background command created by `bash`. It is not a generic process
 manager and does not provide status/read/wait operations.
@@ -2322,7 +2323,7 @@ manager and does not provide status/read/wait operations.
 Parameters:
 
 ```ts
-interface TaskStopParams {
+interface BashStopParams {
   task_id: string;
 }
 ```
@@ -2330,7 +2331,7 @@ interface TaskStopParams {
 Return data:
 
 ```ts
-interface TaskStopData {
+interface BashStopData {
   message: string;
   task_id: string;
   task_type: string;
@@ -2856,14 +2857,14 @@ coverage maps as follows:
 | `node_create` | `create_node`, `create_tag`, `create_field_def`, `create_inline_field`, `set_node_checkbox_visible`, `add_reference`, `create_search_node`, duplicate support. |
 | `node_edit` | Single-node exact replacement compiled to `apply_node_text_patch`, `set_node_checkbox_visible`, `toggle_done`, tag/field upserts, value appends/updates, `move_node`, `set_reference_target`, `replace_node_with_reference`, and `set_search_node`. Merge/reference replacement may trash explicitly named source nodes; ordinary deletion belongs to `node_delete`. |
 | `node_delete` | `trash_node`, `batch_trash_nodes`, `restore_node`; permanent delete is not exposed to agent v1. |
-| `operation_history` | Loro UndoManager-backed `undo`/`redo` plus operation journal listing with origin metadata. |
+| `outline_undo_stack` | Loro UndoManager-backed `undo`/`redo` plus operation journal listing with origin metadata. |
 | `file_read` | Implemented TypeScript file read command with path normalization, text pagination, image content/dimensions, PDF page rendering, notebook parsing, and freshness tracking. |
 | `file_glob` | Implemented TypeScript glob command under allowed roots with local-root-relative output paths. |
 | `file_grep` | Implemented ripgrep-backed search command under allowed roots through Tenon's ripgrep provider, with relative paths, output modes, and streamed pagination. |
 | `file_edit` | Implemented TypeScript exact-replacement command with read-before-edit freshness checks. |
 | `file_write` | Implemented TypeScript create/rewrite command with read-before-write freshness checks for existing files. |
 | `bash` | Implemented TypeScript command runner with timeout, output caps, background task support, and output persistence. |
-| `task_stop` | Implemented TypeScript background task stop command scoped to Lin-created bash tasks. |
+| `bash_stop` | Implemented TypeScript background task stop command scoped to Lin-created bash tasks. |
 | `web_search` | Needed web search adapter: provider-backed search or embedded-browser SERP extraction, host permission scope, rate limiting, structured hints. |
 | `web_fetch` | Needed URL fetch adapter: TypeScript HTTP and/or embedded browser session fetch, HTML-to-markdown extraction, pagination, find mode, structured hints. |
 
@@ -2886,7 +2887,7 @@ Read-only tools run immediately when their permission scope is already allowed:
 - `file_glob`
 - `file_grep`
 - `past_chats`
-- `operation_history(action: "list")`
+- `outline_undo_stack(action: "list")`
 
 Web tools are also read-only, but may be blocked by host/offline policy:
 
@@ -2898,11 +2899,11 @@ Mutating tools still pass through the global permission layer:
 - `node_create`
 - `node_edit`
 - `node_delete`
-- `operation_history(action: "undo" | "redo")`
+- `outline_undo_stack(action: "undo" | "redo")`
 - `file_edit`
 - `file_write`
 - `bash`
-- `task_stop`
+- `bash_stop`
 
 How risk maps to allow / ask / deny (broad node/file edits, user-origin
 undo/redo, risky shell, exfiltration redlines, permissive-mode behavior) is owned
