@@ -40,7 +40,8 @@ decision routing, exceptions, and validation.
   includes duplicate, missing, unexpected, and incomplete class rows. The
   calibration ledger uses unique contiguous `CAxx` ids,
   no malformed finding rows, those same classes, and 100% evidence coverage with
-  no broken local evidence references;
+  no broken local evidence references. Its row drift summary includes duplicate
+  ids, malformed rows, and missing ids;
   component coverage is at least 80%; Exception Registry rows are well-formed
   with 100% evidence coverage and no broken local evidence references; raw colour
   literals outside foundation token declarations stay 0 after named exceptions;

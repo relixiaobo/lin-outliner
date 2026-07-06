@@ -1507,6 +1507,11 @@ function main() {
     }`);
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
     console.log(`  malformed calibration rows: ${metrics.calibrationAudit.malformedCalibrationRows.length}`);
+    console.log(`  calibration row drift: ${
+      metrics.calibrationAudit.duplicateCalibrationIds.length
+      + metrics.calibrationAudit.malformedCalibrationRows.length
+      + metrics.calibrationAudit.missingCalibrationIds.length
+    }`);
     console.log(`  malformed open decision rows: ${metrics.calibrationAudit.malformedOpenDecisionRows.length}`);
     console.log(`  open decision row drift: ${
       metrics.calibrationAudit.duplicateOpenDesignDecisionAreas.length
