@@ -38,8 +38,8 @@ decision routing, exceptions, and validation.
   response cells, and the calibration ledger uses unique contiguous `CAxx` ids,
   no malformed finding rows, those same classes, and 100% evidence coverage with
   no broken local evidence references;
-  component coverage is at least 80%; Exception Registry evidence coverage is
-  100% with no broken local evidence references; raw colour
+  component coverage is at least 80%; Exception Registry rows are well-formed
+  with 100% evidence coverage and no broken local evidence references; raw colour
   literals outside foundation token declarations stay 0 after named exceptions;
   and the runtime surface matrix remains discoverable with unique case names and
   real light/dark theme variants. The
@@ -105,11 +105,11 @@ decision routing, exceptions, and validation.
   local references so named exceptions and Derived decisions do not keep passing
   after their proof files move or disappear.
 - **Named exception summaries.** The calibration audit's Named Exceptions Kept
-  table is a summary, not a second source of truth. Every Kernel Exception
-  Registry entry must appear there, and any non-kernel entry must be named in the
-  metrics script as a local calibration exception. The metrics script fails
-  missing registry entries, unregistered summary entries, and missing local
-  entries.
+  table is a well-formed summary, not a second source of truth. Every Kernel
+  Exception Registry entry must appear there, and any non-kernel entry must be
+  named in the metrics script as a local calibration exception. The metrics
+  script fails malformed summary rows, missing registry entries, unregistered
+  summary entries, and missing local entries.
 
 ## Validation
 

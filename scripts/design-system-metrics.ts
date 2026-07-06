@@ -337,6 +337,20 @@ function exceptionRegistryRows() {
     }));
 }
 
+function malformedExceptionRegistryRows(): string[] {
+  const kernel = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
+  const start = kernel.indexOf('## Exception Registry');
+  const end = kernel.indexOf('## Foundations', start);
+  const section = start >= 0 && end > start ? kernel.slice(start, end) : '';
+  return section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('| '))
+    .filter((line) => line !== '| Exception | Scope | Authority | Evidence |' && !line.startsWith('| ---'))
+    .filter((line) => !/^\| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/.test(line))
+    .sort();
+}
+
 function calibrationNamedExceptionRows(): Map<string, { scope: string; evidence: string }> {
   const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
   const start = source.indexOf('## Named Exceptions Kept');
@@ -354,6 +368,20 @@ function calibrationNamedExceptionRows(): Map<string, { scope: string; evidence:
       ] as const)
       .filter(([name]) => Boolean(name)),
   );
+}
+
+function malformedCalibrationNamedExceptionRows(): string[] {
+  const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
+  const start = source.indexOf('## Named Exceptions Kept');
+  const end = source.indexOf('## Native-Control Exceptions', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('| '))
+    .filter((line) => line !== '| Exception | Scope | Evidence |' && !line.startsWith('| ---'))
+    .filter((line) => !/^\| (.+?) \| (.+?) \| (.+?) \|$/.test(line))
+    .sort();
 }
 
 function calibrationClassificationRows() {
@@ -420,8 +448,10 @@ function malformedDecisionAuditRows(): string[] {
 
 function exceptionEvidenceMetrics() {
   const rows = exceptionRegistryRows();
+  const malformedRegistryRows = malformedExceptionRegistryRows();
   const registryNames = new Set(rows.map((row) => row.name));
   const calibrationNames = calibrationNamedExceptionRows();
+  const malformedNamedExceptionRows = malformedCalibrationNamedExceptionRows();
   const evidenceRows = rows.filter((row) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(row.evidence));
   const brokenReferences = new Set<string>();
   for (const row of rows) {
@@ -435,12 +465,14 @@ function exceptionEvidenceMetrics() {
   }
   return {
     exceptionRows: rows.length,
+    malformedRegistryRows,
     exceptionEvidenceRows: evidenceRows.length,
     exceptionEvidenceCoverage: rows.length === 0 ? 1 : Number((evidenceRows.length / rows.length).toFixed(3)),
     exceptionBrokenReferences: [...brokenReferences].sort(),
     registryExceptionsMissingFromCalibration: [...registryNames]
       .filter((name) => !calibrationNames.has(name))
       .sort(),
+    malformedNamedExceptionRows,
     calibrationExceptionsMissingFromRegistry: [...calibrationNames.keys()]
       .filter((name) => !registryNames.has(name) && !localCalibrationExceptionNames.has(name))
       .sort(),
@@ -939,11 +971,13 @@ function main() {
     }`);
     console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
+    console.log(`  malformed exception registry rows: ${metrics.exceptions.malformedRegistryRows.length}`);
     console.log(`  exception broken refs: ${metrics.exceptions.exceptionBrokenReferences.length}`);
     console.log(`  named exception summary drift: ${
       metrics.exceptions.registryExceptionsMissingFromCalibration.length
       + metrics.exceptions.calibrationExceptionsMissingFromRegistry.length
       + metrics.exceptions.localCalibrationExceptionEntriesMissing.length
+      + metrics.exceptions.malformedNamedExceptionRows.length
     }`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
     console.log(`  raw functional colors outside tokens: ${metrics.tokens.rawFunctionalColorOutsideTokenDeclarations}`);
@@ -1048,11 +1082,17 @@ function main() {
     if (metrics.exceptions.exceptionEvidenceCoverage < 1) {
       failures.push(`exception evidence ${metrics.exceptions.exceptionEvidenceCoverage} < 1`);
     }
+    if (metrics.exceptions.malformedRegistryRows.length > 0) {
+      failures.push(`malformed exception registry rows: ${metrics.exceptions.malformedRegistryRows.join(', ')}`);
+    }
     if (metrics.exceptions.exceptionBrokenReferences.length > 0) {
       failures.push(`exception evidence broken refs: ${metrics.exceptions.exceptionBrokenReferences.join(', ')}`);
     }
     if (metrics.exceptions.registryExceptionsMissingFromCalibration.length > 0) {
       failures.push(`registry exceptions missing from calibration: ${metrics.exceptions.registryExceptionsMissingFromCalibration.join(', ')}`);
+    }
+    if (metrics.exceptions.malformedNamedExceptionRows.length > 0) {
+      failures.push(`malformed named exception rows: ${metrics.exceptions.malformedNamedExceptionRows.join(', ')}`);
     }
     if (metrics.exceptions.calibrationExceptionsMissingFromRegistry.length > 0) {
       failures.push(`calibration exceptions missing from registry: ${metrics.exceptions.calibrationExceptionsMissingFromRegistry.join(', ')}`);
