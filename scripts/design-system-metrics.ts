@@ -898,6 +898,13 @@ function decisionAuditMetrics() {
     .filter((id, index) => rowIds.indexOf(id) !== index)
     .filter((id, index, ids) => ids.indexOf(id) === index)
     .sort();
+  const duplicateDecisionTexts = duplicateValues(
+    rows.map((row) => row.decision.trim()).filter(Boolean),
+  );
+  const incompleteDecisionRows = rows
+    .filter((row) => !row.decision.trim() || !row.derivesFrom.trim() || !row.evidence.trim() || !row.result.trim())
+    .map((row) => row.id || 'missing id')
+    .sort();
   const maxDecisionId = Math.max(
     DECISION_AUDIT_MIN_ROWS,
     ...rowIds.map((id) => Number(id.slice(1))).filter((value) => Number.isFinite(value)),
@@ -932,6 +939,8 @@ function decisionAuditMetrics() {
     decisionRowMinimumTarget: DECISION_AUDIT_MIN_ROWS,
     malformedDecisionRows,
     duplicateDecisionIds,
+    duplicateDecisionTexts,
+    incompleteDecisionRows,
     missingDecisionIds,
     derivedDecisionRows: derivedRows.length,
     exceptionDecisionRows: exceptionRows.length,
@@ -1319,6 +1328,8 @@ function main() {
       decisionRowMinimumTarget: DECISION_AUDIT_MIN_ROWS,
       decisionDerivationTarget: DECISION_DERIVATION_TARGET,
       decisionEvidenceCoverageTarget: DECISION_EVIDENCE_COVERAGE_TARGET,
+      duplicateDecisionTextsTarget: 0,
+      incompleteDecisionRowsTarget: 0,
       componentCoverageTarget: COMPONENT_COVERAGE_TARGET,
       componentSourceReferencesMinimumTarget: COMPONENT_SOURCE_REFERENCES_MIN,
       malformedComponentDocRowsTarget: 0,
@@ -1363,6 +1374,10 @@ function main() {
     console.log(`  invalid calibration classes: ${metrics.calibrationAudit.invalidCalibrationClasses.length}`);
     console.log(`  decision rows: ${metrics.decisionAudit.decisionRows}/${DECISION_AUDIT_MIN_ROWS}`);
     console.log(`  malformed decision rows: ${metrics.decisionAudit.malformedDecisionRows.length}`);
+    console.log(`  decision row drift: ${
+      metrics.decisionAudit.duplicateDecisionTexts.length
+      + metrics.decisionAudit.incompleteDecisionRows.length
+    }`);
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
     console.log(`  decision evidence: ${(metrics.decisionAudit.decisionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  decision broken refs: ${metrics.decisionAudit.decisionBrokenReferences.length}`);
@@ -1493,6 +1508,12 @@ function main() {
     }
     if (metrics.decisionAudit.malformedDecisionRows.length > 0) {
       failures.push(`malformed decision rows: ${metrics.decisionAudit.malformedDecisionRows.join(', ')}`);
+    }
+    if (metrics.decisionAudit.duplicateDecisionTexts.length > 0) {
+      failures.push(`duplicate decision texts: ${metrics.decisionAudit.duplicateDecisionTexts.join(', ')}`);
+    }
+    if (metrics.decisionAudit.incompleteDecisionRows.length > 0) {
+      failures.push(`incomplete decision rows: ${metrics.decisionAudit.incompleteDecisionRows.join(', ')}`);
     }
     if (metrics.decisionAudit.missingDecisionIds.length > 0) {
       failures.push(`missing decision ids: ${metrics.decisionAudit.missingDecisionIds.join(', ')}`);
