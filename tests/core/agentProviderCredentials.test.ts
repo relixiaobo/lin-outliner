@@ -100,6 +100,7 @@ beforeEach(async () => {
       api: 'anthropic-messages',
       provider: 'anthropic',
       reasoning: true,
+      thinkingLevelMap: { off: null, minimal: null, low: 'LOW', medium: null, high: 'HIGH' },
       input: ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 200000,
@@ -162,6 +163,15 @@ requires_openai_auth = true
 }
 
 describe('provider credential resolver', () => {
+  test('provider settings preserve model-specific effort levels and display labels', async () => {
+    const view = await getProviderSettings();
+    const model = view.availableProviders
+      .find((candidate) => candidate.providerId === 'anthropic')
+      ?.models.find((candidate) => candidate.id === 'claude-test');
+    expect(model?.supportedThinkingLevels).toEqual(['low', 'high']);
+    expect(model?.thinkingLevelLabels).toEqual({ low: 'LOW', high: 'HIGH' });
+  });
+
   test('mirrors the CC Switch Codex config without requiring Local Proxy', async () => {
     await writeCcSwitchInstallMarker();
     await writeCodexMirrorConfig({ apiKey: 'codex-mirror-key' });

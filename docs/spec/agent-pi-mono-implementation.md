@@ -328,6 +328,11 @@ Model and effort are owned by the agent identity that actually runs:
 The Settings → Agent profile selector (`AgentModelEffortSelector`) is
 **capability-driven**: pick a provider, then a model; the
 effort options are derived from that model's `supportedThinkingLevels`. The
+model option also carries model-specific effort display labels derived from the
+provider adapter's thinking map for every canonical level, so a model that exposes
+only a small subset such as low/high, or a highest level called `XHigh` / `Max`,
+displays that model's levels without writing a provider-specific string into the
+agent profile. The
 composer chip presents the same catalog as the Codex-style menu above instead, but
 writes the identical values. A provider is a model-selection capability only when
 its connection is both enabled and credentialed/reachable; disabled providers stay

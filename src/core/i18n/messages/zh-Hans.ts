@@ -884,7 +884,7 @@ commandPalette: {
         low: '低',
         medium: '中',
         high: '高',
-        max: '最高',
+        xhigh: 'XHigh',
       },
       editQueuedSteer: '编辑排队的引导',
       cancelQueuedSteer: '取消排队的引导',
