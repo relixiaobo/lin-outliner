@@ -1520,6 +1520,9 @@ function main() {
       metrics.components.malformedComponentDocRows.length
       + metrics.components.duplicateDocumentedComponentNames.length
       + metrics.components.incompleteComponentDocRows.length
+      + metrics.components.componentSourceBrokenReferences.length
+      + metrics.components.componentSourceAmbiguousReferences.length
+      + metrics.components.componentContractBrokenReferences.length
     }`);
     console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
     console.log(`  native control audit drift: ${

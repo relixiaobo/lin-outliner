@@ -72,7 +72,10 @@ decision routing, exceptions, and validation.
   must be unique, every row must carry a component code span, a `Sources` code
   span, and a linked contract owner. Every `Sources` code span must resolve to a
   current renderer CSS/TS/TSX file with no ambiguous short-name match, and every
-  contract link must resolve to a current design-system markdown target.
+  contract link must resolve to a current design-system markdown target. The
+  component doc drift summary includes row shape, duplicate names, missing
+  semantic columns, broken source references, ambiguous source references, and
+  broken contract links.
 - **Calibration audit.** A design-system calibration pass records findings in
   [calibration-audit.md](./calibration-audit.md) as code drift, spec drift, named
   exception, or open design decision. The audit's open-design-decision table must
