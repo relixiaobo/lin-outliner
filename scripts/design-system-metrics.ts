@@ -294,6 +294,26 @@ function evidenceCodePathReferences(markdown: string): string[] {
     });
 }
 
+function brokenLocalEvidenceReferences(
+  sourceFile: string,
+  label: string,
+  markdown: string,
+  codePathExists: (reference: string) => boolean,
+): string[] {
+  const brokenReferences: string[] = [];
+  for (const target of markdownLinkTargets(markdown)) {
+    if (!localMarkdownTargetExists(sourceFile, target)) {
+      brokenReferences.push(`${label}: ${target}`);
+    }
+  }
+  for (const reference of evidenceCodePathReferences(markdown)) {
+    if (!codePathExists(reference)) {
+      brokenReferences.push(`${label}: ${reference}`);
+    }
+  }
+  return brokenReferences;
+}
+
 function exceptionRegistryRows() {
   const kernel = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
   const start = kernel.indexOf('## Exception Registry');
@@ -375,16 +395,12 @@ function exceptionEvidenceMetrics() {
   const brokenReferences = new Set<string>();
   for (const row of rows) {
     const name = row.name || 'unknown exception';
-    for (const target of markdownLinkTargets(`${row.authority} ${row.evidence}`)) {
-      if (!localMarkdownTargetExists(DESIGN_SYSTEM_KERNEL, target)) {
-        brokenReferences.add(`${name}: ${target}`);
-      }
-    }
-    for (const reference of evidenceCodePathReferences(row.evidence)) {
-      if (!existsSync(join(ROOT, reference))) {
-        brokenReferences.add(`${name}: ${reference}`);
-      }
-    }
+    brokenLocalEvidenceReferences(
+      DESIGN_SYSTEM_KERNEL,
+      name,
+      `${row.authority} ${row.evidence}`,
+      (reference) => existsSync(join(ROOT, reference)),
+    ).forEach((reference) => brokenReferences.add(reference));
   }
   return {
     exceptionRows: rows.length,
@@ -441,16 +457,12 @@ function calibrationAuditMetrics() {
   const evidenceRows = rows.filter((row) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(row.evidence));
   const brokenReferences = new Set<string>();
   for (const row of rows) {
-    for (const target of markdownLinkTargets(row.evidence)) {
-      if (!localMarkdownTargetExists(CALIBRATION_AUDIT, target)) {
-        brokenReferences.add(`${row.id} ${row.finding}: ${target}`);
-      }
-    }
-    for (const reference of evidenceCodePathReferences(row.evidence)) {
-      if (!localEvidenceCodePathExists(reference)) {
-        brokenReferences.add(`${row.id} ${row.finding}: ${reference}`);
-      }
-    }
+    brokenLocalEvidenceReferences(
+      CALIBRATION_AUDIT,
+      `${row.id} ${row.finding}`,
+      row.evidence,
+      localEvidenceCodePathExists,
+    ).forEach((reference) => brokenReferences.add(reference));
   }
 
   return {
@@ -498,16 +510,12 @@ function decisionAuditMetrics() {
     .sort();
   const brokenReferences = new Set<string>();
   for (const row of rows) {
-    for (const target of markdownLinkTargets(`${row.derivesFrom} ${row.evidence}`)) {
-      if (!localMarkdownTargetExists(DECISION_AUDIT, target)) {
-        brokenReferences.add(`${row.id} ${row.decision}: ${target}`);
-      }
-    }
-    for (const reference of evidenceCodePathReferences(row.evidence)) {
-      if (!existsSync(join(ROOT, reference))) {
-        brokenReferences.add(`${row.id} ${row.decision}: ${reference}`);
-      }
-    }
+    brokenLocalEvidenceReferences(
+      DECISION_AUDIT,
+      `${row.id} ${row.decision}`,
+      `${row.derivesFrom} ${row.evidence}`,
+      (reference) => existsSync(join(ROOT, reference)),
+    ).forEach((reference) => brokenReferences.add(reference));
   }
   return {
     decisionRows: rows.length,

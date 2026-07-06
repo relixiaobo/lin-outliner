@@ -95,11 +95,12 @@ decision routing, exceptions, and validation.
   evidence. The metrics script fails undocumented entries, stale entries whose
   source literal no longer exists, and same-file/same-literal uses outside the
   named source context.
-- **Audit evidence references.** Exception Registry authority/evidence links,
-  decision-audit links, and path-like evidence code spans must resolve to current
-  repo files. The metrics script reports and fails broken local references so
-  named exceptions and Derived decisions do not keep passing after their proof
-  files move or disappear.
+- **Audit local references.** Exception Registry authority/evidence text,
+  decision-audit derivation/evidence text, and calibration evidence text must
+  resolve any local links and path-like code spans to current repo files. The
+  metrics script reports and fails broken local references so named exceptions
+  and Derived decisions do not keep passing after their proof files move or
+  disappear.
 - **Named exception summaries.** The calibration audit's Named Exceptions Kept
   table is a summary, not a second source of truth. Every Kernel Exception
   Registry entry must appear there, and any non-kernel entry must be named in the
