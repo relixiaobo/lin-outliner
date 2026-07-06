@@ -277,6 +277,13 @@ function malformedSourceMapRows(): string[] {
     .sort();
 }
 
+function sourceMapRowReferenceCount(row: { productSources: string }): number {
+  return [...row.productSources.matchAll(/`([^`]+)`/g)]
+    .map((match) => match[1]?.trim() ?? '')
+    .filter(Boolean)
+    .length;
+}
+
 function sourceMapReferenceMatches(reference: string): string[] {
   const rendererFiles = filesByPattern(RENDERER_DIR, /\.(css|ts|tsx)$/)
     .map((file) => relative(ROOT, file));
@@ -293,6 +300,11 @@ function sourceMapReferenceMatches(reference: string): string[] {
 function sourceMapMetrics() {
   const rows = sourceMapRows();
   const malformedRows = malformedSourceMapRows();
+  const duplicateSourceMapAreas = duplicateValues(rows.map((row) => row.area));
+  const incompleteSourceMapRows = rows
+    .filter((row) => !row.area || !row.productSources.trim() || !row.contract.trim() || sourceMapRowReferenceCount(row) === 0)
+    .map((row) => row.area || 'missing area')
+    .sort();
   const brokenReferences: string[] = [];
   const ambiguousReferences: string[] = [];
   let referenceCount = 0;
@@ -313,6 +325,8 @@ function sourceMapMetrics() {
     sourceMapRows: rows.length,
     sourceMapReferences: referenceCount,
     malformedSourceMapRows: malformedRows,
+    duplicateSourceMapAreas,
+    incompleteSourceMapRows,
     sourceMapBrokenReferences: brokenReferences.sort(),
     sourceMapAmbiguousReferences: ambiguousReferences.sort(),
   };
@@ -1192,6 +1206,8 @@ function main() {
       sourceMapRowsMinimumTarget: 1,
       sourceMapReferencesMinimumTarget: 1,
       malformedSourceMapRowsTarget: 0,
+      duplicateSourceMapAreasTarget: 0,
+      incompleteSourceMapRowsTarget: 0,
       sourceMapBrokenReferencesTarget: 0,
       sourceMapAmbiguousReferencesTarget: 0,
       calibrationClassificationRowsTarget: calibrationFindingClassNames.length,
@@ -1225,6 +1241,7 @@ function main() {
     console.log(`  design-system doc refs: ${metrics.docReferences.designSystemDocReferences}`);
     console.log(`  design-system doc broken refs: ${metrics.docReferences.designSystemDocBrokenReferences.length}`);
     console.log(`  source map rows: ${metrics.sourceMap.sourceMapRows}`);
+    console.log(`  source map incomplete rows: ${metrics.sourceMap.incompleteSourceMapRows.length}`);
     console.log(`  source map broken refs: ${metrics.sourceMap.sourceMapBrokenReferences.length}`);
     console.log(`  calibration class rows: ${metrics.calibrationAudit.calibrationClassificationRows}`);
     console.log(`  incomplete calibration class rows: ${metrics.calibrationAudit.incompleteClassificationModelRows.length}`);
@@ -1294,6 +1311,12 @@ function main() {
     }
     if (metrics.sourceMap.malformedSourceMapRows.length > 0) {
       failures.push(`malformed source map rows: ${metrics.sourceMap.malformedSourceMapRows.join(', ')}`);
+    }
+    if (metrics.sourceMap.duplicateSourceMapAreas.length > 0) {
+      failures.push(`duplicate source map areas: ${metrics.sourceMap.duplicateSourceMapAreas.join(', ')}`);
+    }
+    if (metrics.sourceMap.incompleteSourceMapRows.length > 0) {
+      failures.push(`incomplete source map rows: ${metrics.sourceMap.incompleteSourceMapRows.join(', ')}`);
     }
     if (metrics.sourceMap.sourceMapBrokenReferences.length > 0) {
       failures.push(`source map broken refs: ${metrics.sourceMap.sourceMapBrokenReferences.join(', ')}`);

@@ -49,9 +49,11 @@ decision routing, exceptions, and validation.
   counts are reported as cases and light/dark theme checks, not as a completeness
   claim for every possible UI state.
 - **Source map accountability.** The kernel Source Map is the renderer UI audit's
-  entry index. Its table rows must stay well-formed, and every Product Sources
-  code span must resolve to a current renderer CSS/TS/TSX file; short names must
-  resolve uniquely unless the code span is an intentional wildcard.
+  entry index. Its table rows must stay well-formed, every Area must be unique,
+  every row must carry a Product Sources code span and a contract, and every
+  Product Sources code span must resolve to a current renderer CSS/TS/TSX file;
+  short names must resolve uniquely unless the code span is an intentional
+  wildcard.
 - **Current spec reference accountability.** Current design-system contract docs
   must keep path-like code spans resolvable. This covers the kernel, foundations,
   patterns, surfaces, components, implementation notes, and decision audit. The
