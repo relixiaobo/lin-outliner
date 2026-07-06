@@ -1499,7 +1499,12 @@ function main() {
       + metrics.sourceMap.sourceMapContractBrokenReferences.length
     }`);
     console.log(`  calibration class rows: ${metrics.calibrationAudit.calibrationClassificationRows}`);
-    console.log(`  incomplete calibration class rows: ${metrics.calibrationAudit.incompleteClassificationModelRows.length}`);
+    console.log(`  calibration class drift: ${
+      metrics.calibrationAudit.duplicateClassificationModelClasses.length
+      + metrics.calibrationAudit.missingClassificationModelClasses.length
+      + metrics.calibrationAudit.unexpectedClassificationModelClasses.length
+      + metrics.calibrationAudit.incompleteClassificationModelRows.length
+    }`);
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
     console.log(`  malformed calibration rows: ${metrics.calibrationAudit.malformedCalibrationRows.length}`);
     console.log(`  malformed open decision rows: ${metrics.calibrationAudit.malformedOpenDecisionRows.length}`);

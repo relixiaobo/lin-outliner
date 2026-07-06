@@ -35,9 +35,10 @@ decision routing, exceptions, and validation.
   evidence coverage with no broken local evidence references, and names a kernel
   exception for every Exception row. The decision row drift summary includes
   duplicate ids, duplicate decision text, incomplete rows, and missing ids; the
-  calibration Classification Model
-  table stays limited to the four ratified classes with non-empty meaning and
-  response cells, and the calibration ledger uses unique contiguous `CAxx` ids,
+  calibration Classification Model table stays limited to the four ratified
+  classes with non-empty meaning and response cells, and its drift summary
+  includes duplicate, missing, unexpected, and incomplete class rows. The
+  calibration ledger uses unique contiguous `CAxx` ids,
   no malformed finding rows, those same classes, and 100% evidence coverage with
   no broken local evidence references;
   component coverage is at least 80%; Exception Registry rows are well-formed
