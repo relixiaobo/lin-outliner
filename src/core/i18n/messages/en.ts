@@ -958,7 +958,7 @@ commandPalette: {
         low: 'Low',
         medium: 'Medium',
         high: 'High',
-        max: 'Max',
+        xhigh: 'XHigh',
       },
       editQueuedSteer: 'Edit queued steer',
       cancelQueuedSteer: 'Cancel queued steer',

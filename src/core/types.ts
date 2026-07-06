@@ -767,6 +767,7 @@ export interface AgentConversationListMeta {
 }
 
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type AgentReasoningLevelLabels = Partial<Record<AgentReasoningLevel, string>>;
 /**
  * The reasoning ladder, lowest → highest. The single ordered source for effort
  * option ordering (renderer) and nearest-supported-level coercion (runtime), so the
@@ -952,6 +953,13 @@ export interface AgentModelOption {
   name: string;
   reasoning: boolean;
   supportedThinkingLevels: AgentReasoningLevel[];
+  /**
+   * Optional model-specific display labels for canonical levels. Saved profile
+   * values still use `supportedThinkingLevels`; these labels only reflect the
+   * provider/model's own effort naming (for example `LOW`, `HIGH`, `xhigh`, or
+   * `max`).
+   */
+  thinkingLevelLabels?: AgentReasoningLevelLabels;
   contextWindow: number;
   maxTokens: number;
 }

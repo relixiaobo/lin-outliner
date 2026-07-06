@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { composeProviderQualifiedModel } from '../../../core/agentModelId';
-import { defaultThinkingLevelFor, reasoningLevelLabelKey } from '../../../core/agentReasoning';
+import { defaultThinkingLevelFor } from '../../../core/agentReasoning';
 import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type { AgentModelOption, AgentProviderSettingsView, AgentReasoningLevel } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
@@ -10,6 +10,7 @@ import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from '../icons';
 import { parseModelSelection } from './AgentModelEffortSelector';
 import { isProviderUsable, resolveUsableActiveProvider } from './providerUsability';
+import { reasoningLevelDisplayLabel } from './reasoningLabels';
 
 interface AgentComposerModelControlProps {
   settings: AgentProviderSettingsView | null;
@@ -49,7 +50,6 @@ function AgentComposerModelControlImpl({
 }: AgentComposerModelControlProps) {
   const composer = useT().agent.composer;
   const reasoningCopy = composer.reasoningLevels;
-  const reasoningLabel = (level: AgentReasoningLevel) => reasoningCopy[reasoningLevelLabelKey(level)];
 
   const [open, setOpen] = useState(false);
   const [submenu, setSubmenu] = useState<OpenSubmenu>('none');
@@ -62,6 +62,9 @@ function AgentComposerModelControlImpl({
 
   const menu = useMemo(() => deriveModelMenu(settings, model), [settings, model]);
   const { effectiveProviderId, effectiveModelId, effectiveModelOption, groups, modelCount } = menu;
+  const reasoningLabel = (level: AgentReasoningLevel, option = effectiveModelOption) => (
+    reasoningLevelDisplayLabel(level, option, reasoningCopy)
+  );
 
   const overlayStyle = useAnchoredOverlay(menuRef, {
     anchorRef,

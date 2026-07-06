@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_AGENT_THINKING_LEVEL, defaultThinkingLevelFor, nearestSupportedLevel } from '../../src/core/agentReasoning';
+import { DEFAULT_AGENT_THINKING_LEVEL, defaultThinkingLevelFor, nearestSupportedLevel, reasoningLevelLabelKey } from '../../src/core/agentReasoning';
 
 describe('agentReasoning', () => {
   test('the default level is medium', () => {
@@ -26,5 +26,9 @@ describe('agentReasoning', () => {
   test('defaultThinkingLevelFor is off for a non-reasoning model', () => {
     expect(defaultThinkingLevelFor([])).toBe('off');
     expect(defaultThinkingLevelFor(['off'])).toBe('off');
+  });
+
+  test('xhigh keeps its canonical label key instead of aliasing to max', () => {
+    expect(reasoningLevelLabelKey('xhigh')).toBe('xhigh');
   });
 });

@@ -76,6 +76,12 @@ function optionValues(el: HTMLSelectElement): string[] {
   return Array.from(el.querySelectorAll('option')).map((option) => option.getAttribute('value') ?? '');
 }
 
+function optionLabel(el: HTMLSelectElement, value: string): string | undefined {
+  return Array.from(el.querySelectorAll('option'))
+    .find((option) => (option.getAttribute('value') ?? '') === value)
+    ?.textContent ?? undefined;
+}
+
 function settings(): AgentProviderSettingsView {
   return {
     activeProviderId: 'openai',
@@ -148,6 +154,52 @@ describe('AgentModelEffortSelector', () => {
     expect(optionValues(select(rendered, 'Effort')).sort()).toEqual(['', 'high', 'low', 'medium', 'off']);
     await changeSelect(rendered, 'Effort', 'high');
     expect(savedEffort).toBe('high');
+  });
+
+  test('the effort option label follows the selected model xhigh alias', () => {
+    const view = settings();
+    view.availableProviders[0]!.models[0] = {
+      id: 'gpt-max',
+      name: 'GPT Max',
+      reasoning: true,
+      supportedThinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh'],
+      thinkingLevelLabels: { xhigh: 'max' },
+      contextWindow: 0,
+      maxTokens: 0,
+    };
+    const rendered = renderComponent(
+      <AgentModelEffortSelector
+        settings={view} model="openai/gpt-max" effort="xhigh" disabled={false}
+        {...LABELS} onModelChange={NOOP} onEffortChange={NOOP}
+      />,
+    );
+    const effort = select(rendered, 'Effort');
+    expect(optionValues(effort)).toContain('xhigh');
+    expect(optionLabel(effort, 'xhigh')).toBe('Max');
+  });
+
+  test('the effort options omit unsupported model levels and label every mapped level', () => {
+    const view = settings();
+    view.availableProviders[0]!.models[0] = {
+      id: 'gemini-thinking',
+      name: 'Gemini Thinking',
+      reasoning: true,
+      supportedThinkingLevels: ['low', 'high'],
+      thinkingLevelLabels: { low: 'LOW', high: 'HIGH' },
+      contextWindow: 0,
+      maxTokens: 0,
+    };
+    const rendered = renderComponent(
+      <AgentModelEffortSelector
+        settings={view} model="openai/gemini-thinking" effort="high" disabled={false}
+        {...LABELS} onModelChange={NOOP} onEffortChange={NOOP}
+      />,
+    );
+    const effort = select(rendered, 'Effort');
+    expect(optionValues(effort)).toEqual(['', 'low', 'high']);
+    expect(optionLabel(effort, 'low')).toBe('Low');
+    expect(optionLabel(effort, 'high')).toBe('High');
+    expect(optionLabel(effort, 'medium')).toBeUndefined();
   });
 
   test('a bare colon-bearing Bedrock model id is NOT mis-split into a phantom provider', () => {

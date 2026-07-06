@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
-import { reasoningLevelLabelKey } from '../../../core/agentReasoning';
 import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type { AgentProviderSettingsView, AgentReasoningLevel } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
@@ -8,6 +7,7 @@ import { Field } from '../primitives/Field';
 import { Input } from '../primitives/Input';
 import { SelectControl } from '../primitives/SelectControl';
 import { isProviderUsable, resolveUsableActiveProvider } from './providerUsability';
+import { reasoningLevelDisplayLabel } from './reasoningLabels';
 
 // Capability-driven model + effort picker for an agent profile (provider-connection-
 // model-ownership #256). A provider is a connection; the model/effort that runs is
@@ -66,7 +66,6 @@ export function AgentModelEffortSelector({
 }: AgentModelEffortSelectorProps) {
   const t = useT();
   const reasoningCopy = t.agent.composer.reasoningLevels;
-  const reasoningLabel = (level: AgentReasoningLevel) => reasoningCopy[reasoningLevelLabelKey(level)];
 
   const activeProviderId = settings ? resolveUsableActiveProvider(settings)?.providerId ?? '' : '';
   // A provider id is "known" (eligible for the `:` qualifier split) when it is a
@@ -236,7 +235,7 @@ export function AgentModelEffortSelector({
         >
           <option value="">{inheritLabel}</option>
           {AGENT_REASONING_LADDER.filter((level) => supportedLevels.includes(level)).map((level) => (
-            <option key={level} value={level}>{reasoningLabel(level)}</option>
+            <option key={level} value={level}>{reasoningLevelDisplayLabel(level, selectedModelOption, reasoningCopy)}</option>
           ))}
         </SelectControl>
       </Field>

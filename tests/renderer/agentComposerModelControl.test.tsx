@@ -235,6 +235,61 @@ describe('AgentComposerModelControl', () => {
     expect(savedEffort).toBe('high');
   });
 
+  test('xhigh uses the selected model provider label instead of a fixed Max label', async () => {
+    const view = settings();
+    view.availableProviders[0]!.models = [
+      {
+        id: 'gpt-codex',
+        name: 'GPT Codex',
+        reasoning: true,
+        supportedThinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh'],
+        thinkingLevelLabels: { xhigh: 'xhigh' },
+        contextWindow: 0,
+        maxTokens: 0,
+      },
+    ];
+    const rendered = renderComponent(
+      <AgentComposerModelControl
+        settings={view} model="openai/gpt-codex" effort="xhigh" disabled={false}
+        onModelChange={NOOP} onEffortChange={NOOP}
+      />,
+    );
+    expect(rendered.container.querySelector('.agent-composer-reasoning-chip')?.textContent).toBe('XHigh');
+    await click(rendered, chip(rendered));
+    expect(triggerRow(rendered, 'Reasoning').querySelector('.agent-composer-model-item-meta')?.textContent).toBe('XHigh');
+    await click(rendered, triggerRow(rendered, 'Reasoning'));
+    expect(modelItem(rendered, 'XHigh')).toBeTruthy();
+    expect(() => modelItem(rendered, 'Max')).toThrow();
+  });
+
+  test('the reasoning submenu only shows the selected model levels and labels each mapped level', async () => {
+    const view = settings();
+    view.availableProviders[0]!.models = [
+      {
+        id: 'gemini-thinking',
+        name: 'Gemini Thinking',
+        reasoning: true,
+        supportedThinkingLevels: ['low', 'high'],
+        thinkingLevelLabels: { low: 'LOW', high: 'HIGH' },
+        contextWindow: 0,
+        maxTokens: 0,
+      },
+    ];
+    const rendered = renderComponent(
+      <AgentComposerModelControl
+        settings={view} model="openai/gemini-thinking" effort="high" disabled={false}
+        onModelChange={NOOP} onEffortChange={NOOP}
+      />,
+    );
+    expect(rendered.container.querySelector('.agent-composer-reasoning-chip')?.textContent).toBe('High');
+    await click(rendered, chip(rendered));
+    expect(triggerRow(rendered, 'Reasoning').querySelector('.agent-composer-model-item-meta')?.textContent).toBe('High');
+    await click(rendered, triggerRow(rendered, 'Reasoning'));
+    expect(modelItem(rendered, 'Low')).toBeTruthy();
+    expect(modelItem(rendered, 'High')).toBeTruthy();
+    expect(() => modelItem(rendered, 'Medium')).toThrow();
+  });
+
   test('the main menu shows the current model as a single row; the submenu lists all models', async () => {
     let saved = '';
     const rendered = renderComponent(

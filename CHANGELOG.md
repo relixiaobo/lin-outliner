@@ -427,6 +427,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Model-specific reasoning effort labels (PR #379, codex-4)** — agent model
+  options now carry optional display-only effort labels derived from each
+  provider model's thinking map while keeping persisted profile effort values
+  canonical. The composer model menu and Settings agent profile selector now
+  show only the selected model's supported reasoning levels and render labels
+  such as `XHigh`, `Max`, `LOW`, or `HIGH` without saving provider-specific
+  strings. **Gate (main):** code review found no reportable findings. Verified
+  with typecheck, core tests, renderer tests, docs check, and `git diff
+  --check`.
+
 - **Ask user question stepper polish (PR #378, codex-4)** — the
   multi-question `ask_user_question` composer stepper now uses compact
   `Input needed · 1/2` title-row progress, moves Back into an icon-only header
