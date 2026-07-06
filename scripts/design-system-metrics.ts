@@ -261,20 +261,20 @@ function localMarkdownTargetExists(sourceFile: string, target: string): boolean 
   return existsSync(join(dirname(sourceFile), path));
 }
 
-function fileNameExistsUnder(dir: string, fileName: string): boolean {
-  if (!existsSync(dir)) return false;
-  return readdirSync(dir, { withFileTypes: true }).some((entry) => {
+function fileNameMatchesUnder(dir: string, fileName: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) return fileNameExistsUnder(path, fileName);
-    return entry.isFile() && entry.name === fileName;
+    if (entry.isDirectory()) return fileNameMatchesUnder(path, fileName);
+    return entry.isFile() && entry.name === fileName ? [relative(ROOT, path)] : [];
   });
 }
 
-function localEvidenceCodePathExists(reference: string): boolean {
-  if (existsSync(join(ROOT, reference))) return true;
-  if (reference.includes('/')) return false;
+function localEvidenceCodePathMatches(reference: string): string[] {
+  if (existsSync(join(ROOT, reference))) return [reference];
+  if (reference.includes('/')) return [];
 
-  return [
+  const matches = [
     DESIGN_SYSTEM_DIR,
     join(ROOT, 'docs', 'spec'),
     join(ROOT, 'docs', 'plans'),
@@ -282,7 +282,12 @@ function localEvidenceCodePathExists(reference: string): boolean {
     join(ROOT, 'src', 'renderer'),
     join(ROOT, 'tests', 'e2e'),
     join(ROOT, 'tests', 'renderer'),
-  ].some((dir) => fileNameExistsUnder(dir, reference));
+  ].flatMap((dir) => fileNameMatchesUnder(dir, reference));
+  return [...new Set(matches)].sort();
+}
+
+function repoEvidenceCodePathMatches(reference: string): string[] {
+  return existsSync(join(ROOT, reference)) ? [reference] : [];
 }
 
 function evidenceCodePathReferences(markdown: string): string[] {
@@ -298,7 +303,7 @@ function brokenLocalEvidenceReferences(
   sourceFile: string,
   label: string,
   markdown: string,
-  codePathExists: (reference: string) => boolean,
+  codePathMatches: (reference: string) => string[],
 ): string[] {
   const brokenReferences: string[] = [];
   for (const target of markdownLinkTargets(markdown)) {
@@ -307,8 +312,11 @@ function brokenLocalEvidenceReferences(
     }
   }
   for (const reference of evidenceCodePathReferences(markdown)) {
-    if (!codePathExists(reference)) {
+    const matches = codePathMatches(reference);
+    if (matches.length === 0) {
       brokenReferences.push(`${label}: ${reference}`);
+    } else if (matches.length > 1) {
+      brokenReferences.push(`${label}: ${reference} matched multiple files (${matches.join(', ')})`);
     }
   }
   return brokenReferences;
@@ -399,7 +407,7 @@ function exceptionEvidenceMetrics() {
       DESIGN_SYSTEM_KERNEL,
       name,
       `${row.authority} ${row.evidence}`,
-      (reference) => existsSync(join(ROOT, reference)),
+      repoEvidenceCodePathMatches,
     ).forEach((reference) => brokenReferences.add(reference));
   }
   return {
@@ -461,7 +469,7 @@ function calibrationAuditMetrics() {
       CALIBRATION_AUDIT,
       `${row.id} ${row.finding}`,
       row.evidence,
-      localEvidenceCodePathExists,
+      localEvidenceCodePathMatches,
     ).forEach((reference) => brokenReferences.add(reference));
   }
 
@@ -514,7 +522,7 @@ function decisionAuditMetrics() {
       DECISION_AUDIT,
       `${row.id} ${row.decision}`,
       `${row.derivesFrom} ${row.evidence}`,
-      (reference) => existsSync(join(ROOT, reference)),
+      repoEvidenceCodePathMatches,
     ).forEach((reference) => brokenReferences.add(reference));
   }
   return {
