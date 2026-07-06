@@ -47,7 +47,7 @@ import {
 import { analyzeTextSearchQuery, type TextSearchQueryAnalysis } from './textSearchAnalyzer';
 import { buildReferenceSummary, type ReferenceSummary } from './references';
 import { cappedMultiplier } from './ranking';
-import { nodeIsInSubtree } from './treeUtils';
+import { collectDescendantIds, nodeIsInSubtree } from './treeUtils';
 import {
   nodeAccessRankingMultiplier,
   type NodeAccessStats,
@@ -207,6 +207,7 @@ interface SearchIndex {
   libraryId: NodeId;
   nodes: Map<NodeId, SearchNode>;
   allNodes: SearchNode[];
+  deletedNodeIds?: ReadonlySet<NodeId>;
 }
 
 interface SearchContext {
@@ -589,8 +590,9 @@ export function textSearchRecordForNodeMap(
 }
 
 function referenceSummaryForSearchIndex(index: SearchIndex): ReferenceSummary {
+  const deletedNodeIds = index.deletedNodeIds ?? deletedNodeIdSet(index.nodes);
   return buildReferenceSummary(index.nodes, {
-    isDeleted: (nodeId) => isInTrash(index, nodeId),
+    isDeleted: (nodeId) => deletedNodeIds.has(nodeId),
   });
 }
 
@@ -598,12 +600,21 @@ function indexSearchDocument(document: SearchDocument): SearchIndex {
   const allNodes = Array.isArray(document.nodes)
     ? document.nodes
     : Object.values(document.nodes);
+  const nodes = new Map(allNodes.map((node) => [node.id, node]));
   return {
     rootId: document.rootId,
     libraryId: 'libraryId' in document ? document.libraryId : LIBRARY_ID,
     allNodes,
-    nodes: new Map(allNodes.map((node) => [node.id, node])),
+    nodes,
+    deletedNodeIds: deletedNodeIdSet(nodes),
   };
+}
+
+function deletedNodeIdSet(nodes: ReadonlyMap<NodeId, SearchNode>): Set<NodeId> {
+  return new Set<NodeId>([
+    TRASH_ID,
+    ...collectDescendantIds(nodes, TRASH_ID),
+  ]);
 }
 
 function queryExprFromConditionNode(index: SearchIndex, conditionNode: QueryBearingNode): SearchQueryResolution {
@@ -1891,5 +1902,5 @@ function hasAncestorOfType(index: SearchIndex, nodeId: NodeId, type: SearchNode[
 }
 
 function isInTrash(index: SearchIndex, nodeId: NodeId): boolean {
-  return nodeIsInSubtree(index.nodes, nodeId, TRASH_ID);
+  return index.deletedNodeIds?.has(nodeId) ?? nodeIsInSubtree(index.nodes, nodeId, TRASH_ID);
 }
