@@ -8,7 +8,7 @@
 // it (it reads a structural node shape that `Node` and `NodeProjection` satisfy).
 
 import { buildReferenceSummary, type ReferenceSummary } from './references';
-import { nodeIsInSubtree } from './treeUtils';
+import { collectDescendantIds } from './treeUtils';
 import { TRASH_ID, type NodeId, type NodeType, type RefRole, type RichText } from './types';
 
 export const NAME_FIELD = 'sys:name';
@@ -125,8 +125,12 @@ function referenceSummaryForSystemFields(byId: SysFieldNodeMap, context?: System
   const cached = referenceSummaryCache.get(byId);
   if (cached) return cached;
 
+  const deletedNodeIds = new Set<NodeId>([
+    TRASH_ID,
+    ...collectDescendantIds(byId, TRASH_ID),
+  ]);
   const summary = buildReferenceSummary(byId, {
-    isDeleted: (nodeId) => nodeIsInSubtree(byId, nodeId, TRASH_ID),
+    isDeleted: (nodeId) => deletedNodeIds.has(nodeId),
   });
   referenceSummaryCache.set(byId, summary);
   return summary;

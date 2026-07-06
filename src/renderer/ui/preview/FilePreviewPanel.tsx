@@ -19,6 +19,7 @@ import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
 import { AddChildIcon, FolderIcon, ICON_SIZE, LibraryIcon, MoreIcon, OpenIcon, UrlIcon } from '../icons';
 import { buildOutlinerRows } from '../outliner/row-model';
+import { RECURSIVE_OUTLINER_FALLBACK_ENABLED } from '../outliner/OutlinerFlatView';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
@@ -128,11 +129,14 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const uiRef = useRef(props.ui);
   uiRef.current = props.ui;
   const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
-  const systemFieldContext = useMemo(() => ({ referenceSummary }), [referenceSummary]);
-  const panelRows = useMemo(() => buildOutlinerRows(fileRoot ?? undefined, props.index.byId, {
-    expandedHiddenFields: props.ui.expandedHiddenFields,
-    systemFieldContext,
-  }), [fileRoot, props.index.byId, props.ui.expandedHiddenFields, systemFieldContext]);
+  const panelRows = useMemo(() => (
+    RECURSIVE_OUTLINER_FALLBACK_ENABLED
+      ? buildOutlinerRows(fileRoot ?? undefined, props.index.byId, {
+        expandedHiddenFields: props.ui.expandedHiddenFields,
+        systemFieldContext: { referenceSummary },
+      })
+      : undefined
+  ), [fileRoot, props.index.byId, props.ui.expandedHiddenFields, referenceSummary]);
 
   useEffect(() => {
     if (!looseUrlPreview) {
