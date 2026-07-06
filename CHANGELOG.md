@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Channel create and inline rename (PR #382, codex-3)** — New Channel now
+  creates an untitled Channel immediately, selects it, and focuses the composer.
+  Runtime creation no longer accepts a seed/opening message, ordinary Channel
+  rows expose a direct inline rename edit icon instead of a More menu, protected
+  General/Dream Channels hide rename controls, and blank create/rename stores
+  the existing Untitled sentinel. Specs, i18n, runtime tests, renderer tests,
+  and E2E coverage now match the inline create/rename contract. **Gate (main):**
+  codex-3 fixed the Channel config e2e/stale seed CSS and design-system spec
+  review items; main added the board entry needed for `docs:check`. Verified
+  with typecheck, targeted core/renderer tests, docs check, diff check, and
+  targeted agent-composer, agent-settings, design-system runtime, and typography
+  E2E coverage.
 - **Agent tool naming clarity (PR #381, codex-3)** — renamed the model-visible
   bash background stop tool from `task_stop` to `bash_stop`, renamed the
   outliner undo/redo/list tool from `operation_history` to

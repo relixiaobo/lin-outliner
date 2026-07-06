@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381**) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373, agent-bundled-search-tools #374, data-import-cli-api-boundary #375, ask-user-question-stepper #376 + polish #378, model-effort-labels #379) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,10 +31,9 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-06).** Open PR queue: #382
-(`codex-3/channel-create-inline-rename`) is in main review/gate; plan:
-`docs/plans/channel-create-inline-rename.md`. Recently merged: #381
-(`codex-3/agent-tool-clarity-names`) and #380
+**In flight (2026-07-06).** Open PR queue: none. Recently merged: #382
+(`codex-3/channel-create-inline-rename`), #381
+(`codex-3/agent-tool-clarity-names`), and #380
 (`codex-3/performance-hotspots`) merged 2026-07-06 after main review; see
 *Recently completed*. #377 (`codex/design-system-calibration-audit`) and #379
 (`codex-4/model-effort-labels`) merged 2026-07-06 after main review; see
@@ -478,6 +477,22 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **channel-create-inline-rename** (`codex-3/channel-create-inline-rename`,
+  PR #382, codex-3, merged 2026-07-06, plan-track) — makes Channel creation a
+  one-click action: New Channel immediately creates an untitled Channel,
+  selects it, and focuses the composer. Runtime creation no longer accepts a
+  seed/opening message, ordinary Channel rows use a direct inline rename edit
+  icon instead of a More menu, protected General/Dream Channels hide rename
+  controls, and blank create/rename persists the existing Untitled sentinel.
+  Specs and tests now describe the inline create/rename contract. **Gate
+  (main):** codex-3 fixed the two review items around the Channel config e2e
+  contract/stale seed CSS and the design-system surfaces spec; main added the
+  board entry required by `docs:check` before merge. Verified with typecheck,
+  targeted core conversation tests, renderer `agentRuntimeStore`, docs check,
+  diff check, targeted agent-composer E2E, full agent-settings E2E, targeted
+  design-system runtime E2E, and typography-token E2E. Plan archived `done`:
+  `docs/plans/archive/channel-create-inline-rename.md`.
 
 - **outliner-row-start-enter** (`main`, direct push 2026-07-06, fast-track) —
   pressing `Enter` at the start of a non-empty row now creates and focuses a
