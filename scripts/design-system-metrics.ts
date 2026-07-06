@@ -422,11 +422,70 @@ function markdownLinkTargets(markdown: string): string[] {
     .filter(Boolean);
 }
 
+function stripMarkdownCode(markdown: string): string {
+  return markdown
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/[^\n]/g, ' '))
+    .replace(/`+[^`\n]*`+/g, (span) => span.replace(/[^\n]/g, ' '));
+}
+
+function normalizeMarkdownLinkTarget(target: string): { path: string; anchor: string | null } | null {
+  const trimmed = target.trim();
+  if (!trimmed) return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null;
+
+  const unwrapped = trimmed.startsWith('<') && trimmed.endsWith('>') ? trimmed.slice(1, -1) : trimmed;
+  const [pathWithQuery, rawAnchor] = unwrapped.split('#', 2);
+  const pathOnly = pathWithQuery!.split('?', 1)[0]!;
+
+  try {
+    return {
+      path: pathOnly ? decodeURIComponent(pathOnly) : '',
+      anchor: rawAnchor ? decodeURIComponent(rawAnchor) : null,
+    };
+  } catch {
+    return { path: pathOnly, anchor: rawAnchor ?? null };
+  }
+}
+
+function markdownHeadingSlug(heading: string): string {
+  return heading
+    .replace(/^#+\s*/, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}\s-]/gu, '')
+    .replace(/\s/g, '-');
+}
+
+const headingAnchorCache = new Map<string, Set<string>>();
+
+function markdownHeadingAnchors(file: string): Set<string> {
+  const cached = headingAnchorCache.get(file);
+  if (cached) return cached;
+
+  const anchors = new Set<string>();
+  const counts = new Map<string, number>();
+  const source = stripMarkdownCode(readFileSync(file, 'utf8'));
+  for (const match of source.matchAll(/^#{1,6}\s+(.+)$/gm)) {
+    const base = markdownHeadingSlug(match[0]!);
+    const count = counts.get(base) ?? 0;
+    counts.set(base, count + 1);
+    anchors.add(count === 0 ? base : `${base}-${count}`);
+  }
+  headingAnchorCache.set(file, anchors);
+  return anchors;
+}
+
 function localMarkdownTargetExists(sourceFile: string, target: string): boolean {
-  if (target.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(target)) return true;
-  const path = target.split('#')[0]?.trim();
-  if (!path) return true;
-  return existsSync(join(dirname(sourceFile), path));
+  const normalized = normalizeMarkdownLinkTarget(target);
+  if (!normalized) return true;
+  const resolved = normalized.path ? join(dirname(sourceFile), normalized.path) : sourceFile;
+  if (!existsSync(resolved)) return false;
+  if (normalized.anchor && resolved.endsWith('.md')) {
+    return markdownHeadingAnchors(resolved).has(normalized.anchor);
+  }
+  return true;
 }
 
 function fileNameMatchesUnder(dir: string, fileName: string): string[] {

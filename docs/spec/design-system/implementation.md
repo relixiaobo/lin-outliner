@@ -117,11 +117,12 @@ decision routing, exceptions, and validation.
   named source context.
 - **Audit local references.** Exception Registry authority/evidence text,
   decision-audit derivation/evidence text, and calibration evidence text must
-  resolve any local links and path-like code spans to current repo files. Short
-  filename evidence is accepted only when it resolves to exactly one file in the
-  audit search roots. The metrics script reports and fails broken or ambiguous
-  local references so named exceptions and Derived decisions do not keep passing
-  after their proof files move or disappear.
+  resolve any local links, markdown heading anchors, and path-like code spans to
+  current repo files. Short filename evidence is accepted only when it resolves
+  to exactly one file in the audit search roots. The metrics script reports and
+  fails broken or ambiguous local references so named exceptions and Derived
+  decisions do not keep passing after their proof files or linked sections move
+  or disappear.
 - **Named exception summaries.** The calibration audit's Named Exceptions Kept
   table is a well-formed summary, not a second source of truth. Every Kernel
   Exception Registry entry must appear there, and any non-kernel entry must be
