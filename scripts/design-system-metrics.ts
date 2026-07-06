@@ -1486,7 +1486,8 @@ function main() {
     console.log(`  design-system doc refs: ${metrics.docReferences.designSystemDocReferences}`);
     console.log(`  design-system doc broken refs: ${metrics.docReferences.designSystemDocBrokenReferences.length}`);
     console.log(`  design-system doc drift: ${
-      metrics.docReferences.designSystemDocBrokenReferences.length
+      (metrics.docReferences.designSystemDocReferences < DESIGN_SYSTEM_DOC_REFERENCES_MIN ? 1 : 0)
+      + metrics.docReferences.designSystemDocBrokenReferences.length
       + metrics.docReferences.designSystemDocAmbiguousReferences.length
     }`);
     console.log(`  source map rows: ${metrics.sourceMap.sourceMapRows}`);

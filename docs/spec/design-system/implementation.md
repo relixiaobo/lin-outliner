@@ -69,8 +69,8 @@ decision routing, exceptions, and validation.
   patterns, surfaces, components, implementation notes, and decision audit. The
   calibration finding ledger is validated through its evidence columns instead,
   so historical finding text may still describe stale references as past drift.
-  The current-doc reference drift summary includes broken and ambiguous
-  path-like code spans.
+  The current-doc reference drift summary includes missing minimum reference
+  coverage, broken references, and ambiguous path-like code spans.
 - **Derivation audit.** For a new or changed UI, the PR must be able to answer
   four questions: which surface owns it, which component primitive or pattern it
   uses, which state-model row it maps to, and which foundation tokens carry its
