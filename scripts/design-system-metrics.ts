@@ -1485,6 +1485,10 @@ function main() {
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
     console.log(`  design-system doc refs: ${metrics.docReferences.designSystemDocReferences}`);
     console.log(`  design-system doc broken refs: ${metrics.docReferences.designSystemDocBrokenReferences.length}`);
+    console.log(`  design-system doc drift: ${
+      metrics.docReferences.designSystemDocBrokenReferences.length
+      + metrics.docReferences.designSystemDocAmbiguousReferences.length
+    }`);
     console.log(`  source map rows: ${metrics.sourceMap.sourceMapRows}`);
     console.log(`  source map contract refs: ${metrics.sourceMap.sourceMapContractReferences}`);
     console.log(`  source map incomplete rows: ${metrics.sourceMap.incompleteSourceMapRows.length}`);
