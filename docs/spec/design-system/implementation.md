@@ -103,9 +103,10 @@ decision routing, exceptions, and validation.
   real semantic/native requirement, not a styling shortcut. The metrics script
   scans renderer TS/TSX, including entry surfaces outside `src/renderer/ui`,
   reports named exception files and reasons in `--json`, fails stale exception
-  entries, fails malformed or duplicate audit rows, fails drift between the
-  metrics exception map and the calibration audit's Native-Control Exceptions
-  table, and reports component-implementation native controls separately from
+  entries, fails malformed or duplicate audit rows, fails file/reason/count drift
+  between the metrics exception map and the calibration audit's Native-Control
+  Exceptions table, and reports component-implementation native controls
+  separately from
   product-surface direct native controls, so a reusable primitive can own its
   internal semantics without hiding product-surface drift.
 - **Raw-colour exceptions.** Renderer raw hex and raw functional colour literals

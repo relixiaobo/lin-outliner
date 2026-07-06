@@ -233,6 +233,7 @@ standard change that only hides one local violation is not accepted.
 | CA199 | Named Exceptions Kept rows reconciled names with the kernel registry, but their Evidence cells were not checked for broken local links or path-like code spans, so the summary could point at stale proof while exception drift stayed green. | Code drift | Metrics now validates local references in named-exception summary evidence and fails broken summary evidence references before reporting summary drift. | `scripts/design-system-metrics.ts`; `implementation.md`; `calibration-audit.md` |
 | CA200 | Metrics `--json` exposed some target baselines, but later guard additions left several `--check` zero-drift targets implicit, so external audit tooling could not tell green current values from ratified required zeros. | Code drift | Metrics now exposes target baselines for the ledger, component, exception, raw-colour, and runtime duplicate gates enforced by `--check`, keeping machine-readable audit reuse aligned with the actual guard. | `scripts/design-system-metrics.ts`; `implementation.md`; `calibration-audit.md` |
 | CA201 | Raw-colour metrics treated any custom-property declaration in the central token files as an allowed token declaration, so a raw colour could be hidden in spacing, radius, type, motion, or other non-colour token families while raw-colour drift stayed green. | Code drift | Metrics now accepts raw colours only in the central token layers and only for named colour/effect token families, preserving token ownership without creating local colour exceptions. | `scripts/design-system-metrics.ts`; `implementation.md`; `tokens.css`; `calibration-audit.md` |
+| CA202 | Native-Control Exceptions synchronized file names and reasons but not live direct-native-control counts, so an excepted file could add another raw `button`, `input`, `textarea`, or `select` without making the widened exception explicit. | Code drift | The audit table now records current exception counts and metrics fails count mismatches, keeping native-control exceptions narrow and reviewable without changing UI behavior. | `scripts/design-system-metrics.ts`; `implementation.md`; `calibration-audit.md` |
 
 ## Named Exceptions Kept
 
@@ -256,19 +257,20 @@ These are intentional after calibration. They stay narrow and evidence-backed.
 
 Product surfaces prefer primitives. These direct native controls remain named
 because they carry native/editor semantics, not because they are styling shortcuts.
-The metrics JSON owns the live counts and stale-entry gate.
+The audit table records current live counts, and metrics verifies the counts,
+reasons, and stale-entry gate.
 
-| File | Reason |
-| --- | --- |
-| `src/renderer/ui/agent/AgentComposer.tsx` | Hidden file input plus editor-owned buttons inside the composer surface. |
-| `src/renderer/ui/agent/AgentComposerControls.tsx` | Hidden file input delegated to the composer attachment flow. |
-| `src/renderer/ui/agent/AgentEditor.tsx` | Native textarea used by the agent-profile editor draft model. |
-| `src/renderer/ui/agent/AgentMarkdown.tsx` | Checkbox input inside rendered markdown/task-list content. |
-| `src/renderer/ui/agent/AgentMessageRow.tsx` | Textarea used for in-place message editing. |
-| `src/renderer/ui/outliner/CodeBlockRow.tsx` | Textarea/select pair required for the code-block editor overlay. |
-| `src/renderer/ui/outliner/DateValuePicker.tsx` | Native date/time controls inside the date picker. |
-| `src/renderer/ui/outliner/NodeDescriptionSurface.tsx` | Textarea follows the outliner description editing model. |
-| `src/renderer/ui/outliner/NodeValuePicker.tsx` | Input is an anchored filtering control with caller-owned query semantics. |
+| File | Count | Reason |
+| --- | --- | --- |
+| `src/renderer/ui/agent/AgentComposer.tsx` | 13 | Hidden file input plus editor-owned buttons inside the composer surface. |
+| `src/renderer/ui/agent/AgentComposerControls.tsx` | 1 | Hidden file input delegated to the composer attachment flow. |
+| `src/renderer/ui/agent/AgentEditor.tsx` | 2 | Native textarea used by the agent-profile editor draft model. |
+| `src/renderer/ui/agent/AgentMarkdown.tsx` | 1 | Checkbox input inside rendered markdown/task-list content. |
+| `src/renderer/ui/agent/AgentMessageRow.tsx` | 1 | Textarea used for in-place message editing. |
+| `src/renderer/ui/outliner/CodeBlockRow.tsx` | 1 | Textarea/select pair required for the code-block editor overlay. |
+| `src/renderer/ui/outliner/DateValuePicker.tsx` | 3 | Native date/time controls inside the date picker. |
+| `src/renderer/ui/outliner/NodeDescriptionSurface.tsx` | 1 | Textarea follows the outliner description editing model. |
+| `src/renderer/ui/outliner/NodeValuePicker.tsx` | 1 | Input is an anchored filtering control with caller-owned query semantics. |
 
 ## Open Design Decisions
 

@@ -993,17 +993,18 @@ function nativeControlExceptionAuditRowList() {
   const start = source.indexOf('## Native-Control Exceptions');
   const end = source.indexOf('## Open Design Decisions', start);
   const section = start >= 0 && end > start ? source.slice(start, end) : '';
-  return [...section.matchAll(/^\| `([^`]+)` \| (.+?) \|$/gm)]
+  return [...section.matchAll(/^\| `([^`]+)` \| (\d+) \| (.+?) \|$/gm)]
     .map((match) => ({
       file: match[1] ?? '',
-      reason: match[2]?.trim() ?? '',
+      count: Number(match[2] ?? 0),
+      reason: match[3]?.trim() ?? '',
     }))
     .filter((row) => Boolean(row.file));
 }
 
-function nativeControlExceptionAuditRows(): Map<string, string> {
+function nativeControlExceptionAuditRows(): Map<string, { count: number; reason: string }> {
   return new Map(
-    nativeControlExceptionAuditRowList().map((row) => [row.file, row.reason] as const),
+    nativeControlExceptionAuditRowList().map((row) => [row.file, { count: row.count, reason: row.reason }] as const),
   );
 }
 
@@ -1016,8 +1017,8 @@ function malformedNativeControlExceptionRows(): string[] {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.startsWith('| '))
-    .filter((line) => line !== '| File | Reason |' && !line.startsWith('| ---'))
-    .filter((line) => !/^\| `([^`]+)` \| (.+?) \|$/.test(line))
+    .filter((line) => line !== '| File | Count | Reason |' && !line.startsWith('| ---'))
+    .filter((line) => !/^\| `([^`]+)` \| \d+ \| (.+?) \|$/.test(line))
     .sort();
 }
 
@@ -1110,8 +1111,18 @@ function componentCoverageMetrics() {
     .filter((file) => !(file in nativeControlExceptions))
     .sort();
   const nativeControlExceptionReasonMismatches = Object.entries(nativeControlExceptions)
-    .filter(([file, reason]) => auditedNativeControlExceptions.has(file) && auditedNativeControlExceptions.get(file) !== reason)
-    .map(([file, reason]) => `${file}: metrics="${reason}" audit="${auditedNativeControlExceptions.get(file) ?? ''}"`)
+    .filter(([file, reason]) => {
+      const audit = auditedNativeControlExceptions.get(file);
+      return Boolean(audit && audit.reason !== reason);
+    })
+    .map(([file, reason]) => `${file}: metrics="${reason}" audit="${auditedNativeControlExceptions.get(file)?.reason ?? ''}"`)
+    .sort();
+  const nativeControlExceptionCountMismatches = [...exceptedNativeFiles.entries()]
+    .filter(([file, entry]) => {
+      const audit = auditedNativeControlExceptions.get(file);
+      return Boolean(audit && audit.count !== entry.count);
+    })
+    .map(([file, entry]) => `${file}: metrics=${entry.count} audit=${auditedNativeControlExceptions.get(file)?.count ?? 0}`)
     .sort();
   const accountableControls = primitiveUses + nativeUses;
   return {
@@ -1133,6 +1144,7 @@ function componentCoverageMetrics() {
     nativeControlExceptionsMissingFromAudit,
     nativeControlAuditEntriesMissingFromMetrics,
     nativeControlExceptionReasonMismatches,
+    nativeControlExceptionCountMismatches,
     malformedNativeControlRows,
     duplicateNativeControlAuditFiles,
   };
@@ -1399,6 +1411,7 @@ function main() {
       duplicateNativeControlAuditFilesTarget: 0,
       nativeControlAuditEntriesMissingFromMetricsTarget: 0,
       nativeControlExceptionReasonMismatchesTarget: 0,
+      nativeControlExceptionCountMismatchesTarget: 0,
       exceptionEvidenceCoverageTarget: 1,
       malformedRegistryRowsTarget: 0,
       duplicateRegistryExceptionNamesTarget: 0,
@@ -1467,6 +1480,7 @@ function main() {
       metrics.components.nativeControlExceptionsMissingFromAudit.length
       + metrics.components.nativeControlAuditEntriesMissingFromMetrics.length
       + metrics.components.nativeControlExceptionReasonMismatches.length
+      + metrics.components.nativeControlExceptionCountMismatches.length
       + metrics.components.malformedNativeControlRows.length
       + metrics.components.duplicateNativeControlAuditFiles.length
     }`);
@@ -1654,6 +1668,9 @@ function main() {
     }
     if (metrics.components.nativeControlExceptionReasonMismatches.length > 0) {
       failures.push(`native control exception reason mismatches: ${metrics.components.nativeControlExceptionReasonMismatches.join(', ')}`);
+    }
+    if (metrics.components.nativeControlExceptionCountMismatches.length > 0) {
+      failures.push(`native control exception count mismatches: ${metrics.components.nativeControlExceptionCountMismatches.join(', ')}`);
     }
     if (metrics.exceptions.exceptionEvidenceCoverage < 1) {
       failures.push(`exception evidence ${metrics.exceptions.exceptionEvidenceCoverage} < 1`);
