@@ -21,6 +21,7 @@ const RUNTIME_SURFACE_SPEC = join(ROOT, 'tests', 'e2e', 'design-system-runtime.s
 
 const SURFACE_BASELINE_LINES = 672;
 const SURFACE_TARGET_LINES = Math.floor(SURFACE_BASELINE_LINES * 0.6);
+const DESIGN_SYSTEM_DOC_REFERENCES_MIN = 1;
 const COMPONENT_COVERAGE_TARGET = 0.8;
 const COMPONENT_SOURCE_REFERENCES_MIN = 1;
 const DECISION_DERIVATION_TARGET = 0.8;
@@ -218,6 +219,10 @@ function filesByPattern(dir: string, pattern: RegExp): string[] {
   }).sort();
 }
 
+function existingFilesByPattern(dir: string, pattern: RegExp): string[] {
+  return existsSync(dir) ? filesByPattern(dir, pattern) : [];
+}
+
 function designSystemLineMetrics() {
   const detailFiles = markdownFiles(DESIGN_SYSTEM_DIR);
   const detailLineTotal = detailFiles.reduce((sum, file) => sum + lineCount(file), 0);
@@ -236,6 +241,12 @@ function designSystemLineMetrics() {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function wildcardReferenceMatches(candidates: string[], reference: string): string[] {
+  const pattern = `^${reference.split('*').map(escapeRegExp).join('.*')}$`;
+  const regex = new RegExp(pattern);
+  return candidates.filter((file) => regex.test(file)).sort();
 }
 
 function sourceMapRows() {
@@ -271,9 +282,7 @@ function sourceMapReferenceMatches(reference: string): string[] {
     .map((file) => relative(ROOT, file));
   const normalized = reference.startsWith('styles/') ? `src/renderer/${reference}` : reference;
   if (normalized.includes('*')) {
-    const pattern = `^${normalized.split('*').map(escapeRegExp).join('.*')}$`;
-    const regex = new RegExp(pattern);
-    return rendererFiles.filter((file) => regex.test(file)).sort();
+    return wildcardReferenceMatches(rendererFiles, normalized);
   }
   if (normalized.includes('/')) {
     return existsSync(join(ROOT, normalized)) ? [normalized] : [];
@@ -408,6 +417,66 @@ function localEvidenceCodePathMatches(reference: string): string[] {
     join(ROOT, 'tests', 'renderer'),
   ].flatMap((dir) => fileNameMatchesUnder(dir, reference));
   return [...new Set(matches)].sort();
+}
+
+function designSystemDocReferenceFiles(): string[] {
+  return [
+    DESIGN_SYSTEM_KERNEL,
+    join(DESIGN_SYSTEM_DIR, 'components.md'),
+    join(DESIGN_SYSTEM_DIR, 'decision-audit.md'),
+    join(DESIGN_SYSTEM_DIR, 'foundations.md'),
+    join(DESIGN_SYSTEM_DIR, 'implementation.md'),
+    join(DESIGN_SYSTEM_DIR, 'patterns.md'),
+    join(DESIGN_SYSTEM_DIR, 'surfaces.md'),
+  ].filter((file) => existsSync(file));
+}
+
+function repoCodePathCandidates(): string[] {
+  return [
+    ...markdownFiles(join(ROOT, 'docs', 'spec')),
+    ...existingFilesByPattern(join(ROOT, 'docs', 'plans'), /\.md$/),
+    ...existingFilesByPattern(join(ROOT, 'scripts'), /\.(ts|tsx|js|mjs|cjs)$/),
+    ...existingFilesByPattern(join(ROOT, 'src'), /\.(css|ts|tsx)$/),
+    ...existingFilesByPattern(join(ROOT, 'tests'), /\.(ts|tsx)$/),
+  ].map((file) => relative(ROOT, file)).sort();
+}
+
+function designSystemDocCodePathMatches(reference: string, candidates: string[]): string[] {
+  const normalized = reference.startsWith('styles/') ? `src/renderer/${reference}` : reference;
+  if (normalized.includes('*')) {
+    return wildcardReferenceMatches(candidates, normalized);
+  }
+  if (existsSync(join(ROOT, normalized))) return [normalized];
+  if (normalized.includes('/')) return [];
+  const matches = candidates.filter((file) => file.endsWith(`/${normalized}`));
+  return [...new Set(matches)].sort();
+}
+
+function designSystemDocReferenceMetrics() {
+  const brokenReferences: string[] = [];
+  const ambiguousReferences: string[] = [];
+  const candidates = repoCodePathCandidates();
+  let referenceCount = 0;
+  for (const file of designSystemDocReferenceFiles()) {
+    const relativeFile = relative(ROOT, file);
+    const source = readFileSync(file, 'utf8');
+    for (const reference of evidenceCodePathReferences(source)) {
+      referenceCount += 1;
+      const matches = designSystemDocCodePathMatches(reference, candidates);
+      const label = `${relativeFile}: ${reference}`;
+      if (matches.length === 0) {
+        brokenReferences.push(label);
+      } else if (!reference.includes('*') && matches.length > 1) {
+        ambiguousReferences.push(`${label} matched multiple files (${matches.join(', ')})`);
+      }
+    }
+  }
+  return {
+    designSystemDocReferenceFiles: designSystemDocReferenceFiles().map((file) => relative(ROOT, file)),
+    designSystemDocReferences: referenceCount,
+    designSystemDocBrokenReferences: brokenReferences.sort(),
+    designSystemDocAmbiguousReferences: ambiguousReferences.sort(),
+  };
 }
 
 function repoEvidenceCodePathMatches(reference: string): string[] {
@@ -1076,6 +1145,7 @@ function main() {
 
   const metrics = {
     designSystem: designSystemLineMetrics(),
+    docReferences: designSystemDocReferenceMetrics(),
     sourceMap: sourceMapMetrics(),
     calibrationAudit: calibrationAuditMetrics(),
     decisionAudit: decisionAuditMetrics(),
@@ -1085,6 +1155,9 @@ function main() {
     runtimeSurfaces: runtimeSurfaceMetrics(),
     targets: {
       surfaceTargetLines: SURFACE_TARGET_LINES,
+      designSystemDocReferencesMinimumTarget: DESIGN_SYSTEM_DOC_REFERENCES_MIN,
+      designSystemDocBrokenReferencesTarget: 0,
+      designSystemDocAmbiguousReferencesTarget: 0,
       sourceMapRowsMinimumTarget: 1,
       sourceMapReferencesMinimumTarget: 1,
       malformedSourceMapRowsTarget: 0,
@@ -1115,6 +1188,8 @@ function main() {
     console.log('design-system metrics');
     console.log(`  surface lines: ${metrics.designSystem.surfaceLines}/${SURFACE_TARGET_LINES}`);
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
+    console.log(`  design-system doc refs: ${metrics.docReferences.designSystemDocReferences}`);
+    console.log(`  design-system doc broken refs: ${metrics.docReferences.designSystemDocBrokenReferences.length}`);
     console.log(`  source map rows: ${metrics.sourceMap.sourceMapRows}`);
     console.log(`  source map broken refs: ${metrics.sourceMap.sourceMapBrokenReferences.length}`);
     console.log(`  calibration class rows: ${metrics.calibrationAudit.calibrationClassificationRows}`);
@@ -1163,6 +1238,17 @@ function main() {
     const failures: string[] = [];
     if (metrics.designSystem.surfaceLines > SURFACE_TARGET_LINES) {
       failures.push(`surface lines ${metrics.designSystem.surfaceLines} > ${SURFACE_TARGET_LINES}`);
+    }
+    if (metrics.docReferences.designSystemDocReferences < DESIGN_SYSTEM_DOC_REFERENCES_MIN) {
+      failures.push(
+        `design-system doc references ${metrics.docReferences.designSystemDocReferences} < ${DESIGN_SYSTEM_DOC_REFERENCES_MIN}`,
+      );
+    }
+    if (metrics.docReferences.designSystemDocBrokenReferences.length > 0) {
+      failures.push(`design-system doc broken refs: ${metrics.docReferences.designSystemDocBrokenReferences.join(', ')}`);
+    }
+    if (metrics.docReferences.designSystemDocAmbiguousReferences.length > 0) {
+      failures.push(`design-system doc ambiguous refs: ${metrics.docReferences.designSystemDocAmbiguousReferences.join(', ')}`);
     }
     if (metrics.sourceMap.sourceMapRows === 0 || metrics.sourceMap.sourceMapReferences === 0) {
       failures.push('source map missing or empty');

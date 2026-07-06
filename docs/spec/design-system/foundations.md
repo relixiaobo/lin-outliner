@@ -151,8 +151,8 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   inactivity on the chrome glass; because the palette is near-monochrome the rail
   rule pairs a `saturate()` drop with a slight `brightness` dip (the part that
   actually reads as dimmed). Renderer wiring: a `window-inactive` root class fed
-  by the main process's focus/blur (`core/windowActivity.ts` → App.tsx →
-  shell.css).
+  by the main process's focus/blur (`src/core/windowActivity.ts` ->
+  `src/renderer/ui/App.tsx` -> `src/renderer/styles/shell.css`).
 - **Functional state is neutral.** Selection, hover, active rows, and ordinary
   interactive state use the neutral `--fill-*` ladder and neutral `--focus-ring`
   — not the brand colour and not the macOS system accent. The filled default
