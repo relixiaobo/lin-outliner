@@ -56,7 +56,9 @@ decision routing, exceptions, and validation.
   CSS/TS/TSX file. Contract links must resolve to current design-system markdown
   targets, including anchors. Product-source failures and contract-link failures
   are reported separately. Short source names must resolve uniquely unless the
-  code span is an intentional wildcard.
+  code span is an intentional wildcard. The Source Map drift summary includes
+  malformed rows, duplicate areas, incomplete rows, broken or ambiguous product
+  sources, and broken contract links.
 - **Current spec reference accountability.** Current design-system contract docs
   must keep path-like code spans resolvable. This covers the kernel, foundations,
   patterns, surfaces, components, implementation notes, and decision audit. The

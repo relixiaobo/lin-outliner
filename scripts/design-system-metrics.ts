@@ -1490,6 +1490,14 @@ function main() {
     console.log(`  source map incomplete rows: ${metrics.sourceMap.incompleteSourceMapRows.length}`);
     console.log(`  source map broken refs: ${metrics.sourceMap.sourceMapBrokenReferences.length}`);
     console.log(`  source map contract broken refs: ${metrics.sourceMap.sourceMapContractBrokenReferences.length}`);
+    console.log(`  source map drift: ${
+      metrics.sourceMap.malformedSourceMapRows.length
+      + metrics.sourceMap.duplicateSourceMapAreas.length
+      + metrics.sourceMap.incompleteSourceMapRows.length
+      + metrics.sourceMap.sourceMapBrokenReferences.length
+      + metrics.sourceMap.sourceMapAmbiguousReferences.length
+      + metrics.sourceMap.sourceMapContractBrokenReferences.length
+    }`);
     console.log(`  calibration class rows: ${metrics.calibrationAudit.calibrationClassificationRows}`);
     console.log(`  incomplete calibration class rows: ${metrics.calibrationAudit.incompleteClassificationModelRows.length}`);
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
