@@ -680,6 +680,19 @@ function malformedOpenDesignDecisionRows(): string[] {
     .sort();
 }
 
+function openDesignDecisionRows() {
+  const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
+  const start = source.indexOf('## Open Design Decisions');
+  const section = start >= 0 ? source.slice(start) : '';
+  return [...section.matchAll(/^\| (.+?) \| (.+?) \|$/gm)]
+    .filter((match) => match[1] !== 'Area' && !match[1]?.startsWith('---'))
+    .map((match) => ({
+      area: match[1]?.trim() ?? '',
+      reason: match[2]?.trim() ?? '',
+    }))
+    .filter((row) => Boolean(row.area || row.reason));
+}
+
 function decisionAuditRows() {
   const source = readFileSync(DECISION_AUDIT, 'utf8');
   return [...source.matchAll(/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
@@ -763,6 +776,12 @@ function calibrationAuditMetrics() {
   const rows = calibrationFindingRows();
   const malformedCalibrationRows = malformedCalibrationFindingRows();
   const malformedOpenDecisionRows = malformedOpenDesignDecisionRows();
+  const openDecisionRows = openDesignDecisionRows();
+  const duplicateOpenDesignDecisionAreas = duplicateValues(openDecisionRows.map((row) => row.area));
+  const incompleteOpenDesignDecisionRows = openDecisionRows
+    .filter((row) => !row.area || !row.reason)
+    .map((row) => row.area || 'missing area')
+    .sort();
   const rowIds = rows.map((row) => row.id);
   const duplicateCalibrationIds = rowIds
     .filter((id, index) => rowIds.indexOf(id) !== index)
@@ -800,6 +819,9 @@ function calibrationAuditMetrics() {
     calibrationRows: rows.length,
     malformedCalibrationRows,
     malformedOpenDecisionRows,
+    openDesignDecisionRows: openDecisionRows.length,
+    duplicateOpenDesignDecisionAreas,
+    incompleteOpenDesignDecisionRows,
     duplicateCalibrationIds,
     missingCalibrationIds,
     invalidCalibrationClasses,
@@ -1233,6 +1255,8 @@ function main() {
       sourceMapAmbiguousReferencesTarget: 0,
       calibrationClassificationRowsTarget: calibrationFindingClassNames.length,
       calibrationEvidenceCoverageTarget: CALIBRATION_EVIDENCE_COVERAGE_TARGET,
+      duplicateOpenDesignDecisionAreasTarget: 0,
+      incompleteOpenDesignDecisionRowsTarget: 0,
       decisionRowMinimumTarget: DECISION_AUDIT_MIN_ROWS,
       decisionDerivationTarget: DECISION_DERIVATION_TARGET,
       decisionEvidenceCoverageTarget: DECISION_EVIDENCE_COVERAGE_TARGET,
@@ -1271,6 +1295,10 @@ function main() {
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
     console.log(`  malformed calibration rows: ${metrics.calibrationAudit.malformedCalibrationRows.length}`);
     console.log(`  malformed open decision rows: ${metrics.calibrationAudit.malformedOpenDecisionRows.length}`);
+    console.log(`  open decision row drift: ${
+      metrics.calibrationAudit.duplicateOpenDesignDecisionAreas.length
+      + metrics.calibrationAudit.incompleteOpenDesignDecisionRows.length
+    }`);
     console.log(`  calibration evidence: ${(metrics.calibrationAudit.calibrationEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  calibration broken refs: ${metrics.calibrationAudit.calibrationBrokenReferences.length}`);
     console.log(`  invalid calibration classes: ${metrics.calibrationAudit.invalidCalibrationClasses.length}`);
@@ -1372,6 +1400,12 @@ function main() {
     }
     if (metrics.calibrationAudit.malformedOpenDecisionRows.length > 0) {
       failures.push(`malformed open design decision rows: ${metrics.calibrationAudit.malformedOpenDecisionRows.join(', ')}`);
+    }
+    if (metrics.calibrationAudit.duplicateOpenDesignDecisionAreas.length > 0) {
+      failures.push(`duplicate open design decision areas: ${metrics.calibrationAudit.duplicateOpenDesignDecisionAreas.join(', ')}`);
+    }
+    if (metrics.calibrationAudit.incompleteOpenDesignDecisionRows.length > 0) {
+      failures.push(`incomplete open design decision rows: ${metrics.calibrationAudit.incompleteOpenDesignDecisionRows.join(', ')}`);
     }
     if (metrics.calibrationAudit.missingCalibrationIds.length > 0) {
       failures.push(`missing calibration ids: ${metrics.calibrationAudit.missingCalibrationIds.join(', ')}`);
