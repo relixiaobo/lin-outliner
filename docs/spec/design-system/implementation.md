@@ -33,7 +33,8 @@ decision routing, exceptions, and validation.
   no malformed rows, no incomplete semantic columns, proves at least 80% derived
   decisions, uses only valid `Derived` / `Exception` result values, has 100%
   evidence coverage with no broken local evidence references, and names a kernel
-  exception for every Exception row; the
+  exception for every Exception row. The decision row drift summary includes
+  duplicate ids, duplicate decision text, incomplete rows, and missing ids; the
   calibration Classification Model
   table stays limited to the four ratified classes with non-empty meaning and
   response cells, and the calibration ledger uses unique contiguous `CAxx` ids,

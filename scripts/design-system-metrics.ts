@@ -1513,8 +1513,10 @@ function main() {
     console.log(`  decision rows: ${metrics.decisionAudit.decisionRows}/${DECISION_AUDIT_MIN_ROWS}`);
     console.log(`  malformed decision rows: ${metrics.decisionAudit.malformedDecisionRows.length}`);
     console.log(`  decision row drift: ${
-      metrics.decisionAudit.duplicateDecisionTexts.length
+      metrics.decisionAudit.duplicateDecisionIds.length
+      + metrics.decisionAudit.duplicateDecisionTexts.length
       + metrics.decisionAudit.incompleteDecisionRows.length
+      + metrics.decisionAudit.missingDecisionIds.length
     }`);
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
     console.log(`  decision evidence: ${(metrics.decisionAudit.decisionEvidenceCoverage * 100).toFixed(1)}%`);
