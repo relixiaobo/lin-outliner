@@ -1550,7 +1550,8 @@ function main() {
     }`);
     console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
     console.log(`  native control audit drift: ${
-      metrics.components.nativeControlExceptionsMissingFromAudit.length
+      metrics.components.staleNativeControlExceptions.length
+      + metrics.components.nativeControlExceptionsMissingFromAudit.length
       + metrics.components.nativeControlAuditEntriesMissingFromMetrics.length
       + metrics.components.nativeControlExceptionReasonMismatches.length
       + metrics.components.nativeControlExceptionCountMismatches.length

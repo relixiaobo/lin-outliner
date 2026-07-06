@@ -120,7 +120,8 @@ decision routing, exceptions, and validation.
   reports named exception files and reasons in `--json`, fails stale exception
   entries, fails malformed or duplicate audit rows, fails file/reason/count drift
   between the metrics exception map and the calibration audit's Native-Control
-  Exceptions table, and reports component-implementation native controls
+  Exceptions table, includes those stale and table-drift dimensions in the
+  native-control audit drift summary, and reports component-implementation native controls
   separately from
   product-surface direct native controls, so a reusable primitive can own its
   internal semantics without hiding product-surface drift.
