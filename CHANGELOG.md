@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Reference summary hot-path cleanup (PR #380, codex-3)** — precomputes Trash
+  descendant sets for renderer/system-field reference summaries and carries a
+  deleted-node id set in the search index, so full reference-summary/search
+  scans use set membership instead of repeated parent-chain walks. Node and File
+  preview panels also skip building recursive fallback row models on the default
+  flat outliner path. **Gate (main):** code review found no reportable findings.
+  Verified with typecheck, targeted search/reference/system-field/row tests,
+  renderer tests, docs check, focused outliner/backlinks E2E coverage, and
+  light/dark NodePanel smoke. Full `test:core` was run but remains red on the
+  current `main` baseline for unrelated `agentSkills.test.ts` assertions against
+  external `linlab-skills/data-analysis` wording.
 - **Design-system calibration audit and guards (PR #377, codex)** — calibrated
   the layered design-system contract into executable metrics and runtime guard
   rails: calibration audit rows, component/source-map drift checks, raw-colour

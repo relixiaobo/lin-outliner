@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | `codex-3/performance-hotspots` | draft PR #380 optimize reference summary hot paths (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372**) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373, agent-bundled-search-tools #374, data-import-cli-api-boundary #375, ask-user-question-stepper #376 + polish #378, model-effort-labels #379) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,9 +31,9 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-06).** Open PR queue: #380
-(`codex-3/performance-hotspots`, draft). Recently merged: #377
-(`codex/design-system-calibration-audit`) and #379
+**In flight (2026-07-06).** Open PR queue: none. Recently merged: #380
+(`codex-3/performance-hotspots`) merged 2026-07-06 after main review; see
+*Recently completed*. #377 (`codex/design-system-calibration-audit`) and #379
 (`codex-4/model-effort-labels`) merged 2026-07-06 after main review; see
 *Recently completed*. #378 (`codex-4/ask-user-question-stepper-polish`) merged
 2026-07-05 after main review; see *Recently completed*. #376
@@ -108,8 +108,10 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
    model-first model picker (merge Provider + Model Override, provider as secondary label,
    "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
-3. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
-   `new Map(prev.byId)` + `nextRevisions` whole-map rebuild), each a small standalone PR; no design gate.
+3. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
+   reference-summary Trash set precomputation and default-panel row-model pruning; residual
+   `new Map(prev.byId)` + `nextRevisions` whole-map rebuild remains, each a small standalone PR;
+   no design gate.
 4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
 5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
@@ -429,11 +431,13 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
   perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
-  · P2 (#275) all shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
+  · P2 (#275) · P3 hot-path cleanup #380 all shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
   index patched per delta, windowed/flat outliner renderer + agent streaming `projection_patch` +
-  structural-save coalescing (metrics in Recently completed). **Next: P3** (localized O(N) cleanups
-  — the residual `new Map(prev.byId)` + `nextRevisions` whole-map rebuild; several unlocked by the
-  stable-identity foundation P1 PR-A laid).
+  structural-save coalescing (metrics in Recently completed). #380 precomputes Trash descendant sets
+  for renderer/system/search reference-summary scans and stops building recursive panel row models on
+  the default flat outliner path. **Remaining P3:** localized O(N) cleanups — the residual
+  `new Map(prev.byId)` + `nextRevisions` whole-map rebuild; several unlocked by the stable-identity
+  foundation P1 PR-A laid.
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
@@ -471,6 +475,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **performance-hotspots** (`codex-3/performance-hotspots`, PR #380,
+  codex-3, merged 2026-07-06, fast-track) — trims reference-summary and panel
+  hot paths without changing behavior. Renderer and system-field reference
+  summaries now precompute the Trash descendant set once per cached summary, the
+  search index carries a deleted-node set for O(1) Trash checks during full
+  reference-summary/search scans, and Node/File preview panels no longer build
+  recursive fallback row models when the default flat outliner path is active.
+  **Gate (main):** code review found no reportable findings. Verified on the PR
+  head with typecheck, targeted search/reference/system-field/row tests, the
+  full renderer suite, docs check, focused outliner/backlinks E2E coverage, and
+  light/dark NodePanel smoke. Full `test:core` was also run and remains red on
+  current `main` for unrelated `agentSkills.test.ts` assertions against external
+  `linlab-skills/data-analysis` wording. Fast-track, **shape (a)**, *no plan
+  file*.
 
 - **design-system-calibration-audit** (`codex/design-system-calibration-audit`,
   PR #377, codex, merged 2026-07-06, fast-track) — calibrates the layered
