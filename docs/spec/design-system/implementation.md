@@ -69,8 +69,9 @@ decision routing, exceptions, and validation.
 - **Component source accountability.** `components.md` is the reusable primitive
   contract table. Its rows must stay well-formed, every documented component name
   must be unique, every row must carry a component code span, a `Sources` code
-  span, and a contract, and every `Sources` code span must resolve to a current
-  renderer CSS/TS/TSX file with no ambiguous short-name match.
+  span, and a linked contract owner. Every `Sources` code span must resolve to a
+  current renderer CSS/TS/TSX file with no ambiguous short-name match, and every
+  contract link must resolve to a current design-system markdown target.
 - **Calibration audit.** A design-system calibration pass records findings in
   [calibration-audit.md](./calibration-audit.md) as code drift, spec drift, named
   exception, or open design decision. The audit's open-design-decision table must
@@ -146,7 +147,8 @@ Expected checks for design-system changes:
 - `bun scripts/design-system-metrics.ts --json` for the current compression,
   current-spec source references, source-map product and contract references,
   calibration classification/ledger integrity,
-  decision-derivation, component-source references, component-coverage,
+  decision-derivation, component-source and contract references,
+  component-coverage,
   exception-evidence, and renderer-wide token-discipline baseline, including raw
   colour literals in CSS, TS, and TSX, calibration evidence references, plus the
   runtime surface matrix size, duplicate-name check, light/dark variant

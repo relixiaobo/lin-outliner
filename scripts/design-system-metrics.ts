@@ -426,16 +426,27 @@ function componentRowSourceReferenceCount(row: { sources: string }): number {
     .length;
 }
 
+function componentRowContractReferenceCount(row: { contract: string }): number {
+  return markdownLinkTargets(row.contract).length;
+}
+
 function componentSourceReferenceMetrics() {
   const brokenReferences: string[] = [];
   const ambiguousReferences: string[] = [];
+  const contractBrokenReferences: string[] = [];
   const rows = componentDocRows();
   const duplicateDocumentedComponentNames = duplicateValues(rows.flatMap((row) => componentRowNames(row)));
   const incompleteComponentDocRows = rows
-    .filter((row) => componentRowNames(row).length === 0 || componentRowSourceReferenceCount(row) === 0 || !row.contract.trim())
+    .filter((row) => (
+      componentRowNames(row).length === 0
+      || componentRowSourceReferenceCount(row) === 0
+      || !row.contract.trim()
+      || componentRowContractReferenceCount(row) === 0
+    ))
     .map((row) => row.component || 'missing component')
     .sort();
   let referenceCount = 0;
+  let contractReferenceCount = 0;
   for (const row of rows) {
     for (const match of row.sources.matchAll(/`([^`]+)`/g)) {
       const reference = match[1]?.trim() ?? '';
@@ -448,14 +459,22 @@ function componentSourceReferenceMetrics() {
         ambiguousReferences.push(`${row.component}: ${reference} matched multiple files (${matches.join(', ')})`);
       }
     }
+    for (const target of markdownLinkTargets(row.contract)) {
+      contractReferenceCount += 1;
+      if (!localMarkdownTargetExists(COMPONENTS_DOC, target)) {
+        contractBrokenReferences.push(`${row.component}: ${target}`);
+      }
+    }
   }
   return {
     componentSourceReferences: referenceCount,
+    componentContractReferences: contractReferenceCount,
     malformedComponentDocRows: malformedComponentDocRows(),
     duplicateDocumentedComponentNames,
     incompleteComponentDocRows,
     componentSourceBrokenReferences: brokenReferences.sort(),
     componentSourceAmbiguousReferences: ambiguousReferences.sort(),
+    componentContractBrokenReferences: contractBrokenReferences.sort(),
   };
 }
 
@@ -1416,11 +1435,13 @@ function main() {
       decisionBrokenReferencesTarget: 0,
       componentCoverageTarget: COMPONENT_COVERAGE_TARGET,
       componentSourceReferencesMinimumTarget: COMPONENT_SOURCE_REFERENCES_MIN,
+      componentContractReferencesMinimumTarget: 1,
       malformedComponentDocRowsTarget: 0,
       duplicateDocumentedComponentNamesTarget: 0,
       incompleteComponentDocRowsTarget: 0,
       componentSourceBrokenReferencesTarget: 0,
       componentSourceAmbiguousReferencesTarget: 0,
+      componentContractBrokenReferencesTarget: 0,
       unmappedDocumentedContractsTarget: 0,
       mappedContractsMissingFromDocsTarget: 0,
       componentImplementationFilesMissingTarget: 0,
@@ -1490,6 +1511,7 @@ function main() {
     console.log(`  unnamed exception decisions: ${metrics.decisionAudit.unnamedExceptionDecisions.length}`);
     console.log(`  component coverage: ${(metrics.components.componentCoverage * 100).toFixed(1)}%`);
     console.log(`  component source refs: ${metrics.components.componentSourceReferences}`);
+    console.log(`  component contract refs: ${metrics.components.componentContractReferences}`);
     console.log(`  component doc drift: ${
       metrics.components.malformedComponentDocRows.length
       + metrics.components.duplicateDocumentedComponentNames.length
@@ -1651,6 +1673,9 @@ function main() {
         `component source references ${metrics.components.componentSourceReferences} < ${COMPONENT_SOURCE_REFERENCES_MIN}`,
       );
     }
+    if (metrics.components.componentContractReferences === 0) {
+      failures.push('component contract references missing');
+    }
     if (metrics.components.malformedComponentDocRows.length > 0) {
       failures.push(`malformed component doc rows: ${metrics.components.malformedComponentDocRows.join(', ')}`);
     }
@@ -1665,6 +1690,9 @@ function main() {
     }
     if (metrics.components.componentSourceAmbiguousReferences.length > 0) {
       failures.push(`component source ambiguous refs: ${metrics.components.componentSourceAmbiguousReferences.join(', ')}`);
+    }
+    if (metrics.components.componentContractBrokenReferences.length > 0) {
+      failures.push(`component contract broken refs: ${metrics.components.componentContractBrokenReferences.join(', ')}`);
     }
     if (metrics.components.unmappedDocumentedContracts.length > 0) {
       failures.push(`documented component contracts missing from metrics: ${metrics.components.unmappedDocumentedContracts.join(', ')}`);
