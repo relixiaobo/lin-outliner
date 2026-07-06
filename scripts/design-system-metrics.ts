@@ -612,6 +612,20 @@ function nativeControlExceptionAuditRows(): Map<string, string> {
   );
 }
 
+function malformedNativeControlExceptionRows(): string[] {
+  const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
+  const start = source.indexOf('## Native-Control Exceptions');
+  const end = source.indexOf('## Open Design Decisions', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('| '))
+    .filter((line) => line !== '| File | Reason |' && !line.startsWith('| ---'))
+    .filter((line) => !/^\| `([^`]+)` \| (.+?) \|$/.test(line))
+    .sort();
+}
+
 function componentCoverageMetrics() {
   const files = sourceFiles(RENDERER_DIR);
   const componentTags = new Set(componentContracts.flatMap((contract) => contract.jsxTags));
@@ -689,6 +703,7 @@ function componentCoverageMetrics() {
     .filter((file) => !exceptedNativeFiles.has(file))
     .sort();
   const auditedNativeControlExceptions = nativeControlExceptionAuditRows();
+  const malformedNativeControlRows = malformedNativeControlExceptionRows();
   const nativeControlExceptionsMissingFromAudit = Object.keys(nativeControlExceptions)
     .filter((file) => !auditedNativeControlExceptions.has(file))
     .sort();
@@ -718,6 +733,7 @@ function componentCoverageMetrics() {
     nativeControlExceptionsMissingFromAudit,
     nativeControlAuditEntriesMissingFromMetrics,
     nativeControlExceptionReasonMismatches,
+    malformedNativeControlRows,
   };
 }
 
@@ -968,6 +984,7 @@ function main() {
       metrics.components.nativeControlExceptionsMissingFromAudit.length
       + metrics.components.nativeControlAuditEntriesMissingFromMetrics.length
       + metrics.components.nativeControlExceptionReasonMismatches.length
+      + metrics.components.malformedNativeControlRows.length
     }`);
     console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
@@ -1072,6 +1089,9 @@ function main() {
     }
     if (metrics.components.nativeControlExceptionsMissingFromAudit.length > 0) {
       failures.push(`native control exceptions missing from audit: ${metrics.components.nativeControlExceptionsMissingFromAudit.join(', ')}`);
+    }
+    if (metrics.components.malformedNativeControlRows.length > 0) {
+      failures.push(`malformed native control exception rows: ${metrics.components.malformedNativeControlRows.join(', ')}`);
     }
     if (metrics.components.nativeControlAuditEntriesMissingFromMetrics.length > 0) {
       failures.push(`native control audit entries missing from metrics: ${metrics.components.nativeControlAuditEntriesMissingFromMetrics.join(', ')}`);
