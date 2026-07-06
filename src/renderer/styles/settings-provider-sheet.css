@@ -73,18 +73,6 @@
   color: var(--text-soft);
 }
 
-.channel-config-seed {
-  width: 100%;
-  min-height: 76px;
-  border: 0;
-  outline: none;
-  resize: vertical;
-  background: transparent;
-  color: var(--text-strong);
-  font: inherit;
-  line-height: var(--line-ui-sm);
-}
-
 /* Head: large brand avatar + title / subtitle (native alert layout). */
 .settings-sheet-head {
   display: flex;

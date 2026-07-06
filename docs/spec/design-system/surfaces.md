@@ -178,7 +178,8 @@ The conversation menu follows the Slack section-action model: Direct Messages ow
 `New agent`, Channels owns `New Channel`, and creation actions are section-header
 affordances rather than fake rows. Rows are scan-first and single-line; DMs show
 avatar + name, Channels show hash + name, active rows suppress unread badges, and
-row actions hang from one trailing More menu.
+ordinary Channel rows show one trailing edit icon for inline rename. Protected
+default Channels do not show rename controls.
 
 **Config and inline edits.** Agent authoring uses a dedicated native child window
 (`?surface=agent-config`) opened through the main process. Channel creation is
