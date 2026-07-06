@@ -370,11 +370,30 @@ function malformedComponentDocRows(): string[] {
     .sort();
 }
 
+function componentRowNames(row: { component: string }): string[] {
+  return [...row.component.matchAll(/`([^`]+)`/g)]
+    .map((match) => match[1]?.trim() ?? '')
+    .filter(Boolean);
+}
+
+function componentRowSourceReferenceCount(row: { sources: string }): number {
+  return [...row.sources.matchAll(/`([^`]+)`/g)]
+    .map((match) => match[1]?.trim() ?? '')
+    .filter(Boolean)
+    .length;
+}
+
 function componentSourceReferenceMetrics() {
   const brokenReferences: string[] = [];
   const ambiguousReferences: string[] = [];
+  const rows = componentDocRows();
+  const duplicateDocumentedComponentNames = duplicateValues(rows.flatMap((row) => componentRowNames(row)));
+  const incompleteComponentDocRows = rows
+    .filter((row) => componentRowNames(row).length === 0 || componentRowSourceReferenceCount(row) === 0 || !row.contract.trim())
+    .map((row) => row.component || 'missing component')
+    .sort();
   let referenceCount = 0;
-  for (const row of componentDocRows()) {
+  for (const row of rows) {
     for (const match of row.sources.matchAll(/`([^`]+)`/g)) {
       const reference = match[1]?.trim() ?? '';
       if (!reference) continue;
@@ -390,6 +409,8 @@ function componentSourceReferenceMetrics() {
   return {
     componentSourceReferences: referenceCount,
     malformedComponentDocRows: malformedComponentDocRows(),
+    duplicateDocumentedComponentNames,
+    incompleteComponentDocRows,
     componentSourceBrokenReferences: brokenReferences.sort(),
     componentSourceAmbiguousReferences: ambiguousReferences.sort(),
   };
@@ -1218,6 +1239,8 @@ function main() {
       componentCoverageTarget: COMPONENT_COVERAGE_TARGET,
       componentSourceReferencesMinimumTarget: COMPONENT_SOURCE_REFERENCES_MIN,
       malformedComponentDocRowsTarget: 0,
+      duplicateDocumentedComponentNamesTarget: 0,
+      incompleteComponentDocRowsTarget: 0,
       componentSourceBrokenReferencesTarget: 0,
       componentSourceAmbiguousReferencesTarget: 0,
       duplicateNativeControlAuditFilesTarget: 0,
@@ -1260,6 +1283,11 @@ function main() {
     console.log(`  unnamed exception decisions: ${metrics.decisionAudit.unnamedExceptionDecisions.length}`);
     console.log(`  component coverage: ${(metrics.components.componentCoverage * 100).toFixed(1)}%`);
     console.log(`  component source refs: ${metrics.components.componentSourceReferences}`);
+    console.log(`  component doc drift: ${
+      metrics.components.malformedComponentDocRows.length
+      + metrics.components.duplicateDocumentedComponentNames.length
+      + metrics.components.incompleteComponentDocRows.length
+    }`);
     console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
     console.log(`  native control audit drift: ${
       metrics.components.nativeControlExceptionsMissingFromAudit.length
@@ -1400,6 +1428,12 @@ function main() {
     }
     if (metrics.components.malformedComponentDocRows.length > 0) {
       failures.push(`malformed component doc rows: ${metrics.components.malformedComponentDocRows.join(', ')}`);
+    }
+    if (metrics.components.duplicateDocumentedComponentNames.length > 0) {
+      failures.push(`duplicate documented component names: ${metrics.components.duplicateDocumentedComponentNames.join(', ')}`);
+    }
+    if (metrics.components.incompleteComponentDocRows.length > 0) {
+      failures.push(`incomplete component doc rows: ${metrics.components.incompleteComponentDocRows.join(', ')}`);
     }
     if (metrics.components.componentSourceBrokenReferences.length > 0) {
       failures.push(`component source broken refs: ${metrics.components.componentSourceBrokenReferences.join(', ')}`);

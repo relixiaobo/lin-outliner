@@ -65,9 +65,10 @@ decision routing, exceptions, and validation.
   visual values. If the answer needs a page-local special case, either promote a
   reusable rule or add a named exception with evidence.
 - **Component source accountability.** `components.md` is the reusable primitive
-  contract table. Its rows must stay well-formed, and every `Sources` code span
-  must resolve to a current renderer CSS/TS/TSX file with no ambiguous short-name
-  match.
+  contract table. Its rows must stay well-formed, every documented component name
+  must be unique, every row must carry a component code span, a `Sources` code
+  span, and a contract, and every `Sources` code span must resolve to a current
+  renderer CSS/TS/TSX file with no ambiguous short-name match.
 - **Calibration audit.** A design-system calibration pass records findings in
   [calibration-audit.md](./calibration-audit.md) as code drift, spec drift, named
   exception, or open design decision. The audit's open-design-decision table must
