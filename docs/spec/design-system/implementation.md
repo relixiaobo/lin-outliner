@@ -48,6 +48,10 @@ decision routing, exceptions, and validation.
   outside stylesheet files or behind component-private variables. Runtime surface
   counts are reported as cases and light/dark theme checks, not as a completeness
   claim for every possible UI state.
+- **Source map accountability.** The kernel Source Map is the renderer UI audit's
+  entry index. Its table rows must stay well-formed, and every Product Sources
+  code span must resolve to a current renderer CSS/TS/TSX file; short names must
+  resolve uniquely unless the code span is an intentional wildcard.
 - **Derivation audit.** For a new or changed UI, the PR must be able to answer
   four questions: which surface owns it, which component primitive or pattern it
   uses, which state-model row it maps to, and which foundation tokens carry its
@@ -119,8 +123,8 @@ Expected checks for design-system changes:
 - `bun run typecheck`
 - `bun run docs:check`
 - `bun scripts/design-system-metrics.ts --json` for the current compression,
-  calibration classification/ledger integrity, decision-derivation,
-  component-coverage,
+  source-map references, calibration classification/ledger integrity,
+  decision-derivation, component-coverage,
   exception-evidence, and renderer-wide token-discipline baseline, including raw
   colour literals in CSS, TS, and TSX, calibration evidence references, plus the
   runtime surface matrix size, duplicate-name check, and light/dark variant

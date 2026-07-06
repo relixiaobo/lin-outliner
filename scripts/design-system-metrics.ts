@@ -233,6 +233,81 @@ function designSystemLineMetrics() {
   };
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function sourceMapRows() {
+  const source = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
+  const start = source.indexOf('## Source Map');
+  const end = source.indexOf('## Load-Bearing Rules', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return [...section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \|$/gm)]
+    .filter((match) => match[1] !== 'Area' && !match[1]?.startsWith('---'))
+    .map((match) => ({
+      area: match[1]?.trim() ?? '',
+      productSources: match[2] ?? '',
+      contract: match[3] ?? '',
+    }));
+}
+
+function malformedSourceMapRows(): string[] {
+  const source = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
+  const start = source.indexOf('## Source Map');
+  const end = source.indexOf('## Load-Bearing Rules', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('| '))
+    .filter((line) => line !== '| Area | Product Sources | Contract |' && !line.startsWith('| ---'))
+    .filter((line) => !/^\| (.+?) \| (.+?) \| (.+?) \|$/.test(line))
+    .sort();
+}
+
+function sourceMapReferenceMatches(reference: string): string[] {
+  const rendererFiles = filesByPattern(RENDERER_DIR, /\.(css|ts|tsx)$/)
+    .map((file) => relative(ROOT, file));
+  const normalized = reference.startsWith('styles/') ? `src/renderer/${reference}` : reference;
+  if (normalized.includes('*')) {
+    const pattern = `^${normalized.split('*').map(escapeRegExp).join('.*')}$`;
+    const regex = new RegExp(pattern);
+    return rendererFiles.filter((file) => regex.test(file)).sort();
+  }
+  if (normalized.includes('/')) {
+    return existsSync(join(ROOT, normalized)) ? [normalized] : [];
+  }
+  return rendererFiles.filter((file) => file.endsWith(`/${normalized}`)).sort();
+}
+
+function sourceMapMetrics() {
+  const rows = sourceMapRows();
+  const malformedRows = malformedSourceMapRows();
+  const brokenReferences: string[] = [];
+  const ambiguousReferences: string[] = [];
+  let referenceCount = 0;
+  for (const row of rows) {
+    for (const match of row.productSources.matchAll(/`([^`]+)`/g)) {
+      const reference = match[1]?.trim() ?? '';
+      if (!reference) continue;
+      referenceCount += 1;
+      const matches = sourceMapReferenceMatches(reference);
+      if (matches.length === 0) {
+        brokenReferences.push(`${row.area}: ${reference}`);
+      } else if (!reference.includes('*') && matches.length > 1) {
+        ambiguousReferences.push(`${row.area}: ${reference} matched multiple files (${matches.join(', ')})`);
+      }
+    }
+  }
+  return {
+    sourceMapRows: rows.length,
+    sourceMapReferences: referenceCount,
+    malformedSourceMapRows: malformedRows,
+    sourceMapBrokenReferences: brokenReferences.sort(),
+    sourceMapAmbiguousReferences: ambiguousReferences.sort(),
+  };
+}
+
 function documentedComponentNames(): Set<string> {
   const source = readFileSync(COMPONENTS_DOC, 'utf8');
   const start = source.indexOf('| Component | Sources | Contract |');
@@ -950,6 +1025,7 @@ function main() {
 
   const metrics = {
     designSystem: designSystemLineMetrics(),
+    sourceMap: sourceMapMetrics(),
     calibrationAudit: calibrationAuditMetrics(),
     decisionAudit: decisionAuditMetrics(),
     exceptions: exceptionEvidenceMetrics(),
@@ -958,6 +1034,11 @@ function main() {
     runtimeSurfaces: runtimeSurfaceMetrics(),
     targets: {
       surfaceTargetLines: SURFACE_TARGET_LINES,
+      sourceMapRowsMinimumTarget: 1,
+      sourceMapReferencesMinimumTarget: 1,
+      malformedSourceMapRowsTarget: 0,
+      sourceMapBrokenReferencesTarget: 0,
+      sourceMapAmbiguousReferencesTarget: 0,
       calibrationClassificationRowsTarget: calibrationFindingClassNames.length,
       calibrationEvidenceCoverageTarget: CALIBRATION_EVIDENCE_COVERAGE_TARGET,
       decisionRowMinimumTarget: DECISION_AUDIT_MIN_ROWS,
@@ -979,6 +1060,8 @@ function main() {
     console.log('design-system metrics');
     console.log(`  surface lines: ${metrics.designSystem.surfaceLines}/${SURFACE_TARGET_LINES}`);
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
+    console.log(`  source map rows: ${metrics.sourceMap.sourceMapRows}`);
+    console.log(`  source map broken refs: ${metrics.sourceMap.sourceMapBrokenReferences.length}`);
     console.log(`  calibration class rows: ${metrics.calibrationAudit.calibrationClassificationRows}`);
     console.log(`  incomplete calibration class rows: ${metrics.calibrationAudit.incompleteClassificationModelRows.length}`);
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
@@ -1024,6 +1107,18 @@ function main() {
     const failures: string[] = [];
     if (metrics.designSystem.surfaceLines > SURFACE_TARGET_LINES) {
       failures.push(`surface lines ${metrics.designSystem.surfaceLines} > ${SURFACE_TARGET_LINES}`);
+    }
+    if (metrics.sourceMap.sourceMapRows === 0 || metrics.sourceMap.sourceMapReferences === 0) {
+      failures.push('source map missing or empty');
+    }
+    if (metrics.sourceMap.malformedSourceMapRows.length > 0) {
+      failures.push(`malformed source map rows: ${metrics.sourceMap.malformedSourceMapRows.join(', ')}`);
+    }
+    if (metrics.sourceMap.sourceMapBrokenReferences.length > 0) {
+      failures.push(`source map broken refs: ${metrics.sourceMap.sourceMapBrokenReferences.join(', ')}`);
+    }
+    if (metrics.sourceMap.sourceMapAmbiguousReferences.length > 0) {
+      failures.push(`source map ambiguous refs: ${metrics.sourceMap.sourceMapAmbiguousReferences.join(', ')}`);
     }
     if (metrics.calibrationAudit.duplicateClassificationModelClasses.length > 0) {
       failures.push(`duplicate calibration classification model classes: ${metrics.calibrationAudit.duplicateClassificationModelClasses.join(', ')}`);
