@@ -1571,6 +1571,23 @@ describe('Core', () => {
       .toThrow('tag inheritance cannot create a cycle');
   });
 
+  test('failed tag config validation does not dirty document state', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('project'));
+    const beforeState = JSON.stringify(core.state());
+    const beforeRevision = core.revision();
+    const beforeRevisionDelta = core.revisionDelta();
+    const beforeSerialized = core.serializeState();
+
+    expect(() => core.setTagConfig(tagId, { showCheckbox: true, color: '#aabbcc' }))
+      .toThrow('invalid color value');
+
+    expect(JSON.stringify(core.state())).toBe(beforeState);
+    expect(core.revision()).toBe(beforeRevision);
+    expect(core.revisionDelta()).toEqual(beforeRevisionDelta);
+    expect(core.serializeState()).toBe(beforeSerialized);
+  });
+
   test('tag inheritance instantiates default content along the extends chain (ancestor-first)', () => {
     const core = Core.new();
     const parentTagId = mustFocus(core.createTag('project'));

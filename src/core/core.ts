@@ -113,6 +113,13 @@ type AsyncMutator = () => Promise<FocusHint | undefined>;
 type FocusOptions = Omit<FocusHint, 'nodeId' | 'selectAll'> & { selectAll?: boolean };
 type MoveDirection = 'up' | 'down';
 type CommitOrigin = 'user' | 'agent' | 'system' | '__seed__';
+interface PreparedConfigValue {
+  scalarText: string | null;
+  refTargetId: string | null;
+  refTargetIds: string[];
+  enumOptionId: string | null;
+  enumOptionIds: string[];
+}
 export type CoreTransactionMetadata = OperationHistoryMetadata;
 export type {
   OperationHistoryEntry,
@@ -1561,31 +1568,34 @@ export class Core {
         }
       }
       if (patch.childSupertag) ensureTagDefinition(state, patch.childSupertag);
+      const configUpdates: SetConfigValueInput[] = [];
+      if (patch.showCheckbox !== undefined) {
+        configUpdates.push({ kind: 'scalar', configKey: 'showCheckbox', text: patch.showCheckbox ? 'true' : 'false' });
+      }
+      if (patch.doneStateEnabled !== undefined) {
+        configUpdates.push({ kind: 'scalar', configKey: 'doneStateEnabled', text: patch.doneStateEnabled ? 'true' : 'false' });
+      }
+      if ('color' in patch) {
+        configUpdates.push({ kind: 'scalar', configKey: 'color', text: normalizeOptionalText(patch.color) ?? null });
+      }
+      if ('extends' in patch) {
+        configUpdates.push({ kind: 'ref', configKey: 'extends', targetId: normalizeOptionalText(patch.extends) ?? null });
+      }
+      if ('childSupertag' in patch) {
+        configUpdates.push({ kind: 'ref', configKey: 'childSupertag', targetId: normalizeOptionalText(patch.childSupertag) ?? null });
+      }
+      if (patch.doneMapChecked !== undefined) {
+        configUpdates.push({ kind: 'refList', configKey: 'doneMapChecked', targetIds: patch.doneMapChecked });
+      }
+      if (patch.doneMapUnchecked !== undefined) {
+        configUpdates.push({ kind: 'refList', configKey: 'doneMapUnchecked', targetIds: patch.doneMapUnchecked });
+      }
+      for (const input of configUpdates) this.prepareConfigValueDirect(tagId, input);
       const node = clone(requiredNode(state, tagId));
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
       // config-as-nodes: every tag knob is stored in the defConfig subtree.
-      if (patch.showCheckbox !== undefined) {
-        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'showCheckbox', text: patch.showCheckbox ? 'true' : 'false' });
-      }
-      if (patch.doneStateEnabled !== undefined) {
-        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'doneStateEnabled', text: patch.doneStateEnabled ? 'true' : 'false' });
-      }
-      if ('color' in patch) {
-        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'color', text: normalizeOptionalText(patch.color) ?? null });
-      }
-      if ('extends' in patch) {
-        this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'extends', targetId: normalizeOptionalText(patch.extends) ?? null });
-      }
-      if ('childSupertag' in patch) {
-        this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'childSupertag', targetId: normalizeOptionalText(patch.childSupertag) ?? null });
-      }
-      if (patch.doneMapChecked !== undefined) {
-        this.setConfigValueDirect(tagId, { kind: 'refList', configKey: 'doneMapChecked', targetIds: patch.doneMapChecked });
-      }
-      if (patch.doneMapUnchecked !== undefined) {
-        this.setConfigValueDirect(tagId, { kind: 'refList', configKey: 'doneMapUnchecked', targetIds: patch.doneMapUnchecked });
-      }
+      for (const input of configUpdates) this.setConfigValueDirect(tagId, input);
       return focus(tagId);
     });
   }
@@ -2810,6 +2820,39 @@ export class Core {
   }
 
   private setConfigValueDirect(defId: string, input: SetConfigValueInput) {
+    const prepared = this.prepareConfigValueDirect(defId, input);
+    const rowId = this.ensureConfigRowDirect(defId, input.configKey);
+    this.clearConfigValueChildrenDirect(rowId);
+
+    switch (input.kind) {
+      case 'scalar': {
+        if (prepared.scalarText != null) this.createConfigValueNodeDirect(rowId, prepared.scalarText, undefined, undefined);
+        break;
+      }
+      case 'ref': {
+        if (prepared.refTargetId != null) this.createConfigValueNodeDirect(rowId, '', 'config', prepared.refTargetId);
+        break;
+      }
+      case 'refList': {
+        for (const targetId of prepared.refTargetIds) {
+          this.createConfigValueNodeDirect(rowId, '', 'config', targetId);
+        }
+        break;
+      }
+      case 'enum': {
+        if (prepared.enumOptionId != null) this.createConfigValueNodeDirect(rowId, '', 'enum', prepared.enumOptionId);
+        break;
+      }
+      case 'enumList': {
+        for (const optionId of prepared.enumOptionIds) {
+          this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
+        }
+        break;
+      }
+    }
+  }
+
+  private prepareConfigValueDirect(defId: string, input: SetConfigValueInput): PreparedConfigValue {
     const def = requiredNode(this.snapshot(), defId);
     const schema = CONFIG_SCHEMA[input.configKey];
     if (!schema) throw CoreError.invalidOperation(`unknown config key: ${input.configKey}`);
@@ -2860,35 +2903,7 @@ export class Core {
       }
     }
 
-    const rowId = this.ensureConfigRowDirect(defId, input.configKey);
-    this.clearConfigValueChildrenDirect(rowId);
-
-    switch (input.kind) {
-      case 'scalar': {
-        if (scalarText != null) this.createConfigValueNodeDirect(rowId, scalarText, undefined, undefined);
-        break;
-      }
-      case 'ref': {
-        if (refTargetId != null) this.createConfigValueNodeDirect(rowId, '', 'config', refTargetId);
-        break;
-      }
-      case 'refList': {
-        for (const targetId of refTargetIds) {
-          this.createConfigValueNodeDirect(rowId, '', 'config', targetId);
-        }
-        break;
-      }
-      case 'enum': {
-        if (enumOptionId != null) this.createConfigValueNodeDirect(rowId, '', 'enum', enumOptionId);
-        break;
-      }
-      case 'enumList': {
-        for (const optionId of enumOptionIds) {
-          this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
-        }
-        break;
-      }
-    }
+    return { scalarText, refTargetId, refTargetIds, enumOptionId, enumOptionIds };
   }
 
   private ensureConfigRowDirect(defId: string, configKey: DefConfigKey): string {

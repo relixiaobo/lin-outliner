@@ -1452,8 +1452,12 @@ test.describe('typography tokens', () => {
       'tab-hover-bg',
     ].join('|');
     const retiredAliasPattern = new RegExp(
-      `(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\)|['"\`]--(?:${retiredAliases})['"\`])`,
+      `(?:--(?:${retiredAliases})\\s*:|var\\(--(?:${retiredAliases})\\)|['"\`]--(?:${retiredAliases})['"\`])`,
     );
+    expect(retiredAliasPattern.test('--surface: var(--bg-content);')).toBe(true);
+    expect(retiredAliasPattern.test('background: var(--surface);')).toBe(true);
+    expect(retiredAliasPattern.test('const alias = "--surface";')).toBe(true);
+    expect(retiredAliasPattern.test('background: var(--bg-content);')).toBe(false);
     const violations: string[] = [];
 
     for (const file of rendererSourceFiles) {
