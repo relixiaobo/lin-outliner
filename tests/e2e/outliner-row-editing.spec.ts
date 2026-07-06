@@ -243,6 +243,42 @@ test.describe('outliner row editing parity', () => {
     expect(colors.created).not.toBe(colors.trailing);
   });
 
+  test('Enter at the start of an expanded parent creates a previous sibling without reparenting the subtree', async ({ page }) => {
+    const childId = await page.evaluate(async (testIds) => {
+      const win = window as Window & {
+        lin?: {
+          invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+        };
+      };
+      const outcome = await win.lin!.invoke<{ focus?: { nodeId: string } }>('create_node', {
+        parentId: testIds.alpha,
+        index: null,
+        text: 'Title',
+      });
+      return outcome.focus!.nodeId;
+    }, ids);
+    await emitCurrentProjection(page);
+
+    await row(page, ids.alpha).locator('.row-chevron-button').click({ force: true });
+    await expect(row(page, childId)).toBeVisible();
+
+    const alphaEditorBox = await rowEditor(page, ids.alpha).boundingBox();
+    expect(alphaEditorBox).not.toBeNull();
+    await page.mouse.click(alphaEditorBox!.x + 1, alphaEditorBox!.y + (alphaEditorBox!.height / 2));
+    await page.keyboard.press('Enter');
+
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(4);
+    const children = await todayChildren(page);
+    const createdId = children[0];
+    expect(createdId).toBeTruthy();
+    expect(children).toEqual([createdId, ids.alpha, ids.beta, ids.gamma]);
+    expect((await nodeById(page, createdId))?.content.text).toBe('');
+    expect((await nodeById(page, ids.alpha))?.content.text).toBe('Alpha');
+    expect((await nodeById(page, ids.alpha))?.children).toEqual([childId]);
+    expect((await nodeById(page, childId))?.parentId).toBe(ids.alpha);
+    await expect(rowEditor(page, createdId)).toBeFocused();
+  });
+
   test('> converts the current empty row to a field row without moving it', async ({ page }) => {
     await placeCursor(page, ids.alpha, 'end');
     await page.keyboard.press('Enter');

@@ -305,6 +305,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Outliner row-start Enter insertion (direct main, fast-track)** — pressing
+  `Enter` at the start of a non-empty row now creates and focuses a previous
+  sibling instead of splitting the row or moving the row text under an expanded
+  parent. The editor split payload carries row-start state, the row handler
+  preserves the current subtree, and E2E coverage locks the expanded-parent
+  regression. Verified with typecheck, docs check, diff check, full outliner
+  row-editing E2E coverage, and targeted renderer keymap tests.
 - **Run Details transcript turn coalescing (PR #372, codex-3)** — Run Details
   now adapts raw `assistant(toolCall) -> toolResult -> assistant(text)`
   transcripts into one assistant turn instead of visually splitting the final

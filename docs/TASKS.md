@@ -477,6 +477,15 @@ anything.
 
 ## Recently completed
 
+- **outliner-row-start-enter** (`main`, direct push 2026-07-06, fast-track) —
+  pressing `Enter` at the start of a non-empty row now creates and focuses a
+  previous sibling instead of splitting the row or moving its text under an
+  expanded parent. The editor split payload now carries row-start state, the row
+  handler preserves the current subtree, `ui-behavior` records the rule, and
+  E2E coverage locks the expanded-parent regression. Verified with typecheck,
+  `docs:check`, `git diff --check`, full outliner row-editing E2E coverage, and
+  targeted renderer keymap tests. Fast-track, **shape (a)**, *no plan file*.
+
 - **agent-tool-clarity-names** (`codex-3/agent-tool-clarity-names`, PR #381,
   codex-3, merged 2026-07-06, fast-track) — clarifies model-visible agent tool
   names and their permission labels: background bash stop is now `bash_stop`,

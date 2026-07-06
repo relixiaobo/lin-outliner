@@ -1460,6 +1460,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
     const siblings = props.index.byId.get(props.parentId)?.children ?? [];
     const rowIndex = siblings.indexOf(props.nodeId);
+    if (payload.atStart && !payload.atEnd) {
+      await pendingTextPatchRef.current;
+      await props.run(() => api.createNode(props.parentId, rowIndex >= 0 ? rowIndex : null, ''));
+      return;
+    }
     if (!payload.atEnd) {
       await props.run(() => api.splitNode(targetEditId, payload.before, payload.after, {
         // A file node's `expanded` means "preview open", not "children visible to
@@ -2099,6 +2104,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       onPatch={() => undefined}
       onCommit={() => undefined}
       onEnter={() => void handleEnter({
+        atStart: false,
         atEnd: true,
         before: EMPTY_RICH_TEXT,
         after: EMPTY_RICH_TEXT,
@@ -2252,7 +2258,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                   onCloseTagTrigger={() => props.setTrigger(null)}
                   onArrowUp={() => row.moveFocus(-1)}
                   onArrowDown={() => row.moveFocus(1)}
-                  onEnter={() => void handleEnter({ atEnd: true, before: draftContentRef.current, after: EMPTY_RICH_TEXT })}
+                  onEnter={() => void handleEnter({
+                    atStart: false,
+                    atEnd: true,
+                    before: draftContentRef.current,
+                    after: EMPTY_RICH_TEXT,
+                  })}
                   onBackspace={() => void handleBackspaceAtStart(true)}
                   onEscape={() => void exitToSelection()}
                   onShiftArrow={() => void exitToSelection()}

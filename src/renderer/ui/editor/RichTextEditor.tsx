@@ -55,6 +55,7 @@ import {
 export interface EditorSplitPayload {
   before: RichText;
   after: RichText;
+  atStart: boolean;
   atEnd: boolean;
 }
 
@@ -938,6 +939,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
               propsRef.current.onEnter({
                 before: current,
                 after: { text: '', marks: [], inlineRefs: [] },
+                atStart: false,
                 atEnd: true,
               });
               break;
@@ -946,6 +948,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
             propsRef.current.onEnter({
               before: sliceRichText(current, 0, from),
               after: sliceRichText(current, from, current.text.length),
+              atStart: from === to && from === 0,
               atEnd: from === to && to >= current.text.length,
             });
             break;
