@@ -860,12 +860,17 @@ function main() {
     runtimeSurfaces: runtimeSurfaceMetrics(),
     targets: {
       surfaceTargetLines: SURFACE_TARGET_LINES,
+      calibrationClassificationRowsTarget: calibrationFindingClassNames.length,
+      calibrationEvidenceCoverageTarget: CALIBRATION_EVIDENCE_COVERAGE_TARGET,
+      decisionRowMinimumTarget: DECISION_AUDIT_MIN_ROWS,
       decisionDerivationTarget: DECISION_DERIVATION_TARGET,
       decisionEvidenceCoverageTarget: DECISION_EVIDENCE_COVERAGE_TARGET,
       componentCoverageTarget: COMPONENT_COVERAGE_TARGET,
       exceptionEvidenceCoverageTarget: 1,
       rawHexOutsideTokenDeclarationsTarget: 0,
       rawFunctionalColorOutsideTokenDeclarationsTarget: 0,
+      runtimeSurfaceCasesMinimumTarget: 1,
+      runtimeThemeVariantNamesTarget: ['light', 'dark'],
     },
   };
 

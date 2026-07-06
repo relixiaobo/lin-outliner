@@ -25,7 +25,8 @@ decision routing, exceptions, and validation.
   rules, not a growing surface encyclopedia. Use
   `bun scripts/design-system-metrics.ts --json` to inspect the current state and
   `bun scripts/design-system-metrics.ts --check` once the compression target is
-  satisfied. The ratified target is: surface-specific contract lines are at least
+  satisfied. The JSON `targets` object mirrors the ratified baselines enforced by
+  `--check`. The ratified target is: surface-specific contract lines are at least
   40% below the post-split baseline (`surfaces.md` <= 403 lines from a 672-line
   baseline); the sampled [decision audit](./decision-audit.md) keeps at least the
   current 50-row sample with unique contiguous `Dxx` ids, proves at least 80%
