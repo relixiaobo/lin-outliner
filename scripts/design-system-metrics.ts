@@ -794,6 +794,15 @@ function exceptionEvidenceMetrics() {
       repoEvidenceCodePathMatches,
     ).forEach((reference) => brokenReferences.add(reference));
   }
+  const namedExceptionSummaryBrokenReferences = new Set<string>();
+  for (const row of calibrationNameRows) {
+    brokenLocalEvidenceReferences(
+      CALIBRATION_AUDIT,
+      row.name,
+      row.evidence,
+      localEvidenceCodePathMatches,
+    ).forEach((reference) => namedExceptionSummaryBrokenReferences.add(reference));
+  }
   return {
     exceptionRows: rows.length,
     malformedRegistryRows,
@@ -801,6 +810,7 @@ function exceptionEvidenceMetrics() {
     exceptionEvidenceRows: evidenceRows.length,
     exceptionEvidenceCoverage: rows.length === 0 ? 1 : Number((evidenceRows.length / rows.length).toFixed(3)),
     exceptionBrokenReferences: [...brokenReferences].sort(),
+    namedExceptionSummaryBrokenReferences: [...namedExceptionSummaryBrokenReferences].sort(),
     registryExceptionsMissingFromCalibration: [...registryNameSet]
       .filter((name) => !calibrationNames.has(name))
       .sort(),
@@ -1341,6 +1351,7 @@ function main() {
       exceptionEvidenceCoverageTarget: 1,
       duplicateRegistryExceptionNamesTarget: 0,
       duplicateNamedExceptionSummaryNamesTarget: 0,
+      namedExceptionSummaryBrokenReferencesTarget: 0,
       rawHexOutsideTokenDeclarationsTarget: 0,
       rawFunctionalColorOutsideTokenDeclarationsTarget: 0,
       runtimeSurfaceCasesMinimumTarget: 1,
@@ -1410,6 +1421,7 @@ function main() {
       metrics.exceptions.registryExceptionsMissingFromCalibration.length
       + metrics.exceptions.calibrationExceptionsMissingFromRegistry.length
       + metrics.exceptions.localCalibrationExceptionEntriesMissing.length
+      + metrics.exceptions.namedExceptionSummaryBrokenReferences.length
       + metrics.exceptions.malformedNamedExceptionRows.length
     }`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
@@ -1602,6 +1614,9 @@ function main() {
     }
     if (metrics.exceptions.duplicateNamedExceptionSummaryNames.length > 0) {
       failures.push(`duplicate named exception summary names: ${metrics.exceptions.duplicateNamedExceptionSummaryNames.join(', ')}`);
+    }
+    if (metrics.exceptions.namedExceptionSummaryBrokenReferences.length > 0) {
+      failures.push(`named exception summary broken refs: ${metrics.exceptions.namedExceptionSummaryBrokenReferences.join(', ')}`);
     }
     if (metrics.exceptions.calibrationExceptionsMissingFromRegistry.length > 0) {
       failures.push(`calibration exceptions missing from registry: ${metrics.exceptions.calibrationExceptionsMissingFromRegistry.join(', ')}`);

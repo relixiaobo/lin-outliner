@@ -129,7 +129,8 @@ decision routing, exceptions, and validation.
   Exception Registry entry must appear there, and any non-kernel entry must be
   named in the metrics script as a local calibration exception. The metrics
   script fails malformed summary rows, duplicate registry/summary names, missing
-  registry entries, unregistered summary entries, and missing local entries.
+  registry entries, unregistered summary entries, broken summary evidence
+  references, and missing local entries.
 
 ## Validation
 
