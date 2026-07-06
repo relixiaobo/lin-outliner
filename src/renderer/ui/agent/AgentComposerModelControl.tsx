@@ -7,6 +7,7 @@ import type { AgentModelOption, AgentProviderSettingsView, AgentReasoningLevel }
 import { useT } from '../../i18n/I18nProvider';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from '../icons';
 import { parseModelSelection } from './AgentModelEffortSelector';
 import { isProviderUsable, resolveUsableActiveProvider } from './providerUsability';
@@ -141,6 +142,29 @@ function AgentComposerModelControlImpl({
     setSubmenu('none');
   }
 
+  function closeSubmenu() {
+    setSubmenu('none');
+  }
+
+  const { onKeyDown: onMenuKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: close,
+    kind: 'menu',
+    active: open,
+    getRestoreTarget: () => anchorRef.current,
+    initialFocus: 'surface',
+    focusKey: `${model}:${effort}:${submenu}`,
+  });
+  const { onKeyDown: onSubmenuKeyDown } = useMenuKeyboard({
+    surfaceRef: submenuRef,
+    onClose: closeSubmenu,
+    kind: 'menu',
+    active: open && submenu !== 'none',
+    getRestoreTarget: () => (submenuAnchor.current instanceof HTMLElement ? submenuAnchor.current : anchorRef.current),
+    initialFocus: 'surface',
+    focusKey: `${submenu}:${model}:${effort}:${expandedKey}`,
+  });
+
   function selectModel(providerId: string, option: AgentModelOption) {
     const nextLevels = option.supportedThinkingLevels.length ? option.supportedThinkingLevels : AGENT_REASONING_LADDER;
     // Drop an effort the newly-chosen model cannot honour (same reconciliation as the
@@ -211,6 +235,7 @@ function AgentComposerModelControlImpl({
             className="agent-composer-model-popover"
             role="menu"
             aria-label={composer.modelControlLabel}
+            onKeyDown={onMenuKeyDown}
             style={overlayStyle}
           >
             {supportsReasoning ? (
@@ -255,6 +280,7 @@ function AgentComposerModelControlImpl({
             className="agent-composer-model-popover agent-composer-model-submenu"
             role="menu"
             aria-label={composer.reasoningHeading}
+            onKeyDown={onSubmenuKeyDown}
             style={submenuStyle}
           >
             <div className="agent-composer-model-section-hint" role="presentation">{composer.reasoningHint}</div>
@@ -288,6 +314,7 @@ function AgentComposerModelControlImpl({
             className="agent-composer-model-popover agent-composer-model-submenu"
             role="menu"
             aria-label={composer.modelHeading}
+            onKeyDown={onSubmenuKeyDown}
             style={submenuStyle}
           >
             <div className="agent-composer-model-section-label" role="presentation">{composer.modelHeading}</div>

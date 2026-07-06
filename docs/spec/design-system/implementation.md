@@ -174,6 +174,10 @@ Expected checks for design-system changes:
   discovery, and target baselines for every `--check` gate. Use `--check` before
   publishing a design-system compression or contract PR.
 - Focused Playwright tests for touched surfaces.
+- `tests/renderer/menuKeyboardCoverage.test.ts` keeps every JSX
+  `role="menu"` surface on the shared `useMenuKeyboard` model so menu semantics
+  include focus-in, roving Arrow/Home/End, Tab dismissal, Escape, and focus
+  restoration.
 - `tests/e2e/design-system-runtime.spec.ts` for representative shell, settings,
   settings-row-menu, launcher-renderer, overlay, outliner trigger, menu,
   tag-context, field-reuse, field-value-popovers including selected values,
