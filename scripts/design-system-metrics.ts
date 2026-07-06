@@ -828,15 +828,22 @@ function decisionAuditMetrics() {
   };
 }
 
-function nativeControlExceptionAuditRows(): Map<string, string> {
+function nativeControlExceptionAuditRowList() {
   const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
   const start = source.indexOf('## Native-Control Exceptions');
   const end = source.indexOf('## Open Design Decisions', start);
   const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return [...section.matchAll(/^\| `([^`]+)` \| (.+?) \|$/gm)]
+    .map((match) => ({
+      file: match[1] ?? '',
+      reason: match[2]?.trim() ?? '',
+    }))
+    .filter((row) => Boolean(row.file));
+}
+
+function nativeControlExceptionAuditRows(): Map<string, string> {
   return new Map(
-    [...section.matchAll(/^\| `([^`]+)` \| (.+?) \|$/gm)]
-      .map((match) => [match[1] ?? '', match[2]?.trim() ?? ''] as const)
-      .filter(([file]) => Boolean(file)),
+    nativeControlExceptionAuditRowList().map((row) => [row.file, row.reason] as const),
   );
 }
 
@@ -933,6 +940,9 @@ function componentCoverageMetrics() {
     .sort();
   const auditedNativeControlExceptions = nativeControlExceptionAuditRows();
   const malformedNativeControlRows = malformedNativeControlExceptionRows();
+  const duplicateNativeControlAuditFiles = duplicateValues(
+    nativeControlExceptionAuditRowList().map((row) => row.file),
+  );
   const nativeControlExceptionsMissingFromAudit = Object.keys(nativeControlExceptions)
     .filter((file) => !auditedNativeControlExceptions.has(file))
     .sort();
@@ -964,6 +974,7 @@ function componentCoverageMetrics() {
     nativeControlAuditEntriesMissingFromMetrics,
     nativeControlExceptionReasonMismatches,
     malformedNativeControlRows,
+    duplicateNativeControlAuditFiles,
   };
 }
 
@@ -1193,6 +1204,7 @@ function main() {
       malformedComponentDocRowsTarget: 0,
       componentSourceBrokenReferencesTarget: 0,
       componentSourceAmbiguousReferencesTarget: 0,
+      duplicateNativeControlAuditFilesTarget: 0,
       exceptionEvidenceCoverageTarget: 1,
       duplicateRegistryExceptionNamesTarget: 0,
       duplicateNamedExceptionSummaryNamesTarget: 0,
@@ -1237,6 +1249,7 @@ function main() {
       + metrics.components.nativeControlAuditEntriesMissingFromMetrics.length
       + metrics.components.nativeControlExceptionReasonMismatches.length
       + metrics.components.malformedNativeControlRows.length
+      + metrics.components.duplicateNativeControlAuditFiles.length
     }`);
     console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
@@ -1388,6 +1401,9 @@ function main() {
     }
     if (metrics.components.malformedNativeControlRows.length > 0) {
       failures.push(`malformed native control exception rows: ${metrics.components.malformedNativeControlRows.join(', ')}`);
+    }
+    if (metrics.components.duplicateNativeControlAuditFiles.length > 0) {
+      failures.push(`duplicate native control audit files: ${metrics.components.duplicateNativeControlAuditFiles.join(', ')}`);
     }
     if (metrics.components.nativeControlAuditEntriesMissingFromMetrics.length > 0) {
       failures.push(`native control audit entries missing from metrics: ${metrics.components.nativeControlAuditEntriesMissingFromMetrics.join(', ')}`);
