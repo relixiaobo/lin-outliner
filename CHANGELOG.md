@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Design-system calibration audit and guards (PR #377, codex)** — calibrated
+  the layered design-system contract into executable metrics and runtime guard
+  rails: calibration audit rows, component/source-map drift checks, raw-colour
+  ownership, retired legacy alias detection, cursor/typography token scans,
+  runtime surface E2E coverage, and shared keyboard ownership for every JSX
+  `role="menu"` surface. Renderer CSS drift was tightened around neutral
+  states, materials, cursors, text tiers, and token ownership; dark
+  `--text-tertiary` now lifts centrally; and rejected tag-colour config patches
+  no longer dirty serialized document state. **Gate (main):** code review found
+  two issues around invalid config writes and an over-escaped alias regex; codex
+  fixed both before merge. Verified with typecheck, core/renderer suites,
+  targeted menu/alias/config regressions, design-system runtime/cursor/
+  typography E2E coverage, docs check, design-system metrics, and
+  `git diff --check`.
 - **Ask user question stepper (PR #376, codex-4)** — multi-question
   `ask_user_question` requests now render as a one-question-at-a-time composer
   stepper instead of a stacked form. Back/Next navigation preserves rich answer
