@@ -424,6 +424,19 @@ function malformedCalibrationFindingRows(): string[] {
     .sort();
 }
 
+function malformedOpenDesignDecisionRows(): string[] {
+  const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
+  const start = source.indexOf('## Open Design Decisions');
+  const section = start >= 0 ? source.slice(start) : '';
+  return section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('| '))
+    .filter((line) => line !== '| Area | Why it needs a decision |' && !line.startsWith('| ---'))
+    .filter((line) => !/^\| (.+?) \| (.+?) \|$/.test(line))
+    .sort();
+}
+
 function decisionAuditRows() {
   const source = readFileSync(DECISION_AUDIT, 'utf8');
   return [...source.matchAll(/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
@@ -501,6 +514,7 @@ function calibrationAuditMetrics() {
     .sort();
   const rows = calibrationFindingRows();
   const malformedCalibrationRows = malformedCalibrationFindingRows();
+  const malformedOpenDecisionRows = malformedOpenDesignDecisionRows();
   const rowIds = rows.map((row) => row.id);
   const duplicateCalibrationIds = rowIds
     .filter((id, index) => rowIds.indexOf(id) !== index)
@@ -537,6 +551,7 @@ function calibrationAuditMetrics() {
     incompleteClassificationModelRows,
     calibrationRows: rows.length,
     malformedCalibrationRows,
+    malformedOpenDecisionRows,
     duplicateCalibrationIds,
     missingCalibrationIds,
     invalidCalibrationClasses,
@@ -968,6 +983,7 @@ function main() {
     console.log(`  incomplete calibration class rows: ${metrics.calibrationAudit.incompleteClassificationModelRows.length}`);
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
     console.log(`  malformed calibration rows: ${metrics.calibrationAudit.malformedCalibrationRows.length}`);
+    console.log(`  malformed open decision rows: ${metrics.calibrationAudit.malformedOpenDecisionRows.length}`);
     console.log(`  calibration evidence: ${(metrics.calibrationAudit.calibrationEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  calibration broken refs: ${metrics.calibrationAudit.calibrationBrokenReferences.length}`);
     console.log(`  invalid calibration classes: ${metrics.calibrationAudit.invalidCalibrationClasses.length}`);
@@ -1026,6 +1042,9 @@ function main() {
     }
     if (metrics.calibrationAudit.malformedCalibrationRows.length > 0) {
       failures.push(`malformed calibration rows: ${metrics.calibrationAudit.malformedCalibrationRows.join(', ')}`);
+    }
+    if (metrics.calibrationAudit.malformedOpenDecisionRows.length > 0) {
+      failures.push(`malformed open design decision rows: ${metrics.calibrationAudit.malformedOpenDecisionRows.join(', ')}`);
     }
     if (metrics.calibrationAudit.missingCalibrationIds.length > 0) {
       failures.push(`missing calibration ids: ${metrics.calibrationAudit.missingCalibrationIds.join(', ')}`);
