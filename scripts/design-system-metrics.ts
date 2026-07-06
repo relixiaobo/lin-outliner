@@ -342,6 +342,7 @@ function sourceMapMetrics() {
     .sort();
   const brokenReferences: string[] = [];
   const ambiguousReferences: string[] = [];
+  const contractBrokenReferences: string[] = [];
   let referenceCount = 0;
   let contractReferenceCount = 0;
   for (const row of rows) {
@@ -359,7 +360,7 @@ function sourceMapMetrics() {
     for (const target of markdownLinkTargets(row.contract)) {
       contractReferenceCount += 1;
       if (!localMarkdownTargetExists(DESIGN_SYSTEM_KERNEL, target)) {
-        brokenReferences.push(`${row.area} contract: ${target}`);
+        contractBrokenReferences.push(`${row.area}: ${target}`);
       }
     }
   }
@@ -372,6 +373,7 @@ function sourceMapMetrics() {
     incompleteSourceMapRows,
     sourceMapBrokenReferences: brokenReferences.sort(),
     sourceMapAmbiguousReferences: ambiguousReferences.sort(),
+    sourceMapContractBrokenReferences: contractBrokenReferences.sort(),
   };
 }
 
@@ -1408,6 +1410,7 @@ function main() {
       incompleteSourceMapRowsTarget: 0,
       sourceMapBrokenReferencesTarget: 0,
       sourceMapAmbiguousReferencesTarget: 0,
+      sourceMapContractBrokenReferencesTarget: 0,
       calibrationClassificationRowsTarget: calibrationFindingClassNames.length,
       duplicateClassificationModelClassesTarget: 0,
       missingClassificationModelClassesTarget: 0,
@@ -1486,6 +1489,7 @@ function main() {
     console.log(`  source map contract refs: ${metrics.sourceMap.sourceMapContractReferences}`);
     console.log(`  source map incomplete rows: ${metrics.sourceMap.incompleteSourceMapRows.length}`);
     console.log(`  source map broken refs: ${metrics.sourceMap.sourceMapBrokenReferences.length}`);
+    console.log(`  source map contract broken refs: ${metrics.sourceMap.sourceMapContractBrokenReferences.length}`);
     console.log(`  calibration class rows: ${metrics.calibrationAudit.calibrationClassificationRows}`);
     console.log(`  incomplete calibration class rows: ${metrics.calibrationAudit.incompleteClassificationModelRows.length}`);
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
@@ -1586,6 +1590,9 @@ function main() {
     }
     if (metrics.sourceMap.sourceMapAmbiguousReferences.length > 0) {
       failures.push(`source map ambiguous refs: ${metrics.sourceMap.sourceMapAmbiguousReferences.join(', ')}`);
+    }
+    if (metrics.sourceMap.sourceMapContractBrokenReferences.length > 0) {
+      failures.push(`source map contract broken refs: ${metrics.sourceMap.sourceMapContractBrokenReferences.join(', ')}`);
     }
     if (metrics.calibrationAudit.duplicateClassificationModelClasses.length > 0) {
       failures.push(`duplicate calibration classification model classes: ${metrics.calibrationAudit.duplicateClassificationModelClasses.join(', ')}`);

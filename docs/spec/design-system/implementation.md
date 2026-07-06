@@ -54,7 +54,8 @@ decision routing, exceptions, and validation.
   every row must carry a Product Sources code span and a linked contract owner,
   and every Product Sources code span must resolve to a current renderer
   CSS/TS/TSX file. Contract links must resolve to current design-system markdown
-  targets, including anchors. Short source names must resolve uniquely unless the
+  targets, including anchors. Product-source failures and contract-link failures
+  are reported separately. Short source names must resolve uniquely unless the
   code span is an intentional wildcard.
 - **Current spec reference accountability.** Current design-system contract docs
   must keep path-like code spans resolvable. This covers the kernel, foundations,
