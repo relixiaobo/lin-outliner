@@ -115,7 +115,10 @@ decision routing, exceptions, and validation.
   and in the kernel Exception Registry, with a narrow source-context scope and
   evidence. The metrics script fails undocumented entries, stale entries whose
   source literal no longer exists, and same-file/same-literal uses outside the
-  named source context.
+  named source context. Token declarations are accepted only in the central token
+  layers and only for named colour/effect token families; spacing, radius, type,
+  motion, and other foundation tokens cannot carry raw colour literals by
+  accident.
 - **Audit local references.** Exception Registry authority/evidence text,
   decision-audit derivation/evidence text, and calibration evidence text must
   resolve any local links, markdown heading anchors, and path-like code spans to

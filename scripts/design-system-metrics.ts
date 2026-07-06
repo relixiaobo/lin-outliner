@@ -42,6 +42,31 @@ const rawColorTokenDeclarationFiles = new Set([
   'src/renderer/styles/theme-dark.css',
   'src/renderer/styles/tokens.css',
 ]);
+const rawColorTokenNamePatterns = [
+  /^--accent(?:-strong)?$/,
+  /^--bg-(?:content|elevated|window)$/,
+  /^--border-(?:emphasis|strong)$/,
+  /^--control-on$/,
+  /^--document-selection-bg$/,
+  /^--fill-[1-4]$/,
+  /^--focus-ring(?:-shadow)?$/,
+  /^--highlight-mark$/,
+  /^--identity-tint-\d+$/,
+  /^--inline-code-bg$/,
+  /^--link$/,
+  /^--material-(?:popover|sidebar)$/,
+  /^--outline-(?:emphasis|faint|muted|subtle)$/,
+  /^--overlay-(?:backdrop|shadow-level-[12])$/,
+  /^--preview-action-(?:bg|fg|hover-bg|outline)$/,
+  /^--rail-edge$/,
+  /^--scrollbar-thumb(?:-hover)?$/,
+  /^--separator(?:-opaque)?$/,
+  /^--shadow-(?:rail|thumb|thumb-strong)$/,
+  /^--status-(?:danger|danger-muted|danger-solid-hover|success|success-strong|warning)$/,
+  /^--surface-inverse(?:-strong)?$/,
+  /^--text-(?:on-accent|primary|quaternary|secondary|selection-bg|tertiary)$/,
+  /^--underline-focus-shadow$/,
+];
 
 const componentContracts = [
   {
@@ -1145,7 +1170,9 @@ function rawFunctionalColorMatches(value: string): string[] {
 }
 
 function isRawColorTokenDeclaration(file: string, line: string): boolean {
-  return line.trim().startsWith('--') && rawColorTokenDeclarationFiles.has(relative(ROOT, file));
+  if (!rawColorTokenDeclarationFiles.has(relative(ROOT, file))) return false;
+  const tokenName = line.trim().match(/^(--[\w-]+)\s*:/)?.[1];
+  return Boolean(tokenName && rawColorTokenNamePatterns.some((pattern) => pattern.test(tokenName)));
 }
 
 function rawColorMetrics() {
