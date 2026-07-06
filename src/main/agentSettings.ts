@@ -15,6 +15,7 @@ import type {
   AgentProviderConfigInput,
   AgentProviderConfigView,
   AgentProviderOption,
+  AgentReasoningLevelLabels,
   AgentReasoningLevel,
   AgentProviderSecretStatus,
   AgentProviderStoredApiKey,
@@ -1047,6 +1048,7 @@ function providerModelOptions(providerId: string, models: readonly Model<Api>[])
       name: model.name,
       reasoning: model.reasoning,
       supportedThinkingLevels: getSupportedReasoningLevelsForModel(model),
+      thinkingLevelLabels: getReasoningLevelLabelsForModel(model),
       contextWindow: model.contextWindow,
       maxTokens: model.maxTokens,
     }))
@@ -1203,6 +1205,15 @@ function normalizeProviderId(providerIdInput: string) {
 
 function getSupportedReasoningLevelsForModel(model: Model<Api>): AgentReasoningLevel[] {
   return getSupportedThinkingLevels(model).filter(isAgentReasoningLevel);
+}
+
+function getReasoningLevelLabelsForModel(model: Model<Api>): AgentReasoningLevelLabels | undefined {
+  const labels: AgentReasoningLevelLabels = {};
+  for (const level of AGENT_REASONING_LEVELS) {
+    const mapped = model.thinkingLevelMap?.[level];
+    if (typeof mapped === 'string' && mapped.trim()) labels[level] = mapped.trim();
+  }
+  return Object.keys(labels).length > 0 ? labels : undefined;
 }
 
 function isAgentReasoningLevel(value: unknown): value is AgentReasoningLevel {
