@@ -144,8 +144,8 @@ Expected checks for design-system changes:
   decision-derivation, component-source references, component-coverage,
   exception-evidence, and renderer-wide token-discipline baseline, including raw
   colour literals in CSS, TS, and TSX, calibration evidence references, plus the
-  runtime surface matrix size, duplicate-name check, and light/dark variant
-  discovery. Use `--check` before
+  runtime surface matrix size, duplicate-name check, light/dark variant
+  discovery, and target baselines for every `--check` gate. Use `--check` before
   publishing a design-system compression or contract PR.
 - Focused Playwright tests for touched surfaces.
 - `tests/e2e/design-system-runtime.spec.ts` for representative shell, settings,
