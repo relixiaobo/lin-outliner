@@ -403,6 +403,13 @@ function fileNameMatchesUnder(dir: string, fileName: string): string[] {
   });
 }
 
+function duplicateValues(values: string[]): string[] {
+  return values
+    .filter((value, index) => values.indexOf(value) !== index)
+    .filter((value, index, duplicates) => duplicates.indexOf(value) === index)
+    .sort();
+}
+
 function localEvidenceCodePathMatches(reference: string): string[] {
   if (existsSync(join(ROOT, reference))) return [reference];
   if (reference.includes('/')) return [];
@@ -544,22 +551,30 @@ function malformedExceptionRegistryRows(): string[] {
     .sort();
 }
 
-function calibrationNamedExceptionRows(): Map<string, { scope: string; evidence: string }> {
+function calibrationNamedExceptionRowList() {
   const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
   const start = source.indexOf('## Named Exceptions Kept');
   const end = source.indexOf('## Native-Control Exceptions', start);
   const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return [...section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \|$/gm)]
+    .filter((match) => match[1] !== 'Exception' && !match[1]?.startsWith('---'))
+    .map((match) => ({
+      name: match[1] ?? '',
+      scope: match[2] ?? '',
+      evidence: match[3] ?? '',
+    }))
+    .filter((row) => Boolean(row.name));
+}
+
+function calibrationNamedExceptionRows(): Map<string, { scope: string; evidence: string }> {
   return new Map(
-    [...section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \|$/gm)]
-      .filter((match) => match[1] !== 'Exception' && !match[1]?.startsWith('---'))
-      .map((match) => [
-        match[1] ?? '',
-        {
-          scope: match[2] ?? '',
-          evidence: match[3] ?? '',
-        },
-      ] as const)
-      .filter(([name]) => Boolean(name)),
+    calibrationNamedExceptionRowList().map((row) => [
+      row.name,
+      {
+        scope: row.scope,
+        evidence: row.evidence,
+      },
+    ] as const),
   );
 }
 
@@ -655,7 +670,10 @@ function malformedDecisionAuditRows(): string[] {
 function exceptionEvidenceMetrics() {
   const rows = exceptionRegistryRows();
   const malformedRegistryRows = malformedExceptionRegistryRows();
-  const registryNames = new Set(rows.map((row) => row.name));
+  const registryNames = rows.map((row) => row.name);
+  const registryNameSet = new Set(registryNames);
+  const calibrationNameRows = calibrationNamedExceptionRowList();
+  const calibrationNameList = calibrationNameRows.map((row) => row.name);
   const calibrationNames = calibrationNamedExceptionRows();
   const malformedNamedExceptionRows = malformedCalibrationNamedExceptionRows();
   const evidenceRows = rows.filter((row) => /\[[^\]]+\]\([^)]+\)|`[^`]+`/.test(row.evidence));
@@ -672,15 +690,17 @@ function exceptionEvidenceMetrics() {
   return {
     exceptionRows: rows.length,
     malformedRegistryRows,
+    duplicateRegistryExceptionNames: duplicateValues(registryNames),
     exceptionEvidenceRows: evidenceRows.length,
     exceptionEvidenceCoverage: rows.length === 0 ? 1 : Number((evidenceRows.length / rows.length).toFixed(3)),
     exceptionBrokenReferences: [...brokenReferences].sort(),
-    registryExceptionsMissingFromCalibration: [...registryNames]
+    registryExceptionsMissingFromCalibration: [...registryNameSet]
       .filter((name) => !calibrationNames.has(name))
       .sort(),
+    duplicateNamedExceptionSummaryNames: duplicateValues(calibrationNameList),
     malformedNamedExceptionRows,
     calibrationExceptionsMissingFromRegistry: [...calibrationNames.keys()]
-      .filter((name) => !registryNames.has(name) && !localCalibrationExceptionNames.has(name))
+      .filter((name) => !registryNameSet.has(name) && !localCalibrationExceptionNames.has(name))
       .sort(),
     localCalibrationExceptionEntriesMissing: [...localCalibrationExceptionNames]
       .filter((name) => !calibrationNames.has(name))
@@ -1174,6 +1194,8 @@ function main() {
       componentSourceBrokenReferencesTarget: 0,
       componentSourceAmbiguousReferencesTarget: 0,
       exceptionEvidenceCoverageTarget: 1,
+      duplicateRegistryExceptionNamesTarget: 0,
+      duplicateNamedExceptionSummaryNamesTarget: 0,
       rawHexOutsideTokenDeclarationsTarget: 0,
       rawFunctionalColorOutsideTokenDeclarationsTarget: 0,
       runtimeSurfaceCasesMinimumTarget: 1,
@@ -1219,6 +1241,10 @@ function main() {
     console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  malformed exception registry rows: ${metrics.exceptions.malformedRegistryRows.length}`);
+    console.log(`  duplicate exception names: ${
+      metrics.exceptions.duplicateRegistryExceptionNames.length
+      + metrics.exceptions.duplicateNamedExceptionSummaryNames.length
+    }`);
     console.log(`  exception broken refs: ${metrics.exceptions.exceptionBrokenReferences.length}`);
     console.log(`  named exception summary drift: ${
       metrics.exceptions.registryExceptionsMissingFromCalibration.length
@@ -1375,6 +1401,9 @@ function main() {
     if (metrics.exceptions.malformedRegistryRows.length > 0) {
       failures.push(`malformed exception registry rows: ${metrics.exceptions.malformedRegistryRows.join(', ')}`);
     }
+    if (metrics.exceptions.duplicateRegistryExceptionNames.length > 0) {
+      failures.push(`duplicate registry exception names: ${metrics.exceptions.duplicateRegistryExceptionNames.join(', ')}`);
+    }
     if (metrics.exceptions.exceptionBrokenReferences.length > 0) {
       failures.push(`exception evidence broken refs: ${metrics.exceptions.exceptionBrokenReferences.join(', ')}`);
     }
@@ -1383,6 +1412,9 @@ function main() {
     }
     if (metrics.exceptions.malformedNamedExceptionRows.length > 0) {
       failures.push(`malformed named exception rows: ${metrics.exceptions.malformedNamedExceptionRows.join(', ')}`);
+    }
+    if (metrics.exceptions.duplicateNamedExceptionSummaryNames.length > 0) {
+      failures.push(`duplicate named exception summary names: ${metrics.exceptions.duplicateNamedExceptionSummaryNames.join(', ')}`);
     }
     if (metrics.exceptions.calibrationExceptionsMissingFromRegistry.length > 0) {
       failures.push(`calibration exceptions missing from registry: ${metrics.exceptions.calibrationExceptionsMissingFromRegistry.join(', ')}`);
