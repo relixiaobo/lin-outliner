@@ -134,7 +134,8 @@ decision routing, exceptions, and validation.
   named source context. Token declarations are accepted only in the central token
   layers and only for named colour/effect token families; spacing, radius, type,
   motion, and other foundation tokens cannot carry raw colour literals by
-  accident.
+  accident. The raw-colour exception drift summary includes undocumented and
+  stale exception entries.
 - **Audit local references.** Exception Registry authority/evidence text,
   decision-audit derivation/evidence text, and calibration evidence text must
   resolve any local links, markdown heading anchors, and path-like code spans to

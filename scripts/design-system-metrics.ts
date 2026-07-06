@@ -1576,6 +1576,10 @@ function main() {
     console.log(`  raw functional colors outside tokens: ${metrics.tokens.rawFunctionalColorOutsideTokenDeclarations}`);
     console.log(`  named raw colour exceptions: ${metrics.tokens.rawColorExceptionUses.length}`);
     console.log(`  stale raw colour exceptions: ${metrics.tokens.staleRawColorExceptions.length}`);
+    console.log(`  raw colour exception drift: ${
+      metrics.tokens.undocumentedRawColorExceptions.length
+      + metrics.tokens.staleRawColorExceptions.length
+    }`);
     console.log(`  runtime surface cases: ${metrics.runtimeSurfaces.runtimeSurfaceCases}`);
     console.log(`  runtime theme checks: ${metrics.runtimeSurfaces.runtimeSurfaceThemeChecks}`);
     console.log(`  runtime surface drift: ${
