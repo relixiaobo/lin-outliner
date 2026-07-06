@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent tool naming clarity (PR #381, codex-3)** — renamed the model-visible
+  bash background stop tool from `task_stop` to `bash_stop`, renamed the
+  outliner undo/redo/list tool from `operation_history` to
+  `outline_undo_stack`, and renamed the permission action kind from `task.stop`
+  to `shell.stop`. Specs, permission descriptors, schemas, renderer summaries
+  and icons, i18n strings, and tests now use the clearer names, and the agent
+  tool spec tables now include the implemented `file_delete` tool. **Gate
+  (main):** review found one stale cc-2.1 source-anchor path; codex-3 restored
+  the real `TaskStopTool` path before merge. Verified with typecheck,
+  docs check, diff check, targeted local-tool/node-tool/permission/renderer
+  tests, and the full renderer suite. Full `test:core` remains red on the
+  current `main` baseline for unrelated external `data-analysis` skill text
+  assertions.
 - **Reference summary hot-path cleanup (PR #380, codex-3)** — precomputes Trash
   descendant sets for renderer/system-field reference summaries and carries a
   deleted-node id set in the search index, so full reference-summary/search

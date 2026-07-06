@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380**) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373, agent-bundled-search-tools #374, data-import-cli-api-boundary #375, ask-user-question-stepper #376 + polish #378, model-effort-labels #379) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,7 +31,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-06).** Open PR queue: none. Recently merged: #380
+**In flight (2026-07-06).** Open PR queue: none. Recently merged: #381
+(`codex-3/agent-tool-clarity-names`) and #380
 (`codex-3/performance-hotspots`) merged 2026-07-06 after main review; see
 *Recently completed*. #377 (`codex/design-system-calibration-audit`) and #379
 (`codex-4/model-effort-labels`) merged 2026-07-06 after main review; see
@@ -475,6 +476,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-tool-clarity-names** (`codex-3/agent-tool-clarity-names`, PR #381,
+  codex-3, merged 2026-07-06, fast-track) — clarifies model-visible agent tool
+  names and their permission labels: background bash stop is now `bash_stop`,
+  outline undo/redo/list is now `outline_undo_stack`, and the stop permission
+  action kind is now `shell.stop`. Specs, permission descriptors, schemas,
+  renderer summaries/icons, i18n copy, and tests were updated consistently; the
+  agent tool spec tables also include the already implemented `file_delete`
+  tool. **Gate (main):** review found one stale cc-2.1 source-anchor path in
+  `agent-delegation-runtime.md`; codex-3 restored the real `TaskStopTool`
+  anchor before merge. Verified on the final PR head with typecheck,
+  `docs:check`, `git diff --check`, targeted local-tool/node-tool/permission/
+  renderer tests, and the full renderer suite. Full `test:core` remains red on
+  the current `main` baseline for unrelated external `data-analysis` skill text
+  assertions. Fast-track, **shape (a)**, *no plan file*.
 
 - **performance-hotspots** (`codex-3/performance-hotspots`, PR #380,
   codex-3, merged 2026-07-06, fast-track) — trims reference-summary and panel
