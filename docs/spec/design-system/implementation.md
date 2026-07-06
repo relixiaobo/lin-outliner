@@ -90,8 +90,9 @@ decision routing, exceptions, and validation.
   [calibration-audit.md](./calibration-audit.md) as code drift, spec drift, named
   exception, or open design decision. The audit's open-design-decision table must
   stay well-formed; every area must be unique, and every row must explain why the
-  decision needs escalation so boundaries remain machine-checkable. Do not leave
-  those classifications only in PR prose.
+  decision needs escalation so boundaries remain machine-checkable. Its row drift
+  summary includes malformed rows, duplicate areas, and incomplete rows. Do not
+  leave those classifications only in PR prose.
 - **Tokens are the dev variables.** Two tiers: **foundation tokens** (the ones in
   Foundations — color, type, spacing, radius, elevation, motion) are the CSS
   custom properties in `src/renderer/styles/tokens.css` and are documented in

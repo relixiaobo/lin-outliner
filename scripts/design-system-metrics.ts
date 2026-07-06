@@ -1526,7 +1526,8 @@ function main() {
     }`);
     console.log(`  malformed open decision rows: ${metrics.calibrationAudit.malformedOpenDecisionRows.length}`);
     console.log(`  open decision row drift: ${
-      metrics.calibrationAudit.duplicateOpenDesignDecisionAreas.length
+      metrics.calibrationAudit.malformedOpenDecisionRows.length
+      + metrics.calibrationAudit.duplicateOpenDesignDecisionAreas.length
       + metrics.calibrationAudit.incompleteOpenDesignDecisionRows.length
     }`);
     console.log(`  calibration evidence: ${(metrics.calibrationAudit.calibrationEvidenceCoverage * 100).toFixed(1)}%`);
