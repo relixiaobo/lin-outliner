@@ -29,14 +29,15 @@ decision routing, exceptions, and validation.
   `--check`. The ratified target is: surface-specific contract lines are at least
   40% below the post-split baseline (`surfaces.md` <= 403 lines from a 672-line
   baseline); the sampled [decision audit](./decision-audit.md) keeps at least the
-  current 50-row sample with unique contiguous `Dxx` ids, proves at least 80%
-  derived decisions, uses only valid `Derived` / `Exception` result values, has
-  100% evidence coverage with no broken local evidence references, and names a
-  kernel exception for every Exception row; the calibration Classification Model
+  current 50-row sample with unique contiguous `Dxx` ids and no malformed rows,
+  proves at least 80% derived decisions, uses only valid `Derived` / `Exception`
+  result values, has 100% evidence coverage with no broken local evidence
+  references, and names a kernel exception for every Exception row; the
+  calibration Classification Model
   table stays limited to the four ratified classes with non-empty meaning and
   response cells, and the calibration ledger uses unique contiguous `CAxx` ids,
-  those same classes, and 100%
-  evidence coverage with no broken local evidence references;
+  no malformed finding rows, those same classes, and 100% evidence coverage with
+  no broken local evidence references;
   component coverage is at least 80%; Exception Registry evidence coverage is
   100% with no broken local evidence references; raw colour
   literals outside foundation token declarations stay 0 after named exceptions;

@@ -383,6 +383,19 @@ function calibrationFindingRows() {
     }));
 }
 
+function malformedCalibrationFindingRows(): string[] {
+  const source = readFileSync(CALIBRATION_AUDIT, 'utf8');
+  const start = source.indexOf('## Findings Ledger');
+  const end = source.indexOf('## Named Exceptions Kept', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  return section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^\| CA\d+/.test(line))
+    .filter((line) => !/^\| (CA\d+) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/.test(line))
+    .sort();
+}
+
 function decisionAuditRows() {
   const source = readFileSync(DECISION_AUDIT, 'utf8');
   return [...source.matchAll(/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/gm)]
@@ -393,6 +406,16 @@ function decisionAuditRows() {
       evidence: match[4] ?? '',
       result: match[5]?.trim() ?? '',
     }));
+}
+
+function malformedDecisionAuditRows(): string[] {
+  const source = readFileSync(DECISION_AUDIT, 'utf8');
+  return source
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^\| D\d{2}/.test(line))
+    .filter((line) => !/^\| (D\d{2}) \| (.+?) \| (.+?) \| (.+?) \| (.+?) \|$/.test(line))
+    .sort();
 }
 
 function exceptionEvidenceMetrics() {
@@ -445,6 +468,7 @@ function calibrationAuditMetrics() {
     .map((row) => row.name || 'missing class name')
     .sort();
   const rows = calibrationFindingRows();
+  const malformedCalibrationRows = malformedCalibrationFindingRows();
   const rowIds = rows.map((row) => row.id);
   const duplicateCalibrationIds = rowIds
     .filter((id, index) => rowIds.indexOf(id) !== index)
@@ -480,6 +504,7 @@ function calibrationAuditMetrics() {
     unexpectedClassificationModelClasses,
     incompleteClassificationModelRows,
     calibrationRows: rows.length,
+    malformedCalibrationRows,
     duplicateCalibrationIds,
     missingCalibrationIds,
     invalidCalibrationClasses,
@@ -491,6 +516,7 @@ function calibrationAuditMetrics() {
 
 function decisionAuditMetrics() {
   const rows = decisionAuditRows();
+  const malformedDecisionRows = malformedDecisionAuditRows();
   const rowIds = rows.map((row) => row.id);
   const duplicateDecisionIds = rowIds
     .filter((id, index) => rowIds.indexOf(id) !== index)
@@ -528,6 +554,7 @@ function decisionAuditMetrics() {
   return {
     decisionRows: rows.length,
     decisionRowMinimumTarget: DECISION_AUDIT_MIN_ROWS,
+    malformedDecisionRows,
     duplicateDecisionIds,
     missingDecisionIds,
     derivedDecisionRows: derivedRows.length,
@@ -892,10 +919,12 @@ function main() {
     console.log(`  calibration class rows: ${metrics.calibrationAudit.calibrationClassificationRows}`);
     console.log(`  incomplete calibration class rows: ${metrics.calibrationAudit.incompleteClassificationModelRows.length}`);
     console.log(`  calibration rows: ${metrics.calibrationAudit.calibrationRows}`);
+    console.log(`  malformed calibration rows: ${metrics.calibrationAudit.malformedCalibrationRows.length}`);
     console.log(`  calibration evidence: ${(metrics.calibrationAudit.calibrationEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  calibration broken refs: ${metrics.calibrationAudit.calibrationBrokenReferences.length}`);
     console.log(`  invalid calibration classes: ${metrics.calibrationAudit.invalidCalibrationClasses.length}`);
     console.log(`  decision rows: ${metrics.decisionAudit.decisionRows}/${DECISION_AUDIT_MIN_ROWS}`);
+    console.log(`  malformed decision rows: ${metrics.decisionAudit.malformedDecisionRows.length}`);
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
     console.log(`  decision evidence: ${(metrics.decisionAudit.decisionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  decision broken refs: ${metrics.decisionAudit.decisionBrokenReferences.length}`);
@@ -944,6 +973,9 @@ function main() {
     if (metrics.calibrationAudit.duplicateCalibrationIds.length > 0) {
       failures.push(`duplicate calibration ids: ${metrics.calibrationAudit.duplicateCalibrationIds.join(', ')}`);
     }
+    if (metrics.calibrationAudit.malformedCalibrationRows.length > 0) {
+      failures.push(`malformed calibration rows: ${metrics.calibrationAudit.malformedCalibrationRows.join(', ')}`);
+    }
     if (metrics.calibrationAudit.missingCalibrationIds.length > 0) {
       failures.push(`missing calibration ids: ${metrics.calibrationAudit.missingCalibrationIds.join(', ')}`);
     }
@@ -968,6 +1000,9 @@ function main() {
     }
     if (metrics.decisionAudit.duplicateDecisionIds.length > 0) {
       failures.push(`duplicate decision ids: ${metrics.decisionAudit.duplicateDecisionIds.join(', ')}`);
+    }
+    if (metrics.decisionAudit.malformedDecisionRows.length > 0) {
+      failures.push(`malformed decision rows: ${metrics.decisionAudit.malformedDecisionRows.join(', ')}`);
     }
     if (metrics.decisionAudit.missingDecisionIds.length > 0) {
       failures.push(`missing decision ids: ${metrics.decisionAudit.missingDecisionIds.join(', ')}`);
