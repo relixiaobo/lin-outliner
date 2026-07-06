@@ -51,10 +51,11 @@ decision routing, exceptions, and validation.
   claim for every possible UI state.
 - **Source map accountability.** The kernel Source Map is the renderer UI audit's
   entry index. Its table rows must stay well-formed, every Area must be unique,
-  every row must carry a Product Sources code span and a contract, and every
-  Product Sources code span must resolve to a current renderer CSS/TS/TSX file;
-  short names must resolve uniquely unless the code span is an intentional
-  wildcard.
+  every row must carry a Product Sources code span and a linked contract owner,
+  and every Product Sources code span must resolve to a current renderer
+  CSS/TS/TSX file. Contract links must resolve to current design-system markdown
+  targets, including anchors. Short source names must resolve uniquely unless the
+  code span is an intentional wildcard.
 - **Current spec reference accountability.** Current design-system contract docs
   must keep path-like code spans resolvable. This covers the kernel, foundations,
   patterns, surfaces, components, implementation notes, and decision audit. The
@@ -143,7 +144,7 @@ Expected checks for design-system changes:
 - `bun run typecheck`
 - `bun run docs:check`
 - `bun scripts/design-system-metrics.ts --json` for the current compression,
-  current-spec source references, source-map references,
+  current-spec source references, source-map product and contract references,
   calibration classification/ledger integrity,
   decision-derivation, component-source references, component-coverage,
   exception-evidence, and renderer-wide token-discipline baseline, including raw

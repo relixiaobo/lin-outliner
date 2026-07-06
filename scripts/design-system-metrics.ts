@@ -309,6 +309,10 @@ function sourceMapRowReferenceCount(row: { productSources: string }): number {
     .length;
 }
 
+function sourceMapContractReferenceCount(row: { contract: string }): number {
+  return markdownLinkTargets(row.contract).length;
+}
+
 function sourceMapReferenceMatches(reference: string): string[] {
   const rendererFiles = filesByPattern(RENDERER_DIR, /\.(css|ts|tsx)$/)
     .map((file) => relative(ROOT, file));
@@ -327,12 +331,19 @@ function sourceMapMetrics() {
   const malformedRows = malformedSourceMapRows();
   const duplicateSourceMapAreas = duplicateValues(rows.map((row) => row.area));
   const incompleteSourceMapRows = rows
-    .filter((row) => !row.area || !row.productSources.trim() || !row.contract.trim() || sourceMapRowReferenceCount(row) === 0)
+    .filter((row) => (
+      !row.area
+      || !row.productSources.trim()
+      || !row.contract.trim()
+      || sourceMapRowReferenceCount(row) === 0
+      || sourceMapContractReferenceCount(row) === 0
+    ))
     .map((row) => row.area || 'missing area')
     .sort();
   const brokenReferences: string[] = [];
   const ambiguousReferences: string[] = [];
   let referenceCount = 0;
+  let contractReferenceCount = 0;
   for (const row of rows) {
     for (const match of row.productSources.matchAll(/`([^`]+)`/g)) {
       const reference = match[1]?.trim() ?? '';
@@ -345,10 +356,17 @@ function sourceMapMetrics() {
         ambiguousReferences.push(`${row.area}: ${reference} matched multiple files (${matches.join(', ')})`);
       }
     }
+    for (const target of markdownLinkTargets(row.contract)) {
+      contractReferenceCount += 1;
+      if (!localMarkdownTargetExists(DESIGN_SYSTEM_KERNEL, target)) {
+        brokenReferences.push(`${row.area} contract: ${target}`);
+      }
+    }
   }
   return {
     sourceMapRows: rows.length,
     sourceMapReferences: referenceCount,
+    sourceMapContractReferences: contractReferenceCount,
     malformedSourceMapRows: malformedRows,
     duplicateSourceMapAreas,
     incompleteSourceMapRows,
@@ -1365,6 +1383,7 @@ function main() {
       designSystemDocAmbiguousReferencesTarget: 0,
       sourceMapRowsMinimumTarget: 1,
       sourceMapReferencesMinimumTarget: 1,
+      sourceMapContractReferencesMinimumTarget: 1,
       malformedSourceMapRowsTarget: 0,
       duplicateSourceMapAreasTarget: 0,
       incompleteSourceMapRowsTarget: 0,
@@ -1443,6 +1462,7 @@ function main() {
     console.log(`  design-system doc refs: ${metrics.docReferences.designSystemDocReferences}`);
     console.log(`  design-system doc broken refs: ${metrics.docReferences.designSystemDocBrokenReferences.length}`);
     console.log(`  source map rows: ${metrics.sourceMap.sourceMapRows}`);
+    console.log(`  source map contract refs: ${metrics.sourceMap.sourceMapContractReferences}`);
     console.log(`  source map incomplete rows: ${metrics.sourceMap.incompleteSourceMapRows.length}`);
     console.log(`  source map broken refs: ${metrics.sourceMap.sourceMapBrokenReferences.length}`);
     console.log(`  calibration class rows: ${metrics.calibrationAudit.calibrationClassificationRows}`);
@@ -1523,7 +1543,11 @@ function main() {
     if (metrics.docReferences.designSystemDocAmbiguousReferences.length > 0) {
       failures.push(`design-system doc ambiguous refs: ${metrics.docReferences.designSystemDocAmbiguousReferences.join(', ')}`);
     }
-    if (metrics.sourceMap.sourceMapRows === 0 || metrics.sourceMap.sourceMapReferences === 0) {
+    if (
+      metrics.sourceMap.sourceMapRows === 0
+      || metrics.sourceMap.sourceMapReferences === 0
+      || metrics.sourceMap.sourceMapContractReferences === 0
+    ) {
       failures.push('source map missing or empty');
     }
     if (metrics.sourceMap.malformedSourceMapRows.length > 0) {
