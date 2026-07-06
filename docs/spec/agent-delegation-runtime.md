@@ -93,7 +93,7 @@ cc-2.1 contains two layers:
 | `src/tasks/LocalAgentTask/LocalAgentTask.tsx` | Registers background agent tasks, tracks status/progress, supports completion/failure/killed notifications and queued messages. | Reuse lifecycle states, but persist through Lin event store and child-run runtime state. |
 | `src/tools/AgentTool/resumeAgent.ts` | Reconstructs sidechain transcript, appends a new user prompt, rebuilds replacement state, resumes in background. | Implement `run_steer` for same-conversation child run continuation. |
 | `src/tools/TaskOutputTool/TaskOutputTool.tsx` | Reads background task output and can block until completion; deprecated in favor of reading output file path. | Do not add a TaskOutput clone. Prefer completion notifications plus output references readable with `file_read`; keep `run_status` only for explicit status/wait checks. |
-| `src/tools/BashStopTool/BashStopTool.ts` | Stops a running background task by id. | Implement `run_stop` for child run ids/names. |
+| `src/tools/TaskStopTool/TaskStopTool.ts` | Stops a running background task by id. | Implement `run_stop` for child run ids/names. |
 | `src/tools/TeamCreateTool/*` | Creates team config, team task list, leader state, teammate workflow. | Do not copy for initial child runs. |
 | `src/tools/SendMessageTool/*` | Mixes teammate mailbox, background-agent resume, broadcast, shutdown/plan protocol, and cross-session routes. | Do not copy as one tool. Use `run_steer` only for same-conversation child run continuation. Future global messaging gets separate tools. |
 
