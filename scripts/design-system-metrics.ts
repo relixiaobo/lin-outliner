@@ -1483,6 +1483,7 @@ function main() {
     console.log('design-system metrics');
     console.log(`  surface lines: ${metrics.designSystem.surfaceLines}/${SURFACE_TARGET_LINES}`);
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
+    console.log(`  surface drift: ${metrics.designSystem.surfaceLines > SURFACE_TARGET_LINES ? 1 : 0}`);
     console.log(`  design-system doc refs: ${metrics.docReferences.designSystemDocReferences}`);
     console.log(`  design-system doc broken refs: ${metrics.docReferences.designSystemDocBrokenReferences.length}`);
     console.log(`  design-system doc drift: ${

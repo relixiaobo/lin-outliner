@@ -28,7 +28,8 @@ decision routing, exceptions, and validation.
   satisfied. The JSON `targets` object mirrors the ratified baselines enforced by
   `--check`. The ratified target is: surface-specific contract lines are at least
   40% below the post-split baseline (`surfaces.md` <= 403 lines from a 672-line
-  baseline); the sampled [decision audit](./decision-audit.md) keeps at least the
+  baseline), and the surface drift summary reports whether that compression
+  target is exceeded; the sampled [decision audit](./decision-audit.md) keeps at least the
   current 50-row sample with unique contiguous `Dxx` ids, unique decision text,
   no malformed rows, no incomplete semantic columns, proves at least 80% derived
   decisions, uses only valid `Derived` / `Exception` result values, has 100%
