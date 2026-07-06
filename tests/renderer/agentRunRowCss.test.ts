@@ -22,7 +22,9 @@ describe('agent run row CSS', () => {
   });
 
   test('animates live run status markers with the shared agent spinner', () => {
-    expect(runDetailCss).toMatch(/\.agent-run-status-spinner\s*\{[^}]*animation:\s*agent-spin 900ms linear infinite;/s);
+    expect(runDetailCss).toMatch(
+      /\.agent-run-status-spinner\s*\{[^}]*animation:\s*agent-spin var\(--motion-spin-cycle\) linear infinite;/s,
+    );
     expect(runDetailCss).not.toContain('agent-tool-spin');
   });
 

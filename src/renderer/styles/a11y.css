@@ -10,8 +10,8 @@
    alpha-on-ink system (text, separators, outlines, focus) inverts correctly in
    both light and dark for free — no component rules, no per-theme literals. The
    material fallback is a single --material-* swap, so any surface that opts into
-   `var(--material-*)` + `var(--material-backdrop)` (the rails today, popovers in
-   PR-C) gets the opaque fallback with no @media block of its own.
+   `var(--material-*)` + `var(--material-backdrop)` gets the opaque fallback with
+   no @media block of its own.
 
    IMPORT ORDER: this file MUST be @imported AFTER theme-dark.css. Its overrides
    share :root specificity with the dark block, so when both match (e.g. dark +
@@ -58,7 +58,8 @@
   }
 }
 
-/* Reduced motion: a single global reset replaces the previous per-file overrides.
+/* Reduced motion: the global baseline collapses motion app-wide. Registered
+   local rules may replace perpetual activity indicators with static states.
    0.01ms (not 0) keeps transitionend/animationend events firing; the iteration
    cap collapses infinite loops (e.g. the reference-conversion pulse) to one. */
 @media (prefers-reduced-motion: reduce) {
@@ -69,9 +70,9 @@
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
+    animation-duration: var(--motion-reduced-duration) !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    transition-duration: var(--motion-reduced-duration) !important;
     scroll-behavior: auto !important;
   }
 }

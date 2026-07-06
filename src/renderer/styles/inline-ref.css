@@ -1,6 +1,4 @@
 .inline-ref {
-  --inline-file-ref-hover-shadow: 0 0 0 var(--space-1) var(--fill-1);
-
   display: inline;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -23,8 +21,15 @@
 .inline-ref[data-inline-ref-kind="local-file"]:hover,
 .inline-ref[data-inline-ref-kind="local-file"]:focus-visible {
   background: var(--fill-1);
-  box-shadow: var(--inline-file-ref-hover-shadow);
   color: var(--text-strong);
+}
+
+.inline-ref[data-inline-ref-kind="local-file"]:hover {
+  box-shadow: var(--inline-ref-hover-shadow);
+}
+
+.inline-ref[data-inline-ref-kind="local-file"]:focus-visible {
+  box-shadow: var(--inline-ref-focus-shadow);
 }
 
 .inline-ref.ProseMirror-selectednode {
@@ -147,7 +152,7 @@
   overflow: hidden;
   border-radius: var(--radius-overlay-sm);
   background: var(--material-popover);
-  box-shadow: var(--overlay-shadow-level-1), var(--outline-subtle);
+  box-shadow: var(--overlay-shadow-level-1);
   backdrop-filter: var(--material-backdrop);
   -webkit-backdrop-filter: var(--material-backdrop);
   color: var(--text-strong);
@@ -216,7 +221,7 @@
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
   font-weight: 650;
-  line-height: var(--line-ui);
+  line-height: var(--line-ui-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -241,12 +246,4 @@
 
 .inline-file-preview-warning {
   color: var(--text-soft);
-}
-
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .inline-file-preview-popover {
-    background: var(--bg-elevated);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
 }

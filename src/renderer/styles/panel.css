@@ -34,7 +34,7 @@
   justify-content: center;
   border-radius: var(--radius-sm);
   background: var(--fill-1);
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   margin-top: 1px;
   mix-blend-mode: multiply;
 }
@@ -71,7 +71,7 @@
 
 .panel-title-editor .row-editor {
   display: inline-block;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--title-display);
   font-weight: 600;
   line-height: var(--line-panel-title);
@@ -86,7 +86,7 @@
   overflow: hidden;
   min-width: 0;
   margin: 0;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--title-display);
   font-weight: 600;
   line-height: var(--line-panel-title);
@@ -126,7 +126,7 @@
   align-items: center;
   gap: var(--space-1);
   margin-top: var(--space-5);
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
@@ -170,25 +170,25 @@
 .panel-date-picker-button:focus-visible,
 .calendar-month-nav:hover,
 .calendar-month-nav:focus-visible {
-  color: var(--text-sub);
+  color: var(--text-secondary);
 }
 
 .panel-date-picker-button[aria-expanded="true"] {
   background: var(--control-active);
-  color: var(--text-sub);
+  color: var(--text-secondary);
 }
 
 .calendar-month-day:hover,
 .calendar-month-day:focus-visible {
   background: var(--control-hover);
-  color: var(--text-sub);
+  color: var(--text-secondary);
 }
 
 .panel-date-nav-divider {
   width: 1px;
   height: 12px;
   margin: 0 var(--space-2);
-  background: var(--border-subtle);
+  background: var(--separator);
 }
 
 .panel-date-picker-button {
@@ -221,7 +221,7 @@
   height: 28px;
   grid-template-columns: 28px 1fr 28px;
   align-items: center;
-  color: var(--text-sub);
+  color: var(--text-secondary);
   font-size: var(--font-ui-sm);
   font-weight: 600;
   line-height: var(--line-ui-sm);
@@ -244,7 +244,7 @@
 .calendar-month-weekdays {
   column-gap: var(--calendar-day-gap);
   margin-top: var(--space-4);
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-2xs);
   font-weight: 600;
   line-height: var(--line-meta);
@@ -270,7 +270,7 @@
   height: var(--calendar-day-size);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-sub);
+  color: var(--text-secondary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
@@ -326,7 +326,7 @@
 
 .calendar-month-day.is-selected {
   background: var(--surface-inverse);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .panel-title-more-button {
@@ -338,18 +338,18 @@
   justify-content: center;
   border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--muted);
+  color: var(--text-secondary);
   transition: background var(--motion-fast), color var(--motion-fast);
 }
 
 .panel-title-more-button:hover,
 .panel-title-more-button:focus-visible {
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .panel-title-more-button.is-active {
   background: var(--control-active);
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .panel-header-tag-icon {

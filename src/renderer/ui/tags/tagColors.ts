@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import type { NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { projectTagConfig, type ConfigNodeMap } from '../../../core/configProjection';
+import { TAG_COLOR_TOKENS, type TagColorToken } from '../../../core/configSchema';
 
 export interface TagColor {
   text: string;
@@ -9,17 +10,16 @@ export interface TagColor {
 }
 
 // Tag chips must follow the theme. The accent is a fixed hue, but the chip's
-// background is mixed toward the LIVE --surface token (resolved per element) so the
-// same tag reads as a soft light tint in light mode and a soft dark tint in dark
-// mode — never the baked near-white box that glared against a dark panel. The accent
-// stays the text colour (legible on both the light and dark tint). One rule, shared
-// with the legacy raw-hex branch in resolveTagColor below.
+// background is mixed toward the live content surface token (resolved per element)
+// so the same tag reads as a soft light tint in light mode and a soft dark tint in
+// dark mode — never the baked near-white box that glared against a dark panel. The
+// accent stays the text colour (legible on both the light and dark tint).
 const TAG_SURFACE_TINT = '12%';
 
 function accentTagColor(accent: string): TagColor {
   return {
     text: accent,
-    background: `color-mix(in srgb, ${accent} ${TAG_SURFACE_TINT}, var(--surface))`,
+    background: `color-mix(in srgb, ${accent} ${TAG_SURFACE_TINT}, var(--bg-content))`,
   };
 }
 
@@ -40,29 +40,20 @@ const TAG_COLOR_GRAY: TagColor = {
   background: 'var(--fill-3)',
 };
 
-const TAG_COLOR_MAP: Record<string, TagColor> = {
+const TAG_COLOR_MAP: Record<TagColorToken, TagColor> = {
   red: TAG_COLORS[0],
   orange: TAG_COLORS[1],
   amber: TAG_COLORS[2],
-  yellow: TAG_COLORS[2],
   green: TAG_COLORS[3],
-  emerald: TAG_COLORS[3],
-  teal: TAG_COLORS[3],
-  sky: TAG_COLORS[4],
   blue: TAG_COLORS[4],
-  indigo: TAG_COLORS[5],
-  violet: TAG_COLORS[5],
   purple: TAG_COLORS[5],
-  rose: TAG_COLORS[6],
   pink: TAG_COLORS[6],
-  brown: TAG_COLOR_GRAY,
-  slate: TAG_COLOR_GRAY,
   gray: TAG_COLOR_GRAY,
 };
 
 export interface TagColorPreset {
   /** Canonical token persisted on the tag's `color` config. */
-  token: string;
+  token: TagColorToken;
   label: string;
   color: TagColor;
 }
@@ -72,16 +63,22 @@ export interface TagColorPreset {
  * color in TAG_COLORS; resolveTagColor maps the token back through
  * TAG_COLOR_MAP, so storage stays token-based (theme-aware) rather than raw hex.
  */
-export const TAG_COLOR_PRESETS: readonly TagColorPreset[] = [
-  { token: 'red', label: 'Red', color: TAG_COLORS[0] },
-  { token: 'orange', label: 'Orange', color: TAG_COLORS[1] },
-  { token: 'amber', label: 'Amber', color: TAG_COLORS[2] },
-  { token: 'green', label: 'Green', color: TAG_COLORS[3] },
-  { token: 'blue', label: 'Blue', color: TAG_COLORS[4] },
-  { token: 'purple', label: 'Purple', color: TAG_COLORS[5] },
-  { token: 'pink', label: 'Pink', color: TAG_COLORS[6] },
-  { token: 'gray', label: 'Gray', color: TAG_COLOR_GRAY },
-];
+const TAG_COLOR_LABELS: Record<TagColorToken, string> = {
+  red: 'Red',
+  orange: 'Orange',
+  amber: 'Amber',
+  green: 'Green',
+  blue: 'Blue',
+  purple: 'Purple',
+  pink: 'Pink',
+  gray: 'Gray',
+};
+
+export const TAG_COLOR_PRESETS: readonly TagColorPreset[] = TAG_COLOR_TOKENS.map((token) => ({
+  token,
+  label: TAG_COLOR_LABELS[token],
+  color: TAG_COLOR_MAP[token],
+}));
 
 const JOURNAL_TAG_IDS = new Set(['tag:day', 'tag:week', 'tag:year']);
 
@@ -104,12 +101,7 @@ export function resolveTagColor(tag: NodeProjection | undefined, byId: ConfigNod
   // config-as-nodes: the tag's color token lives in its defConfig subtree.
   const color = projectTagConfig(byId, tag).color;
   if (color) {
-    if (color.startsWith('#')) {
-      // Legacy raw-hex tags (preset picker now stores tokens). Same theme-aware
-      // tint as the preset accents above so both paths read identically.
-      return accentTagColor(color);
-    }
-    const mapped = TAG_COLOR_MAP[color];
+    const mapped = TAG_COLOR_MAP[color as TagColorToken];
     if (mapped) return mapped;
   }
   return hashTagColor(tag.id);

@@ -112,7 +112,7 @@ test.describe('agent debug panel', () => {
     await expect(errorResultRow.locator(':scope > summary strong')).toContainText('permission_denied');
     await expect.poll(async () => errorResultRow.locator(':scope > summary strong').evaluate((node) => {
       const probe = document.createElement('span');
-      probe.style.color = 'var(--danger)';
+      probe.style.color = 'var(--status-danger)';
       document.body.append(probe);
       const expected = getComputedStyle(probe).color;
       probe.remove();

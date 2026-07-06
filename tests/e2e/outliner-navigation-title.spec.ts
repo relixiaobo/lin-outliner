@@ -450,7 +450,7 @@ test.describe('outliner navigation and page title parity', () => {
       const originBox = origin.getBoundingClientRect();
       const panelBackBox = panelBack.getBoundingClientRect();
       const disabledColorProbe = document.createElement('span');
-      disabledColorProbe.style.color = 'var(--text-disabled)';
+      disabledColorProbe.style.color = 'var(--text-quaternary)';
       document.body.appendChild(disabledColorProbe);
       const disabledColor = getComputedStyle(disabledColorProbe).color;
       disabledColorProbe.remove();
@@ -597,7 +597,7 @@ test.describe('outliner navigation and page title parity', () => {
     await expect(page.getByRole('dialog', { name: 'Calendar' })).toBeVisible();
     await expect(page.locator('.panel-date-note-dot')).toHaveCount(0);
 
-    const countedDay = page.getByRole('button', { name: 'Go to 2026-05-13 · 3 nodes' });
+    const countedDay = page.getByRole('gridcell', { name: 'Go to 2026-05-13 · 3 nodes' });
     await expect(countedDay).toHaveClass(/note-density-2/);
     await expect.poll(async () => countedDay.evaluate((element) =>
       getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
@@ -626,7 +626,7 @@ test.describe('outliner navigation and page title parity', () => {
       expect(radius).toBeLessThanOrEqual(8);
     }
 
-    await page.getByRole('button', { name: 'Go to 2026-05-20' }).click();
+    await page.getByRole('gridcell', { name: 'Go to 2026-05-20' }).click();
 
     await expect(page.locator('.panel-title-editor').first()).toContainText('2026-05-20');
   });

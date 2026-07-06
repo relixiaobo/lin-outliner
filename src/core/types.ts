@@ -120,7 +120,7 @@ export type DefConfigKey = TagConfigKey | FieldConfigKey;
 //   enumList → zero or more child `reference`s (refRole 'enum') to options
 //   number   → one child value node; content text = codec-encoded number
 //   bool     → one child value node; content text = codec-encoded boolean
-//   color    → one child value node; content text = codec-encoded #RRGGBB
+//   color    → one child value node; content text = codec-encoded palette token
 // Registry-level domain of a config knob. Drives which control renders and how
 // the value is stored as a child node: ref/enum → a child reference (with a
 // config refRole so it stays out of the backlink graph); number/color/bool →

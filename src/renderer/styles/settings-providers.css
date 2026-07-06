@@ -13,7 +13,7 @@
   gap: var(--space-5);
   border-radius: var(--panel-radius);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
+  box-shadow: var(--rail-surface-shadow);
   /* Top padding clears the inset traffic lights (frameless window): the lights
      overlay the rail's top, the "Settings" title sits below them. */
   padding: var(--chrome-height) var(--rail-pad) var(--rail-pad);
@@ -276,7 +276,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-2);
 }
 
@@ -304,5 +304,5 @@
 }
 
 .settings-row-menu-item:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }

@@ -7,6 +7,7 @@ import type { AgentModelOption, AgentProviderSettingsView, AgentReasoningLevel }
 import { useT } from '../../i18n/I18nProvider';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from '../icons';
 import { parseModelSelection } from './AgentModelEffortSelector';
 import { isProviderUsable, resolveUsableActiveProvider } from './providerUsability';
@@ -141,6 +142,29 @@ function AgentComposerModelControlImpl({
     setSubmenu('none');
   }
 
+  function closeSubmenu() {
+    setSubmenu('none');
+  }
+
+  const { onKeyDown: onMenuKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: close,
+    kind: 'menu',
+    active: open,
+    getRestoreTarget: () => anchorRef.current,
+    initialFocus: 'surface',
+    focusKey: `${model}:${effort}:${submenu}`,
+  });
+  const { onKeyDown: onSubmenuKeyDown } = useMenuKeyboard({
+    surfaceRef: submenuRef,
+    onClose: closeSubmenu,
+    kind: 'menu',
+    active: open && submenu !== 'none',
+    getRestoreTarget: () => (submenuAnchor.current instanceof HTMLElement ? submenuAnchor.current : anchorRef.current),
+    initialFocus: 'surface',
+    focusKey: `${submenu}:${model}:${effort}:${expandedKey}`,
+  });
+
   function selectModel(providerId: string, option: AgentModelOption) {
     const nextLevels = option.supportedThinkingLevels.length ? option.supportedThinkingLevels : AGENT_REASONING_LADDER;
     // Drop an effort the newly-chosen model cannot honour (same reconciliation as the
@@ -174,18 +198,17 @@ function AgentComposerModelControlImpl({
   function renderModelItem(providerId: string, option: AgentModelOption) {
     const selected = providerId === effectiveProviderId && option.id === effectiveModelId;
     return (
-      <button
+      <ButtonControl
         key={`${providerId}:${option.id}`}
         aria-checked={selected}
         className={`agent-composer-model-item${selected ? ' is-selected' : ''}`}
         onClick={() => selectModel(providerId, option)}
         role="menuitemradio"
-        type="button"
       >
         <span className="agent-composer-model-item-label">{option.name || option.id}</span>
         <span className="agent-composer-model-spacer" />
         <span className="agent-composer-model-check">{selected ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
-      </button>
+      </ButtonControl>
     );
   }
 
@@ -212,10 +235,11 @@ function AgentComposerModelControlImpl({
             className="agent-composer-model-popover"
             role="menu"
             aria-label={composer.modelControlLabel}
+            onKeyDown={onMenuKeyDown}
             style={overlayStyle}
           >
             {supportsReasoning ? (
-              <button
+              <ButtonControl
                 ref={effortRowRef}
                 aria-expanded={submenu === 'effort'}
                 aria-haspopup="menu"
@@ -223,16 +247,15 @@ function AgentComposerModelControlImpl({
                 onClick={() => toggleSubmenu('effort')}
                 onMouseEnter={() => setSubmenu('effort')}
                 role="menuitem"
-                type="button"
               >
                 <span className="agent-composer-model-item-label">{composer.reasoningHeading}</span>
                 <span className="agent-composer-model-spacer" />
                 <span className="agent-composer-model-item-meta">{effortRowLabel}</span>
                 <ChevronRightIcon className="agent-composer-model-item-caret" size={ICON_SIZE.menu} />
-              </button>
+              </ButtonControl>
             ) : null}
             {modelCount > 0 ? (
-              <button
+              <ButtonControl
                 ref={modelRowRef}
                 aria-expanded={submenu === 'model'}
                 aria-haspopup="menu"
@@ -240,12 +263,11 @@ function AgentComposerModelControlImpl({
                 onClick={() => toggleSubmenu('model')}
                 onMouseEnter={() => setSubmenu('model')}
                 role="menuitem"
-                type="button"
               >
                 <span className="agent-composer-model-item-label">{modelName}</span>
                 <span className="agent-composer-model-spacer" />
                 <ChevronRightIcon className="agent-composer-model-item-caret" size={ICON_SIZE.menu} />
-              </button>
+              </ButtonControl>
             ) : null}
           </div>,
           document.body,
@@ -258,19 +280,19 @@ function AgentComposerModelControlImpl({
             className="agent-composer-model-popover agent-composer-model-submenu"
             role="menu"
             aria-label={composer.reasoningHeading}
+            onKeyDown={onSubmenuKeyDown}
             style={submenuStyle}
           >
             <div className="agent-composer-model-section-hint" role="presentation">{composer.reasoningHint}</div>
             {reasoningLevels.map((level) => {
               const selected = effort === level;
               return (
-                <button
+                <ButtonControl
                   key={level}
                   aria-checked={selected}
                   className={`agent-composer-model-item${selected ? ' is-selected' : ''}`}
                   onClick={() => selectEffort(level)}
                   role="menuitemradio"
-                  type="button"
                 >
                   <span className="agent-composer-model-item-label">{reasoningLabel(level)}</span>
                   {level === defaultLevel ? (
@@ -278,7 +300,7 @@ function AgentComposerModelControlImpl({
                   ) : null}
                   <span className="agent-composer-model-spacer" />
                   <span className="agent-composer-model-check">{selected ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
-                </button>
+                </ButtonControl>
               );
             })}
           </div>,
@@ -292,6 +314,7 @@ function AgentComposerModelControlImpl({
             className="agent-composer-model-popover agent-composer-model-submenu"
             role="menu"
             aria-label={composer.modelHeading}
+            onKeyDown={onSubmenuKeyDown}
             style={submenuStyle}
           >
             <div className="agent-composer-model-section-label" role="presentation">{composer.modelHeading}</div>
@@ -305,24 +328,22 @@ function AgentComposerModelControlImpl({
                   ) : null}
                   {visible.map((option) => renderModelItem(group.providerId, option))}
                   {group.models.length > visible.length ? (
-                    <button
+                    <ButtonControl
                       className="agent-composer-model-item agent-composer-model-expander"
                       onClick={() => expandProvider(group.providerId)}
-                      type="button"
                     >
                       <span className="agent-composer-model-item-label">{composer.showAllModels({ count: group.models.length })}</span>
                       <span className="agent-composer-model-spacer" />
                       <ChevronDownIcon className="agent-composer-model-item-caret" size={ICON_SIZE.menu} />
-                    </button>
+                    </ButtonControl>
                   ) : null}
                   {expanded && group.models.length > RECENT_MODEL_COUNT ? (
-                    <button
+                    <ButtonControl
                       className="agent-composer-model-item agent-composer-model-expander"
                       onClick={() => collapseProvider(group.providerId)}
-                      type="button"
                     >
                       <span className="agent-composer-model-item-label">{composer.showFewerModels}</span>
-                    </button>
+                    </ButtonControl>
                   ) : null}
                 </div>
               );

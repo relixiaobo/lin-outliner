@@ -39,7 +39,7 @@ export function workspaceLayoutMetricsFromCanvas(canvas: HTMLElement): Workspace
   return {
     canvasWidth: canvas.getBoundingClientRect().width,
     layoutGap: readCssPx(style, '--layout-gap', 0),
-    panelGap: readCssPx(style, '--panel-gap', 0),
+    panelGap: readCssPx(style, '--layout-gap', 0),
     panelMinWidth: readCssPx(style, '--outline-panel-min-width', FALLBACK_PANEL_MIN_WIDTH),
   };
 }

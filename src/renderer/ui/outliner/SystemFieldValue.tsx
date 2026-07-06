@@ -3,6 +3,7 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import type { NavigateRootOptions } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { CalendarIcon } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import type { SystemFieldDisplay } from '../../../core/systemFields';
 import { useT } from '../../i18n/I18nProvider';
@@ -39,8 +40,7 @@ export function SystemFieldValue({ display, byId, onRoot, onToggleDone }: System
     return (
       <div className="field-value-cell">
         {onToggleDone ? (
-          <button
-            type="button"
+          <ButtonControl
             className={`typed-field-boolean typed-field-checkbox ${display.checked ? 'checked' : ''}`}
             role="checkbox"
             aria-checked={display.checked}
@@ -48,7 +48,7 @@ export function SystemFieldValue({ display, byId, onRoot, onToggleDone }: System
             onClick={onToggleDone}
           >
             {mark}
-          </button>
+          </ButtonControl>
         ) : (
           <span
             className={`typed-field-boolean typed-field-checkbox is-readonly ${display.checked ? 'checked' : ''}`}
@@ -103,9 +103,8 @@ function renderValue(
           const color = resolveTagColor(tag, byId);
           const label = tag?.content.text || tagId;
           return (
-            <button
+            <ButtonControl
               key={tagId}
-              type="button"
               className="tag-badge tag-badge-button"
               style={{ '--tag-bg': color.background, '--tag-text': color.text } as CSSProperties}
               title={openTagTitle(label)}
@@ -113,7 +112,7 @@ function renderValue(
             >
               <span className="tag-badge-hash">#</span>
               <span className="tag-badge-label">{label}</span>
-            </button>
+            </ButtonControl>
           );
         });
     case 'text':

@@ -1134,7 +1134,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const existing = [...nodes.values()].find((node) => node.type === 'tagDef' && node.content.text === normalized);
       if (existing) return outcome({ nodeId: existing.id, selectAll: false });
       const tagId = `tag-${normalized}-${++sequence}`;
-      makeNode(tagId, normalized, { type: 'tagDef', parentId: ids.schema, color: '#6a8f6b' });
+      makeNode(tagId, normalized, { type: 'tagDef', parentId: ids.schema, color: 'green' });
       appendChild(ids.schema, tagId);
       return outcome({ nodeId: tagId, selectAll: false });
     };
@@ -1482,7 +1482,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode('recents-query-value', '30', { parentId: 'recents-query' });
     makeNode(ids.trash, 'Trash', { parentId: ids.root, locked: true });
     makeNode(ids.dayTag, 'day', { type: 'tagDef', parentId: ids.schema, color: 'gray' });
-    makeNode(ids.projectTag, 'project', { type: 'tagDef', parentId: ids.schema, color: '#5e8e65' });
+    makeNode(ids.projectTag, 'project', { type: 'tagDef', parentId: ids.schema, color: 'green' });
     makeNode(ids.statusField, 'Status', {
       type: 'fieldDef',
       parentId: ids.schema,

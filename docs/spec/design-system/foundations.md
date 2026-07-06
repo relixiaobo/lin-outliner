@@ -7,353 +7,39 @@ routing, exceptions, and validation.
 
 ## Foundations
 
-Use these default desktop tokens before adding component-specific values:
+The live foundation token values are layered in renderer CSS: base values live in
+`src/renderer/styles/tokens.css`, dark overrides live in
+`src/renderer/styles/theme-dark.css`, and accessibility preference overrides live
+in `src/renderer/styles/a11y.css`. This document owns the contracts, naming
+model, and allowed roles; it does not copy the full token table. When an exact
+value matters, read the live token layer. When a token's meaning changes, update
+this prose in the same change.
 
-```css
-:root {
-  --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-family-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  --font-scale: 100%;
-  --font-ui-2xs: 0.625rem; /* 10px */
-  --line-ui-2xs-tight: 0.8125rem; /* 13px */
-  --line-ui-2xs: 0.875rem; /* 14px */
-  --font-ui-xs: 0.6875rem; /* 11px */
-  --line-ui-xs: 0.9375rem; /* 15px */
-  --line-ui-xs-relaxed: 1rem; /* 16px */
-  --font-meta: 0.75rem; /* 12px */
-  --line-meta-tight: 1.0625rem; /* 17px */
-  --line-meta: 1.125rem; /* 18px */
-  --font-ui-sm: 0.8125rem; /* 13px */
-  --line-ui-sm-tight: 1.1875rem; /* 19px */
-  --line-ui-sm: 1.25rem; /* 20px */
-  --font-ui-md: 0.875rem; /* 14px */
-  --line-ui-md: 1.375rem; /* 22px */
-  --font-content: 1rem; /* 16px */
-  --line-content: 1.625rem; /* 26px */
-  --font-code-inline: 0.875em;
-  --line-code-inline: 1.18;
-  --font-code-block: var(--font-ui-sm); /* 13px */
-  --line-code-block: var(--line-ui-sm); /* 20px */
-  --content-control-height: var(--line-content);
-  --font-description: var(--font-ui-sm);
-  --line-description: 1.125rem; /* 18px */
-  /* One large heading size (markdown h1); h2/h3 reuse --font-content (16) and
-     --font-ui-md (14) rather than a parallel heading ladder. */
-  --font-heading-lg: 1.125rem; /* 18px */
-  --line-heading-lg: 1.625rem; /* 26px */
-  --font-panel-title: 1.5rem; /* 24px — top of the type scale */
-  --line-panel-title: 2rem; /* 32px */
-  --title-display: var(--font-panel-title);
-  --title-section: var(--font-heading-lg);
-  --title-group: var(--font-ui-sm);
-  font-size: var(--font-scale);
+Core token families:
 
-  color-scheme: light dark;
-
-  /* ── Ink: the single per-theme base for every alpha-on-base colour. Flip this
-        one channel triple in dark mode and all the text/fill/separator levels
-        below follow. (macOS uses black ink in light, white ink in dark.) ── */
-  --ink: 0 0 0;
-
-  /* ── Text (label) levels — alpha on --ink, identical alphas in both themes ── */
-  --text-primary: rgb(var(--ink) / 0.88);    /* primary text + glyphs */
-  --text-secondary: rgb(var(--ink) / 0.55);  /* subtitles, secondary labels */
-  --text-tertiary: rgb(var(--ink) / 0.30);   /* placeholders, faint meta */
-  --text-quaternary: rgb(var(--ink) / 0.16); /* watermark, disabled */
-
-  /* ── Neutral fills — control / hover / active / selection backgrounds. These
-        are the everyday functional surfaces. NOT brand, NOT system accent. ── */
-  --fill-1: rgb(var(--ink) / 0.04);  /* subtle hover */
-  --fill-2: rgb(var(--ink) / 0.07);  /* hover, resting control */
-  --fill-3: rgb(var(--ink) / 0.10);  /* active / selected row */
-  --fill-4: rgb(var(--ink) / 0.16);  /* pressed / strong */
-
-  /* ── Separators ── */
-  --separator: rgb(var(--ink) / 0.10);  /* hairline, lets backdrop blend */
-  --separator-opaque: #d8d8dc;          /* solid divider (per-theme) */
-
-  /* ── Opaque surfaces (literal per-theme values) ── */
-  --bg-window: #ececec;   /* window/chrome base behind the OS material */
-  --bg-content: #ffffff;  /* opaque content panel — never translucent */
-  --bg-elevated: #ffffff; /* menus/popovers/HUD — float above content. In light
-                             this equals content (macOS light menus are white);
-                             elevation reads through the drop shadow. Dark mode
-                             lightens it past content so it reads as forward. */
-
-  /* ── Materials: translucent chrome tint, layered over the OS vibrancy
-        (Electron) + backdrop-filter. Chrome only — never the content layer.
-        There is no toolbar material: the top strip is transparent over the
-        content base and inherits a rail's material only where it crosses one. ── */
-  --material-sidebar: rgba(246, 246, 246, 0.60); /* the floating-rail material */
-  --material-popover: rgba(250, 250, 250, 0.80);
-  --material-blur: 30px;        /* constant blur radius for every glass surface */
-  --material-saturate: 112%;    /* slight saturation lift under the blur */
-  --material-backdrop: blur(var(--material-blur)) saturate(var(--material-saturate));
-  --rail-edge: rgb(var(--ink) / 0.10); /* 0.5px inset hairline on the glass rail */
-  /* File-preview HUD controls float over arbitrary document pixels, so they own
-     a contrast pair instead of using the app-surface fill ladder. */
-  --preview-action-bg: rgba(46, 46, 50, 0.78);
-  --preview-action-hover-bg: rgba(31, 31, 35, 0.88);
-  --preview-action-fg: rgba(255, 255, 255, 0.94);
-  --preview-action-outline: rgba(255, 255, 255, 0.12);
-
-  /* ── Selection & focus = NEUTRAL (Raycast/Finder model). Functional state is
-        never the brand colour and never the system accent. ── */
-  --selection-bg: var(--fill-3);    /* selected row */
-  --selection-soft: var(--fill-2);  /* multi-select / range / hover */
-  --focus-ring: rgb(var(--ink) / 0.45);
-  --focus-ring-shadow: 0 0 0 2px rgb(var(--ink) / 0.22);
-  /* Editor text-selection highlight (::selection): NEUTRAL, not the system
-     accent and not rose — a touch stronger than a selected row so glyphs stay
-     legible through it. Glyph colour is unchanged under selection. */
-  --text-selection-bg: rgb(var(--ink) / 0.14);
-  --document-selection-bg: rgba(0, 0, 0, 0.30);
-  --drop-line: var(--focus-ring); /* neutral drag insertion line */
-
-  /* ── Accent = brand rose, used SPARSELY: text caret, brand marks, small
-        status badges. Never selection, focus, active rows, default actions,
-        and no longer links. ── */
-  --accent: #f43f5e;
-  --accent-strong: #e11d48;
-  --caret: var(--accent);
-  --text-on-accent: #ffffff;
-  /* ── Link = native macOS link blue (the FIXED linkColor, not the variable
-        system accent). Decoupled from the brand rose so clickable text reads as
-        a link, not an error — rose sat too near --status-danger. Exactly one
-        link colour; theme-adapted by the dark override. ── */
-  --link: #0a66d6;
-  --link-hover: color-mix(in srgb, var(--link) 78%, var(--text-primary));
-
-  /* ── Status ── */
-  --status-success: #3f9e6a;
-  --status-success-strong: #3f865d;
-  --status-warning: #d99a1c;
-  --status-danger: #e5484d;
-  --status-danger-solid-hover: color-mix(in srgb, var(--status-danger) 88%, #000000);
-  --status-danger-muted: #9a3f34;
-  --status-info: #3b82c4;
-  --control-on: #3f9e6a; /* checked/on controls, not semantic status */
-
-  /* ── Identity / categorical visualization tints ── */
-  --identity-tint-0: #e11d48;
-  --identity-tint-1: #ea580c;
-  --identity-tint-2: #ca8a04;
-  --identity-tint-3: #059669;
-  --identity-tint-4: #0d9488;
-  --identity-tint-5: #2563eb;
-  --identity-tint-6: #7c3aed;
-  --identity-tint-7: #db2777;
-  --usage-input: var(--identity-tint-5);
-  --usage-output: var(--identity-tint-6);
-  --usage-cache-read: var(--identity-tint-3);
-  --usage-cache-write: var(--identity-tint-2);
-
-  /* ── Inline code / highlighted prose ── */
-  --inline-code-bg: rgb(var(--ink) / 0.06);
-  --highlight-mark: rgba(247, 236, 139, 0.6);
-
-  /* ── Elevation: drop shadows scale; outlines/dividers are alpha-on-ink so they
-        invert with the theme instead of staying black ── */
-  --overlay-bg: var(--bg-elevated);
-  --overlay-active-bg: var(--fill-2);
-  /* Elevation tiers, softest → strongest: rail (floating chrome) < level-1
-     (menus/popovers) < level-2 (dialogs). */
-  --shadow-rail: 0 8px 26px -10px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.10);
-  --overlay-shadow-level-1: 0 8px 20px -12px rgba(0, 0, 0, 0.22), 0 2px 8px -4px rgba(0, 0, 0, 0.10);
-  --overlay-shadow-level-2: 0 18px 48px -20px rgba(0, 0, 0, 0.24), 0 6px 18px -10px rgba(0, 0, 0, 0.14);
-  --outline-faint: inset 0 0 0 1px rgb(var(--ink) / 0.04);
-  --outline-subtle: inset 0 0 0 1px rgb(var(--ink) / 0.07);
-  --outline-muted: inset 0 0 0 1px rgb(var(--ink) / 0.10);
-  --outline-emphasis: inset 0 0 0 1px rgb(var(--ink) / 0.16);
-  --outline-focus: inset 0 0 0 1px var(--focus-ring);
-  --underline-focus-shadow: inset 0 -1px 0 rgb(var(--ink) / 0.20);
-  --tag-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
-  --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.14);
-  --shadow-thumb-strong: 0 1px 2px rgba(0, 0, 0, 0.18);
-
-  /* ── Legacy product-token aliases. Existing component CSS keeps working; new
-        code uses the semantic tokens above. Migrate opportunistically. NOTE:
-        --accent-brand maps to the brand rose for its sparse accent roles only;
-        where it (or the now-removed --primary) historically painted primary
-        buttons / active states rose, those usages move to neutral --fill-*. ── */
-  --deck-bg: var(--bg-window);
-  --app-bg: var(--bg-window);
-  --panel-bg: var(--bg-content);
-  --surface: var(--bg-content);
-  --surface-soft: var(--bg-elevated);
-  --surface-disabled: var(--fill-3);
-  --surface-user-bubble: var(--fill-3);
-  --surface-inverse: #2e2e32;
-  --surface-inverse-strong: #1f1f23;
-  --text-main: var(--text-primary);
-  --text-strong: var(--text-primary);
-  --text-body: var(--text-primary);
-  --text-sub: var(--text-secondary);
-  --text-soft: var(--text-secondary);
-  --text-muted: var(--text-tertiary);
-  --text-faint: var(--text-tertiary);
-  --text-disabled: var(--text-quaternary);
-  --row-hover: var(--fill-2);
-  --row-selected: var(--selection-bg);
-  --border-subtle: var(--separator);
-  --border-muted: var(--separator);
-  --border-emphasis: rgb(var(--ink) / 0.18);
-  --border-strong: rgb(var(--ink) / 0.30); /* strong control border, not the hairline */
-  --control-hover: var(--fill-2);
-  --control-active: var(--fill-3);
-  --focus-border: var(--focus-ring);
-  --accent-brand: var(--accent);
-  /* NOTE: no --primary alias. It is deliberately absent (see Color & Appearance):
-     its name implies a primary-action colour, but it historically mapped to rose
-     and silently violated "functional state is neutral". Do not reintroduce it;
-     action surfaces use the neutral --fill-* ladder + --focus-ring. */
-  --semantic-success: var(--status-success);
-  --semantic-success-strong: var(--status-success-strong);
-  --semantic-danger-muted: var(--status-danger-muted);
-  --semantic-warning: var(--status-warning);
-  --semantic-info: var(--status-info);
-  --resize-cursor: ew-resize;
-  --resize-cursor-y: ns-resize;
-
-  --space-hairline: 1px;
-  --space-1: 2px;
-  --space-2: 4px;
-  --space-3: 6px;
-  --space-4: 8px;
-  --space-5: 10px;
-  --space-6: 12px;
-  --space-8: 16px;
-  --space-micro: var(--space-2);
-  --space-sm: var(--space-4);
-  --space-md: var(--space-8);
-  --space-lg: 24px;
-  --space-xl: 32px;
-  --layout-gap: var(--space-sm);
-
-  /* Control box sizes — a tight 3-step ladder (20 / 24 / 28). */
-  --control-size-xs: 20px;
-  --control-size-md: 24px;
-  --control-size-xl: 28px;
-  --breadcrumb-height: var(--control-size-xl);
-  --row-h-dense: var(--line-content);
-  --row-h-comfortable: 44px;
-  --icon-size-xs: 12px;
-  --icon-size-sm: 14px;
-  --icon-size-md: 16px;
-  --icon-size-lg: 18px;
-  --checkbox-mark-size: var(--icon-size-md);
-  --checkbox-mark-radius: var(--radius-xs);
-  --switch-mark-width: 30px; /* documented 30x18 track, wider than the 28px control box */
-  --switch-mark-height: var(--icon-size-lg);
-  --switch-mark-thumb-size: var(--icon-size-sm);
-  --switch-mark-inset: var(--space-1);
-
-  /* Radius is a deliberately short set. The everyday step is 5 / 6 / 8:
-     rows 5, controls/chips/icon-buttons 6, small surfaces & the composer 8.
-     Larger structural radii (10 menus, 12, 16 rail, 24 window) sit above it. */
-  --radius-2xs: 2px;
-  --radius-xs: 3px;          /* checkbox / switch marks */
-  --radius-row: 5px;         /* outliner rows */
-  --radius-sm: 6px;          /* controls, chips, icon buttons */
-  --radius-md: 8px;          /* small surfaces, composer */
-  --radius-overlay-sm: 10px; /* menus / popovers */
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-window: 24px; /* OS window outer radius (macOS Tahoe). We don't draw
-                            it — the OS does — but it is the head of the
-                            concentric chain the floating rails inset from:
-                            window 24 → (inset --layout-gap 8) → rail 16
-                            → (inset --layout-gap 8) → composer 8. Every step
-                            subtracts the gap, so all the nested corners share
-                            one centre. */
-  --radius-pill: 999px;
-  /* concentric chain in code: rail = window − gap (24 − 8 = 16). */
-  --workspace-surface-radius: calc(var(--radius-window) - var(--layout-gap));
-  --panel-radius: var(--workspace-surface-radius);
-  /* Composer is inset by --layout-gap inside the agent rail, so its bottom
-     corners are CONCENTRIC with the rail's bottom corners: 16 − 8 = 8. */
-  --agent-composer-radius: calc(var(--panel-radius) - var(--layout-gap));
-
-  --motion-fast: 120ms ease;
-  --motion-layout-duration: 160ms;
-  --motion-layout: var(--motion-layout-duration) ease;
-  --chrome-zone-backing-delay: var(--motion-layout-duration);
-  --z-base: 0;
-  --z-raised: 10;
-  --z-resize: 30;
-  --z-popover: 100;
-  --z-agent-menu: 120;
-  --z-editor-toolbar: 140;
-  --z-modal: 200;
-  --z-toast: 300;
-
-  --row-edge: 6px;
-  --row-leading-width: 42px;
-  --row-leading-height: var(--line-content);
-  --row-chevron-width: 15px;
-  --row-chevron-gap: var(--space-2);
-  --row-bullet-width: 15px;
-  --row-content-gap: var(--space-4);
-  --row-selection-start: 21px;
-
-  /* Reading measure: outliner content centres in a bounded column on wide panes
-     (~70–80 chars at 16px). Settings keeps a wider utility cap for two-column
-     control grids. Chrome like the breadcrumb hugs the pane edge. */
-  --reading-max: 720px;
-  --settings-content-max-width: 920px;
-  --panel-content-max: var(--reading-max);
-
-  /* Native overlay scrollbar: thumb is a neutral ink alpha, never coloured and
-     never permanently visible. Honors the OS "show scrollbars" setting. */
-  --scrollbar-thumb: rgb(var(--ink) / 0.22);
-}
-
-/* Dark appearance. Follows the OS via prefers-color-scheme; the in-app
-   light/dark/system control drives it through nativeTheme.themeSource, so this
-   one block is the whole dark theme. Only the per-theme literals change — every
-   alpha-on-ink token above (text, fills, separators, outlines) inverts for free
-   when --ink flips to white. Elevated surfaces are LIGHTER than content. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ink: 255 255 255;
-
-    --separator-opaque: #3a3a3c;
-    --highlight-mark: rgba(120, 100, 30, 0.55);
-
-    --bg-window: #2a2a2c;    /* chrome base behind the material */
-    --bg-content: #1e1e1e;   /* opaque document canvas */
-    --bg-elevated: #2e2e30;  /* menus/popovers float above content → lighter */
-
-    --material-sidebar: rgba(40, 40, 42, 0.55);
-    --material-popover: rgba(48, 48, 50, 0.72);
-    --rail-edge: rgb(var(--ink) / 0.12);
-    --shadow-rail: 0 8px 26px -8px rgba(0, 0, 0, 0.60), 0 1px 3px rgba(0, 0, 0, 0.40);
-
-    /* brand + status nudged up for legibility on dark */
-    --accent: #ff5d76;
-    --accent-strong: #ff7088;
-    --link: #4c9bff; /* link blue lifted to match macOS dark linkColor */
-    --status-info: #5aa0e0;
-    --status-success-strong: #5fc88a;
-
-    /* inverse chips invert (dark-on-light in light mode → light-on-dark here) */
-    --surface-inverse: #e6e6ea;
-    --surface-inverse-strong: #f4f4f6;
-
-    /* drop shadows go deeper so elevation still reads on a dark backdrop */
-    --overlay-shadow-level-1: 0 8px 22px -12px rgba(0, 0, 0, 0.55), 0 2px 8px -4px rgba(0, 0, 0, 0.40);
-    --overlay-shadow-level-2: 0 18px 50px -20px rgba(0, 0, 0, 0.60), 0 6px 18px -10px rgba(0, 0, 0, 0.45);
-    --overlay-backdrop: rgba(0, 0, 0, 0.45);
-    --overlay-backdrop-strong: rgba(0, 0, 0, 0.88);
-  }
-}
-```
+- Typography: `--font-*`, `--line-*`, `--title-*`, and reading roles.
+- Colour and appearance: `--ink`, `--text-*`, `--fill-*`, separators,
+  opaque surfaces, materials, `--accent`, `--link`, status, identity, and
+  usage tints.
+- Elevation and focus: rail/overlay shadows, outline ladders, focus rings, and
+  local shadow role tokens.
+- Spacing and sizing: `--space-*`, `--layout-gap`, control/icon sizes,
+  chrome, rail, panel, and outliner geometry tokens.
+- Radius: the short `--radius-*` ladder plus the derived window/rail/composer
+  concentric chain.
+- Motion and stacking: `--motion-*` role tokens and `--z-*` elevation
+  order.
 
 ### Token Rules
 
-- Product CSS keeps raw hex colors inside token declarations only.
-- Component CSS may use `rgba()` or `color-mix()` for alpha states, but the base
-  color should come from a token whenever the value is semantic.
+- Product renderer styling keeps raw hex and raw functional color literals
+  (`rgb()`, `rgba()`, `hsl()`, `hsla()`) inside the foundation token declaration
+  layer only: `tokens.css`, `theme-dark.css`, and `a11y.css`. Component CSS
+  custom properties and source-owned style strings in TS/TSX derive from tokens
+  or use a named exception.
+- Component CSS may use `color-mix()` for local alpha states, but the base color
+  comes from a token or `currentColor` when the stroke should follow inherited
+  text colour.
 - Primary text parity matters: outliner row text, field values, agent assistant
   prose, user bubbles, and the agent composer use
   `--font-content / --line-content`.
@@ -380,8 +66,7 @@ Use these default desktop tokens before adding component-specific values:
   highlight layer must stay synced to the textarea's horizontal and vertical
   scroll offsets.
 - `--workspace-surface-radius` is the canonical outer radius for workspace
-  structural surfaces. `--panel-radius` and `--agent-composer-radius` both map
-  to it.
+  structural surfaces; `--panel-radius` maps to it.
 - **Concentric corners.** When one rounded surface nests inside another, the
   inner radius is `parent radius − inset`, so both corners share a single centre
   and the curves stay parallel. The canonical chain is window → rail:
@@ -419,6 +104,10 @@ Use these default desktop tokens before adding component-specific values:
   error or destructive action.
 - Product CSS references elevation, outline, size, spacing, and motion tokens
   instead of writing one-off system values.
+- Component-private custom properties may own local component geometry, but
+  colour, elevation, stroke, motion, and typography semantics derive from
+  foundation tokens. Component `--*shadow*` variables must reference token-layer
+  shadows rather than hand-writing shadow recipes.
 
 ### Color & Appearance
 
@@ -432,9 +121,11 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   only guaranteed legible on the neutral surfaces they were designed for:
   `--bg-window`, `--bg-content`, `--bg-elevated`, and the material tints. They are
   **not** valid on colored semantic surfaces. Any colored surface — tag
-  backgrounds, status badges, the inverse chip, text over a strong material, user
-  bubbles — must define its **own** foreground/background pair, not reach for the
-  neutral ink levels.
+  backgrounds, status badges, the inverse chip, text over a strong material —
+  must define its **own** foreground/background pair, not reach for the neutral
+  ink levels. Neutral user bubbles stay on the foundation ladder
+  (`--fill-3` + `--text-strong`) so transcript content shares the same reusable
+  text/fill model as the rest of the opaque content layer.
 - **Appearance.** `color-scheme: light dark` on `:root`; dark mode is one
   `@media (prefers-color-scheme: dark)` block. The in-app light/dark/system control
   (Settings › General › Theme) drives it through `nativeTheme.themeSource` (which
@@ -460,8 +151,8 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   inactivity on the chrome glass; because the palette is near-monochrome the rail
   rule pairs a `saturate()` drop with a slight `brightness` dip (the part that
   actually reads as dimmed). Renderer wiring: a `window-inactive` root class fed
-  by the main process's focus/blur (`core/windowActivity.ts` → App.tsx →
-  shell.css).
+  by the main process's focus/blur (`src/core/windowActivity.ts` ->
+  `src/renderer/ui/App.tsx` -> `src/renderer/styles/shell.css`).
 - **Functional state is neutral.** Selection, hover, active rows, and ordinary
   interactive state use the neutral `--fill-*` ladder and neutral `--focus-ring`
   — not the brand colour and not the macOS system accent. The filled default
@@ -471,7 +162,7 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   Native feel comes from materials, layout, and behaviour, not from coloured
   selection. The toggle / checkbox **on**-state carries `--control-on` (the macOS
   on-switch idiom) with a fixed-white knob / check glyph (`--text-on-accent`) in
-  BOTH themes. It is deliberately separate from `--semantic-success`, so status
+  BOTH themes. It is deliberately separate from `--status-success`, so status
   green does not leak into non-status controls.
 - **Text selection is neutral too.** The editor text-selection highlight
   (`::selection`, `--text-selection-bg`) is a neutral ink alpha — the one place
@@ -496,26 +187,34 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   `--bg-content` is the opaque content panel; `--bg-elevated` is menus / popovers
   / HUD — in dark mode it is *lighter* than content so floating surfaces read as
   elevated.
-- **Status.** `--status-success` (Sage), `--status-warning` (Mustard),
-  `--status-info` (Sapphire), `--status-danger`. Status colour is reserved for
-  genuine semantic state, not decoration. **It must never leak into interactive
-  meaning** — status colours never paint selection, hover, active rows, focus, or
-  any non-link clickable affordance. In particular `--status-info` (Sapphire) is
-  for an *informational status* only; it is not a selection or accent colour, and
-  painting functional state with it would read as a smuggled-in system accent
-  (which we deliberately avoid — selection/focus stay neutral per B3). It is a
-  distinct blue from `--link`: status blue marks state, the native link blue marks
-  a clickable link, and the two never swap roles. The app has one accent (rose)
-  and one link colour (the native link blue). Destructive confirmation buttons
+- **Status.** The current status token set is the product-used set:
+  `--status-success` (Sage), `--status-warning` (Mustard), and
+  `--status-danger`. Status colour is reserved for genuine semantic state, not
+  decoration. **It must never leak into interactive meaning** — status colours
+  never paint selection, hover, active rows, focus, or any non-link clickable
+  affordance. Do not add an informational status blue without a current surface
+  that needs it; otherwise it duplicates the native link blue's perceptual slot
+  and broadens the colour model without reusable evidence. The app has one
+  accent (rose) and one link colour (the native link blue). Destructive
+  confirmation buttons
   may use a solid danger fill (`--status-danger` with
   `--status-danger-solid-hover`) only when the command itself is destructive;
   ordinary destructive affordance hover remains neutral per the state table.
+- **Reading registers.** `--text-strong`, `--text-soft`, and `--text-faint` are
+  intentional register names over the `--text-primary / --text-secondary /
+  --text-tertiary` ladder. They do not introduce new colour values; they give
+  transcript, tool, and dense chrome surfaces one shared vocabulary for bright
+  assistant speech, softer reasoning/tool context, and faint preview/meta text.
 - **Dark-mode rules.** Avoid pure `#000`/`#fff`; lean on the alpha-on-ink levels
   and the `#1e1e1e` / `#2a2a2c` / `#2e2e30` surface seeds. Separators and outlines
-  invert with `--ink` automatically; drop shadows deepen.
-- **Legacy aliases.** `--deck-bg`, `--panel-bg`, `--text-main`, … are aliased onto
-  this layer so existing components keep working; migrate to the semantic tokens
-  opportunistically.
+  invert with `--ink` automatically; drop shadows deepen. If one low-emphasis
+  text tier is consistently too faint in dark mode, lift that tier once in
+  `theme-dark.css` rather than patching individual surfaces.
+- **Alias discipline.** A token that only maps to another token is valid only
+  when it names a reusable role contract (reading registers, selection state,
+  row density, panel width, chrome timing, etc.). Compatibility shims without a
+  current role are retired and guarded by token tests rather than reintroduced
+  to keep old call sites working.
 - **There is no `--primary` token — do not reintroduce it.** Its name implies a
   primary-action colour, but it historically mapped to the rose accent, so every
   surface that read it (many old primary buttons, active rows, focus surfaces) stayed
@@ -525,8 +224,8 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   `--fill-3`), keyboard focus uses neutral `--focus-ring`, and the default filled
   button uses the neutral inverse-surface pair (`--surface-inverse` /
   `--surface-inverse-strong`). Pre-launch means no compatibility burden: migrate
-  any remaining `--primary` / `--accent-brand`-as-action usage in live CSS to the
-  neutral contract and delete the alias outright, rather than keeping a rose shim.
+  any remaining `--primary` / accent-as-action usage in live CSS to the neutral
+  contract and delete the alias outright, rather than keeping a rose shim.
   The brand colour survives only for the sparse accent roles above (caret, brand
   marks, status badges).
 
@@ -535,12 +234,13 @@ User-defined tag palette:
 - Pickable presets are Red, Orange, Amber, Green, Blue, Purple, Pink, and Gray,
   stored as canonical color tokens.
 - Chromatic tags keep a fixed accent hue for text and derive the chip background
-  with `color-mix(in srgb, <accent> 12%, var(--surface))`, so the tint follows
-  the live surface in light and dark mode.
+  with `color-mix(in srgb, <accent> 12%, var(--bg-content))`, so the tint follows
+  the live content surface in light and dark mode.
 - Gray is neutral, not a hardcoded slate chip: text uses `--text-secondary` and
   background uses `--fill-3`.
-- Legacy raw-hex tag colors are still resolved through the same theme-aware
-  tinting algorithm; do not add baked light-mode chip backgrounds to the spec.
+- The palette is closed: raw-hex or alias tag values are invalid/unset and fall
+  back to deterministic identity tinting. Do not add legacy raw-hex readers or
+  baked light-mode chip backgrounds.
 
 ### Materials & Liquid Glass
 
@@ -636,11 +336,11 @@ Window material mapping:
 | Window / surface | Native material | Renderer material contract |
 | --- | --- | --- |
 | Main app window | macOS `vibrancy: 'under-window'`; Windows `backgroundMaterial: 'mica'` when available | Root receives the detected `data-window-material`; rails and in-app material overlays use `--material-*` + `--material-backdrop` over the window material. |
-| Sidebar and agent rails | Same main-window material underneath | Floating CSS rail surfaces use `--material-sidebar`, `--material-backdrop`, and `--rail-edge`. |
+| Sidebar and agent rails | Same main-window material underneath | Floating CSS rail surfaces use `--material-sidebar`, `--material-backdrop`, and `--rail-surface-shadow`. |
 | Menus / popovers inside the app | Same main-window material underneath | CSS elevated-overlay tier: `--material-popover` + `--material-backdrop` + level-1 shadow. |
 | Dialogs / in-app command palette | Same main-window material underneath | Opaque `--bg-elevated` + level-2 shadow; never translucent. |
 | Global launcher window | macOS `vibrancy: 'hud'` | Transparent launcher surface over HUD material; functional fills tint the glass, no second `backdrop-filter`. |
-| Settings / provider / agent / channel child windows | No OS material | Opaque preferences/config surfaces; no `data-window-material` glass contract. |
+| Settings / provider / agent / channel child windows | No OS material | Opaque preferences/config surfaces; Settings rail may reuse `--rail-surface-shadow` without material; no `data-window-material` glass contract. |
 
 There is no separate full-width toolbar material: the top strip is the window's
 drag region; over the content base it is transparent, over a rail it is the
@@ -669,8 +369,9 @@ weight alone — pair it with color or fill. The system font stack supplies nati
 weights (SF on macOS).
 
 CJK + Latin mixing: line-height tokens are tuned so Latin and CJK glyph boxes
-share a stable visual line, so mixed runs do not change row height. Do not apply
-letter-spacing to CJK text.
+share a stable visual line, so mixed runs do not change row height. Product CSS
+keeps `letter-spacing: 0`; do not introduce tracking for labels, headings, codes,
+or CJK text.
 
 Scale: `--font-scale` on `:root` scales the whole system through `rem`. Never
 scale font size with viewport width.
@@ -679,7 +380,7 @@ scale font size with viewport width.
 
 - **Base unit:** `2px` atomic (`--space-1`) on a `4 / 8` rhythm
   (`--space-4 = 8px`). Compose spacing from tokens; no one-off pixel values.
-- **Layout gap:** shell gaps and insets use `--layout-gap` (`--space-sm`, 8px).
+- **Layout gap:** shell gaps and insets use `--layout-gap` (`--space-4`, 8px).
 - **Alignment spine:** the outliner leading grid (`--row-leading-*`, columns
   `15px 4px 15px 8px`) is the shared spine. Breadcrumb, normal rows, reference
   rows, and field rows all align text-start to it.
@@ -697,16 +398,16 @@ scale font size with viewport width.
 - **Text gutters:** outliner, agent, and settings body text starts are intentionally
   tiered by each surface's affordance width. Do not flatten them into one x-offset;
   converge within a surface instead.
-- **Dock widths:** sidebar `216px` (`180–280`); agent dock `330px` (`300–520`).
+- **Dock widths:** sidebar `196px` (`152px–280px`); agent dock `344px` (`280px–520px`).
 
 ### Elevation, Radius & Stroke
 
 - **Elevation:** two drop-shadow levels — level 1 (menus, popovers, tooltips) and
   level 2 (dialogs, command palette). Shadows are pure drop shadows; floating
-  surfaces carry no real outer border. Dark mode deepens them. The glass rails
-  carry their own *soft, low* elevation (they float above the content base) —
-  `--shadow-rail`, the softest tier (rail < level-1 menus < level-2 dialogs), not
-  a level-1/2 overlay shadow and not a hairline.
+  surfaces carry no real outer border. Dark mode deepens them. Floating rails
+  carry their own *soft, low* elevation plus a subtle edge ring
+  (`--rail-surface-shadow`) — the softest tier (rail < level-1 menus < level-2
+  dialogs), not a level-1/2 overlay shadow and not a hand-written hairline.
 - **Radius:** a deliberately short ladder. The everyday step is **5 / 6 / 8** —
   rows `--radius-row` (5), controls/chips/icon-buttons `--radius-sm` (6), small
   surfaces & composer `--radius-md` (8). Above it sit the structural radii: menus
@@ -752,8 +453,13 @@ scale font size with viewport width.
 ### Motion
 
 - **Tokens:** `--motion-fast` (120ms) for hover/press/affordance reveals;
+  `--motion-slow` (180ms) for state highlights that need to be readable without
+  feeling like content entrance animation;
   `--motion-layout-duration` / `--motion-layout` (160ms) for layout shifts
   (resize, collapse, panel changes).
+  Perpetual state indicators use role tokens: spin cycles, caret cycles, working
+  dot cycles/stagger, reference pulses, and the agent shape cycle. Reduced-motion
+  collapse uses `--motion-reduced-duration`.
   Add new durations only with a clear role.
 - **Easing:** standard `ease`; motion is functional feedback, never decoration.
 - **What animates:** state and layout transitions. Content does not animate in;

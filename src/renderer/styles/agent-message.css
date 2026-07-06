@@ -24,8 +24,6 @@
 }
 
 .agent-user-content-shell {
-  --agent-user-highlight-shadow: 0 0 0 1px var(--border-emphasis);
-
   display: flex;
   max-width: 100%;
   min-width: 0;
@@ -33,7 +31,7 @@
   align-items: flex-end;
   gap: var(--space-2);
   border-radius: var(--radius-md);
-  background: var(--surface-user-bubble);
+  background: var(--fill-3);
   /* Tighter than the old --space-5/--space-6 (10/12): a short message read as a puffy
      box. --space-4/--space-5 (8/10) keeps the bubble compact while staying on the
      radius-md ladder shared with the composer + suggestion chips. */
@@ -45,7 +43,7 @@
 
 .agent-user-content-shell.is-highlighted {
   background: var(--fill-4);
-  box-shadow: var(--agent-user-highlight-shadow);
+  box-shadow: var(--message-user-highlight-shadow);
 }
 
 .agent-user-content-body {
@@ -104,12 +102,15 @@
 .agent-message-inline-ref {
   appearance: none;
   border: 0;
-  cursor: pointer;
   font: inherit;
   line-height: inherit;
   margin: 0;
   text-align: inherit;
   vertical-align: baseline;
+}
+
+.inline-ref.agent-message-inline-ref[href] {
+  cursor: pointer;
 }
 
 .agent-message-inline-ref:focus-visible {
@@ -146,9 +147,9 @@
   height: 30px;
   align-items: center;
   gap: var(--space-3);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
-  background: var(--material-popover);
+  background: var(--fill-1);
   color: var(--text-strong);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
@@ -158,7 +159,7 @@
 
 .agent-user-file-chip[href]:hover {
   border-color: var(--border-strong);
-  background: var(--fill-1);
+  background: var(--fill-2);
   color: var(--text-strong);
 }
 
@@ -184,9 +185,9 @@
   display: block;
   max-width: min(100%, 260px);
   max-height: 220px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
-  background: var(--material-popover);
+  background: var(--fill-1);
   object-fit: contain;
 }
 
@@ -228,12 +229,12 @@
 
 /* A keyed avatar carries its per-agent identity hue (--avatar-accent, bound by the
    is-tint-* class below). The hue is the initial; the fill is the same hue mixed
-   toward the live --surface, so it reads as a soft light tint in light mode and a
-   soft dark tint in dark mode (never a baked box that glares against a dark panel)
-   — the theme-aware treatment shared with the tag chips. A hairline ring of the
-   same hue gives the small pill definition without a hard border. */
+   toward the live content surface, so it reads as a soft light tint in light mode
+   and a soft dark tint in dark mode (never a baked box that glares against a dark
+   panel) — the theme-aware treatment shared with the tag chips. A hairline ring
+   of the same hue gives the small pill definition without a hard border. */
 .agent-identity-avatar[class*="is-tint-"] {
-  background: color-mix(in srgb, var(--avatar-accent) 18%, var(--surface));
+  background: color-mix(in srgb, var(--avatar-accent) 18%, var(--bg-content));
   color: var(--avatar-accent);
   box-shadow: var(--avatar-tint-ring);
 }
@@ -300,15 +301,13 @@
 }
 
 .agent-user-edit-card {
-  --agent-user-highlight-shadow: 0 0 0 1px var(--border-emphasis);
-
   display: flex;
   width: min(88%, 520px);
   flex-direction: column;
   gap: var(--space-4);
   border: 1px solid var(--border-emphasis);
   border-radius: var(--radius-md);
-  background: var(--material-popover);
+  background: var(--bg-elevated);
   padding: var(--space-5);
   transition:
     background var(--motion-slow),
@@ -317,7 +316,7 @@
 
 .agent-user-edit-card.is-highlighted {
   background: var(--fill-2);
-  box-shadow: var(--agent-user-highlight-shadow);
+  box-shadow: var(--message-user-highlight-shadow);
 }
 
 .agent-user-edit-input {
@@ -339,8 +338,6 @@
 }
 
 .agent-assistant-content {
-  --agent-assistant-highlight-shadow: 0 0 0 1px var(--fill-3);
-
   position: relative;
   display: flex;
   max-width: 100%;
@@ -358,7 +355,7 @@
 
 .agent-assistant-content.is-highlighted {
   background: var(--fill-1);
-  box-shadow: var(--agent-assistant-highlight-shadow);
+  box-shadow: var(--message-assistant-highlight-shadow);
 }
 
 .agent-assistant-text {
@@ -450,15 +447,15 @@
   border-radius: var(--radius-pill);
   background: currentColor;
   opacity: 0.4;
-  animation: agent-channel-working-dot 1.2s ease-in-out infinite;
+  animation: agent-channel-working-dot var(--motion-working-cycle) ease-in-out infinite;
 }
 
 .agent-channel-working-dots > span:nth-child(2) {
-  animation-delay: 0.15s;
+  animation-delay: var(--motion-working-stagger);
 }
 
 .agent-channel-working-dots > span:nth-child(3) {
-  animation-delay: 0.3s;
+  animation-delay: calc(var(--motion-working-stagger) * 2);
 }
 
 @keyframes agent-channel-working-dot {
@@ -477,7 +474,7 @@
 
 /* Portaled to document.body; position/left/top/width/maxHeight come from
    useAnchoredOverlay (position: fixed) so the popover flips and clamps to the
-   viewport instead of running off a short window. Opaque --overlay-bg is
+   viewport instead of running off a short window. Opaque --bg-elevated is
    deliberate: the old translucent material let transcript text bleed through. */
 .agent-channel-working-detail {
   --channel-activity-pad: var(--space-4);             /* 8px */
@@ -493,10 +490,8 @@
   flex-direction: column;
   gap: var(--channel-activity-header-list-gap);
   border-radius: var(--radius-overlay-sm);
-  background: var(--overlay-bg);
-  box-shadow:
-    var(--overlay-shadow-level-1),
-    var(--outline-subtle);
+  background: var(--bg-elevated);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--channel-activity-pad);
   overflow: hidden;
 }
@@ -624,7 +619,7 @@
 
 .agent-channel-working-item-stop.agent-composer-action-button:disabled {
   background: transparent;
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -697,7 +692,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   color: var(--text-strong);
   padding: var(--space-5);
   user-select: text;

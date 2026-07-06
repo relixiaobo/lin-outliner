@@ -25,18 +25,76 @@ decision routing, exceptions, and validation.
   rules, not a growing surface encyclopedia. Use
   `bun scripts/design-system-metrics.ts --json` to inspect the current state and
   `bun scripts/design-system-metrics.ts --check` once the compression target is
-  satisfied. The ratified target is: surface-specific contract lines are at least
+  satisfied. The JSON `targets` object mirrors the ratified baselines enforced by
+  `--check`. The ratified target is: surface-specific contract lines are at least
   40% below the post-split baseline (`surfaces.md` <= 403 lines from a 672-line
-  baseline); the sampled [decision audit](./decision-audit.md) proves at least
-  80% derived decisions; component coverage is at least 80%; Exception Registry
-  evidence coverage is 100%; raw hex outside token declarations stays 0 after
-  named exceptions. The raw-hex scan covers renderer CSS, TS, and TSX, so source
-  literals cannot hide outside stylesheet files.
+  baseline), and the surface drift summary reports whether that compression
+  target is exceeded; the sampled [decision audit](./decision-audit.md) keeps at least the
+  current 50-row sample with unique contiguous `Dxx` ids, unique decision text,
+  no malformed rows, no incomplete semantic columns, proves at least 80% derived
+  decisions, uses only valid `Derived` / `Exception` result values, has 100%
+  evidence coverage with no broken local evidence references, and names a kernel
+  exception for every Exception row. The decision row drift summary includes
+  duplicate ids, duplicate decision text, incomplete rows, and missing ids; the
+  calibration Classification Model table stays limited to the four ratified
+  classes with non-empty meaning and response cells, and its drift summary
+  includes duplicate, missing, unexpected, and incomplete class rows. The
+  calibration ledger uses unique contiguous `CAxx` ids,
+  no malformed finding rows, those same classes, and 100% evidence coverage with
+  no broken local evidence references. Its row drift summary includes duplicate
+  ids, malformed rows, and missing ids;
+  component coverage is at least 80%; Exception Registry rows are well-formed
+  with 100% evidence coverage and no broken local evidence references; raw colour
+  literals outside foundation token declarations stay 0 after named exceptions;
+  and the runtime surface matrix remains discoverable with unique case names and
+  real light/dark theme variants. The
+  raw-colour scan covers renderer CSS, TS, and TSX, and only the foundation token
+  layer may declare raw-colour custom properties, so source literals cannot hide
+  outside stylesheet files or behind component-private variables. Runtime surface
+  counts are reported as cases and light/dark theme checks, not as a completeness
+  claim for every possible UI state. The runtime surface drift summary includes
+  a missing or empty matrix, duplicate surface names, missing light/dark theme
+  coverage, and duplicate theme variants.
+- **Source map accountability.** The kernel Source Map is the renderer UI audit's
+  entry index. Its table rows must stay well-formed, every Area must be unique,
+  every row must carry a Product Sources code span and a linked contract owner,
+  and every Product Sources code span must resolve to a current renderer
+  CSS/TS/TSX file. Contract links must resolve to current design-system markdown
+  targets, including anchors. Product-source failures and contract-link failures
+  are reported separately. Short source names must resolve uniquely unless the
+  code span is an intentional wildcard. The Source Map drift summary includes
+  a missing or empty map, malformed rows, duplicate areas, incomplete rows,
+  broken or ambiguous product sources, and broken contract links.
+- **Current spec reference accountability.** Current design-system contract docs
+  must keep path-like code spans resolvable. This covers the kernel, foundations,
+  patterns, surfaces, components, implementation notes, and decision audit. The
+  calibration finding ledger is validated through its evidence columns instead,
+  so historical finding text may still describe stale references as past drift.
+  The current-doc reference drift summary includes missing minimum reference
+  coverage, broken references, and ambiguous path-like code spans.
 - **Derivation audit.** For a new or changed UI, the PR must be able to answer
   four questions: which surface owns it, which component primitive or pattern it
   uses, which state-model row it maps to, and which foundation tokens carry its
   visual values. If the answer needs a page-local special case, either promote a
   reusable rule or add a named exception with evidence.
+- **Component source accountability.** `components.md` is the reusable primitive
+  contract table. Its rows must stay well-formed, every documented component name
+  must be unique, every row must carry a component code span, a `Sources` code
+  span, and a linked contract owner. Every `Sources` code span must resolve to a
+  current renderer CSS/TS/TSX file with no ambiguous short-name match, and every
+  contract link must resolve to a current design-system markdown target. The
+  component doc drift summary includes missing minimum source/contract reference
+  coverage, row shape, duplicate names, missing semantic columns, broken source
+  references, ambiguous source references, and broken contract links, plus drift
+  between documented contracts, the metrics contract map, and live
+  implementation files.
+- **Calibration audit.** A design-system calibration pass records findings in
+  [calibration-audit.md](./calibration-audit.md) as code drift, spec drift, named
+  exception, or open design decision. The audit's open-design-decision table must
+  stay well-formed; every area must be unique, and every row must explain why the
+  decision needs escalation so boundaries remain machine-checkable. Its row drift
+  summary includes malformed rows, duplicate areas, and incomplete rows. Do not
+  leave those classifications only in PR prose.
 - **Tokens are the dev variables.** Two tiers: **foundation tokens** (the ones in
   Foundations — color, type, spacing, radius, elevation, motion) are the CSS
   custom properties in `src/renderer/styles/tokens.css` and are documented in
@@ -50,20 +108,54 @@ decision routing, exceptions, and validation.
 - **Naming:** tokens are semantic-role names (`--text-primary`, `--fill-3`,
   `--material-sidebar`), never raw-value names (`--gray-200`). Component contracts
   use the component name matching the source file.
-- **Migration:** legacy aliases bridge old names onto the semantic layer; remove
-  an alias once all usages migrate. Pre-launch, so no compatibility burden —
-  cut over directly rather than keeping shims.
+- **Alias discipline:** aliases are allowed only when they name a reusable role
+  contract over the foundation layer. Retired compatibility names are guarded
+  from returning; pre-launch means we cut callers to the owning semantic token
+  instead of keeping shims.
 - **Change discipline:** the smallest owning design-system layer is updated
   before or with any UI change that alters a system contract (Implementation Rule
   2). The main agent records notable system changes in `CHANGELOG.md` on merge.
 - **Native-control exceptions.** Product surfaces prefer shared primitives over
   raw native controls. Direct `button`, `input`, `textarea`, and `select` usages
-  outside primitive implementations must either migrate to a primitive or appear
+  outside component implementations must either migrate to a primitive or appear
   in `scripts/design-system-metrics.ts` with a named reason. The reason must be a
-  real semantic/native requirement, not a styling shortcut.
-- **Raw-hex exceptions.** Renderer raw hex belongs in token declarations. Any
+  real semantic/native requirement, not a styling shortcut. The metrics script
+  scans renderer TS/TSX, including entry surfaces outside `src/renderer/ui`,
+  reports named exception files and reasons in `--json`, fails stale exception
+  entries, fails malformed or duplicate audit rows, fails file/reason/count drift
+  between the metrics exception map and the calibration audit's Native-Control
+  Exceptions table, includes those stale and table-drift dimensions in the
+  native-control audit drift summary, and reports component-implementation native controls
+  separately from
+  product-surface direct native controls, so a reusable primitive can own its
+  internal semantics without hiding product-surface drift.
+- **Raw-colour exceptions.** Renderer raw hex and raw functional colour literals
+  belong in the foundation token declaration layer. Component-private CSS
+  variables are product styling, so they derive from existing tokens. Any
   unavoidable source literal must be named in `scripts/design-system-metrics.ts`
-  and in the kernel Exception Registry, with a narrow scope and evidence.
+  and in the kernel Exception Registry, with a narrow source-context scope and
+  evidence. The metrics script fails undocumented entries, stale entries whose
+  source literal no longer exists, and same-file/same-literal uses outside the
+  named source context. Token declarations are accepted only in the central token
+  layers and only for named colour/effect token families; spacing, radius, type,
+  motion, and other foundation tokens cannot carry raw colour literals by
+  accident. The raw-colour exception drift summary includes undocumented and
+  stale exception entries.
+- **Audit local references.** Exception Registry authority/evidence text,
+  decision-audit derivation/evidence text, and calibration evidence text must
+  resolve any local links, markdown heading anchors, and path-like code spans to
+  current repo files. Short filename evidence is accepted only when it resolves
+  to exactly one file in the audit search roots. The metrics script reports and
+  fails broken or ambiguous local references so named exceptions and Derived
+  decisions do not keep passing after their proof files or linked sections move
+  or disappear.
+- **Named exception summaries.** The calibration audit's Named Exceptions Kept
+  table is a well-formed summary, not a second source of truth. Every Kernel
+  Exception Registry entry must appear there, and any non-kernel entry must be
+  named in the metrics script as a local calibration exception. The metrics
+  script fails malformed summary rows, duplicate registry/summary names, missing
+  registry entries, unregistered summary entries, broken summary evidence
+  references, and missing local entries.
 
 ## Validation
 
@@ -72,13 +164,83 @@ Expected checks for design-system changes:
 - `bun run typecheck`
 - `bun run docs:check`
 - `bun scripts/design-system-metrics.ts --json` for the current compression,
-  decision-derivation, component-coverage, exception-evidence, and
-  renderer-wide token-discipline baseline. Use `--check` before publishing a
-  design-system compression or contract PR.
+  current-spec source references, source-map product and contract references,
+  calibration classification/ledger integrity,
+  decision-derivation, component-source and contract references,
+  component-coverage,
+  exception-evidence, and renderer-wide token-discipline baseline, including raw
+  colour literals in CSS, TS, and TSX, calibration evidence references, plus the
+  runtime surface matrix size, duplicate-name check, light/dark variant
+  discovery, and target baselines for every `--check` gate. Use `--check` before
+  publishing a design-system compression or contract PR.
 - Focused Playwright tests for touched surfaces.
-- `tests/e2e/typography-tokens.spec.ts` for token discipline.
+- `tests/renderer/menuKeyboardCoverage.test.ts` keeps every JSX
+  `role="menu"` surface on the shared `useMenuKeyboard` model so menu semantics
+  include focus-in, roving Arrow/Home/End, Tab dismissal, Escape, and focus
+  restoration.
+- `tests/e2e/design-system-runtime.spec.ts` for representative shell, settings,
+  settings-row-menu, launcher-renderer, overlay, outliner trigger, menu,
+  tag-context, field-reuse, field-value-popovers including selected values,
+  floating-tool, panel-date-navigation, view-configuration and toolbar tooltip,
+  schema-definition, code-block, inline-file preview/context, confirm-dialog,
+  error-state, file-preview row/header menus, document-outline, agent-composer
+  menus/submenus, dream-manual, agent-message-details, agent/debug usage
+  tooltips, agent-process, and run-detail surfaces staying bounded and
+  OS-theme-native in light and dark.
+- `tests/e2e/typography-tokens.spec.ts` for token discipline, the no renderer
+  `[data-theme]` bridge rule, the registered dark-media rule allowlist, the
+  registered `color-scheme` declaration allowlist, the registered reduced-motion
+  / reduced-transparency / increased-contrast rule allowlists, the absent
+  `--primary` token family, viewport-independent font sizing, neutral
+  letter-spacing, the static no-scale feedback guard, and the registered
+  layout-transition and interactive-state layout-declaration allowlists; it keeps
+  global z-index values on the `--z-*` ladder without renderer source-owned
+  inline `zIndex` / `z-index`, keeps foundation typography/radius/shadow styling
+  out of renderer source-owned inline style objects, direct DOM style writes
+  including same-file style aliases, inline style strings, and `cssText`
+  assignment / append strings,
+  keeps hidden scrollbars limited to the registered document-outline mini-rail
+  exception, and keeps every
+  `--material-*` background paired with the
+  shared `--material-backdrop` filter, scoped to registered chrome / overlay
+  surfaces, and routed through the shared accessibility fallback path; backdrop
+  filters stay scoped to those material surfaces plus the
+  registered preview-HUD exception, while preview HUD actions use
+  `--preview-action-shadow` and rail chrome uses the shared
+  `--rail-surface-shadow`. It also keeps level-2 focused overlays on the opaque
+  elevated tier, not the material popover tier.
+  It also keeps functional-state fills, borders, and rings from using brand,
+  link, or status colour tokens outside the solid destructive-confirmation
+  exception, keeps registered overlay root surfaces free of real outer borders,
+  and fails overlay `box-shadow` declarations that mix level-1/2 shadow tokens
+  with outline tokens. It also rejects the legacy generic
+  `--shadow` and `--danger` aliases across renderer source evidence so surfaces
+  name the actual elevation tier and semantic status role they use, keeps retired
+  legacy aliases out of live CSS,
+  keeps stylesheet raw functional color literals inside token declarations, fails
+  undefined live token references outside named runtime/generated inputs, keeps
+  motion timing literals routed through motion tokens outside zero delays,
+  prevents design system docs from copying a second `:root` token table, and
+  keeps component shadow custom properties routed through token-layer shadows,
+  keeps component `color-mix()` recipes derived from tokens or `currentColor`,
+  and keeps foundation token definitions unique in `tokens.css`.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
-  interaction affordances change.
+  interaction affordances change, including pointer-cursor scope, help-cursor
+  diagnostics scope, text-cursor editor/text scope, and forced
+  `user-select: none !important` suppression staying limited to active drag /
+  resize gestures. It also keeps direct, named, conditional, and spread renderer
+  JSX inline styles, direct / object-assigned DOM style writes including
+  same-file style aliases, inline style strings, and `cssText` strings from
+  declaring cursor, user-select, or app-region affordance properties, keeps renderer drag
+  regions from selecting chrome text, keeps the shared bare input primitive from
+  suppressing the global
+  keyboard focus ring, keeps local `:focus-visible` ring suppressions explicitly
+  named, keeps local `:focus-visible` outline suppressions either paired with a
+  focus token or explicitly named, keeps explicit `:focus-visible` indicator
+  declarations routed through focus-named tokens, keeps resize cursors routed
+  through the shared cursor tokens, keeps role-tooltip surfaces registered and
+  pointer-transparent with read-only content, and keeps named chrome icon controls
+  colour-only on hover, focus, and press.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
   behavior when material rules change.
 - `git diff --check`

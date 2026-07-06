@@ -9,7 +9,7 @@
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--bg-elevated);
   /* Same float inset as the main shell (--layout-gap) so the rail nests
      concentrically inside the 24px native window corner — window 24 = gap 8 + rail
      16 (B9). */
@@ -30,6 +30,7 @@
   z-index: var(--z-popover);
   height: var(--chrome-height);
   -webkit-app-region: drag;
+  user-select: none;
 }
 
 /* Back / forward (‹ ›) toolbar group, like macOS System Settings. The buttons
@@ -72,7 +73,7 @@
   flex: 0 0 auto;
   width: 1px;
   height: calc(var(--chrome-control-height) - var(--space-4));
-  background: var(--border-subtle);
+  background: var(--separator);
 }
 
 .settings-toolbar-title {
@@ -139,7 +140,7 @@
 .agent-settings-section-header > span {
   min-width: 0;
   overflow: hidden;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   text-overflow: ellipsis;
@@ -154,7 +155,7 @@
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-main);
+  color: var(--text-primary);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -166,6 +167,6 @@
   min-width: 0;
   min-height: 0;
   align-items: stretch;
-  /* Same rail↔content gap as the main shell (--shell-gap). */
+  /* Same rail↔content gap as the main shell. */
   gap: var(--layout-gap);
 }

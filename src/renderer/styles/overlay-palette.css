@@ -19,8 +19,8 @@
 .command-input {
   width: 100%;
   height: 40px;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text);
+  border-bottom: 1px solid var(--separator);
+  color: var(--text-primary);
   font-size: var(--font-ui-md);
   padding: 0 var(--space-8);
 }
@@ -41,13 +41,13 @@
   height: 40px;
   align-items: center;
   justify-content: flex-end;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--separator);
   padding: 0 var(--space-6);
 }
 
 .command-action-button {
   height: 26px;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: var(--font-meta);
 }
 
@@ -59,7 +59,7 @@
   justify-content: center;
   border-radius: var(--radius-sm);
   background: var(--fill-1);
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   font-weight: 500;
   padding: 0 var(--space-2);

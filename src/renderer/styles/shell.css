@@ -4,8 +4,8 @@
      • LOWER — a full-bleed opaque content base (.workspace-canvas) that fills the
        window edge to edge and extends UNDER the floating rails.
      • UPPER — the sidebar + agent rails float on top: inset by --layout-gap,
-       rounded --panel-radius, soft --shadow-rail, --material-sidebar tint +
-       backdrop-filter + a --rail-edge hairline ring.
+       rounded --panel-radius, --rail-surface-shadow, --material-sidebar tint +
+       backdrop-filter.
    Persistent window chrome (traffic lights + two symmetric rail toggles) is fixed
    to the window, not the rails.
    ════════════════════════════════════════════════════════════════════════════ */
@@ -17,7 +17,7 @@
   height: 100vh;
   overflow: hidden;
   background: var(--bg-content);
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 /* The shell is no longer a grid that reserves rail width. It's a positioning
@@ -132,7 +132,7 @@
    history to traverse; the main window's toggles never disable). Still no box —
    the glyph just dims, consistent with the colour-only chrome idiom (B6). */
 .rail-toggle:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 /* When a rail is collapsed its zone sits over the pane (not the rail), so give it an
@@ -200,12 +200,12 @@
   gap: var(--space-1);
   overflow: hidden;
   border-radius: var(--radius-lg);
-  /* Menu glass (design-system B5 / D2). --material-backdrop carries the PR-B
-     reduced-transparency / high-contrast opaque fallback for free. */
+  /* Menu glass (design-system B5 / D2). --material-backdrop carries the shared
+     reduced-transparency / high-contrast opaque fallback. */
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-3);
   -webkit-app-region: no-drag;
 }
@@ -233,7 +233,7 @@
 }
 
 .top-chrome-more-item:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
   cursor: default;
 }
 

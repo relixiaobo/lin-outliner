@@ -389,9 +389,9 @@ function RoundInfoHover({ labels, round }: { labels: DebugLabels; round: AgentDe
         title={labels.roundInfoTitle}
         variant="panel"
       />
-      <span className="agent-debug-usage-popover" role="tooltip" aria-label={labels.roundInfoTitle}>
+      <div className="agent-debug-usage-popover" role="tooltip" aria-label={labels.roundInfoTitle}>
         <RoundInfoContent labels={labels} round={round} />
-      </span>
+      </div>
     </div>
   );
 }

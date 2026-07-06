@@ -50,21 +50,21 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  color: color-mix(in srgb, var(--text) 44%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 44%, transparent);
   -webkit-app-region: no-drag;
 }
 
 .file-preview-reader-actions:hover,
 .file-preview-reader-actions:focus-visible,
 .file-preview-reader-actions[aria-expanded='true'] {
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .file-preview-message {
   display: grid;
   min-height: 180px;
   place-items: center;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-md);
 }
@@ -77,7 +77,7 @@
 }
 
 .file-preview-directory-summary {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
 }
@@ -86,7 +86,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--separator);
 }
 
 .file-preview-directory-row {
@@ -98,7 +98,7 @@
   align-items: center;
   gap: var(--space-3);
   border: 0;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--separator);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
@@ -118,7 +118,7 @@
 }
 
 .file-preview-directory-meta {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
 }
@@ -141,7 +141,7 @@
 }
 
 .file-preview-image figcaption {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
 }
@@ -154,7 +154,7 @@
   flex: 1 1 auto;
   overflow: hidden;
   border-radius: var(--file-preview-frame-radius);
-  background: var(--surface);
+  background: var(--bg-content);
   box-shadow: var(--inset-hairline);
   clip-path: inset(0 round var(--file-preview-frame-radius));
 }
@@ -175,7 +175,7 @@
   flex: 1 1 auto;
   border: 0;
   border-radius: inherit;
-  background: var(--surface);
+  background: var(--bg-content);
 }
 
 /* Audio / video players on a media file node's page. */
@@ -192,11 +192,11 @@
   border-radius: var(--file-preview-frame-radius);
   background: transparent;
   box-shadow: var(--inset-hairline);
-  color: var(--text-main);
+  color: var(--text-primary);
   --media-background-color: transparent;
-  --media-primary-color: var(--text-main);
+  --media-primary-color: var(--text-primary);
   --media-secondary-color: transparent;
-  --media-text-color: var(--text-main);
+  --media-text-color: var(--text-primary);
   --media-control-background: transparent;
   --media-control-hover-background: transparent;
   --media-control-height: var(--control-size-xl);
@@ -211,15 +211,15 @@
   --media-range-padding-left: var(--space-2);
   --media-range-padding-right: var(--space-2);
   --media-range-track-height: 3px;
-  --media-range-track-background: var(--fill-selected);
-  --media-range-bar-color: var(--text-main);
-  --media-range-thumb-background: var(--text-main);
+  --media-range-track-background: var(--selection-bg);
+  --media-range-bar-color: var(--text-primary);
+  --media-range-thumb-background: var(--text-primary);
   --media-range-thumb-width: 10px;
   --media-range-thumb-height: 10px;
   --media-volume-range-width: 58px;
   --media-font-size: var(--font-ui-xs);
   --media-font-weight: 500;
-  --media-font-family: var(--font-sans);
+  --media-font-family: var(--font-family-sans);
   --media-cursor: default;
   --media-focus-box-shadow: var(--focus-ring-shadow);
 }
@@ -251,13 +251,13 @@
   gap: var(--space-1);
   border-radius: inherit;
   padding: 2px var(--space-2);
-  background: var(--fill-hover);
+  background: var(--fill-2);
   box-shadow: none;
 }
 
 .file-preview-media-player--video .file-preview-media-controls {
   border-radius: var(--file-preview-flush-radius);
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--separator);
   box-shadow: none;
 }
 
@@ -289,7 +289,7 @@
 .file-preview-media-time {
   min-width: 72px;
   justify-content: center;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .file-preview-media-player--audio .file-preview-media-time {
@@ -318,7 +318,7 @@
   max-width: 100%;
   flex: 0 0 auto;
   gap: var(--space-1);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-1);
   padding: var(--space-1);
@@ -329,7 +329,7 @@
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font: inherit;
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
@@ -338,7 +338,7 @@
 
 .file-preview-html-mode-button:hover,
 .file-preview-html-mode-button:focus-visible {
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .file-preview-html-mode-button[aria-pressed='true'] {
@@ -351,7 +351,7 @@
   width: 100%;
   min-height: 420px;
   flex: 1 1 auto;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: white;
 }
@@ -431,7 +431,7 @@
 
 .file-preview-markdown pre {
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-1);
   padding: var(--file-preview-content-inset, var(--space-4));
@@ -506,7 +506,7 @@
   width: min(720px, 100%);
   min-height: 320px;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--file-preview-page-radius);
   background: var(--bg-content);
 }
@@ -610,9 +610,9 @@
 .file-preview-pdf-canvas {
   grid-area: 1 / 1;
   max-width: 100%;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--file-preview-page-radius);
-  background: var(--surface);
+  background: var(--bg-content);
   box-shadow: var(--shadow-thumb);
 }
 
@@ -710,8 +710,6 @@
 }
 
 .document-outline-rail-marker {
-  --document-outline-marker-shadow: 0 0 0 1px var(--preview-action-outline);
-
   flex: 0 0 auto;
   width: var(--document-outline-marker-width);
   height: 2px;
@@ -749,7 +747,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   opacity: 0;
   pointer-events: none;
   transform: translateY(-50%) translateX(calc(-1 * var(--space-2)));
@@ -824,8 +822,8 @@
 
 .file-preview-table td {
   max-width: 280px;
-  border-bottom: 1px solid var(--border-subtle);
-  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--separator);
+  border-right: 1px solid var(--separator);
   padding: var(--space-2) var(--space-3);
   vertical-align: top;
   white-space: pre-wrap;
@@ -872,7 +870,7 @@
 
 .file-preview-unavailable-note {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
 }
@@ -939,7 +937,7 @@
   min-width: 0;
   border: 0;
   border-radius: var(--file-preview-frame-radius);
-  background: var(--surface-soft);
+  background: var(--bg-elevated);
   box-shadow: var(--inset-hairline);
   padding: var(--file-preview-frame-padding-block) var(--file-preview-frame-padding-inline);
 }
@@ -1191,7 +1189,7 @@
   background: var(--preview-action-bg);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow-thumb-strong), inset 0 0 0 1px var(--preview-action-outline);
+  box-shadow: var(--preview-action-shadow);
   color: inherit;
   font: inherit;
   font-size: var(--font-ui-sm);
@@ -1217,7 +1215,7 @@
   background: var(--preview-action-bg);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow-thumb-strong), inset 0 0 0 1px var(--preview-action-outline);
+  box-shadow: var(--preview-action-shadow);
   color: inherit;
   transition: color var(--motion-fast), background var(--motion-fast);
 }
@@ -1236,8 +1234,8 @@
 /* A quiet caption (type · size · pages) at the top of the `⋯` menu. */
 .file-preview-menu-meta {
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-muted);
+  border-bottom: 1px solid var(--separator);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
 }
@@ -1269,7 +1267,7 @@
 /* The filename is a read-only caret surface: it wraps like a locked/reference row
    and participates in node keyboard commands, but text input never renames it. */
 .file-node-row-name {
-  color: var(--text-main);
+  color: var(--text-primary);
   line-height: var(--line-content);
   overflow-wrap: anywhere;
   white-space: normal;
@@ -1326,7 +1324,7 @@
 
 .file-node-card-menu-trigger:hover,
 .file-node-card-menu-trigger[aria-expanded='true'] {
-  color: var(--text-main);
+  color: var(--text-primary);
 }
 
 .file-node-card-menu-trigger:focus-visible {
@@ -1368,9 +1366,9 @@
   height: auto;
   max-width: min(320px, 100%);
   max-height: 240px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--bg-content);
   object-fit: contain;
 }
 
@@ -1383,13 +1381,13 @@
   min-width: 160px;
   min-height: var(--control-size-lg, 40px);
   padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
-  background: var(--surface-soft);
+  background: var(--bg-elevated);
 }
 
 .file-node-image-fallback {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
 }
@@ -1428,8 +1426,8 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
-  color: var(--text-main);
+  box-shadow: var(--overlay-shadow-level-1);
+  color: var(--text-primary);
 }
 
 /* Image file rows have no filename editor; this focusable, visually-hidden anchor

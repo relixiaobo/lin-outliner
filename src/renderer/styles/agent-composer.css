@@ -146,7 +146,7 @@
 
 .dream-schedule-trigger > svg {
   flex: 0 0 auto;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   transition: color var(--motion-fast);
 }
 
@@ -198,8 +198,8 @@
   gap: var(--space-4);
   overflow: auto;
   border-radius: var(--radius-overlay-sm);
-  background: var(--overlay-bg);
-  box-shadow: var(--overlay-shadow-level-1), var(--outline-subtle);
+  background: var(--bg-elevated);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-6);
 }
 
@@ -237,7 +237,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-sm);
   background: var(--bg-window);
   color: var(--text-strong);
@@ -255,7 +255,7 @@
 
 .dream-manual-date-trigger > svg {
   flex: 0 0 auto;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .dream-manual-date-value {
@@ -273,7 +273,7 @@
   min-height: 84px;
   min-width: 0;
   resize: vertical;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-sm);
   outline: none;
   background: var(--bg-window);
@@ -424,22 +424,22 @@
 
 .agent-approval-button.is-primary {
   background: var(--surface-inverse);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .agent-approval-button.is-primary:hover:not(:disabled) {
   background: var(--surface-inverse-strong);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .agent-approval-button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
   cursor: default;
 }
 
 .agent-approval-button.is-primary:disabled {
-  background: var(--surface-disabled);
-  color: var(--panel-bg);
+  background: var(--fill-3);
+  color: var(--bg-content);
 }
 
 .agent-approval-details-toggle:focus-visible,
@@ -524,7 +524,7 @@
 }
 
 .agent-question-back-button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 .agent-question-item {
@@ -672,7 +672,7 @@
 }
 
 .agent-question-discuss-button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 .agent-question-nav-actions {
@@ -698,7 +698,7 @@
   min-width: 0;
   align-items: center;
   gap: var(--space-3);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-2);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
@@ -837,14 +837,14 @@
 }
 
 .agent-composer-mention-section {
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   font-weight: 650;
   padding: var(--space-2) var(--space-3) var(--space-1);
 }
 
 .agent-composer-mention-status {
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   padding: var(--space-2) var(--space-3);
 }
@@ -870,7 +870,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-1);
   pointer-events: none;
 }
@@ -975,7 +975,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
 }
 
 /* The submenu floats above its parent menu (the parent stays open behind it). */
@@ -1080,7 +1080,7 @@
 .agent-composer-model-divider {
   height: 1px;
   margin: var(--space-1) var(--space-2);
-  background: var(--border-subtle);
+  background: var(--separator);
 }
 
 .agent-composer-model-group {
@@ -1093,7 +1093,7 @@
   color: var(--text-faint);
   font-size: var(--font-meta);
   line-height: var(--line-meta-tight);
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -1124,13 +1124,13 @@
 }
 
 .agent-composer-tool-button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
   cursor: default;
 }
 
 .agent-composer-action-button {
   background: var(--surface-inverse);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .agent-composer-action-button.is-stop svg {
@@ -1143,8 +1143,8 @@
 }
 
 .agent-composer-action-button:disabled {
-  background: var(--surface-disabled);
-  color: var(--panel-bg);
+  background: var(--fill-3);
+  color: var(--bg-content);
   cursor: default;
 }
 

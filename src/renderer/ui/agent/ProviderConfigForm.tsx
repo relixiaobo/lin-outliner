@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CheckIcon, CopyIcon, HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { ErrorState } from '../primitives/FeedbackState';
 import { Input } from '../primitives/Input';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
@@ -229,14 +230,13 @@ export function ProviderConfigForm({
           <div className="settings-sheet-note">
             <p>{authNote.note}</p>
             {authNote.docsUrl ? (
-              <button
+              <ButtonControl
                 className="agent-settings-doc-link"
                 onClick={() => onOpenExternal(authNote.docsUrl as string)}
-                type="button"
               >
                 <span>{authNote.docsLabel ?? t.providerConfig.learnMore}</span>
                 <OpenIcon size={ICON_SIZE.tiny} />
-              </button>
+              </ButtonControl>
             ) : null}
           </div>
         ) : null}
@@ -271,26 +271,24 @@ export function ProviderConfigForm({
                   variant="bare"
                 />
                 {apiKey || hasStoredKey ? (
-                  <button
+                  <ButtonControl
                     aria-label={t.providerConfig.copyKey}
                     className="settings-sheet-reveal"
                     disabled={busy}
                     onClick={() => void copyApiKey()}
-                    type="button"
                   >
                     {keyLoading ? <LoaderIcon size={ICON_SIZE.menu} /> : <CopyIcon size={ICON_SIZE.menu} />}
-                  </button>
+                  </ButtonControl>
                 ) : null}
-                <button
+                <ButtonControl
                   aria-label={reveal ? t.providerConfig.hideKey : t.providerConfig.showKey}
                   aria-pressed={reveal}
                   className="settings-sheet-reveal"
                   disabled={busy}
                   onClick={() => void toggleReveal()}
-                  type="button"
                 >
                   {reveal ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
-                </button>
+                </ButtonControl>
               </div>
             </div>
           ) : null}
@@ -307,10 +305,10 @@ export function ProviderConfigForm({
           </label>
         </div>
         {!authNote && !hasCredential && docsUrl ? (
-          <button className="agent-settings-doc-link settings-sheet-getkey" onClick={() => onOpenExternal(docsUrl)} type="button">
+          <ButtonControl className="agent-settings-doc-link settings-sheet-getkey" onClick={() => onOpenExternal(docsUrl)}>
             <span>{t.providerConfig.getApiKey}</span>
             <OpenIcon size={ICON_SIZE.tiny} />
-          </button>
+          </ButtonControl>
         ) : null}
 
         {validating ? (

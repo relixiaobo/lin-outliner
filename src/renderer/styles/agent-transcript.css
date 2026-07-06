@@ -135,7 +135,7 @@
 .agent-compaction-line {
   min-width: 0;
   height: 1px;
-  background: var(--border-subtle);
+  background: var(--separator);
 }
 
 .agent-compaction-toggle {
@@ -144,7 +144,7 @@
   align-items: center;
   gap: var(--space-2);
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   padding: 0 var(--space-3);
@@ -153,7 +153,7 @@
 .agent-compaction-toggle:hover,
 .agent-compaction-toggle:focus-visible {
   background: var(--control-hover);
-  color: var(--text-body);
+  color: var(--text-primary);
 }
 
 .agent-compaction-toggle:disabled {
@@ -163,7 +163,7 @@
 .agent-compaction-toggle:disabled:hover,
 .agent-compaction-toggle:disabled:focus-visible {
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .agent-compaction-toggle.is-active {
@@ -173,14 +173,14 @@
 .agent-compaction-toggle.is-active:hover,
 .agent-compaction-toggle.is-active:focus-visible {
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .agent-context-clear-label,
 .agent-context-clear-label:hover,
 .agent-context-clear-label:focus-visible {
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .agent-compaction-chevron {
@@ -202,7 +202,7 @@
   width: min(100%, 680px);
   justify-self: center;
   overflow-wrap: anywhere;
-  border-left: 2px solid var(--border);
+  border-left: 2px solid var(--separator);
   color: var(--text-soft);
   font-size: var(--font-content);
   line-height: var(--line-content);

@@ -37,7 +37,7 @@
   --sidebar-tree-label-gap: var(--space-3);
   border-radius: var(--panel-radius);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
+  box-shadow: var(--rail-surface-shadow);
   transform: translate3d(0, 0, 0);
   transition:
     transform var(--motion-layout),
@@ -138,7 +138,7 @@
   height: var(--sidebar-row-height);
   align-items: center;
   border-radius: var(--radius-sm);
-  color: var(--text-body);
+  color: var(--text-primary);
   font-size: var(--font-ui-md);
   font-weight: 400;
   gap: var(--space-2);
@@ -160,7 +160,7 @@
   width: var(--sidebar-tree-icon-size);
   height: var(--sidebar-tree-icon-size);
   flex: 0 0 var(--sidebar-tree-icon-size);
-  color: var(--text-sub);
+  color: var(--text-secondary);
 }
 
 .sidebar-section-title {
@@ -187,7 +187,7 @@
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-md);
   padding: var(--space-2) var(--space-3) var(--space-2) calc(var(--sidebar-content-start) - 1px);
-  border: 1px dashed var(--border-subtle);
+  border: 1px dashed var(--separator);
   border-radius: var(--radius-sm);
   transition: border-color var(--motion-fast), background var(--motion-fast), color var(--motion-fast);
 }
@@ -195,7 +195,7 @@
 .sidebar-section.pin-dragover .sidebar-pin-dropzone {
   border-color: var(--border-strong);
   background: var(--fill-2);
-  color: var(--text-body);
+  color: var(--text-primary);
 }
 
 /* Pinned rows are drag-reorderable and accept drops at a position. The insertion point
@@ -228,7 +228,7 @@
   width: var(--sidebar-tree-icon-size);
   height: var(--sidebar-tree-icon-size);
   flex: 0 0 var(--sidebar-tree-icon-size);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .sidebar-root-section {
@@ -259,7 +259,7 @@
 }
 
 .sidebar-root-button:hover {
-  color: var(--text-body);
+  color: var(--text-primary);
 }
 
 .sidebar-root-avatar {
@@ -271,7 +271,7 @@
   justify-content: center;
   overflow: hidden;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   color: var(--text-soft);
   font-size: var(--font-ui-xs);
   font-weight: 700;
@@ -294,7 +294,7 @@
   height: var(--sidebar-row-height);
   align-items: center;
   border-radius: var(--radius-sm);
-  color: var(--text-body);
+  color: var(--text-primary);
   /* Label starts right after the chevron gutter + a breathing gap, then one extra
      --sidebar-tree-indent per nesting depth. Derived from the chevron geometry so the
      label always clears the chevron with the same air, whatever the chevron size. */
@@ -322,7 +322,7 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-row);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   padding: 0;
 }
 
@@ -359,7 +359,7 @@
 }
 
 .workspace-tree-row.trashed .workspace-tree-label-text {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, currentColor 68%, transparent);
 }

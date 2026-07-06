@@ -38,13 +38,13 @@ describe('config-as-nodes value mechanism (Stage 4)', () => {
     const otherTag = mustFocus(core.createTag('place'));
 
     core.setConfigValue(tagId, { kind: 'scalar', configKey: 'showCheckbox', text: 'true' });
-    core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: '#aabbcc' });
+    core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: 'red' });
     core.setConfigValue(tagId, { kind: 'ref', configKey: 'extends', targetId: otherTag });
 
     const tag = buildConfigIndex(core.state()).tag(tagId);
     expect(tag?.showCheckbox).toBe(true);
     expect(tag?.doneStateEnabled).toBe(false);
-    expect(tag?.color).toBe('#aabbcc');
+    expect(tag?.color).toBe('red');
     expect(tag?.extends).toBe(otherTag);
     expect(tag?.childSupertag).toBeUndefined();
     expect(tag?.doneMapChecked).toEqual([]);
@@ -100,8 +100,8 @@ describe('config-as-nodes value mechanism (Stage 4)', () => {
   test('a null/empty payload clears the value', () => {
     const core = Core.new();
     const tagId = mustFocus(core.createTag('event'));
-    core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: '#aabbcc' });
-    expect(buildConfigIndex(core.state()).tag(tagId)?.color).toBe('#aabbcc');
+    core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: 'red' });
+    expect(buildConfigIndex(core.state()).tag(tagId)?.color).toBe('red');
     core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: null });
     expect(buildConfigIndex(core.state()).tag(tagId)?.color).toBeUndefined();
   });
@@ -110,9 +110,10 @@ describe('config-as-nodes value mechanism (Stage 4)', () => {
     const core = Core.new();
     const tagId = mustFocus(core.createTag('event'));
 
-    // color is a free token: a named palette key is accepted (no hex constraint)
+    // color is a closed palette token: named palette keys are accepted, raw hex is not
     core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: 'red' });
     expect(buildConfigIndex(core.state()).tag(tagId)?.color).toBe('red');
+    expect(() => core.setConfigValue(tagId, { kind: 'scalar', configKey: 'color', text: '#aabbcc' })).toThrow();
     // wrong kind for the key (color is scalar, not ref)
     expect(() => core.setConfigValue(tagId, { kind: 'ref', configKey: 'color', targetId: tagId })).toThrow();
     // a field-only key cannot be set on a tag definition

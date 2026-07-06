@@ -24,7 +24,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .settings-memory-editor {

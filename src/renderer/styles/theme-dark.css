@@ -11,6 +11,11 @@
     color-scheme: dark;
     --ink: 255 255 255;
 
+    /* Tertiary text at the light-mode 0.30 alpha reads below 3:1 on dark
+       content/material surfaces. Lift it centrally so text-faint remains a
+       readable preview/meta tier without per-surface colour patches. */
+    --text-tertiary: rgb(var(--ink) / 0.40);
+
     --separator-opaque: #3a3a3c;
     --highlight-mark: rgba(120, 100, 30, 0.55);
 
@@ -28,7 +33,6 @@
     --accent-strong: #ff7088;
     /* link blue lifted for legibility on dark ink (matches macOS dark linkColor) */
     --link: #4c9bff;
-    --status-info: #5aa0e0;
     /* success-strong is used as foreground text/icons on dark surfaces; the light
        #3f865d reads too dark on dark, so lift it to a legible mid green. */
     --status-success-strong: #5fc88a;
@@ -40,9 +44,7 @@
     /* drop shadows deepen so elevation still reads on a dark backdrop */
     --overlay-shadow-level-1: 0 8px 22px -12px rgba(0, 0, 0, 0.55), 0 2px 8px -4px rgba(0, 0, 0, 0.40);
     --overlay-shadow-level-2: 0 18px 50px -20px rgba(0, 0, 0, 0.60), 0 6px 18px -10px rgba(0, 0, 0, 0.45);
-    --agent-side-panel-shadow: -18px 0 48px rgba(0, 0, 0, 0.55);
 
     --overlay-backdrop: rgba(0, 0, 0, 0.45);
-    --overlay-backdrop-strong: rgba(0, 0, 0, 0.88);
   }
 }

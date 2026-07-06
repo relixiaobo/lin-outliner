@@ -21,6 +21,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import {
   CODE_LANGUAGE_OPTIONS,
   codeLanguageLabel,
@@ -390,6 +391,12 @@ function CodeLanguageMenu({
     placement: 'bottom-start',
     width: 184,
   });
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose,
+    kind: 'menu',
+    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
+  });
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -397,16 +404,9 @@ function CodeLanguageMenu({
       if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
       onClose();
     }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      onClose();
-    }
     document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
     };
   }, [anchorRef, onClose]);
 
@@ -415,6 +415,7 @@ function CodeLanguageMenu({
       ref={menuRef}
       aria-label={tc.languageLabel}
       className="code-block-language-menu"
+      onKeyDown={onKeyDown}
       role="menu"
       style={style}
     >

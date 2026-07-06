@@ -23,7 +23,7 @@ body {
   height: 100%;
   background: transparent;
   font-family: var(--font-family-sans);
-  color: var(--text);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   /* Chrome text is not user-selectable (B10) — re-enabled on the input below. */
@@ -40,7 +40,7 @@ body {
   /* Transparent so the window's OS vibrancy (hud) shows through — the liquid-glass
    * system overlay. Functional fills/separators (alpha-on-ink) tint the glass. */
   background: transparent;
-  color: var(--text);
+  color: var(--text-primary);
   /* A hairline glass edge that follows the native window corner: alpha-on-ink so
    * it reads as a light catch in dark mode and a quiet border in light. (Border,
    * not box-shadow — the token guard requires box-shadow be a token.) */
@@ -76,7 +76,7 @@ body {
 
 .launcher-input-icon {
   flex-shrink: 0;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
 }
 
 .launcher-input {
@@ -86,7 +86,7 @@ body {
   min-width: 0;
   border: 0;
   background: transparent;
-  color: var(--text);
+  color: var(--text-primary);
   outline: none;
   padding: 0;
   font-size: var(--font-heading-lg);
@@ -133,7 +133,7 @@ body {
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   font-weight: 600;
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .launcher-remediation-detail {
@@ -208,7 +208,7 @@ body {
 }
 
 .launcher-row.is-active .launcher-row-icon {
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .launcher-row-title {
@@ -219,7 +219,7 @@ body {
   text-overflow: ellipsis;
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-md);
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .launcher-row-subtitle {

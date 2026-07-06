@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import {
+  DEFAULT_AGENT_WIDTH,
+  DEFAULT_SIDEBAR_WIDTH,
   MAX_AGENT_WIDTH,
   MAX_SIDEBAR_WIDTH,
   MIN_AGENT_WIDTH,
@@ -10,6 +13,14 @@ import {
   type ResponsiveRailState,
   type WorkspaceLayoutMetrics,
 } from '../../src/renderer/ui/workspaceResponsiveLayout';
+
+const tokenSource = readFileSync('src/renderer/styles/tokens.css', 'utf8');
+
+function tokenPx(name: string): number {
+  const match = new RegExp(`--${name}:\\s*(\\d+)px;`).exec(tokenSource);
+  expect(match, `missing --${name}`).not.toBeNull();
+  return Number(match![1]);
+}
 
 const baseMetrics: WorkspaceLayoutMetrics = {
   canvasWidth: 980,
@@ -26,6 +37,24 @@ const openRails: ResponsiveRailState = {
 };
 
 describe('workspace responsive layout', () => {
+  test('keeps responsive rail constants aligned with design tokens', () => {
+    expect({
+      sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+      sidebarMinWidth: MIN_SIDEBAR_WIDTH,
+      sidebarMaxWidth: MAX_SIDEBAR_WIDTH,
+      agentWidth: DEFAULT_AGENT_WIDTH,
+      agentMinWidth: MIN_AGENT_WIDTH,
+      agentMaxWidth: MAX_AGENT_WIDTH,
+    }).toEqual({
+      sidebarWidth: tokenPx('sidebar-width'),
+      sidebarMinWidth: tokenPx('sidebar-min-width'),
+      sidebarMaxWidth: tokenPx('sidebar-max-width'),
+      agentWidth: tokenPx('agent-width'),
+      agentMinWidth: tokenPx('agent-min-width'),
+      agentMaxWidth: tokenPx('agent-max-width'),
+    });
+  });
+
   test('shrinks the agent rail first when a window resize creates a pane deficit', () => {
     const next = clampRailWidthsForPanelFloor(baseMetrics, {
       ...openRails,

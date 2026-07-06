@@ -12,7 +12,7 @@
 
 .agent-markdown th,
 .agent-markdown td {
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   padding: var(--space-3) var(--space-4);
   text-align: left;
   vertical-align: top;
@@ -29,7 +29,7 @@
 }
 
 .agent-process-block.is-error {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .agent-disclosure-indicator {
@@ -264,7 +264,7 @@
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--caret) 82%, transparent);
   vertical-align: -2px;
-  animation: agent-caret 950ms ease-in-out infinite;
+  animation: agent-caret var(--motion-caret-cycle) ease-in-out infinite;
 }
 
 .agent-streaming-indicator {
@@ -295,7 +295,7 @@
      each shape and turns during the morph, so the two stay in lock-step. */
   color: var(--accent);
   transform-origin: center;
-  animation: agent-shape-spin 3s ease-in-out infinite;
+  animation: agent-shape-spin var(--motion-shape-cycle) ease-in-out infinite;
 }
 
 .agent-streaming-capsule path {
@@ -305,7 +305,7 @@
   /* Initial = rounded triangle; the keyframes drive the morph. All three `d`
      values share one command structure (M, (L Q)×4, Z) so they interpolate. */
   d: path("M 23.9 7.81 L 24.1 7.81 Q 28.87 7.81 30.57 12.27 L 37.28 29.8 Q 39.42 35.41 33.42 35.41 L 14.58 35.41 Q 8.58 35.41 10.72 29.8 L 17.43 12.27 Q 19.13 7.81 23.9 7.81 Z");
-  animation: agent-shape 3s ease-in-out infinite;
+  animation: agent-shape var(--motion-shape-cycle) ease-in-out infinite;
 }
 
 /* Gradient stops carry tokens so the rose shading inverts/tunes with the system. */
@@ -325,8 +325,8 @@
   gap: var(--space-4);
   max-width: 100%;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger);
   padding: var(--space-5) var(--space-6);
 }
 
@@ -340,7 +340,7 @@
 }
 
 .agent-tool-call.is-error {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 /* A never-settled (declared-but-not-completed) step is neutral and dimmed — the
@@ -507,7 +507,7 @@
 
 .agent-tool-call-spinner,
 .agent-process-spinner {
-  animation: agent-spin 900ms linear infinite;
+  animation: agent-spin var(--motion-spin-cycle) linear infinite;
 }
 
 .agent-tool-call-panel {
@@ -516,7 +516,7 @@
   flex-direction: column;
   gap: var(--space-5);
   margin: var(--space-1) 0 0 20px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-2);
   padding: var(--space-5) var(--space-6);
@@ -544,7 +544,7 @@
 }
 
 .agent-tool-call-section-title span {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .agent-tool-call-copy {

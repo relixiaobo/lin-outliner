@@ -7,6 +7,7 @@ import type { NodeId } from '../../api/types';
 import type { CommandRunner } from '../shared';
 import { requestRevealAgentConversation } from '../../agent/agentReveal';
 import { CalendarIcon, PlayIcon } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
 
 // The recurrence-form/summary helpers live in the shared `dateRecurrence` module
@@ -63,8 +64,7 @@ export function useCommandRun(nodeId: NodeId): { running: boolean; run: () => vo
 export function CommandRunButton(props: { labels: CommandFieldLabels; onRun: () => void }) {
   const { labels, onRun } = props;
   return (
-    <button
-      type="button"
+    <ButtonControl
       className="command-title-run"
       title={labels.runNow}
       onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
@@ -74,7 +74,7 @@ export function CommandRunButton(props: { labels: CommandFieldLabels; onRun: () 
         <PlayIcon size={12} />
         <span className="command-title-run-label">{labels.runNow}</span>
       </span>
-    </button>
+    </ButtonControl>
   );
 }
 
@@ -105,9 +105,8 @@ export function CommandScheduleFieldValue(props: {
   return (
     <div className="field-value-cell command-field-value-cell">
       <CommandValueBullet />
-      <button
+      <ButtonControl
         ref={anchorRef}
-        type="button"
         className={`command-field-value command-schedule-value ${open ? 'is-open' : ''} ${summary ? '' : 'is-empty'}`.trim()}
         data-field-value
         data-armed={summary ? 'true' : undefined}
@@ -126,7 +125,7 @@ export function CommandScheduleFieldValue(props: {
         ) : (
           <span className="command-field-placeholder">{tf.datePlaceholder}</span>
         )}
-      </button>
+      </ButtonControl>
       <DateValuePicker
         anchorRef={anchorRef}
         value={schedule ?? ''}

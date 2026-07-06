@@ -29,7 +29,7 @@
 
 .button-primary {
   background: var(--surface-inverse);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .button-primary:hover:not(:disabled),
@@ -83,11 +83,11 @@
 }
 
 .button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 .button-primary:disabled,
 .button-secondary:disabled,
 .button-danger.button-solid:disabled {
-  background: var(--surface-disabled);
+  background: var(--fill-3);
 }

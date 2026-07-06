@@ -401,13 +401,12 @@ function RunBreadcrumb({
     <nav className="agent-run-breadcrumb panel-breadcrumb" aria-label={t.agent.runDetail.detailsAriaLabel}>
       <span className="panel-breadcrumb-segment agent-run-breadcrumb-root">
         {onOpenRuns ? (
-          <button
+          <ButtonControl
             className="panel-breadcrumb-button"
             onClick={onOpenRuns}
-            type="button"
           >
             {rootContent}
-          </button>
+          </ButtonControl>
         ) : (
           <span className="panel-breadcrumb-current-label">{rootContent}</span>
         )}
@@ -416,13 +415,12 @@ function RunBreadcrumb({
         <span className="panel-breadcrumb-segment" key={item.runId}>
           <span className="panel-breadcrumb-divider">/</span>
           {onOpenRun ? (
-            <button
+            <ButtonControl
               className="panel-breadcrumb-button"
               onClick={() => onOpenRun(item.runId, detail.conversationId)}
-              type="button"
             >
               {item.title}
-            </button>
+            </ButtonControl>
           ) : (
             <span className="panel-breadcrumb-current-label">{item.title}</span>
           )}

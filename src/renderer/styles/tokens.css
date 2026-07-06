@@ -37,8 +37,8 @@
   --title-group: var(--font-ui-sm);
   font-family: var(--font-family-sans);
   font-size: var(--font-scale);
-  color: var(--text-main);
-  background: var(--deck-bg);
+  color: var(--text-primary);
+  background: var(--bg-window);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -55,12 +55,13 @@
      SEMANTIC FOUNDATION (design-system.md). Two themes over one ink base: every
      text/fill/separator/outline value is an alpha over --ink (black in light,
      white in dark), so the dark @media block at the end only flips --ink + a few
-     opaque/material literals. Legacy aliases (--text-main, --deck-bg, …) are
-     re-pointed onto this layer below so existing component CSS keeps working.
+     opaque/material literals. Remaining legacy role aliases are re-pointed onto
+     this layer below so existing component CSS keeps working.
      ════════════════════════════════════════════════════════════════════════ */
   --ink: 0 0 0;
 
-  /* text (label) levels — alpha on ink, identical alphas in both themes */
+  /* text (label) levels — alpha on ink; dark mode may centrally lift low tiers
+     in theme-dark.css when the same alpha reads too faint on dark surfaces. */
   --text-primary: rgb(var(--ink) / 0.88);
   --text-secondary: rgb(var(--ink) / 0.55);
   --text-tertiary: rgb(var(--ink) / 0.30);
@@ -93,6 +94,8 @@
   --preview-action-hover-bg: rgba(31, 31, 35, 0.88);
   --preview-action-fg: rgba(255, 255, 255, 0.94);
   --preview-action-outline: rgba(255, 255, 255, 0.12);
+  --preview-action-shadow: var(--shadow-thumb-strong), inset 0 0 0 1px var(--preview-action-outline);
+  --document-outline-marker-shadow: 0 0 0 1px var(--preview-action-outline);
   /* The shared backdrop-filter for every translucent material surface. Surfaces
      opt in with `background: var(--material-*)` + `backdrop-filter:
      var(--material-backdrop)`; the a11y layer (a11y.css) then swaps both tokens
@@ -107,6 +110,7 @@
   --selection-soft: var(--fill-2);
   --focus-ring: rgb(var(--ink) / 0.45);
   --focus-ring-shadow: 0 0 0 2px rgb(var(--ink) / 0.22);
+  --focus-ring-shadow-inset: inset var(--focus-ring-shadow);
   --text-selection-bg: rgb(var(--ink) / 0.14); /* neutral ::selection */
   /* PDF canvases render their own document pixels, so alpha-on-ink can disappear
      over white pages in dark mode. Keep document text selection fixed-neutral and
@@ -137,7 +141,6 @@
   --status-danger: #e5484d;
   --status-danger-solid-hover: color-mix(in srgb, var(--status-danger) 88%, #000000);
   --status-danger-muted: #9a3f34;
-  --status-info: #3b82c4;
   /* control state — checked/on controls, separate from semantic status */
   --control-on: #3f9e6a;
 
@@ -147,7 +150,7 @@
      state), not the rose accent (B4). It therefore gets a dedicated muted palette.
      One family with the tag-chip palette (tagColors.ts) so the app reads as one
      coordinated set; like the accent/status hues these are fixed (only --ink flips
-     in dark), and the avatar mixes the hue toward --surface for a theme-aware tint. */
+     in dark), and the avatar mixes the hue toward --bg-content for a theme-aware tint. */
   --identity-tint-0: #e11d48; /* red */
   --identity-tint-1: #ea580c; /* orange */
   --identity-tint-2: #ca8a04; /* amber */
@@ -173,6 +176,7 @@
 
   /* elevation: rail (softest) < level-1 (menus) < level-2 (dialogs) */
   --shadow-rail: 0 8px 26px -10px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.10);
+  --rail-surface-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
   --overlay-shadow-level-1: 0 8px 20px -12px rgba(0, 0, 0, 0.22), 0 2px 8px -4px rgba(0, 0, 0, 0.10);
   --overlay-shadow-level-2: 0 18px 48px -20px rgba(0, 0, 0, 0.24), 0 6px 18px -10px rgba(0, 0, 0, 0.14);
 
@@ -186,61 +190,42 @@
   --outline-focus: inset 0 0 0 1px var(--focus-ring);
   --underline-focus-shadow: inset 0 -1px 0 rgb(var(--ink) / 0.20);
   --tag-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
+  --inline-ref-hover-shadow: 0 0 0 var(--space-1) var(--fill-1);
   --inline-ref-selection-shadow: inset 0 0 0 1px var(--row-selection-border);
   --inline-ref-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--inline-ref-accent, var(--inline-ref-default)) 22%, transparent);
-  --agent-side-panel-shadow: -18px 0 48px rgba(0, 0, 0, 0.12);
+  --message-user-highlight-shadow: 0 0 0 1px var(--border-emphasis);
+  --message-assistant-highlight-shadow: 0 0 0 1px var(--fill-3);
   --view-radio-shadow: inset 0 0 0 1.5px var(--separator-opaque);
   --view-radio-checked-shadow: inset 0 0 0 1.5px var(--text-primary);
   /* Selected colour swatch: a strong ink ring with a surface-coloured gap so the
      pick reads clearly over a coloured swatch in both themes (replaces the too-faint
      --border-emphasis border). Two layers, so it must live as a token to satisfy
      the box-shadow token guard. */
-  --swatch-selected-ring: 0 0 0 2px var(--panel-bg), 0 0 0 3.5px var(--text-primary);
-  --search-builder-focus-shadow: var(--focus-ring-shadow);
+  --swatch-selected-ring: 0 0 0 2px var(--bg-content), 0 0 0 3.5px var(--text-primary);
   --typed-field-section-shadow: inset 0 1px 0 var(--separator);
   --segmented-track-shadow: inset 0 0 0 1px var(--separator);
   /* Grouped-card edge: a 0.5px inset hairline instead of a heavy border, so a
      card reads as its own region by surface + hairline (settings inset groups,
      the agent-profile detail card). */
-  --inset-hairline: inset 0 0 0 0.5px var(--border-subtle);
+  --inset-hairline: inset 0 0 0 0.5px var(--separator);
   --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.14);
   --shadow-thumb-strong: 0 1px 2px rgba(0, 0, 0, 0.18);
 
-  /* ── Legacy product-token aliases → semantic layer. Migrate opportunistically.
-        There is no --primary family: action surfaces use neutral fill /
-        focus-ring / outline tokens instead of the rose accent. ── */
-  --deck-bg: var(--bg-window);
-  --app-bg: var(--bg-window);
-  --panel-bg: var(--bg-content);
-  --window-material-frost: color-mix(in srgb, var(--bg-window) 62%, transparent);
-  --surface-soft: var(--bg-elevated);
-  --text-main: var(--text-primary);
+  /* Reading-register aliases over the foundation text ladder. These do not add
+     new alphas; they give transcript, tool, and dense chrome surfaces a shared
+     cross-surface vocabulary for bright / soft / faint content. */
   --text-strong: var(--text-primary);
-  --text-body: var(--text-primary);
-  --text-sub: var(--text-secondary);
   --text-soft: var(--text-secondary);
-  --text-muted: var(--text-tertiary);
   --text-faint: var(--text-tertiary);
-  --text-disabled: var(--text-quaternary);
-  --border-subtle: var(--separator);
-  --border-muted: var(--separator);
+  /* Product role tokens layered on the semantic foundation. There is no
+     --primary family: action surfaces use neutral fill / focus-ring / outline
+     tokens instead of the rose accent. */
   /* a strong control border (view-radio ring, etc.) — NOT the hairline divider;
      keep it a visible neutral that inverts with the theme */
   --border-strong: rgb(var(--ink) / 0.30);
-  --accent-brand: var(--accent);
-  --semantic-success: var(--status-success);
-  --semantic-success-strong: var(--status-success-strong);
-  --semantic-danger-muted: var(--status-danger-muted);
-  --semantic-warning: var(--status-warning);
-  --semantic-info: var(--status-info);
-  --surface-user-bubble: var(--fill-3);
   --surface-inverse: #2e2e32;
   --surface-inverse-strong: #1f1f23;
-  --surface-disabled: var(--fill-3);
-  --overlay-bg: var(--bg-elevated);
-  --overlay-active-bg: var(--fill-2);
   --overlay-backdrop: rgba(26, 26, 26, 0.30);
-  --overlay-backdrop-strong: rgba(0, 0, 0, 0.82);
   --space-hairline: 1px;
   --space-1: 2px;
   --space-2: 4px;
@@ -249,14 +234,10 @@
   --space-5: 10px;
   --space-6: 12px;
   --space-8: 16px;
-  --space-micro: var(--space-2);
-  --space-sm: var(--space-4);
-  --space-md: var(--space-8);
   --space-lg: 24px;
   --space-xl: 32px;
   --layout-gap: var(--space-4);
   --chrome-control-height: 26px;
-  --workspace-tab-width: 168px;
   /* ── OS-window geometry. SINGLE SOURCE OF TRUTH: core/chromeGeometry.ts. The
      main process reads it to build the native window; the renderer re-injects the
      same constants onto :root at boot (src/renderer/main.tsx), so layout below
@@ -317,19 +298,16 @@
   --sidebar-width: 196px;
   --sidebar-min-width: 152px;
   --sidebar-max-width: 280px;
-  --sidebar-collapsed-width: 0px;
   --sidebar-section-gap: var(--space-xl);
   --agent-width: 344px;
   --agent-min-width: 280px;
   --agent-max-width: 520px;
-  --agent-collapsed-width: 0px;
   /* The single rail content inset, shared by BOTH floating rails (sidebar + agent). It
      is the rail's concentric inset — its rounded corner minus the row hover-block's, so
      content sits evenly inside the rail. Each rail's toggle is positioned to this same
      inset, so the toggle and the content under it share one edge. One source, no drift. */
   --rail-pad: var(--space-4);
-  --agent-dock-inset-x: var(--rail-pad);
-  /* The agent rail's TEXT reading column. --rail-pad / --agent-dock-inset-x is the
+  /* The agent rail's TEXT reading column. --rail-pad is the
      concentric BLOCK edge (where the composer card, hover fills and rail ring sit) —
      prose placed directly on it reads as glued to the edge. The composer's INPUT text
      already sits one reading gutter further in (card inset --agent-composer-corner-inset
@@ -337,21 +315,14 @@
      transcript messages, and the composer input all share ONE text column, instead of
      the title/messages hugging the block edge while the composer breathes. */
   --agent-content-x: calc(
-    var(--agent-dock-inset-x) + var(--agent-composer-corner-inset) + var(--space-2)
+    var(--rail-pad) + var(--agent-composer-corner-inset) + var(--space-2)
   );
   --outline-panel-min-width: 360px;
-  --outline-panel-ideal-width: 520px;
-  --shell-padding-x: var(--layout-gap);
-  --shell-padding-top: var(--layout-gap);
-  --shell-padding-bottom: var(--layout-gap);
-  --shell-gap: var(--layout-gap);
-  --panel-gap: var(--layout-gap);
   /* Control box sizes — a tight 4-step ladder (20 / 22 / 24 / 28). */
   --control-size-xs: 20px;
   --control-size-sm: 22px;
   --control-size-md: 24px;
   --control-size-xl: 28px;
-  --breadcrumb-height: var(--control-size-xl);
   /* List-row height tier: each surface picks a deliberate density step. Agent
      process rows are compact by line/padding geometry, not a fixed row height,
      so they consume no rung here. */
@@ -365,8 +336,6 @@
   --icon-size-sm: 14px;
   --icon-size-md: 16px;
   --icon-size-lg: 18px;
-  --workspace-tab-close-size: var(--control-size-xs);
-  --workspace-tab-icon-slot: var(--icon-size-md);
   --switch-mark-height: var(--icon-size-lg);
   --switch-mark-thumb-size: var(--icon-size-sm);
   --switch-mark-inset: var(--space-1);
@@ -375,6 +344,7 @@
      small surfaces); structural 10/12/16/24 (menus → … → rail → OS window);
      pill for capsules/circles. Interactive controls prefer pill; content +
      dense rows keep the soft-rect ladder. */
+  --radius-none: 0;
   --radius-2xs: 2px;
   --radius-xs: 3px;          /* checkbox / switch marks */
   --radius-row: 5px;         /* outliner rows + small dense controls */
@@ -390,16 +360,23 @@
      (see the OS-window geometry note above). This literal is the preview fallback. */
   --radius-window: 24px;
   --radius-pill: 999px;
-  --checkbox-mark-radius: var(--radius-xs);
-  /* concentric chain in code: rail = window − gap; composer = rail − gap. */
+  /* Concentric chain in code: rail = window − gap. The agent composer is flush
+     with the rail and reuses --panel-radius instead of a nested-card radius. */
   --workspace-surface-radius: calc(var(--radius-window) - var(--layout-gap));
   --panel-radius: var(--workspace-surface-radius);
-  --agent-composer-radius: calc(var(--panel-radius) - var(--layout-gap));
   --agent-composer-corner-inset: var(--space-3);
-  --agent-composer-corner-radius: calc(var(--agent-composer-radius) - var(--agent-composer-corner-inset));
   --motion-fast: 120ms ease;
+  --motion-slow: 180ms ease;
   --motion-layout-duration: 160ms;
   --motion-layout: var(--motion-layout-duration) ease;
+  --motion-reduced-duration: 0.01ms;
+  --motion-spin-fast-cycle: 800ms;
+  --motion-spin-cycle: 900ms;
+  --motion-caret-cycle: 1s;
+  --motion-working-cycle: 1.2s;
+  --motion-working-stagger: 150ms;
+  --motion-pulse-cycle: 2.5s;
+  --motion-shape-cycle: 3s;
   --chrome-zone-backing-delay: var(--motion-layout-duration);
   --panel-size: 1;
   --panel-content-x: 28px;
@@ -416,36 +393,18 @@
   --resize-cursor: ew-resize;
   --resize-cursor-y: ns-resize;
   --resize-hit-width: 10px;
-  /* tab tokens are retained for local tab-like controls; the shell has no global tab strip. */
-  --tab-bg: rgb(var(--ink) / 0.03);
-  --tab-active-bg: rgb(var(--ink) / 0.05);
-  --tab-hover-bg: rgb(var(--ink) / 0.07);
   --control-hover: var(--fill-2);
   --control-active: var(--fill-3);
-  --focus-border: var(--focus-ring);
   --scrollbar-thumb: rgb(var(--ink) / 0.22);
   --scrollbar-thumb-hover: rgb(var(--ink) / 0.34);
-  --agent-accent: var(--accent);
-  --bg: var(--surface-soft);
-  --surface: var(--panel-bg);
-  --surface-2: var(--bg-window);
-  --border: var(--border-muted);
   --border-emphasis: rgb(var(--ink) / 0.18);
-  --muted: var(--text-secondary);
-  --muted-2: var(--text-tertiary);
-  --text: var(--text-primary);
   /* the one link colour — native link blue (design-system.md: exactly one) */
   --inline-ref-default: var(--link);
   --inline-ref-hover: var(--link-hover);
-  /* danger affordances use the genuine status red, not brand rose */
-  --danger: var(--status-danger);
   --row-hover: var(--fill-2);
   --row-selected: var(--fill-3);
-  --row-selection-bg: var(--row-selected);
   --row-selection-frame-bg: color-mix(in srgb, var(--row-selected) 72%, transparent);
-  --row-selection-border: color-mix(in srgb, var(--text) 18%, transparent);
-  --shadow: var(--overlay-shadow-level-1);
-  --z-base: 0;
+  --row-selection-border: color-mix(in srgb, var(--text-primary) 18%, transparent);
   --z-raised: 10;
   --z-resize: 30;
   --z-popover: 100;

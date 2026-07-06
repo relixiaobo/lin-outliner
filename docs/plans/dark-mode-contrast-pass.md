@@ -5,7 +5,7 @@ confirmed **no hardcoded hex outside `tokens.css` / `theme-dark.css`** (the only
 `#…` in component CSS is a GitHub-issue number in a comment), every classic
 invert-trap already carries an explicit fix (white tick on green via
 `--text-on-accent`; `pm-highlight` forcing `color: inherit`;
-`--status-success-strong` and `--status-info` lifted for dark; the agent-dock
+`--status-success-strong` lifted for dark; the agent-dock
 rail icons bumped off the 0.30 tier because 0.30 read "blurry" on the dark rail).
 So this is **not** a mechanism change. It is a **visual confirm + nudge pass**:
 run the app in both themes, eyeball the residual contrast risks the static review
@@ -21,11 +21,11 @@ report's risk table is the **checklist of what to confirm on the real run**, and
 the actual edits are decided at the keyboard with both themes open.
 
 The fix shape is already proven twice in the repo:
-- **`agent-dock.css:230-233`** — rail icons moved off `--text-faint` (0.30) onto
+- **`agent-dock.css` `.agent-menu-button`** — rail icons moved off `--text-faint` (0.30) onto
   `--text-secondary` (0.55) *because 0.30 read blurry on the dark rail*. This is
   the precedent and the canary: if icon strokes at 0.30 needed lifting, body text
   at 0.30 likely does too.
-- **`a11y.css:35-56`** (`prefers-contrast: more`) — lifts the exact text tiers
+- **`a11y.css` `prefers-contrast: more`** — lifts the exact text tiers
   (`--text-tertiary` 0.30→0.52, `--text-quaternary` 0.16→0.38) and separators
   (0.10→0.32) via a single `:root` token redefinition. That block is the
   **template** for a dark-only lift: same tokens, same one-place redefinition,
@@ -62,7 +62,7 @@ The fix shape is already proven twice in the repo:
   pass only touches color/contrast *values*.
 - **No `settings-*.css` edits** (see Collision check) — status-color fixes there,
   if any, land as token nudges in `theme-dark.css`. (#118 is merged; its tokens —
-  added `--inset-hairline`, uses `--border-subtle` — don't affect this pass's
+  added `--inset-hairline`, routed through `--separator` — don't affect this pass's
   targets.)
 - Not a WCAG-AA certification effort — the bar is "reads cleanly in the product on
   a real dark screen", judged by eye, consistent with the design system's
@@ -81,8 +81,8 @@ Every confirmed fix is one of two shapes, in priority order:
    to dark. Use for the high-volume text-tier and separator risks.
 2. **Single-token dark literal lift.** For a per-theme literal already living in
    the dark block (status colors, materials), add/raise its dark value the way
-   `--status-success-strong` → `#5fc88a` and `--status-info` → `#5aa0e0` are
-   already done. Use for status colors and any material/scrollbar adjustment.
+   `--status-success-strong` → `#5fc88a` is already done. Use for status colors
+   and any material/scrollbar adjustment.
 
 A site-level edit is the fix **only** when the run shows a single misassigned tier
 (a body label wearing `--text-quaternary`), and even then the edit is "move it to
@@ -90,27 +90,27 @@ the right existing tier", not "give it a custom color".
 
 ### Candidate risk table
 
-The checklist for the run. Columns: token pair · usage `file:line` · static
+The checklist for the run. Columns: token pair · usage evidence · static
 reasoning · proposed nudge (if confirmed) · needs-visual-confirm. **Every row is
-`needs-visual-confirm: yes`** — nothing here is applied without seeing it. Sites
-verified against current `HEAD`; Layer 1/2 may move line numbers, so re-grep at
-run time.
+`needs-visual-confirm: yes`** — nothing here is applied without seeing it. Use
+selector/token evidence instead of brittle `file:line` references; re-grep the
+selectors at run time.
 
-| Sev | Surface / where | Token pair | Usage `file:line` (verified) | Static reasoning | Proposed nudge (if confirmed) |
+| Sev | Surface / where | Token pair | Usage evidence | Static reasoning | Proposed nudge (if confirmed) |
 |---|---|---|---|---|---|
-| S2 | code captions, agent/transcript meta, sidebar secondary, canvas hints | `--text-faint` = `--text-tertiary` (0.30 ink) | `code.css:149,180,229`, `canvas.css:107`, `agent-message.css:76,118,133,144`, `sidebar.css:181,318`, `agent-transcript.css:114,161` | 0.30 ink ≈ 3:1 at best; rail icons were already moved OFF 0.30 (`agent-dock.css:230-233`) for reading "blurry" in dark. Highest-volume risk. | Lift `--text-tertiary` in the dark block, e.g. 0.30 → **0.38–0.42** (a11y `more` goes to 0.52; pick the smallest that reads). One line. |
-| S2 | outliner dimmed bullet / placeholder + faint labels | `--text-quaternary` (0.16 ink) | `outliner.css:1740` (`.row-bullet-shape.dimmed`) | 0.16 alpha is far below AA in both themes; legible only as decoration. Confirm it isn't load-bearing copy in dark. | If load-bearing: lift `--text-quaternary` in dark, e.g. 0.16 → **0.22–0.26**. If purely decorative: leave. |
-| S2 | settings success result line, other plain-success text | `--status-success` `#3f9e6a` (NOT lifted in dark) | `settings-provider-sheet.css:202,408` | `theme-dark.css` lifts `--status-success-strong`→`#5fc88a` *expressly because the dark green read too dark*; the **plain** `--status-success` keeps `#3f9e6a` — the same too-dark green the lift fixed. | Add a dark `--status-success` lift in `theme-dark.css` (mirror the `-strong` lift), e.g. → **`#5fc88a`-ish mid green**. Token-only; does **not** touch `settings-*.css` (#118-safe). |
-| S2 | validation warning glyph; danger reset/remove labels | `--status-warning` `#d99a1c` / `--status-danger` `#e5484d` (no dark lift) | `outliner.css:1230` (warning), danger labels in outliner / settings | Amber on near-black usually OK; `#e5484d` red on `#1e1e1e` is borderline — confirm it doesn't muddy. | Only if confirmed muddy: small dark lift of `--status-danger` (and/or `-warning`) in `theme-dark.css`. Likely leave amber. |
-| S2 | faint text inside open menus / popovers / sidebar | `--text-faint` (0.30) over `--material-popover` (0.72) / `--material-sidebar` (0.55) | `agent-composer.css:510`, agent-dock menus, `popover-command.css`, sidebar | Text floor is *translucent*, so effective contrast is lower than nominal and varies with backdrop bleed-through. Captions in menus most at risk. | Largely **covered** by the `--text-tertiary` dark lift above (same token). If still weak, that is evidence the lift value should be a touch higher; do not special-case the menu. |
-| S2 | keyboard focus ring on a *selected* inverse pill | `--focus-ring-shadow` (white 0.22 in dark) around control on `--surface-inverse` (`#e6e6ea`, light in dark) | `panel.css:265-267` (`.calendar-month-day.is-selected` → `--surface-inverse`); inverse chips in settings / `agent-composer.css` | In dark the 2px outset ring is white but the selected pill is *light* → low ring contrast; keyboard focus may be invisible on selected items. | If confirmed: give selected-inverse controls a focus ring that reads on a light pill (a dark/ink-based ring scoped to the inverse-pill context), or have those controls use `--outline-focus` (ink-based) on selection. Decide at the keyboard — narrow, may be a single-rule fix rather than a token. |
-| S3 | hairline dividers throughout | `--separator` = 0.10 ink | `tokens.css:72`; consumers in `agent-subagent.css`, `code.css`, `agent-debug.css`, `settings-agents.css` | 0.10 white on dark is very faint; where it divides two near-equal dark surfaces it may vanish (no opaque fallback outside `prefers-contrast`). | If invisible where it matters: lift `--separator` in the dark block, e.g. 0.10 → **0.14–0.16**. One line. |
-| S3 | editor `<mark>` highlight | `--highlight-mark` dark `rgba(120,100,30,0.55)` under `color: inherit` body text | `outliner.css:2046-2052`; token `theme-dark.css:15` | Black-text trap already fixed (`color: inherit`); the olive-over-dark *fill* + inherited ~0.88 white text needs an eye for legibility/aesthetics. | If murky: adjust the dark `--highlight-mark` literal (lighter/less-olive) in `theme-dark.css`. Token-only. |
-| S3 | launcher row bullet (a *filled dot*, not text) | `background: var(--text-tertiary)` (0.30) | `launcher.css:190` | A 5px dot painted with 0.30 ink: faint on the launcher's `--bg-elevated` in dark; small enough that low contrast hurts findability. | Auto-improves with the `--text-tertiary` dark lift. If still faint at dot size, that is a tier-assignment call (point the dot at `--text-secondary`) — flag, don't custom-color. |
-| S3 | scrollbar thumb on translucent rails | `--scrollbar-thumb` 0.22 ink over `--material-*` | `base.css:25` | 0.22 white thumb on see-through dark material — confirm it's visible at all before the 0.34 hover fade-in. | If invisible at rest: small dark lift of `--scrollbar-thumb` (e.g. 0.22 → 0.28) in `theme-dark.css`. |
-| S3 | disabled labels/controls | `--text-disabled` = `--text-quaternary` (0.16 ink) | `breadcrumb.css:106,151`, `shell.css:129,230`, `agent-composer.css:187`, `agent-subagent.css:235` | 0.16 white on dark is near-invisible. Acceptable as "disabled", but flag any spot where a disabled value must still be *read*. | Tied to the `--text-quaternary` decision above. Likely leave at disabled-faint unless a disabled value must remain readable. |
-| S3 (likely-OK) | drop shadows on dark floor | `--shadow-rail` / `--overlay-shadow-level-*` (deepened in dark) | `tokens.css:123-125`; `theme-dark.css:24,40-42` | Dark shadow on near-black floor adds little; elevation reads via the lighter elevated *surface* step (`#2e2e30` vs `#1e1e1e`). | Confirm floating chrome still reads as raised. If flat: nudge the elevated-surface step, not the shadow. Probably no change. |
-| S4 (likely-OK) | inverse-on-fill hover color flip | `color: var(--surface-inverse)` on `background: var(--control-hover)` | `agent-composer.css:173,469,543`, `code.css:219`, many | Deliberate label flip; readable in both themes by construction. Listed only so the pass confirms the flip isn't jarring. | None expected. |
+| S2 | code captions, agent/transcript meta, sidebar secondary, canvas hints | `--text-faint` = `--text-tertiary` (light 0.30; dark 0.40 ink) | `code.css` captions/chrome, `canvas.css` hints, `agent-message.css` meta, `sidebar.css` secondary lines, `agent-transcript.css` meta | The light-mode 0.30 tier read around 2.6–2.7:1 on dark content/material surfaces; rail icons were already moved OFF 0.30 (`agent-dock.css` `.agent-menu-button`) for reading "blurry" in dark. | Dark-only `--text-tertiary` lift is the central fix. Visual pass should confirm it reads as a faint tier without collapsing into `--text-secondary`. |
+| S2 | outliner dimmed bullet / placeholder + faint labels | `--text-quaternary` (0.16 ink) | `outliner.css` dimmed bullet / placeholder / faint label selectors | 0.16 alpha is far below AA in both themes; legible only as decoration. Confirm it isn't load-bearing copy in dark. | If load-bearing: lift `--text-quaternary` in dark, e.g. 0.16 → **0.22–0.26**. If purely decorative: leave. |
+| S2 | settings success result line, other plain-success text | `--status-success` `#3f9e6a` (NOT lifted in dark) | `settings-provider-sheet.css` success/result selectors using `--status-success` | `theme-dark.css` lifts `--status-success-strong`→`#5fc88a` *expressly because the dark green read too dark*; the **plain** `--status-success` keeps `#3f9e6a` — the same too-dark green the lift fixed. | Add a dark `--status-success` lift in `theme-dark.css` (mirror the `-strong` lift), e.g. → **`#5fc88a`-ish mid green**. Token-only; does **not** touch `settings-*.css` (#118-safe). |
+| S2 | validation warning glyph; danger reset/remove labels | `--status-warning` `#d99a1c` / `--status-danger` `#e5484d` (no dark lift) | warning/danger selectors in `outliner.css` and settings sheets | Amber on near-black usually OK; `#e5484d` red on `#1e1e1e` is borderline — confirm it doesn't muddy. | Only if confirmed muddy: small dark lift of `--status-danger` (and/or `-warning`) in `theme-dark.css`. Likely leave amber. |
+| S2 | faint text inside open menus / popovers / sidebar | `--text-faint` = `--text-tertiary` (dark 0.40) over `--material-popover` (0.72) / `--material-sidebar` (0.55) | captions in `agent-composer.css`, agent dock menus, `popover-command.css`, and sidebar menus | Text floor is *translucent*, so effective contrast varies with backdrop bleed-through even after the central dark lift. Captions in menus remain the main confirmation target. | Largely **covered** by the `--text-tertiary` dark lift above (same token). If still weak, that is evidence the lift value should be a touch higher; do not special-case the menu. |
+| S2 | keyboard focus ring on a *selected* inverse pill | `--focus-ring-shadow` (white 0.22 in dark) around control on `--surface-inverse` (`#e6e6ea`, light in dark) | `panel.css` selected calendar day and inverse-chip controls in settings / `agent-composer.css` | In dark the 2px outset ring is white but the selected pill is *light* → low ring contrast; keyboard focus may be invisible on selected items. | If confirmed: give selected-inverse controls a focus ring that reads on a light pill (a dark/ink-based ring scoped to the inverse-pill context), or have those controls use `--outline-focus` (ink-based) on selection. Decide at the keyboard — narrow, may be a single-rule fix rather than a token. |
+| S3 | hairline dividers throughout | `--separator` = 0.10 ink | `--separator` consumers in `agent-tool-rows.css`, `agent-run-detail.css`, `code.css`, `agent-debug.css`, `settings-agents.css` | 0.10 white on dark is very faint; where it divides two near-equal dark surfaces it may vanish (no opaque fallback outside `prefers-contrast`). | If invisible where it matters: lift `--separator` in the dark block, e.g. 0.10 → **0.14–0.16**. One line. |
+| S3 | editor `<mark>` highlight | `--highlight-mark` dark `rgba(120,100,30,0.55)` under `color: inherit` body text | `outliner.css` mark styling and `theme-dark.css` `--highlight-mark` override | Black-text trap already fixed (`color: inherit`); the olive-over-dark *fill* + inherited ~0.88 white text needs an eye for legibility/aesthetics. | If murky: adjust the dark `--highlight-mark` literal (lighter/less-olive) in `theme-dark.css`. Token-only. |
+| S3 | launcher row bullet (a *filled dot*, not text) | `background: var(--text-tertiary)` (dark 0.40) | `launcher.css` row bullet dot | A 5px dot painted with the faint text tier can still read softer than text on the launcher's `--bg-elevated` in dark; small size can hurt findability even when nominal contrast improves. | Auto-improves with the `--text-tertiary` dark lift. If still faint at dot size, that is a tier-assignment call (point the dot at `--text-secondary`) — flag, don't custom-color. |
+| S3 | scrollbar thumb on translucent rails | `--scrollbar-thumb` 0.22 ink over `--material-*` | `base.css` scrollbar thumb token | 0.22 white thumb on see-through dark material — confirm it's visible at all before the 0.34 hover fade-in. | If invisible at rest: small dark lift of `--scrollbar-thumb` (e.g. 0.22 → 0.28) in `theme-dark.css`. |
+| S3 | disabled labels/controls | `--text-quaternary` (0.16 ink) | disabled selectors in `breadcrumb.css`, `shell.css`, and `agent-composer.css` | 0.16 white on dark is near-invisible. Acceptable as "disabled", but flag any spot where a disabled value must still be *read*. | Tied to the `--text-quaternary` decision above. Likely leave at disabled-faint unless a disabled value must remain readable. |
+| S3 (likely-OK) | drop shadows on dark floor | `--shadow-rail` / `--overlay-shadow-level-*` (deepened in dark) | shadow tokens in `tokens.css` and dark overrides in `theme-dark.css` | Dark shadow on near-black floor adds little; elevation reads via the lighter elevated *surface* step (`#2e2e30` vs `#1e1e1e`). | Confirm floating chrome still reads as raised. If flat: nudge the elevated-surface step, not the shadow. Probably no change. |
+| S4 (likely-OK) | inverse-on-fill hover color flip | `color: var(--surface-inverse)` on `background: var(--control-hover)` | inverse-on-fill hover selectors in `agent-composer.css`, `code.css`, and related controls | Deliberate label flip; readable in both themes by construction. Listed only so the pass confirms the flip isn't jarring. | None expected. |
 
 ### What "done" looks like
 
@@ -153,13 +153,13 @@ default so the pass isn't blocked.
 - Last refreshed 2026-07-01: no open PR currently claims this dark-mode contrast
   pass. The historical adjacent PRs #119 (cc/incremental-projection — core↔renderer
   projection protocol, no CSS) and #118 (codex/settings-macOS-clarity) are both
-  merged; #118's tokens (added `--inset-hairline`, uses `--border-subtle`) don't
+  merged; #118's tokens (added `--inset-hairline`, routed through `--separator`) don't
   affect this pass's targets.
-- **Settings sites:** the report cites `settings-provider-sheet.css:202,408`
-  (plain-success text) and other `settings-*.css` sites. This pass's fix is a
-  **token nudge in `theme-dark.css`** — it does **not** edit any `settings-*.css`
-  regardless. Re-grep cited `file:line`s against `main` (#118 reshaped the settings
-  CSS).
+- **Settings sites:** the report cites `settings-provider-sheet.css`
+  plain-success text selectors and other `settings-*.css` sites. This pass's fix
+  is a **token nudge in `theme-dark.css`** — it does **not** edit any
+  `settings-*.css` regardless. Re-grep cited selectors against `main` (#118
+  reshaped the settings CSS).
 - **Sequence after Layer 1/2** (`ui-quality-roadmap.md`): this pass verifies the
   *final* state. Running it before `design-system-consistency`, `composition-rhythm`,
   `button-primitive`, `input-primitive`, `feedback-states` land would re-confirm a
@@ -216,8 +216,9 @@ in priority order; for each, note "fine" or the nudge applied.
 - [ ] **Keyboard-focus a *selected* item in dark** (risk 6): tab to a selected
       calendar day / inverse chip; confirm the focus ring is visible on the light
       inverse pill.
-- [ ] **Hairline dividers in dark** (risk 7): agent-subagent / debug / settings
-      list separators where content meets elevated surface — do they read at all?
+- [ ] **Hairline dividers in dark** (risk 7): agent tool rows / run detail /
+      debug / settings list separators where content meets elevated surface — do
+      they read at all?
 - [ ] **Editor `<mark>` highlight in dark** (risk 8): legibility of body text over
       the olive fill.
 - [ ] **Launcher bullet dot in dark** (risk 9): findable at 5px?

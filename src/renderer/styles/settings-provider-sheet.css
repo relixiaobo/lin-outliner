@@ -22,7 +22,7 @@
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: var(--surface);
+  background: var(--bg-content);
   padding: var(--space-6);
 }
 
@@ -56,7 +56,7 @@
   z-index: var(--z-popover);
   margin-top: 0;
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--bg-content);
   box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-4);
 }
@@ -118,7 +118,7 @@
 
 .settings-sheet-subtitle {
   margin: 0;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
@@ -144,7 +144,7 @@
 }
 
 .inset-card .settings-sheet-row:not(:last-child) {
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--separator);
 }
 
 /* "Get API key" link sits just under the connection card, pulled close to it
@@ -197,7 +197,7 @@
   min-width: 0;
   align-items: center;
   gap: var(--space-3);
-  color: var(--muted-2);
+  color: var(--text-tertiary);
 }
 
 .settings-sheet-key > svg {
@@ -224,7 +224,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-3);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-1);
   padding: var(--space-4) var(--space-5);
@@ -271,7 +271,7 @@
 
 .settings-sheet-spinner {
   flex: 0 0 auto;
-  animation: settings-sheet-spin 0.8s linear infinite;
+  animation: settings-sheet-spin var(--motion-spin-fast-cycle) linear infinite;
 }
 
 @keyframes settings-sheet-spin {
@@ -322,7 +322,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-3);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-1);
   padding: var(--space-4) var(--space-5);
@@ -341,14 +341,14 @@
   font-family: var(--font-family-mono);
   font-size: var(--font-heading-lg);
   line-height: var(--line-heading-lg);
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   color: var(--text-strong);
   user-select: text;
 }
 
 .settings-sheet-oauth-countdown {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
 }
@@ -388,7 +388,7 @@
   flex-direction: row;
   align-items: center;
   gap: var(--space-4);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-1);
   padding: var(--space-4) var(--space-5);
@@ -417,7 +417,7 @@
 
 .settings-sheet-oauth-connected-sub {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }

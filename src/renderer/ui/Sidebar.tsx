@@ -21,6 +21,7 @@ import { MenuSurface } from './primitives/MenuSurface';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from './primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from './primitives/useDismissibleOverlay';
+import { useMenuKeyboard } from './primitives/useMenuKeyboard';
 import { textOf } from './shared';
 import type { NavigateRootOptions } from './shared';
 import { useT } from '../i18n/I18nProvider';
@@ -374,7 +375,12 @@ function SidebarNodeContextMenu(props: SidebarNodeContextMenuProps) {
     width: 240,
   });
 
-  useDismissibleOverlay(menuRef, props.onClose);
+  useDismissibleOverlay(menuRef, props.onClose, { escape: false });
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: props.onClose,
+    kind: 'menu',
+  });
 
   const item = (label: string, icon: ReactNode, onClick: () => void) => (
     <MenuItem
@@ -397,6 +403,7 @@ function SidebarNodeContextMenu(props: SidebarNodeContextMenuProps) {
       preserveSelection
       role="menu"
       style={menuStyle}
+      onKeyDown={onKeyDown}
       onMouseDown={(event) => event.stopPropagation()}
     >
       {item(tc.openNode, <OpenIcon size={ICON_SIZE.menu} />, props.onOpen)}

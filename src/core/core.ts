@@ -24,6 +24,7 @@ import type { TextSearchIndex } from './textSearchIndex';
 import {
   CONFIG_SCHEMA,
   ENUM_DOMAINS,
+  TAG_COLOR_TOKENS,
   boolCodec,
   canonicalizeScalar,
   configKeysForDefType,
@@ -112,6 +113,13 @@ type AsyncMutator = () => Promise<FocusHint | undefined>;
 type FocusOptions = Omit<FocusHint, 'nodeId' | 'selectAll'> & { selectAll?: boolean };
 type MoveDirection = 'up' | 'down';
 type CommitOrigin = 'user' | 'agent' | 'system' | '__seed__';
+interface PreparedConfigValue {
+  scalarText: string | null;
+  refTargetId: string | null;
+  refTargetIds: string[];
+  enumOptionId: string | null;
+  enumOptionIds: string[];
+}
 export type CoreTransactionMetadata = OperationHistoryMetadata;
 export type {
   OperationHistoryEntry,
@@ -1560,31 +1568,34 @@ export class Core {
         }
       }
       if (patch.childSupertag) ensureTagDefinition(state, patch.childSupertag);
+      const configUpdates: SetConfigValueInput[] = [];
+      if (patch.showCheckbox !== undefined) {
+        configUpdates.push({ kind: 'scalar', configKey: 'showCheckbox', text: patch.showCheckbox ? 'true' : 'false' });
+      }
+      if (patch.doneStateEnabled !== undefined) {
+        configUpdates.push({ kind: 'scalar', configKey: 'doneStateEnabled', text: patch.doneStateEnabled ? 'true' : 'false' });
+      }
+      if ('color' in patch) {
+        configUpdates.push({ kind: 'scalar', configKey: 'color', text: normalizeOptionalText(patch.color) ?? null });
+      }
+      if ('extends' in patch) {
+        configUpdates.push({ kind: 'ref', configKey: 'extends', targetId: normalizeOptionalText(patch.extends) ?? null });
+      }
+      if ('childSupertag' in patch) {
+        configUpdates.push({ kind: 'ref', configKey: 'childSupertag', targetId: normalizeOptionalText(patch.childSupertag) ?? null });
+      }
+      if (patch.doneMapChecked !== undefined) {
+        configUpdates.push({ kind: 'refList', configKey: 'doneMapChecked', targetIds: patch.doneMapChecked });
+      }
+      if (patch.doneMapUnchecked !== undefined) {
+        configUpdates.push({ kind: 'refList', configKey: 'doneMapUnchecked', targetIds: patch.doneMapUnchecked });
+      }
+      for (const input of configUpdates) this.prepareConfigValueDirect(tagId, input);
       const node = clone(requiredNode(state, tagId));
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
       // config-as-nodes: every tag knob is stored in the defConfig subtree.
-      if (patch.showCheckbox !== undefined) {
-        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'showCheckbox', text: patch.showCheckbox ? 'true' : 'false' });
-      }
-      if (patch.doneStateEnabled !== undefined) {
-        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'doneStateEnabled', text: patch.doneStateEnabled ? 'true' : 'false' });
-      }
-      if ('color' in patch) {
-        this.setConfigValueDirect(tagId, { kind: 'scalar', configKey: 'color', text: normalizeOptionalText(patch.color) ?? null });
-      }
-      if ('extends' in patch) {
-        this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'extends', targetId: normalizeOptionalText(patch.extends) ?? null });
-      }
-      if ('childSupertag' in patch) {
-        this.setConfigValueDirect(tagId, { kind: 'ref', configKey: 'childSupertag', targetId: normalizeOptionalText(patch.childSupertag) ?? null });
-      }
-      if (patch.doneMapChecked !== undefined) {
-        this.setConfigValueDirect(tagId, { kind: 'refList', configKey: 'doneMapChecked', targetIds: patch.doneMapChecked });
-      }
-      if (patch.doneMapUnchecked !== undefined) {
-        this.setConfigValueDirect(tagId, { kind: 'refList', configKey: 'doneMapUnchecked', targetIds: patch.doneMapUnchecked });
-      }
+      for (const input of configUpdates) this.setConfigValueDirect(tagId, input);
       return focus(tagId);
     });
   }
@@ -2809,6 +2820,39 @@ export class Core {
   }
 
   private setConfigValueDirect(defId: string, input: SetConfigValueInput) {
+    const prepared = this.prepareConfigValueDirect(defId, input);
+    const rowId = this.ensureConfigRowDirect(defId, input.configKey);
+    this.clearConfigValueChildrenDirect(rowId);
+
+    switch (input.kind) {
+      case 'scalar': {
+        if (prepared.scalarText != null) this.createConfigValueNodeDirect(rowId, prepared.scalarText, undefined, undefined);
+        break;
+      }
+      case 'ref': {
+        if (prepared.refTargetId != null) this.createConfigValueNodeDirect(rowId, '', 'config', prepared.refTargetId);
+        break;
+      }
+      case 'refList': {
+        for (const targetId of prepared.refTargetIds) {
+          this.createConfigValueNodeDirect(rowId, '', 'config', targetId);
+        }
+        break;
+      }
+      case 'enum': {
+        if (prepared.enumOptionId != null) this.createConfigValueNodeDirect(rowId, '', 'enum', prepared.enumOptionId);
+        break;
+      }
+      case 'enumList': {
+        for (const optionId of prepared.enumOptionIds) {
+          this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
+        }
+        break;
+      }
+    }
+  }
+
+  private prepareConfigValueDirect(defId: string, input: SetConfigValueInput): PreparedConfigValue {
     const def = requiredNode(this.snapshot(), defId);
     const schema = CONFIG_SCHEMA[input.configKey];
     if (!schema) throw CoreError.invalidOperation(`unknown config key: ${input.configKey}`);
@@ -2820,44 +2864,46 @@ export class Core {
     if (!allowedKeys || !allowedKeys.includes(input.configKey)) {
       throw CoreError.invalidOperation(`config key ${input.configKey} does not apply to this definition`);
     }
-    const rowId = this.ensureConfigRowDirect(defId, input.configKey);
-    this.clearConfigValueChildrenDirect(rowId);
+
+    let scalarText: string | null = null;
+    let refTargetId: string | null = null;
+    let refTargetIds: string[] = [];
+    let enumOptionId: string | null = null;
+    let enumOptionIds: string[] = [];
 
     switch (input.kind) {
       case 'scalar': {
         if (input.text == null || input.text.trim() === '') break;
         const result = canonicalizeScalar(schema.domain, input.text);
         if ('error' in result) throw CoreError.invalidOperation(result.error);
-        this.createConfigValueNodeDirect(rowId, result.text, undefined, undefined);
+        scalarText = result.text;
         break;
       }
       case 'ref': {
         if (input.targetId == null) break;
         requiredNode(this.snapshot(), input.targetId);
-        this.createConfigValueNodeDirect(rowId, '', 'config', input.targetId);
+        refTargetId = input.targetId;
         break;
       }
       case 'refList': {
         for (const targetId of input.targetIds) {
           requiredNode(this.snapshot(), targetId);
-          this.createConfigValueNodeDirect(rowId, '', 'config', targetId);
         }
+        refTargetIds = input.targetIds;
         break;
       }
       case 'enum': {
         if (input.value == null) break;
-        const optionId = this.resolveEnumOption(input.configKey, input.value);
-        this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
+        enumOptionId = this.resolveEnumOption(input.configKey, input.value);
         break;
       }
       case 'enumList': {
-        for (const value of input.values) {
-          const optionId = this.resolveEnumOption(input.configKey, value);
-          this.createConfigValueNodeDirect(rowId, '', 'enum', optionId);
-        }
+        enumOptionIds = input.values.map((value) => this.resolveEnumOption(input.configKey, value));
         break;
       }
     }
+
+    return { scalarText, refTargetId, refTargetIds, enumOptionId, enumOptionIds };
   }
 
   private ensureConfigRowDirect(defId: string, configKey: DefConfigKey): string {
@@ -4439,9 +4485,8 @@ function findNamedChild(state: DocumentState, parentId: string, name: string) {
 }
 
 function nextTagColor(state: DocumentState) {
-  const colors = ['red', 'orange', 'amber', 'yellow', 'green', 'teal', 'blue', 'indigo', 'violet', 'brown'];
   const count = Object.values(state.nodes).filter((node) => node.type === 'tagDef').length;
-  return colors[count % colors.length];
+  return TAG_COLOR_TOKENS[count % TAG_COLOR_TOKENS.length];
 }
 
 function tagExtendsWouldCycle(state: DocumentState, tagId: string, parentTagId: string) {

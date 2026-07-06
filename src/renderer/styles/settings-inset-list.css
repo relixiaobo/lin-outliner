@@ -44,7 +44,7 @@
 .inset-group-footnote {
   margin: 0;
   padding: 0 var(--space-2);
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-2xs);
   line-height: var(--line-ui-2xs);
 }
@@ -70,7 +70,7 @@
   bottom: 0;
   left: var(--inset-separator-inset, var(--space-4));
   height: 1px;
-  background: var(--border-subtle);
+  background: var(--separator);
   pointer-events: none;
 }
 
@@ -132,7 +132,7 @@
 
 .inset-row-sublabel {
   overflow: hidden;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   text-overflow: ellipsis;

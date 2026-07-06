@@ -12,24 +12,26 @@ and non-goals; product behavior stays with the owning surface.
 
 | Component | Sources | Contract |
 | --- | --- | --- |
-| `CheckboxMark` | `CheckboxMark.tsx` | Decorative `16px` checkbox mark with `3px` radius. Unchecked is outlined; checked uses `--control-on` with a fixed-white check glyph (`--text-on-accent`, theme-independent). Does not own row behavior or persistence. |
-| `CheckboxControl` | `CheckboxControl.tsx`, `AgentSettingsView.tsx` | Labeled native checkbox wrapper for settings/forms. Keeps native checkbox semantics and `CheckboxMark` visual together. |
-| `SwitchControl` / `SwitchMark` | `SwitchControl.tsx`, `SwitchMark.tsx`, `DefinitionConfigControls.tsx`, `AgentSettingsView.tsx`, `AgentEditor.tsx`, `DateValuePicker.tsx` | Semantic switch wrapper plus shared `30px x 18px` track and `14px` thumb. Does not own labels or persistence. |
-| `IconButton` | `IconButton.tsx` | Icon-first button with explicit accessible label and tokenized icon size. Visual variant stays caller-owned. |
-| `MenuSurface` | `MenuSurface.tsx`, `PopoverList.tsx`, `NodeContextMenu.tsx` | Shared menu/popover wrapper. Caller owns role, positioning, keyboard navigation, filtering, and execution. Edge separation comes from pure overlay shadow, not border. |
-| `MenuItem` | `MenuItem.tsx`, command/menu rows | Stable row contract for icon, label, metadata, active, disabled, selected, and danger states. |
-| `useAnchoredOverlay` / `AnchoredActionMenu` | `useAnchoredOverlay.ts`, `AnchoredActionMenu.tsx` | Viewport-aware anchored positioning, shared action-menu shell, and outside-dismissal wiring. Does not own menu contents or commands. |
-| `PopoverListbox` / `PopoverListItem` / `PopoverEmpty` | `PopoverList.tsx`, trigger/option/tag/reference/slash popovers | Listbox shell, option item structure, and empty-list state. Active index and filtering remain caller-owned. |
-| `Dialog` / `ConfirmDialog` | `Dialog.tsx`, `ConfirmDialog.tsx`, `CommandPalette.tsx` | Modal shell with label linkage, Escape handling, focus trap, initial focus, and focus restoration. `ConfirmDialog` is the confirmation wrapper over `Dialog`; `CommandPalette` is a surface consumer of the dialog shell. |
-| `Button` | `Button.tsx`, `styles/button.css` | Shared text/action button primitive. `primary` is the neutral filled-default idiom (`--surface-inverse` + `--panel-bg`), `secondary` is neutral filled, `ghost` is transparent until hover, and `danger` carries danger text or a solid danger fill only for destructive confirmation. It owns visual state and default `type="button"`; callers own command behavior. |
-| `ButtonControl` | `ButtonControl.tsx` | Low-level native button wrapper with default `type="button"` and ref forwarding. Use it for icon-only or highly custom controls whose visual contract is owned by the surrounding component. |
-| `Input` / `Textarea` / `Field` | `Input.tsx`, `Textarea.tsx`, `Field.tsx`, `styles/input.css` | Shared form-control skin. `boxed` is the tokenized neutral control surface, `bare` inherits the surrounding inset-row focus model. `Field` is the single label/control wrapper: it can provide the default field stack, or accept caller layout classes for inset rows. Helper text, parsing, draft/commit behavior, and validation stay caller-owned. |
-| `SelectControl` | `SelectControl.tsx` | Native select wrapper. `plain` stays caller-styled, `popup` is the compact settings pop-up control, and `boxed` / `bare` share the `Input` visual skin with a passive chevron affordance. Options and value coercion stay caller-owned. |
-| `FeedbackState` / `EmptyState` / `ErrorState` | `FeedbackState.tsx`, `styles/feedback-state.css` | Shared quiet empty/loading/error state. It reserves a stable inline or panel slot, uses muted neutral text by default, spins only for loading, honors reduced motion, and pairs error color with text/icon/action rather than color alone. `EmptyState` and `ErrorState` are the JSX exports. |
-| `TextInputControl` / `NumberInputControl` | `TextInputControl.tsx`, `NumberInputControl.tsx` | Legacy thin native wrappers retained for specialized call sites during migration. New shared form surfaces use `Input` / `Textarea`. |
-| `PanelSurface` / `WorkspacePanelSurface` | `WorkspacePanelSurface.tsx` | Opaque content pane (`--bg-content`), flush within the content base — no card radius, no gap. Panes are divided by a 1px `--separator` (the resize handle), not a per-pane border. Active pane indication is a subtle neutral control-state cue, never a box outline. `WorkspacePanelSurface` is the JSX implementation. |
-| `ResizeHandle` | `ResizeHandle.tsx` | Shared resize button structure. Pointer behavior stays in `useResizableLayout`. |
-| `AppliedTag` | `AppliedTag.tsx` | Fixed measured tag pill using tag palette background/text colors. Hover/focus must not shift row width. |
+| `CheckboxMark` | `CheckboxMark.tsx` | Decorative `16px` checkbox mark with `3px` radius. Unchecked is outlined; checked uses `--control-on` with a fixed-white check glyph (`--text-on-accent`, theme-independent). Does not own row behavior or persistence. See [Form Controls](#form-controls). |
+| `CheckboxControl` | `CheckboxControl.tsx`, `AgentSettingsView.tsx` | Labeled native checkbox wrapper for settings/forms. Keeps native checkbox semantics and `CheckboxMark` visual together. See [Form Controls](#form-controls). |
+| `SwitchControl` / `SwitchMark` | `SwitchControl.tsx`, `SwitchMark.tsx`, `DefinitionConfigControls.tsx`, `AgentSettingsView.tsx`, `AgentEditor.tsx`, `DateValuePicker.tsx` | Semantic switch wrapper plus shared `30px x 18px` track and `14px` thumb. Does not own labels or persistence. See [Form Controls](#form-controls). |
+| `IconButton` | `IconButton.tsx` | Icon-first button with explicit accessible label and tokenized icon size. Visual variant stays caller-owned. See [Buttons And Icon Controls](#buttons-and-icon-controls). |
+| `MenuSurface` | `MenuSurface.tsx`, `PopoverList.tsx`, `NodeContextMenu.tsx` | Shared menu/popover wrapper. Caller owns role, positioning, keyboard navigation, filtering, and execution. Edge separation comes from pure overlay shadow, not border. See [Overlays](#overlays). |
+| `MenuItem` | `MenuItem.tsx`, command/menu rows | Stable row contract for icon, label, metadata, active, disabled, selected, and danger states. See [Overlays](#overlays). |
+| `useAnchoredOverlay` / `AnchoredActionMenu` | `useAnchoredOverlay.ts`, `AnchoredActionMenu.tsx` | Viewport-aware anchored positioning, shared action-menu shell, and outside-dismissal wiring. Does not own menu contents or commands. See [Overlays](#overlays). |
+| `PopoverListbox` / `PopoverListItem` / `PopoverEmpty` | `PopoverList.tsx`, trigger/option/tag/reference/slash popovers | Listbox shell, option item structure, and empty-list state. Active index and filtering remain caller-owned. See [Overlays](#overlays). |
+| `Dialog` / `ConfirmDialog` | `Dialog.tsx`, `ConfirmDialog.tsx`, `CommandPalette.tsx` | Modal shell with label linkage, Escape handling, focus trap, initial focus, and focus restoration. `ConfirmDialog` is the confirmation wrapper over `Dialog`; `CommandPalette` is a surface consumer of the dialog shell. See [Overlays](#overlays). |
+| `Button` | `Button.tsx`, `styles/button.css` | Shared text/action button primitive. `primary` is the neutral filled-default idiom (`--surface-inverse` + `--bg-content`), `secondary` is neutral filled, `ghost` is transparent until hover, and `danger` carries danger text or a solid danger fill only for destructive confirmation. It owns visual state and default `type="button"`; callers own command behavior. See [Buttons And Icon Controls](#buttons-and-icon-controls). |
+| `ButtonControl` | `ButtonControl.tsx` | Low-level native button wrapper with default `type="button"` and ref forwarding. Use it for icon-only or highly custom controls whose visual contract is owned by the surrounding component. See [Buttons And Icon Controls](#buttons-and-icon-controls). |
+| `Input` / `Textarea` / `Field` | `Input.tsx`, `Textarea.tsx`, `Field.tsx`, `styles/input.css` | Shared form-control skin. `boxed` is the tokenized neutral control surface, `bare` inherits the surrounding inset-row focus model. `Field` is the single label/control wrapper: it can provide the default field stack, or accept caller layout classes for inset rows. Helper text, parsing, draft/commit behavior, and validation stay caller-owned. See [Form Controls](#form-controls). |
+| `SelectControl` | `SelectControl.tsx` | Native select wrapper. `plain` stays caller-styled, `popup` is the compact settings pop-up control, and `boxed` / `bare` share the `Input` visual skin with a passive chevron affordance. Options and value coercion stay caller-owned. See [Form Controls](#form-controls). |
+| `SegmentedControl` | `SegmentedControl.tsx` | Compact mutually-exclusive option group with roving tabindex and neutral selected fill. Caller owns options, persistence, and any value coercion. See [Form Controls](#form-controls). |
+| `FeedbackState` / `EmptyState` / `ErrorState` | `FeedbackState.tsx`, `styles/feedback-state.css` | Shared quiet empty/loading/error state. It reserves a stable inline or panel slot, uses muted neutral text by default, spins only for loading, honors reduced motion, and pairs error color with text/icon/action rather than color alone. `EmptyState` and `ErrorState` are the JSX exports. See [patterns.md → Content & States](./patterns.md#content--states). |
+| `TextInputControl` / `NumberInputControl` | `TextInputControl.tsx`, `NumberInputControl.tsx` | Legacy thin native wrappers retained for specialized call sites during migration. New shared form surfaces use `Input` / `Textarea`. See [Form Controls](#form-controls). |
+| `InsetGroup` / `InsetRow` / `SettingsRowMenu` | `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `styles/settings-inset-list.css` | Grouped preference-list primitive: sentence-case section header, one rounded elevated card, content-aligned row separators, split row main/trailing interaction, and an optional `...` row action menu. Product copy, row selection, persistence, and action contents stay caller-owned. See [Inset Groups And Rows](#inset-groups-and-rows). |
+| `PanelSurface` / `WorkspacePanelSurface` | `WorkspacePanelSurface.tsx` | Opaque content pane (`--bg-content`), flush within the content base — no card radius, no gap. Panes are divided by a 1px `--separator` (the resize handle), not a per-pane border. Active pane indication is a subtle neutral control-state cue, never a box outline. `WorkspacePanelSurface` is the JSX implementation. See [surfaces.md → Workspace And Panels](./surfaces.md#workspace-and-panels). |
+| `ResizeHandle` | `ResizeHandle.tsx` | Shared resize button structure. Pointer behavior stays in `useResizableLayout`. See [surfaces.md → Workspace And Panels](./surfaces.md#workspace-and-panels). |
+| `AppliedTag` | `AppliedTag.tsx` | Fixed measured tag pill using tag palette background/text colors. Hover/focus must not shift row width. See [patterns.md → Tag Hover](./patterns.md#tag-hover). |
 
 ## Contract Shape
 
@@ -76,9 +78,12 @@ or selected affordance.
 - Escape closes overlays; non-modal popovers close on outside pointer down;
   dialogs trap focus, restore focus on close, and keep focus-visible rings inside
   the overlay.
-- Tooltips are read-only names for controls: small opaque `--bg-elevated`
-  surfaces, `--font-meta`, level-1 shadow, delayed hover, instant dismiss, no
-  action content.
+- Tooltips are read-only names for controls on the level-1 elevated-overlay
+  tier: small `--material-popover` + `--material-backdrop` surfaces,
+  `--font-meta`, level-1 shadow, hover/focus reveal, instant dismiss, no action
+  content. Reduced-transparency mode makes the material opaque. Pointer-delayed
+  previews are a separate inline/file-preview pattern, not the general tooltip
+  contract.
 
 ### Form Controls
 
@@ -94,12 +99,13 @@ the ring is not clipped.
 
 ### Inset Groups And Rows
 
-`SettingsInsetList.tsx` (`InsetGroup` + `InsetRow`) is the grouped-list primitive
-for preference-like surfaces. It renders a sentence-case section header above one
-rounded `--bg-elevated` card whose rows are split by content-aligned hairlines.
-Rows use `--row-h-comfortable`, text-led layout, optional non-interactive
-`leading`, `label`, optional `sublabel`, and a sibling `trailing` interactive
-control. A switch/select/segmented control never nests inside the row button.
+`SettingsInsetList.tsx` (`InsetGroup` + `InsetRow`) and `SettingsRowMenu.tsx` are
+the grouped-list primitive for preference-like surfaces. They render a
+sentence-case section header above one rounded `--bg-elevated` card whose rows
+are split by content-aligned hairlines. Rows use `--row-h-comfortable`, text-led
+layout, optional non-interactive `leading`, `label`, optional `sublabel`, and a
+sibling `trailing` interactive control. A switch/select/segmented control never
+nests inside the row button.
 
 Inset rows carry no row-wide hover fill by default. Hover or keyboard focus
 reveals the row action affordance (`Configure`, `...`, etc.); selected/focused
@@ -125,7 +131,8 @@ hairline edge, and concentric inner document-page corners. Preview pages scroll
 inside the viewport content box; pages never render into the frame inset. The
 bottom-center preview action bar is a fixed-width primary capsule plus a separate
 circular `...` action, never a segmented control. It uses `--preview-action-*`
-HUD tokens because it floats over arbitrary document/image pixels.
+HUD tokens, including `--preview-action-shadow`, because it floats over
+arbitrary document/image pixels.
 
 External document pixels may force a light document canvas inside the preview
 iframe/page renderer. That exception is confined to document pixels; preview

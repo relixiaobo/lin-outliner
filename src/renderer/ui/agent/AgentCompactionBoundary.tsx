@@ -8,6 +8,7 @@ import {
 import { AgentMarkdown } from './AgentMarkdown';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
+import { ButtonControl } from '../primitives/ButtonControl';
 
 function compactTriggerLabel(
   trigger: AgentCompactionEntry['compaction']['trigger'],
@@ -40,11 +41,10 @@ export function AgentCompactionBoundary({
             <small>{compactTriggerLabel(entry.compaction.trigger, t.agent.process.compactionTrigger)}</small>
           </div>
         ) : (
-          <button
+          <ButtonControl
             aria-expanded={expanded}
             className="agent-compaction-toggle"
             onClick={() => setExpanded((open) => !open)}
-            type="button"
           >
             <ChevronDownIcon
               className={expanded ? 'agent-compaction-chevron is-expanded' : 'agent-compaction-chevron'}
@@ -52,7 +52,7 @@ export function AgentCompactionBoundary({
             />
             <span>{t.agent.process.compacted}</span>
             <small>{compactTriggerLabel(entry.compaction.trigger, t.agent.process.compactionTrigger)}</small>
-          </button>
+          </ButtonControl>
         )}
       </div>
       <div className="agent-compaction-line" aria-hidden="true" />

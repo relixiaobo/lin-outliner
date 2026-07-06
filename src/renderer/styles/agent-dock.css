@@ -21,7 +21,7 @@
   overflow: hidden;
   border-radius: var(--panel-radius);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
+  box-shadow: var(--rail-surface-shadow);
   padding: 0;
   transform: translate3d(0, 0, 0);
   transition:
@@ -41,8 +41,8 @@
 }
 
 /* No hover "chip": the rail slides off-screen when collapsed. Hover feedback lives
-   on the toggle itself (.rail-toggle:hover in shell.css) as a centred fill tint —
-   the rail-sized --shadow-rail on a 26px chip read as a box offset from the icon. */
+   on the toggle itself (.rail-toggle:hover in shell.css) as colour deepening, never
+   a fill box offset from the icon. */
 
 /* Material: translucent only under OS vibrancy. Applied UNCONDITIONALLY (like the
    sidebar) so the glass persists through the collapse fade instead of popping off the
@@ -67,9 +67,9 @@ button.panel-resize-handle {
 
 /* No grab pill anywhere. A handle is an INVISIBLE hit strip whose only affordance
    is the ew-resize cursor on hover (inherited from the base rule above): you hover
-   the edge / divider line itself and drag it. The visible "line" is the rail's own
-   --rail-edge ring (sidebar / agent) or the 1px inter-pane divider (the panel slot
-   below) — the handle just widens that line's grab target. */
+   the edge / divider line itself and drag it. The visible "line" is the shared
+   --rail-surface-shadow edge ring (sidebar / agent) or the 1px inter-pane divider
+   (the panel slot below) — the handle just widens that line's grab target. */
 
 /* Rails clip overflow, so the handles sit just INSIDE each rail's outer edge
    (a hit strip flush against the resizable edge) rather than poking into the gap. */
@@ -167,7 +167,7 @@ button.panel-resize-handle {
 
 .agent-chat-panel[data-work-panel-open="true"],
 .agent-chat-panel[data-work-panel-open="true"] .agent-dock-header {
-  background: var(--panel-bg);
+  background: var(--bg-content);
 }
 
 .agent-dock-header[data-run-detail-open="true"] {
@@ -252,19 +252,19 @@ button.panel-resize-handle {
 }
 
 .agent-dock-run-status.is-running {
-  background: color-mix(in srgb, var(--agent-accent) 12%, transparent);
-  color: var(--agent-accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 
 .agent-dock-run-status.is-completed {
-  background: color-mix(in srgb, var(--semantic-success) 12%, transparent);
-  color: var(--semantic-success-strong);
+  background: color-mix(in srgb, var(--status-success) 12%, transparent);
+  color: var(--status-success-strong);
 }
 
 .agent-dock-run-status.is-failed,
 .agent-dock-run-status.is-stopped {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger);
 }
 
 .agent-dock-title {
@@ -357,12 +357,12 @@ button.panel-resize-handle {
   max-height: min(420px, calc(100vh - 128px));
   overflow: hidden;
   border-radius: var(--radius-overlay-sm);
-  /* Menu glass (design-system B5 / D2). --material-backdrop carries the PR-B
+  /* Menu glass (design-system B5 / D2). --material-backdrop carries the shared
      reduced-transparency / high-contrast opaque fallback. */
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
 }
 
 .agent-conversation-menu-header {
@@ -392,7 +392,7 @@ button.panel-resize-handle {
 }
 
 .agent-conversation-section-action:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 .agent-conversation-list {
@@ -503,7 +503,7 @@ button.panel-resize-handle {
   transform: translateY(-50%);
   border-radius: var(--radius-pill);
   background: var(--text-strong);
-  color: var(--surface);
+  color: var(--bg-content);
   font-size: var(--font-ui-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -550,7 +550,7 @@ button.panel-resize-handle {
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-2);
 }
 
@@ -574,7 +574,7 @@ button.panel-resize-handle {
 }
 
 .agent-conversation-row-menu-item:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 .agent-conversation-section-header {

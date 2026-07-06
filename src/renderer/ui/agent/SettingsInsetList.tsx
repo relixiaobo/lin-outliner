@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from 'react';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { cx } from '../primitives/cx';
 
 // The macOS System Settings *interaction* idiom, rendered in our own design
@@ -7,8 +8,8 @@ import { cx } from '../primitives/cx';
 // NEUTRAL (B3/B4) — never the system accent. Geometry derives from the radius /
 // hairline ladders (B9); see settings-inset-list.css.
 //
-// This is the reusable A7 foundation: Providers is the first consumer, and
-// Permissions / Skills can adopt it later for free consistency.
+// This is the reusable A7 foundation shared by providers, permissions, skills,
+// memory, and agent-profile panes.
 
 interface InsetGroupProps {
   /** Sentence-case section header above the card (e.g. "Configured"). */
@@ -92,16 +93,15 @@ export const InsetRow = memo(function InsetRow({
       role="listitem"
     >
       {onSelect ? (
-        <button
+        <ButtonControl
           aria-current={selected ? 'true' : undefined}
           aria-label={ariaLabel}
           className="inset-row-main"
           disabled={disabled}
           onClick={onSelect}
-          type="button"
         >
           {body}
-        </button>
+        </ButtonControl>
       ) : (
         <div className="inset-row-main is-static">{body}</div>
       )}

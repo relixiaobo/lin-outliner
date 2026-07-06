@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { ICON_SIZE, MoreIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { AnchoredActionMenu, type AnchoredMenuAction } from '../primitives/AnchoredActionMenu';
+import { ButtonControl } from '../primitives/ButtonControl';
 
 export type RowMenuAction = AnchoredMenuAction;
 
@@ -26,7 +27,7 @@ export function SettingsRowMenu({
 
   return (
     <>
-      <button
+      <ButtonControl
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label={ariaLabel}
@@ -38,10 +39,9 @@ export function SettingsRowMenu({
           onOpenChange(!open);
         }}
         ref={anchorRef}
-        type="button"
       >
         <MoreIcon size={ICON_SIZE.menu} />
-      </button>
+      </ButtonControl>
       {open ? (
         <AnchoredActionMenu
           actions={actions}

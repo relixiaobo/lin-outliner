@@ -448,7 +448,7 @@ test.describe('outliner inline atom and drag visuals', () => {
       const defaultProbe = document.createElement('span');
       defaultProbe.style.color = 'var(--inline-ref-default)';
       const tagProbe = document.createElement('span');
-      tagProbe.style.color = '#5e8e65';
+      tagProbe.style.color = 'var(--identity-tint-3)';
       element.append(defaultProbe, tagProbe);
       const result = {
         actual: getComputedStyle(element).color,

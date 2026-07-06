@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import { CheckIcon, ICON_SIZE, LoaderIcon, OpenIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { ErrorState } from '../primitives/FeedbackState';
 import { Input } from '../primitives/Input';
 import {
@@ -259,14 +260,13 @@ export function ProviderOAuthForm({
               <div className="settings-sheet-oauth-code-block">
                 <p className="settings-sheet-oauth-step-label">{t.providerOAuth.enterCodeAtSignIn}</p>
                 <p className="settings-sheet-oauth-code">{flow.deviceCode.userCode}</p>
-                <button
+                <ButtonControl
                   className="agent-settings-doc-link"
                   onClick={() => onOpenExternal(flow.deviceCode!.verificationUri)}
-                  type="button"
                 >
                   <span>{flow.deviceCode.verificationUri}</span>
                   <OpenIcon size={ICON_SIZE.tiny} />
-                </button>
+                </ButtonControl>
                 {countdown !== null ? (
                   <p className="settings-sheet-oauth-countdown">{t.providerOAuth.expiresIn({ time: formatCountdown(countdown) })}</p>
                 ) : null}
@@ -278,10 +278,10 @@ export function ProviderOAuthForm({
                 <p className="settings-sheet-oauth-step-label">
                   {flow.auth.instructions ?? t.providerOAuth.continueInBrowser}
                 </p>
-                <button className="agent-settings-doc-link" onClick={() => onOpenExternal(flow.auth!.url)} type="button">
+                <ButtonControl className="agent-settings-doc-link" onClick={() => onOpenExternal(flow.auth!.url)}>
                   <span>{t.providerOAuth.openSignInPage}</span>
                   <OpenIcon size={ICON_SIZE.tiny} />
-                </button>
+                </ButtonControl>
               </div>
             ) : null}
 
@@ -301,10 +301,10 @@ export function ProviderOAuthForm({
           <div className="settings-sheet-oauth-intro">
             {signInHint ? <p className="settings-sheet-oauth-hint">{signInHint}</p> : null}
             {docsUrl ? (
-              <button className="agent-settings-doc-link" onClick={() => onOpenExternal(docsUrl)} type="button">
+              <ButtonControl className="agent-settings-doc-link" onClick={() => onOpenExternal(docsUrl)}>
                 <span>{docsLabel ?? t.providerOAuth.learnMore}</span>
                 <OpenIcon size={ICON_SIZE.tiny} />
-              </button>
+              </ButtonControl>
             ) : null}
           </div>
         )}

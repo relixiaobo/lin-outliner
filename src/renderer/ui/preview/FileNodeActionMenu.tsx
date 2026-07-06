@@ -2,10 +2,12 @@ import { useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/I18nProvider';
 import { CopyIcon, FolderIcon, ICON_SIZE, MoreIcon, OpenIcon, ShowIcon } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { FileNode } from './fileNode';
 import {
   fileNodeAssetActions,
@@ -43,7 +45,7 @@ export function FileNodeActionMenu({ node, primaryLabel, onPrimary }: FileNodeAc
 
   return (
     <>
-      <button
+      <ButtonControl
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label={ta.menuLabel}
@@ -60,10 +62,9 @@ export function FileNodeActionMenu({ node, primaryLabel, onPrimary }: FileNodeAc
           setOpen((value) => !value);
         }}
         ref={anchorRef}
-        type="button"
       >
         <MoreIcon size={ICON_SIZE.menu} />
-      </button>
+      </ButtonControl>
       {open ? (
         <FloatingActionMenu
           anchorRef={anchorRef}
@@ -103,9 +104,15 @@ function FloatingActionMenu({
     placement: 'bottom-end',
     width: 200,
   });
-  // Capture-phase outside-pointer + Escape dismissal. The trigger is ignored so a
-  // repeat click toggles this menu instead of closing and immediately reopening it.
-  useDismissibleOverlay(menuRef, onClose, { ignoreRefs: dismissIgnoreRefs });
+  // Capture-phase outside-pointer dismissal. Escape, roving navigation, and focus
+  // restoration are owned by `useMenuKeyboard`.
+  useDismissibleOverlay(menuRef, onClose, { escape: false, ignoreRefs: dismissIgnoreRefs });
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose,
+    kind: 'menu',
+    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
+  });
 
   return createPortal(
     <MenuSurface
@@ -114,6 +121,7 @@ function FloatingActionMenu({
       // The menu is portaled to <body>; without this the document pointerdown handler
       // would clear the active row selection when the menu (or an item) is clicked.
       preserveSelection
+      onKeyDown={onKeyDown}
       onMouseDown={(event) => event.stopPropagation()}
       ref={menuRef}
       role="menu"

@@ -1,11 +1,10 @@
-.trigger-popover,
-.command-palette {
+.trigger-popover {
   position: absolute;
   z-index: var(--z-popover);
   min-width: 220px;
   border-radius: var(--radius-overlay-sm);
-  /* Overlay glass (design-system B5 / D2). --material-backdrop carries the PR-B
-     reduced-transparency / high-contrast opaque fallback for free. */
+  /* Overlay glass (design-system B5 / D2). --material-backdrop carries the shared
+     reduced-transparency / high-contrast opaque fallback. */
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
@@ -15,12 +14,14 @@
 /* Elevation tiers (design-system D3): menus / popovers sit at level-1; the
    command palette is a focused surface at level-2. */
 .trigger-popover {
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 .command-palette {
+  border-radius: var(--radius-overlay-sm);
+  background: var(--bg-elevated);
   box-shadow: var(--overlay-shadow-level-2);
 }
 
@@ -40,7 +41,7 @@
   gap: var(--space-5);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--muted);
+  color: var(--text-secondary);
   min-height: 32px;
   padding: var(--space-2) var(--space-4);
   text-align: left;
@@ -52,7 +53,7 @@
 .command-item:hover,
 .command-item.active {
   background: var(--fill-2);
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .popover-item.disabled {
@@ -62,11 +63,11 @@
 .popover-item.disabled:hover,
 .popover-item.disabled.active {
   background: transparent;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 .command-group-heading {
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   font-weight: 500;
   padding: var(--space-3) var(--space-5) calc(var(--space-2) + var(--space-hairline));
@@ -81,7 +82,7 @@
   flex: 0 0 16px;
   align-items: center;
   justify-content: center;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 .popover-node-emoji {
@@ -111,7 +112,7 @@
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--font-ui-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -143,7 +144,7 @@
 
 .popover-item-meta {
   overflow: hidden;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -151,12 +152,12 @@
 
 .command-item-type {
   flex: 0 0 auto;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   white-space: nowrap;
 }
 
 .popover-empty {
-  color: var(--muted);
+  color: var(--text-secondary);
   padding: calc(var(--space-3) + var(--space-hairline)) var(--space-4);
 }

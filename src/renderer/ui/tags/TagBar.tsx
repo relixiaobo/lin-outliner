@@ -5,9 +5,11 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { isNodeInTrash } from '../interactions/nodeLocation';
 import { CloseIcon, ICON_SIZE, SearchIcon, SettingsIcon } from '../icons';
-import { ButtonControl } from '../primitives/ButtonControl';
+import { MenuItem } from '../primitives/MenuItem';
+import { MenuSurface } from '../primitives/MenuSurface';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useT } from '../../i18n/I18nProvider';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
@@ -49,7 +51,14 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
     width: 220,
   });
 
-  useDismissibleOverlay(menuRef, () => setMenu(null), { disabled: !menu });
+  const closeMenu = () => setMenu(null);
+  useDismissibleOverlay(menuRef, closeMenu, { disabled: !menu, escape: false });
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: closeMenu,
+    kind: 'menu',
+    active: Boolean(menu),
+  });
 
   const removeTag = () => {
     void run(() => api.removeTag(nodeId, tag.id));
@@ -91,44 +100,48 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
         onContextMenu={openMenu}
       />
       {menu && createPortal(
-        <div
+        <MenuSurface
           ref={menuRef}
+          aria-label={t.tags.menuLabel({ label })}
           className="tag-context-menu"
+          preserveSelection
+          role="menu"
           style={menuStyle}
+          onKeyDown={onKeyDown}
           onMouseDown={(event) => event.stopPropagation()}
         >
-          <ButtonControl
+          <MenuItem
             className="tag-context-item"
+            icon={<CloseIcon size={ICON_SIZE.menu} />}
+            label={t.tags.removeTitle}
             onClick={() => {
               removeTag();
               setMenu(null);
             }}
-          >
-            <CloseIcon size={ICON_SIZE.menu} />
-            {t.tags.removeTitle}
-          </ButtonControl>
-          <ButtonControl
+            role="menuitem"
+          />
+          <MenuItem
             className="tag-context-item"
+            icon={<SearchIcon size={ICON_SIZE.menu} />}
+            label={t.tags.everythingTagged({ label })}
             onClick={() => {
               openTagSearch();
               setMenu(null);
             }}
-          >
-            <SearchIcon size={ICON_SIZE.menu} />
-            {t.tags.everythingTagged({ label })}
-          </ButtonControl>
-          <div className="tag-context-separator" />
-          <ButtonControl
+            role="menuitem"
+          />
+          <div className="tag-context-separator" role="separator" />
+          <MenuItem
             className="tag-context-item"
+            icon={<SettingsIcon size={ICON_SIZE.menu} />}
+            label={t.tags.configureTag}
             onClick={() => {
               onRoot?.(tag.id);
               setMenu(null);
             }}
-          >
-            <SettingsIcon size={ICON_SIZE.menu} />
-            {t.tags.configureTag}
-          </ButtonControl>
-        </div>,
+            role="menuitem"
+          />
+        </MenuSurface>,
         document.body,
       )}
     </>
