@@ -32,6 +32,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent Issue Manager plan (PR #384, codex-4)** — added the active P1
+  implementation plan for replacing scheduled command / Run-centered work with
+  the Agent Issue Manager model: Issues and sub-issues for durable work,
+  Recurring Issues for cadence, Agent Sessions for execution, Activity for
+  progress/audit, and UI Views as filters over those objects. The ratified build
+  shape is one complete implementation PR by PM decision, with no migration or
+  back-compat reader because the product is pre-release. The plan also pins the
+  runtime-owned authorization boundary, protected Dream compatibility boundary,
+  due-time recurring materialization rule, Neva-only run profile `AgentRef`, and
+  eight-tool model-facing surface.
 - **Channel create and inline rename (PR #382, codex-3)** — New Channel now
   creates an untitled Channel immediately, selects it, and focuses the composer.
   Runtime creation no longer accepts a seed/opening message, ordinary Channel
