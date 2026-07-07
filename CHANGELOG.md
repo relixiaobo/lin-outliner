@@ -12,6 +12,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Structured field resolution (PR #385, codex)** — semantic `Field:: value`
+  writes now reuse an existing owner field or unique field definition before
+  creating a new definition, preserve existing typed field configs, infer new
+  field types conservatively, and fail closed on duplicate active field matches.
+  Agent `node_create` / `node_edit` and paste metadata now share the resolver,
+  `Done:: true/false` writes through the synced system Done field, and core
+  guards prevent manual field creation, field-definition rename, and definition
+  reuse from creating duplicate active field names on one owner.
 - **Native-feel loading surfaces** — Settings now paints its toolbar, rail, and
   active pane before provider settings finish loading, and the main window
   startup path paints persistent window chrome instead of a generic centered
