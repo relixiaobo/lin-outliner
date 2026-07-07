@@ -115,6 +115,9 @@ Run-first product surface:
   confirmed unattended ready Issue that has not already had a Session. Ordinary
   and child-agent tool pools receive `issueRuntime`; Dream does not, so
   model-facing Issue tools cannot create, mutate, or start Dream work.
+  Startup recovery marks any persisted `pending`, `active`, or `awaitingInput`
+  Agent Session as `stale` when there is no live executor in the restored
+  runtime.
 
 The internal executor binding is intentionally not part of the model-facing
 schema. `agent_session_read` returns Agent Session state and Activity, not a Run

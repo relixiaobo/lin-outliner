@@ -322,4 +322,41 @@ describe('agent issue store', () => {
       expect((await store.listReadyIssuesForExecution(600)).map((issue) => issue.title)).not.toContain('Ready now');
     });
   });
+
+  test('marks interrupted live Agent Sessions stale on recovery', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Recover interrupted session' },
+        request: { mode: 'request' },
+        reason: 'Create recoverable work.',
+      }, actor, 10);
+      const issue = (await store.search({ targets: ['issue'] })).rows[0];
+      const started = await store.startSession({
+        issueId: issue.target.id,
+        expectedIssueRevision: issue.revision,
+        request: { mode: 'request' },
+        reason: 'Start work.',
+      }, { type: 'runtime-authorized-action', actor }, actor, 20);
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+      await store.bindSessionExecution(sessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:issue',
+        executionId: 'execution:interrupted',
+        startedAt: 30,
+      }, actor, 30);
+
+      const stale = await store.markInterruptedSessionsStale({ type: 'system' }, 40);
+      expect(stale.map((session) => session.id)).toEqual([sessionId]);
+      const read = await store.readSession({ agentSessionId: sessionId, include: ['activity-summary'] });
+      expect(read?.agentSession).toMatchObject({
+        state: 'stale',
+        errorMessage: 'Agent Session was interrupted before runtime restore.',
+        completedAt: 40,
+      });
+      expect(read?.activity?.at(-1)?.content.type).toBe('agent-error');
+
+      expect(await store.markInterruptedSessionsStale({ type: 'system' }, 50)).toEqual([]);
+    });
+  });
 });

@@ -873,6 +873,7 @@ export class AgentRuntime {
     void this.ensureDefaultChannelEventStates()
       .catch((error) => this.reportWarn('agent-runtime', 'Failed to ensure default channels.', error));
     this.queueScheduledDream(new Date());
+    this.queueIssueRecovery(new Date());
     this.queueIssueSweep(new Date());
     // Crash recovery FIRST: reconcile any occurrence that was attempted but never
     // recorded success (the app crashed/quit/slept mid-run) — at-most-once, so it
@@ -3449,10 +3450,30 @@ export class AgentRuntime {
     this.queueIssueSweep(new Date());
   }
 
+  private queueIssueRecovery(now: Date) {
+    this.issueSweepTail = this.issueSweepTail
+      .catch(() => undefined)
+      .then(() => this.recoverInterruptedIssueSessions(now));
+  }
+
   private queueIssueSweep(now: Date) {
     this.issueSweepTail = this.issueSweepTail
       .catch(() => undefined)
       .then(() => this.sweepIssueSchedules(now));
+  }
+
+  private async recoverInterruptedIssueSessions(now: Date) {
+    try {
+      await this.getIssueStore().markInterruptedSessionsStale({ type: 'system' }, now.getTime());
+    } catch (error) {
+      this.reportWarn(
+        'agent-runtime',
+        `Issue session recovery failed: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        { operation: 'recoverInterruptedIssueSessions' },
+        'issue-session-recovery-failed',
+      );
+    }
   }
 
   private async sweepIssueSchedules(now: Date) {

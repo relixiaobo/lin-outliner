@@ -2867,7 +2867,10 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     // Anacron catch-up on system wake: a command whose occurrence elapsed while
     // the device slept fires once on resume (coalesced via the watermark).
-    powerMonitor.on('resume', () => agentRuntime.runCommandCatchUp());
+    powerMonitor.on('resume', () => {
+      agentRuntime.runIssueCatchUp();
+      agentRuntime.runCommandCatchUp();
+    });
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     createLauncherWindow({
       preloadPath: join(__dirname, '../preload/index.cjs'),

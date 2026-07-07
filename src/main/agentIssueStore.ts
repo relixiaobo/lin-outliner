@@ -518,6 +518,30 @@ export class AgentIssueStore {
       .filter((issue) => isIssueReadyForExecution(issue, state, now))
       .sort((left, right) => triggerSortTime(left) - triggerSortTime(right) || left.createdAt - right.createdAt);
   }
+
+  async markInterruptedSessionsStale(actor: ActorRef = DEFAULT_ACTOR, now = Date.now()): Promise<AgentSession[]> {
+    const staleSessions: AgentSession[] = [];
+    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+      for (const session of Object.values(state.sessions)) {
+        if (!isRecoverableLiveSession(session.state)) continue;
+        session.state = 'stale';
+        session.errorMessage = 'Agent Session was interrupted before runtime restore.';
+        session.completedAt = now;
+        session.updatedAt = now;
+        session.revision = revision(now);
+        appendActivity(state, {
+          target: { type: 'agent-session', agentSessionId: session.id },
+          actor,
+          content: { type: 'agent-error', body: session.errorMessage },
+          relatedTargets: [{ type: 'issue', id: session.issueId }],
+          createdAt: now,
+        });
+        staleSessions.push(session);
+      }
+      return state;
+    }, PRIVATE_JSON_FILE_OPTIONS);
+    return staleSessions;
+  }
 }
 
 function emptyState(): AgentIssueStoreState {
@@ -897,6 +921,10 @@ function canMessageSession(state: AgentSession['state']): boolean {
 }
 
 function canStopSession(state: AgentSession['state']): boolean {
+  return state === 'pending' || state === 'active' || state === 'awaitingInput';
+}
+
+function isRecoverableLiveSession(state: AgentSession['state']): boolean {
   return state === 'pending' || state === 'active' || state === 'awaitingInput';
 }
 
