@@ -154,6 +154,11 @@ schema. `agent_session_read` returns Agent Session state and Activity, not a Run
 id. `agent_session_send_message` and `agent_session_stop` route through the
 binding when a live executor is available and otherwise report a warning or
 blocked state through the normal tool result.
+Activity is a high-signal user-visible summary layer, not the Agent Session
+transcript. Runtime keeps the full terminal output on `AgentSession.latestOutput`
+but strips common reasoning blocks and truncates Activity bodies before writing
+`agent-response`, `agent-error`, `agent-question`, comments, or
+`verification-result` entries.
 Issue and Recurring Issue `delete` operations return `applied` without an object
 revision because the target no longer exists; the deletion remains auditable via
 Activity on the deleted target id.

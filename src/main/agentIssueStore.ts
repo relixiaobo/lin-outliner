@@ -46,6 +46,7 @@ import {
 const STORE_VERSION = 1;
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
+const MAX_ACTIVITY_BODY_CHARS = 1_200;
 const DEFAULT_ISSUE_STATUS: IssueStatus = { name: 'Triage', category: 'triage' };
 const DEFAULT_ACTOR: ActorRef = { type: 'system' };
 
@@ -362,7 +363,7 @@ export class AgentIssueStore {
       appendActivity(state, {
         target: { type: 'agent-session', agentSessionId },
         actor,
-        content: { type: 'agent-error', body: message },
+        content: { type: 'agent-error', body: activityBody(message, 'Agent Session failed to start.') },
         relatedTargets: [{ type: 'issue', id: session.issueId }],
         createdAt: now,
       });
@@ -435,8 +436,8 @@ export class AgentIssueStore {
         target: { type: 'agent-session', agentSessionId: session.id },
         actor,
         content: input.kind === 'answer'
-          ? { type: 'agent-response', body: input.message }
-          : { type: 'comment', body: input.message },
+          ? { type: 'agent-response', body: activityBody(input.message, 'Session answer sent.') }
+          : { type: 'comment', body: activityBody(input.message, 'Session guidance sent.') },
         relatedTargets: [{ type: 'issue', id: session.issueId }],
         createdAt: now,
       });
@@ -1217,7 +1218,8 @@ function appendVerifierResultActivity(
 ) {
   const issue = state.issues[session.issueId];
   if (!issue || issue.verificationPolicy?.mode !== 'agent-review') return;
-  const body = (input.latestOutput ?? session.latestOutput ?? '').trim() || 'Verifier completed without a written verdict.';
+  const rawBody = (input.latestOutput ?? session.latestOutput ?? '').trim() || 'Verifier completed without a written verdict.';
+  const body = activityBody(rawBody, 'Verifier completed without a written verdict.');
   const verdict = verifierVerdictFromText(body);
   issue.evidence = [
     ...(issue.evidence ?? []).filter((entry) => !(entry.type === 'agent-session' && entry.agentSessionId === session.id)),
@@ -1278,21 +1280,37 @@ function sessionStateActivityContent(
   switch (state) {
     case 'complete':
       return input.latestOutput
-        ? { type: 'agent-response', body: input.latestOutput }
+        ? { type: 'agent-response', body: activityBody(input.latestOutput, 'Agent Session completed.') }
         : { type: 'agent-progress', body: 'Agent Session completed.' };
     case 'error':
-      return { type: 'agent-error', body: input.errorMessage ?? 'Agent Session failed.' };
+      return { type: 'agent-error', body: activityBody(input.errorMessage, 'Agent Session failed.') };
     case 'canceled':
       return { type: 'agent-action', action: 'agent_session_stop', result: 'canceled' };
     case 'active':
       return { type: 'agent-progress', body: 'Agent Session is active.' };
     case 'awaitingInput':
-      return { type: 'agent-question', body: input.errorMessage ?? 'Agent Session needs input.' };
+      return { type: 'agent-question', body: activityBody(input.errorMessage, 'Agent Session needs input.') };
     case 'stale':
-      return { type: 'agent-error', body: input.errorMessage ?? 'Agent Session became stale.' };
+      return { type: 'agent-error', body: activityBody(input.errorMessage, 'Agent Session became stale.') };
     case 'pending':
       return { type: 'agent-progress', body: 'Agent Session is pending.' };
   }
+}
+
+function activityBody(input: string | undefined, fallback: string): string {
+  const sanitized = stripReasoningBlocks(input ?? '')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim();
+  const body = sanitized || fallback;
+  if (body.length <= MAX_ACTIVITY_BODY_CHARS) return body;
+  return `${body.slice(0, MAX_ACTIVITY_BODY_CHARS - 1).trimEnd()}…`;
+}
+
+function stripReasoningBlocks(input: string): string {
+  return input
+    .replace(/<analysis>[\s\S]*?<\/analysis>/giu, '')
+    .replace(/<thinking>[\s\S]*?<\/thinking>/giu, '')
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/giu, '');
 }
 
 function latestActivity(state: AgentIssueStoreState): Activity | null {

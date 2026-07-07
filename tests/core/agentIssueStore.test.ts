@@ -716,13 +716,17 @@ describe('agent issue store', () => {
         engine: 'delegation',
         executionId: 'execution:1',
         state: 'completed',
-        latestOutput: 'Launch risks summarized.',
+        latestOutput: '<analysis>internal chain of thought</analysis>\nLaunch risks summarized.',
         completedAt: 200,
       }, actor, 200);
       expect(synced?.state).toBe('complete');
-      expect(synced?.latestOutput).toBe('Launch risks summarized.');
+      expect(synced?.latestOutput).toBe('<analysis>internal chain of thought</analysis>\nLaunch risks summarized.');
       const read = await store.readSession({ agentSessionId: sessionId, include: ['activity-summary'] });
       expect(read?.activity?.map((entry) => entry.content.type)).toContain('agent-response');
+      expect(read?.activity?.find((entry) => entry.content.type === 'agent-response')?.content).toEqual({
+        type: 'agent-response',
+        body: 'Launch risks summarized.',
+      });
     });
   });
 

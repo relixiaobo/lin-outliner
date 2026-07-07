@@ -644,9 +644,11 @@ No hidden controller Run should be used as the user's work object. If the
 implementation needs orchestration, it must still emit Agent Session and
 Activity as the canonical persisted contract.
 
-Activity must not store raw model reasoning. Agent progress entries are concise
-user-visible summaries of meaningful execution state, decisions, blockers, or
-results.
+Activity must not store raw model reasoning or full transcripts. Runtime keeps
+the complete terminal output on `AgentSession.latestOutput`, while Activity
+bodies are stripped of common reasoning blocks, truncated, and used only as
+concise user-visible summaries of meaningful execution state, decisions,
+blockers, or results.
 
 ### Verification Model
 
