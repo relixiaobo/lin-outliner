@@ -412,6 +412,9 @@ export class AgentIssueStore {
           relatedTargets: [{ type: 'issue', id: session.issueId }],
           createdAt: now,
         });
+        if (nextState === 'complete' && session.purpose === 'verify') {
+          appendVerifierResultActivity(state, session, input, actor, now);
+        }
       }
       return state;
     }, PRIVATE_JSON_FILE_OPTIONS);
@@ -682,10 +685,14 @@ function buildSession(
   const inputSnapshot = issue.input
     ? resolveInput?.(issue.input, issue, now) ?? { scope: issue.input, resolvedAt: now }
     : undefined;
+  const purpose = input.purpose ?? 'execute';
   return {
     id: `agent-session:${randomUUID()}`,
     issueId: issue.id,
-    delegate: issue.delegate ?? { type: 'default-agent' },
+    delegate: purpose === 'verify'
+      ? issue.verificationPolicy?.verifier ?? { type: 'default-agent', runProfile: 'verifier' }
+      : issue.delegate ?? { type: 'default-agent' },
+    purpose,
     state: 'pending',
     source,
     issueSnapshot: issue,
@@ -907,6 +914,9 @@ function validateSessionStart(
   }
   if (issue.status.category === 'completed' || issue.status.category === 'canceled') {
     messages.push({ code: 'terminal_issue', message: 'Completed or canceled Issues cannot start new Agent Sessions.' });
+  }
+  if (input.purpose === 'verify' && issue.verificationPolicy?.mode !== 'agent-review') {
+    messages.push({ code: 'missing_agent_review_policy', message: 'Verifier Agent Sessions require an agent-review verification policy.' });
   }
   if (issueHasActiveSession(issue, state)) {
     messages.push({ code: 'active_session_exists', message: 'Issue already has a pending, active, or waiting Agent Session.' });
@@ -1153,6 +1163,40 @@ function sameActivityTarget(left: ActivityTarget, right: ActivityTarget): boolea
   if (left.type === 'issue' && right.type === 'issue') return left.issueId === right.issueId;
   if (left.type === 'recurring-issue' && right.type === 'recurring-issue') return left.recurringIssueId === right.recurringIssueId;
   return left.type === 'agent-session' && right.type === 'agent-session' && left.agentSessionId === right.agentSessionId;
+}
+
+function appendVerifierResultActivity(
+  state: AgentIssueStoreState,
+  session: AgentSession,
+  input: AgentSessionExecutionSyncInput,
+  actor: ActorRef,
+  now: number,
+) {
+  const issue = state.issues[session.issueId];
+  if (!issue || issue.verificationPolicy?.mode !== 'agent-review') return;
+  const body = (input.latestOutput ?? session.latestOutput ?? '').trim() || 'Verifier completed without a written verdict.';
+  const verdict = verifierVerdictFromText(body);
+  issue.evidence = [
+    ...(issue.evidence ?? []).filter((entry) => !(entry.type === 'agent-session' && entry.agentSessionId === session.id)),
+    { type: 'agent-session', agentSessionId: session.id },
+  ];
+  issue.updatedAt = now;
+  issue.revision = revision(now);
+  appendActivity(state, {
+    target: { type: 'issue', issueId: issue.id },
+    actor,
+    content: { type: 'verification-result', verdict, body, agentSessionId: session.id },
+    relatedTargets: [{ type: 'agent-session', id: session.id }],
+    createdAt: now,
+  });
+}
+
+function verifierVerdictFromText(text: string): 'pass' | 'fail' | 'partial' {
+  const normalized = text.trim().toLocaleLowerCase();
+  if (/^(verdict:\s*)?pass\b/u.test(normalized)) return 'pass';
+  if (/^(verdict:\s*)?fail\b/u.test(normalized)) return 'fail';
+  if (/^(verdict:\s*)?(partial|pass-or-partial)\b/u.test(normalized)) return 'partial';
+  return 'partial';
 }
 
 function canMessageSession(state: AgentSession['state']): boolean {

@@ -596,6 +596,11 @@ export const AGENT_SESSION_START_PARAMETERS = {
       minLength: 1,
       description: 'Existing concrete Issue to execute or orchestrate. Do not pass Recurring Issue ids.',
     },
+    purpose: {
+      type: 'string',
+      enum: ['execute', 'verify'],
+      description: 'Session purpose. Use execute for normal work and verify only when the Issue has an agent-review verification policy.',
+    },
     expectedIssueRevision: {
       type: 'string',
       minLength: 1,

@@ -177,6 +177,15 @@ of that Session does not by itself complete the Issue and does not cause the
 scheduler to loop on the same Issue. Retrying or continuing terminal work
 creates a new Agent Session through an explicit `agent_session_start` request.
 
+Issue verification uses the same Agent Session mechanism. `agent_session_start`
+accepts `purpose: "verify"` only when the Issue has
+`verificationPolicy.mode === "agent-review"`. The Session uses the configured
+verifier AgentRef, defaulting to Neva's `verifier` run profile. When that
+Session completes, runtime records a `verification-result` Activity on the Issue
+and links the verifier Agent Session as Issue evidence. There is no
+`verification_*` model-facing tool and a verifier verdict does not automatically
+complete the Issue.
+
 ## Run Delegation Tools
 
 `spawn_run` is the only downward delegation primitive. It forks Neva into an isolated

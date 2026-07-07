@@ -1919,6 +1919,7 @@ terminal state.
 ```ts
 interface AgentSessionStartInput {
   issueId: string;
+  purpose?: 'execute' | 'verify';
   expectedIssueRevision?: string;
   continuation?: AgentSessionContinuationRequest;
   detach?: boolean;
@@ -2001,6 +2002,7 @@ interface AgentSessionStopInput {
 | Parameter | Description |
 |---|---|
 | `issueId` | Existing concrete Issue to execute or orchestrate. Do not pass Recurring Issue IDs; recurring definitions first materialize concrete Issues. |
+| `purpose` | Session purpose. `execute` is normal work. `verify` starts a normal Agent Session using the Issue's `agent-review` verification policy and records its verdict as Activity/evidence. |
 | `expectedIssueRevision` | Issue revision the caller expects to execute. Include it after reading an Issue so runtime can reject stale execution requests. |
 | `continuation` | Optional link to a previous terminal or stale Agent Session when the caller wants to continue, retry, or revise from prior work. |
 | `detach` | Whether the caller wants the Session to continue in the background while the current conversation proceeds. Runtime may still notify completion. |

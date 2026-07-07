@@ -188,6 +188,8 @@ export type AgentSessionState =
   | 'stale'
   | 'canceled';
 
+export type AgentSessionPurpose = 'execute' | 'verify';
+
 export type AgentSessionSource =
   | { type: 'delegation'; actor: ActorRef }
   | { type: 'recurring-issue'; recurringIssueId: AgentRecurringIssueId; dueAt: number }
@@ -211,6 +213,7 @@ export interface AgentSession {
   id: AgentSessionId;
   issueId: AgentIssueId;
   delegate: AgentRef;
+  purpose?: AgentSessionPurpose;
   state: AgentSessionState;
   source: AgentSessionSource;
   issueSnapshot: AgentIssue;
@@ -573,6 +576,7 @@ export interface AgentSessionExecutionPolicyOverride {
 
 export interface AgentSessionStartInput {
   issueId: AgentIssueId;
+  purpose?: AgentSessionPurpose;
   expectedIssueRevision?: ObjectRevisionValue;
   continuation?: AgentSessionContinuationRequest;
   detach?: boolean;

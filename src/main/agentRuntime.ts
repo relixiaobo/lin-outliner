@@ -9195,6 +9195,7 @@ function agentSessionObjective(session: AgentSession, startInput: AgentSessionSt
     'You are executing one Agent Session for a Tenon Issue.',
     '',
     `Agent Session id: ${session.id}`,
+    `Agent Session purpose: ${session.purpose ?? 'execute'}`,
     `Issue id: ${issue.id}`,
     `Issue title: ${issue.title}`,
     issue.description ? `Issue description:\n${issue.description}` : '',
@@ -9205,12 +9206,28 @@ function agentSessionObjective(session: AgentSession, startInput: AgentSessionSt
     formatIssueCriteria(issue.completionCriteria),
     formatIssueContinuation(startInput),
     '',
+    ...(session.purpose === 'verify' ? verifierSessionRules() : executionSessionRules()),
+  ].filter(Boolean).join('\n');
+}
+
+function executionSessionRules(): string[] {
+  return [
     'Execution rules:',
     '1. Work only within this Issue snapshot and its confirmed input scope.',
     '2. If the work must be split, create or update sub-issues with the Issue tools; do not invent hidden child work as the durable breakdown.',
     '3. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
     '4. Completing this Agent Session does not automatically complete the Issue.',
-  ].filter(Boolean).join('\n');
+  ];
+}
+
+function verifierSessionRules(): string[] {
+  return [
+    'Verification rules:',
+    '1. Review the Issue snapshot, completion criteria, evidence, linked Agent Sessions, and available output.',
+    '2. Do not perform the work again unless a narrow read is needed to verify evidence.',
+    '3. Start the final response with exactly one verdict line: "Verdict: pass", "Verdict: partial", or "Verdict: fail".',
+    '4. Then summarize the evidence and any blockers. Runtime records that verdict as Issue Activity; it does not automatically complete the Issue.',
+  ];
 }
 
 function agentSessionCriteria(criteria: readonly IssueCompletionCriterion[] | undefined): string[] | undefined {

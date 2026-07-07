@@ -611,6 +611,97 @@ describe('agent issue store', () => {
     });
   });
 
+  test('represents agent verification as a normal Agent Session with verdict Activity', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'No verification policy' },
+        request: { mode: 'request' },
+        reason: 'Create unverified work.',
+      }, actor, 90);
+      const noPolicy = (await store.search({ text: 'No verification policy' })).rows[0];
+      await store.update({
+        target: { type: 'issue', id: noPolicy.target.id, expectedRevision: noPolicy.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm work.',
+      }, actor, 95);
+      const confirmedNoPolicy = (await store.search({ text: 'No verification policy' })).rows[0];
+      const blocked = await store.startSession({
+        issueId: confirmedNoPolicy.target.id,
+        purpose: 'verify',
+        expectedIssueRevision: confirmedNoPolicy.revision,
+        request: { mode: 'request' },
+        reason: 'Try to verify without policy.',
+      }, { type: 'runtime-authorized-action', actor }, actor, 96);
+      expect(blocked.status).toBe('blocked');
+      expect(blocked.validation?.map((entry) => entry.code)).toContain('missing_agent_review_policy');
+
+      await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Verify launch checklist',
+          verificationPolicy: {
+            mode: 'agent-review',
+            verifier: { type: 'default-agent', runProfile: 'verifier' },
+            requiredVerdict: 'pass',
+          },
+        },
+        request: { mode: 'request' },
+        reason: 'Create verifiable work.',
+      }, actor, 100);
+      const issue = (await store.search({ text: 'Verify launch checklist' })).rows[0];
+      await store.update({
+        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm verification work.',
+      }, actor, 110);
+      const confirmed = (await store.search({ text: 'Verify launch checklist' })).rows[0];
+      const started = await store.startSession({
+        issueId: confirmed.target.id,
+        purpose: 'verify',
+        expectedIssueRevision: confirmed.revision,
+        request: { mode: 'request' },
+        reason: 'Start verifier.',
+      }, { type: 'runtime-authorized-action', actor }, actor, 120);
+      expect(started.status).toBe('applied');
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+      const session = await store.readSession({ agentSessionId: sessionId });
+      expect(session?.agentSession).toMatchObject({
+        purpose: 'verify',
+        delegate: { type: 'default-agent', runProfile: 'verifier' },
+      });
+
+      await store.bindSessionExecution(sessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:verify',
+        executionId: 'execution:verify',
+        startedAt: 130,
+      }, actor, 130);
+      await store.syncSessionExecution({
+        engine: 'delegation',
+        executionId: 'execution:verify',
+        state: 'completed',
+        latestOutput: 'Verdict: pass\nAll checklist evidence is present.',
+        completedAt: 140,
+      }, actor, 140);
+
+      const read = await store.read({ target: confirmed.target, include: ['activity'] });
+      expect(read.issue?.evidence).toContainEqual({ type: 'agent-session', agentSessionId: sessionId });
+      expect(read.activity).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          content: {
+            type: 'verification-result',
+            verdict: 'pass',
+            body: 'Verdict: pass\nAll checklist evidence is present.',
+            agentSessionId: sessionId,
+          },
+        }),
+      ]));
+    });
+  });
+
   test('lists ready Issues once and excludes Issues that already have a Session', async () => {
     await withStore(async (store) => {
       await store.create({
