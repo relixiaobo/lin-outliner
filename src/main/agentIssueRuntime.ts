@@ -12,11 +12,16 @@ import type {
 } from '../core/agentIssue';
 import type { AgentIssueToolRuntime } from './agentIssueTools';
 import type { AgentIssueStore, AgentSessionExecutionBinding, IssueInputResolver } from './agentIssueStore';
+import {
+  agentIssueOperationMatches,
+  issueUpdateRequiresRuntimeAuthorization,
+} from './agentIssueRuntimeAuthorization';
 
 export interface AgentIssueToolRuntimeOptions {
   store: AgentIssueStore;
   actor: ActorRef;
   authorization?: RuntimeAuthorizationCapability;
+  authorizationProvider?: (scope: AgentOperationScope) => RuntimeAuthorizationCapability | undefined;
   executor?: AgentSessionExecutor;
   startSource?: (input: AgentSessionStartInput) => AgentSessionSource;
   resolveInputScope?: IssueInputResolver;
@@ -45,12 +50,12 @@ export function createAgentIssueToolRuntime(options: AgentIssueToolRuntimeOption
     startSession: (input) => startSession(options, input, now()),
     readSession: (input) => readSession(options, input),
     sendSessionMessage: (input) => (
-      hasAuthorization(options.authorization, { type: 'agent-session-message', agentSessionId: input.agentSessionId }, now())
+      hasAuthorization(options, { type: 'agent-session-message', agentSessionId: input.agentSessionId }, now())
         ? sendSessionMessage(options, input, now())
         : needsConfirmation('Message Agent Session', 'Send this message to the running Agent Session.', { type: 'agent-session-message', agentSessionId: input.agentSessionId }, [{ type: 'agent-session', id: input.agentSessionId }])
     ),
     stopSession: (input) => (
-      hasAuthorization(options.authorization, { type: 'agent-session-stop', agentSessionId: input.agentSessionId }, now())
+      hasAuthorization(options, { type: 'agent-session-stop', agentSessionId: input.agentSessionId }, now())
         ? stopSession(options, input, now())
         : needsConfirmation('Stop Agent Session', 'Stop this Agent Session and mark it canceled.', { type: 'agent-session-stop', agentSessionId: input.agentSessionId }, [{ type: 'agent-session', id: input.agentSessionId }])
     ),
@@ -74,7 +79,7 @@ async function updateIssue(
   const scope: AgentOperationScope = input.target.type === 'issue'
     ? { type: 'issue-update', issueId: input.target.id }
     : { type: 'recurring-issue-update', recurringIssueId: input.target.id };
-  if (requiresIssueUpdateAuthorization(input) && !hasAuthorization(options.authorization, scope, now)) {
+  if (issueUpdateRequiresRuntimeAuthorization(input.change) && !hasAuthorization(options, scope, now)) {
     return needsConfirmation(
       'Confirm Issue change',
       'Apply this execution-enabling or lifecycle Issue change.',
@@ -96,7 +101,7 @@ async function startSession(
     });
   }
   const scope: AgentOperationScope = { type: 'agent-session-start', issueId: input.issueId };
-  if (!hasAuthorization(options.authorization, scope, now)) {
+  if (!hasAuthorization(options, scope, now)) {
     return needsConfirmation(
       'Start Agent Session',
       'Start one Agent Session for this Issue.',
@@ -183,43 +188,14 @@ async function stopSession(
   return warning ? withWarning(result, 'executor_stop_failed', warning) : result;
 }
 
-function requiresIssueUpdateAuthorization(input: IssueUpdateInput): boolean {
-  if (input.change.type === 'confirm' || input.change.type === 'delete' || input.change.type === 'archive') return true;
-  if (input.change.type === 'pause' || input.change.type === 'resume' || input.change.type === 'skip-next') return true;
-  if (input.change.type === 'patch') {
-    return 'trigger' in input.change.patch
-      || 'permissionMode' in input.change.patch
-      || 'executionPolicy' in input.change.patch
-      || 'issueTemplate' in input.change.patch;
-  }
-  return false;
-}
-
 function hasAuthorization(
-  authorization: RuntimeAuthorizationCapability | undefined,
+  options: AgentIssueToolRuntimeOptions,
   required: AgentOperationScope,
   now: number,
 ): boolean {
+  const authorization = options.authorizationProvider?.(required) ?? options.authorization;
   if (!authorization || authorization.expiresAt < now) return false;
-  return authorization.allowedOperations.some((operation) => operationMatches(operation, required));
-}
-
-function operationMatches(allowed: AgentOperationScope, required: AgentOperationScope): boolean {
-  if (allowed.type !== required.type) return false;
-  switch (required.type) {
-    case 'issue-create':
-      return true;
-    case 'issue-update':
-      return allowed.type === 'issue-update' && (!allowed.issueId || allowed.issueId === required.issueId);
-    case 'recurring-issue-update':
-      return allowed.type === 'recurring-issue-update' && (!allowed.recurringIssueId || allowed.recurringIssueId === required.recurringIssueId);
-    case 'agent-session-start':
-      return allowed.type === 'agent-session-start' && (!allowed.issueId || allowed.issueId === required.issueId);
-    case 'agent-session-message':
-      return allowed.type === 'agent-session-message' && (!allowed.agentSessionId || allowed.agentSessionId === required.agentSessionId);
-    case 'agent-session-stop':
-      return allowed.type === 'agent-session-stop' && (!allowed.agentSessionId || allowed.agentSessionId === required.agentSessionId);
-  }
+  return authorization.allowedOperations.some((operation) => agentIssueOperationMatches(operation, required));
 }
 
 function needsConfirmation(

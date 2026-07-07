@@ -1528,6 +1528,13 @@ permission context. If user confirmation is required, the tool returns
 `needs-confirmation` with a structured `confirmation` object instead of letting
 the agent invent an unsafe follow-up.
 
+In the shipped runtime path, execution-enabling `issue_update` requests and
+`agent_session_start` / `agent_session_send_message` / `agent_session_stop`
+requests are also classified by the ordinary tool permission layer. Approval of
+that permission card creates a short-lived runtime-owned authorization capability
+for the exact Issue or Agent Session operation; the capability is consumed by
+`AgentIssueToolRuntime` and is never passed through model-facing tool input.
+
 Common parameter descriptions:
 
 | Parameter | Required | Description |

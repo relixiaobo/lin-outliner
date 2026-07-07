@@ -101,6 +101,12 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   Session first, then immediately hands it to the configured executor. If no
   executor is available, the Session is marked `error` instead of remaining
   indefinitely `pending`;
+- `src/main/agentIssueRuntimeAuthorization.ts` is the shared classifier for
+  Issue-tool runtime authorization scopes. The ordinary tool permission layer
+  soft-blocks execution-enabling `issue_update` and `agent_session_*` requests;
+  when the user approves the permission card, `AgentRuntime` injects a short-lived
+  runtime-owned capability into the `AgentIssueToolRuntime`. The model-facing
+  schema still carries no authorization token, capability id, or `userActionId`;
 - `src/main/agentIssueInputResolver.ts` resolves an Issue's confirmed input
   scope against the current outliner projection when an Agent Session starts.
   `selected-nodes`, `node-children`, and `tag-query` scopes become a bounded

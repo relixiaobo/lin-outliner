@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
 import type { AgentPermissionMode } from '../core/types';
+import type { AgentOperationScope } from '../core/agentIssue';
 import {
   agentToolActionKindProfile,
   isReadOnlyActionKind,
@@ -25,6 +26,7 @@ import {
   type ToolActionDescriptor,
 } from './agentToolPermissionRules';
 import { selfDefinitionRootEntries } from './agentAuthoring';
+import { agentIssueRuntimeAuthorizationScope } from './agentIssueRuntimeAuthorization';
 
 export type { AgentPermissionMode } from '../core/types';
 export type {
@@ -627,6 +629,27 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
+  if (isAgentIssueToolName(toolName)) {
+    const authorizationScope = agentIssueRuntimeAuthorizationScope(toolName, input.args);
+    const copy = agentIssuePermissionCopy(toolName, input.args, authorizationScope);
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, copy.actionKind), {
+      accessScope: 'none',
+      title: copy.title,
+      summary: copy.summary,
+      consequence: copy.consequence,
+      reversible: copy.reversible,
+      externalEffect: false,
+      highConsequence: authorizationScope !== null,
+      code: copy.code,
+      ...(authorizationScope ? {
+        softBlock: true,
+        requestTitle: copy.requestTitle,
+        requestTarget: copy.target,
+        requestDetails: copy.details,
+      } : {}),
+    })];
+  }
+
   if (toolName === 'node_read' || toolName === 'node_search' || toolName === 'outline_undo_stack') {
     const actionKind = firstActionKindForTool(toolName, input.args, 'outline.read');
     const writes = actionKind === 'outline.edit';
@@ -770,6 +793,177 @@ export function deriveAgentToolActionDescriptors(input: {
     platformHardBlock: true,
     redline: true,
   })];
+}
+
+function isAgentIssueToolName(toolName: string): boolean {
+  return toolName === 'issue_search'
+    || toolName === 'issue_read'
+    || toolName === 'issue_create'
+    || toolName === 'issue_update'
+    || toolName === 'agent_session_start'
+    || toolName === 'agent_session_read'
+    || toolName === 'agent_session_send_message'
+    || toolName === 'agent_session_stop';
+}
+
+function agentIssuePermissionCopy(
+  toolName: string,
+  args: unknown,
+  authorizationScope: AgentOperationScope | null,
+): {
+  actionKind: AgentToolActionKind;
+  title: string;
+  summary: string;
+  consequence: string;
+  reversible: boolean;
+  code: string;
+  requestTitle?: string;
+  target?: string;
+  details?: AgentApprovalDetail[];
+} {
+  const target = authorizationScope ? agentIssueOperationTarget(authorizationScope) : agentIssueToolTarget(toolName, args);
+  switch (toolName) {
+    case 'issue_search':
+      return {
+        actionKind: 'agent.issue.search',
+        title: 'issue search',
+        summary: 'Search local Issues and Recurring Issues.',
+        consequence: 'This reads local Issue metadata without changing it.',
+        reversible: true,
+        code: 'agent_issue_search',
+      };
+    case 'issue_read':
+      return {
+        actionKind: 'agent.issue.read',
+        title: 'issue read',
+        summary: `Read local Issue details for ${target}.`,
+        consequence: 'This reads local Issue metadata, Agent Sessions, and Activity without changing them.',
+        reversible: true,
+        code: 'agent_issue_read',
+      };
+    case 'issue_create':
+      return {
+        actionKind: 'agent.issue.create',
+        title: 'issue create',
+        summary: 'Create local Issue or Recurring Issue work metadata.',
+        consequence: 'This creates durable local work metadata. Execution still requires confirmation when unattended or runtime-controlled.',
+        reversible: true,
+        code: 'agent_issue_create',
+      };
+    case 'issue_update':
+      return {
+        actionKind: 'agent.issue.update',
+        title: 'issue update',
+        summary: `Update local Issue metadata for ${target}.`,
+        consequence: authorizationScope
+          ? 'This applies an execution-enabling or lifecycle Issue change.'
+          : 'This changes durable local Issue metadata without starting execution.',
+        reversible: false,
+        code: authorizationScope ? 'agent_issue_authorized_update' : 'agent_issue_update',
+        requestTitle: 'Confirm Issue change?',
+        target,
+        details: agentIssueApprovalDetails('Issue operation', target, authorizationScope),
+      };
+    case 'agent_session_start':
+      return {
+        actionKind: 'agent.session.start',
+        title: 'agent session start',
+        summary: `Start one Agent Session for ${target}.`,
+        consequence: 'This starts execution for a confirmed Issue. Downstream tools keep their own permission gates.',
+        reversible: false,
+        code: 'agent_session_start',
+        requestTitle: 'Start Agent Session?',
+        target,
+        details: agentIssueApprovalDetails('Agent Session operation', target, authorizationScope),
+      };
+    case 'agent_session_read':
+      return {
+        actionKind: 'agent.session.read',
+        title: 'agent session read',
+        summary: `Read Agent Session state for ${target}.`,
+        consequence: 'This reads local execution state and bounded output without changing it.',
+        reversible: true,
+        code: 'agent_session_read',
+      };
+    case 'agent_session_send_message':
+      return {
+        actionKind: 'agent.session.send',
+        title: 'agent session message',
+        summary: `Send guidance to ${target}.`,
+        consequence: 'This steers an existing Agent Session within the current Issue definition.',
+        reversible: false,
+        code: 'agent_session_send_message',
+        requestTitle: 'Message Agent Session?',
+        target,
+        details: agentIssueApprovalDetails('Agent Session operation', target, authorizationScope),
+      };
+    case 'agent_session_stop':
+      return {
+        actionKind: 'agent.session.stop',
+        title: 'agent session stop',
+        summary: `Stop ${target}.`,
+        consequence: 'This cancels a pending or active Agent Session without deleting the durable Issue.',
+        reversible: false,
+        code: 'agent_session_stop',
+        requestTitle: 'Stop Agent Session?',
+        target,
+        details: agentIssueApprovalDetails('Agent Session operation', target, authorizationScope),
+      };
+    default:
+      return {
+        actionKind: 'shell.unknown',
+        title: 'unknown issue tool',
+        summary: `Use unknown Issue tool ${toolName}.`,
+        consequence: 'This Issue tool is outside the supported permission classification surface.',
+        reversible: false,
+        code: 'unknown_issue_tool',
+      };
+  }
+}
+
+function agentIssueOperationTarget(scope: AgentOperationScope): string {
+  switch (scope.type) {
+    case 'issue-create':
+      return 'new issue';
+    case 'issue-update':
+      return scope.issueId ?? 'issue';
+    case 'recurring-issue-update':
+      return scope.recurringIssueId ?? 'recurring issue';
+    case 'agent-session-start':
+      return scope.issueId ?? 'issue';
+    case 'agent-session-message':
+    case 'agent-session-stop':
+      return scope.agentSessionId ?? 'agent session';
+  }
+}
+
+function agentIssueToolTarget(toolName: string, args: unknown): string {
+  if (!args || typeof args !== 'object') return toolName;
+  const record = args as Record<string, unknown>;
+  const target = record.target;
+  if (target && typeof target === 'object') {
+    const id = (target as Record<string, unknown>).id;
+    if (typeof id === 'string' && id.trim()) return id;
+  }
+  for (const key of ['issueId', 'agentSessionId']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return toolName;
+}
+
+function agentIssueApprovalDetails(
+  label: string,
+  target: string,
+  scope: AgentOperationScope | null,
+): AgentApprovalDetail[] | undefined {
+  if (!scope) return undefined;
+  return [
+    { label: 'Action', value: label },
+    { label: 'Target', value: target },
+    { label: 'Why asking', value: 'This operation requires runtime-owned authorization before it can execute.' },
+    { label: 'Permission kind', value: scope.type },
+  ];
 }
 
 function derivePathToolActionDescriptor(

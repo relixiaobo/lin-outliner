@@ -45,6 +45,65 @@ describe('agent permissions', () => {
     }
   });
 
+  test('classifies Issue tools and asks before runtime-authorized execution operations', () => {
+    const search = evaluateAgentToolPermission({
+      toolName: 'issue_search',
+      args: { targets: ['issue'] },
+      policy: { workspaceRoot },
+    });
+    expect(search.behavior).toBe('allow');
+    expect(search.descriptor?.actionKind).toBe('agent.issue.search');
+
+    const create = evaluateAgentToolPermission({
+      toolName: 'issue_create',
+      args: {
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Daily news',
+          cadence: { type: 'daily', time: '08:00' },
+          timeZone: 'UTC',
+          issueTemplate: { permissionMode: 'unattended' },
+        },
+        request: { mode: 'request' },
+      },
+      policy: { workspaceRoot },
+    });
+    expect(create.behavior).toBe('allow');
+    expect(create.descriptor?.actionKind).toBe('agent.issue.create');
+
+    const confirm = evaluateAgentToolPermission({
+      toolName: 'issue_update',
+      args: {
+        target: { type: 'recurring-issue', id: 'recurring:daily-news' },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+      },
+      policy: { workspaceRoot },
+    });
+    expect(confirm.behavior).toBe('soft_blocked');
+    if (confirm.behavior !== 'soft_blocked') throw new Error('expected issue_update confirm to require approval');
+    expect(confirm.code).toBe('agent_issue_authorized_update');
+    expect(confirm.request.title).toBe('Confirm Issue change?');
+    expect(confirm.request.target).toBe('recurring:daily-news');
+    expect(confirm.request.alwaysAllowRule).toBeUndefined();
+    expect(confirm.descriptor?.actionKind).toBe('agent.issue.update');
+
+    const start = evaluateAgentToolPermission({
+      toolName: 'agent_session_start',
+      args: {
+        issueId: 'issue:daily-news-2026-07-07',
+        request: { mode: 'request' },
+      },
+      policy: { workspaceRoot },
+    });
+    expect(start.behavior).toBe('soft_blocked');
+    if (start.behavior !== 'soft_blocked') throw new Error('expected agent_session_start to require approval');
+    expect(start.code).toBe('agent_session_start');
+    expect(start.request.title).toBe('Start Agent Session?');
+    expect(start.request.target).toBe('issue:daily-news-2026-07-07');
+    expect(start.descriptor?.platformHardBlock).toBeUndefined();
+  });
+
   test('asks before reading file paths outside the handed file scope', () => {
     const outsideRoot = '/tmp/outside-project';
     const cases = [
