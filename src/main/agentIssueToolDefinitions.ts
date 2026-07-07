@@ -49,6 +49,19 @@ function isDeleteOrArchive(input: unknown): boolean {
   return change?.type === 'delete' || change?.type === 'archive';
 }
 
+function issueUpdateRequiresRuntimeAuthorization(input: unknown): boolean {
+  if (!hasRequestMode(input, 'request')) return false;
+  if (typeof input !== 'object' || input === null || !('change' in input)) return false;
+  const change = (input as { change?: { type?: unknown; patch?: Record<string, unknown> } }).change;
+  if (!change) return false;
+  if (['confirm', 'delete', 'archive', 'pause', 'resume', 'skip-next'].includes(String(change.type))) return true;
+  if (change.type !== 'patch' || !change.patch) return false;
+  return 'trigger' in change.patch
+    || 'permissionMode' in change.patch
+    || 'executionPolicy' in change.patch
+    || 'issueTemplate' in change.patch;
+}
+
 export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] = ([
   {
     name: 'issue_search',
@@ -87,7 +100,7 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => false,
     isDestructive: () => false,
-    requiresRuntimeAuthorization: (input) => hasRequestMode(input, 'request'),
+    requiresRuntimeAuthorization: () => false,
   },
   {
     name: 'issue_update',
@@ -100,7 +113,7 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => false,
     isDestructive: isDeleteOrArchive,
-    requiresRuntimeAuthorization: (input) => hasRequestMode(input, 'request'),
+    requiresRuntimeAuthorization: issueUpdateRequiresRuntimeAuthorization,
   },
   {
     name: 'agent_session_start',

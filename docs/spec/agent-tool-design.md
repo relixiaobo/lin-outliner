@@ -94,6 +94,10 @@ Run-first product surface:
   authorization classifier in one place;
 - `src/main/agentIssueTools.ts` adapts those definitions to the existing
   `ToolEnvelope` result format behind an explicit `AgentIssueToolRuntime`;
+- `src/main/agentIssueRuntime.ts` wraps the store as an
+  `AgentIssueToolRuntime` and applies runtime-owned authorization capability
+  checks before confirmation, execution-enabling updates, Agent Session starts,
+  messages, or stops;
 - `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
   Sessions, and Activity in `issue-manager.json`, including draft creation,
   parent/sub-issue links, revision conflicts, session message/stop Activity,
