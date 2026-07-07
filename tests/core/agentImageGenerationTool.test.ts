@@ -1,19 +1,17 @@
-import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
-import type { AgentPayloadRef } from '../../src/core/agentEventLog';
 import {
   createGenerateImageTool,
-  generateImagePayloadsFromDetails,
   type AgentImageGenerationRuntime,
   type GenerateImageData,
 } from '../../src/main/agentImageGenerationTool';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 
 const ONE_PIXEL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==';
+const GENERATED_IMAGE_PATH = '/tmp/tenon/generated/image-0.png';
 
 describe('generate_image tool', () => {
-  test('returns image content to the model and payload refs in details', async () => {
-    const writtenPayloads: AgentPayloadRef[] = [];
+  test('returns generated image paths without embedding image bytes in the tool result', async () => {
+    const writtenPaths: string[] = [];
     const runtime: AgentImageGenerationRuntime = {
       listModels: async () => [{
         providerId: 'openai',
@@ -23,21 +21,11 @@ describe('generate_image tool', () => {
         output: ['image'],
       }],
       getActiveProviderId: async () => 'openai',
-      readPayloadImage: async () => { throw new Error('not used'); },
       readLocalImage: async () => { throw new Error('not used'); },
-      writeGeneratedImage: async ({ index, data, mimeType }) => {
-        const payload: AgentPayloadRef = {
-          kind: 'payload_ref',
-          id: `payload-${index}`,
-          storage: 'file',
-          mimeType,
-          byteLength: data.byteLength,
-          sha256: createHash('sha256').update(data).digest('hex'),
-          role: 'tool_output',
-          summary: 'Generated image',
-        };
-        writtenPayloads.push(payload);
-        return payload;
+      writeGeneratedImage: async ({ index }) => {
+        const path = `/tmp/tenon/generated/image-${index}.png`;
+        writtenPaths.push(path);
+        return { path };
       },
       generateImages: async ({ modelId }) => ({
         api: 'openai-images',
@@ -59,27 +47,27 @@ describe('generate_image tool', () => {
     expect(details.data?.modelId).toBe('gpt-image-2');
     expect(details.data?.modelName).toBe('GPT Image 2');
     expect(details.data?.images).toHaveLength(1);
-    expect(details.data?.images[0]?.payload.id).toBe('payload-0');
-    expect(writtenPayloads).toHaveLength(1);
+    expect(details.data?.images[0]?.path).toBe('/tmp/tenon/generated/image-0.png');
+    expect(writtenPaths).toEqual(['/tmp/tenon/generated/image-0.png']);
 
     const text = result.content.find((part) => part.type === 'text');
     const image = result.content.find((part) => part.type === 'image');
-    expect(image).toMatchObject({ type: 'image', mimeType: 'image/png' });
+    expect(image).toBeUndefined();
     if (!text || text.type !== 'text') throw new Error('Expected text result');
     expect(text.text).not.toContain(ONE_PIXEL_PNG_BASE64);
     expect(JSON.parse(text.text)).toEqual({
       ok: true,
       data: {
         images: [{
-          payloadId: 'payload-0',
+          path: '/tmp/tenon/generated/image-0.png',
           mimeType: 'image/png',
           byteLength: Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64').byteLength,
           width: 1,
           height: 1,
         }],
       },
+      instructions: 'Use Markdown image syntax such as ![description](</absolute/path.png>) with the returned image paths to place images in the final answer when the user should see them.',
     });
-    expect(generateImagePayloadsFromDetails(details)?.map((payload) => payload.id)).toEqual(['payload-0']);
   });
 
   test('treats model auto as the default selection', async () => {
@@ -98,18 +86,8 @@ describe('generate_image tool', () => {
         output: ['text', 'image'],
       }],
       getActiveProviderId: async () => 'google',
-      readPayloadImage: async () => { throw new Error('not used'); },
       readLocalImage: async () => { throw new Error('not used'); },
-      writeGeneratedImage: async ({ index, data, mimeType }) => ({
-        kind: 'payload_ref',
-        id: `payload-${index}`,
-        storage: 'file',
-        mimeType,
-        byteLength: data.byteLength,
-        sha256: createHash('sha256').update(data).digest('hex'),
-        role: 'tool_output',
-        summary: 'Generated image',
-      }),
+      writeGeneratedImage: async () => ({ path: GENERATED_IMAGE_PATH }),
       generateImages: async ({ providerId, modelId }) => ({
         api: `${providerId}-images`,
         provider: providerId,
@@ -146,18 +124,8 @@ describe('generate_image tool', () => {
       }],
       getActiveProviderId: async () => 'openai',
       getDefaultModel: async () => 'google/gemini-3.1-flash-image',
-      readPayloadImage: async () => { throw new Error('not used'); },
       readLocalImage: async () => { throw new Error('not used'); },
-      writeGeneratedImage: async ({ index, data, mimeType }) => ({
-        kind: 'payload_ref',
-        id: `payload-${index}`,
-        storage: 'file',
-        mimeType,
-        byteLength: data.byteLength,
-        sha256: createHash('sha256').update(data).digest('hex'),
-        role: 'tool_output',
-        summary: 'Generated image',
-      }),
+      writeGeneratedImage: async () => ({ path: GENERATED_IMAGE_PATH }),
       generateImages: async ({ providerId, modelId }) => ({
         api: `${providerId}-images`,
         provider: providerId,
@@ -188,18 +156,8 @@ describe('generate_image tool', () => {
       }],
       getActiveProviderId: async () => 'openai',
       getDefaultModel: async () => 'google/gemini-3.1-flash-image',
-      readPayloadImage: async () => { throw new Error('not used'); },
       readLocalImage: async () => { throw new Error('not used'); },
-      writeGeneratedImage: async ({ index, data, mimeType }) => ({
-        kind: 'payload_ref',
-        id: `payload-${index}`,
-        storage: 'file',
-        mimeType,
-        byteLength: data.byteLength,
-        sha256: createHash('sha256').update(data).digest('hex'),
-        role: 'tool_output',
-        summary: 'Generated image',
-      }),
+      writeGeneratedImage: async () => ({ path: GENERATED_IMAGE_PATH }),
       generateImages: async ({ providerId, modelId }) => ({
         api: `${providerId}-images`,
         provider: providerId,
@@ -238,7 +196,6 @@ describe('generate_image tool', () => {
             }
           : null
       ),
-      readPayloadImage: async () => { throw new Error('not used'); },
       readLocalImage: async () => { throw new Error('not used'); },
       writeGeneratedImage: async () => { throw new Error('not used'); },
       generateImages: async () => { throw new Error('provider should not be called'); },
@@ -264,7 +221,6 @@ describe('generate_image tool', () => {
         output: ['image'],
       }],
       getActiveProviderId: async () => 'openai',
-      readPayloadImage: async () => { throw new Error('not used'); },
       readLocalImage: async () => { throw new Error('not used'); },
       writeGeneratedImage: async () => { throw new Error('not used'); },
       generateImages: async ({ modelId }) => ({

@@ -1,10 +1,8 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { AssistantImages, ImagesContext, ImageContent as PiImageContent, TextContent as PiTextContent } from '@earendil-works/pi-ai';
-import type { AgentPayloadRef } from '../core/agentEventLog';
 import {
   agentToolResult,
   errorEnvelope,
-  isToolEnvelope,
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
@@ -12,7 +10,7 @@ import { readAgentImageDimensions } from './agentLocalTools';
 
 export const GENERATE_IMAGE_TOOL_NAME = 'generate_image';
 
-const MAX_IMAGE_REFS = 4;
+const MAX_IMAGE_PATHS = 4;
 const MAX_GENERATED_IMAGES = 4;
 const MAX_PROMPT_CHARS = 32_000;
 
@@ -39,7 +37,6 @@ export interface AgentImageGenerationRuntime {
     modelId: string;
     options: GenerateImageRuntimeOptions;
   }): AgentImageGenerationOptionValidationIssue | null;
-  readPayloadImage(input: { payloadId: string; runId?: string }): Promise<AgentImageGenerationInputImage>;
   readLocalImage(input: { filePath: string }): Promise<AgentImageGenerationInputImage>;
   writeGeneratedImage(input: {
     toolCallId: string;
@@ -49,7 +46,7 @@ export interface AgentImageGenerationRuntime {
     data: Buffer;
     mimeType: string;
     prompt: string;
-  }): Promise<AgentPayloadRef>;
+  }): Promise<{ path: string }>;
   generateImages(input: {
     providerId: string;
     modelId: string;
@@ -85,7 +82,7 @@ export interface GenerateImageData {
 }
 
 export interface GeneratedImageResult {
-  payload: AgentPayloadRef;
+  path: string;
   mimeType: string;
   byteLength: number;
   width?: number;
@@ -101,12 +98,8 @@ interface NormalizedGenerateImageParams {
   quality?: string;
   background?: string;
   outputFormat?: string;
-  imageRefs: NormalizedImageRef[];
+  imagePaths: string[];
 }
-
-type NormalizedImageRef =
-  | { kind: 'path'; filePath: string }
-  | { kind: 'payload'; payloadId: string; runId?: string };
 
 export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): AgentTool<any, ToolEnvelope<GenerateImageData>> {
   return {
@@ -115,7 +108,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
     description: [
       'Generate or edit raster images with an enabled image-capable provider.',
       'Use this for original bitmap assets such as illustrations, photos, mockups, textures, and UI artwork. Do not use it for web image search or file conversion.',
-      'Omit model to use the best enabled image model. Omit image_refs for text-to-image; pass image_refs only when editing or transforming existing images.',
+      'Omit model to use the best enabled image model. Omit image_paths for text-to-image; pass image_paths only when editing or transforming existing local images. When the user should see generated images, place the returned paths in the final answer with Markdown image syntax, for example ![description](</absolute/path.png>).',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -133,28 +126,11 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           minLength: 1,
           description: 'Optional image model id. Use a bare model id when unambiguous, or provider:model / provider/model to select a provider explicitly. Omit or pass auto to use the default enabled image model.',
         },
-        image_refs: {
+        image_paths: {
           type: 'array',
-          maxItems: MAX_IMAGE_REFS,
-          description: 'Optional source images for edits or transformations. Each item may be a workspace path, payload:<id>, { path }, or { payload_id, run_id }. Omit for text-to-image.',
-          items: {
-            anyOf: [
-              { type: 'string', minLength: 1, description: 'Workspace file path or payload:<id> image reference.' },
-              {
-                type: 'object',
-                additionalProperties: false,
-                anyOf: [
-                  { required: ['path'] },
-                  { required: ['payload_id'] },
-                ],
-                properties: {
-                  path: { type: 'string', minLength: 1, description: 'Workspace image path to read and send as edit input.' },
-                  payload_id: { type: 'string', minLength: 1, description: 'Agent payload id for a previously stored image.' },
-                  run_id: { type: 'string', minLength: 1, description: 'Optional run id when reading an image payload from another run.' },
-                },
-              },
-            ],
-          },
+          maxItems: MAX_IMAGE_PATHS,
+          description: 'Optional local image paths for edits or transformations. Use absolute paths returned by earlier tool results or workspace-relative paths for user files. Omit for text-to-image.',
+          items: { type: 'string', minLength: 1, description: 'Readable local image path to use as an edit/reference input.' },
         },
         count: {
           type: 'integer',
@@ -232,10 +208,10 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           }));
         }
 
-        const inputImages = await Promise.all(params.imageRefs.map((ref) => resolveImageRef(runtime, ref)));
+        const inputImages = await Promise.all(params.imagePaths.map((filePath) => runtime.readLocalImage({ filePath })));
         if (inputImages.length > 0 && !selected.input.includes('image')) {
           return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, 'model_does_not_accept_images', `${selected.name} does not accept input images.`, {
-            instructions: 'Use a model whose capability lists image input, or remove image_refs.',
+            instructions: 'Use a model whose capability lists image input, or remove image_paths.',
             metrics: { durationMs: elapsed(startedAt) },
           }));
         }
@@ -283,7 +259,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         const images = await Promise.all(imageOutputs.map(async (image, index): Promise<GeneratedImageResult> => {
           const data = Buffer.from(stripDataUrlPrefix(image.data), 'base64');
           const dimensions = readAgentImageDimensions(data, image.mimeType);
-          const payload = await runtime.writeGeneratedImage({
+          const saved = await runtime.writeGeneratedImage({
             toolCallId,
             index,
             providerId: selected.providerId,
@@ -293,7 +269,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
             prompt: params.prompt,
           });
           return {
-            payload: dimensions ? { ...payload, display: dimensions } : payload,
+            path: saved.path,
             mimeType: image.mimeType,
             byteLength: data.byteLength,
             ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
@@ -310,13 +286,13 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         };
         return agentToolResult(
           successEnvelope(GENERATE_IMAGE_TOOL_NAME, data, {
+            instructions: 'Use Markdown image syntax such as ![description](</absolute/path.png>) with the returned image paths to place images in the final answer when the user should see them.',
             metrics: {
               durationMs: elapsed(startedAt),
               outputBytes: images.reduce((total, image) => total + image.byteLength, 0),
             },
           }),
           modelVisibleGenerateImageData(data),
-          imageOutputs,
         );
       } catch (error) {
         return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, 'image_generation_failed', errorMessage(error), {
@@ -342,16 +318,6 @@ function isImageRateLimitError(message: string): boolean {
   return /\\b429\\b|rate.?limit|usage_limit|quota|weekly_limit/i.test(message);
 }
 
-export function generateImagePayloadsFromDetails(details: unknown): AgentPayloadRef[] | null {
-  if (!isToolEnvelope(details) || details.tool !== GENERATE_IMAGE_TOOL_NAME || !details.ok) return null;
-  const data = details.data as { images?: unknown } | undefined;
-  if (!data || !Array.isArray(data.images)) return null;
-  const payloads = data.images
-    .map((image) => image && typeof image === 'object' ? (image as { payload?: unknown }).payload : undefined)
-    .filter(isAgentPayloadRef);
-  return payloads.length > 0 ? payloads : null;
-}
-
 function normalizeGenerateImageParams(rawParams: unknown):
   | { ok: true; params: NormalizedGenerateImageParams }
   | { ok: false; code: string; message: string } {
@@ -363,8 +329,8 @@ function normalizeGenerateImageParams(rawParams: unknown):
   if (prompt.length > MAX_PROMPT_CHARS) {
     return { ok: false, code: 'prompt_too_large', message: `Prompt is too large. Maximum ${MAX_PROMPT_CHARS} characters.` };
   }
-  const imageRefs = normalizeImageRefs(record.image_refs);
-  if (!imageRefs.ok) return imageRefs;
+  const imagePaths = normalizeImagePaths(record.image_paths);
+  if (!imagePaths.ok) return imagePaths;
   return {
     ok: true,
     params: {
@@ -376,44 +342,28 @@ function normalizeGenerateImageParams(rawParams: unknown):
       quality: stringParam(record.quality),
       background: stringParam(record.background),
       outputFormat: stringParam(record.output_format),
-      imageRefs: imageRefs.refs,
+      imagePaths: imagePaths.paths,
     },
   };
 }
 
-function normalizeImageRefs(raw: unknown):
-  | { ok: true; refs: NormalizedImageRef[] }
+function normalizeImagePaths(raw: unknown):
+  | { ok: true; paths: string[] }
   | { ok: false; code: string; message: string } {
-  if (raw === undefined || raw === null) return { ok: true, refs: [] };
-  if (!Array.isArray(raw)) return { ok: false, code: 'invalid_image_refs', message: 'image_refs must be an array.' };
-  if (raw.length > MAX_IMAGE_REFS) return { ok: false, code: 'too_many_image_refs', message: `At most ${MAX_IMAGE_REFS} input images are supported.` };
-  const refs: NormalizedImageRef[] = [];
+  if (raw === undefined || raw === null) return { ok: true, paths: [] };
+  if (!Array.isArray(raw)) return { ok: false, code: 'invalid_image_paths', message: 'image_paths must be an array.' };
+  if (raw.length > MAX_IMAGE_PATHS) return { ok: false, code: 'too_many_image_paths', message: `At most ${MAX_IMAGE_PATHS} input images are supported.` };
+  const paths: string[] = [];
   for (const item of raw) {
     if (typeof item === 'string') {
       const value = item.trim();
       if (!value) continue;
-      refs.push(value.startsWith('payload:') ? { kind: 'payload', payloadId: value.slice('payload:'.length).trim() } : { kind: 'path', filePath: value });
+      paths.push(value);
       continue;
     }
-    if (item && typeof item === 'object' && !Array.isArray(item)) {
-      const record = item as Record<string, unknown>;
-      const filePath = stringParam(record.path);
-      const payloadId = stringParam(record.payload_id);
-      if (filePath && payloadId) return { ok: false, code: 'invalid_image_ref', message: 'Each image_ref may specify either path or payload_id, not both.' };
-      if (filePath) refs.push({ kind: 'path', filePath });
-      else if (payloadId) refs.push({ kind: 'payload', payloadId, runId: stringParam(record.run_id) });
-      else return { ok: false, code: 'invalid_image_ref', message: 'Each image_ref object needs path or payload_id.' };
-      continue;
-    }
-    return { ok: false, code: 'invalid_image_ref', message: 'Each image_ref must be a path string, payload:<id>, or object.' };
+    return { ok: false, code: 'invalid_image_path', message: 'Each image_paths item must be a local image path string.' };
   }
-  return { ok: true, refs };
-}
-
-async function resolveImageRef(runtime: AgentImageGenerationRuntime, ref: NormalizedImageRef): Promise<AgentImageGenerationInputImage> {
-  return ref.kind === 'payload'
-    ? runtime.readPayloadImage({ payloadId: ref.payloadId, runId: ref.runId })
-    : runtime.readLocalImage({ filePath: ref.filePath });
+  return { ok: true, paths };
 }
 
 function selectImageModel(
@@ -459,24 +409,13 @@ function noImageModelMessage(requested: string | undefined): string {
 function modelVisibleGenerateImageData(data: GenerateImageData) {
   return {
     images: data.images.map((image) => ({
-      payloadId: image.payload.id,
+      path: image.path,
       mimeType: image.mimeType,
       byteLength: image.byteLength,
       ...(image.width && image.height ? { width: image.width, height: image.height } : {}),
     })),
     ...(data.text.length ? { text: data.text } : {}),
   };
-}
-
-function isAgentPayloadRef(value: unknown): value is AgentPayloadRef {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<AgentPayloadRef>;
-  return candidate.kind === 'payload_ref'
-    && typeof candidate.id === 'string'
-    && candidate.storage === 'file'
-    && typeof candidate.mimeType === 'string'
-    && typeof candidate.byteLength === 'number'
-    && typeof candidate.sha256 === 'string';
 }
 
 function stringParam(value: unknown): string | undefined {

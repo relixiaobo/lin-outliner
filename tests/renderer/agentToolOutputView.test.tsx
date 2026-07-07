@@ -4,7 +4,6 @@ import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { AgentToolResultWithPayloads, ToolCall } from '../../src/core/agentTypes';
-import type { AgentPayloadRef } from '../../src/core/agentEventLog';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { PREVIEW_TARGET_OPEN_EVENT, type PreviewTargetOpenDetail } from '../../src/renderer/ui/preview/previewEvents';
 
@@ -140,18 +139,19 @@ describe('agent tool output view', () => {
     }]);
   });
 
-  test('renders generated image payloads as inline previews', async () => {
-    const payload: AgentPayloadRef = {
-      kind: 'payload_ref',
-      id: 'tool-output-generate-image-0',
-      storage: 'file',
-      mimeType: 'image/png',
-      byteLength: 68,
-      sha256: 'b'.repeat(64),
-      role: 'tool_output',
-      scope: { type: 'run', conversationId: 'conversation-1', runId: 'run-1' },
-      summary: 'Generated puppy image',
-      display: { width: 1, height: 1 },
+  test('renders generated image paths as inline previews', async () => {
+    const generatedPath = '/tmp/tenon/generated/puppy.png';
+    const modelVisible = {
+      ok: true,
+      data: {
+        images: [{
+          path: generatedPath,
+          mimeType: 'image/png',
+          byteLength: 68,
+          width: 1,
+          height: 1,
+        }],
+      },
     };
     const result: AgentToolResultWithPayloads = {
       role: 'toolResult',
@@ -159,8 +159,7 @@ describe('agent tool output view', () => {
       toolName: 'generate_image',
       timestamp: 1,
       isError: false,
-      content: [{ type: 'text', text: 'Generated puppy image' }],
-      payloadRefs: [{ contentIndex: 0, payload, label: 'Generated puppy image' }],
+      content: [{ type: 'text', text: JSON.stringify(modelVisible, null, 2) }],
       details: {
         ok: true,
         tool: 'generate_image',
@@ -170,6 +169,7 @@ describe('agent tool output view', () => {
           providerId: 'openai',
           modelId: 'gpt-image-2',
           modelName: 'GPT Image 2',
+          images: modelVisible.data.images,
         },
       },
     };
@@ -218,7 +218,8 @@ describe('agent tool output view', () => {
 
     const image = rendered.container.querySelector('.agent-tool-image-preview img');
     expect(image?.getAttribute('src')).toBe('blob:generated-image');
-    expect(image?.getAttribute('alt')).toBe('Generated puppy image');
+    expect(image?.getAttribute('alt')).toBe('puppy.png');
+    expect(rendered.container.textContent).not.toContain(generatedPath);
 
     const previewButton = rendered.container.querySelector('.agent-tool-image-preview');
     if (!(previewButton instanceof rendered.window.HTMLButtonElement)) throw new Error('Image preview button not found');
@@ -227,11 +228,10 @@ describe('agent tool output view', () => {
     });
     expect(opened).toEqual([{
       target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        runId: 'run-1',
-        payloadId: payload.id,
-        label: 'Generated puppy image',
+        kind: 'local-file',
+        path: generatedPath,
+        entryKind: 'file',
+        label: 'puppy.png',
       },
     }]);
   });

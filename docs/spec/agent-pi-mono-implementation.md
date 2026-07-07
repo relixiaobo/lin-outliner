@@ -873,7 +873,7 @@ These are the active core tool surface.
 | `bash_stop` | bash stop role | Yes | Default allow unless blocked | Stop background commands created by `bash`. |
 | `web_search` | web search role | Optional | Default allow unless host/offline policy blocks | Search the web for current external information. |
 | `web_fetch` | web fetch role | Optional | Default allow unless host/offline policy blocks | Fetch and read a specific URL with pagination or snippet search. |
-| `generate_image` | image generation role | Yes | Default allow unless blocked | Generate or edit raster images through enabled image-capable providers and store image payloads. |
+| `generate_image` | image generation role | Yes | Default allow unless blocked | Generate or edit raster images through enabled image-capable providers and store generated image files. |
 
 P0 intentionally follows nodex's compact outliner surface instead of exposing
 one tool per UI command. Tag, field, reference, move, and merge behavior
@@ -998,12 +998,15 @@ Each command should return:
 - optional `operation` with `undoGroupId` for document mutations
 - optional `requiresApproval` for deferred execution
 
-`generate_image` returns normal tool-envelope details plus payload refs for each
+`generate_image` returns normal tool-envelope details plus local paths for each
 generated image. Runtime details keep the actual provider/model used for UI and
-debug display, but the model-visible JSON contains only payload ids and file
-metadata needed for follow-up work. The raw image bytes are written through the
-agent payload store and are not copied into model-visible JSON or renderer debug
-text.
+debug display, but the model-visible JSON contains only paths and file metadata
+needed for follow-up work. The raw image bytes are written to the app-owned
+generated-image directory under the agent scratch root and are not copied into
+model-visible JSON, renderer debug text, or extra image content blocks. When the
+user should see the images, the assistant places those paths in the final
+response with Markdown image syntax; the renderer loads the bytes through the
+trusted local preview bridge.
 
 TypeScript should validate paths, workspace boundaries, command timeouts, output size,
 and mutation legality. TypeScript validation is useful for fast feedback, but it

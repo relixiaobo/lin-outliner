@@ -26,7 +26,6 @@ describe('agent tool catalog', () => {
       imageGeneration: {
         listModels: async () => [],
         getActiveProviderId: async () => null,
-        readPayloadImage: async () => { throw new Error('not used'); },
         readLocalImage: async () => { throw new Error('not used'); },
         writeGeneratedImage: async () => { throw new Error('not used'); },
         generateImages: async () => { throw new Error('not used'); },

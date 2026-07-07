@@ -25,7 +25,7 @@ import type {
   ToolResultMessage,
 } from '@earendil-works/pi-ai';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type AgentFileAttachmentInput,
@@ -105,6 +105,7 @@ import {
   channelIncludesInDreamData,
   channelAgentMembers,
 } from '../core/agentChannel';
+import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import {
   formatChatSourceReferenceMarker,
   rewriteFileReferenceMarkerPaths,
@@ -115,7 +116,11 @@ import { normalizeConversationTitle, sanitizeConversationTitle } from '../core/a
 import { TOOL_CATALOG } from '../core/agentToolCatalog';
 import { isSystemReminderBlock, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
-import { materializeAgentLocalPath, materializePathBackedAttachment } from './agentAttachmentMaterialization';
+import {
+  AGENT_GENERATED_IMAGE_DIR,
+  materializeAgentLocalPath,
+  materializePathBackedAttachment,
+} from './agentAttachmentMaterialization';
 import { sniffMimeType } from './assetService';
 import {
   buildReferencedFilesReminder,
@@ -190,7 +195,6 @@ import {
   validateImageGenerationOptions,
 } from './piImageModels';
 import {
-  generateImagePayloadsFromDetails,
   type AgentImageGenerationRuntime,
 } from './agentImageGenerationTool';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
@@ -250,7 +254,6 @@ import {
 } from './agentPermissionEvents';
 import {
   createAgentLocalWorkspaceContext,
-  readAgentImageDimensions,
   resolveAgentLocalReadPath,
   scratchRootForWorkdir,
   setAgentLocalPermissionRoots,
@@ -4766,16 +4769,6 @@ export class AgentRuntime {
       getActiveProviderId: async () => (await this.getActiveProviderConfig().catch(() => null))?.providerId ?? null,
       getDefaultModel: async () => (await getProviderSettings()).imageGeneration.defaultModel ?? null,
       validateOptions: ({ providerId, modelId, options }) => validateImageGenerationOptions(providerId, modelId, options),
-      readPayloadImage: async ({ payloadId, runId }) => {
-        const payload = await this.previewPayload(conversationId, payloadId, runId);
-        if (!payload) throw new Error(`Image payload not found or not readable: ${payloadId}`);
-        if (!payload.mimeType.startsWith('image/')) throw new Error(`Payload is not an image: ${payloadId}`);
-        return {
-          data: await this.getEventStore().readPayload(conversationId, payload),
-          mimeType: payload.mimeType,
-          label: payload.summary ?? payload.id,
-        };
-      },
       readLocalImage: async ({ filePath }) => {
         const resolved = resolveAgentLocalReadPath(localWorkspace, filePath);
         const data = await readFile(resolved);
@@ -4787,17 +4780,18 @@ export class AgentRuntime {
           label: path.basename(resolved),
         };
       },
-      writeGeneratedImage: async ({ toolCallId, index, providerId, modelId, data, mimeType, prompt }) => (
-        this.getEventStore().writePayload(conversationId, {
-          id: `tool-output-${toolCallId}-image-${index}`,
+      writeGeneratedImage: async ({ toolCallId, index, providerId, modelId, data, mimeType, prompt }) => ({
+        path: await this.writeGeneratedImageArtifact({
           data,
+          index,
           mimeType,
+          modelId,
+          prompt,
+          providerId,
           runId: getConversation()?.activeRun?.id ?? undefined,
-          role: 'tool_output',
-          summary: summarizeGeneratedImagePayload(providerId, modelId, prompt),
-          display: readAgentImageDimensions(data, mimeType),
-        })
-      ),
+          toolCallId,
+        }),
+      }),
       generateImages: async ({ providerId, modelId, context, options }) => {
         const model = piFindImageModel(providerId, modelId);
         if (!model) throw new Error(`Unknown image model: ${providerId}:${modelId}`);
@@ -6147,16 +6141,11 @@ export class AgentRuntime {
     const actor = toolActor(message.toolName, message.toolCallId);
     const prePersisted = activeRun.toolOutputPayloads.get(message.toolCallId);
     activeRun.toolOutputPayloads.delete(message.toolCallId);
-    const generatedImagePayloads = prePersisted ? null : generateImagePayloadsFromDetails(message.details);
     const persisted = prePersisted
       ? {
           content: [{ type: 'payload_ref', payload: prePersisted.payload, label: prePersisted.label }] satisfies AgentPersistedContent[],
           payloads: [prePersisted.payload],
         }
-      : generatedImagePayloads
-        ? await this.persistGeneratedImageToolResultContent(conversationId, message, generatedImagePayloads, {
-            runId: this.activeRunId(conversation) ?? undefined,
-          })
       : await this.persistPiUserContent(conversationId, message.content, {
           imageSummary: `${message.toolName} image output`,
           runId: this.activeRunId(conversation) ?? undefined,
@@ -6198,38 +6187,6 @@ export class AgentRuntime {
     // The tool result is now the run's tail: the next continuation segment
     // chains onto it, keeping this run's spine linear (see `lastMessageId`).
     activeRun.lastMessageId = toolResultMessageId;
-  }
-
-  private async persistGeneratedImageToolResultContent(
-    conversationId: string,
-    message: ToolResultMessage,
-    payloads: AgentPayloadRef[],
-    options: { runId?: string },
-  ): Promise<{ content: AgentPersistedContent[]; payloads: AgentPayloadRef[] }> {
-    const content: AgentPersistedContent[] = [];
-    const textPayloads: AgentPayloadRef[] = [];
-    const textParts = message.content.filter((part): part is PiTextContent => part.type === 'text');
-    for (const [index, part] of textParts.entries()) {
-      const saved = await this.persistTextContent(conversationId, part.text, {
-        textPayloadRole: 'tool_output',
-        textSummary: `${message.toolName} output`,
-        textPayloadId: textParts.length <= 1
-          ? `tool-output-${message.toolCallId}`
-          : `tool-output-${message.toolCallId}-${index}`,
-        runId: options.runId,
-      });
-      content.push(saved.content);
-      if (saved.payload) textPayloads.push(saved.payload);
-    }
-    content.push(...payloads.map((payload): AgentPersistedContent => ({
-      type: 'image',
-      imageRef: payload,
-      alt: payload.summary ?? `${message.toolName} image output`,
-    })));
-    return {
-      content: content.length > 0 ? content : textPersistedContent(''),
-      payloads: [...textPayloads, ...payloads],
-    };
   }
 
   private async appendToolCallEventsFromAssistant(conversationId: string, conversation: AgentConversationState, message: AssistantMessage) {
@@ -6580,6 +6537,32 @@ export class AgentRuntime {
   // with only a `localFileRoot` (e.g. in tests) keeps the legacy in-workdir scratch layout.
   private scratchRoot() {
     return scratchRootForWorkdir(this.localFileRoot(), this.options.scratchRoot);
+  }
+
+  private async writeGeneratedImageArtifact(
+    input: {
+      data: Buffer;
+      index: number;
+      mimeType: string;
+      modelId: string;
+      prompt: string;
+      providerId: string;
+      runId?: string;
+      toolCallId: string;
+    },
+  ): Promise<string> {
+    const runPart = safeAttachmentFileName(input.runId || 'conversation');
+    const dir = path.join(this.scratchRoot(), AGENT_GENERATED_IMAGE_DIR, runPart);
+    await mkdir(dir, { recursive: true });
+    const promptPart = safeAttachmentFileName(input.prompt.slice(0, 48) || 'generated-image');
+    const providerPart = safeAttachmentFileName(`${input.providerId}-${input.modelId}`.slice(0, 64));
+    const toolPart = safeAttachmentFileName(input.toolCallId.slice(0, 32));
+    const filePath = path.join(
+      dir,
+      `${Date.now()}-${toolPart}-${input.index}-${providerPart}-${promptPart}${generatedImageExtension(input.mimeType)}`,
+    );
+    await writeFile(filePath, input.data);
+    return filePath;
   }
 
   private async materializeFileAttachments(attachments: AgentMessageAttachmentInput[]): Promise<{
@@ -7258,9 +7241,12 @@ function imageProviderPriorityIndex(priority: readonly string[], providerId: str
   return index >= 0 ? index : priority.length;
 }
 
-function summarizeGeneratedImagePayload(providerId: string, modelId: string, prompt: string): string {
-  const preview = prompt.length > 80 ? `${prompt.slice(0, 77)}...` : prompt;
-  return `Generated image from ${providerId}:${modelId}${preview ? ` - ${preview}` : ''}`;
+function generatedImageExtension(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'image/jpeg') return '.jpg';
+  if (normalized === 'image/webp') return '.webp';
+  if (normalized === 'image/gif') return '.gif';
+  return '.png';
 }
 
 function payloadScopeMatchesPreviewTarget(

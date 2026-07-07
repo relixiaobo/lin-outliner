@@ -67,7 +67,7 @@ surface.
 | `run_steer` | agent | No | No | Send soft execution guidance to a live Run without changing its contract. |
 | `run_amend` | agent | No document mutation | No | Hard-amend a Run's objective, criteria, or budget; invalidates verifier conclusions. |
 | `run_stop` | agent | No document mutation | No | Stop a live same-session Run. |
-| `generate_image` | agent | Creates payloads | Usually yes | Generate or edit raster images through enabled image-capable providers. |
+| `generate_image` | agent | Creates image files | Usually yes | Generate or edit raster images through enabled image-capable providers. |
 
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
@@ -257,7 +257,7 @@ fresh request.
 `generate_image` is a run-scoped image generation and image-editing tool. It is
 the product surface for generated raster images; Tenon may use pi-ai
 `ImagesModels` internally, but the agent sees a Tenon-owned tool with Tenon-owned
-permissions and payload persistence.
+permissions and local-file persistence.
 
 The tool is available only when the runtime has at least one enabled,
 credentialed image-capable provider. Provider records do not store a default
@@ -274,11 +274,7 @@ Input:
 interface GenerateImageInput {
   prompt: string; // required visual generation/edit instruction
   model?: string; // model id, provider:model, provider/model, or auto; omitted = auto
-  image_refs?: Array<
-    | string // workspace path or payload:<id>
-    | { path: string }
-    | { payload_id: string; run_id?: string } // run_id is optional for cross-run payload reads
-  >; // omitted = text-to-image
+  image_paths?: string[]; // local image paths for edits/references; omitted = text-to-image
   count?: number; // default 1, capped at 4
   size?: string; // provider-specific; omitted = provider default
   aspect_ratio?: string; // provider-specific; omitted = provider default
@@ -291,9 +287,9 @@ interface GenerateImageInput {
 Validation is TypeScript-owned:
 
 - `prompt` is required, non-empty, and capped.
-- `image_refs` are capped and resolve through either the local file boundary or
-  existing agent payload reads. The selected model must advertise image input
-  before references are sent.
+- `image_paths` are capped and resolve through the same local file boundary used
+  by file tools and previewable agent scratch files. The selected model must
+  advertise image input before references are sent.
 - A provider-qualified model selects that exact provider/model pair. An
   unqualified model id may be used only when the enabled image model catalog can
   resolve it deterministically.
@@ -313,15 +309,29 @@ Validation is TypeScript-owned:
   retries so one tool call maps to one provider request unless the user or agent
   explicitly tries again.
 
-Generated images are stored as normal agent payload files before the tool result
-is persisted. The model-visible JSON includes only payload ids, mime types, byte
-length, and dimensions when known; it does not include provider/model execution
-metadata or base64 image bytes. The complete runtime details retain
-`providerId`, `modelId`, and `modelName` for UI/debug display. The tool result
-also returns image content blocks to the pi-agent loop so the same turn can
-inspect or use the generated image without re-reading debug payloads. The
-renderer displays generated image payloads inline as lazy-loaded previews; opening
-the preview targets the underlying agent payload.
+Generated images are written to an app-owned local generated-image directory
+under the agent scratch root, with one path returned per generated image. The
+model-visible JSON includes only local paths, mime types, byte lengths, and
+dimensions when known; it does not include provider/model execution metadata or
+base64 image bytes. The complete runtime details retain `providerId`, `modelId`,
+and `modelName` for UI/debug display. The tool result does not embed raw image
+bytes or image content blocks; follow-up edits pass the returned paths back
+through `image_paths`, and explicit inspection can use the normal local file
+tools. The renderer displays generated image paths inline as lazy-loaded previews
+through the local preview byte reader; opening the preview targets the returned
+local-file path.
+
+When the user should see generated images in the final response, the assistant
+places the returned paths with Markdown image syntax, preferably the
+angle-bracket form for filesystem paths:
+
+```md
+![short description](</absolute/path/to/generated-image.png>)
+```
+
+The Markdown position is authoritative for mixed text/image answers. The image
+renderer still loads bytes through the trusted local preview bridge rather than
+directly loading `file:` URLs.
 
 Runtime details:
 
@@ -331,7 +341,7 @@ interface GenerateImageData {
   modelId: string;
   modelName: string;
   images: Array<{
-    payload: AgentPayloadRef;
+    path: string;
     mimeType: string;
     byteLength: number;
     width?: number;
@@ -347,7 +357,7 @@ Model-visible `data`:
 ```ts
 interface GenerateImageVisibleData {
   images: Array<{
-    payloadId: string;
+    path: string;
     mimeType: string;
     byteLength: number;
     width?: number;
@@ -357,10 +367,9 @@ interface GenerateImageVisibleData {
 }
 ```
 
-`generate_image` does not automatically insert the image into the outline or
-write a local file outside the payload store. If the user asks for a file or
-document insertion, the agent must use the normal file or node tools after the
-image result exists.
+`generate_image` does not automatically insert the image into the outline. If
+the user asks for a file or document insertion, the agent must use the normal
+file or node tools after the image result exists.
 
 ## Import Pack CLI/API
 
@@ -3014,7 +3023,7 @@ coverage maps as follows:
 | `bash_stop` | Implemented TypeScript background task stop command scoped to Lin-created bash tasks. |
 | `web_search` | Needed web search adapter: provider-backed search or embedded-browser SERP extraction, host permission scope, rate limiting, structured hints. |
 | `web_fetch` | Needed URL fetch adapter: TypeScript HTTP and/or embedded browser session fetch, HTML-to-markdown extraction, pagination, find mode, structured hints. |
-| `generate_image` | Implemented TypeScript image-generation adapter that resolves enabled image-capable providers, writes generated image payloads, and returns model-visible payload refs plus image content blocks. |
+| `generate_image` | Implemented TypeScript image-generation adapter that resolves enabled image-capable providers, writes generated image files, and returns model-visible local paths. |
 
 Lin should prefer adding semantic TypeScript core commands where the current command
 set is too UI-shaped. For example, semantic target/source merge is better for

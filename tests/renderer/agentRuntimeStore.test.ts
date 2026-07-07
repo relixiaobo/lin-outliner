@@ -1098,7 +1098,7 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('preserves generated image payload refs for renderer preview loading', async () => {
+  test('preserves persisted image payload refs for renderer preview loading', async () => {
     const payload: AgentPayloadRef = {
       kind: 'payload_ref',
       id: 'tool-output-tool-image-image-0',

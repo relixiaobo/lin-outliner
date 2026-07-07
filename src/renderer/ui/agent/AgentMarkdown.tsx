@@ -32,6 +32,8 @@ import {
 import { AgentChatSourceReference } from './AgentChatSourceReference';
 import { ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
 import { openUrlPreviewFromClick } from '../preview/urlPreviewRouting';
+import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
+import { usePreviewObjectUrl } from '../preview/usePreviewObjectUrl';
 
 interface AgentMarkdownProps {
   index?: DocumentIndex;
@@ -125,6 +127,72 @@ function reactNodeText(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node);
   if (Array.isArray(node)) return node.map(reactNodeText).join('');
   return '';
+}
+
+function markdownLocalImageFromSrc(src: string | undefined): { path: string; label: string } | null {
+  const fileRef = localFileReferenceFromHref(src);
+  if (fileRef?.entryKind === 'file') {
+    return { path: fileRef.path, label: basenameForPath(fileRef.path) || fileRef.path };
+  }
+  const trimmed = src?.trim();
+  if (!trimmed || !trimmed.startsWith('/')) return null;
+  return { path: trimmed, label: basenameForPath(trimmed) || trimmed };
+}
+
+function AgentMarkdownImage({ alt, src, title }: ComponentPropsWithoutRef<'img'>) {
+  const t = useT();
+  const localImage = markdownLocalImageFromSrc(src);
+  const localPath = localImage?.path ?? null;
+  const localLabel = localImage?.label ?? null;
+  const label = alt || localLabel || src || t.agent.toolCall.storedOutput;
+  const target = useMemo(() => (
+    localPath
+      ? {
+          kind: 'local-file' as const,
+          path: localPath,
+          entryKind: 'file' as const,
+          label,
+        }
+      : null
+  ), [label, localPath]);
+  const preview = usePreviewObjectUrl(target, { enabled: Boolean(target) });
+
+  if (!localImage || !target) {
+    return (
+      <a
+        href={src}
+        onClick={(event) => {
+          if (!src) return;
+          if (!openUrlPreviewFromClick(event.nativeEvent, src, label)) return;
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        rel="noreferrer"
+        target="_blank"
+        title={title}
+      >
+        {label}
+      </a>
+    );
+  }
+
+  return (
+    <button
+      aria-label={label}
+      className="agent-markdown-image"
+      onClick={() => dispatchPreviewTargetOpen({ target })}
+      title={title || label}
+      type="button"
+    >
+      {preview.src ? (
+        <img alt={label} loading="lazy" src={preview.src} />
+      ) : (
+        <span className="agent-markdown-image-placeholder">
+          {preview.error ? t.agent.toolCall.payloadUnavailable : t.common.loading}
+        </span>
+      )}
+    </button>
+  );
 }
 
 function useMarkdownComponents(
@@ -224,6 +292,9 @@ function useMarkdownComponents(
     },
     input({ ...rest }: ComponentPropsWithoutRef<'input'>) {
       return <input {...rest} disabled />;
+    },
+    img(props: ComponentPropsWithoutRef<'img'>) {
+      return <AgentMarkdownImage {...props} />;
     },
     pre({ children }: ComponentPropsWithoutRef<'pre'>) {
       return <>{children}</>;
