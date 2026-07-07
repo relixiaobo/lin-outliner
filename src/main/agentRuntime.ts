@@ -151,6 +151,7 @@ import {
   type AgentConversationIndexEntry,
   type AgentRunMetaProjection,
 } from './agentEventStore';
+import { AgentIssueStore } from './agentIssueStore';
 import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
   dreamWindowSummary,
@@ -405,6 +406,7 @@ interface DebugConversationContext {
 }
 const DREAM_SCHEDULER_INTERVAL_MS = 60_000;
 const COMMAND_SCHEDULER_INTERVAL_MS = 60_000;
+const ISSUE_SCHEDULER_INTERVAL_MS = 60_000;
 // In-memory per-command failure backoff (openclaw-style); process-level, never
 // persisted. A failed fire does not advance the watermark, so it stays due.
 const COMMAND_FAILURE_BACKOFF_MS = [30_000, 60_000, 300_000, 900_000, 3_600_000] as const;
@@ -730,11 +732,13 @@ export class AgentRuntime {
   private debugRunSummaryCache = new Map<string, { latestSeq: number; parentToolCallId: string | null; summary: AgentDebugRunSummary }>();
   private debugRunCache = new Map<string, { latestSeq: number; contextSeq: number; parentToolCallId: string | null; run: AgentDebugRun }>();
   private eventStore: AgentEventStore | null = null;
+  private issueStore: AgentIssueStore | null = null;
   private pastChatsService: AgentPastChatsService | null = null;
   private pendingApprovals = new Map<string, AgentPendingApproval>();
   private pendingUserQuestions = new Map<string, AgentPendingUserQuestion>();
   private nextConversationId = 1;
   private dreamMemoryExtractionTail: Promise<void> = Promise.resolve();
+  private issueSweepTail: Promise<void> = Promise.resolve();
   /** Dream subjects with a run in flight, keyed by `principalKey` — one Dream per subject at a time. */
   private readonly dreamingPrincipals = new Set<string>();
   /**
@@ -745,6 +749,7 @@ export class AgentRuntime {
    */
   private readonly dreamFailureBackoff = new Map<string, { consecutiveFailures: number; nextAttemptAt: number }>();
   private dreamSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+  private issueSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private commandSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private commandSweepTail: Promise<void> = Promise.resolve();
   private readonly firingCommandNodeIds = new Set<string>();
@@ -843,6 +848,7 @@ export class AgentRuntime {
       completeSimpleFn: this.options.completeSimpleFn,
     });
     this.startDreamScheduler();
+    this.startIssueScheduler();
     this.startCommandScheduler();
   }
 
@@ -855,6 +861,7 @@ export class AgentRuntime {
     void this.ensureDefaultChannelEventStates()
       .catch((error) => this.reportWarn('agent-runtime', 'Failed to ensure default channels.', error));
     this.queueScheduledDream(new Date());
+    this.queueIssueSweep(new Date());
     // Crash recovery FIRST: reconcile any occurrence that was attempted but never
     // recorded success (the app crashed/quit/slept mid-run) — at-most-once, so it
     // is skipped, not re-fired. Chained on the same sweep tail, so the catch-up
@@ -3333,6 +3340,14 @@ export class AgentRuntime {
     (this.commandSchedulerTimer as { unref?: () => void }).unref?.();
   }
 
+  private startIssueScheduler() {
+    if (this.issueSchedulerTimer) return;
+    this.issueSchedulerTimer = setInterval(() => {
+      this.queueIssueSweep(new Date());
+    }, ISSUE_SCHEDULER_INTERVAL_MS);
+    (this.issueSchedulerTimer as { unref?: () => void }).unref?.();
+  }
+
   // Teardown for the recurring scheduler timer (called on dispose / before-quit).
   // `.unref()` already keeps it from blocking exit; this stops it cleanly so a
   // disposed runtime (e.g. a test instance) leaves no live interval behind.
@@ -3340,6 +3355,12 @@ export class AgentRuntime {
     if (!this.commandSchedulerTimer) return;
     clearInterval(this.commandSchedulerTimer);
     this.commandSchedulerTimer = null;
+  }
+
+  stopIssueScheduler() {
+    if (!this.issueSchedulerTimer) return;
+    clearInterval(this.issueSchedulerTimer);
+    this.issueSchedulerTimer = null;
   }
 
   /**
@@ -3352,7 +3373,7 @@ export class AgentRuntime {
    * a slow in-flight dream (an LLM call) must not block ⌘Q.
    */
   async drainPendingWrites(): Promise<void> {
-    const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.commandSweepTail];
+    const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.issueSweepTail, this.commandSweepTail];
     for (const conversation of this.conversations.values()) pending.push(conversation.pendingEventAppend);
     // Delegated-run ledgers append on their own per-run queues — settle them
     // too, or a quit can keep the conversation's terminal marker while losing
@@ -3365,6 +3386,30 @@ export class AgentRuntime {
   // in main.ts). Idle-safe: queued behind any in-flight sweep.
   runCommandCatchUp() {
     this.queueCommandSweep(new Date());
+  }
+
+  runIssueCatchUp() {
+    this.queueIssueSweep(new Date());
+  }
+
+  private queueIssueSweep(now: Date) {
+    this.issueSweepTail = this.issueSweepTail
+      .catch(() => undefined)
+      .then(() => this.sweepIssueSchedules(now));
+  }
+
+  private async sweepIssueSchedules(now: Date) {
+    try {
+      await this.getIssueStore().materializeDueRecurringIssues(now.getTime(), { type: 'system' });
+    } catch (error) {
+      this.reportWarn(
+        'agent-runtime',
+        `Issue schedule sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        { operation: 'sweepIssueSchedules' },
+        'issue-schedule-sweep-failed',
+      );
+    }
   }
 
   private queueCommandSweep(now: Date) {
@@ -4729,6 +4774,11 @@ export class AgentRuntime {
       errorReporter: this.options.errorReporter,
     });
     return this.eventStore;
+  }
+
+  private getIssueStore() {
+    this.issueStore ??= AgentIssueStore.forAgentDataRoot(this.options.agentDataRoot ?? path.join(app.getPath('userData'), 'agent'));
+    return this.issueStore;
   }
 
   private getPastChatsService() {

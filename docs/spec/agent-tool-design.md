@@ -102,6 +102,10 @@ Run-first product surface:
   Sessions, and Activity in `issue-manager.json`, including draft creation,
   parent/sub-issue links, revision conflicts, session message/stop Activity,
   and due-time Recurring Issue materialization.
+- `src/main/agentRuntime.ts` owns the Issue store lifecycle and runs a
+  lightweight Issue scheduler tick. At this checkpoint the tick materializes
+  due confirmed Recurring Issues into concrete Issues only; Agent Session worker
+  start remains a later runtime wiring step in the same implementation PR.
 
 The target model-facing tool names are exactly:
 
