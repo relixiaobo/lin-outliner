@@ -29,6 +29,7 @@ describe('pi image models', () => {
     )).toMatchObject({
       apiKey: 'test-key',
       baseURL: 'https://sub2api.wisebox.ai/v1',
+      maxRetries: 0,
     });
   });
 

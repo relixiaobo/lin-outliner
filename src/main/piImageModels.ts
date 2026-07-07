@@ -212,7 +212,7 @@ export function openAiImageClientOptions(
     apiKey: options?.apiKey,
     baseURL: normalizedUrl(options?.baseUrl) ?? normalizedUrl(model.baseUrl),
     timeout: options?.timeoutMs,
-    maxRetries: options?.maxRetries,
+    maxRetries: options?.maxRetries ?? 0,
   }) as ConstructorParameters<typeof OpenAI>[0];
 }
 

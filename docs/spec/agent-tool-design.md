@@ -308,6 +308,10 @@ Validation is TypeScript-owned:
   `background: "transparent"`; use `auto`/`opaque` or select a model that
   supports transparent backgrounds. Older Tenon-owned OpenAI GPT image entries
   accept only `auto`, `1024x1024`, `1024x1536`, and `1536x1024` sizes.
+- Provider quota and rate-limit failures return `rate_limited` with instructions
+  not to retry immediately. OpenAI image calls disable the SDK's default automatic
+  retries so one tool call maps to one provider request unless the user or agent
+  explicitly tries again.
 
 Generated images are stored as normal agent payload files before the tool result
 is persisted. The model-visible JSON includes only payload ids, mime types, byte

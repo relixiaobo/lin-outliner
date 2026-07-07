@@ -257,7 +257,9 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           options,
         });
         if (response.stopReason === 'error') {
-          return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, 'provider_error', response.errorMessage ?? 'Image generation failed.', {
+          const providerError = classifyImageProviderError(response.errorMessage ?? 'Image generation failed.');
+          return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, providerError.code, providerError.message, {
+            instructions: providerError.instructions,
             metrics: { durationMs: elapsed(startedAt) },
           }));
         }
@@ -323,6 +325,21 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
       }
     },
   };
+}
+
+function classifyImageProviderError(message: string): { code: string; message: string; instructions?: string } {
+  if (isImageRateLimitError(message)) {
+    return {
+      code: 'rate_limited',
+      message,
+      instructions: 'The selected image provider is rate-limited or out of quota. Do not retry immediately; ask the user to wait, switch the default image model to another enabled provider, or update the provider quota/key.',
+    };
+  }
+  return { code: 'provider_error', message };
+}
+
+function isImageRateLimitError(message: string): boolean {
+  return /\\b429\\b|rate.?limit|usage_limit|quota|weekly_limit/i.test(message);
 }
 
 export function generateImagePayloadsFromDetails(details: unknown): AgentPayloadRef[] | null {

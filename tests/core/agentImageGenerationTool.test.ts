@@ -253,4 +253,40 @@ describe('generate_image tool', () => {
     expect(details.error?.message).toBe('Size "2048x1024" is not supported by gpt-image-1.5.');
     expect(details.instructions).toBe('Use auto, 1024x1024, 1024x1536, 1536x1024.');
   });
+
+  test('returns rate limit instructions for quota-limited image providers', async () => {
+    const runtime: AgentImageGenerationRuntime = {
+      listModels: async () => [{
+        providerId: 'openai',
+        id: 'gpt-image-2',
+        name: 'GPT Image 2',
+        input: ['text', 'image'],
+        output: ['image'],
+      }],
+      getActiveProviderId: async () => 'openai',
+      readPayloadImage: async () => { throw new Error('not used'); },
+      readLocalImage: async () => { throw new Error('not used'); },
+      writeGeneratedImage: async () => { throw new Error('not used'); },
+      generateImages: async ({ modelId }) => ({
+        api: 'openai-images',
+        provider: 'openai',
+        model: modelId,
+        output: [],
+        stopReason: 'error',
+        errorMessage: '429 status code: USAGE_LIMIT_EXCEEDED WEEKLY_LIMIT_EXCEEDED',
+        timestamp: Date.now(),
+      }),
+    };
+
+    const tool = createGenerateImageTool(runtime);
+    const result = await tool.execute('call-rate-limited', { prompt: 'A tiny icon' });
+    const details = result.details as ToolEnvelope<GenerateImageData>;
+    const visible = JSON.parse(result.content.find((part) => part.type === 'text')?.text ?? '{}');
+
+    expect(details.ok).toBe(false);
+    expect(details.error?.code).toBe('rate_limited');
+    expect(details.instructions).toContain('Do not retry immediately');
+    expect(visible.error.code).toBe('rate_limited');
+    expect(visible.instructions).toContain('switch the default image model');
+  });
 });
