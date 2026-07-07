@@ -185,6 +185,10 @@ duplicate Issues for the same recurrence window. When multiple due windows were
 missed, the default `coalesce-latest` policy creates only the latest concrete
 Issue, stores `skippedWindowCount` on the Issue recurrence context, and records
 the coalesced count in Recurring Issue Activity.
+`skip-next` records the next due window in
+`skippedMaterializationAts`, advances `nextMaterializationAt`, and the
+materializer treats that window as intentionally handled rather than missed, so
+it does not create a concrete Issue or inflate a later coalesced count.
 
 Automatic trigger execution is one-shot per concrete Issue in V1: a confirmed
 unattended `when-ready` Issue or due `scheduled` Issue without any prior Agent

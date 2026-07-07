@@ -215,6 +215,66 @@ describe('agent issue store', () => {
     });
   });
 
+  test('skip-next advances a Recurring Issue without materializing or coalescing the skipped window', async () => {
+    await withStore(async (store) => {
+      const createdAt = new Date(2026, 6, 7, 17, 0).getTime();
+      const firstWindow = new Date(2026, 6, 7, 18, 0).getTime();
+      const firstDue = new Date(2026, 6, 7, 18, 5).getTime();
+      const secondDue = new Date(2026, 6, 8, 18, 5).getTime();
+      await store.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Daily review',
+          cadence: { type: 'daily', time: '18:00' },
+          timeZone: 'Asia/Shanghai',
+          missedPolicy: { type: 'coalesce-latest' },
+          issueTemplate: {
+            delegate: { type: 'default-agent', runProfile: 'background' },
+            trigger: { type: 'when-ready' },
+            permissionMode: 'unattended',
+          },
+        },
+        request: { mode: 'request' },
+        reason: 'Create review routine.',
+      }, actor, createdAt);
+      const recurring = (await store.search({ targets: ['recurring-issue'] })).rows[0];
+      await store.update({
+        target: { type: 'recurring-issue', id: recurring.target.id, expectedRevision: recurring.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm review routine.',
+      }, actor, createdAt + 1);
+
+      const confirmed = (await store.search({ targets: ['recurring-issue'] })).rows[0];
+      await store.update({
+        target: { type: 'recurring-issue', id: recurring.target.id, expectedRevision: confirmed.revision },
+        change: { type: 'skip-next' },
+        request: { mode: 'request' },
+        reason: 'Skip today.',
+      }, actor, createdAt + 2);
+
+      expect(await store.materializeDueRecurringIssues(firstDue, actor)).toEqual([]);
+      const materialized = await store.materializeDueRecurringIssues(secondDue, actor);
+      expect(materialized).toHaveLength(1);
+      expect(materialized[0].title).toBe('Daily review - 2026-07-08');
+      expect(materialized[0].recurrence?.skippedWindowCount).toBeUndefined();
+
+      const read = await store.read({ target: recurring.target, include: ['activity', 'generated-issues'] });
+      expect(read.recurringIssue?.skippedMaterializationAts).toEqual([firstWindow]);
+      expect(read.activity).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          content: {
+            type: 'agent-action',
+            action: 'skip-next',
+            parameter: String(firstWindow),
+            result: 'recorded',
+          },
+        }),
+      ]));
+      expect(read.generatedIssues?.map((issue) => issue.title)).toEqual(['Daily review - 2026-07-08']);
+    });
+  });
+
   test('coalesces missed Recurring Issue windows into the latest concrete Issue', async () => {
     await withStore(async (store) => {
       const createdAt = new Date(2026, 6, 7, 17, 0).getTime();

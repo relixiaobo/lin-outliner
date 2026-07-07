@@ -505,6 +505,12 @@ export class AgentIssueStore {
           recurringIssue.nextMaterializationAt = nextDueAfter(recurringIssue.cadence, now) ?? undefined;
           continue;
         }
+        if (isSkippedRecurringWindow(recurringIssue, dueAt)) {
+          recurringIssue.nextMaterializationAt = nextDueAfter(recurringIssue.cadence, dueAt + 1) ?? undefined;
+          recurringIssue.updatedAt = now;
+          recurringIssue.revision = revision(now);
+          continue;
+        }
         if (hasGeneratedIssueForWindow(state, recurringIssue.id, dueAt)) {
           recurringIssue.nextMaterializationAt = nextDueAfter(recurringIssue.cadence, dueAt + 1) ?? undefined;
           continue;
@@ -780,7 +786,19 @@ function applyRecurringIssueChange(
       appendActivity(state, activityInput({ type: 'recurring-issue', recurringIssueId: recurringIssue.id }, actor, { type: 'status-change', to: 'active' }, now));
       break;
     case 'skip-next':
-      appendActivity(state, activityInput({ type: 'recurring-issue', recurringIssueId: recurringIssue.id }, actor, { type: 'agent-action', action: 'skip-next', result: 'recorded' }, now));
+      {
+        const skippedAt = recurringIssue.nextMaterializationAt ?? nextDueAfter(recurringIssue.cadence, now);
+        if (skippedAt !== null && skippedAt !== undefined) {
+          recurringIssue.skippedMaterializationAts = uniqueNumbers([...(recurringIssue.skippedMaterializationAts ?? []), skippedAt]);
+          recurringIssue.nextMaterializationAt = nextDueAfter(recurringIssue.cadence, skippedAt + 1) ?? undefined;
+        }
+        appendActivity(state, activityInput(
+          { type: 'recurring-issue', recurringIssueId: recurringIssue.id },
+          actor,
+          { type: 'agent-action', action: 'skip-next', parameter: skippedAt !== null && skippedAt !== undefined ? String(skippedAt) : undefined, result: 'recorded' },
+          now,
+        ));
+      }
       break;
     case 'archive':
       recurringIssue.status = 'archived';
@@ -1313,11 +1331,19 @@ function timeInRange(value: number | undefined, range: { from?: number; to?: num
   return true;
 }
 
+function uniqueNumbers(values: readonly number[]): number[] {
+  return [...new Set(values)].sort((left, right) => left - right);
+}
+
 function hasGeneratedIssueForWindow(state: AgentIssueStoreState, recurringIssueId: string, windowStartAt: number): boolean {
   return Object.values(state.issues).some((issue) => (
     issue.recurrence?.recurringIssueId === recurringIssueId
     && issue.recurrence.windowStartAt === windowStartAt
   ));
+}
+
+function isSkippedRecurringWindow(recurringIssue: AgentRecurringIssue, windowStartAt: number): boolean {
+  return recurringIssue.skippedMaterializationAts?.includes(windowStartAt) ?? false;
 }
 
 function countSkippedWindows(
@@ -1334,7 +1360,7 @@ function countSkippedWindows(
   let skipped = 0;
   let guard = 0;
   while (cursor !== null && cursor < dueAt && guard < 10_000) {
-    if (!hasGeneratedIssueForWindow(state, recurringIssue.id, cursor)) skipped += 1;
+    if (!hasGeneratedIssueForWindow(state, recurringIssue.id, cursor) && !isSkippedRecurringWindow(recurringIssue, cursor)) skipped += 1;
     cursor = nextDueAfter(recurringIssue.cadence, cursor + 1);
     guard += 1;
   }

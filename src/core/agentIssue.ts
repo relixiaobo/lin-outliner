@@ -173,6 +173,7 @@ export interface AgentRecurringIssue {
   issueTemplate: RecurringIssueTemplate;
   confirmation: IssueConfirmation;
   nextMaterializationAt?: number;
+  skippedMaterializationAts?: number[];
   revision: ObjectRevisionValue;
   createdAt: number;
   updatedAt: number;

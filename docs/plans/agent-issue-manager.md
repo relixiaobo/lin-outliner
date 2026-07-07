@@ -439,6 +439,8 @@ interface AgentRecurringIssue {
   missedPolicy: RecurringIssueMissedPolicy;
   issueTemplate: RecurringIssueTemplate;
   confirmation: IssueConfirmation;
+  nextMaterializationAt?: number;
+  skippedMaterializationAts?: number[];
   createdAt: number;
   updatedAt: number;
 }
