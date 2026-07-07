@@ -129,6 +129,11 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   requests `activity-summary` rows and orders them by latest Activity time, so it
   remains an Activity projection rather than a Logbook object or an Issue
   `updatedAt` list.
+- `issue_search` applies canonical field filters across both concrete Issues
+  and Recurring Issues where the field exists, including delegate profile,
+  trigger type, input node/tag scope, Activity type, and explicit ordering by
+  created, updated, due, next materialization, or status fields. Missing ordered
+  values stay last in both ascending and descending order.
 
 The internal executor binding is intentionally not part of the model-facing
 schema. `agent_session_read` returns Agent Session state and Activity, not a Run

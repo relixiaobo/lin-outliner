@@ -59,6 +59,7 @@ describe('agent issue store', () => {
             delegate: { type: 'default-agent', runProfile: 'background' },
             trigger: { type: 'when-ready' },
             permissionMode: 'unattended',
+            input: { type: 'tag-query', tag: 'news' },
           },
         },
         request: { mode: 'request' },
@@ -72,6 +73,10 @@ describe('agent issue store', () => {
       expect((await store.search({
         targets: ['recurring-issue'],
         filter: { statusCategories: ['scheduled'] },
+      })).rows).toHaveLength(1);
+      expect((await store.search({
+        targets: ['recurring-issue'],
+        filter: { delegateIds: ['background'], inputTags: ['#news'], triggerTypes: ['when-ready'] },
       })).rows).toHaveLength(1);
 
       await store.create({
@@ -121,6 +126,38 @@ describe('agent issue store', () => {
         createdAt: 40,
       });
       expect(activityRow?.activityCount).toBeGreaterThan(0);
+    });
+  });
+
+  test('honors explicit Issue search ordering with missing values last', async () => {
+    await withStore(async (store) => {
+      for (const [title, targetAt] of [
+        ['No due date', undefined],
+        ['Due later', 300],
+        ['Due earlier', 200],
+      ] as const) {
+        await store.create({
+          issueType: 'issue',
+          fields: {
+            title,
+            ...(targetAt !== undefined ? { dueDate: { targetAt, timeZone: 'UTC' } } : {}),
+          },
+          request: { mode: 'request' },
+          reason: 'Create ordered work.',
+        }, actor, targetAt ?? 100);
+      }
+
+      const ascending = await store.search({
+        targets: ['issue'],
+        orderBy: [{ field: 'dueDate', direction: 'asc' }],
+      });
+      expect(ascending.rows.map((row) => row.title)).toEqual(['Due earlier', 'Due later', 'No due date']);
+
+      const descending = await store.search({
+        targets: ['issue'],
+        orderBy: [{ field: 'dueDate', direction: 'desc' }],
+      });
+      expect(descending.rows.map((row) => row.title)).toEqual(['Due later', 'Due earlier', 'No due date']);
     });
   });
 

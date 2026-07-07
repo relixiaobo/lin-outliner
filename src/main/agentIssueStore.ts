@@ -5,6 +5,7 @@ import type {
   ActivityContent,
   ActivityTarget,
   AgentIssue,
+  AgentRef,
   AgentRecurringIssue,
   AgentSession,
   AgentSessionId,
@@ -104,7 +105,7 @@ export class AgentIssueStore {
         if (matchesRecurringIssue(recurringIssue, input, state)) rows.push(recurringIssueRow(recurringIssue, state, input));
       }
     }
-    rows.sort((left, right) => searchRowSortTime(right, input) - searchRowSortTime(left, input) || left.title.localeCompare(right.title));
+    rows.sort((left, right) => compareSearchRows(left, right, input, state));
     const limit = clampLimit(input.limit);
     const offset = cursorOffset(input.cursor);
     const page = rows.slice(offset, offset + limit);
@@ -816,6 +817,7 @@ function matchesIssue(issue: AgentIssue, state: AgentIssueStoreState, input: Iss
   if (input.text && !textMatches([issue.title, issue.description], input.text)) return false;
   if (filter?.ids && !filter.ids.includes(issue.id)) return false;
   if (filter?.issueIds && !filter.issueIds.includes(issue.id)) return false;
+  if (filter?.delegateIds && !agentRefMatches(issue.delegate, filter.delegateIds)) return false;
   if (filter?.statusCategories && !filter.statusCategories.includes(issue.status.category) && !derivedIssueBuckets(issue, state).some((bucket) => filter.statusCategories!.includes(bucket))) return false;
   if (filter?.parentIssueIds && (!issue.parentIssueId || !filter.parentIssueIds.includes(issue.parentIssueId))) return false;
   if (filter?.hasSubIssues !== undefined && (issue.subIssueIds.length > 0) !== filter.hasSubIssues) return false;
@@ -827,8 +829,8 @@ function matchesIssue(issue: AgentIssue, state: AgentIssueStoreState, input: Iss
   if (filter?.dueDate && !timeInRange(issue.dueDate?.targetAt, filter.dueDate)) return false;
   if (filter?.createdAt && !timeInRange(issue.createdAt, filter.createdAt)) return false;
   if (filter?.updatedAt && !timeInRange(issue.updatedAt, filter.updatedAt)) return false;
-  if (filter?.inputNodeIds && !filter.inputNodeIds.some((nodeId) => issue.input?.type === 'selected-nodes' && issue.input.nodeIds.includes(nodeId))) return false;
-  if (filter?.inputTags && !filter.inputTags.some((tag) => issue.input?.type === 'tag-query' && issue.input.tag === tag)) return false;
+  if (filter?.inputNodeIds && !inputScopeMatchesNodeIds(issue.input, filter.inputNodeIds)) return false;
+  if (filter?.inputTags && !inputScopeMatchesTags(issue.input, filter.inputTags)) return false;
   if (filter?.sessionState) {
     const sessions = Object.values(state.sessions).filter((session) => session.issueId === issue.id);
     if (!sessions.some((session) => filter.sessionState!.includes(session.state))) return false;
@@ -843,11 +845,15 @@ function matchesRecurringIssue(recurringIssue: AgentRecurringIssue, input: Issue
   if (input.text && !textMatches([recurringIssue.titleTemplate, recurringIssue.descriptionTemplate], input.text)) return false;
   if (filter?.ids && !filter.ids.includes(recurringIssue.id)) return false;
   if (filter?.recurringIssueIds && !filter.recurringIssueIds.includes(recurringIssue.id)) return false;
+  if (filter?.delegateIds && !agentRefMatches(recurringIssue.issueTemplate.delegate, filter.delegateIds)) return false;
   if (filter?.statusCategories && !derivedRecurringIssueBuckets(recurringIssue).some((bucket) => filter.statusCategories!.includes(bucket))) return false;
+  if (filter?.triggerTypes && !filter.triggerTypes.includes((recurringIssue.issueTemplate.trigger ?? { type: 'when-ready' }).type)) return false;
   if (filter?.cadence && !filter.cadence.includes(recurringIssue.cadence.type)) return false;
   if (filter?.confirmed !== undefined && (recurringIssue.confirmation.state === 'confirmed') !== filter.confirmed) return false;
   if (filter?.archived !== undefined && Boolean(recurringIssue.archivedAt || recurringIssue.status === 'archived') !== filter.archived) return false;
   if (filter?.nextMaterializationAt && !timeInRange(recurringIssue.nextMaterializationAt, filter.nextMaterializationAt)) return false;
+  if (filter?.inputNodeIds && !inputScopeMatchesNodeIds(recurringIssue.issueTemplate.input, filter.inputNodeIds)) return false;
+  if (filter?.inputTags && !inputScopeMatchesTags(recurringIssue.issueTemplate.input, filter.inputTags)) return false;
   if (filter?.activityTypes && state && !recurringIssueActivity(state, recurringIssue).some((activity) => filter.activityTypes!.includes(activity.content.type))) return false;
   if (filter?.activityTarget && !sameActivityTarget(filter.activityTarget, { type: 'recurring-issue', recurringIssueId: recurringIssue.id })) return false;
   return true;
@@ -983,6 +989,102 @@ function searchRowSortTime(row: IssueSearchRow, input: IssueSearchInput): number
   return input.include?.includes('activity-summary')
     ? row.latestActivity?.createdAt ?? row.updatedAt
     : row.updatedAt;
+}
+
+function compareSearchRows(
+  left: IssueSearchRow,
+  right: IssueSearchRow,
+  input: IssueSearchInput,
+  state: AgentIssueStoreState,
+): number {
+  for (const order of input.orderBy ?? []) {
+    const diff = compareSearchRowField(left, right, order.field, order.direction ?? 'desc', state);
+    if (diff !== 0) return diff;
+  }
+  return searchRowSortTime(right, input) - searchRowSortTime(left, input)
+    || left.title.localeCompare(right.title);
+}
+
+function compareSearchRowField(
+  left: IssueSearchRow,
+  right: IssueSearchRow,
+  field: NonNullable<IssueSearchInput['orderBy']>[number]['field'],
+  direction: NonNullable<NonNullable<IssueSearchInput['orderBy']>[number]['direction']>,
+  state: AgentIssueStoreState,
+): number {
+  const leftValue = searchRowFieldValue(left, field, state);
+  const rightValue = searchRowFieldValue(right, field, state);
+  if (leftValue === undefined && rightValue === undefined) return 0;
+  if (leftValue === undefined) return 1;
+  if (rightValue === undefined) return -1;
+  const diff = compareValues(leftValue, rightValue);
+  return direction === 'asc' ? diff : -diff;
+}
+
+function searchRowFieldValue(
+  row: IssueSearchRow,
+  field: NonNullable<IssueSearchInput['orderBy']>[number]['field'],
+  state: AgentIssueStoreState,
+): number | string | undefined {
+  const object = row.target.type === 'issue'
+    ? state.issues[row.target.id]
+    : state.recurringIssues[row.target.id];
+  switch (field) {
+    case 'createdAt':
+      return object?.createdAt;
+    case 'updatedAt':
+      return object?.updatedAt;
+    case 'dueDate':
+      return row.target.type === 'issue'
+        ? state.issues[row.target.id]?.dueDate?.targetAt
+        : undefined;
+    case 'nextMaterializationAt':
+      return row.target.type === 'recurring-issue'
+        ? state.recurringIssues[row.target.id]?.nextMaterializationAt
+        : undefined;
+    case 'status':
+      return row.status;
+  }
+}
+
+function compareValues(
+  left: number | string,
+  right: number | string,
+): number {
+  if (typeof left === 'number' && typeof right === 'number') return left - right;
+  return String(left).localeCompare(String(right));
+}
+
+function agentRefMatches(ref: AgentRef | undefined, delegateIds: readonly string[]): boolean {
+  const normalized = new Set(delegateIds.map((id) => id.trim()).filter(Boolean));
+  if (normalized.size === 0) return true;
+  const effective = ref ?? { type: 'default-agent' as const };
+  const profile = effective.runProfile ?? 'default';
+  return normalized.has(effective.type)
+    || normalized.has(profile)
+    || normalized.has(`${effective.type}:${profile}`);
+}
+
+function inputScopeMatchesNodeIds(
+  scope: IssueInputScope | undefined,
+  nodeIds: readonly string[],
+): boolean {
+  if (!scope || nodeIds.length === 0) return false;
+  if (scope.type === 'selected-nodes') return nodeIds.some((nodeId) => scope.nodeIds.includes(nodeId));
+  if (scope.type === 'node-children') return nodeIds.includes(scope.nodeId);
+  return false;
+}
+
+function inputScopeMatchesTags(
+  scope: IssueInputScope | undefined,
+  tags: readonly string[],
+): boolean {
+  if (!scope || scope.type !== 'tag-query' || tags.length === 0) return false;
+  return tags.some((tag) => normalizeTagForSearch(tag) === normalizeTagForSearch(scope.tag));
+}
+
+function normalizeTagForSearch(tag: string): string {
+  return tag.trim().replace(/^#+/u, '').toLocaleLowerCase();
 }
 
 function appendActivity(
