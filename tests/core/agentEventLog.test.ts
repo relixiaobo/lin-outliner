@@ -112,6 +112,33 @@ describe('agent event log', () => {
     expect(deriveAgentPiMessages(state).map(textOf)).toEqual(['Question', 'Hello']);
   });
 
+  test('preserves tool result details on replay', () => {
+    const details = {
+      ok: true,
+      tool: 'generate_image',
+      data: {
+        images: [{ path: '/tmp/tenon/generated/image.png', mimeType: 'image/png' }],
+      },
+    };
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Tool details' },
+      {
+        ...base(2, 'tool_result.created', { type: 'tool', toolName: 'generate_image', toolCallId: 'tool-1' }),
+        runId: 'run-1',
+        messageId: 'tool-result-1',
+        parentMessageId: null,
+        toolCallId: 'tool-1',
+        toolName: 'generate_image',
+        isError: false,
+        content: [{ type: 'text', text: JSON.stringify({ ok: true, data: details.data }) }],
+        details,
+        outputSummary: 'generated image',
+      },
+    ]);
+
+    expect(state.messages['tool-result-1']?.details).toEqual(details);
+  });
+
   test('keeps run-snapshot debug events as replay-neutral diagnostics', () => {
     const debugPayload: AgentPayloadRef = {
       kind: 'payload_ref',

@@ -208,10 +208,16 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           }));
         }
 
-        const inputImages = await Promise.all(params.imagePaths.map((filePath) => runtime.readLocalImage({ filePath })));
-        if (inputImages.length > 0 && !selected.input.includes('image')) {
+        if (params.imagePaths.length > 0 && !selected.input.includes('image')) {
           return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, 'model_does_not_accept_images', `${selected.name} does not accept input images.`, {
             instructions: 'Use a model whose capability lists image input, or remove image_paths.',
+            metrics: { durationMs: elapsed(startedAt) },
+          }));
+        }
+        const inputImages = await readInputImages(runtime, params.imagePaths);
+        if (!inputImages.ok) {
+          return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, 'input_image_unavailable', `Input image is not readable: ${inputImages.path}. ${inputImages.message}`, {
+            instructions: 'Use an existing local image path, regenerate the missing image, or remove image_paths for text-to-image.',
             metrics: { durationMs: elapsed(startedAt) },
           }));
         }
@@ -219,7 +225,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         const context: ImagesContext = {
           input: [
             { type: 'text', text: params.prompt } satisfies PiTextContent,
-            ...inputImages.map((image): PiImageContent => ({
+            ...inputImages.images.map((image): PiImageContent => ({
               type: 'image',
               data: image.data.toString('base64'),
               mimeType: image.mimeType,
@@ -312,6 +318,24 @@ function classifyImageProviderError(message: string): { code: string; message: s
     };
   }
   return { code: 'provider_error', message };
+}
+
+async function readInputImages(
+  runtime: AgentImageGenerationRuntime,
+  imagePaths: string[],
+): Promise<
+  | { ok: true; images: AgentImageGenerationInputImage[] }
+  | { ok: false; path: string; message: string }
+> {
+  const images: AgentImageGenerationInputImage[] = [];
+  for (const filePath of imagePaths) {
+    try {
+      images.push(await runtime.readLocalImage({ filePath }));
+    } catch (error) {
+      return { ok: false, path: filePath, message: errorMessage(error) };
+    }
+  }
+  return { ok: true, images };
 }
 
 function isImageRateLimitError(message: string): boolean {

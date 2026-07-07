@@ -1180,6 +1180,7 @@ commandPalette: {
       screenshotCaptured: 'Screenshot captured',
       storedOutput: 'Stored tool output',
       payloadUnavailable: 'Payload unavailable',
+      imageUnavailable: 'Image unavailable',
       previewOutput: 'Preview output',
       loadFullOutput: 'Load full output',
       reloadFullOutput: 'Reload full output',

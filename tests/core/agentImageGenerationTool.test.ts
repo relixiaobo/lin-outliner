@@ -245,4 +245,36 @@ describe('generate_image tool', () => {
     expect(visible.error.code).toBe('rate_limited');
     expect(visible.instructions).toContain('switch the default image model');
   });
+
+  test('returns a recoverable error when an input image path is missing', async () => {
+    const runtime: AgentImageGenerationRuntime = {
+      listModels: async () => [{
+        providerId: 'openai',
+        id: 'gpt-image-2',
+        name: 'GPT Image 2',
+        input: ['text', 'image'],
+        output: ['image'],
+      }],
+      getActiveProviderId: async () => 'openai',
+      readLocalImage: async ({ filePath }) => {
+        throw new Error(`ENOENT: no such file or directory, open '${filePath}'`);
+      },
+      writeGeneratedImage: async () => { throw new Error('not used'); },
+      generateImages: async () => { throw new Error('provider should not be called'); },
+    };
+
+    const tool = createGenerateImageTool(runtime);
+    const result = await tool.execute('call-missing-input', {
+      prompt: 'Edit this image',
+      image_paths: ['/tmp/tenon/generated/missing.png'],
+    });
+    const details = result.details as ToolEnvelope<GenerateImageData>;
+    const visible = JSON.parse(result.content.find((part) => part.type === 'text')?.text ?? '{}');
+
+    expect(details.ok).toBe(false);
+    expect(details.error?.code).toBe('input_image_unavailable');
+    expect(details.error?.message).toContain('/tmp/tenon/generated/missing.png');
+    expect(details.instructions).toContain('regenerate the missing image');
+    expect(visible.error.code).toBe('input_image_unavailable');
+  });
 });

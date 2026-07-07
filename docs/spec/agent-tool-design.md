@@ -290,6 +290,9 @@ Validation is TypeScript-owned:
 - `image_paths` are capped and resolve through the same local file boundary used
   by file tools and previewable agent scratch files. The selected model must
   advertise image input before references are sent.
+- Missing, cleared, inaccessible, or non-image input paths return
+  `input_image_unavailable` before any provider call, with instructions to use an
+  existing path, regenerate the image, or remove `image_paths`.
 - A provider-qualified model selects that exact provider/model pair. An
   unqualified model id may be used only when the enabled image model catalog can
   resolve it deterministically.
@@ -314,12 +317,15 @@ under the agent scratch root, with one path returned per generated image. The
 model-visible JSON includes only local paths, mime types, byte lengths, and
 dimensions when known; it does not include provider/model execution metadata or
 base64 image bytes. The complete runtime details retain `providerId`, `modelId`,
-and `modelName` for UI/debug display. The tool result does not embed raw image
-bytes or image content blocks; follow-up edits pass the returned paths back
-through `image_paths`, and explicit inspection can use the normal local file
-tools. The renderer displays generated image paths inline as lazy-loaded previews
-through the local preview byte reader; opening the preview targets the returned
-local-file path.
+`modelName`, and the generated image path list for UI/debug display, and those
+details are persisted with the tool result event. The tool result does not embed
+raw image bytes or image content blocks; follow-up edits pass the returned paths
+back through `image_paths`, and explicit inspection can use the normal local file
+tools. The renderer reads generated image paths from the persisted details and
+displays them inline as lazy-loaded previews through the local preview byte
+reader; opening the preview targets the returned local-file path. If the file has
+been cleared or manually removed, the preview remains in place and shows an
+unavailable-image placeholder.
 
 When the user should see generated images in the final response, the assistant
 places the returned paths with Markdown image syntax, preferably the

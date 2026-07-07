@@ -1089,6 +1089,7 @@ commandPalette: {
       screenshotCaptured: '已捕获截图',
       storedOutput: '已存储的工具输出',
       payloadUnavailable: '负载不可用',
+      imageUnavailable: '图片不可用',
       previewOutput: '预览输出',
       loadFullOutput: '加载完整输出',
       reloadFullOutput: '重新加载完整输出',

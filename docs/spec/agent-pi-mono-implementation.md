@@ -1006,7 +1006,12 @@ generated-image directory under the agent scratch root and are not copied into
 model-visible JSON, renderer debug text, or extra image content blocks. When the
 user should see the images, the assistant places those paths in the final
 response with Markdown image syntax; the renderer loads the bytes through the
-trusted local preview bridge.
+trusted local preview bridge. The tool result details are persisted with the
+event and are the renderer's source for generated image paths. If a generated
+file is later cleared, path preview surfaces keep the image slot and show an
+unavailable-image placeholder; if the agent reuses a missing generated path as an
+edit input, `generate_image` returns `input_image_unavailable` before calling the
+provider.
 
 TypeScript should validate paths, workspace boundaries, command timeouts, output size,
 and mutation legality. TypeScript validation is useful for fast feedback, but it

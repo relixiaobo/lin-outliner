@@ -85,6 +85,7 @@ export interface AgentRenderMessageEntity {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  details?: unknown;
   /** Wall-clock the producing run took (run `updatedAt − startedAt`), for the "Worked for …" process header. */
   runDurationMs?: number;
   /**
@@ -649,6 +650,7 @@ function toRenderMessageEntity(
     toolCallId: message.toolCallId,
     toolName: message.toolName,
     isError: message.isError,
+    details: message.details,
     // Only a SEALED run has a meaningful wall-clock: `run.updatedAt` is bumped
     // at start and at the terminal event, never in between, so a still-`running`
     // run (live, or a top-level run left `running` after a crash/quit) has

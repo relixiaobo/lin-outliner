@@ -6180,6 +6180,7 @@ export class AgentRuntime {
         toolName: message.toolName,
         isError: message.isError,
         content: persisted.content,
+        details: message.details,
         outputSummary: summarizeToolResult(message),
         outputRef,
       },

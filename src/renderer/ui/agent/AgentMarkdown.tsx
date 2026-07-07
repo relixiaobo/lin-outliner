@@ -188,7 +188,7 @@ function AgentMarkdownImage({ alt, src, title }: ComponentPropsWithoutRef<'img'>
         <img alt={label} loading="lazy" src={preview.src} />
       ) : (
         <span className="agent-markdown-image-placeholder">
-          {preview.error ? t.agent.toolCall.payloadUnavailable : t.common.loading}
+          {preview.error ? t.agent.toolCall.imageUnavailable : t.common.loading}
         </span>
       )}
     </button>

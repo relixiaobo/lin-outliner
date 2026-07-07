@@ -326,7 +326,7 @@ function resultImages(result: AgentToolResultWithPayloads | undefined): Array<{ 
     .map((block) => ({ data: block.data, mimeType: block.mimeType }));
 }
 
-export function toolImagePayloadRefs(result: AgentToolResultWithPayloads | undefined): AgentToolResultPayloadPart[] {
+function toolImagePayloadRefs(result: AgentToolResultWithPayloads | undefined): AgentToolResultPayloadPart[] {
   if (!result?.payloadRefs) return [];
   return result.payloadRefs.filter((ref) => ref.payload.mimeType.startsWith('image/'));
 }
@@ -355,17 +355,6 @@ function generatedImageData(result: AgentToolResultWithPayloads): unknown {
     && Array.isArray(details.data.images)
   ) {
     return details.data;
-  }
-  for (const block of result.content) {
-    if (block.type !== 'text') continue;
-    try {
-      const parsed = JSON.parse(block.text) as unknown;
-      if (isRecord(parsed) && parsed.ok === true && isRecord(parsed.data) && Array.isArray(parsed.data.images)) {
-        return parsed.data;
-      }
-    } catch {
-      // Tool output text is often plain text; ignore non-JSON blocks.
-    }
   }
   return null;
 }
@@ -753,7 +742,7 @@ function LocalToolImage({
         <img alt={label} loading="lazy" src={preview.src} />
       ) : (
         <span className="agent-tool-image-preview-placeholder">
-          {preview.error ? t.agent.toolCall.payloadUnavailable : t.common.loading}
+          {preview.error ? t.agent.toolCall.imageUnavailable : t.common.loading}
         </span>
       )}
     </button>
@@ -964,8 +953,9 @@ export function AgentToolCallBlock({
     () => parseFileToolOutput(toolCall, result, outputText),
     [toolCall, result, outputText],
   );
-  const images = useMemo(() => resultImages(result), [result]);
-  const imagePayloadRefs = useMemo(() => toolImagePayloadRefs(result), [result]);
+  const isGenerateImageTool = toolCall.name === 'generate_image';
+  const images = useMemo(() => (isGenerateImageTool ? [] : resultImages(result)), [isGenerateImageTool, result]);
+  const imagePayloadRefs = useMemo(() => (isGenerateImageTool ? [] : toolImagePayloadRefs(result)), [isGenerateImageTool, result]);
   const imagePaths = useMemo(() => generatedImagePaths(result), [result]);
   const imageDetails = useMemo(() => generatedImageDetails(result), [result]);
   // A file output renders its own chip + diff, so the generic output parts (and
@@ -1051,9 +1041,9 @@ export function AgentToolCallBlock({
           </div>
           <AgentGeneratedImagePreviews
             conversationId={conversationId}
-            images={imagePaths.length > 0 ? [] : images}
+            images={images}
             paths={imagePaths}
-            payloadRefs={imagePaths.length > 0 ? [] : imagePayloadRefs}
+            payloadRefs={imagePayloadRefs}
           />
           <GeneratedImageMeta details={imageDetails} />
           {parts.map((part, partIndex) =>

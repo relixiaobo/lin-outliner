@@ -236,6 +236,57 @@ describe('agent tool output view', () => {
     }]);
   });
 
+  test('shows generated image placeholders when the local image was removed', async () => {
+    const generatedPath = '/tmp/tenon/generated/missing.png';
+    const result: AgentToolResultWithPayloads = {
+      role: 'toolResult',
+      toolCallId: 'tool-generate-image-missing',
+      toolName: 'generate_image',
+      timestamp: 1,
+      isError: false,
+      content: [{ type: 'text', text: JSON.stringify({ ok: true, data: { images: [{ path: generatedPath, mimeType: 'image/png' }] } }) }],
+      details: {
+        ok: true,
+        tool: 'generate_image',
+        version: 1,
+        status: 'success',
+        data: {
+          providerId: 'openai',
+          modelId: 'gpt-image-2',
+          modelName: 'GPT Image 2',
+          images: [{ path: generatedPath, mimeType: 'image/png', byteLength: 68 }],
+        },
+      },
+    };
+
+    const rendered = renderComponent(
+      <AgentToolCallBlock
+        defaultExpanded
+        pendingToolCallIds={new Set()}
+        result={result}
+        conversationId="conversation-1"
+        toolCall={{ type: 'toolCall', id: 'tool-generate-image-missing', name: 'generate_image', arguments: { prompt: 'a puppy' } } satisfies ToolCall}
+        turnActive={false}
+      />,
+      (window) => {
+        Object.assign(window, {
+          lin: {
+            invoke: async (command: string) => {
+              if (command === 'preview_read_bytes') return { bytes: null, error: 'missing' };
+              throw new Error(`Unexpected command: ${command}`);
+            },
+          },
+        });
+      },
+    );
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(rendered.container.querySelector('.agent-tool-image-preview img')).toBeNull();
+    expect(rendered.container.querySelector('.agent-tool-image-preview-placeholder')?.textContent).toBe('Image unavailable');
+  });
+
   test('renders loaded skill calls as a compact affordance without input or output panels', () => {
     const result: AgentToolResultWithPayloads = {
       role: 'toolResult',

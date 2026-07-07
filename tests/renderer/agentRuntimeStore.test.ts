@@ -1098,17 +1098,25 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('preserves persisted image payload refs for renderer preview loading', async () => {
-    const payload: AgentPayloadRef = {
-      kind: 'payload_ref',
-      id: 'tool-output-tool-image-image-0',
-      storage: 'file',
-      mimeType: 'image/png',
-      byteLength: 68,
-      sha256: 'image-sha',
-      role: 'tool_output',
-      summary: 'Generated image',
-      display: { width: 1, height: 1 },
+  test('preserves tool result details for generated image path rendering', async () => {
+    const generatedPath = '/tmp/tenon/generated/puppy.png';
+    const details = {
+      ok: true,
+      tool: 'generate_image',
+      version: 1,
+      status: 'success',
+      data: {
+        providerId: 'openai',
+        modelId: 'gpt-image-2',
+        modelName: 'GPT Image 2',
+        images: [{
+          path: generatedPath,
+          mimeType: 'image/png',
+          byteLength: 68,
+          width: 1,
+          height: 1,
+        }],
+      },
     };
     const assistant = assistantMessage('', 2);
     assistant.content = [{
@@ -1126,13 +1134,14 @@ describe('agent runtime store', () => {
       role: 'toolResult',
       status: 'completed',
       parentMessageId: 'a1',
-      content: [{ type: 'image', imageRef: payload, alt: 'Generated image' }],
+      content: [{ type: 'text', text: JSON.stringify({ ok: true, data: { images: details.data.images } }) }],
       createdAt: 3,
       updatedAt: 3,
       branches: null,
       toolCallId: 'tool-image',
       toolName: 'generate_image',
       isError: false,
+      details,
     };
     const fake = createFakeClient({ latestConversation: conversation('saved', restoredProjection) });
     const store = createAgentRuntimeStore(fake.client);
@@ -1140,7 +1149,8 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
 
     const result = store.getSnapshot().toolResults.get('tool-image');
-    expect(result?.payloadRefs).toEqual([{ contentIndex: 0, payload, label: 'Generated image' }]);
+    expect(result?.details).toEqual(details);
+    expect(result?.payloadRefs).toBeUndefined();
     unsubscribe();
   });
 

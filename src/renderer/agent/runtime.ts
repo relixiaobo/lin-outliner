@@ -515,6 +515,7 @@ function toolResultFromEntity(entity: AgentRenderMessageEntity): AgentToolResult
     toolCallId: entity.toolCallId ?? entity.id,
     toolName: entity.toolName ?? 'unknown',
     content: toToolResultContent(entity.content),
+    details: entity.details,
     payloadRefs: payloadRefsFromContent(entity.content),
     isError: !!entity.isError,
     timestamp: entity.createdAt,

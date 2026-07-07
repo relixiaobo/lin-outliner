@@ -794,6 +794,7 @@ export interface ToolResultCreatedEvent extends AgentEventBase {
   parentMessageId: string | null;
   isError: boolean;
   content: AgentPersistedContent[];
+  details?: unknown;
   outputSummary: string;
   outputRef?: AgentPayloadRef;
 }
@@ -1122,6 +1123,7 @@ export interface AgentEventMessageRecord {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  details?: unknown;
   outputSummary?: string;
   /**
    * Model-context-only substitution for a slimmed tool result (budget offload or
@@ -1608,6 +1610,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         isError: event.isError,
+        details: event.details,
         outputSummary: event.outputSummary,
       });
       state.selectedLeafMessageId = event.messageId;

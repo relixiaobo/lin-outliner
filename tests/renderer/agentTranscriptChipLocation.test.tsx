@@ -251,6 +251,29 @@ describe('transcript file-chip location marker', () => {
     }]);
   });
 
+  test('AgentMarkdown shows a placeholder when a local Markdown image is missing', async () => {
+    const imagePath = '/tmp/tenon/generated/missing.png';
+    const rendered = render(
+      <AgentMarkdown index={0} keyPrefix="probe" text={`![Missing image](<${imagePath}>)`} />,
+      (window) => {
+        Object.assign(window, {
+          lin: {
+            invoke: async (command: string) => {
+              if (command === 'preview_read_bytes') return { bytes: null, error: 'missing' };
+              throw new Error(`Unexpected command: ${command}`);
+            },
+          },
+        });
+      },
+    );
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(rendered.document.querySelector('.agent-markdown-image img')).toBeNull();
+    expect(rendered.document.querySelector('.agent-markdown-image-placeholder')?.textContent).toBe('Image unavailable');
+  });
+
   test('AgentInlineReferenceText renders chat-source markers with the shared chat icon and label spans', () => {
     const marker = formatChatSourceReferenceMarker('in the weather chat', {
       kind: 'chat-source',
