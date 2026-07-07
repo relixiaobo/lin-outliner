@@ -404,8 +404,8 @@ Required behavior:
 - `scheduled` Issues create an Agent Session at or after `startAt` when the
   same readiness rules pass.
 - Unattended delegated Issues require confirmation before their triggers become
-  active. If the user action that creates the Issue explicitly authorizes
-  execution, no second confirmation is required.
+  active. If runtime creates a confirmation from an authorization capability in
+  the same operation, no second confirmation is required.
 - Editing an Issue affects future Agent Sessions only. Existing Agent Sessions
   keep their Issue snapshot through Activity.
 - A blocked Issue can remain visible without creating an Agent Session.
@@ -878,9 +878,10 @@ Dream is a protected system routine, not ordinary user-created work:
 - **Decision points:** trigger now vs save/schedule for later; execute directly
   vs create sub-issues; mark Issue complete vs leave it
   started/attention-needed.
-- **Validation:** User action or confirmation must authorize unattended
-  execution; blockers must be clear; child Issue triggers or direct starts must
-  stay within the parent Issue scope; destructive output must be confirmed.
+- **Validation:** Runtime authorization or existing confirmation must authorize
+  unattended execution; blockers must be clear; child Issue triggers or direct
+  starts must stay within the parent Issue scope; destructive output must be
+  confirmed.
 - **Result state:** The current conversation is not occupied by long execution;
   work is visible as an Issue with Agent Sessions and Activity.
 - **Failure/recovery:** If validation fails, no Session is created and the Issue
@@ -1005,8 +1006,8 @@ ambiguous.
   verification policy on Issues.
 - **FR-8:** A confirmed Recurring Issue can create concrete Issues on a cadence.
 - **FR-9:** Runtime can create an Agent Session only when a concrete Issue has a
-  ready trigger or an accepted `agent_session_start` request, and user action,
-  confirmed automation, or orchestration policy authorizes it.
+  ready trigger or an accepted `agent_session_start` request, and runtime
+  authorization, confirmed automation, or orchestration policy authorizes it.
 - **FR-10:** Every Agent Session must reach `complete`, `error`,
   `awaitingInput`, `stale`, or `canceled`; it must not remain live forever.
 - **FR-11:** Agent Sessions must emit Activity for visible progress, actions,
@@ -1085,9 +1086,10 @@ ambiguous.
   session Activity; they do not duplicate every transcript token.
 - **BR-13:** View membership is derived from object fields and Activity, not
   manually stored as object state or exposed as a model-facing object.
-- **BR-14:** A tool that changes execution permissions, recurrence, destructive
-  output, execution triggers, or direct Session start must carry a current user
-  action, an allowed orchestration source, or create a proposal.
+- **BR-14:** A tool request that changes execution permissions, recurrence,
+  destructive output, execution triggers, or direct Session start must run under
+  a runtime authorization capability, an allowed orchestration source, or create
+  a proposal.
 - **BR-15:** Completion-criteria updates are Activity or field changes, not a
   separate update object in V1.
 - **BR-16:** A sub-issue is a normal Issue with its own delegate, status, due
@@ -1102,7 +1104,7 @@ ambiguous.
   read status, send guidance, or request stop, but cannot directly set terminal
   state or append Activity.
 - **BR-20:** Creating or updating an Issue can include its trigger. A UI or
-  agent may present "create and start" as one user action by recording a
+  agent may present "create and start" as one user-facing operation by recording a
   confirmed Issue with a ready trigger. Running an existing manual Issue now
   uses `agent_session_start` and does not change the Issue trigger.
 - **BR-21:** Runtime can validate, dispatch, monitor, recover, stop, and
@@ -1338,7 +1340,7 @@ interface TenonAgentToolDefinition {
   outputSchema: unknown;
   isReadOnly(input: unknown): boolean;
   isDestructive(input: unknown): boolean;
-  requiresCurrentUserAction(input: unknown): boolean;
+  requiresRuntimeAuthorization(input: unknown): boolean;
   validate(input: unknown, context: TenonAgentToolContext): ValidationResult;
   execute(input: unknown, context: TenonAgentToolContext): unknown;
 }
