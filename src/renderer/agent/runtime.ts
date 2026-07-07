@@ -570,6 +570,13 @@ function persistedContentSummary(content: AgentPersistedContent): string {
 
 function payloadRefsFromContent(content: AgentPersistedContent[]): AgentToolResultWithPayloads['payloadRefs'] {
   const refs = content.flatMap((part, index) => {
+    if (part.type === 'image') {
+      return [{
+        contentIndex: index,
+        payload: part.imageRef,
+        label: part.alt,
+      }];
+    }
     if (part.type !== 'payload_ref') return [];
     return [{
       contentIndex: index,

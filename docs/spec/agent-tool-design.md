@@ -319,7 +319,9 @@ length, and dimensions when known; it does not include provider/model execution
 metadata or base64 image bytes. The complete runtime details retain
 `providerId`, `modelId`, and `modelName` for UI/debug display. The tool result
 also returns image content blocks to the pi-agent loop so the same turn can
-inspect or use the generated image without re-reading debug payloads.
+inspect or use the generated image without re-reading debug payloads. The
+renderer displays generated image payloads inline as lazy-loaded previews; opening
+the preview targets the underlying agent payload.
 
 Runtime details:
 

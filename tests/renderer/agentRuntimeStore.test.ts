@@ -1098,6 +1098,52 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('preserves generated image payload refs for renderer preview loading', async () => {
+    const payload: AgentPayloadRef = {
+      kind: 'payload_ref',
+      id: 'tool-output-tool-image-image-0',
+      storage: 'file',
+      mimeType: 'image/png',
+      byteLength: 68,
+      sha256: 'image-sha',
+      role: 'tool_output',
+      summary: 'Generated image',
+      display: { width: 1, height: 1 },
+    };
+    const assistant = assistantMessage('', 2);
+    assistant.content = [{
+      type: 'toolCall',
+      id: 'tool-image',
+      name: 'generate_image',
+      arguments: { prompt: 'a puppy' },
+    }];
+    const restoredProjection = projection([
+      { nodeId: 'u1', message: userMessage('draw a puppy'), branches: null },
+      { nodeId: 'a1', message: assistant, branches: null },
+    ]);
+    restoredProjection.entities.messages['tool-result-image'] = {
+      id: 'tool-result-image',
+      role: 'toolResult',
+      status: 'completed',
+      parentMessageId: 'a1',
+      content: [{ type: 'image', imageRef: payload, alt: 'Generated image' }],
+      createdAt: 3,
+      updatedAt: 3,
+      branches: null,
+      toolCallId: 'tool-image',
+      toolName: 'generate_image',
+      isError: false,
+    };
+    const fake = createFakeClient({ latestConversation: conversation('saved', restoredProjection) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    const result = store.getSnapshot().toolResults.get('tool-image');
+    expect(result?.payloadRefs).toEqual([{ contentIndex: 0, payload, label: 'Generated image' }]);
+    unsubscribe();
+  });
+
   test('indexes sub-runs by parent tool call id for renderer lookup', async () => {
     const subRun = {
       id: 'run-1',

@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { AgentToolResultWithPayloads, ToolCall } from '../../src/core/agentTypes';
+import type { AgentPayloadRef } from '../../src/core/agentEventLog';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { PREVIEW_TARGET_OPEN_EVENT, type PreviewTargetOpenDetail } from '../../src/renderer/ui/preview/previewEvents';
 
@@ -135,6 +136,102 @@ describe('agent tool output view', () => {
         runId: 'run-1',
         payloadId: 'payload-run-scoped-output',
         label: 'large.log output',
+      },
+    }]);
+  });
+
+  test('renders generated image payloads as inline previews', async () => {
+    const payload: AgentPayloadRef = {
+      kind: 'payload_ref',
+      id: 'tool-output-generate-image-0',
+      storage: 'file',
+      mimeType: 'image/png',
+      byteLength: 68,
+      sha256: 'b'.repeat(64),
+      role: 'tool_output',
+      scope: { type: 'run', conversationId: 'conversation-1', runId: 'run-1' },
+      summary: 'Generated puppy image',
+      display: { width: 1, height: 1 },
+    };
+    const result: AgentToolResultWithPayloads = {
+      role: 'toolResult',
+      toolCallId: 'tool-generate-image',
+      toolName: 'generate_image',
+      timestamp: 1,
+      isError: false,
+      content: [{ type: 'text', text: 'Generated puppy image' }],
+      payloadRefs: [{ contentIndex: 0, payload, label: 'Generated puppy image' }],
+      details: {
+        ok: true,
+        tool: 'generate_image',
+        version: 1,
+        status: 'success',
+        data: {
+          providerId: 'openai',
+          modelId: 'gpt-image-2',
+          modelName: 'GPT Image 2',
+        },
+      },
+    };
+
+    const opened: PreviewTargetOpenDetail[] = [];
+    const rendered = renderComponent(
+      <AgentToolCallBlock
+        defaultExpanded
+        pendingToolCallIds={new Set()}
+        result={result}
+        conversationId="conversation-1"
+        toolCall={{ type: 'toolCall', id: 'tool-generate-image', name: 'generate_image', arguments: { prompt: 'a puppy' } } satisfies ToolCall}
+        turnActive={false}
+      />,
+      (window) => {
+        window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+          opened.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
+        });
+        Object.assign(window, {
+          lin: {
+            invoke: async (command: string) => {
+              if (command === 'preview_read_bytes') {
+                return { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer, mimeType: 'image/png' };
+              }
+              throw new Error(`Unexpected command: ${command}`);
+            },
+          },
+        });
+        const originalCreateObjectURL = URL.createObjectURL;
+        const originalRevokeObjectURL = URL.revokeObjectURL;
+        Object.assign(URL, {
+          createObjectURL: () => 'blob:generated-image',
+          revokeObjectURL: () => undefined,
+        });
+        return () => {
+          Object.assign(URL, {
+            createObjectURL: originalCreateObjectURL,
+            revokeObjectURL: originalRevokeObjectURL,
+          });
+        };
+      },
+    );
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    const image = rendered.container.querySelector('.agent-tool-image-preview img');
+    expect(image?.getAttribute('src')).toBe('blob:generated-image');
+    expect(image?.getAttribute('alt')).toBe('Generated puppy image');
+
+    const previewButton = rendered.container.querySelector('.agent-tool-image-preview');
+    if (!(previewButton instanceof rendered.window.HTMLButtonElement)) throw new Error('Image preview button not found');
+    act(() => {
+      previewButton.dispatchEvent(new rendered.window.Event('click', { bubbles: true }));
+    });
+    expect(opened).toEqual([{
+      target: {
+        kind: 'agent-payload',
+        conversationId: 'conversation-1',
+        runId: 'run-1',
+        payloadId: payload.id,
+        label: 'Generated puppy image',
       },
     }]);
   });
@@ -324,9 +421,10 @@ function textButton(rendered: RenderedComponent, text: string): HTMLButtonElemen
   return button;
 }
 
-function renderComponent(element: ReactNode): RenderedComponent {
+function renderComponent(element: ReactNode, setupWindow?: (window: Window) => void | (() => void)): RenderedComponent {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
+  const cleanupWindow = setupWindow?.(window);
 
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
@@ -338,12 +436,17 @@ function renderComponent(element: ReactNode): RenderedComponent {
   const rendered: RenderedComponent = {
     cleanup: () => {
       act(() => root.unmount());
+      cleanupWindow?.();
     },
     container,
     window,
   };
   mounted.push(rendered);
   return rendered;
+}
+
+async function flushMicrotasks() {
+  for (let i = 0; i < 50; i += 1) await Promise.resolve();
 }
 
 function installDomGlobals(window: Window) {
