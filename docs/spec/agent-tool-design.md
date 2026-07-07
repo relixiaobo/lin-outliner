@@ -75,9 +75,10 @@ agent tool, so there are no channel-management tools on the surface.
 ### Agent Issue Manager Contract Checkpoint
 
 The Issue Manager implementation has a canonical protocol/store checkpoint in
-code, but it is not yet registered into the default model-facing tool catalog.
-Until runtime wiring is complete, `spawn_run` / `run_*` remain the active
-delegation tools described below.
+code, and the Issue/Agent Session tools are wired into ordinary and child-agent
+tool pools through `AgentIssueToolRuntime`. Until execution-worker wiring is
+complete, `spawn_run` / `run_*` remain the active delegation tools described
+below.
 
 The checkpoint defines the target concepts and schemas that later replace the
 Run-first product surface:
@@ -106,6 +107,8 @@ Run-first product surface:
   lightweight Issue scheduler tick. At this checkpoint the tick materializes
   due confirmed Recurring Issues into concrete Issues only; Agent Session worker
   start remains a later runtime wiring step in the same implementation PR.
+  Ordinary and child-agent tool pools receive `issueRuntime`; Dream does not, so
+  model-facing Issue tools cannot create, mutate, or start Dream work.
 
 The target model-facing tool names are exactly:
 

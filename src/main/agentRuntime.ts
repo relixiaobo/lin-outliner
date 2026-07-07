@@ -217,6 +217,7 @@ import {
   type SkillListingReservation,
   type SkillTurnEffect,
 } from './agentSkills';
+import { createAgentIssueToolRuntime } from './agentIssueRuntime';
 import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
   AGENT_DELEGATE_TOOL_NAME,
@@ -2623,6 +2624,7 @@ export class AgentRuntime {
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
           delegationRuntime,
+          issueRuntime: this.createIssueToolRuntime(defaultAgentId),
           chatSourceValidator: this.createChatSourceValidator(),
           pastChats: this.createPastChatsToolRuntime(() => conversationId),
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
@@ -2808,6 +2810,7 @@ export class AgentRuntime {
       skillRuntime: conversation.skillRuntime,
       skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
       delegationRuntime: conversation.delegationRuntime,
+      issueRuntime: this.createIssueToolRuntime(conversation.defaultAgentId),
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => conversation.eventState.conversation?.id ?? 'unknown'),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
@@ -2844,6 +2847,7 @@ export class AgentRuntime {
       skillToolEnabled: true,
       skillRuntime: input.skillRuntime,
       delegationRuntime: input.delegationRuntime,
+      issueRuntime: this.createIssueToolRuntime(input.executingAgentId),
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => input.conversationId),
       streamFn: this.options.streamFn,
@@ -4856,6 +4860,13 @@ export class AgentRuntime {
         });
       },
     };
+  }
+
+  private createIssueToolRuntime(agentId: string): AgentToolsOptions['issueRuntime'] {
+    return createAgentIssueToolRuntime({
+      store: this.getIssueStore(),
+      actor: { type: 'agent', agentId },
+    });
   }
 
   private createChatSourceValidator(): AgentToolsOptions['chatSourceValidator'] {
@@ -7701,6 +7712,7 @@ function createConfiguredAgent(
     pastChats?: AgentToolsOptions['pastChats'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
     imageGeneration?: AgentToolsOptions['imageGeneration'];
+    issueRuntime?: AgentToolsOptions['issueRuntime'];
     localWorkspace?: AgentLocalWorkspaceContext;
     allowedTools?: readonly string[];
     disallowedTools?: readonly string[];
@@ -7747,6 +7759,7 @@ function createConfiguredAgent(
     pastChats: options.pastChats,
     askUserQuestion: options.askUserQuestion,
     imageGeneration: options.imageGeneration,
+    issueRuntime: options.issueRuntime,
     allowedTools: options.allowedTools,
     disallowedTools: options.disallowedTools,
   });
