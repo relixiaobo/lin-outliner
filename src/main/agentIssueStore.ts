@@ -32,6 +32,7 @@ import type {
   RecurringIssueUpdateChange,
   RelatedTargetRef,
   TenonAgentToolResult,
+  ValidationMessage,
 } from '../core/agentIssue';
 import {
   PRIVATE_JSON_FILE_OPTIONS,
@@ -226,6 +227,15 @@ export class AgentIssueStore {
         status: 'conflict',
         targets: [{ type: 'issue', id: input.issueId }],
         validation: [{ code: 'revision_mismatch', message: 'Issue changed since it was read.' }],
+        revisions: [{ target: { type: 'issue', id: issue.id }, revision: issue.revision }],
+      };
+    }
+    const validation = validateSessionStart(current, issue, input);
+    if (validation.length > 0) {
+      return {
+        status: 'blocked',
+        targets: [{ type: 'issue', id: input.issueId }],
+        validation,
         revisions: [{ target: { type: 'issue', id: issue.id }, revision: issue.revision }],
       };
     }
@@ -845,6 +855,47 @@ function isIssueReadyForExecution(issue: AgentIssue, state: AgentIssueStoreState
   return issue.trigger.startAt <= now;
 }
 
+function validateSessionStart(
+  state: AgentIssueStoreState,
+  issue: AgentIssue,
+  input: AgentSessionStartInput,
+): ValidationMessage[] {
+  const messages: ValidationMessage[] = [];
+  if (issue.archivedAt) {
+    messages.push({ code: 'archived_issue', message: 'Archived Issues cannot start Agent Sessions.' });
+  }
+  if (issue.confirmation.state !== 'confirmed') {
+    messages.push({ code: 'unconfirmed_issue', message: 'Issue must be confirmed before starting an Agent Session.' });
+  }
+  if (issue.status.category === 'completed' || issue.status.category === 'canceled') {
+    messages.push({ code: 'terminal_issue', message: 'Completed or canceled Issues cannot start new Agent Sessions.' });
+  }
+  if (issueHasActiveSession(issue, state)) {
+    messages.push({ code: 'active_session_exists', message: 'Issue already has a pending, active, or waiting Agent Session.' });
+  }
+  for (const relation of issue.relations) {
+    if (relation.type !== 'blocked-by') continue;
+    if (!isBlockingIssueCompleted(state.issues[relation.issueId])) {
+      messages.push({ code: 'blocked_by_issue', message: `Issue is blocked by ${relation.issueId}.` });
+    }
+  }
+  const continuation = input.continuation;
+  if (continuation) {
+    const previous = state.sessions[continuation.previousAgentSessionId];
+    if (!previous) {
+      messages.push({ code: 'previous_session_not_found', message: 'Previous Agent Session was not found for continuation.' });
+    } else {
+      if (previous.issueId !== issue.id) {
+        messages.push({ code: 'previous_session_issue_mismatch', message: 'Continuation Agent Session must belong to the same Issue.' });
+      }
+      if (!isTerminalSessionState(previous.state)) {
+        messages.push({ code: 'previous_session_not_terminal', message: 'Only terminal Agent Sessions can be continued with a new Agent Session.' });
+      }
+    }
+  }
+  return messages;
+}
+
 function issueHasActiveSession(issue: AgentIssue, state: AgentIssueStoreState): boolean {
   return Object.values(state.sessions).some((session) => (
     session.issueId === issue.id
@@ -926,6 +977,10 @@ function canStopSession(state: AgentSession['state']): boolean {
 
 function isRecoverableLiveSession(state: AgentSession['state']): boolean {
   return state === 'pending' || state === 'active' || state === 'awaitingInput';
+}
+
+function isTerminalSessionState(state: AgentSession['state']): boolean {
+  return state === 'complete' || state === 'error' || state === 'stale' || state === 'canceled';
 }
 
 function agentSessionStateFromExecution(state: AgentSessionExecutionSyncInput['state']): AgentSession['state'] {

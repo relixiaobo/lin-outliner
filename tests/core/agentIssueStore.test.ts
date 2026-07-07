@@ -161,11 +161,19 @@ describe('agent issue store', () => {
         reason: 'Process invoice-tagged nodes.',
       }, actor, 100);
       const issue = (await store.search({ text: 'invoices' })).rows[0];
+      const confirmed = await store.update({
+        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm invoice processing.',
+      }, actor, 150);
+      expect(confirmed.status).toBe('applied');
+      const confirmedIssue = (await store.search({ text: 'invoices' })).rows[0];
       const source: AgentSessionSource = { type: 'runtime-authorized-action', actor };
 
       const sessionResult = await store.startSession({
-        issueId: issue.target.id,
-        expectedIssueRevision: issue.revision,
+        issueId: confirmedIssue.target.id,
+        expectedIssueRevision: confirmedIssue.revision,
         detach: true,
         request: { mode: 'request' },
         reason: 'Start invoice processing.',
@@ -180,7 +188,7 @@ describe('agent issue store', () => {
       expect(session?.activity?.[0]?.content.type).toBe('agent-progress');
 
       const transitioned = await store.update({
-        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
+        target: { type: 'issue', id: confirmedIssue.target.id, expectedRevision: confirmedIssue.revision },
         change: { type: 'transition', status: { name: 'Started', category: 'started' } },
         request: { mode: 'request' },
         reason: 'Mark the Issue started.',
@@ -217,6 +225,154 @@ describe('agent issue store', () => {
         'comment',
         'agent-action',
       ]);
+    });
+  });
+
+  test('blocks Agent Session starts that violate confirmation, blocker, or active-session rules', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Blocked starter', trigger: { type: 'when-ready' } },
+        request: { mode: 'request' },
+        reason: 'Create work.',
+      }, actor, 10);
+      const unconfirmed = (await store.search({ text: 'Blocked starter' })).rows[0];
+      const source: AgentSessionSource = { type: 'runtime-authorized-action', actor };
+      const unconfirmedStart = await store.startSession({
+        issueId: unconfirmed.target.id,
+        expectedIssueRevision: unconfirmed.revision,
+        request: { mode: 'request' },
+        reason: 'Start too early.',
+      }, source, actor, 20);
+      expect(unconfirmedStart.status).toBe('blocked');
+      expect(unconfirmedStart.validation?.map((entry) => entry.code)).toContain('unconfirmed_issue');
+
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Blocking prerequisite' },
+        request: { mode: 'request' },
+        reason: 'Create blocker.',
+      }, actor, 30);
+      const blocker = (await store.search({ text: 'Blocking prerequisite' })).rows[0];
+      await store.update({
+        target: { type: 'issue', id: unconfirmed.target.id, expectedRevision: unconfirmed.revision },
+        change: { type: 'patch', patch: { relations: [{ type: 'blocked-by', issueId: blocker.target.id }] } },
+        request: { mode: 'request' },
+        reason: 'Add dependency.',
+      }, actor, 40);
+      const patched = (await store.search({ text: 'Blocked starter' })).rows[0];
+      await store.update({
+        target: { type: 'issue', id: patched.target.id, expectedRevision: patched.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm work.',
+      }, actor, 50);
+      const confirmed = (await store.search({ text: 'Blocked starter' })).rows[0];
+      const blockedStart = await store.startSession({
+        issueId: confirmed.target.id,
+        expectedIssueRevision: confirmed.revision,
+        request: { mode: 'request' },
+        reason: 'Start while blocked.',
+      }, source, actor, 60);
+      expect(blockedStart.status).toBe('blocked');
+      expect(blockedStart.validation?.map((entry) => entry.code)).toContain('blocked_by_issue');
+
+      await store.update({
+        target: { type: 'issue', id: blocker.target.id, expectedRevision: blocker.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm blocker.',
+      }, actor, 70);
+      const confirmedBlocker = (await store.search({ text: 'Blocking prerequisite' })).rows[0];
+      await store.update({
+        target: { type: 'issue', id: blocker.target.id, expectedRevision: confirmedBlocker.revision },
+        change: { type: 'transition', status: { name: 'Done', category: 'completed' } },
+        request: { mode: 'request' },
+        reason: 'Complete blocker.',
+      }, actor, 80);
+      const unblocked = (await store.search({ text: 'Blocked starter' })).rows[0];
+      const firstStart = await store.startSession({
+        issueId: unblocked.target.id,
+        expectedIssueRevision: unblocked.revision,
+        request: { mode: 'request' },
+        reason: 'Start after blocker.',
+      }, source, actor, 90);
+      expect(firstStart.status).toBe('applied');
+
+      const secondStart = await store.startSession({
+        issueId: unblocked.target.id,
+        expectedIssueRevision: unblocked.revision,
+        request: { mode: 'request' },
+        reason: 'Start duplicate session.',
+      }, source, actor, 100);
+      expect(secondStart.status).toBe('blocked');
+      expect(secondStart.validation?.map((entry) => entry.code)).toContain('active_session_exists');
+    });
+  });
+
+  test('validates Agent Session continuation identity and terminal state', async () => {
+    await withStore(async (store) => {
+      for (const title of ['Continuation target', 'Different issue']) {
+        await store.create({
+          issueType: 'issue',
+          fields: { title },
+          request: { mode: 'request' },
+          reason: 'Create issue.',
+        }, actor, 10);
+        const row = (await store.search({ text: title })).rows[0];
+        await store.update({
+          target: { type: 'issue', id: row.target.id, expectedRevision: row.revision },
+          change: { type: 'confirm' },
+          request: { mode: 'request' },
+          reason: 'Confirm issue.',
+        }, actor, 20);
+      }
+      const source: AgentSessionSource = { type: 'runtime-authorized-action', actor };
+      const target = (await store.search({ text: 'Continuation target' })).rows[0];
+      const other = (await store.search({ text: 'Different issue' })).rows[0];
+      const started = await store.startSession({
+        issueId: target.target.id,
+        expectedIssueRevision: target.revision,
+        request: { mode: 'request' },
+        reason: 'Initial start.',
+      }, source, actor, 30);
+      const previousSessionId = started.targets.find((entry) => entry.type === 'agent-session')!.id;
+      await store.markInterruptedSessionsStale({ type: 'system' }, 40);
+
+      const mismatch = await store.startSession({
+        issueId: other.target.id,
+        expectedIssueRevision: other.revision,
+        continuation: { previousAgentSessionId: previousSessionId, intent: 'continue' },
+        request: { mode: 'request' },
+        reason: 'Continue from wrong issue.',
+      }, source, actor, 50);
+      expect(mismatch.status).toBe('blocked');
+      expect(mismatch.validation?.map((entry) => entry.code)).toContain('previous_session_issue_mismatch');
+
+      const continuation = await store.startSession({
+        issueId: target.target.id,
+        expectedIssueRevision: target.revision,
+        continuation: { previousAgentSessionId: previousSessionId, intent: 'retry', guidance: 'Try again.' },
+        request: { mode: 'request' },
+        reason: 'Retry terminal session.',
+      }, source, actor, 60);
+      expect(continuation.status).toBe('applied');
+      const nextSessionId = continuation.targets.find((entry) => entry.type === 'agent-session')!.id;
+      const read = await store.readSession({ agentSessionId: nextSessionId });
+      expect(read?.agentSession.continuationOfAgentSessionId).toBe(previousSessionId);
+
+      const activeContinuation = await store.startSession({
+        issueId: target.target.id,
+        expectedIssueRevision: target.revision,
+        continuation: { previousAgentSessionId: nextSessionId, intent: 'continue' },
+        request: { mode: 'request' },
+        reason: 'Continue active session.',
+      }, source, actor, 70);
+      expect(activeContinuation.status).toBe('blocked');
+      expect(activeContinuation.validation?.map((entry) => entry.code)).toEqual(expect.arrayContaining([
+        'active_session_exists',
+        'previous_session_not_terminal',
+      ]));
     });
   });
 
@@ -332,9 +488,16 @@ describe('agent issue store', () => {
         reason: 'Create recoverable work.',
       }, actor, 10);
       const issue = (await store.search({ targets: ['issue'] })).rows[0];
+      await store.update({
+        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm recoverable work.',
+      }, actor, 15);
+      const confirmedIssue = (await store.search({ targets: ['issue'] })).rows[0];
       const started = await store.startSession({
-        issueId: issue.target.id,
-        expectedIssueRevision: issue.revision,
+        issueId: confirmedIssue.target.id,
+        expectedIssueRevision: confirmedIssue.revision,
         request: { mode: 'request' },
         reason: 'Start work.',
       }, { type: 'runtime-authorized-action', actor }, actor, 20);
