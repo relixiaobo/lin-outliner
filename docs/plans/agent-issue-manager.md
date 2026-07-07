@@ -1470,7 +1470,7 @@ The longer prompt guidance should carry these usage boundaries:
 ### Current Tool Shape
 
 Current model-facing tools are organized around content, local resources, and
-legacy execution control:
+Issue / Agent Session work management:
 
 - outliner content tools: `node_search`, `node_read`, `node_create`,
   `node_edit`, `node_delete`, `operation_history`;
@@ -1478,13 +1478,15 @@ legacy execution control:
   `file_write`, `bash`, `task_stop`;
 - web tools: `web_search`, `web_fetch`;
 - conversation/context tools: `past_chats`, `ask_user_question`, `skill`;
-- legacy execution tools: `spawn_run`, `run_status`, `run_steer`, `run_amend`,
-  `run_stop`.
+- work-management tools: `issue_search`, `issue_read`, `issue_create`,
+  `issue_update`, `agent_session_start`, `agent_session_read`,
+  `agent_session_send_message`, `agent_session_stop`.
 
-The current scheduled command path includes `set_command_schedule`,
-`mark_command_attempted`, `mark_command_fired`, `agent_run_command_now`, and
-`agent_ensure_command_conversation`. These are legacy implementation concepts,
-not target tools.
+Direct delegated-Run tools are not retained as compatibility tools. Runtime keeps
+an internal delegation executor for Agent Sessions, isolated skills, and manual
+command-node Run Now, but the model-facing surface is Issue / Agent Session. The
+command-node schedule and watermark protocol is deleted; `agent_run_command_now`
+remains only as the attended manual command runner.
 
 ### Common Result Shape
 
@@ -1961,10 +1963,10 @@ caller should normally use `agent_session_send_message` instead of
 `agent_session_start`. If the previous Session is terminal, runtime creates a
 new Session and stores the link as `continuationOfAgentSessionId`.
 
-`agent_session_read` is analogous to the read/status part of `run_status`: use
-it to inspect an Agent Session or briefly wait for a specific decision. Agents
-should not poll it by default; terminal runtime notifications and Activity
-projections surface outcomes.
+`agent_session_read` inspects an Agent Session or briefly waits for a specific
+decision without exposing internal executor ids. Agents should not poll it by
+default; terminal runtime notifications and Activity projections surface
+outcomes.
 
 ```ts
 interface AgentSessionReadInput {
@@ -1980,9 +1982,9 @@ type AgentSessionReadInclude =
   | 'blocking-question';
 ```
 
-`agent_session_send_message` is analogous to `run_steer`: it sends soft
-guidance, user answers, or clarifications to an existing Agent Session. It does
-not change the Issue definition, criteria, permissions, or execution policy.
+`agent_session_send_message` sends soft guidance, user answers, or
+clarifications to an existing Agent Session. It does not change the Issue
+definition, criteria, permissions, or execution policy.
 If the Agent Session is `awaitingInput`, an answer can move the same Session
 back to active execution when runtime accepts it.
 
@@ -1996,9 +1998,8 @@ interface AgentSessionSendMessageInput {
 }
 ```
 
-`agent_session_stop` is analogous to `run_stop`: it requests runtime stop and
-records the stop request as Activity. The runtime moves the Agent Session to a
-`canceled` terminal state.
+`agent_session_stop` requests runtime stop and records the stop request as
+Activity. The runtime moves the Agent Session to a `canceled` terminal state.
 
 ```ts
 interface AgentSessionStopInput {
@@ -2217,9 +2218,9 @@ Expected file areas:
 - `src/main/agentEventStore.ts` or new stores for the canonical objects.
 - `src/main/agentRuntime.ts` for Agent Session creation, state updates,
   activity emission, scheduler materialization, and recovery.
-- `src/main/commandScheduler.ts`, `src/core/core.ts`, `src/core/types.ts`,
-  `src/core/systemFields.ts`, and `src/main/documentService.ts` to retire
-  command-node schedule ownership.
+- `src/main/commandScheduler.ts` is deleted, and `src/core/core.ts`,
+  `src/core/types.ts`, `src/core/systemFields.ts`, and
+  `src/main/documentService.ts` retire command-node schedule ownership.
 - `src/renderer/ui/agent/AgentRunsPanel.tsx` and related components to replace
   Run-first UI with Issue, Agent Session, and Activity views.
 - `src/core/i18n/messages/en.ts` and `src/core/i18n/messages/zh-Hans.ts` for

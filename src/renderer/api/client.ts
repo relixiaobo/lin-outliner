@@ -121,13 +121,10 @@ export const api = {
     command<CommandResult>('set_code_block', { nodeId, codeLanguage: codeLanguage ?? null }),
   setCodeLanguage: (nodeId: string, codeLanguage: string) =>
     command<CommandResult>('set_code_language', { nodeId, codeLanguage }),
-  // Command nodes (scheduled routines). The brief is the node's text content;
-  // `setCommandSchedule` is user-only at the gateway (the bright line) — pass
-  // null to clear the schedule (manual-only).
+  // Command nodes. The brief is the node's text content; scheduled work belongs
+  // to Issues and Recurring Issues.
   setCommandNode: (nodeId: string) =>
     command<CommandResult>('set_command_node', { nodeId }),
-  setCommandSchedule: (nodeId: string, schedule: string | null) =>
-    command<CommandResult>('set_command_schedule', { nodeId, schedule: schedule ?? null }),
   runCommandNow: (nodeId: string) =>
     command<{ conversationId: string }>('agent_run_command_now', { nodeId }),
   ensureCommandConversation: (nodeId: string) =>

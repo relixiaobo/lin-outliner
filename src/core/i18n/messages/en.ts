@@ -767,13 +767,10 @@ commandPalette: {
         create: ({ label }: { label: string }) => `Create "${label}"`,
         optionsListLabel: ({ name }: { name: string }) => `${name} options`,
       },
-      // Command node (scheduled routine) controls: the Schedule value reuses the
-      // standard date editor; Run lives at the start of the command title. Arming
-      // the schedule is the user-only "bright line".
+      // Command node controls. Scheduling belongs to Issues / Recurring Issues;
+      // command nodes only expose a manual Run affordance.
       command: {
-        enableSchedule: 'Enable schedule…',
         runNow: 'Run',
-        edit: 'Edit schedule',
       },
     },
   },
@@ -1125,8 +1122,10 @@ commandPalette: {
         nodeReadRun: ({ count }: { count: number }) => `Reading ${count === 1 ? 'a node' : `${count} nodes`}`,
         nodeSearch: () => 'Searched nodes',
         nodeSearchRun: () => 'Searching nodes',
-        run: ({ count }: { count: number }) => `Managed ${count === 1 ? 'an agent run' : `${count} agent runs`}`,
-        runRun: ({ count }: { count: number }) => `Managing ${count === 1 ? 'an agent run' : `${count} agent runs`}`,
+        issue: ({ count }: { count: number }) => `Managed ${count === 1 ? 'an issue' : `${count} issues`}`,
+        issueRun: ({ count }: { count: number }) => `Managing ${count === 1 ? 'an issue' : `${count} issues`}`,
+        session: ({ count }: { count: number }) => `Managed ${count === 1 ? 'an agent session' : `${count} agent sessions`}`,
+        sessionRun: ({ count }: { count: number }) => `Managing ${count === 1 ? 'an agent session' : `${count} agent sessions`}`,
         web: () => 'Searched the web',
         webRun: () => 'Searching the web',
         memory: () => 'Recalled memory',
@@ -1199,10 +1198,14 @@ commandPalette: {
       unknownPending: ({ name }: { name: string }) => `${name}...`,
       // Verb triples per tool: base (used in "Failed to {base}"), pending, done.
       verbs: {
-        runChildAgent: { base: 'start agent run', pending: 'Running agent run', done: 'Ran agent run' },
-        checkChildAgent: { base: 'check agent run', pending: 'Checking agent run', done: 'Checked agent run' },
-        messageChildAgent: { base: 'message agent run', pending: 'Messaging agent run', done: 'Messaged agent run' },
-        stopChildRun: { base: 'stop agent run', pending: 'Stopping agent run', done: 'Stopped agent run' },
+        searchIssues: { base: 'search issues', pending: 'Searching issues', done: 'Searched issues' },
+        readIssue: { base: 'read issue', pending: 'Reading issue', done: 'Read issue' },
+        createIssue: { base: 'create issue', pending: 'Creating issue', done: 'Created issue' },
+        updateIssue: { base: 'update issue', pending: 'Updating issue', done: 'Updated issue' },
+        startAgentSession: { base: 'start agent session', pending: 'Starting agent session', done: 'Started agent session' },
+        readAgentSession: { base: 'read agent session', pending: 'Reading agent session', done: 'Read agent session' },
+        messageAgentSession: { base: 'message agent session', pending: 'Messaging agent session', done: 'Messaged agent session' },
+        stopAgentSession: { base: 'stop agent session', pending: 'Stopping agent session', done: 'Stopped agent session' },
         recallMemory: { base: 'recall memory', pending: 'Recalling memory', done: 'Recalled memory' },
         dreamMemory: { base: 'dream memory', pending: 'Dreaming memory', done: 'Dreamed memory' },
         createNode: { base: 'create node', pending: 'Creating node', done: 'Created node' },

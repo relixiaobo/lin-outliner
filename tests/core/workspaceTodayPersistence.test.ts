@@ -9,6 +9,14 @@ mock.module('electron', () => ({
   app: {
     getPath: () => electronUserDataRoot,
   },
+  BrowserWindow: class {
+    static getAllWindows() {
+      return [];
+    }
+  },
+  session: {
+    fromPartition: () => ({ clearStorageData: async () => undefined }),
+  },
 }));
 
 type DocumentServiceModule = typeof import('../../src/main/documentService');

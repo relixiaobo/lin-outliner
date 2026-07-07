@@ -709,12 +709,10 @@ commandPalette: {
         create: ({ label }: { label: string }) => `创建“${label}”`,
         optionsListLabel: ({ name }: { name: string }) => `${name}选项`,
       },
-      // 命令节点（定时例程）控件：Schedule 复用标准日期编辑器；Run 位于命令标题
-      // 开头。设定调度是「只有用户能做」的安全红线。
+      // Command node controls. Scheduling belongs to Issues / Recurring Issues;
+      // command nodes only expose a manual Run affordance.
       command: {
-        enableSchedule: '启用调度…',
         runNow: '运行',
-        edit: '编辑调度',
       },
     },
   },
@@ -1036,8 +1034,10 @@ commandPalette: {
         nodeReadRun: ({ count }) => `正在读取 ${count} 个节点`,
         nodeSearch: () => '已搜索节点',
         nodeSearchRun: () => '正在搜索节点',
-        run: ({ count }) => `管理了 ${count} 个智能体运行`,
-        runRun: ({ count }) => `正在管理 ${count} 个智能体运行`,
+        issue: ({ count }) => `管理了 ${count} 个 Issue`,
+        issueRun: ({ count }) => `正在管理 ${count} 个 Issue`,
+        session: ({ count }) => `管理了 ${count} 个 Agent Session`,
+        sessionRun: ({ count }) => `正在管理 ${count} 个 Agent Session`,
         web: () => '已搜索网页',
         webRun: () => '正在搜索网页',
         memory: () => '已检索记忆',
@@ -1107,10 +1107,14 @@ commandPalette: {
       under: ({ verb, subject }) => `在 ${subject} 下${verb}`,
       unknownPending: ({ name }) => `${name}……`,
       verbs: {
-        runChildAgent: { base: '启动智能体运行', pending: '智能体运行中', done: '智能体运行完成' },
-        checkChildAgent: { base: '检查智能体运行', pending: '正在检查智能体运行', done: '已检查智能体运行' },
-        messageChildAgent: { base: '向智能体运行发送消息', pending: '正在向智能体运行发送消息', done: '已向智能体运行发送消息' },
-        stopChildRun: { base: '停止智能体运行', pending: '正在停止智能体运行', done: '已停止智能体运行' },
+        searchIssues: { base: '搜索 Issue', pending: '正在搜索 Issue', done: '已搜索 Issue' },
+        readIssue: { base: '读取 Issue', pending: '正在读取 Issue', done: '已读取 Issue' },
+        createIssue: { base: '创建 Issue', pending: '正在创建 Issue', done: '已创建 Issue' },
+        updateIssue: { base: '更新 Issue', pending: '正在更新 Issue', done: '已更新 Issue' },
+        startAgentSession: { base: '启动 Agent Session', pending: '正在启动 Agent Session', done: '已启动 Agent Session' },
+        readAgentSession: { base: '读取 Agent Session', pending: '正在读取 Agent Session', done: '已读取 Agent Session' },
+        messageAgentSession: { base: '向 Agent Session 发送消息', pending: '正在向 Agent Session 发送消息', done: '已向 Agent Session 发送消息' },
+        stopAgentSession: { base: '停止 Agent Session', pending: '正在停止 Agent Session', done: '已停止 Agent Session' },
         recallMemory: { base: '召回记忆', pending: '正在召回记忆', done: '已召回记忆' },
         dreamMemory: { base: 'Dream 记忆', pending: '正在 Dream 记忆', done: '已 Dream 记忆' },
         createNode: { base: '创建节点', pending: '正在创建节点', done: '已创建节点' },

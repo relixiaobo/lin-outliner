@@ -7,6 +7,14 @@ let userData = '';
 
 mock.module('electron', () => ({
   app: { getPath: () => userData },
+  BrowserWindow: class {
+    static getAllWindows() {
+      return [];
+    }
+  },
+  session: {
+    fromPartition: () => ({ clearStorageData: async () => undefined }),
+  },
 }));
 
 const { createAgentSkillProvenanceStore } = await import('../../src/main/agentSkillProvenanceStore');

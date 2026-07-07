@@ -1,29 +1,12 @@
-import { useCallback, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
-import { scheduleChipSummary } from './dateRecurrence';
-import { DateValuePicker } from './DateValuePicker';
-import { NodeBulletDot } from './NodeBulletDot';
+import { useCallback, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
-import type { CommandRunner } from '../shared';
 import { requestRevealAgentConversation } from '../../agent/agentReveal';
-import { CalendarIcon, PlayIcon } from '../icons';
+import { PlayIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
-import { useT } from '../../i18n/I18nProvider';
 
-// The recurrence-form/summary helpers live in the shared `dateRecurrence` module
-// (the generic date field uses them too); re-exported here so existing importers
-// (and tests) keep pulling them from the command field surface.
-export { buildScheduleString, scheduleChipSummary } from './dateRecurrence';
-export type { RecurrencePreset as CommandRecurrencePreset } from './dateRecurrence';
-
-// Labels for the command config field editors and the title Run action. Sourced
-// from `i18n.outliner.field.command`. The Schedule editor itself is the shared
-// date picker, so its calendar / recurrence labels live under
-// `i18n.outliner.field.datePicker`.
 export interface CommandFieldLabels {
-  enableSchedule: string;
   runNow: string;
-  edit: string;
 }
 
 // Drives an attended "run now": 1) ensure the delivery conversation exists on
@@ -76,89 +59,4 @@ export function CommandRunButton(props: { labels: CommandFieldLabels; onRun: () 
       </span>
     </ButtonControl>
   );
-}
-
-// The value cell for a command node's `Schedule` system field. It mirrors the
-// STANDARD date field value's interaction: empty by default with a "Press Space to
-// pick a date…" placeholder, and Space (or click) summons the shared date picker
-// (single-only; recurrence is the "Repeat" control). When armed it shows the
-// schedule summary + a muted calendar glyph. It commits through the user-gated
-// `set_command_schedule`, not the generic field-value write, so the schedule bright
-// line is unchanged. `buttonRef` lets the field row focus this cell on navigation.
-export function CommandScheduleFieldValue(props: {
-  nodeId: NodeId;
-  schedule: string | null;
-  readOnly?: boolean;
-  labels: CommandFieldLabels;
-  run: CommandRunner;
-  buttonRef?: RefObject<HTMLButtonElement | null>;
-}) {
-  const { nodeId, schedule, readOnly, labels, run, buttonRef } = props;
-  const tf = useT().outliner.field;
-  const [open, setOpen] = useState(false);
-  const internalRef = useRef<HTMLButtonElement>(null);
-  const anchorRef = buttonRef ?? internalRef;
-  const summary = useMemo(() => (schedule ? scheduleChipSummary(schedule, tf.datePicker) : ''), [schedule, tf.datePicker]);
-
-  const setSchedule = (next: string | null) => { void run(() => api.setCommandSchedule(nodeId, next)); };
-
-  return (
-    <div className="field-value-cell command-field-value-cell">
-      <CommandValueBullet />
-      <ButtonControl
-        ref={anchorRef}
-        className={`command-field-value command-schedule-value ${open ? 'is-open' : ''} ${summary ? '' : 'is-empty'}`.trim()}
-        data-field-value
-        data-armed={summary ? 'true' : undefined}
-        disabled={readOnly}
-        title={summary ? labels.edit : labels.enableSchedule}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        onKeyDown={(event) => openOnSpaceOrEnter(event, () => setOpen(true))}
-      >
-        {summary ? (
-          <>
-            <span className="command-field-value-label">{summary}</span>
-            <CalendarIcon size={13} strokeWidth={1.8} />
-          </>
-        ) : (
-          <span className="command-field-placeholder">{tf.datePlaceholder}</span>
-        )}
-      </ButtonControl>
-      <DateValuePicker
-        anchorRef={anchorRef}
-        value={schedule ?? ''}
-        open={open && !readOnly}
-        onOpenChange={setOpen}
-        onCommit={(value) => setSchedule(value || null)}
-        allowRange={false}
-      />
-    </div>
-  );
-}
-
-// Each command config value reads, like a Tana field value, as its own node — so
-// it carries a leading bullet matching the standard value-node bullet (the same
-// `.row-bullet-shape.content` + dot the outliner draws). The schedule/agent are
-// scalar-backed (no value node exists to zoom into), so this bullet is purely
-// decorative and stays out of the a11y tree.
-function CommandValueBullet() {
-  return (
-    <span className="command-field-value-bullet" aria-hidden="true">
-      <span className="row-bullet-shape content">
-        <NodeBulletDot />
-      </span>
-    </span>
-  );
-}
-
-// Space / Enter on a focused command value cell summons its picker — matching the
-// standard date field value, where Space on the empty value opens the calendar.
-function openOnSpaceOrEnter(event: ReactKeyboardEvent, open: () => void): void {
-  if (event.key !== ' ' && event.key !== 'Enter') return;
-  if (event.metaKey || event.ctrlKey || event.altKey) return;
-  event.preventDefault();
-  event.stopPropagation();
-  open();
 }

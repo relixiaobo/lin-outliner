@@ -6,6 +6,14 @@ const userData = '/tmp/lin-agent-tool-permission-store-test';
 
 mock.module('electron', () => ({
   app: { getPath: () => userData },
+  BrowserWindow: class {
+    static getAllWindows() {
+      return [];
+    }
+  },
+  session: {
+    fromPartition: () => ({ clearStorageData: async () => undefined }),
+  },
 }));
 
 const {

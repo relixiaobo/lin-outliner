@@ -1,7 +1,6 @@
 import { parseDateFieldValue } from './dateFieldValue';
 import { projectFieldConfig } from './configProjection';
 import {
-  COMMAND_SCHEDULE_FIELD_ID,
   CREATED_FIELD,
   DAY_FIELD,
   DONE_AT_FIELD,
@@ -73,7 +72,6 @@ const SYSTEM_FIELD_IDS = [
   REF_COUNT_FIELD,
   OWNER_FIELD,
   DAY_FIELD,
-  COMMAND_SCHEDULE_FIELD_ID,
 ];
 
 export function normalizeFieldNameKey(name: string): string {

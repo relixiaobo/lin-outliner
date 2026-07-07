@@ -1,4 +1,4 @@
-import { Agent, type AfterToolCallResult, type AgentEvent, type AgentTool } from '@earendil-works/pi-agent-core';
+import { Agent, type AfterToolCallResult, type AgentEvent } from '@earendil-works/pi-agent-core';
 import { isContextOverflow } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, ImageContent, Model, TextContent, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
 import { randomUUID } from 'node:crypto';
@@ -39,12 +39,6 @@ import {
   createPostCompactRestoredFilesReminder,
 } from './agentCompaction';
 import {
-  agentToolResult,
-  errorEnvelope,
-  successEnvelope,
-  type ToolEnvelope,
-} from './agentToolEnvelope';
-import {
   collectAgentMessageToolResultBudgetSelections,
   createToolResultBudgetState,
   DEFAULT_MAX_TOOL_RESULT_CHARS,
@@ -62,7 +56,6 @@ import {
 } from './agentDelegationIdentity';
 import {
   isRunProfileId,
-  modelSelectableRunProfiles,
   resolveRunProfile,
   runProfileForIsolatedSkill,
   runProfileForPurpose,
@@ -104,11 +97,7 @@ import {
 
 export { recordNodeToolChanges } from './agentDelegationVerificationPolicy';
 
-export const AGENT_DELEGATE_TOOL_NAME = 'spawn_run';
-export const AGENT_STATUS_TOOL_NAME = 'run_status';
-export const AGENT_SEND_TOOL_NAME = 'run_steer';
-export const AGENT_AMEND_TOOL_NAME = 'run_amend';
-export const AGENT_STOP_TOOL_NAME = 'run_stop';
+export const INTERNAL_DELEGATION_ACTOR_TOOL_NAME = 'internal_delegation';
 
 const AGENT_LISTING_CONTEXT_PERCENT = 0.01;
 const CHARS_PER_TOKEN = 4;
@@ -132,135 +121,6 @@ const DEFAULT_VERIFIER_LIVELOCK_REPEAT_LIMIT = 2;
 // `setTimeout` stores its delay in a 32-bit int; a larger delay overflows and
 // fires (near-)immediately, so any timer is armed in clamped re-arming hops.
 const MAX_SETTIMEOUT_DELAY_MS = 2_147_483_647;
-
-const AGENT_TOOL_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['objective'],
-  properties: {
-    objective: {
-      type: 'string',
-      minLength: 1,
-      description: 'The objective for the new Run to pursue. This is the work, not the acceptance criteria.',
-    },
-    criteria: {
-      type: 'array',
-      items: { type: 'string', minLength: 1 },
-      description: 'Independent acceptance criteria the parent will verify. Required unless verify is false.',
-    },
-    verify: {
-      type: 'boolean',
-      description: 'Defaults to true. Set false only for an explicitly unverified throwaway run.',
-    },
-    scope: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        capabilities: { type: 'array', items: { type: 'string', minLength: 1 } },
-        resources: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            docs: { type: 'array', items: { type: 'string', minLength: 1 } },
-            paths: { type: 'array', items: { type: 'string', minLength: 1 } },
-          },
-        },
-      },
-      description: 'Optional narrowed capability/resource scope. It cannot widen the caller.',
-    },
-    budget: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        tokens: { type: 'integer', minimum: 1 },
-        wallClockMinutes: { type: 'integer', minimum: 1 },
-      },
-      description: 'Optional budget slice. Detached root goals should provide a ceiling.',
-    },
-    runProfile: {
-      type: 'string',
-      enum: modelSelectableRunProfiles().map((profile) => profile.id),
-      description: 'Optional Run profile. Use research for read-only exploration; omit for default work.',
-    },
-    context: {
-      type: 'string',
-      enum: ['full', 'brief', 'none'],
-      description: 'How much parent context the Run receives. Verifiers are always none.',
-    },
-    detach: {
-      type: 'boolean',
-      description: 'Run past the current turn and notify on outcome.',
-    },
-    description: {
-      type: 'string',
-      minLength: 1,
-      maxLength: 200,
-      description: 'Optional short 3-5 word description for the Work/Runs panel.',
-    },
-    model: {
-      type: 'string',
-      minLength: 1,
-      description: 'Optional model override. Takes precedence over the agent definition model. If omitted, uses the agent definition model or inherits the parent model.',
-    },
-    name: {
-      type: 'string',
-      minLength: 1,
-      maxLength: 120,
-      description: 'Optional same-session name for addressing this background agent.',
-    },
-  },
-};
-
-const AGENT_STATUS_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
-    wait: { type: 'boolean', description: 'If true, wait briefly for a running background agent to finish.' },
-    timeout_ms: { type: 'integer', minimum: 1, maximum: 120000, description: 'Maximum wait time when wait is true. Default 30000.' },
-  },
-};
-
-const AGENT_SEND_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['message'],
-  properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
-    message: { type: 'string', minLength: 1, description: 'Soft steering message to send to the existing background run.' },
-  },
-};
-
-const AGENT_STOP_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
-  },
-};
-
-const AGENT_AMEND_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['changes'],
-  properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
-    changes: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        objective: { type: 'string', minLength: 1 },
-        criteria: { type: 'array', items: { type: 'string', minLength: 1 } },
-        budget: AGENT_TOOL_PARAMETERS.properties.budget,
-      },
-    },
-  },
-};
-
-
 
 export type AgentDelegateToolData = AgentRunActionResult;
 
@@ -291,9 +151,9 @@ export interface AgentChildAgentCreateInput {
   preapprovedToolRules?: string[];
   l0CacheBreakpointEnabled?: boolean;
   /**
-   * Run with no interactive approval channel (unattended). A tool needing
-   * approval is denied + surfaced instead of waiting for a human; globally
-   * always-allowed tools still run. Set for scheduled command runs.
+   * Run with no interactive approval channel. A tool needing approval is denied
+   * and surfaced instead of waiting for a human; globally always-allowed tools
+   * still run. Set only by runtime-owned unattended execution paths.
    */
   unattended?: boolean;
   afterToolResult?: (
@@ -554,7 +414,7 @@ export class AgentDelegationRuntime {
     if (!listing) return null;
     for (const agent of newAgents) this.listedAgents.set(agent.name, agentListingIdentity(agent));
     return [
-      `You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} creates a same-agent sub-run in an isolated worker — it does not select or switch to a different agent:`,
+      'You are operating with these available agent definitions for Issue and Agent Session work:',
       '',
       listing,
     ].join('\n');
@@ -781,7 +641,7 @@ export class AgentDelegationRuntime {
     await this.host.runStatusChanged(snapshotRun(run));
     return {
       ...runToToolData(run),
-      instructions: 'Run objective metadata was amended. Existing verifier conclusions are invalidated; use run_steer to provide execution guidance if needed.',
+      instructions: 'Execution objective metadata was amended. Existing verifier conclusions are invalidated; use Agent Session messaging for execution guidance if needed.',
     };
   }
 
@@ -958,7 +818,7 @@ export class AgentDelegationRuntime {
       return {
         ...runToToolData(run),
         status: 'async_launched',
-        instructions: `The run is running in the background. Tenon will notify you automatically when it finishes. Use ${AGENT_STATUS_TOOL_NAME} with runId "${run.id}" only when you need an explicit progress check, ${AGENT_SEND_TOOL_NAME} to steer it, ${AGENT_AMEND_TOOL_NAME} to change objective/criteria/budget, or ${AGENT_STOP_TOOL_NAME} to stop it.`,
+        instructions: 'The Agent Session is running in the background. Tenon will notify you automatically when it finishes; use Agent Session tools for explicit inspection or control.',
       };
     }
 
@@ -1882,86 +1742,6 @@ export class AgentDelegationRuntime {
   }
 }
 
-export function createAgentDelegationTools(runtime: AgentDelegationRuntime): AgentTool<any, ToolEnvelope<AgentDelegateToolData>>[] {
-  return [
-    {
-      name: AGENT_DELEGATE_TOOL_NAME,
-      label: 'Spawn Run',
-      description: [
-        'Create a same-agent sub-run for a focused objective with explicit acceptance criteria.',
-        'Use context to choose full, brief, or no inherited parent context.',
-        'Launch multiple runs in the same turn when independent work can run in parallel.',
-        `For long work, set detach and use ${AGENT_STATUS_TOOL_NAME}, ${AGENT_SEND_TOOL_NAME}, ${AGENT_AMEND_TOOL_NAME}, or ${AGENT_STOP_TOOL_NAME} with the returned runId.`,
-      ].join('\n'),
-      parameters: AGENT_TOOL_PARAMETERS,
-      executionMode: 'parallel',
-      execute: async (toolCallId, rawParams, signal) => {
-        try {
-          return delegateToolResult(AGENT_DELEGATE_TOOL_NAME, await runtime.invokeAgent(rawParams, signal, toolCallId));
-        } catch (error) {
-          return agentToolResult(errorEnvelope(AGENT_DELEGATE_TOOL_NAME, 'agent_failed', errorMessage(error)));
-        }
-      },
-    },
-    {
-      name: AGENT_STATUS_TOOL_NAME,
-      label: 'Run Status',
-      description: 'Check a same-session background run by runId or name.',
-      parameters: AGENT_STATUS_PARAMETERS,
-      executionMode: 'parallel',
-      execute: async (_toolCallId, rawParams) => {
-        try {
-          return delegateToolResult(AGENT_STATUS_TOOL_NAME, await runtime.status(rawParams));
-        } catch (error) {
-          return agentToolResult(errorEnvelope(AGENT_STATUS_TOOL_NAME, 'agent_status_failed', errorMessage(error)));
-        }
-      },
-    },
-    {
-      name: AGENT_SEND_TOOL_NAME,
-      label: 'Run Steer',
-      description: 'Send a soft steering message to an existing same-session background run without changing its objective or criteria.',
-      parameters: AGENT_SEND_PARAMETERS,
-      executionMode: 'parallel',
-      execute: async (_toolCallId, rawParams) => {
-        try {
-          return delegateToolResult(AGENT_SEND_TOOL_NAME, await runtime.send(rawParams));
-        } catch (error) {
-          return agentToolResult(errorEnvelope(AGENT_SEND_TOOL_NAME, 'agent_send_failed', errorMessage(error)));
-        }
-      },
-    },
-    {
-      name: AGENT_AMEND_TOOL_NAME,
-      label: 'Run Amend',
-      description: 'Hard-amend an existing run objective, acceptance criteria, or budget. This invalidates prior verifier conclusions.',
-      parameters: AGENT_AMEND_PARAMETERS,
-      executionMode: 'parallel',
-      execute: async (_toolCallId, rawParams) => {
-        try {
-          return delegateToolResult(AGENT_AMEND_TOOL_NAME, await runtime.amend(rawParams));
-        } catch (error) {
-          return agentToolResult(errorEnvelope(AGENT_AMEND_TOOL_NAME, 'agent_amend_failed', errorMessage(error)));
-        }
-      },
-    },
-    {
-      name: AGENT_STOP_TOOL_NAME,
-      label: 'Run Stop',
-      description: 'Stop a running same-session background run.',
-      parameters: AGENT_STOP_PARAMETERS,
-      executionMode: 'parallel',
-      execute: async (_toolCallId, rawParams) => {
-        try {
-          return delegateToolResult(AGENT_STOP_TOOL_NAME, await runtime.stop(rawParams));
-        } catch (error) {
-          return agentToolResult(errorEnvelope(AGENT_STOP_TOOL_NAME, 'agent_stop_failed', errorMessage(error)));
-        }
-      },
-    },
-  ];
-}
-
 /**
  * The inherited fork context: the parent's live transcript (cloned) with
  * unresolved tool calls closed by placeholder results. The directive is NOT
@@ -2089,11 +1869,11 @@ function buildRunDirective(params: AgentToolParams): string {
     `<${FORK_BOILERPLATE_TAG}>`,
     'STOP. READ THIS FIRST.',
     '',
-    'You are a Tenon child Run. You may decompose your objective by creating sub-runs when that is the most reliable way to finish.',
+    'You are a Tenon Agent Session worker. You may decompose your objective by creating sub-issues when that is the most reliable way to finish.',
     '',
     'Controller rules:',
     '1. Stay strictly within the objective and acceptance criteria.',
-    `2. When creating sub-runs, use ${AGENT_DELEGATE_TOOL_NAME} with explicit objective and criteria.`,
+    '2. When decomposing, use issue_create with explicit objective and criteria. Runtime trigger/session rules decide when execution starts.',
     '3. Verify sub-run results before accepting them as done; create replacement work for rejected results when budget remains.',
     '4. Do not ask the user questions from this child Run; block with a concise reason if owner input is genuinely required.',
     '5. Keep the final report factual and concise, naming what was verified and any residual gaps.',
@@ -2142,36 +1922,6 @@ function lastAssistantMessage(messages: readonly AgentMessage[]): AssistantMessa
     if (message?.role === 'assistant') return message;
   }
   return null;
-}
-
-export function delegateToolResult(toolName: string, data: AgentDelegateToolData) {
-  // Next-step guidance is an envelope concern, not data: lift data.instructions
-  // to the envelope's instructions field so it sits beside status/error like
-  // every other tool, rather than nested inside the result payload.
-  const envelope = successEnvelope(toolName, data, data.instructions ? { instructions: data.instructions } : {});
-  return agentToolResult(envelope, visibleRunResult(data));
-}
-
-// Model-visible projection. The full AgentDelegateToolData stays on the envelope
-// (details); the parent agent needs lifecycle state, addressability, verdict
-// blockers, one-level child summaries for controllers, and produced result/error.
-// Next-step instructions are carried by the envelope's instructions field.
-// Echoed launch arguments (description, context_mode) and
-// timestamps/transcript counts are dropped.
-export function visibleRunResult(data: AgentDelegateToolData): unknown {
-  const visible: Record<string, unknown> = {
-    status: data.status,
-    runId: data.runId,
-  };
-  if (data.name) visible.name = data.name;
-  if (data.objective_status) visible.objective_status = data.objective_status;
-  if (data.budget) visible.budget = data.budget;
-  if (data.children && data.children.length > 0) visible.children = data.children;
-  if (data.latest_verifier_gap) visible.latest_verifier_gap = data.latest_verifier_gap;
-  if (data.blocked_reason) visible.blocked_reason = data.blocked_reason;
-  if (data.result !== undefined) visible.result = data.result;
-  if (data.error !== undefined) visible.error = data.error;
-  return visible;
 }
 
 function runToToolData(run: DelegationRunState, children: readonly DelegationRunState[] = []): AgentDelegateToolData {
@@ -2319,13 +2069,13 @@ function replaceToolResultText(message: ToolResultMessage, text: string): void {
 }
 
 function normalizeAgentToolParams(raw: unknown): AgentToolParams {
-  if (!isPlainRecord(raw)) throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input must be an object.`);
+  if (!isPlainRecord(raw)) throw new Error('Delegation input must be an object.');
   const objective = coerceString(raw.objective)?.trim();
-  if (!objective) throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input requires objective.`);
+  if (!objective) throw new Error('Delegation input requires objective.');
   const verify = raw.verify !== false;
   const criteria = coerceStringArray(raw.criteria);
   if (verify && (!criteria || criteria.length === 0)) {
-    throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input requires at least one criterion unless verify is false.`);
+    throw new Error('Delegation input requires at least one criterion unless verify is false.');
   }
   const description = coerceString(raw.description)?.trim() || truncate(compactInlineText(objective), 120);
   const runPrompt = coerceString(raw.runPrompt)?.trim() || buildObjectivePrompt(objective, criteria);
@@ -2371,15 +2121,15 @@ function normalizeRequestedRunProfile(value: unknown): AgentRunProfileId | undef
 }
 
 function normalizeAmendParams(raw: unknown): { runId: string; changes: { objective?: string; criteria?: string[]; budget?: AgentRunBudget } } {
-  if (!isPlainRecord(raw)) throw new Error('run_amend input must be an object.');
+  if (!isPlainRecord(raw)) throw new Error('Delegation amend input must be an object.');
   const runId = coerceString(raw.runId)?.trim();
-  if (!runId) throw new Error('run_amend input requires runId.');
-  if (!isPlainRecord(raw.changes)) throw new Error('run_amend input requires changes.');
+  if (!runId) throw new Error('Delegation amend input requires runId.');
+  if (!isPlainRecord(raw.changes)) throw new Error('Delegation amend input requires changes.');
   const objective = coerceString(raw.changes.objective)?.trim();
   const criteria = raw.changes.criteria === undefined ? undefined : coerceStringArray(raw.changes.criteria) ?? [];
   const budget = raw.changes.budget === undefined ? undefined : normalizeRunBudgetInput(raw.changes.budget);
   if (objective === undefined && criteria === undefined && budget === undefined) {
-    throw new Error('run_amend changes must include objective, criteria, or budget.');
+    throw new Error('Delegation amend changes must include objective, criteria, or budget.');
   }
   return { runId, changes: { objective, criteria, budget } };
 }
@@ -2403,9 +2153,9 @@ function normalizeRunSelector(raw: unknown): { runId?: string; name?: string; wa
 }
 
 function normalizeSendParams(raw: unknown): { runId?: string; name?: string; message: string } {
-  if (!isPlainRecord(raw)) throw new Error('run_steer input must be an object.');
+  if (!isPlainRecord(raw)) throw new Error('Delegation message input must be an object.');
   const message = coerceString(raw.message)?.trim();
-  if (!message) throw new Error('run_steer input requires message.');
+  if (!message) throw new Error('Delegation message input requires message.');
   return {
     runId: coerceString(raw.runId),
     name: coerceString(raw.name),
@@ -2458,7 +2208,7 @@ function parsePersistedAgentListingStateLine(line: string): { name: string; iden
 
 function parseLiveAgentListing(text: string): string[] {
   const body = unwrapSystemReminder(text);
-  if (!body.includes(`You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} creates`)) {
+  if (!body.includes('You are operating with these available agent definitions for Issue and Agent Session work:')) {
     return [];
   }
   return body

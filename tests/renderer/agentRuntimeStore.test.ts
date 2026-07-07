@@ -1182,10 +1182,9 @@ describe('agent runtime store', () => {
           content: [{
             type: 'toolCall',
             id: 'tool-agent-1',
-            name: 'spawn_run',
+            name: 'agent_session_start',
             arguments: {
-              description: 'Inspect Run UI',
-              objective: 'Inspect the current UI.',
+              issueId: 'issue-run-ui',
             },
           }],
         },

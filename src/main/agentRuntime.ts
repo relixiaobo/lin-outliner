@@ -187,7 +187,7 @@ import {
   runContextPolicyFromContextMode,
   runProfileFromStartedRun,
 } from './agentRunProfiles';
-import { commandBriefText, liveCommandNodeIds, selectDueCommands, type DueCommand } from './commandScheduler';
+import { commandBriefText } from './commandNodeBrief';
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
@@ -242,7 +242,7 @@ import {
 } from './agentIssueRuntimeAuthorization';
 import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
-  AGENT_DELEGATE_TOOL_NAME,
+  INTERNAL_DELEGATION_ACTOR_TOOL_NAME,
   AgentDelegationRuntime,
   createTenonAssistantAgentDefinition,
   recordNodeToolChanges,
@@ -428,11 +428,7 @@ interface DebugConversationContext {
   replacedByToolCall: Map<string, Extract<AgentEvent, { type: 'tool_result.replaced' }>[]>;
 }
 const DREAM_SCHEDULER_INTERVAL_MS = 60_000;
-const COMMAND_SCHEDULER_INTERVAL_MS = 60_000;
 const ISSUE_SCHEDULER_INTERVAL_MS = 60_000;
-// In-memory per-command failure backoff (openclaw-style); process-level, never
-// persisted. A failed fire does not advance the watermark, so it stays due.
-const COMMAND_FAILURE_BACKOFF_MS = [30_000, 60_000, 300_000, 900_000, 3_600_000] as const;
 // How long each `status({wait})` poll blocks while waiting for a background-flagged
 // command Run to finish (it re-polls if the run is still going).
 const COMMAND_RUN_WAIT_MS = 600_000;
@@ -471,7 +467,6 @@ interface AgentRuntimeOptions {
   streamFn?: StreamFn;
   dreamMemoryExtractionEnabled?: boolean;
   errorReporter?: ErrorReporter;
-  legacyRunToolsEnabled?: boolean;
 }
 
 interface AgentToolApprovalInput {
@@ -780,15 +775,8 @@ export class AgentRuntime {
   private readonly dreamFailureBackoff = new Map<string, { consecutiveFailures: number; nextAttemptAt: number }>();
   private dreamSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private issueSchedulerTimer: ReturnType<typeof setInterval> | null = null;
-  private commandSchedulerTimer: ReturnType<typeof setInterval> | null = null;
-  private commandSweepTail: Promise<void> = Promise.resolve();
   private readonly firingIssueIds = new Set<string>();
   private readonly firingCommandNodeIds = new Set<string>();
-  private readonly commandFailureCounts = new Map<string, number>();
-  private readonly commandBackoffUntil = new Map<string, number>();
-  // Command nodes that have a delivery conversation this app run, so the sweep
-  // can delete the conversation when the node is permanently removed.
-  private readonly knownCommandConversationNodeIds = new Set<string>();
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentConversationState>;
   // Mutable: the primary agent (Neva) is user-customizable, so her display name and
@@ -2654,7 +2642,6 @@ export class AgentRuntime {
           runtimeSettingsLoader: () => this.getRuntimeSettings(),
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
-          delegationRuntime,
           issueRuntime: this.createIssueToolRuntime(defaultAgentId, this.createIssueSessionExecutor(
             () => this.currentRuntimeConversation(conversationRef.current)?.delegationRuntime ?? null,
             () => conversationId,
@@ -2665,7 +2652,6 @@ export class AgentRuntime {
           imageGeneration: this.createImageGenerationRuntime(conversationId, localWorkspace, () => conversationRef.current),
           allowedTools: agentToolFilter.allowedTools,
           disallowedTools: agentToolFilter.disallowedTools,
-          legacyRunToolsEnabled: this.options.legacyRunToolsEnabled,
           permissionScopeIdProvider: () => {
             const current = conversationRef.current;
             return current ? this.activeRunId(current) : null;
@@ -2846,7 +2832,6 @@ export class AgentRuntime {
       localWorkspace: conversation.localWorkspace,
       skillRuntime: conversation.skillRuntime,
       skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
-      delegationRuntime: conversation.delegationRuntime,
       issueRuntime: this.createIssueToolRuntime(conversation.defaultAgentId, this.createIssueSessionExecutor(
         () => conversation.delegationRuntime,
         () => conversation.eventState.conversation?.id ?? 'unknown',
@@ -2857,7 +2842,6 @@ export class AgentRuntime {
       imageGeneration: this.createImageGenerationRuntime(conversation.eventState.conversation?.id ?? 'unknown', conversation.localWorkspace, () => conversation),
       allowedTools: conversation.agentToolFilter.allowedTools,
       disallowedTools: conversation.agentToolFilter.disallowedTools,
-      legacyDelegationToolsEnabled: this.options.legacyRunToolsEnabled,
     });
   }
 
@@ -2888,7 +2872,6 @@ export class AgentRuntime {
       runtimeSettingsLoader: () => this.getRuntimeSettings(),
       skillToolEnabled: true,
       skillRuntime: input.skillRuntime,
-      delegationRuntime: input.delegationRuntime,
       issueRuntime: this.createIssueToolRuntime(input.executingAgentId, this.createIssueSessionExecutor(
         () => input.delegationRuntime,
         () => parentConversationId,
@@ -2907,10 +2890,9 @@ export class AgentRuntime {
       runScope: input.scope,
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
-      legacyRunToolsEnabled: this.options.legacyRunToolsEnabled,
       preapprovedToolRules: input.preapprovedToolRules,
       permissionScopeIdProvider: () => input.conversationId,
-      // Unattended (scheduled command) runs have NO interactive approval channel:
+      // Runtime-owned unattended executions have NO interactive approval channel:
       // leaving it undefined makes an 'ask' decision resolve to a denial that is
       // surfaced in the conversation, rather than hanging on a human who will
       // never answer. Globally always-allowed tools still run (they resolve to
@@ -2990,7 +2972,7 @@ export class AgentRuntime {
         body: interruptedError,
         source: { type: 'run', runId: run.id },
         actor: run.parentToolCallId
-          ? toolActor(AGENT_DELEGATE_TOOL_NAME, run.parentToolCallId)
+          ? toolActor(INTERNAL_DELEGATION_ACTOR_TOOL_NAME, run.parentToolCallId)
           : systemActor(),
       });
     }
@@ -2998,7 +2980,7 @@ export class AgentRuntime {
 
   private delegatedRunActor(snapshot: AgentRunSnapshot): AgentActor {
     return snapshot.parentToolCallId
-      ? toolActor(AGENT_DELEGATE_TOOL_NAME, snapshot.parentToolCallId)
+      ? toolActor(INTERNAL_DELEGATION_ACTOR_TOOL_NAME, snapshot.parentToolCallId)
       : systemActor();
   }
 
@@ -3417,29 +3399,12 @@ export class AgentRuntime {
     (this.dreamSchedulerTimer as { unref?: () => void }).unref?.();
   }
 
-  private startCommandScheduler() {
-    if (this.commandSchedulerTimer) return;
-    this.commandSchedulerTimer = setInterval(() => {
-      this.queueCommandSweep(new Date());
-    }, COMMAND_SCHEDULER_INTERVAL_MS);
-    (this.commandSchedulerTimer as { unref?: () => void }).unref?.();
-  }
-
   private startIssueScheduler() {
     if (this.issueSchedulerTimer) return;
     this.issueSchedulerTimer = setInterval(() => {
       this.queueIssueSweep(new Date());
     }, ISSUE_SCHEDULER_INTERVAL_MS);
     (this.issueSchedulerTimer as { unref?: () => void }).unref?.();
-  }
-
-  // Teardown for the recurring scheduler timer (called on dispose / before-quit).
-  // `.unref()` already keeps it from blocking exit; this stops it cleanly so a
-  // disposed runtime (e.g. a test instance) leaves no live interval behind.
-  stopCommandScheduler() {
-    if (!this.commandSchedulerTimer) return;
-    clearInterval(this.commandSchedulerTimer);
-    this.commandSchedulerTimer = null;
   }
 
   stopIssueScheduler() {
@@ -3458,21 +3423,13 @@ export class AgentRuntime {
    * a slow in-flight dream (an LLM call) must not block ⌘Q.
    */
   async drainPendingWrites(): Promise<void> {
-    const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.issueSweepTail, this.commandSweepTail];
+    const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.issueSweepTail];
     for (const conversation of this.conversations.values()) pending.push(conversation.pendingEventAppend);
     // Delegated-run ledgers append on their own per-run queues — settle them
     // too, or a quit can keep the conversation's terminal marker while losing
     // the ledger's own run.completed (the run stream then self-reports running).
     pending.push(...this.runLedger.pendingWrites());
     await Promise.allSettled(pending);
-  }
-
-  // Catch-up hook for app launch (see ready()) and `powerMonitor.resume` (wired
-  // in main.ts). Idle-safe: queued behind any in-flight sweep.
-  runCommandCatchUp() {
-    // Scheduled command-node execution is retired as an automatic work source.
-    // Issue/Recurring Issue triggers own scheduled agent work; command nodes can
-    // still be run manually through runCommandNow for compatibility.
   }
 
   runIssueCatchUp() {
@@ -3577,171 +3534,11 @@ export class AgentRuntime {
     return `lin-agent-issue-${hashJson({ agentId: this.agentIdentity.agentId, issueId }).slice(0, 16)}`;
   }
 
-  private queueCommandSweep(now: Date) {
-    this.commandSweepTail = this.commandSweepTail
-      .catch(() => undefined)
-      .then(() => this.sweepCommandSchedules(now));
-  }
-
-  private queueCommandReconcile() {
-    this.commandSweepTail = this.commandSweepTail
-      .catch(() => undefined)
-      .then(() => this.reconcileCommandAttempts());
-  }
-
-  // One-time startup crash recovery for at-most-once scheduled runs. An occurrence
-  // is attempted (`mark_command_attempted` → `sysLastAttemptAt = dueAt`) BEFORE it
-  // runs; success advances `sysLastRunAt` past it. So at launch, any command with
-  // `sysLastAttemptAt > sysLastRunAt` was interrupted mid-run (crash/quit/sleep):
-  // advance the watermark past that occurrence rather than re-firing it — the
-  // brief's non-idempotent side effects must not repeat. The due check never reads
-  // the attempt marker, so an in-process run *failure* still retries (it is gated
-  // by the in-memory backoff, not by this reconciliation).
-  private async reconcileCommandAttempts() {
-    let projection;
-    try {
-      projection = this.outlinerToolHost.getProjection();
-    } catch {
-      return;
-    }
-    for (const node of projection.nodes) {
-      if (node.type !== 'command') continue;
-      const attemptedAt = node.sysLastAttemptAt;
-      if (attemptedAt === undefined || attemptedAt <= (node.sysLastRunAt ?? 0)) continue;
-      await this.outlinerToolHost.handle(
-        'mark_command_fired',
-        { nodeId: node.id, firedAt: attemptedAt },
-        { origin: 'system', summary: 'Reconciled an interrupted command run.' },
-      ).catch(() => undefined);
-    }
-  }
-
-  private async sweepCommandSchedules(now: Date) {
-    let projection;
-    try {
-      projection = this.outlinerToolHost.getProjection();
-    } catch {
-      return;
-    }
-    this.pruneCommandRuntimeState(projection);
-    const due = selectDueCommands(projection, now);
-    for (const command of due) {
-      if (this.firingCommandNodeIds.has(command.nodeId)) continue;
-      const backoffUntil = this.commandBackoffUntil.get(command.nodeId);
-      if (backoffUntil !== undefined && backoffUntil > now.getTime()) continue;
-      // Fire concurrently — do NOT await here. `fireCommand` self-guards via
-      // `firingCommandNodeIds` and never rejects, so one slow/hung command can't
-      // block the others (or, via the sweep tail, every subsequent sweep).
-      void this.fireCommand(command, now);
-    }
-  }
-
-  // Reconcile in-memory command state against the live document: prune backoff
-  // entries for nodes that no longer exist, and delete the delivery conversation
-  // of a command node that was permanently removed (trashed nodes are still
-  // present, so their conversation is preserved for restore).
-  private pruneCommandRuntimeState(projection: DocumentProjection) {
-    if (
-      this.commandFailureCounts.size === 0
-      && this.commandBackoffUntil.size === 0
-      && this.knownCommandConversationNodeIds.size === 0
-    ) return;
-    const live = liveCommandNodeIds(projection);
-    for (const nodeId of [...this.commandFailureCounts.keys()]) {
-      if (!live.has(nodeId)) this.commandFailureCounts.delete(nodeId);
-    }
-    for (const nodeId of [...this.commandBackoffUntil.keys()]) {
-      if (!live.has(nodeId)) this.commandBackoffUntil.delete(nodeId);
-    }
-    for (const nodeId of [...this.knownCommandConversationNodeIds]) {
-      if (live.has(nodeId)) continue;
-      this.knownCommandConversationNodeIds.delete(nodeId);
-      void this.deleteConversation(
-        this.commandConversationId(nodeId),
-      ).catch(() => undefined);
-    }
-  }
-
-  private async fireCommand(command: DueCommand, now: Date) {
-    this.firingCommandNodeIds.add(command.nodeId);
-    this.knownCommandConversationNodeIds.add(command.nodeId);
-    try {
-      // At-most-once: persist the attempted occurrence BEFORE running, so a
-      // crash / quit / sleep mid-run is reconciled at startup (the occurrence is
-      // skipped, not re-fired) instead of repeating the brief's non-idempotent
-      // side effects. Done first inside the try: if even this write fails we back
-      // off rather than run un-recorded. (An in-process run failure still retries
-      // — the due check ignores this marker; only startup reconciliation reads it.)
-      await this.outlinerToolHost.handle(
-        'mark_command_attempted',
-        { nodeId: command.nodeId, attemptedAt: command.dueAt },
-        { origin: 'system', summary: 'Command occurrence attempted.' },
-      );
-      await this.startTriggeredRun(command);
-      // Success: advance the watermark (system origin — never agent-written) so
-      // the occurrence is not re-fired, and clear any failure backoff. Use the
-      // COMPLETION time, not the sweep-start `now`: a run that straddled the next
-      // occurrence boundary would otherwise leave a watermark before it and
-      // double-fire. `markCommandFired` is forward-only, so this never regresses
-      // a fresher user re-arm.
-      await this.outlinerToolHost.handle(
-        'mark_command_fired',
-        { nodeId: command.nodeId, firedAt: Date.now() },
-        { origin: 'system', summary: 'Command schedule fired.' },
-      );
-      this.commandFailureCounts.delete(command.nodeId);
-      this.commandBackoffUntil.delete(command.nodeId);
-    } catch (error) {
-      // Failure does NOT advance the watermark — the occurrence stays due.
-      // Apply an in-memory backoff so a persistently failing command (e.g. no
-      // provider configured) does not tight-loop.
-      const attempt = this.commandFailureCounts.get(command.nodeId) ?? 0;
-      this.commandFailureCounts.set(command.nodeId, attempt + 1);
-      const delay = COMMAND_FAILURE_BACKOFF_MS[Math.min(attempt, COMMAND_FAILURE_BACKOFF_MS.length - 1)];
-      // Backoff from the FAILURE moment, not the sweep-start `now`: a slow run can
-      // straddle the next sweep, and `now + delay` could already be in the past,
-      // collapsing the 30s/1m/5m/15m/1h ladder into a 60s tight-retry loop.
-      this.commandBackoffUntil.set(command.nodeId, Date.now() + delay);
-      const message = error instanceof Error ? error.message : String(error);
-      this.emitError(
-        this.commandConversationId(command.nodeId),
-        message,
-        {
-          domain: 'command',
-          code: 'scheduled-command-failed',
-          context: {
-            commandNodeId: command.nodeId,
-            attempt: attempt + 1,
-            delayMs: delay,
-            dueAt: command.dueAt,
-          },
-          error,
-        },
-      );
-    } finally {
-      this.firingCommandNodeIds.delete(command.nodeId);
-    }
-  }
-
   // One delivery conversation per command node — a stable id derived from the
   // node id so every fire posts into a single thread (find-or-created on each
   // fire; tolerant of the conversation being deleted).
   private commandConversationId(nodeId: string): string {
     return `lin-agent-command-${hashJson({ agentId: this.agentIdentity.agentId, nodeId }).slice(0, 16)}`;
-  }
-
-  // A scheduled fire: no human turn, runs as a delegated Run on the delivery conversation.
-  private async startTriggeredRun(command: DueCommand): Promise<void> {
-    const brief = command.brief.trim();
-    // Defensive: `selectDueCommands` already drops empty-brief commands, so this
-    // throw is unreachable in normal operation — but it guarantees an empty
-    // command can never reach the watermark advance in `fireCommand`.
-    if (!brief) throw new Error('This command has no brief to run.');
-    await this.runCommandChildAgent(
-      this.commandConversationId(command.nodeId),
-      brief,
-      command.lastSuccessAt,
-    );
   }
 
   // Ensure a command node's delivery conversation EXISTS ON DISK (a `conversation.created`
@@ -3755,7 +3552,6 @@ export class AgentRuntime {
     const node = this.outlinerToolHost.getProjection().nodes.find((entry) => entry.id === nodeId);
     if (!node || node.type !== 'command') throw new Error('Not a command node.');
     const conversationId = this.commandConversationId(nodeId);
-    this.knownCommandConversationNodeIds.add(nodeId);
     // Already live (a prior run/restore) — nothing to persist; restore will reuse it.
     if (!this.conversations.has(conversationId)) {
       const loaded = await this.loadEventState(conversationId);
@@ -3777,60 +3573,46 @@ export class AgentRuntime {
   }
 
   // Run now (attended): the same execution path with a `node` trigger and NO
-  // watermark advance, so testing a command never disturbs its schedule.
-  // Returns the delivery conversation so the caller can surface it.
+  // scheduled trigger. Returns the delivery conversation so the caller can
+  // surface it.
   async runCommandNow(nodeId: string): Promise<{ conversationId: string }> {
     const projection = this.outlinerToolHost.getProjection();
     const node = projection.nodes.find((entry) => entry.id === nodeId);
     if (!node || node.type !== 'command') throw new Error('Not a command node.');
     const conversationId = this.commandConversationId(nodeId);
-    // Coordinate with the scheduled sweep via the same guard set. If a fire (or
-    // another Run-now) for this node is already in flight, surface the existing
-    // delivery conversation instead of starting a colliding second run — and the
-    // sweep, which skips nodes in this set, won't treat the attended run as a
-    // schedule failure.
+    // If another Run-now for this node is already in flight, surface the
+    // existing delivery conversation instead of starting a colliding second run.
     if (this.firingCommandNodeIds.has(nodeId)) {
       return { conversationId: conversationId };
     }
-    // Build the same brief a scheduled fire does: title + non-field child outline,
-    // with inline references reconstructed (see `commandBriefText`).
+    // Build the command brief: title + non-field child outline, with inline
+    // references reconstructed (see `commandBriefText`).
     const byId = new Map(projection.nodes.map((entry) => [entry.id, entry]));
     const brief = commandBriefText(node, byId).trim();
     if (!brief) throw new Error('This command has no brief to run.');
     this.firingCommandNodeIds.add(nodeId);
-    this.knownCommandConversationNodeIds.add(nodeId);
     try {
-      await this.runCommandChildAgent(conversationId, brief, node.sysLastRunAt ?? null);
+      await this.runCommandChildAgent(conversationId, brief);
       return { conversationId: conversationId };
     } finally {
       this.firingCommandNodeIds.delete(nodeId);
     }
   }
 
-  // Shared no-human-turn execution for command runs (scheduled + Run-now). The
-  // brief — the command title plus its non-field child outline (see
-  // `commandBriefText`) — is run as a delegated Run anchored to the command's own
-  // delivery conversation, so every fire shows up as a Run in Work. Under the
-  // one-Neva invariant a fire always forks the otherwise-empty delivery
-  // conversation, so the run executes under Neva's identity and capabilities.
-  // Resolves only when the Run reaches a terminal state; throws on failure/stop
-  // so the caller leaves the watermark unadvanced and arms the failure backoff.
+  // Manual command execution: run the command title plus its non-field child
+  // outline as a delegated Run anchored to the command's own delivery
+  // conversation.
   private async runCommandChildAgent(
     conversationId: string,
     brief: string,
-    lastSuccessAt: number | null,
   ): Promise<void> {
     const conversation = await this.ensureConversationWithId(conversationId, commandConversationTitle(brief));
     await this.refreshRuntimeSettings(conversation);
     let data = await conversation.delegationRuntime.invokeAgent({
       description: commandConversationTitle(brief),
       objective: brief,
-      runPrompt: buildTriggeredCommandPrompt(brief, lastSuccessAt),
+      runPrompt: brief,
       verify: false,
-      // Unattended: a scheduled run has no human watching, so a tool needing
-      // approval is denied + surfaced (never hangs the run); globally
-      // always-allowed tools still run. Run-now keeps the interactive channel.
-      unattended: true,
     });
     // Attended command Runs await completion, but an agent definition flagged
     // `background: true` launches detached regardless — poll to completion so the
@@ -6967,16 +6749,6 @@ function withinInlineByteBudget(sizeBytes: number): boolean {
   return sizeBytes <= 0 || Math.ceil(sizeBytes / 3) * 4 <= MAX_IMAGE_ATTACHMENT_BASE64_CHARS;
 }
 
-// The instruction text for a scheduled command fire: the brief, plus a bounded
-// note of when it last ran so the agent covers only what is new (catch-up
-// digests "the last few days" rather than replaying full history).
-function buildTriggeredCommandPrompt(brief: string, lastSuccessAt: number | null): string {
-  const since = lastSuccessAt
-    ? `This is a scheduled run. The previous successful run was ${new Date(lastSuccessAt).toISOString()} — cover what is new since then.`
-    : 'This is the first scheduled run of this command.';
-  return `${brief}\n\n(${since})`;
-}
-
 function buildUserPromptMessage(
   message: string,
   attachments: AgentMessageAttachmentInput[],
@@ -7950,7 +7722,6 @@ function createConfiguredAgent(
     runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
     skillToolEnabled?: boolean;
     skillRuntime?: AgentSkillRuntime;
-    delegationRuntime?: AgentDelegationRuntime;
     chatSourceValidator?: AgentToolsOptions['chatSourceValidator'];
     pastChats?: AgentToolsOptions['pastChats'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
@@ -7960,7 +7731,6 @@ function createConfiguredAgent(
     runScope?: AgentRunScope;
     allowedTools?: readonly string[];
     disallowedTools?: readonly string[];
-    legacyRunToolsEnabled?: boolean;
     preapprovedToolRules?: string[];
     l0CacheBreakpointEnabled?: boolean;
     permissionScopeIdProvider?: () => string | null;
@@ -8004,7 +7774,6 @@ function createConfiguredAgent(
     localWorkspace: options.localWorkspace,
     skillRuntime,
     skillToolEnabled: options.skillToolEnabled,
-    delegationRuntime: options.delegationRuntime,
     chatSourceValidator: options.chatSourceValidator,
     pastChats: options.pastChats,
     askUserQuestion: options.askUserQuestion,
@@ -8013,7 +7782,6 @@ function createConfiguredAgent(
     runScope: options.runScope,
     allowedTools: options.allowedTools,
     disallowedTools: options.disallowedTools,
-    legacyDelegationToolsEnabled: options.legacyRunToolsEnabled,
   });
   let agent: Agent;
   agent = new Agent({

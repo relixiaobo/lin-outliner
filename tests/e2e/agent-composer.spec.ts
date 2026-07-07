@@ -3172,10 +3172,9 @@ test.describe('agent composer controls', () => {
             content: [{
               type: 'toolCall',
               id: 'tool-agent-1',
-              name: 'spawn_run',
+              name: 'agent_session_start',
               arguments: {
-                description: 'Inspect Run UI',
-                objective: 'Inspect the current UI.',
+                issueId: 'issue-work-1',
               },
             }],
           },
@@ -3247,11 +3246,11 @@ test.describe('agent composer controls', () => {
       });
     });
 
-    // A DM main-agent child run stays anchored to its spawning ordinary Agent
+    // A DM main-agent child run stays anchored to its Agent Session start
     // tool-call row, NOT a free-floating conversation-level boundary. So there
     // is no boundary region, and the run remains a process row in the bubble.
     await expect(page.getByRole('region', { name: 'Agent run · Inspect Run UI' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Running agent run "Inspect Run UI"' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Starting agent session "issue-work-1"' }).first()).toBeVisible();
 
     await page.getByRole('button', { name: /^Open Work/ }).click();
     const work = page.getByRole('region', { name: 'Agent work' });

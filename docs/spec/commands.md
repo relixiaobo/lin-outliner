@@ -113,53 +113,23 @@ toggles the owner node's done state.
 `create_search_node`, `set_search_node`, `set_search_query_outline`,
 `refresh_search_node_results`.
 
-### Document — command nodes (manual compatibility)
-`set_command_node`, `set_command_schedule`, `mark_command_fired`.
+### Document — command nodes
+`set_command_node`.
 
-A `command` node is **node-native**: its text content is a natural-language brief,
-its body (the non-field child outline) is the prompt detail, and its config lives
-in one real child field row — `Schedule`. Command-node scheduled execution is
-retired: the stored schedule value is legacy compatibility data and does not
-auto-fire. Issue and Recurring Issue triggers are the only automatic scheduled
-agent-work source of truth. (Design history:
-`docs/plans/archive/agent-scheduled-routines.md`; replacement design:
-`docs/plans/agent-issue-manager.md`.)
+A `command` node is **node-native** and manual-only: its text content is a
+natural-language brief, and its body (the non-field child outline) is prompt
+detail. Durable scheduled work is represented as an Issue with a scheduled
+trigger or as a Recurring Issue that materializes concrete Issues. Command nodes
+do not carry schedule fields, fire watermarks, or unattended execution state.
 
 - `set_command_node(nodeId)` converts a plain content row into a `command` node
-  (brief stays in the node's content), seeds the user-only `commandSchedule`
-  protected field, and seeds a `fieldEntry` child pointing at the built-in system
-  field `sys:commandSchedule`, whose value editor writes the gated scalar.
-  Idempotent (find-or-create — a re-conversion never duplicates the row). Drafting
-  a command is allowed from any origin.
-- `set_command_schedule(nodeId, schedule?)` stores / changes / clears the legacy
-  schedule string — a canonical `<endpoint> RRULE:...` string parsed by
-  `dateSchedule.ts`. **The bright line remains:** a command node's schedule is
-  rejected unless `origin === 'user'` (gated on the `command` node-type
-  invariant, not the mutable `protectedFields` array, so it can never fail open).
-  The agent can draft a brief and propose a schedule as text, but this field no
-  longer grants unattended execution. A non-empty value keeps the historical
-  watermark behavior (`sysLastRunAt = now`) only so old data remains stable;
-  clearing it leaves the watermark untouched.
-- `mark_command_fired(nodeId, firedAt)` is a legacy system watermark command
-  (`sysLastRunAt`) retained for compatibility with older command-run code and
-  tests. **Forward-only** — it never moves the watermark backward. It remains
-  **system-managed**: an `origin === 'agent'` write is rejected at the gateway.
-- `mark_command_attempted(nodeId, attemptedAt)` records the at-most-once marker
-  (`sysLastAttemptAt`) retained for the same legacy compatibility boundary.
-  Forward-only and agent-rejected, exactly like `mark_command_fired`.
-
-There is no command-node anacron scheduler. The main process no longer sweeps
-command nodes on a timer, app launch, or `powerMonitor.resume`; `runCommandCatchUp`
-is a compatibility no-op. Old command nodes therefore cannot create unattended
-background work. Scheduled work must be represented as an Issue with a scheduled
-trigger or as a Recurring Issue that materializes concrete Issues.
+  (brief stays in the node's content). Idempotent. Drafting a command is allowed
+  from any origin.
 
 `agent_run_command_now(nodeId)` (agent command) runs the brief attended, right
-now: the same no-human-turn execution with a `{type:'node'}` trigger and **no
-watermark advance**, so testing a command never disturbs the legacy schedule
-field. It coordinates through a shared in-flight guard — if a run for the same
-node is already running it returns the existing conversation rather than
-colliding. Returns the delivery `conversationId`.
+now. It coordinates through a shared in-flight guard — if a run for the same node
+is already running it returns the existing conversation rather than colliding.
+Returns the delivery `conversationId`.
 
 `agent_ensure_command_conversation(nodeId)` ensures the command's delivery
 conversation exists (creating an empty one titled from the brief if needed) and
@@ -171,51 +141,25 @@ throw.
 Entry points (renderer): the `/command` slash command converts the current row
 into a command node. A command node is **node-native** — it carries a command
 glyph instead of a bullet (`RowMarker` `command` variant) and is always shown
-expanded (its config + steps stay visible the way the old controls card did,
-`isRowExpanded`). Under the brief (the inline-edited row text = the title) sit the
-two seeded config field rows plus the prompt steps (any other child nodes).
+expanded so its prompt steps stay visible (`isRowExpanded`). The inline-edited
+row text is the title/brief; any non-field child nodes are serialized as the
+prompt outline.
 
-**Run lives on the title, not in the Schedule value.** A labelled **Run** button
-(`CommandRunButton` — a text action button with a background, aligned with the
-title like the inline Done checkbox) sits at the start of the command title;
+**Run lives on the title.** A labelled **Run** button (`CommandRunButton` — a
+text action button with a background, aligned with the title like the inline Done
+checkbox) sits at the start of the command title;
 `useCommandRun` drives the attended run: ensure the delivery conversation
 (`agent_ensure_command_conversation`), reveal the agent panel on it (without
 auto-opening Work — that was abrupt), then run it
 (`agent_run_command_now`), so the run streams through the delivery conversation
 and can be inspected from run-source detail references. While the run is in
-flight the **command bullet glyph becomes a
-spinner** (`RowMarker` `processing` → `.is-processing`) — that is the *only*
-running indicator; the Run button never reflects running/failed state (a
-`runningRef` in the hook just guards against a double-trigger). The two config
-field values render in the **standard outliner value style** (plain value text +
-a muted trailing glyph, no pill), so they read like ordinary fields. Each value
-also carries its **own leading bullet** (`.command-field-value-bullet`, reusing
-the standard value-node `.row-bullet-shape.content` + dot), so a value reads as
-its own node the way Tana field values do. The schedule/agent stay **scalar-backed**
-(no value node exists), so this bullet is decorative — there is nothing to zoom
-into; it is `aria-hidden` and non-interactive. Both values default **blank** and
-open their picker on **Space** (or click), mirroring the standard date field's
-"Press Space to pick…" empty value:
+flight the **command bullet glyph becomes a spinner** (`RowMarker` `processing`
+→ `.is-processing`) — that is the *only* running indicator; the Run button never
+reflects running/failed state (a `runningRef` in the hook just guards against a
+double-trigger).
 
-- The **Schedule** field row (`sys:commandSchedule`) carries a **calendar** marker
-  icon; when empty it shows the "Press Space to pick a date…" placeholder, and when
-  armed the schedule summary as plain text with a trailing calendar glyph. Space or
-  a click opens the **standard date picker** (`DateValuePicker`) — the same editor
-  every date field uses, with a **Repeat** control (the date field gained
-  recurrence; see `date-field-values.md`) — in **single-only mode**
-  (`allowRange={false}`, since a schedule is always a single anchor). The picker
-  commits live through the user-only `set_command_schedule` gateway (the bright line
-  is unchanged: only the generic field-value write path is bypassed, never the
-  gate). The summary is built from the shared recurrence labels
-  (`scheduleChipSummary`).
-
-Navigating to the config row focuses its value cell (`OutlinerFieldRow` consumes
-both the field-name and row focus targets onto the value button), so the keyboard
-Space-to-pick affordance works after arrow navigation, not just on click.
-
-The field editor honors the owner's edit lock. The prompt is everything else
-under the command node (ordinary child rows) — edited as normal outline content,
-serialized to the run brief by `commandBriefText`.
+Command nodes do not have schedule, recurrence, last-run, or last-attempt fields.
+Scheduled and recurring automation belongs to Issues and Recurring Issues.
 
 ### Document — history
 `undo`, `redo`.
@@ -318,13 +262,9 @@ pre-release child-run command aliases are not accepted.
 - Origins are tagged on the underlying Loro transaction (`user:`, `agent:`,
   `system:`) so the scoped `UndoManager` can separate user undo from agent
   undo. See `src/core/loroDocument.ts`.
-- `NodeType` reserves `command` plus `CommandNode.commandSchedule`,
-  `CommandNode.sysLastRunAt`, `CommandNode.sysLastAttemptAt`, and
-  `NodeBase.protectedFields`
-  (descriptive metadata only — the bright line is enforced inline on the
-  `command` node-type invariant, not on this array) for scheduled-routines work.
-  The Schedule config field row surfaces that scalar through the built-in system
-  field `sys:commandSchedule` (see `src/core/systemFields.ts`).
+- `NodeType` reserves `command` for manual command nodes. Command nodes carry no
+  schedule or execution watermark scalar; scheduling is owned by Issue /
+  Recurring Issue runtime state.
 - When adding or renaming a command, update `DOCUMENT_COMMANDS` or
   `AGENT_COMMANDS` and the matching dispatcher in `src/main/documentService.ts`
   (and `src/main/agentRuntime.ts` for agent commands). Update this category

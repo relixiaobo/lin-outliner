@@ -1,6 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { TOOL_CATALOG } from '../../src/core/agentToolCatalog';
-import type { AgentDelegationRuntime } from '../../src/main/agentDelegation';
 import type { AgentIssueToolRuntime } from '../../src/main/agentIssueTools';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
@@ -23,7 +22,6 @@ describe('agent tool catalog', () => {
     const { createAgentTools } = await import('../../src/main/agentTools');
     const filteredNames = createAgentTools(undefined, {
       localFileRoot: '/tmp',
-      delegationRuntime: {} as AgentDelegationRuntime,
       imageGeneration: {
         listModels: async () => [],
         getActiveProviderId: async () => null,
@@ -40,36 +38,21 @@ describe('agent tool catalog', () => {
     expect(filteredNames).toEqual([...TOOL_CATALOG].sort());
   });
 
-  test('Issue runtime suppresses legacy Run tools unless explicitly enabled', async () => {
+  test('delegation runtime remains internal and does not expose direct Run tools', async () => {
     const { createAgentTools } = await import('../../src/main/agentTools');
-    const currentNames = createAgentTools(undefined, {
+    const names = createAgentTools(undefined, {
       localFileRoot: '/tmp',
-      delegationRuntime: {} as AgentDelegationRuntime,
       issueRuntime: issueRuntimeStub(),
     }).map((tool) => tool.name);
-    expect(currentNames).toEqual(expect.arrayContaining([
+    expect(names).toEqual(expect.arrayContaining([
       'issue_search',
       'agent_session_start',
     ]));
-    expect(currentNames).not.toContain('spawn_run');
-    expect(currentNames).not.toContain('run_status');
-    expect(currentNames).not.toContain('run_steer');
-    expect(currentNames).not.toContain('run_amend');
-    expect(currentNames).not.toContain('run_stop');
-
-    const legacyNames = createAgentTools(undefined, {
-      localFileRoot: '/tmp',
-      delegationRuntime: {} as AgentDelegationRuntime,
-      issueRuntime: issueRuntimeStub(),
-      legacyDelegationToolsEnabled: true,
-    }).map((tool) => tool.name);
-    expect(legacyNames).toEqual(expect.arrayContaining([
-      'spawn_run',
-      'run_status',
-      'run_steer',
-      'run_amend',
-      'run_stop',
-    ]));
+    expect(names).not.toContain('spawn_run');
+    expect(names).not.toContain('run_status');
+    expect(names).not.toContain('run_steer');
+    expect(names).not.toContain('run_amend');
+    expect(names).not.toContain('run_stop');
   });
 
   test('default outliner-backed tools do not expose the internal data import adapter', async () => {

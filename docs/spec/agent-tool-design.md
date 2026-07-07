@@ -74,10 +74,9 @@ surface.
 
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
-Legacy delegated-Run tools (`spawn_run`, `run_status`, `run_steer`,
-`run_amend`, and `run_stop`) remain as an internal compatibility executor and
-can be enabled only through an explicit legacy tool profile. They are not part
-of the default product model-facing tool registry when Issue runtime is active.
+The internal delegation executor is not a tool family. It backs Agent Sessions,
+isolated skills, and manual command-node Run Now, but agents control work
+through Issue / Agent Session tools only.
 
 ### Agent Issue Manager Contract Checkpoint
 
@@ -225,59 +224,38 @@ and links the verifier Agent Session as Issue evidence. There is no
 `verification_*` model-facing tool and a verifier verdict does not automatically
 complete the Issue.
 
-## Legacy Run Delegation Executor
+## Internal Delegation Executor
 
-The delegated-Run executor remains in the runtime for compatibility, isolated
-skill execution, tests, and as the implementation substrate for some Agent
-Session starts. It is not the ordinary product work-management API. When a
-legacy tool profile explicitly enables it, `spawn_run` forks Neva into an
-isolated child Run and takes:
+The delegation executor remains in the runtime for isolated skill execution and
+as the implementation substrate for Agent Session starts. It is not the product
+work-management API and has no model-facing compatibility tools. Runtime maps a
+confirmed Agent Session snapshot into an internal delegation input:
 
 ```ts
-interface SpawnInput {
+interface DelegationInput {
   objective: string;
   criteria?: string[]; // required unless verify === false
   verify?: boolean; // default true
   scope?: {
-    capabilities?: string[]; // action kinds, or legacy tool names normalized to action kinds
+    capabilities?: string[]; // action kinds
     resources?: { docs?: string[]; paths?: string[]; nodes?: string[] };
   };
   budget?: { tokens?: number; wallClockMinutes?: number };
   context?: "full" | "brief" | "none"; // verifier Runs are runtime-pinned to "none"
-  detach?: boolean;
   model?: string; // optional override
   name?: string;
 }
 ```
 
 The runtime validates that verified runs have explicit criteria. The returned
-Run result is accepted only after the parent-verifies-child loop passes. A leaf
-worker verifier failure does not resurrect the worker Run: the failed attempt
-stays completed with a blocked objective status, and a fresh replacement worker
-gets a new `runId` when budget and livelock guards allow it. A controller
-(structurally: a work Run that has spawned work children) and a root tracked goal
-replan in place after verifier failure: the same `runId` returns to `running` /
-`active`, receives the verifier gap as hidden continuation context, and keeps its
-child lineage intact.
+executor result is synchronized back to the owning Agent Session and Issue
+Activity. Scope narrows downward by action kind; resource paths/docs cannot widen
+past the parent Session scope. Budget is admitted locally at each edge, reserves
+token headroom before sibling work, and settles on termination.
 
-The control tools are intentionally uniform:
-
-- `run_status({ runId | name, wait?, timeout_ms? })`
-- `run_steer({ runId | name, message })`
-- `run_amend({ runId, changes: { objective?, criteria?, budget? } })`
-- `run_stop({ runId | name })`
-
-`run_steer` is soft guidance and never changes verifier validity.
-`run_amend` changes the contract and invalidates any prior verifier conclusion.
-Scope narrows downward by action kind; resource paths/docs cannot widen past the
-parent Run. Budget is admitted locally at each edge, reserves token headroom
-before sibling spawns, and settles on child termination.
-
-`run_status` returns the Run's execution status, objective status, budget, latest
-verifier gap if any, and one level of direct child summaries. Child summaries use
-the structural role labels `worker`, `controller`, or `verifier`; `verifier`
-comes from the persisted Run purpose, while `controller` is derived from having
-spawned work children.
+Agents inspect or control execution through `agent_session_read`,
+`agent_session_send_message`, and `agent_session_stop`; those tools do not expose
+internal executor ids as the product contract.
 
 ### Deferred Tools
 

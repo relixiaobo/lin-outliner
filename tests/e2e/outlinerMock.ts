@@ -29,7 +29,6 @@ export const ids = {
   beta: 'node-beta',
   gamma: 'node-gamma',
   commandNode: 'node-command',
-  commandScheduleEntry: 'field-entry-command-schedule',
 } as const;
 
 interface MockFixtureOptions {
@@ -40,7 +39,7 @@ interface MockFixtureOptions {
   oauthProvider?: boolean;
   /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
   noProvider?: boolean;
-  /** Adds an armed `command` (scheduled routine) node under today for the command-node specs. */
+  /** Adds a manual `command` node under today for the command-node specs. */
   commandNode?: boolean;
   /** Preloads remembered permission grants for settings/security specs. */
   permissionGrants?: string[];
@@ -304,7 +303,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      videoDurationMs?: number;
 	      configKey?: string;
 	      refRole?: string;
-	      commandSchedule?: string;
 	    };
     type CreateNodeTree = {
       content: RichText;
@@ -1564,14 +1562,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       makeNode(ids.commandNode, 'Summarize my unread feeds and post the highlights', {
         type: 'command',
         parentId: ids.today,
-        commandSchedule: '2026-06-09T09:00 RRULE:FREQ=DAILY',
-      });
-      // The node-native Schedule config row — a real field entry pointing at the
-      // built-in system field, as `setCommandNode` seeds it.
-      makeNode(ids.commandScheduleEntry, '', {
-        type: 'fieldEntry',
-        parentId: ids.commandNode,
-        fieldDefId: 'sys:commandSchedule',
       });
     }
     appendChild(ids.workspace, ids.root);
@@ -1598,7 +1588,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     for (const childId of [ids.alpha, ids.beta, ids.gamma]) appendChild(ids.today, childId);
     if (options.commandNode) {
       appendChild(ids.today, ids.commandNode);
-      appendChild(ids.commandNode, ids.commandScheduleEntry);
     }
 
     Object.defineProperty(navigator, 'clipboard', {
@@ -3237,26 +3226,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (node) {
             node.type = 'command';
             // Seed the node-native Schedule config row if absent — find-or-create,
-            // mirroring `ensureCommandFieldEntriesDirect`.
-            const seedField = (defId: string, index: number) => {
-              const exists = node.children.some((childId) => {
-                const child = nodes.get(childId);
-                return child?.type === 'fieldEntry' && child.fieldDefId === defId;
-              });
-              if (exists) return;
-              const entryId = `field-entry-${++sequence}`;
-              makeNode(entryId, '', { type: 'fieldEntry', parentId: node.id, fieldDefId: defId });
-              appendChild(node.id, entryId, index);
-            };
-            seedField('sys:commandSchedule', 0);
-          }
-          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
-        }
-        if (cmd === 'set_command_schedule') {
-          const node = nodes.get(String(args.nodeId));
-          if (node) {
-            const schedule = args.schedule == null ? '' : String(args.schedule);
-            if (schedule) node.commandSchedule = schedule; else delete node.commandSchedule;
           }
           return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
         }

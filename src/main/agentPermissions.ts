@@ -163,7 +163,6 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'ask_user_question',
   'skill',
   'bash_stop',
-  'run_status',
   'node_read',
   'node_search',
 ]);
@@ -195,15 +194,6 @@ const TOOL_ALIASES = new Map<string, string>([
   ['askuserquestion', 'ask_user_question'],
   ['skill', 'skill'],
   ['bash_stop', 'bash_stop'],
-  ['spawn_run', 'spawn_run'],
-  ['runstatus', 'run_status'],
-  ['run_status', 'run_status'],
-  ['runsteer', 'run_steer'],
-  ['run_steer', 'run_steer'],
-  ['runamend', 'run_amend'],
-  ['run_amend', 'run_amend'],
-  ['runstop', 'run_stop'],
-  ['run_stop', 'run_stop'],
   ['node_read', 'node_read'],
   ['node_search', 'node_search'],
   ['node_create', 'node_create'],
@@ -706,66 +696,15 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
-  if (toolName === 'bash_stop' || toolName === 'run_stop') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, toolName === 'run_stop' ? 'agent.delegate.stop' : 'shell.stop'), {
+  if (toolName === 'bash_stop') {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'shell.stop'), {
       accessScope: 'none',
-      title: toolName === 'run_stop' ? 'run stop' : 'bash task stop',
-      summary: toolName === 'run_stop' ? 'Stop a background Run.' : 'Stop a background task launched by the agent.',
-      consequence: toolName === 'run_stop'
-        ? 'This controls a local background Run; downstream Run actions keep their own permission gates.'
-        : 'This only controls a local background task.',
+      title: 'bash task stop',
+      summary: 'Stop a background task launched by the agent.',
+      consequence: 'This only controls a local background task.',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'run_status') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.status'), {
-      accessScope: 'none',
-      title: 'run status',
-      summary: 'Read the status of a background Run.',
-      consequence: 'This reads local Run state.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'run_steer') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.send'), {
-      accessScope: 'none',
-      title: 'run steer',
-      summary: 'Send follow-up guidance to an existing Run.',
-      consequence: 'This can steer an already-running local Run; downstream Run actions keep their own permission gates.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'run_amend') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.amend'), {
-      accessScope: 'none',
-      title: 'run amend',
-      summary: 'Change an existing Run objective, criteria, or budget.',
-      consequence: 'This changes local Run control metadata; downstream Run actions keep their own permission gates.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'spawn_run') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.spawn'), {
-      accessScope: 'none',
-      title: 'spawn run',
-      summary: 'Create a same-agent sub-run.',
-      consequence: 'This creates a local Run; downstream Run actions keep their own permission gates.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-      capabilities: ['agent_spawn'],
     })];
   }
 
@@ -2331,7 +2270,7 @@ export function toolPathArgumentName(toolNameInput: string): string | null {
 
 function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'bash_stop' || toolName === 'spawn_run' || toolName === 'run_status' || toolName === 'run_steer' || toolName === 'run_amend' || toolName === 'run_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'generate_image') return 'control';
+  if (toolName === 'bash_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'generate_image') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete' || toolName === 'data_import') return 'write';
   if (toolName === 'outline_undo_stack') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';

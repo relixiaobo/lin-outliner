@@ -112,14 +112,13 @@ and every conversation's members are `{user, Neva}`.
 
 ### Verified goal runs
 
-Long objectives use the same Run primitive, not a new Task object. There is no
+Long objectives are durable Issues, not a separate Task object. There is no
 user-facing goal mode, `/goal` shortcut, or composer goal button: users describe
-work in ordinary prose, and the model-side `goal-launching` workflow decides when
-to start a detached tracked Run with explicit criteria, bounded budget, and
-`objective.status: active`. The run may decompose by calling `spawn_run`; every
-spawned worker is a Run, every verifier is a Run with
-`objective.role: verifier` and `runProfile: verify`, and every verifier is
-runtime-pinned to `context: none` with read-only tools.
+work in ordinary prose, and the agent creates or updates Issues with explicit
+criteria, bounded execution policy, and Agent Session triggers. An Agent Session
+may decompose durable work by creating sub-Issues. Internal workers and verifiers
+remain runtime implementation details, and verifier execution is runtime-pinned
+to minimal context with read-only tools.
 
 The parent-verifies-child rule is structural: a worker's terminal output is not
 self-declared completion. The parent spawns an independent verifier Run with a

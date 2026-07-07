@@ -2918,8 +2918,7 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     quitAfterFlush = true;
     // We force-exit below (app.exit bypasses will-quit), so do the on-quit cleanup
-    // here: stop the command scheduler and release the global hotkey(s).
-    agentRuntime.stopCommandScheduler();
+    // here: release the global hotkey(s).
     unregisterLauncherHotkeys();
     // Settle in-flight writes, then exit. We force-exit instead of re-issuing
     // app.quit(): after preventDefault() cancels the OS ⌘Q terminate, Electron's

@@ -14,7 +14,6 @@ import path from 'node:path';
 import { createNodeTools, type ChatSourceValidator, type OutlinerToolHost } from './agentNodeTools';
 import { createLocalTools, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
-import { createAgentDelegationTools, type AgentDelegationRuntime } from './agentDelegation';
 import { createAgentIssueTools, type AgentIssueToolRuntime } from './agentIssueTools';
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
@@ -213,7 +212,6 @@ export interface AgentToolsOptions {
   localWorkspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
   skillToolEnabled?: boolean;
-  delegationRuntime?: AgentDelegationRuntime;
   issueRuntime?: AgentIssueToolRuntime;
   pastChats?: PastChatsToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
@@ -222,7 +220,6 @@ export interface AgentToolsOptions {
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
   runScope?: AgentRunScope;
-  legacyDelegationToolsEnabled?: boolean;
 }
 
 interface AgentToolCatalogEntry {
@@ -281,9 +278,6 @@ function buildAgentToolCatalog(
   }, {
     precondition: !!options.skillRuntime && options.skillToolEnabled !== false,
     create: () => options.skillRuntime ? [createSkillTool(options.skillRuntime)] : [],
-  }, {
-    precondition: !!options.delegationRuntime && (options.legacyDelegationToolsEnabled ?? !options.issueRuntime),
-    create: () => options.delegationRuntime ? createAgentDelegationTools(options.delegationRuntime) : [],
   }];
 }
 

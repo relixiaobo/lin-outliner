@@ -437,7 +437,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `allowed-tools` | Supported as run-scoped preapproval metadata, not as a tool visibility list. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery for mutable skills. Built-ins load immediately even when they declare `paths`. |
-| `execution: isolated` | Supported through the runtime-owned delegation executor. Isolated skill bodies run in a sidechain sub-run of the current agent and return only the final result to the parent; they do not require exposing `spawn_run` on the default product tool surface. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
+| `execution: isolated` | Supported through the runtime-owned delegation executor. Isolated skill bodies run in a sidechain worker of the current agent and return only the final result to the parent; they do not require exposing direct delegated-run tools. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary file-tool permissions, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
 | Agent-managed agent-definition writes | Not supported. The one-Neva invariant removed agent authoring as a self-definition surface (no `/create-agent` workflow, and the self-definition write gate governs skills only). The single agent, Neva, is configured through the agent-config window (`agentUpdateAgentDefinition`), not by authoring `AGENT.md` files. |
@@ -621,7 +621,7 @@ Intentional omissions:
 - Session-memory compact: omitted because Lin does not use this memory model.
 - Pre/post/session-start compact hooks: omitted until Lin has a first-class hook system.
 - Plan-mode and plan-file attachments: omitted because Lin does not have that separate plan-mode runtime.
-- Task-output-file compatibility tools: omitted because Lin follows cc-2.1's preferred path of surfacing durable output references that can be read with `file_read`. Legacy `run_status` remains only behind explicit delegated-Run compatibility profiles; ordinary work inspection goes through `issue_read` and `agent_session_read`.
+- Task-output-file compatibility tools: omitted because Lin follows cc-2.1's preferred path of surfacing durable output references that can be read with `file_read`. Ordinary work inspection goes through `issue_read` and `agent_session_read`.
 - Deferred-tool/MCP delta re-announcement: omitted for now because Lin's tool registry is stable in `pi-agent-core`; future plugin/app tools should add their own compact restore state.
 - Provider-specific cache-edit microcompact: omitted because it depends on cache editing support that is not available through the generic pi provider path. Lin uses stable event-log replacements instead.
 - Prompt-cache telemetry and survey plumbing: omitted because it is observability, not model-visible behavior.

@@ -37,14 +37,14 @@ interface DateValuePickerProps {
   // Commit a normalized date value ('' clears it). The caller routes this to the
   // node command set (materialize a draft, or replace a committed value's text).
   onCommit: (nextValue: string) => void;
-  // Whether the end-date (range) toggle is offered. Off for single-only callers
-  // like the command schedule, where a range has no meaning.
+  // Whether the end-date (range) toggle is offered. Off for single-date callers
+  // where a range has no meaning.
   allowRange?: boolean;
   // Whether the time toggle is offered. Off for date-only callers such as the
   // Dream launcher, which persists strict YYYY-MM-DD windows.
   allowTime?: boolean;
-  // Whether the recurrence selector is offered for single dates. Command
-  // schedules need it; plain date pickers do not.
+  // Whether the recurrence selector is offered for single dates. Recurring
+  // workflows need it; plain date pickers do not.
   allowRecurrence?: boolean;
   // Optional upper bound for selectable dates, encoded as YYYY-MM-DD.
   maxDate?: string;

@@ -484,24 +484,6 @@ export class DocumentService {
         return this.core.setCodeLanguage(String(args.nodeId), String(args.codeLanguage ?? ''));
       case 'set_command_node':
         return this.core.setCommandNode(String(args.nodeId));
-      case 'set_command_schedule':
-        return this.core.setCommandSchedule(
-          String(args.nodeId),
-          nullableString(args.schedule) ?? undefined,
-          meta.origin ?? 'user',
-        );
-      case 'mark_command_fired':
-        return this.core.markCommandFired(
-          String(args.nodeId),
-          nullableNumber(args.firedAt) ?? Date.now(),
-          meta.origin ?? 'system',
-        );
-      case 'mark_command_attempted':
-        return this.core.markCommandAttempted(
-          String(args.nodeId),
-          nullableNumber(args.attemptedAt) ?? Date.now(),
-          meta.origin ?? 'system',
-        );
       case 'create_image_node':
         return this.core.createImageNode(String(args.parentId), nullableNumber(args.index), {
           assetId: nullableString(args.assetId) ?? undefined,

@@ -20,11 +20,6 @@ export const TAGS_FIELD = 'sys:tags';
 export const REF_COUNT_FIELD = 'sys:refCount';
 export const OWNER_FIELD = 'sys:owner';
 export const DAY_FIELD = 'sys:day';
-// Command-node config surfaced as a read-write system field: its value lives on
-// the owner's gated scalar (`commandSchedule`), so the bright line stays keyed to
-// the node-type invariant — this field is just an editing surface, like `sys:done`
-// over `completedAt`. Not in the generic field picker.
-export const COMMAND_SCHEDULE_FIELD_ID = 'sys:commandSchedule';
 
 /** The node fields system-field derivation reads. `Node` and `NodeProjection` both satisfy it. */
 export interface SysFieldNode {
@@ -41,7 +36,6 @@ export interface SysFieldNode {
   targetId?: NodeId;
   fieldDefId?: NodeId;
   refRole?: RefRole;
-  commandSchedule?: string;
 }
 export type SysFieldNodeMap = ReadonlyMap<NodeId, SysFieldNode>;
 
@@ -68,8 +62,6 @@ const SYSTEM_FIELD_LABELS: ReadonlyArray<{ id: string; label: string; pickable: 
   { id: REF_COUNT_FIELD, label: 'References', pickable: true },
   { id: OWNER_FIELD, label: 'Owner', pickable: true },
   { id: DAY_FIELD, label: 'Day', pickable: true },
-  // The command-config field is auto-attached to command nodes, never user-picked.
-  { id: COMMAND_SCHEDULE_FIELD_ID, label: 'Schedule', pickable: false },
 ];
 
 /** The label for a system field id, or undefined for a non-system field. */
@@ -173,7 +165,6 @@ export type ResolvedSystemField =
   | { kind: 'tags'; tagIds: NodeId[] }
   | { kind: 'nodeRefs'; refs: SystemFieldRef[]; count: number }
   | { kind: 'dayRef'; nodeId: NodeId | null; text: string }
-  | { kind: 'commandSchedule'; schedule: string | null }
   | { kind: 'text'; values: string[] };
 
 export function resolveSystemField(
@@ -184,7 +175,6 @@ export function resolveSystemField(
 ): ResolvedSystemField {
   const node = displayNode(owner, byId);
   if (fieldId === DONE_FIELD) return { kind: 'done', done: Boolean(node.completedAt) };
-  if (fieldId === COMMAND_SCHEDULE_FIELD_ID) return { kind: 'commandSchedule', schedule: node.commandSchedule ?? null };
   if (fieldId === CREATED_FIELD) return { kind: 'date', ms: node.createdAt ?? null };
   if (fieldId === UPDATED_FIELD) return { kind: 'date', ms: node.updatedAt ?? null };
   if (fieldId === DONE_AT_FIELD) return { kind: 'date', ms: node.completedAt && node.completedAt > 0 ? node.completedAt : null };
@@ -230,8 +220,6 @@ export function systemFieldValues(
         : resolved.refs.map((ref) => ref.label).filter(Boolean);
     case 'dayRef':
       return resolved.text ? [resolved.text] : [];
-    case 'commandSchedule':
-      return resolved.schedule ? [resolved.schedule] : [];
     default:
       return resolved.values;
   }
@@ -262,7 +250,6 @@ export type SystemFieldDisplay =
   | { kind: 'dayRef'; nodeId: NodeId | null; text: string }
   | { kind: 'tags'; tagIds: NodeId[] }
   | { kind: 'nodeRefs'; refs: SystemFieldRef[] }
-  | { kind: 'commandSchedule'; schedule: string | null }
   | { kind: 'text'; text: string };
 
 export function systemFieldDisplay(
@@ -283,8 +270,6 @@ export function systemFieldDisplay(
       return { kind: 'nodeRefs', refs: resolved.refs };
     case 'dayRef':
       return { kind: 'dayRef', nodeId: resolved.nodeId, text: resolved.text };
-    case 'commandSchedule':
-      return { kind: 'commandSchedule', schedule: resolved.schedule };
     default:
       return { kind: 'text', text: resolved.values.join(', ') };
   }

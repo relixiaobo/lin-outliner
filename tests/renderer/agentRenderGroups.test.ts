@@ -63,8 +63,8 @@ describe('splitTimelineIntoGroups', () => {
     expect(groups.map((g) => g.kind)).toEqual(['toolActivity', 'item', 'toolActivity']);
   });
 
-  test('a sub-run tool call folds like an ordinary tool call', () => {
-    const childItem = toolItem('child', 'spawn_run');
+  test('an Agent Session tool call folds like an ordinary tool call', () => {
+    const childItem = toolItem('child', 'agent_session_start');
     const groups = splitTimelineIntoGroups(
       [toolItem('a', 'bash'), childItem, toolItem('b', 'bash')],
       noBreaks,
@@ -177,6 +177,17 @@ describe('summarizeToolActivity', () => {
       process,
     );
     expect(summary).toBe('Read a file · read a node');
+  });
+
+  test('summarizes Issue and Agent Session tools as first-class activity', () => {
+    const summary = summarizeToolActivity(
+      [
+        member('issue_create', 'done', { title: 'Write daily report' }, 'a'),
+        member('agent_session_start', 'pending', { issueId: 'issue-1' }, 'b'),
+      ],
+      process,
+    );
+    expect(summary).toBe('Managed an issue · managing an agent session');
   });
 });
 

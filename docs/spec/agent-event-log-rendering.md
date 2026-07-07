@@ -1150,8 +1150,8 @@ Rules:
 - **Consecutive tool calls fold into one counted activity group** (Codex's
   render-group split, `splitTimelineIntoGroups`/`summarizeToolActivity` in
   `agentRenderGroups.ts`). Inside the visible process timeline, a maximal run of
-  ≥2 adjacent tool calls, including sub-run tool calls such as `spawn_run`,
-  collapses into a single `AgentToolActivityGroup` disclosure whose header is the
+  ≥2 adjacent tool calls collapses into a single `AgentToolActivityGroup`
+  disclosure whose header is the
   counted summary, expandable to the member rows. A thinking or narration block
   and a **loaded-skill chip** (a compact glanceable affordance, not an expandable
   row) **break the run** (reasoning is a hard boundary); a lone tool call renders

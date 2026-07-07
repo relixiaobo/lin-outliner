@@ -95,10 +95,8 @@ Not canonical:
   (`DateRecurrenceRule`, `parseDateRecurrenceRule`, `formatDateRecurrenceRule`):
   `src/core/dateFieldValue.ts`. The `single` value variant carries an optional
   `recurrence`; a `range` never does.
-- Schedule fire evaluation builds on those primitives:
-  `src/core/dateSchedule.ts` parses a canonical `<endpoint> RRULE:...` schedule,
-  computes the most recent due occurrence, and returns an anacron-style fire
-  decision for command-node scheduling.
+- Recurring Issue materialization builds on the same date/recurrence primitives,
+  but command nodes do not carry schedules or recurrence state.
 - Search date matching: `src/core/searchEngine.ts` (matches on the anchor; a
   recurring value's later occurrences are not expanded for search).
 - Date field UI: `src/renderer/ui/outliner/DateValuePicker.tsx` — a date value is a
@@ -107,7 +105,3 @@ Not canonical:
   control (PR #64). The picker carries a **Repeat** control (single dates only;
   hidden in range mode) backed by the shared recurrence helpers in
   `src/renderer/ui/outliner/dateRecurrence.ts`.
-- The command node's **Schedule** field reuses this same picker in single-only
-  mode (`allowRange={false}`), but commits through the user-gated
-  `set_command_schedule` rather than the generic field-value write — the schedule
-  bright line is unchanged. See `commands.md`.
