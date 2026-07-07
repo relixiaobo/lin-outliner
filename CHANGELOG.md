@@ -10,6 +10,15 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Fixed
+
+- **Agent skill turn coalescing** — loaded skill steering no longer splits the
+  conversation transcript into a standalone assistant turn when the follow-up
+  assistant segment belongs to the same run. The skill/tool call and continuation
+  now render as one assistant reply, while hidden notifications that separate
+  different runs remain invisible turn boundaries. Verified with targeted
+  renderer coverage, full renderer tests, typecheck, docs check, and diff check.
+
 ### Added
 
 - **Channel create and inline rename (PR #382, codex-3)** — New Channel now

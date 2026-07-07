@@ -75,11 +75,12 @@ function userEntry(id: string, timestamp: number): AgentMessageEntry {
   };
 }
 
-function hiddenTurnBoundaryEntry(id: string, timestamp = 2): AgentConversationEntry {
+function hiddenTurnBoundaryEntry(id: string, timestamp = 2, sourceSeq?: number): AgentConversationEntry {
   return {
     id,
     kind: 'hidden-turn-boundary',
     timestamp,
+    sourceSeq,
   };
 }
 
@@ -138,6 +139,29 @@ describe('buildConversationRenderRows — isLastInTurn', () => {
       'assistant-turn-run:run-2',
     ]);
     expect(assistantRows.every((row) => row.isLastInTurn)).toBe(true);
+  });
+
+  test('run-scoped hidden steering keeps assistant continuations in one turn', () => {
+    const rows = buildConversationRenderRows(
+      [
+        userEntry('user-1', 0),
+        assistantEntry({ id: 'a-skill', agentId: 'alpha', runId: 'run-1', sourceSeq: 10, text: 'loaded skill' }),
+        hiddenTurnBoundaryEntry('hidden-skill-steering', 2, 11),
+        assistantEntry({ id: 'a-answer', agentId: 'alpha', runId: 'run-1', sourceSeq: 12, text: 'final response' }),
+      ],
+      'idle',
+    );
+
+    const assistantRows = rows.filter((row) => row.entry.kind === 'message'
+      && (row.entry as AgentMessageEntry).message.role === 'assistant');
+    expect(rows.map((row) => row.entry.kind)).toEqual(['message', 'message']);
+    expect(assistantRows).toHaveLength(1);
+    expect(assistantRows[0]!.key).toBe('assistant-turn-run:run-1');
+    expect(assistantRows[0]!.sourceSeqs).toEqual([10, 11, 12]);
+    expect((assistantRows[0]!.entry as AgentMessageEntry).message.content).toEqual([
+      { type: 'text', text: 'loaded skill' },
+      { type: 'text', text: 'final response' },
+    ]);
   });
 
   test('an assistant turn followed by a different agent is still last-in-turn', () => {

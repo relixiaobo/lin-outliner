@@ -117,6 +117,26 @@ function uniqueAssistantTurnStableKey(
   return `${baseKey}:${firstEntry.id}`;
 }
 
+interface SourceSeqCarrier {
+  sourceSeq?: number;
+  sourceSeqs?: number[];
+}
+
+function sourceSeqsForEntry(entry: SourceSeqCarrier): number[] {
+  return entry.sourceSeqs ?? (typeof entry.sourceSeq === 'number' ? [entry.sourceSeq] : []);
+}
+
+function shouldMergeAcrossHiddenBoundary(
+  assistantEntries: readonly AssistantEntry[],
+  nextEntry: AgentConversationEntry | undefined,
+): nextEntry is AssistantEntry {
+  const previous = assistantEntries.at(-1);
+  if (!previous || !nextEntry || !isAssistantEntry(nextEntry)) return false;
+  return previous.runId !== null
+    && previous.runId === nextEntry.runId
+    && sameAssistantActor(previous, nextEntry);
+}
+
 export function buildConversationRenderRows(
   entries: AgentConversationEntry[],
   turnPhase: AgentTurnPhase,
@@ -135,11 +155,22 @@ export function buildConversationRenderRows(
 
     if (isAssistantEntry(entry)) {
       const assistantEntries: AssistantEntry[] = [];
+      const sourceSeqs: number[] = [];
       while (index < entries.length) {
         const candidate = entries[index]!;
+        if (isHiddenTurnBoundaryEntry(candidate)) {
+          const nextEntry = entries[index + 1];
+          if (shouldMergeAcrossHiddenBoundary(assistantEntries, nextEntry)) {
+            sourceSeqs.push(...sourceSeqsForEntry(candidate));
+            index += 1;
+            continue;
+          }
+          break;
+        }
         if (!isAssistantEntry(candidate)) break;
         if (assistantEntries.length > 0 && !sameAssistantActor(assistantEntries[0]!, candidate)) break;
         assistantEntries.push(candidate);
+        sourceSeqs.push(...sourceSeqsForEntry(candidate));
         index += 1;
       }
 
@@ -157,7 +188,7 @@ export function buildConversationRenderRows(
         entry: mergedEntry,
         endIndex,
         key: stableKey,
-        sourceSeqs: assistantEntries.flatMap((entry) => entry.sourceSeqs ?? (typeof entry.sourceSeq === 'number' ? [entry.sourceSeq] : [])),
+        sourceSeqs,
         turnPhase,
         totalEntryCount: entries.length,
         nextEntry: entries[endIndex + 1],
@@ -171,9 +202,7 @@ export function buildConversationRenderRows(
       key: isBoundaryEntry(entry)
         ? entry.id
         : (entry as AgentMessageEntry).nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
-      sourceSeqs: entry.kind === 'message'
-        ? entry.sourceSeqs ?? (typeof entry.sourceSeq === 'number' ? [entry.sourceSeq] : [])
-        : [],
+      sourceSeqs: entry.kind === 'message' ? sourceSeqsForEntry(entry) : [],
       turnPhase,
       totalEntryCount: entries.length,
       nextEntry: entries[index + 1],
