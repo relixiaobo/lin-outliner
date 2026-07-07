@@ -11,7 +11,7 @@ import type {
   TenonAgentToolResult,
 } from '../core/agentIssue';
 import type { AgentIssueToolRuntime } from './agentIssueTools';
-import type { AgentIssueStore, AgentSessionExecutionBinding } from './agentIssueStore';
+import type { AgentIssueStore, AgentSessionExecutionBinding, IssueInputResolver } from './agentIssueStore';
 
 export interface AgentIssueToolRuntimeOptions {
   store: AgentIssueStore;
@@ -19,6 +19,7 @@ export interface AgentIssueToolRuntimeOptions {
   authorization?: RuntimeAuthorizationCapability;
   executor?: AgentSessionExecutor;
   startSource?: (input: AgentSessionStartInput) => AgentSessionSource;
+  resolveInputScope?: IssueInputResolver;
   now?: () => number;
 }
 
@@ -90,7 +91,9 @@ async function startSession(
   now: number,
 ): Promise<TenonAgentToolResult> {
   if (input.request.mode === 'preview') {
-    return options.store.startSession(input, options.startSource?.(input) ?? { type: 'runtime-authorized-action', actor: options.actor }, options.actor, now);
+    return options.store.startSession(input, options.startSource?.(input) ?? { type: 'runtime-authorized-action', actor: options.actor }, options.actor, now, {
+      resolveInput: options.resolveInputScope,
+    });
   }
   const scope: AgentOperationScope = { type: 'agent-session-start', issueId: input.issueId };
   if (!hasAuthorization(options.authorization, scope, now)) {
@@ -101,7 +104,9 @@ async function startSession(
       [{ type: 'issue', id: input.issueId }],
     );
   }
-  const started = await options.store.startSession(input, options.startSource?.(input) ?? { type: 'runtime-authorized-action', actor: options.actor }, options.actor, now);
+  const started = await options.store.startSession(input, options.startSource?.(input) ?? { type: 'runtime-authorized-action', actor: options.actor }, options.actor, now, {
+    resolveInput: options.resolveInputScope,
+  });
   if (started.status !== 'applied') return started;
   return activateStartedSession(options, input, started, now);
 }

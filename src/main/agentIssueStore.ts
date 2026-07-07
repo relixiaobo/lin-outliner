@@ -17,6 +17,7 @@ import type {
   ActorRef,
   IssueCreateInput,
   IssueDraftFields,
+  IssueInputScope,
   IssueUpdateChange,
   IssueReadInput,
   IssueReadResult,
@@ -30,6 +31,7 @@ import type {
   RecurringIssueCadence,
   RecurringIssueDraftFields,
   RecurringIssueUpdateChange,
+  ResolvedIssueInput,
   RelatedTargetRef,
   TenonAgentToolResult,
   ValidationMessage,
@@ -74,6 +76,8 @@ export interface AgentSessionExecutionSyncInput {
   errorMessage?: string;
   completedAt?: number;
 }
+
+export type IssueInputResolver = (scope: IssueInputScope, issue: AgentIssue, now: number) => ResolvedIssueInput;
 
 export class AgentIssueStore {
   constructor(private readonly filePath: string) {}
@@ -208,6 +212,7 @@ export class AgentIssueStore {
     source: AgentSessionSource,
     actor: ActorRef = DEFAULT_ACTOR,
     now = Date.now(),
+    options: { resolveInput?: IssueInputResolver } = {},
   ): Promise<TenonAgentToolResult> {
     if (input.request.mode === 'preview') {
       return { status: 'preview', targets: [{ type: 'issue', id: input.issueId }] };
@@ -243,7 +248,7 @@ export class AgentIssueStore {
     return updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
       const issue = state.issues[input.issueId];
       if (!issue) return state;
-      const session = buildSession(issue, input, source, now);
+      const session = buildSession(issue, input, source, now, options.resolveInput);
       state.sessions[session.id] = session;
       appendActivity(state, {
         target: { type: 'agent-session', agentSessionId: session.id },
@@ -661,7 +666,16 @@ function issueFromRecurringIssue(
   };
 }
 
-function buildSession(issue: AgentIssue, input: AgentSessionStartInput, source: AgentSessionSource, now: number): AgentSession {
+function buildSession(
+  issue: AgentIssue,
+  input: AgentSessionStartInput,
+  source: AgentSessionSource,
+  now: number,
+  resolveInput?: IssueInputResolver,
+): AgentSession {
+  const inputSnapshot = issue.input
+    ? resolveInput?.(issue.input, issue, now) ?? { scope: issue.input, resolvedAt: now }
+    : undefined;
   return {
     id: `agent-session:${randomUUID()}`,
     issueId: issue.id,
@@ -669,7 +683,7 @@ function buildSession(issue: AgentIssue, input: AgentSessionStartInput, source: 
     state: 'pending',
     source,
     issueSnapshot: issue,
-    ...(issue.input ? { inputSnapshot: { scope: issue.input, resolvedAt: now } } : {}),
+    ...(inputSnapshot ? { inputSnapshot } : {}),
     ...(issue.output ? { outputSnapshot: issue.output } : {}),
     executionPolicy: {
       ...(issue.executionPolicy ?? { deadlineAt: now + 60 * 60 * 1000, retryPolicy: 'manual' as const }),

@@ -101,6 +101,11 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   Session first, then immediately hands it to the configured executor. If no
   executor is available, the Session is marked `error` instead of remaining
   indefinitely `pending`;
+- `src/main/agentIssueInputResolver.ts` resolves an Issue's confirmed input
+  scope against the current outliner projection when an Agent Session starts.
+  `selected-nodes`, `node-children`, and `tag-query` scopes become a bounded
+  `inputSnapshot` with concrete node ids and a preview on the Agent Session;
+  the Issue remains the durable work object, and nodes do not store work state.
 - `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
   Sessions, and Activity in `issue-manager.json`, including draft creation,
   parent/sub-issue links, revision conflicts, session message/stop Activity,

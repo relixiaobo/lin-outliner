@@ -220,6 +220,10 @@ describe('agent issue store', () => {
         reason: 'Process invoice-tagged nodes.',
       }, actor, 100);
       const issue = (await store.search({ text: 'invoices' })).rows[0];
+      expect((await store.search({
+        targets: ['issue'],
+        filter: { inputTags: ['invoice'] },
+      })).rows.map((row) => row.target.id)).toContain(issue.target.id);
       const confirmed = await store.update({
         target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
         change: { type: 'confirm' },
@@ -236,7 +240,14 @@ describe('agent issue store', () => {
         detach: true,
         request: { mode: 'request' },
         reason: 'Start invoice processing.',
-      }, source, actor, 200);
+      }, source, actor, 200, {
+        resolveInput: (scope, _issue, now) => ({
+          scope,
+          resolvedAt: now,
+          nodeIds: ['node:invoice-a', 'node:invoice-b'],
+          preview: 'Resolved 2 invoice nodes.',
+        }),
+      });
 
       expect(sessionResult.status).toBe('applied');
       const sessionTarget = sessionResult.targets.find((target) => target.type === 'agent-session');
@@ -244,6 +255,12 @@ describe('agent issue store', () => {
       const session = await store.readSession({ agentSessionId: sessionTarget!.id, include: ['activity-summary'] });
       expect(session?.agentSession.state).toBe('pending');
       expect(session?.agentSession.issueSnapshot.title).toBe('Summarize tagged invoices');
+      expect(session?.agentSession.inputSnapshot).toMatchObject({
+        scope: { type: 'tag-query', tag: 'invoice' },
+        resolvedAt: 200,
+        nodeIds: ['node:invoice-a', 'node:invoice-b'],
+        preview: 'Resolved 2 invoice nodes.',
+      });
       expect(session?.activity?.[0]?.content.type).toBe('agent-progress');
 
       const transitioned = await store.update({

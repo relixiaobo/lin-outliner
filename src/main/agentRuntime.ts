@@ -121,7 +121,6 @@ import type {
   AgentSessionReadInput,
   AgentSessionStartInput,
   IssueCompletionCriterion,
-  IssueInputScope,
   IssueReadInput,
   IssueSearchInput,
   IssueSearchResult,
@@ -166,6 +165,7 @@ import {
   type AgentRunMetaProjection,
 } from './agentEventStore';
 import { AgentIssueStore, type AgentSessionExecutionSyncInput } from './agentIssueStore';
+import { resolveIssueInputScopeFromProjection } from './agentIssueInputResolver';
 import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
   dreamWindowSummary,
@@ -5011,6 +5011,9 @@ export class AgentRuntime {
       store: this.getIssueStore(),
       actor: { type: 'agent', agentId },
       executor,
+      resolveInputScope: (scope, issue, now) => (
+        resolveIssueInputScopeFromProjection(scope, issue, this.outlinerToolHost.getProjection(), now)
+      ),
     });
   }
 
@@ -9197,7 +9200,7 @@ function agentSessionObjective(session: AgentSession, startInput: AgentSessionSt
     issue.description ? `Issue description:\n${issue.description}` : '',
     issue.parentIssueId ? `Parent Issue id: ${issue.parentIssueId}` : '',
     issue.recurrence ? `Recurring Issue id: ${issue.recurrence.recurringIssueId}` : '',
-    issue.input ? `Input scope:\n${formatIssueInputScope(issue.input)}` : 'Input scope: none',
+    session.inputSnapshot ? `Input snapshot:\n${formatIssueInputSnapshot(session.inputSnapshot)}` : 'Input snapshot: none',
     issue.output ? `Output policy:\n${formatIssueOutputPolicy(issue.output)}` : 'Output policy: activity only',
     formatIssueCriteria(issue.completionCriteria),
     formatIssueContinuation(startInput),
@@ -9235,8 +9238,14 @@ function formatIssueContinuation(startInput: AgentSessionStartInput): string {
   ].filter(Boolean).join('\n');
 }
 
-function formatIssueInputScope(input: IssueInputScope): string {
-  return JSON.stringify(input);
+function formatIssueInputSnapshot(input: AgentSession['inputSnapshot']): string {
+  if (!input) return 'none';
+  return [
+    `Scope: ${JSON.stringify(input.scope)}`,
+    `Resolved at: ${new Date(input.resolvedAt).toISOString()}`,
+    input.nodeIds ? `Resolved node ids: ${input.nodeIds.length > 0 ? input.nodeIds.join(', ') : 'none'}` : '',
+    input.preview ? `Preview: ${input.preview}` : '',
+  ].filter(Boolean).join('\n');
 }
 
 function formatIssueOutputPolicy(output: IssueOutputPolicy): string {
