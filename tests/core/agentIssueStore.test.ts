@@ -229,6 +229,59 @@ describe('agent issue store', () => {
     });
   });
 
+  test('delete lifecycle operations apply and keep Activity audit records', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Delete concrete work' },
+        request: { mode: 'request' },
+        reason: 'Create concrete work.',
+      }, actor, 10);
+      await store.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Delete routine',
+          cadence: { type: 'daily', time: '09:00' },
+          timeZone: 'UTC',
+          issueTemplate: { permissionMode: 'unattended' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create recurring work.',
+      }, actor, 20);
+      const issue = (await store.search({ targets: ['issue'] })).rows[0];
+      const recurringIssue = (await store.search({ targets: ['recurring-issue'] })).rows[0];
+
+      const issueDelete = await store.update({
+        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
+        change: { type: 'delete' },
+        request: { mode: 'request' },
+        reason: 'Delete concrete work.',
+      }, actor, 30);
+      const recurringDelete = await store.update({
+        target: { type: 'recurring-issue', id: recurringIssue.target.id, expectedRevision: recurringIssue.revision },
+        change: { type: 'delete' },
+        request: { mode: 'request' },
+        reason: 'Delete recurring work.',
+      }, actor, 40);
+
+      expect(issueDelete.status).toBe('applied');
+      expect(recurringDelete.status).toBe('applied');
+      expect((await store.search({ targets: ['issue'] })).rows).toEqual([]);
+      expect((await store.search({ targets: ['recurring-issue'] })).rows).toEqual([]);
+      const state = await store.state();
+      expect(Object.values(state.activity)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          target: { type: 'issue', issueId: issue.target.id },
+          content: { type: 'field-change', field: 'definition', to: 'deleted' },
+        }),
+        expect.objectContaining({
+          target: { type: 'recurring-issue', recurringIssueId: recurringIssue.target.id },
+          content: { type: 'field-change', field: 'definition', to: 'deleted' },
+        }),
+      ]));
+    });
+  });
+
   test('links sub-issues through visible Issue hierarchy', async () => {
     await withStore(async (store) => {
       await store.create({

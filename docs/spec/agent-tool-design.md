@@ -140,6 +140,9 @@ schema. `agent_session_read` returns Agent Session state and Activity, not a Run
 id. `agent_session_send_message` and `agent_session_stop` route through the
 binding when a live executor is available and otherwise report a warning or
 blocked state through the normal tool result.
+Issue and Recurring Issue `delete` operations return `applied` without an object
+revision because the target no longer exists; the deletion remains auditable via
+Activity on the deleted target id.
 
 The target model-facing tool names are exactly:
 

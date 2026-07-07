@@ -199,7 +199,12 @@ export class AgentIssueStore {
     }, PRIVATE_JSON_FILE_OPTIONS).then((state) => {
       const target = targetFromUpdateInput(input);
       const revision = revisionForTarget(state, target);
-      if (!revision) return { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Target object was not found.' }] };
+      if (!revision) {
+        if (input.change.type === 'delete') {
+          return { status: 'applied', targets: [target] };
+        }
+        return { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Target object was not found.' }] };
+      }
       return {
         status: 'applied',
         targets: [target],
