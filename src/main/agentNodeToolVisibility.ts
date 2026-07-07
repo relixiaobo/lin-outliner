@@ -112,11 +112,12 @@ export function visibleSearchResult(index: ProjectionIndex, data: NodeSearchData
 }
 
 export function visibleCreateResult(data: NodeCreateData, previewOnly: boolean, index?: ProjectionIndex): NodeVisiblePayload {
+  const createdIds = [...data.createdNodeIds, ...(data.createdFieldEntryIds ?? [])];
   const visible: NodeVisibleMutationResult = compactVisibleResult({
     outline: previewOnly
       ? data.outline
       : index ? serializeAnnotatedOutlines(index, data.createdRootIds, 12, 0, 500, false) : undefined,
-    changes: previewOnly ? {} : compactChanges({ created: data.createdNodeIds }) ?? {},
+    changes: previewOnly ? {} : compactChanges({ created: createdIds }) ?? {},
   });
   return { visible, ctx: { outcome: previewOnly ? 'preview' : 'applied' } };
 }

@@ -4,6 +4,7 @@ import { normalizeCodeLanguage } from '../core/codeLanguages';
 
 export interface OutlineDocument {
   roots: OutlineNode[];
+  fields: OutlineField[];
 }
 
 export interface OutlineNode {
@@ -133,6 +134,7 @@ export function parseLinOutline(
   }
 
   const roots: OutlineNode[] = [];
+  const documentFields: OutlineField[] = [];
   const stack: StackFrame[] = [];
 
   for (const line of parsedLines) {
@@ -152,14 +154,15 @@ export function parseLinOutline(
     const annotated = stripNodeMarker(line.text);
     const fieldHeader = line.codeBlock ? null : parseFieldHeader(annotated.text);
 
-    if (fieldHeader && parent?.kind === 'node') {
+    if (fieldHeader && (!parent || parent.kind === 'node')) {
       const field: OutlineField = {
         ...(annotated.nodeId ? { nodeId: annotated.nodeId } : {}),
         name: fieldHeader.name,
         values: fieldHeader.value ? [parseOutlineValue(fieldHeader.value)] : [],
         clear: !fieldHeader.value,
       };
-      parent.node.fields.push(field);
+      if (parent?.kind === 'node') parent.node.fields.push(field);
+      else documentFields.push(field);
       stack.push({ kind: 'field', level: line.level, field });
       continue;
     }
@@ -179,11 +182,11 @@ export function parseLinOutline(
     stack.push({ kind: 'node', level: line.level, node });
   }
 
-  if (roots.length === 0) {
-    return { ok: false, error: { message: 'Outline must contain at least one node.', line: 1, column: 1 } };
+  if (roots.length === 0 && documentFields.length === 0) {
+    return { ok: false, error: { message: 'Outline must contain at least one node or field.', line: 1, column: 1 } };
   }
 
-  return { ok: true, document: { roots }, warnings };
+  return { ok: true, document: { roots, fields: documentFields }, warnings };
 }
 
 function isClosingFenceLine(line: string, marker: string): boolean {

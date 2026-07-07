@@ -3,8 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
+import { projectFieldConfig } from '../../src/core/configProjection';
+import { LoroOutlinerDocument } from '../../src/core/loroDocument';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
-import { plainText, replaceAllRichTextPatch, TRASH_ID } from '../../src/core/types';
+import { LIBRARY_ID, plainText, replaceAllRichTextPatch, SCHEMA_ID, TRASH_ID, WORKSPACE_ID } from '../../src/core/types';
 import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agentNodeTools';
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
@@ -36,7 +38,11 @@ function hostFor(core: Core, overrides: Partial<OutlinerToolHost> = {}): Outline
       if (command === 'create_tag') return core.createTag(String(args.name ?? ''));
       if (command === 'apply_tag') return core.applyTag(String(args.nodeId), String(args.tagId));
       if (command === 'remove_tag') return core.removeTag(String(args.nodeId), String(args.tagId));
-      if (command === 'create_inline_field') return core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), 'plain');
+      if (command === 'create_inline_field') return core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), fieldTypeArg(args.fieldType));
+      if (command === 'reuse_field_definition') return core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
+      if (command === 'create_collected_field_option') return core.createCollectedFieldOption(String(args.fieldEntryId), String(args.name));
+      if (command === 'select_field_option') return core.selectFieldOption(String(args.fieldEntryId), String(args.optionNodeId));
+      if (command === 'add_field_reference') return core.addFieldReference(String(args.fieldEntryId), String(args.targetNodeId));
       if (command === 'add_reference') return core.addReference(String(args.parentId), String(args.targetId), nullableNumber(args.index));
       if (command === 'set_reference_target') return core.setReferenceTarget(String(args.referenceId), String(args.targetId));
       if (command === 'trash_node') return core.trashNode(String(args.nodeId));
@@ -76,8 +82,96 @@ function arrayArg(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : [];
 }
 
+function fieldTypeArg(value: unknown) {
+  if (['plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox', 'reference'].includes(String(value))) {
+    return String(value) as any;
+  }
+  return 'plain';
+}
+
 function nodeRef(core: Core, nodeId: string, label?: string): string {
   return formatNodeReferenceMarker(label ?? core.state().nodes[nodeId]?.content.text ?? nodeId, nodeId);
+}
+
+function fieldEntryByName(core: Core, ownerId: string, name: string): string {
+  const state = core.state();
+  const entryId = state.nodes[ownerId]!.children.find((childId) => {
+    const child = state.nodes[childId];
+    if (child?.type !== 'fieldEntry') return false;
+    const label = child.fieldDefId?.startsWith('sys:')
+      ? child.fieldDefId
+      : state.nodes[child.fieldDefId ?? '']?.content.text;
+    return label === name;
+  });
+  expect(entryId).toBeDefined();
+  return entryId!;
+}
+
+function fieldTypeOf(core: Core, fieldEntryId: string) {
+  const state = core.state();
+  const entry = state.nodes[fieldEntryId]!;
+  expect(entry.type).toBe('fieldEntry');
+  const fieldDef = state.nodes[entry.fieldDefId!]!;
+  const byId = new Map(Object.values(state.nodes).map((node) => [node.id, node]));
+  return projectFieldConfig(byId, fieldDef).fieldType;
+}
+
+function coreWithDirtyDuplicateOwnerFields(): Core {
+  const legacy = new LoroOutlinerDocument();
+  legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {
+    node.content = plainText('Tenon');
+  });
+  legacy.createNodeWithId(LIBRARY_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+    node.content = plainText('Library');
+  });
+  legacy.createNodeWithId(SCHEMA_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+    node.content = plainText('Schema');
+  });
+  legacy.createNodeWithId(TRASH_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+    node.content = plainText('Trash');
+  });
+  legacy.createNodeWithId('feed-node', LIBRARY_ID, undefined, undefined, (node) => {
+    node.content = plainText('Feed');
+  });
+  legacy.createNodeWithId('xml-def-a', SCHEMA_ID, undefined, 'fieldDef', (node) => {
+    node.content = plainText('xmlUrl');
+  });
+  legacy.createNodeWithId('xml-def-b', SCHEMA_ID, undefined, 'fieldDef', (node) => {
+    node.content = plainText(' XMLURL ');
+  });
+  legacy.createNodeWithId('xml-entry-a', 'feed-node', undefined, 'fieldEntry', (node) => {
+    node.fieldDefId = 'xml-def-a';
+  });
+  legacy.createNodeWithId('xml-entry-b', 'feed-node', undefined, 'fieldEntry', (node) => {
+    node.fieldDefId = 'xml-def-b';
+  });
+  return Core.fromState(legacy.serialize('__legacy__'));
+}
+
+function coreWithDirtyDuplicateFieldDefs(): Core {
+  const legacy = new LoroOutlinerDocument();
+  legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {
+    node.content = plainText('Tenon');
+  });
+  legacy.createNodeWithId(LIBRARY_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+    node.content = plainText('Library');
+  });
+  legacy.createNodeWithId(SCHEMA_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+    node.content = plainText('Schema');
+  });
+  legacy.createNodeWithId(TRASH_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+    node.content = plainText('Trash');
+  });
+  legacy.createNodeWithId('article-parent', LIBRARY_ID, undefined, undefined, (node) => {
+    node.content = plainText('Articles');
+  });
+  legacy.createNodeWithId('source-def-a', SCHEMA_ID, undefined, 'fieldDef', (node) => {
+    node.content = plainText('Source');
+  });
+  legacy.createNodeWithId('source-def-b', SCHEMA_ID, undefined, 'fieldDef', (node) => {
+    node.content = plainText(' source ');
+  });
+  return Core.fromState(legacy.serialize('__legacy__'));
 }
 
 async function executeTool<TData>(core: Core, name: string, params: unknown): Promise<ToolEnvelope<TData>> {
@@ -132,6 +226,7 @@ describe('agent node tools', () => {
     expect(nodeCreate.description).toContain('Use %%search%% only when creating a saved search/view');
     expect(nodeCreateOutlineDescription).toContain('Use "Title - description" only when the user explicitly asks');
     expect(nodeCreateOutlineDescription).toContain('Markdown inline syntax creates rich-text marks');
+    expect(nodeCreateOutlineDescription).toContain('Field:: writes resolve existing owner fields');
     expect(JSON.stringify(nodeCreate.parameters)).toContain("today's journal node, not the current UI selection");
     expect(nodeSearch.description).toContain('DONE_LAST_DAYS value:: 7');
     expect(nodeSearch.description).toContain('Use node_search for temporary lookup');
@@ -184,6 +279,247 @@ describe('agent node tools', () => {
     const fieldEntry = core.state().nodes[fieldEntryId]!;
     expect(fieldEntry.type).toBe('fieldEntry');
     expect(fieldEntry.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['Active']);
+  });
+
+  test('node_create top-level field lines write structured fields onto the parent', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const feed = mustFocus(core.createNode(today, null, 'Feed'));
+
+    const envelope = await executeTool<{
+      createdRootIds: string[];
+      createdFieldEntryIds?: string[];
+      createdFieldDefIds?: string[];
+    }>(core, 'node_create', {
+      parent_id: feed,
+      outline: '- xmlUrl:: https://example.com/feed.xml',
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.createdRootIds).toEqual([]);
+    expect(envelope.data!.createdFieldEntryIds).toHaveLength(1);
+    const entryId = fieldEntryByName(core, feed, 'xmlUrl');
+    expect(fieldTypeOf(core, entryId)).toBe('url');
+    expect(core.state().nodes[entryId]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
+      'https://example.com/feed.xml',
+    ]);
+  });
+
+  test('node_create top-level fields preserve after_id root insertion position', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const first = mustFocus(core.createNode(today, null, 'A'));
+    const second = mustFocus(core.createNode(today, null, 'B'));
+
+    const envelope = await executeTool<{ createdRootIds: string[]; createdFieldEntryIds?: string[] }>(core, 'node_create', {
+      after_id: second,
+      outline: [
+        '- Source:: RSS',
+        '- New',
+      ].join('\n'),
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.createdFieldEntryIds).toHaveLength(1);
+    expect(core.state().nodes[today]!.children.filter((childId) => core.state().nodes[childId]?.type !== 'fieldEntry')).toEqual([
+      first,
+      second,
+      envelope.data!.createdRootIds[0],
+    ]);
+  });
+
+  test('node_create infers conservative field types for new field definitions', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+
+    const envelope = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: [
+        '- Typed',
+        '  - xmlUrl:: https://example.com/feed.xml',
+        '  - Contact:: person@example.com',
+        '  - Published:: 2026-07-07',
+        '  - Score:: 42',
+        `  - Related:: ${nodeRef(core, target)}`,
+        '  - Flag:: true',
+        '  - Notes:: hello',
+      ].join('\n'),
+    });
+
+    expect(envelope.ok).toBe(true);
+    const root = envelope.data!.createdRootIds[0]!;
+    expect(fieldTypeOf(core, fieldEntryByName(core, root, 'xmlUrl'))).toBe('url');
+    expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Contact'))).toBe('email');
+    expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Published'))).toBe('date');
+    expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Score'))).toBe('number');
+    expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Related'))).toBe('reference');
+    expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Flag'))).toBe('checkbox');
+    expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Notes'))).toBe('plain');
+  });
+
+  test('node_create reuses existing typed field definitions by name', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const seedEntry = mustFocus(core.createInlineField(seed, null, 'xmlUrl', 'url'));
+    const fieldDefId = core.state().nodes[seedEntry]!.fieldDefId!;
+
+    const envelope = await executeTool<{ createdRootIds: string[]; createdFieldDefIds?: string[]; matchedNodeIds?: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- Feed\n  - xmlUrl:: https://example.com/feed.xml',
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.createdFieldDefIds).toBeUndefined();
+    expect(envelope.data!.matchedNodeIds).toContain(fieldDefId);
+    const root = envelope.data!.createdRootIds[0]!;
+    const entryId = fieldEntryByName(core, root, 'xmlUrl');
+    expect(core.state().nodes[entryId]!.fieldDefId).toBe(fieldDefId);
+    expect(fieldTypeOf(core, entryId)).toBe('url');
+  });
+
+  test('node_create selects existing options when reusing an options field definition', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const seedEntry = mustFocus(core.createInlineField(seed, null, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[seedEntry]!.fieldDefId!;
+    const activeOption = mustFocus(core.registerCollectedOption(fieldDefId, 'Active'));
+
+    const envelope = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- Feed\n  - Status:: Active',
+    });
+
+    expect(envelope.ok).toBe(true);
+    const root = envelope.data!.createdRootIds[0]!;
+    const entryId = fieldEntryByName(core, root, 'Status');
+    const valueId = core.state().nodes[entryId]!.children[0]!;
+    expect(core.state().nodes[valueId]).toMatchObject({
+      type: 'reference',
+      targetId: activeOption,
+    });
+  });
+
+  test('node_create validates options-from-supertag values through option selection', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const sourceTagId = mustFocus(core.createTag('City'));
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const seedEntry = mustFocus(core.createInlineField(seed, null, 'Destination', 'options_from_supertag'));
+    const fieldDefId = core.state().nodes[seedEntry]!.fieldDefId!;
+    core.setFieldConfig(fieldDefId, {
+      fieldType: 'options_from_supertag',
+      sourceSupertag: sourceTagId,
+    });
+    const chengduId = mustFocus(core.createNode(today, null, 'Chengdu'));
+    core.applyTag(chengduId, sourceTagId);
+
+    const valid = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: `- Trip\n  - Destination:: ${nodeRef(core, chengduId, 'Chengdu')}`,
+    });
+
+    expect(valid.ok).toBe(true);
+    const root = valid.data!.createdRootIds[0]!;
+    const entryId = fieldEntryByName(core, root, 'Destination');
+    const valueId = core.state().nodes[entryId]!.children[0]!;
+    expect(core.state().nodes[valueId]).toMatchObject({
+      type: 'reference',
+      targetId: chengduId,
+    });
+
+    const invalid = await executeTool(core, 'node_create', {
+      parent_id: today,
+      outline: '- Bad trip\n  - Destination:: Chengdu',
+    });
+    expect(invalid.ok).toBe(false);
+    expect(invalid.error?.message).toContain('options-from-supertag');
+  });
+
+  test('node_create reuses an existing same-owner field entry instead of duplicating it', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const feed = mustFocus(core.createNode(today, null, 'Feed'));
+    const entry = mustFocus(core.createInlineField(feed, null, 'xmlUrl', 'url'));
+    core.setFieldFreeTextValue(entry, 'https://old.example/feed.xml');
+
+    const envelope = await executeTool<{ createdFieldEntryIds?: string[] }>(core, 'node_create', {
+      parent_id: feed,
+      outline: '- xmlUrl:: https://new.example/feed.xml',
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.createdFieldEntryIds).toBeUndefined();
+    const fieldEntries = core.state().nodes[feed]!.children.filter((childId) => core.state().nodes[childId]?.type === 'fieldEntry');
+    expect(fieldEntries).toEqual([entry]);
+    expect(core.state().nodes[entry]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
+      'https://old.example/feed.xml',
+      'https://new.example/feed.xml',
+    ]);
+  });
+
+  test('node_create does not match empty draft fields as the Field placeholder name', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const feed = mustFocus(core.createNode(today, null, 'Feed'));
+    const draftEntry = mustFocus(core.createInlineField(feed, null, '', 'plain'));
+
+    const envelope = await executeTool<{ createdFieldEntryIds?: string[] }>(core, 'node_create', {
+      parent_id: feed,
+      outline: '- Field:: value',
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.createdFieldEntryIds).toHaveLength(1);
+    expect(envelope.data!.createdFieldEntryIds).not.toContain(draftEntry);
+    expect(core.state().nodes[feed]!.children.filter((childId) => core.state().nodes[childId]?.type === 'fieldEntry')).toHaveLength(2);
+    expect(core.state().nodes[draftEntry]!.children).toEqual([]);
+    expect(core.state().nodes[fieldEntryByName(core, feed, 'Field')]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['value']);
+  });
+
+  test('node_create rejects ambiguous duplicate owner fields and duplicate definitions', async () => {
+    const duplicateOwnerCore = coreWithDirtyDuplicateOwnerFields();
+    const duplicateOwner = await executeTool(duplicateOwnerCore, 'node_create', {
+      parent_id: 'feed-node',
+      outline: '- xmlUrl:: https://example.com/feed.xml',
+    });
+    expect(duplicateOwner.ok).toBe(false);
+    expect(duplicateOwner.error?.message).toContain('Multiple field entries');
+
+    const duplicateDefsCore = coreWithDirtyDuplicateFieldDefs();
+    const duplicateDefs = await executeTool(duplicateDefsCore, 'node_create', {
+      parent_id: 'article-parent',
+      outline: '- Article\n  - Source:: RSS',
+    });
+    expect(duplicateDefs.ok).toBe(false);
+    expect(duplicateDefs.error?.message).toContain('Multiple field definitions');
+  });
+
+  test('node_create writes Done through the system field and rejects read-only system fields', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const task = mustFocus(core.createNode(today, null, 'Task'));
+
+    const done = await executeTool(core, 'node_create', {
+      parent_id: task,
+      outline: '- Done:: true',
+    });
+    expect(done.ok).toBe(true);
+    expect(core.state().nodes[task]!.completedAt).toBeGreaterThan(0);
+    const doneEntry = core.state().nodes[task]!.children.find((childId) => core.state().nodes[childId]?.fieldDefId === 'sys:done');
+    expect(doneEntry).toBeDefined();
+    expect(core.state().nodes[doneEntry!]!.children).toEqual([]);
+    const read = await executeTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', { node_id: task, depth: 0 });
+    expect(read.data!.items[0]!.outline).toBe('- [x] Task\n  - Done::');
+
+    const created = await executeTool(core, 'node_create', {
+      parent_id: task,
+      outline: '- Created:: 2026-07-07',
+    });
+    expect(created.ok).toBe(false);
+    expect(created.error?.message).toContain('read-only');
   });
 
   test('node_create materializes markdown inline marks and links as rich text', async () => {
@@ -306,6 +642,7 @@ describe('agent node tools', () => {
     const result = await executeRawTool<{
       createdRootIds: string[];
       createdNodeIds: string[];
+      createdFieldEntryIds?: string[];
       outline?: string;
     }>(core, 'node_create', {
       parent_id: today,
@@ -332,7 +669,10 @@ describe('agent node tools', () => {
     expect((visible as any).metrics).toBeUndefined();
     expect(visible.data!.outline).toContain(`%%node:${result.details.data!.createdRootIds[0]}%% Launch`);
     expect(visible.data!.outline).toContain('Status::');
-    expect(visible.data!.changes!.created).toEqual(result.details.data!.createdNodeIds);
+    expect(visible.data!.changes!.created).toEqual([
+      ...result.details.data!.createdNodeIds,
+      ...(result.details.data!.createdFieldEntryIds ?? []),
+    ]);
     expect((visible.data! as any).refs).toBeUndefined();
     // create now carries the final-answer citation guidance.
     expect(visible.instructions).toContain('[[node:');
@@ -1044,7 +1384,7 @@ describe('agent node tools', () => {
       new_string: `  - %%node:${fieldEntryId}%% Date::\n    - 2026-05-20..2026-05-24`,
     });
     expect(invalid.ok).toBe(false);
-    expect(invalid.error?.message).toContain('Invalid date field value');
+    expect(invalid.error?.message).toContain('date field and received a non-date value');
     expect(core.state().nodes[fieldEntryId]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
       '2026-05-20/2026-05-24',
     ]);

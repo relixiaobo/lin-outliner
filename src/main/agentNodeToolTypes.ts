@@ -198,6 +198,7 @@ export interface NodeCreateData {
   createdFieldEntryIds?: string[];
   createdTagIds?: string[];
   createdFieldDefIds?: string[];
+  matchedNodeIds?: string[];
   duplicatedFrom?: string;
   targetId?: string;
   outline?: string;

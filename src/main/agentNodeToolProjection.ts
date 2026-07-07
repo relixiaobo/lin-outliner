@@ -16,6 +16,7 @@ import { formatTag } from '../core/textSyntax';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import { isInternalConfigNode } from '../core/configSchema';
 import { referencesForTarget, type ReferenceSource } from '../core/references';
+import { systemFieldLabel } from '../core/systemFields';
 import type {
   NodeBacklink,
   NodeFieldRead,
@@ -59,7 +60,7 @@ export function fieldReads(index: ProjectionIndex, node: NodeProjection, include
         .map((option) => option.content.text.trim())
         .filter((value): value is string => Boolean(value));
       return {
-        name: fieldDef?.content.text || fieldEntry.content.text || 'Field',
+        name: fieldName(index, fieldEntry),
         type: fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain',
         values,
         fieldEntryId: fieldEntry.id,
@@ -160,6 +161,8 @@ export function referenceText(index: ProjectionIndex, node: NodeProjection): str
 
 export function fieldName(index: ProjectionIndex, fieldEntry: NodeProjection): string {
   const fieldDefId = fieldEntry.type === 'fieldEntry' ? fieldEntry.fieldDefId : undefined;
+  const systemLabel = fieldDefId ? systemFieldLabel(fieldDefId) : null;
+  if (systemLabel) return systemLabel;
   const fieldDef = fieldDefId ? index.nodes.get(fieldDefId) : undefined;
   return fieldDef?.content.text || fieldEntry.content.text || 'Field';
 }
