@@ -306,9 +306,14 @@ describe('agent issue store', () => {
         reason: 'Break release work into a visible sub-issue.',
       }, actor, 20);
 
-      const read = await store.read({ target: parent.target, include: ['sub-issues'] });
+      const read = await store.read({ target: parent.target, include: ['sub-issues', 'activity'] });
       expect(read.issue?.subIssueIds).toHaveLength(1);
       expect(read.subIssues?.[0]?.title).toBe('Write release notes');
+      expect(read.activity).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          content: { type: 'agent-action', action: 'sub_issue_create', result: read.subIssues![0]!.id },
+        }),
+      ]));
       const children = await store.search({ filter: { parentIssueIds: [parent.target.id] } });
       expect(children.rows.map((row) => row.title)).toEqual(['Write release notes']);
     });

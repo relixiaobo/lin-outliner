@@ -134,6 +134,10 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   trigger type, input node/tag scope, Activity type, and explicit ordering by
   created, updated, due, next materialization, or status fields. Missing ordered
   values stay last in both ascending and descending order.
+- Creating an Issue with `parentIssueId` updates the parent's visible
+  `subIssueIds` and records Activity on the parent, so agent-created breakdowns
+  are visible through both `issue_search`/`issue_read` hierarchy and the parent
+  Activity feed.
 
 The internal executor binding is intentionally not part of the model-facing
 schema. `agent_session_read` returns Agent Session state and Activity, not a Run

@@ -138,6 +138,7 @@ export class AgentIssueStore {
           content: { type: 'field-change', field: 'definition', to: 'created' },
           createdAt: now,
         });
+        appendParentSubIssueActivity(state, issue, actor, now);
         return state;
       }
 
@@ -792,6 +793,22 @@ function linkIssueToParent(state: AgentIssueStoreState, issue: AgentIssue) {
   const parent = state.issues[issue.parentIssueId];
   if (!parent || parent.subIssueIds.includes(issue.id)) return;
   parent.subIssueIds = [...parent.subIssueIds, issue.id];
+}
+
+function appendParentSubIssueActivity(
+  state: AgentIssueStoreState,
+  issue: AgentIssue,
+  actor: ActorRef,
+  now: number,
+) {
+  if (!issue.parentIssueId || !state.issues[issue.parentIssueId]) return;
+  appendActivity(state, {
+    target: { type: 'issue', issueId: issue.parentIssueId },
+    actor,
+    content: { type: 'agent-action', action: 'sub_issue_create', result: issue.id },
+    relatedTargets: [{ type: 'issue', id: issue.id }],
+    createdAt: now,
+  });
 }
 
 function unlinkIssueFromParent(state: AgentIssueStoreState, issue: AgentIssue) {
