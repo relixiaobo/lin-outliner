@@ -67,7 +67,7 @@ export function issueSearchInputForWorkPreset(preset: IssueWorkPreset): IssueSea
         limit: 100,
       };
     case 'activity':
-      return { filter: { archived: false }, limit: 100 };
+      return { filter: { archived: false }, include: ['activity-summary'], limit: 100 };
   }
 }
 
@@ -158,6 +158,13 @@ function IssueStatusMarker({ row }: { row: IssueSearchRow }) {
   );
 }
 
+function rowSummary(row: IssueSearchRow, preset: IssueWorkPreset, labels: ReturnType<typeof useT>): string {
+  if (preset === 'activity' && row.latestActivity) {
+    return `${activityText(row.latestActivity)} · ${relativeTimeLabel(row.latestActivity.createdAt, labels.agent.run)}`;
+  }
+  return `${targetKindLabel(row.target, labels.agent.issue)} · ${row.status} · ${relativeTimeLabel(row.updatedAt, labels.agent.run)}`;
+}
+
 export function AgentIssuesPanel({
   activeSessionCount,
   error,
@@ -225,7 +232,7 @@ export function AgentIssuesPanel({
                   <span className="agent-run-title">{row.title}</span>
                 </span>
                 <span className="agent-run-summary">
-                  {targetKindLabel(row.target, t.agent.issue)} · {row.status} · {relativeTimeLabel(row.updatedAt, t.agent.run)}
+                  {rowSummary(row, preset, t)}
                 </span>
               </span>
               <ChevronRightIcon className="agent-run-open-affordance" size={ICON_SIZE.menu} />

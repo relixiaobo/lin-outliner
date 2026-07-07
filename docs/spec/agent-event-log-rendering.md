@@ -1016,7 +1016,11 @@ Rules:
   Completed, and Activity are renderer tabs translated into Issue filters such as
   confirmation state, status categories, scheduled triggers, Recurring Issue
   `nextMaterializationAt`, active Agent Sessions, and Activity-derived state;
-  they are not model-facing view enums.
+  they are not model-facing view enums. The Activity tab asks
+  `agent_issue_search` for `activity-summary`, displays the latest Activity
+  summary on each row, and sorts by latest Activity time. It is a projection over
+  Activity attached to Issues and Recurring Issues, not a separate Logbook or an
+  Issue `updatedAt` list.
 
   The first-level Work rows are Issues or Recurring Issues. Each row shows a
   concept marker, title, object kind, status, and relative update time. Active

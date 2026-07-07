@@ -613,6 +613,8 @@ export interface IssueSearchRow {
   status: string;
   revision: ObjectRevisionValue;
   updatedAt: number;
+  latestActivity?: Activity;
+  activityCount?: number;
 }
 
 export interface IssueSearchResult {

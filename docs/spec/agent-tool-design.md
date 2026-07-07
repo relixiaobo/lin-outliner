@@ -125,7 +125,10 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   `agent_issue_search`, opens Issue details with `agent_issue_read`, and renders
   Agent Sessions and Activity as Issue detail sections. The panel's Triage,
   Active, Scheduled, Completed, and Activity tabs are renderer presets translated
-  into canonical Issue filters, not model-facing view enums.
+  into canonical Issue filters, not model-facing view enums. The Activity tab
+  requests `activity-summary` rows and orders them by latest Activity time, so it
+  remains an Activity projection rather than a Logbook object or an Issue
+  `updatedAt` list.
 
 The internal executor binding is intentionally not part of the model-facing
 schema. `agent_session_read` returns Agent Session state and Activity, not a Run

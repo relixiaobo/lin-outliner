@@ -88,12 +88,20 @@ describe('agent issue store', () => {
         reason: 'Confirm one-off work.',
       }, actor, 20);
       const confirmed = (await store.search({ targets: ['issue'], text: 'invoices' })).rows[0];
-      await store.startSession({
+      const started = await store.startSession({
         issueId: confirmed.target.id,
         expectedIssueRevision: confirmed.revision,
         request: { mode: 'request' },
         reason: 'Start one-off work.',
       }, { type: 'runtime-authorized-action', actor }, actor, 30);
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+      await store.sendSessionMessage({
+        agentSessionId: sessionId,
+        message: 'Inspect totals first.',
+        kind: 'guidance',
+        request: { mode: 'request' },
+        reason: 'Add execution guidance.',
+      }, actor, 40);
 
       expect((await store.search({
         targets: ['issue'],
@@ -103,6 +111,16 @@ describe('agent issue store', () => {
         targets: ['issue'],
         filter: { activityTypes: ['agent-progress'] },
       })).rows.map((row) => row.target.id)).toContain(confirmed.target.id);
+      const activityRows = await store.search({
+        targets: ['issue'],
+        include: ['activity-summary'],
+      });
+      const activityRow = activityRows.rows.find((row) => row.target.id === confirmed.target.id);
+      expect(activityRow?.latestActivity).toMatchObject({
+        content: { type: 'comment', body: 'Inspect totals first.' },
+        createdAt: 40,
+      });
+      expect(activityRow?.activityCount).toBeGreaterThan(0);
     });
   });
 

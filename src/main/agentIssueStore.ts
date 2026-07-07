@@ -96,15 +96,15 @@ export class AgentIssueStore {
     const rows: IssueSearchRow[] = [];
     if (targets.has('issue')) {
       for (const issue of Object.values(state.issues)) {
-        if (matchesIssue(issue, state, input)) rows.push(issueRow(issue));
+        if (matchesIssue(issue, state, input)) rows.push(issueRow(issue, state, input));
       }
     }
     if (targets.has('recurring-issue')) {
       for (const recurringIssue of Object.values(state.recurringIssues)) {
-        if (matchesRecurringIssue(recurringIssue, input, state)) rows.push(recurringIssueRow(recurringIssue));
+        if (matchesRecurringIssue(recurringIssue, input, state)) rows.push(recurringIssueRow(recurringIssue, state, input));
       }
     }
-    rows.sort((left, right) => right.updatedAt - left.updatedAt || left.title.localeCompare(right.title));
+    rows.sort((left, right) => searchRowSortTime(right, input) - searchRowSortTime(left, input) || left.title.localeCompare(right.title));
     const limit = clampLimit(input.limit);
     const offset = cursorOffset(input.cursor);
     const page = rows.slice(offset, offset + limit);
@@ -947,24 +947,42 @@ function triggerSortTime(issue: AgentIssue): number {
   return issue.trigger.type === 'scheduled' ? issue.trigger.startAt : issue.createdAt;
 }
 
-function issueRow(issue: AgentIssue): IssueSearchRow {
+function issueRow(issue: AgentIssue, state: AgentIssueStoreState, input: IssueSearchInput): IssueSearchRow {
+  const activity = input.include?.includes('activity-summary')
+    ? sortActivityDescending(issueActivity(state, issue))
+    : undefined;
   return {
     target: { type: 'issue', id: issue.id },
     title: issue.title,
     status: issue.status.name,
     revision: issue.revision,
     updatedAt: issue.updatedAt,
+    ...(activity ? { latestActivity: activity[0], activityCount: activity.length } : {}),
   };
 }
 
-function recurringIssueRow(recurringIssue: AgentRecurringIssue): IssueSearchRow {
+function recurringIssueRow(
+  recurringIssue: AgentRecurringIssue,
+  state: AgentIssueStoreState,
+  input: IssueSearchInput,
+): IssueSearchRow {
+  const activity = input.include?.includes('activity-summary')
+    ? sortActivityDescending(recurringIssueActivity(state, recurringIssue))
+    : undefined;
   return {
     target: { type: 'recurring-issue', id: recurringIssue.id },
     title: recurringIssue.titleTemplate,
     status: recurringIssue.status,
     revision: recurringIssue.revision,
     updatedAt: recurringIssue.updatedAt,
+    ...(activity ? { latestActivity: activity[0], activityCount: activity.length } : {}),
   };
+}
+
+function searchRowSortTime(row: IssueSearchRow, input: IssueSearchInput): number {
+  return input.include?.includes('activity-summary')
+    ? row.latestActivity?.createdAt ?? row.updatedAt
+    : row.updatedAt;
 }
 
 function appendActivity(
@@ -1011,6 +1029,10 @@ function recurringIssueActivity(state: AgentIssueStoreState, recurringIssue: Age
       (activity.target.type === 'recurring-issue' && activity.target.recurringIssueId === recurringIssue.id)
       || (activity.relatedTargets?.some((target) => target.type === 'recurring-issue' && target.id === recurringIssue.id) ?? false)
     ));
+}
+
+function sortActivityDescending(activity: Activity[]): Activity[] {
+  return [...activity].sort((left, right) => right.createdAt - left.createdAt);
 }
 
 function issueMatchesActivityTarget(state: AgentIssueStoreState, issue: AgentIssue, target: ActivityTarget): boolean {
