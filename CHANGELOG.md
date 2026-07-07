@@ -40,6 +40,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Feed-processing built-in skill (PR #387, codex-3)** — enabled the
+  `feed-processing` skill from `linlab-skills` as a default resource-backed
+  built-in. Development runs now load it from the sibling linlab checkout, and
+  packaged builds stage it into `Resources/built-in-skills` alongside the other
+  linlab artifact skills. The agent skills spec documents `/feed-processing` as
+  a sink-neutral feed-content pack workflow.
 - **Agent Issue Manager plan (PR #384, codex-4)** — added the active P1
   implementation plan for replacing scheduled command / Run-centered work with
   the Agent Issue Manager model: Issues and sub-issues for durable work,
