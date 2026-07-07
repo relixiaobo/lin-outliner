@@ -49,6 +49,7 @@ import {
   LoaderIcon,
   PencilIcon,
   RunsIcon,
+  TrashIcon,
   WarningIcon,
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
@@ -73,6 +74,7 @@ import { composerCurrentNodeId } from './userViewContext';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { Dialog } from '../primitives/Dialog';
 import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
@@ -160,6 +162,10 @@ function editableConversationTitle(title: string | null | undefined): string {
   const readable = nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim();
   if (!readable || readable === RUNTIME_UNTITLED_SENTINEL) return '';
   return readable;
+}
+
+function isProtectedDefaultChannel(conversationId: string): boolean {
+  return conversationId === DEFAULT_GENERAL_CHANNEL_ID || conversationId === DEFAULT_DREAM_CHANNEL_ID;
 }
 
 function agentDefinitionName(definition: AgentDefinitionView | undefined): string | null {
@@ -447,6 +453,8 @@ export function AgentChatPanel({
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingConversationTitle, setEditingConversationTitle] = useState('');
   const [savingRenameConversationId, setSavingRenameConversationId] = useState<string | null>(null);
+  const [pendingDeleteConversation, setPendingDeleteConversation] = useState<AgentConversationListMeta | null>(null);
+  const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [workPanelOpen, setWorkPanelOpen] = useState(false);
   const [runDetailStack, setRunDetailStack] = useState<RunDetailTarget[]>([]);
   const [runIndex, setRunIndex] = useState<AgentRunListEntry[]>([]);
@@ -1192,6 +1200,32 @@ export function AgentChatPanel({
     }
   }
 
+  async function confirmDeleteConversation() {
+    const target = pendingDeleteConversation;
+    if (!target || deletingConversationId) return;
+    setPendingDeleteConversation(null);
+    if (isProtectedDefaultChannel(target.id)) return;
+
+    setDeletingConversationId(target.id);
+    setSettingsError(null);
+    try {
+      await api.agentDeleteConversation(target.id);
+      if (editingConversationId === target.id) {
+        setEditingConversationId(null);
+        setEditingConversationTitle('');
+      }
+      const nextConversations = await loadConversations();
+      const activeConversationStillListed = nextConversations?.some((entry) => entry.id === conversationId) ?? true;
+      if (target.id === conversationId || !activeConversationStillListed) {
+        await selectConversation(DEFAULT_GENERAL_CHANNEL_ID);
+      }
+    } catch (caught) {
+      if (mountedRef.current) setSettingsError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (mountedRef.current) setDeletingConversationId(null);
+    }
+  }
+
   async function handleSelectConversation(targetConversationId: string) {
     // Single-agent collapse: navigation is never locked. A run keeps streaming in
     // its conversation and surfaces unread via conversation_attention; the user can
@@ -1450,9 +1484,10 @@ export function AgentChatPanel({
                 const isCurrent = conversation.id === conversationId;
                 const title = readableConversationTitle(conversation.title, t.common.untitled);
                 const unread = isCurrent ? 0 : conversation.unreadCount ?? unreadByConversationId.get(conversation.id) ?? 0;
-                const canRename = conversation.id !== DEFAULT_GENERAL_CHANNEL_ID && conversation.id !== DEFAULT_DREAM_CHANNEL_ID;
+                const canManage = !isProtectedDefaultChannel(conversation.id);
                 const isEditing = editingConversationId === conversation.id;
                 const renameSaving = savingRenameConversationId === conversation.id;
+                const deleteSaving = deletingConversationId === conversation.id;
                 return (
                   <div
                     className={[
@@ -1522,11 +1557,11 @@ export function AgentChatPanel({
                         ) : null}
                       </ButtonControl>
                     )}
-                    {canRename && !isEditing ? (
+                    {canManage && !isEditing ? (
                       <div className="agent-conversation-row-actions">
                         <IconButton
                           className="agent-conversation-edit-button"
-                          disabled={renameSaving}
+                          disabled={renameSaving || deleteSaving}
                           icon={PencilIcon}
                           iconSize={ICON_SIZE.menu}
                           label={t.agent.chat.renameChannel}
@@ -1535,6 +1570,19 @@ export function AgentChatPanel({
                             startRenameConversation(conversation);
                           }}
                           title={t.agent.chat.renameChannel}
+                          variant="message"
+                        />
+                        <IconButton
+                          className="agent-conversation-delete-button"
+                          disabled={deleteSaving}
+                          icon={TrashIcon}
+                          iconSize={ICON_SIZE.menu}
+                          label={t.agent.chat.deleteChannel}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setPendingDeleteConversation(conversation);
+                          }}
+                          title={t.agent.chat.deleteChannel}
                           variant="message"
                         />
                       </div>
@@ -1547,6 +1595,19 @@ export function AgentChatPanel({
           document.body,
         ) : null}
       </header>
+      {pendingDeleteConversation ? (
+        <ConfirmDialog
+          danger
+          confirmLabel={t.agent.chat.deleteChannelConfirm}
+          message={t.agent.chat.deleteChannelMessage}
+          onCancel={() => setPendingDeleteConversation(null)}
+          onConfirm={() => void confirmDeleteConversation()}
+          restoreFocus={() => historyButtonRef.current}
+          title={t.agent.chat.deleteChannelTitle({
+            name: readableConversationTitle(pendingDeleteConversation.title, t.common.untitled),
+          })}
+        />
+      ) : null}
 
       {workPanelOpen ? (
         <div className="agent-work-page">

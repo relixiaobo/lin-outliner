@@ -229,10 +229,15 @@ test.describe('agent composer controls', () => {
     await expect(channelsList.locator('.agent-conversation-members')).toHaveCount(0);
     await expect(channelsList.locator('.agent-conversation-channel-icon')).toHaveCount(5);
     const generalRow = channelsList.locator('.agent-conversation-row', { hasText: 'General' }).first();
+    const dreamRow = channelsList.locator('.agent-conversation-row', { hasText: 'Dream' }).first();
     const planningRow = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
     await expect(channelsList.locator('.agent-conversation-row').first()).toContainText('General');
     await expect(generalRow.getByRole('button', { name: 'Rename channel' })).toHaveCount(0);
+    await expect(generalRow.getByRole('button', { name: 'Delete channel' })).toHaveCount(0);
+    await expect(dreamRow.getByRole('button', { name: 'Rename channel' })).toHaveCount(0);
+    await expect(dreamRow.getByRole('button', { name: 'Delete channel' })).toHaveCount(0);
     await expect(planningRow.getByRole('button', { name: 'Rename channel' })).toHaveCount(1);
+    await expect(planningRow.getByRole('button', { name: 'Delete channel' })).toHaveCount(1);
     await expect(planningRow.locator('.agent-conversation-unread')).toHaveText('3');
 
     await menu.getByRole('button', { name: /self/ }).click();
@@ -385,6 +390,27 @@ test.describe('agent composer controls', () => {
       conversationId: 'lin-agent-channel-planning',
       title: 'Release plans',
     });
+  });
+
+  test('deletes a Channel from the row delete affordance after confirmation', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const menu = page.getByRole('dialog', { name: 'Channels' });
+    const channelsList = menu.locator('.agent-conversation-list').first();
+    const channelRow = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
+
+    await channelRow.hover();
+    await channelRow.getByRole('button', { name: 'Delete channel' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Delete "Planning Channel"?' });
+    await expect(confirm).toContainText('This removes the Channel and its transcript history.');
+    await confirm.getByRole('button', { name: 'Delete channel' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_delete_conversation')?.args;
+    }).toMatchObject({
+      conversationId: 'lin-agent-channel-planning',
+    });
+    await expect(channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' })).toHaveCount(0);
   });
 
   test('shows Channel member count in the header without member avatars', async ({ page }) => {

@@ -174,20 +174,21 @@ header shows hash icon + Channel name + member count including the user. No head
 subtitle, decorative status dot, model line, member stack, or DM-to-Channel action
 appears in the title row. The title trigger follows the Header Chrome pattern.
 
-The conversation menu follows the Slack section-action model: Direct Messages owns
-`New agent`, Channels owns `New Channel`, and creation actions are section-header
-affordances rather than fake rows. Rows are scan-first and single-line; DMs show
-avatar + name, Channels show hash + name, active rows suppress unread badges, and
-ordinary Channel rows show one trailing edit icon for inline rename. Protected
-default Channels do not show rename controls.
+The conversation menu is a single Channels list with one section-header
+`New Channel` affordance rather than a fake row. Rows are scan-first and
+single-line; Channels show hash + name, active rows suppress unread badges, and
+ordinary Channel rows show trailing edit/delete icon actions for inline rename
+and confirmed deletion. Protected default Channels do not show rename or delete
+controls.
 
 **Config and inline edits.** Agent authoring uses a dedicated native child window
 (`?surface=agent-config`) opened through the main process. Channel creation is
 inline-lightweight: the Channels `+` creates an untitled Channel immediately and
 focuses the composer. Ordinary Channel rows expose a trailing edit icon for inline
-rename; protected default Channels do not show rename controls. Channel settings
-surfaces, when opened directly, use the settings sheet/inset-list language for
-remaining per-Channel settings such as Dream-data inclusion.
+rename and a trailing trash icon for confirmed deletion; protected default
+Channels do not show rename or delete controls. Channel settings surfaces, when
+opened directly, use the settings sheet/inset-list language for remaining
+per-Channel settings such as Dream-data inclusion.
 
 **Transcript.** Agent UI uses Tenon foundations: neutral text, translucent chrome,
 opaque content surfaces, sparse semantic colour, low elevation, and compact

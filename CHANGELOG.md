@@ -12,6 +12,9 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Channel deletion affordance** — ordinary Channel rows now expose a confirmed
+  delete action beside inline rename in the conversation menu, while protected
+  General/Dream Channels keep both mutation controls hidden.
 - **Agent skill turn coalescing** — loaded skill steering no longer splits the
   conversation transcript into a standalone assistant turn when the follow-up
   assistant segment belongs to the same run. The skill/tool call and continuation

@@ -210,8 +210,8 @@ truth.
     create/rename dialog), and the message-addressing protocol fields (`addressedTo`,
     `member.added`/`member.removed`). The Channel container itself survives: every
     conversation is an id-namespaced single-agent channel, "General" is the default,
-    and users create/rename channels from the one list's `+` (no agent-facing
-    `channel_create` tool — UI action only).
+    and users create, rename, and delete ordinary channels from the one list
+    (no agent-facing `channel_create` tool — UI action only).
 
 ## Next Milestone
 

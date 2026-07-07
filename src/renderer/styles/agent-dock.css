@@ -542,6 +542,12 @@ button.panel-resize-handle {
   color: var(--text-strong);
 }
 
+.agent-conversation-delete-button:hover:not(:disabled),
+.agent-conversation-delete-button:focus-visible:not(:disabled) {
+  background: transparent;
+  color: var(--status-danger);
+}
+
 .agent-conversation-rename-editor {
   height: 36px;
 }

@@ -290,9 +290,10 @@ members `{user, Neva}`; **General** (`lin-agent-channel-general`,
 conversation list; and the user can create further Channels from that list's
 single `+` button. Creation is immediate: a blank title stores the untitled
 display sentinel, no opening message is persisted, the new Channel is selected,
-and the composer receives focus. Ordinary Channel rows expose a direct edit icon
-for inline rename; blank rename restores the untitled display sentinel. Channel
-configuration also owns the per-channel **include in Dream data** setting:
+and the composer receives focus. Ordinary Channel rows expose direct edit/delete
+icons for inline rename and confirmed deletion; blank rename restores the
+untitled display sentinel. Channel configuration also owns the per-channel
+**include in Dream data** setting:
 ordinary channels default included, the protected Dream channel is forced
 excluded, and protected default channel names stay immutable while their editable
 settings can still use the same configuration surface. Protected default
