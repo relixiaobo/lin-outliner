@@ -47,8 +47,9 @@ import {
   HashIcon,
   ICON_SIZE,
   LoaderIcon,
-  MoreIcon,
+  PencilIcon,
   RunsIcon,
+  TrashIcon,
   WarningIcon,
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
@@ -73,10 +74,10 @@ import { composerCurrentNodeId } from './userViewContext';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { Dialog } from '../primitives/Dialog';
 import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
-import { AnchoredActionMenu } from '../primitives/AnchoredActionMenu';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useT } from '../../i18n/I18nProvider';
@@ -157,64 +158,14 @@ function readableConversationTitle(title: string | null | undefined, fallback: s
   return readable;
 }
 
-interface ConversationRowMenuAction {
-  disabled?: boolean;
-  id?: string;
-  label: string;
-  onSelect: () => void;
+function editableConversationTitle(title: string | null | undefined): string {
+  const readable = nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim();
+  if (!readable || readable === RUNTIME_UNTITLED_SENTINEL) return '';
+  return readable;
 }
 
-function ConversationRowMoreMenu({
-  actions,
-  disabled,
-  label,
-  menuLabel,
-  onOpenChange,
-  open,
-}: {
-  actions: ConversationRowMenuAction[];
-  disabled?: boolean;
-  label: string;
-  menuLabel: string;
-  onOpenChange: (open: boolean) => void;
-  open: boolean;
-}) {
-  const anchorRef = useRef<HTMLButtonElement | null>(null);
-
-  return (
-    <>
-      <IconButton
-        aria-expanded={open}
-        aria-haspopup="menu"
-        className="agent-message-action-button agent-conversation-more-button"
-        disabled={disabled}
-        icon={MoreIcon}
-        iconSize={ICON_SIZE.menu}
-        label={label}
-        onClick={(event) => {
-          event.stopPropagation();
-          onOpenChange(!open);
-        }}
-        ref={anchorRef}
-        title={label}
-        variant="message"
-      />
-      {open ? (
-        <AnchoredActionMenu
-          actions={actions}
-          anchorRef={anchorRef}
-          ariaLabel={menuLabel}
-          className="agent-conversation-row-menu"
-          itemClassName="agent-conversation-row-menu-item"
-          itemLabelClassName="agent-conversation-row-menu-item-label"
-          onClose={() => onOpenChange(false)}
-          // The history menu's outside-pointer handler ignores clicks inside this menu.
-          surfaceProps={{ 'data-agent-conversation-row-menu': 'true' }}
-          width={196}
-        />
-      ) : null}
-    </>
-  );
+function isProtectedDefaultChannel(conversationId: string): boolean {
+  return conversationId === DEFAULT_GENERAL_CHANNEL_ID || conversationId === DEFAULT_DREAM_CHANNEL_ID;
 }
 
 function agentDefinitionName(definition: AgentDefinitionView | undefined): string | null {
@@ -475,6 +426,7 @@ export function AgentChatPanel({
     resolveApproval,
     resolveUserQuestion,
     selectConversation,
+    newConversation,
     sendMessage: sendRuntimeMessage,
     conversationId,
     conversationTitle,
@@ -497,7 +449,12 @@ export function AgentChatPanel({
   const [conversations, setConversations] = useState<AgentConversationListMeta[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
-  const [rowActionMenu, setRowActionMenu] = useState<string | null>(null);
+  const [creatingConversation, setCreatingConversation] = useState(false);
+  const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
+  const [editingConversationTitle, setEditingConversationTitle] = useState('');
+  const [savingRenameConversationId, setSavingRenameConversationId] = useState<string | null>(null);
+  const [pendingDeleteConversation, setPendingDeleteConversation] = useState<AgentConversationListMeta | null>(null);
+  const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [workPanelOpen, setWorkPanelOpen] = useState(false);
   const [runDetailStack, setRunDetailStack] = useState<RunDetailTarget[]>([]);
   const [runIndex, setRunIndex] = useState<AgentRunListEntry[]>([]);
@@ -522,6 +479,9 @@ export function AgentChatPanel({
   const suppressHeaderClickRef = useRef(false);
   const revealAfterDockOpenTimerRef = useRef<number | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const cancelRenameRef = useRef<string | null>(null);
+  const pendingRenameRef = useRef<string | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const copyPayloadTextCacheRef = useRef<PayloadTextPromiseCache>(new Map());
   const copyAssistantTurnSourceRef = useRef({ entries, toolResults, conversationId });
@@ -539,6 +499,13 @@ export function AgentChatPanel({
     }
     dockOpenRef.current = dockOpen;
   }, [dockOpen]);
+  useLayoutEffect(() => {
+    if (!editingConversationId) return;
+    const input = renameInputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, [editingConversationId]);
   const agentMembers = useMemo(
     () => members.filter((member) => member.principal.type === 'agent' && member.mention),
     [members],
@@ -1087,7 +1054,10 @@ export function AgentChatPanel({
   }, [historyOpen, loadConversations]);
 
   useEffect(() => {
-    if (!historyOpen) setRowActionMenu(null);
+    if (!historyOpen) {
+      setEditingConversationId(null);
+      setEditingConversationTitle('');
+    }
   }, [historyOpen]);
 
   useEffect(() => {
@@ -1100,9 +1070,7 @@ export function AgentChatPanel({
       const target = event.target;
       if (target instanceof Node && headerRef.current?.contains(target)) return;
       if (target instanceof Node && historyMenuRef.current?.contains(target)) return;
-      if (target instanceof Element && target.closest('[data-agent-conversation-row-menu="true"]')) return;
       setHistoryOpen(false);
-      setRowActionMenu(null);
     };
     document.addEventListener('pointerdown', handlePointerDown, true);
     return () => document.removeEventListener('pointerdown', handlePointerDown, true);
@@ -1184,22 +1152,78 @@ export function AgentChatPanel({
     await clearSteer();
   }
 
-  function handleNewConversation() {
+  async function handleNewConversation() {
+    if (creatingConversation) return;
     setHistoryOpen(false);
-    setRowActionMenu(null);
-    void window.lin?.openChannelConfig?.({ mode: 'create' });
+    setEditingConversationId(null);
+    setEditingConversationTitle('');
+    setCreatingConversation(true);
+    try {
+      await newConversation({});
+      await loadConversations();
+      setComposerFocusToken((token) => token + 1);
+    } catch (caught) {
+      if (mountedRef.current) setSettingsError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (mountedRef.current) setCreatingConversation(false);
+    }
   }
 
-  function handleConfigureAgent(agentId: string) {
-    setHistoryOpen(false);
-    setRowActionMenu(null);
-    void window.lin?.openAgentConfig?.({ agentId });
+  function startRenameConversation(target: AgentConversationListMeta) {
+    setEditingConversationId(target.id);
+    setEditingConversationTitle(editableConversationTitle(target.title));
+    cancelRenameRef.current = null;
   }
 
-  function handleConfigureChannel(targetConversationId: string) {
-    setHistoryOpen(false);
-    setRowActionMenu(null);
-    void window.lin?.openChannelConfig?.({ conversationId: targetConversationId, mode: 'configure' });
+  function cancelRenameConversation(targetConversationId: string) {
+    cancelRenameRef.current = targetConversationId;
+    setEditingConversationId(null);
+    setEditingConversationTitle('');
+  }
+
+  async function commitRenameConversation(targetConversationId: string) {
+    if (pendingRenameRef.current === targetConversationId) return;
+    pendingRenameRef.current = targetConversationId;
+    setSavingRenameConversationId(targetConversationId);
+    setSettingsError(null);
+    try {
+      await api.agentRenameConversation(targetConversationId, editingConversationTitle);
+      await loadConversations();
+      if (targetConversationId === conversationId) await reloadConversation();
+      setEditingConversationId(null);
+      setEditingConversationTitle('');
+    } catch (caught) {
+      if (mountedRef.current) setSettingsError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (pendingRenameRef.current === targetConversationId) pendingRenameRef.current = null;
+      if (mountedRef.current) setSavingRenameConversationId(null);
+    }
+  }
+
+  async function confirmDeleteConversation() {
+    const target = pendingDeleteConversation;
+    if (!target || deletingConversationId) return;
+    setPendingDeleteConversation(null);
+    if (isProtectedDefaultChannel(target.id)) return;
+
+    setDeletingConversationId(target.id);
+    setSettingsError(null);
+    try {
+      await api.agentDeleteConversation(target.id);
+      if (editingConversationId === target.id) {
+        setEditingConversationId(null);
+        setEditingConversationTitle('');
+      }
+      const nextConversations = await loadConversations();
+      const activeConversationStillListed = nextConversations?.some((entry) => entry.id === conversationId) ?? true;
+      if (target.id === conversationId || !activeConversationStillListed) {
+        await selectConversation(DEFAULT_GENERAL_CHANNEL_ID);
+      }
+    } catch (caught) {
+      if (mountedRef.current) setSettingsError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (mountedRef.current) setDeletingConversationId(null);
+    }
   }
 
   async function handleSelectConversation(targetConversationId: string) {
@@ -1208,7 +1232,8 @@ export function AgentChatPanel({
     // switch away freely (Slack-like). The only no-op is re-selecting the current.
     if (targetConversationId === conversationId) return;
     setHistoryOpen(false);
-    setRowActionMenu(null);
+    setEditingConversationId(null);
+    setEditingConversationTitle('');
     await selectConversation(targetConversationId);
   }
 
@@ -1333,7 +1358,8 @@ export function AgentChatPanel({
     surfaceRef: historyMenuRef,
     onClose: () => {
       setHistoryOpen(false);
-      setRowActionMenu(null);
+      setEditingConversationId(null);
+      setEditingConversationTitle('');
     },
     kind: 'dialog',
     active: historyOpen,
@@ -1434,6 +1460,7 @@ export function AgentChatPanel({
               <span>{t.agent.chat.conversations}</span>
               <IconButton
                 className="agent-conversation-section-action"
+                disabled={creatingConversation}
                 icon={AddIcon}
                 label={t.agent.chat.newConversation}
                 onClick={() => void handleNewConversation()}
@@ -1457,51 +1484,106 @@ export function AgentChatPanel({
                 const isCurrent = conversation.id === conversationId;
                 const title = readableConversationTitle(conversation.title, t.common.untitled);
                 const unread = isCurrent ? 0 : conversation.unreadCount ?? unreadByConversationId.get(conversation.id) ?? 0;
-                const actionMenuKey = `channel:${conversation.id}`;
-                const channelActions: ConversationRowMenuAction[] = [
-                  {
-                    disabled: anyRunActive,
-                    id: 'configure-channel',
-                    label: t.agent.chat.configureChannel,
-                    onSelect: () => handleConfigureChannel(conversation.id),
-                  },
-                ];
+                const canManage = !isProtectedDefaultChannel(conversation.id);
+                const isEditing = editingConversationId === conversation.id;
+                const renameSaving = savingRenameConversationId === conversation.id;
+                const deleteSaving = deletingConversationId === conversation.id;
                 return (
                   <div
-                    className={isCurrent ? 'agent-conversation-row agent-conversation-compact-row is-current' : 'agent-conversation-row agent-conversation-compact-row'}
+                    className={[
+                      'agent-conversation-row agent-conversation-compact-row',
+                      isCurrent ? 'is-current' : '',
+                      isEditing ? 'is-editing' : '',
+                    ].filter(Boolean).join(' ')}
                     key={conversation.id}
                   >
-                    <ButtonControl
-                      className="agent-conversation-select agent-conversation-compact-select"
-                      onClick={() => void handleSelectConversation(conversation.id)}
-                    >
-                      <HashIcon
-                        aria-hidden="true"
-                        className="agent-conversation-channel-icon"
-                        size={ICON_SIZE.menu}
-                      />
-                      <span className="agent-conversation-name">{title}</span>
-                      {unread > 0 ? (
-                        <span
-                          className="agent-conversation-unread"
-                          // The visible glyph caps at "99+" for width; the accessible
-                          // name + tooltip carry the exact count (more useful to AT and
-                          // disambiguates "99+" on hover).
-                          aria-label={t.agent.chat.unreadMessages({ count: unread })}
-                          title={t.agent.chat.unreadMessages({ count: unread })}
-                        >
-                          {unread > 99 ? '99+' : unread}
-                        </span>
-                      ) : null}
-                    </ButtonControl>
-                    {channelActions.length > 0 ? (
+                    {isEditing ? (
+                      <div className="agent-conversation-select agent-conversation-compact-select agent-conversation-rename-editor">
+                        <HashIcon
+                          aria-hidden="true"
+                          className="agent-conversation-channel-icon"
+                          size={ICON_SIZE.menu}
+                        />
+                        <input
+                          aria-label={t.agent.chat.renameChannel}
+                          className="agent-conversation-rename-input"
+                          disabled={renameSaving}
+                          onBlur={() => {
+                            if (cancelRenameRef.current === conversation.id) {
+                              cancelRenameRef.current = null;
+                              return;
+                            }
+                            void commitRenameConversation(conversation.id);
+                          }}
+                          onChange={(event) => setEditingConversationTitle(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              void commitRenameConversation(conversation.id);
+                              return;
+                            }
+                            if (event.key === 'Escape') {
+                              event.preventDefault();
+                              cancelRenameConversation(conversation.id);
+                            }
+                          }}
+                          placeholder={t.common.untitled}
+                          ref={renameInputRef}
+                          value={editingConversationTitle}
+                        />
+                      </div>
+                    ) : (
+                      <ButtonControl
+                        className="agent-conversation-select agent-conversation-compact-select"
+                        onClick={() => void handleSelectConversation(conversation.id)}
+                      >
+                        <HashIcon
+                          aria-hidden="true"
+                          className="agent-conversation-channel-icon"
+                          size={ICON_SIZE.menu}
+                        />
+                        <span className="agent-conversation-name">{title}</span>
+                        {unread > 0 ? (
+                          <span
+                            className="agent-conversation-unread"
+                            // The visible glyph caps at "99+" for width; the accessible
+                            // name + tooltip carry the exact count (more useful to AT and
+                            // disambiguates "99+" on hover).
+                            aria-label={t.agent.chat.unreadMessages({ count: unread })}
+                            title={t.agent.chat.unreadMessages({ count: unread })}
+                          >
+                            {unread > 99 ? '99+' : unread}
+                          </span>
+                        ) : null}
+                      </ButtonControl>
+                    )}
+                    {canManage && !isEditing ? (
                       <div className="agent-conversation-row-actions">
-                        <ConversationRowMoreMenu
-                          actions={channelActions}
-                          label={t.agent.chat.channelOptions}
-                          menuLabel={t.agent.chat.channelOptions}
-                          onOpenChange={(open) => setRowActionMenu(open ? actionMenuKey : null)}
-                          open={rowActionMenu === actionMenuKey}
+                        <IconButton
+                          className="agent-conversation-edit-button"
+                          disabled={renameSaving || deleteSaving}
+                          icon={PencilIcon}
+                          iconSize={ICON_SIZE.menu}
+                          label={t.agent.chat.renameChannel}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            startRenameConversation(conversation);
+                          }}
+                          title={t.agent.chat.renameChannel}
+                          variant="message"
+                        />
+                        <IconButton
+                          className="agent-conversation-delete-button"
+                          disabled={deleteSaving}
+                          icon={TrashIcon}
+                          iconSize={ICON_SIZE.menu}
+                          label={t.agent.chat.deleteChannel}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setPendingDeleteConversation(conversation);
+                          }}
+                          title={t.agent.chat.deleteChannel}
+                          variant="message"
                         />
                       </div>
                     ) : null}
@@ -1513,6 +1595,19 @@ export function AgentChatPanel({
           document.body,
         ) : null}
       </header>
+      {pendingDeleteConversation ? (
+        <ConfirmDialog
+          danger
+          confirmLabel={t.agent.chat.deleteChannelConfirm}
+          message={t.agent.chat.deleteChannelMessage}
+          onCancel={() => setPendingDeleteConversation(null)}
+          onConfirm={() => void confirmDeleteConversation()}
+          restoreFocus={() => historyButtonRef.current}
+          title={t.agent.chat.deleteChannelTitle({
+            name: readableConversationTitle(pendingDeleteConversation.title, t.common.untitled),
+          })}
+        />
+      ) : null}
 
       {workPanelOpen ? (
         <div className="agent-work-page">
@@ -1563,9 +1658,7 @@ export function AgentChatPanel({
             ) : null}
             {entries.length === 0 ? (
               <div className="agent-empty-state">
-                {!settingsLoaded ? (
-                  <EmptyState icon={LoaderIcon} loading role="status" title={t.common.loading} />
-                ) : hasUsableProvider ? null : (
+                {!settingsLoaded || hasUsableProvider ? null : (
                   <div className="agent-onboarding" role="status">
                     <p className="agent-onboarding-text">{t.agent.chat.onboardingText}</p>
                     <Button

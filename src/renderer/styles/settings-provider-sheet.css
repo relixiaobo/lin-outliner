@@ -73,18 +73,6 @@
   color: var(--text-soft);
 }
 
-.channel-config-seed {
-  width: 100%;
-  min-height: 76px;
-  border: 0;
-  outline: none;
-  resize: vertical;
-  background: transparent;
-  color: var(--text-strong);
-  font: inherit;
-  line-height: var(--line-ui-sm);
-}
-
 /* Head: large brand avatar + title / subtitle (native alert layout). */
 .settings-sheet-head {
   display: flex;
@@ -174,6 +162,10 @@
   background: transparent;
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
+}
+
+.settings-sheet-placeholder {
+  color: var(--text-tertiary);
 }
 
 /* The field inputs are borderless inside the clipped inset card, so the global

@@ -1289,10 +1289,12 @@ Rules:
   boundaries: an `assistant(toolCall) -> toolResult -> assistant(text)` raw run
   transcript adapts into one assistant turn, with the tool/skill call in the
   process block and the text in the final response. Hidden notification-only user
-  rows remain invisible, but they are preserved as logical turn boundaries so the
-  resulting assistant continuation renders as a separate response without a
-  visible query row. This keeps the differences at the data-adapter boundary
-  instead of forking presentation behavior.
+  rows remain invisible. They are preserved as logical turn boundaries when they
+  separate different runs; when a hidden steering row sits between assistant
+  segments from the same run, the conversation transcript skips that boundary so
+  the skill/tool call and the continuation render as one assistant turn. This
+  keeps the differences at the data-adapter boundary instead of forking
+  presentation behavior.
 - Large details are refs, not row payloads.
 - **Context slimming is invisible to the transcript.** Budget offload and
   time-based microcompact shrink only the *model's* copy of a tool result: a

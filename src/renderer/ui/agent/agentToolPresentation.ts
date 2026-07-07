@@ -13,7 +13,7 @@ import {
   NodeEditToolIcon,
   NodeReadToolIcon,
   NodeSearchToolIcon,
-  OperationHistoryToolIcon,
+  OutlineUndoStackToolIcon,
   PastChatsToolIcon,
   QuestionToolIcon,
   RestoreIcon,
@@ -22,7 +22,7 @@ import {
   RunStatusToolIcon,
   SkillAuthorToolIcon,
   SkillIcon,
-  TaskStopToolIcon,
+  BashStopToolIcon,
   TerminalIcon,
   WebFetchToolIcon,
   WebSearchToolIcon,
@@ -65,13 +65,13 @@ export function agentToolPresentation(toolCall: ToolCall): AgentToolPresentation
   if (RUN_SPAWN_TOOLS.has(name)) return { activityKind: 'run', icon: RunSpawnToolIcon };
   if (RUN_STATUS_TOOLS.has(name)) return { activityKind: 'run', icon: RunStatusToolIcon };
   if (RUN_MESSAGE_TOOLS.has(name)) return { activityKind: 'run', icon: RunMessageToolIcon };
-  if (RUN_STOP_TOOLS.has(name)) return { activityKind: 'run', icon: TaskStopToolIcon };
+  if (RUN_STOP_TOOLS.has(name)) return { activityKind: 'run', icon: BashStopToolIcon };
 
   switch (name) {
     case 'bash':
       return { activityKind: 'command', icon: TerminalIcon };
-    case 'task_stop':
-      return { activityKind: 'command', icon: TaskStopToolIcon };
+    case 'bash_stop':
+      return { activityKind: 'command', icon: BashStopToolIcon };
     case 'file_read':
       return { activityKind: 'fileRead', icon: FileReadToolIcon };
     case 'file_glob':
@@ -97,8 +97,8 @@ export function agentToolPresentation(toolCall: ToolCall): AgentToolPresentation
       };
     case 'node_search':
       return { activityKind: 'nodeSearch', icon: NodeSearchToolIcon };
-    case 'operation_history':
-      return { activityKind: 'history', icon: OperationHistoryToolIcon };
+    case 'outline_undo_stack':
+      return { activityKind: 'history', icon: OutlineUndoStackToolIcon };
     case 'web_search':
       return { activityKind: 'web', icon: WebSearchToolIcon };
     case 'web_fetch':

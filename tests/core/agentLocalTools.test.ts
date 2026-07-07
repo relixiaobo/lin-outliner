@@ -15,11 +15,11 @@ import {
   visibleBash,
   visibleFileGlob,
   visibleFileGrep,
-  visibleTaskStop,
+  visibleBashStop,
   type BashData,
   type FileGlobData,
   type FileGrepData,
-  type TaskStopData,
+  type BashStopData,
 } from '../../src/main/agentLocalTools';
 import { AgentSkillRuntime } from '../../src/main/agentSkills';
 import { agentAttachmentDir, materializePathBackedAttachment } from '../../src/main/agentAttachmentMaterialization';
@@ -585,7 +585,7 @@ describe('agent local tools', () => {
     const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
     const fileDelete = tools.find((tool) => tool.name === 'file_delete')!;
     const bash = tools.find((tool) => tool.name === 'bash')!;
-    const taskStop = tools.find((tool) => tool.name === 'task_stop')!;
+    const bashStop = tools.find((tool) => tool.name === 'bash_stop')!;
 
     expect(fileRead.description).toContain('The file_path parameter must be an absolute path');
     expect(JSON.stringify(fileRead.parameters)).toContain('The line number to start reading from');
@@ -598,8 +598,8 @@ describe('agent local tools', () => {
     expect(JSON.stringify(bash.parameters)).toContain('Do not use vague words');
     expect(JSON.stringify(bash.parameters)).not.toContain('dangerouslyDisableSandbox');
     expect(JSON.stringify(bash.parameters).toLowerCase()).not.toContain('sandbox');
-    expect(JSON.stringify(taskStop.parameters)).toContain('task_id returned by bash');
-    expect(JSON.stringify(taskStop.parameters)).not.toContain('shell_id');
+    expect(JSON.stringify(bashStop.parameters)).toContain('task_id returned by bash');
+    expect(JSON.stringify(bashStop.parameters)).not.toContain('shell_id');
   });
 
   test('file_edit applies exact replacements only after file_read', async () => {
@@ -2017,7 +2017,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('bash background tasks can be stopped with task_stop', async () => {
+  test('bash background tasks can be stopped with bash_stop', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string; taskStatus: string }>(workspaceRoot, 'bash', {
         command: 'sleep 5',
@@ -2027,7 +2027,7 @@ describe('agent local tools', () => {
       expect(started.data!.backgroundTaskId).toStartWith('task_');
       expect(started.data!.taskStatus).toBe('running');
 
-      const stopped = await executeTool<{ task_id: string; task_type: string; status: string; outputPath: string }>(workspaceRoot, 'task_stop', {
+      const stopped = await executeTool<{ task_id: string; task_type: string; status: string; outputPath: string }>(workspaceRoot, 'bash_stop', {
         task_id: started.data!.backgroundTaskId,
       });
       expect(stopped.ok).toBe(true);
@@ -2037,7 +2037,7 @@ describe('agent local tools', () => {
     });
   });
 
-  posixBashProcessTest('bash task_stop kills descendant processes', async () => {
+  posixBashProcessTest('bash_stop kills descendant processes', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const pidFile = path.join(workspaceRoot, 'child.pid');
       let childPid: number | undefined;
@@ -2056,7 +2056,7 @@ describe('agent local tools', () => {
         expect(pidReady).toBe(true);
         expect(isProcessAlive(childPid!)).toBe(true);
 
-        const stopped = await executeTool(workspaceRoot, 'task_stop', {
+        const stopped = await executeTool(workspaceRoot, 'bash_stop', {
           task_id: started.data!.backgroundTaskId,
         });
         expect(stopped.ok).toBe(true);
@@ -2092,7 +2092,7 @@ describe('agent local tools', () => {
         expect(runningOutput).toContain('status: running');
         expect(runningOutput).not.toContain('status: completed');
 
-        const stopped = await executeTool(workspaceRoot, 'task_stop', {
+        const stopped = await executeTool(workspaceRoot, 'bash_stop', {
           task_id: started.data!.backgroundTaskId,
         });
         expect(stopped.ok).toBe(true);
@@ -2163,13 +2163,13 @@ describe('agent local tools', () => {
         expect(output).toContain('status: completed');
       }
 
-      const pruned = await executeTool(workspaceRoot, 'task_stop', {
+      const pruned = await executeTool(workspaceRoot, 'bash_stop', {
         task_id: taskIds[0],
       });
       expect(pruned.ok).toBe(false);
       expect(pruned.error?.code).toBe('task_not_found');
 
-      const recentCompleted = await executeTool(workspaceRoot, 'task_stop', {
+      const recentCompleted = await executeTool(workspaceRoot, 'bash_stop', {
         task_id: taskIds.at(-1),
       });
       expect(recentCompleted.ok).toBe(false);
@@ -2245,8 +2245,8 @@ describe('local tool model-visible projections', () => {
     expect(countVisible).not.toHaveProperty('mode');
   });
 
-  test('task_stop keeps only outputPath and drops the echoed message, id, and status', () => {
-    const data: TaskStopData = {
+  test('bash_stop keeps only outputPath and drops the echoed message, id, and status', () => {
+    const data: BashStopData = {
       message: 'Successfully stopped task: task_1 (sleep 100)',
       task_id: 'task_1',
       task_type: 'bash',
@@ -2254,7 +2254,7 @@ describe('local tool model-visible projections', () => {
       status: 'stopped',
       outputPath: '/tmp/task_1.log',
     };
-    const visible = visibleTaskStop(data);
+    const visible = visibleBashStop(data);
     expect(visible).toEqual({ outputPath: '/tmp/task_1.log' });
     expect(visible).not.toHaveProperty('task_id');
     expect(visible).not.toHaveProperty('status');

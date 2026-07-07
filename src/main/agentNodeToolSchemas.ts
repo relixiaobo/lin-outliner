@@ -233,14 +233,14 @@ export const NODE_EDIT_PARAMETERS = {
   },
 };
 
-export const OPERATION_HISTORY_PARAMETERS = {
+export const OUTLINE_UNDO_STACK_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
   properties: {
     action: {
       type: 'string',
       enum: ['list', 'undo', 'redo'],
-      description: 'History action. Defaults to list. list is read-only; undo and redo operate on the selected operation stack.',
+      description: 'Undo stack action. Defaults to list. list is read-only; undo and redo operate on the selected outline operation stack.',
     },
     steps: {
       type: 'integer',
@@ -251,7 +251,7 @@ export const OPERATION_HISTORY_PARAMETERS = {
     operation_id: {
       type: 'string',
       minLength: 1,
-      description: 'Optional stack-top guard from operation_history list. Undo/redo is skipped unless the current stack top has this operation_id.',
+      description: 'Optional stack-top guard from outline_undo_stack list. Undo/redo is skipped unless the current stack top has this operation_id.',
     },
     origin: {
       type: 'string',

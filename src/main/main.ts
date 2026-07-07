@@ -2562,7 +2562,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
           : typeof args.goal === 'string'
             ? args.goal
             : undefined,
-        seedText: typeof args.seedText === 'string' ? args.seedText : undefined,
       });
     case 'agent_list_conversations':
       return agentRuntime.listConversations();

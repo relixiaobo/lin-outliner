@@ -174,7 +174,7 @@ Conceptual shape:
 interface AgentRuntimeClient {
   restoreLatestConversation(): Promise<AgentConversation>;
   restoreConversation(conversationId: string): Promise<AgentConversation>;
-  createConversation(options: { title: string; seedText?: string }): Promise<AgentConversation>;
+  createConversation(options: { title?: string }): Promise<AgentConversation>;
   closeConversation(conversationId: string): Promise<void>;
   sendMessage(conversationId: string, message: string, attachments?: AgentMessageAttachmentInput[]): Promise<void>;
   editMessage(conversationId: string, nodeId: string, message: string): Promise<void>;
@@ -760,7 +760,7 @@ Reference local and agent tool roles:
 - skill invocation
 - user question
 - delegated child-run execution
-- task stop
+- bash stop
 - plan mode
 - MCP resource listing and reading
 
@@ -781,7 +781,7 @@ adapter maps envelope errors (`details.ok === false`) to
 - `file_edit` is exact string replacement, not a custom patch protocol.
 - `file_glob` finds paths; `file_grep` searches contents.
 - `bash` runs commands and can background long-running work.
-- `task_stop` only stops a background task; it is not a generic process manager.
+- `bash_stop` only stops a background task; it is not a generic process manager.
 - Large command output should be persisted and then read through the file tool.
 
 Tenon configures a local `ask_user_question` tool for structured clarification.
@@ -813,14 +813,15 @@ These are the active core tool surface.
 | `node_create` | nodex `node_create`, Tenon outline parser | Yes | Default allow unless blocked | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
 | `node_edit` | nodex `node_edit`, Tenon outline parser | Yes | Default allow unless blocked | Edit a known node's annotated outline by exact replacement, or perform explicit move, merge, or reference replacement. |
 | `node_delete` | nodex `node_delete` | Yes | Default allow unless blocked | Trash or restore nodes. |
-| `operation_history` | nodex `undo`, Tenon history | Yes | Default allow unless blocked | List, undo, or redo user and agent operations. |
+| `outline_undo_stack` | nodex `undo`, Tenon history | Yes | Default allow unless blocked | List, undo, or redo user and agent outline operations. |
 | `file_read` | local file read role | Yes | Typed file boundary | Read files with bounded output and freshness tracking. |
 | `file_glob` | local file glob role | Yes | Typed file boundary | Find files by path pattern. |
 | `file_grep` | local file grep role | Yes | Typed file boundary | Search file contents with bounded output. |
 | `file_edit` | local exact edit role | Yes | Typed file boundary | Perform exact string replacement after reading the file. |
 | `file_write` | local file write role | Yes | Typed file boundary | Create files or rewrite whole files. |
+| `file_delete` | local file delete role | Yes | Typed file boundary | Move files or directories to agent trash. |
 | `bash` | shell execution role | Yes | Hard redlines + soft blocks | Run local commands with timeout, block policy, and output limits. |
-| `task_stop` | background task stop role | Yes | Default allow unless blocked | Stop background commands created by `bash`. |
+| `bash_stop` | bash stop role | Yes | Default allow unless blocked | Stop background commands created by `bash`. |
 | `web_search` | web search role | Optional | Default allow unless host/offline policy blocks | Search the web for current external information. |
 | `web_fetch` | web fetch role | Optional | Default allow unless host/offline policy blocks | Fetch and read a specific URL with pagination or snippet search. |
 
@@ -839,7 +840,7 @@ These agent-level tools are active on top of the P0 local/document surface.
 | `ask_user_question` | structured user elicitation | Yes | No | Pause a run for single-choice, multi-choice, free-text, refs/attachments, or a discuss-before-answering outcome. |
 | `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` is the built-in user- and model-invocable authoring workflow. |
 
-`task_stop` is active because Tenon's `bash` tool supports background commands.
+`bash_stop` is active because Tenon's `bash` tool supports background commands.
 
 ### P2 Tools
 
@@ -866,7 +867,7 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
 - `node_*` for document graph operations.
 - `file_*` for filesystem operations.
 - `bash` for shell execution.
-- `task_stop` for stopping background commands created by `bash`.
+- `bash_stop` for stopping background commands created by `bash`.
 - `node_search` / `node_read` for durable timeline memory nodes.
 - `past_chats` for visible prior conversation history and exact raw source spans.
 - Runtime-owned Dream runs are private `memory-dream` skill runs in the protected
@@ -915,14 +916,14 @@ agent_tool_node_read
 agent_tool_node_create
 agent_tool_node_edit
 agent_tool_node_delete
-agent_tool_operation_history
+agent_tool_outline_undo_stack
 agent_tool_file_read
 agent_tool_file_write
 agent_tool_file_edit
 agent_tool_file_glob
 agent_tool_file_grep
 agent_tool_bash
-agent_tool_task_stop
+agent_tool_bash_stop
 agent_tool_web_search
 agent_tool_web_fetch
 ```

@@ -9,6 +9,19 @@ import { clipboardText, commandCalls, installElectronMock } from './outlinerMock
 // opens a real attached dialog. The list window has no provider search and no
 // in-content Close button (closed through native window chrome).
 test.describe('agent settings window', () => {
+  test('shows native window chrome before provider settings finish loading', async ({ page }) => {
+    await installElectronMock(page, { providerSettingsDelayMs: 1_000 });
+    await page.goto('/?surface=settings');
+
+    const settings = page.locator('.settings-window');
+    await expect(settings).toBeVisible();
+    await expect(settings.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(settings.locator('.settings-rail')).toBeVisible();
+    await expect(settings.locator('.settings-content')).toHaveAttribute('aria-busy', 'true');
+    await expect(settings.getByRole('button', { name: 'Providers', exact: true })).toBeVisible();
+    await expect(settings.locator('.agent-settings-empty', { hasText: 'Loading' })).toHaveCount(0);
+  });
+
   test('renders as a standalone window with a floating rail and native close', async ({ page }) => {
     const settings = await openSettings(page);
     await expect(settings.getByRole('heading', { name: 'Settings' })).toBeVisible();
@@ -435,6 +448,39 @@ test.describe('agent settings window', () => {
 });
 
 test.describe('agent and Channel config windows', () => {
+  test('shows agent config chrome and actions before agent data finishes loading', async ({ page }) => {
+    await installElectronMock(page, {
+      agentDefinitionsDelayMs: 1_000,
+      agentSkillsDelayMs: 1_000,
+      providerSettingsDelayMs: 1_000,
+    });
+    await page.goto('/?surface=agent-config&agent=user%3Amock%3Aself');
+
+    const config = page.locator('.agent-config-window');
+    await expect(config).toBeVisible();
+    await expect(config).toHaveAttribute('aria-busy', 'true');
+    await expect(config.getByRole('heading', { name: 'Configure agent' })).toBeVisible();
+    await expect(config.locator('.agent-editor-actions')).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(config.locator('.agent-settings-empty', { hasText: 'Loading' })).toHaveCount(0);
+  });
+
+  test('shows Channel config fields before conversations finish loading', async ({ page }) => {
+    await installElectronMock(page, { agentConversationsDelayMs: 1_000 });
+    await page.goto('/?surface=channel-config&conversation=lin-agent-channel-planning&mode=configure');
+
+    const config = page.locator('.channel-config-window');
+    await expect(config).toBeVisible();
+    await expect(config).toHaveAttribute('aria-busy', 'true');
+    await expect(config.getByRole('heading', { name: 'Channel settings' })).toBeVisible();
+    await expect(config.getByLabel('Channel name')).toBeVisible();
+    await expect(config.getByLabel('Channel name')).toBeDisabled();
+    await expect(config.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Save settings' })).toBeDisabled();
+    await expect(config.locator('.agent-settings-empty', { hasText: 'Loading' })).toHaveCount(0);
+  });
+
   test('renders the agent config as a titled child window with fixed actions', async ({ page }) => {
     const config = await openAgentConfig(page, 'user%3Amock%3Aself');
     // Both the window title and the editor header read "Edit self".
@@ -481,9 +527,11 @@ test.describe('agent and Channel config windows', () => {
 
   test('uses design-system controls inside the Channel config window', async ({ page }) => {
     const config = await openChannelConfig(page, '', 'create');
-    await expect(config.locator('.channel-config-seed.settings-sheet-row-input')).toBeVisible();
-    // The one-Neva collapse removed the member roster, so the window is name + seed
-    // only — no raw checkboxes, just design-system controls.
+    await expect(config.getByLabel('Channel name')).toBeVisible();
+    await expect(config.getByLabel('Opening message')).toHaveCount(0);
+    await expect(config.locator('.channel-config-seed')).toHaveCount(0);
+    // Channel settings no longer expose a create-time seed or member roster; any
+    // remaining toggles must use design-system controls, not raw checkboxes.
     await expect(config.locator('input[type="checkbox"]:not(.agent-settings-checkbox input)')).toHaveCount(0);
 
     const shadows = await config.locator('.settings-sheet-actions').evaluate((element) => {
@@ -508,6 +556,23 @@ test.describe('agent and Channel config windows', () => {
 // Model and effort now live on the agent profile, never here, so this window has no
 // Model or Thinking-level control.
 test.describe('provider config window', () => {
+  test('shows provider config fields before provider settings finish loading', async ({ page }) => {
+    await installElectronMock(page, { providerSettingsDelayMs: 1_000 });
+    await page.goto('/?surface=provider-config&provider=openai&mode=configure');
+
+    const config = page.locator('.provider-config-window');
+    await expect(config).toBeVisible();
+    await expect(config).toHaveAttribute('aria-busy', 'true');
+    await expect(config.getByRole('heading', { name: 'OpenAI' })).toBeVisible();
+    await expect(config.getByLabel('API key')).toBeVisible();
+    await expect(config.getByLabel('API key')).toBeDisabled();
+    await expect(config.getByLabel('Base URL')).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Validate' })).toBeDisabled();
+    await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(config.locator('.agent-settings-empty', { hasText: 'Loading' })).toHaveCount(0);
+  });
+
   test('renders the saved connection — connection only, no model/reasoning controls', async ({ page }) => {
     const config = await openProviderConfig(page, 'openai');
     await expect(config.getByRole('heading', { name: /OpenAI/ })).toBeVisible();
@@ -643,8 +708,9 @@ async function openSettings(page: Page, extraQuery = '', options: Parameters<typ
   await page.goto(`/?surface=settings${extraQuery}`);
   const settings = page.locator('.settings-window');
   await expect(settings).toBeVisible();
-  // The window shows a "Loading..." state until the async provider fetch
-  // resolves; wait for the loaded content so assertions don't race it.
+  // Wait for the provider-backed rows when a spec needs loaded settings data.
+  // Window chrome and category navigation render before this fetch resolves.
+  await expect(settings.locator('.settings-content')).not.toHaveAttribute('aria-busy', 'true');
   await expect(settings.locator('.inset-row').first()).toBeVisible();
   return settings;
 }

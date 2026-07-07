@@ -159,10 +159,11 @@ Details, run/debug surfaces, ledger metadata, and profile editors.
   icon-supported without becoming an illustrated card. Editable empty outline
   pages do **not** get a centered empty-state block; the trailing editor line is
   the action point.
-- **Loading:** prefer an in-place reserved slot or skeleton over a spinner that
-  shifts layout. When a spinner is necessary, render it through `FeedbackState`
-  so reduced motion can disable the spin. The first frame is the working surface,
-  not a splash.
+- **Loading:** the first frame is the working surface, not a splash. Persistent
+  chrome, rails, and navigation render before async data resolves. For slow
+  operations, use an in-place reserved slot; when a spinner is necessary, render
+  it through `FeedbackState` so reduced motion can disable the spin. Do not gate
+  whole windows or preference panes behind a generic loading page.
 - **Error / offline:** surface errors inline near their cause; reserve full
   surfaces for genuine whole-view failures. Status color is used sparingly and
   always paired with text or an icon, never color alone.

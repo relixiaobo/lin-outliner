@@ -596,20 +596,37 @@ export function App() {
     return true;
   }), [ensureTodayNode, bindPreviewPanelNode, run]);
 
-  if (!index) {
-    return (
-      <div className="app">
-        <div className="loading-panel">
-          {error ? t.shell.startupError({ error }) : t.common.loading}
-        </div>
-      </div>
-    );
-  }
-
   const appShellStyle = {
     '--sidebar-width': `${sidebarWidth}px`,
     '--agent-width': `${agentWidth}px`,
   } as CSSProperties;
+
+  if (!index) {
+    return (
+      <div
+        className={[
+          'app',
+          sidebarOpen ? '' : 'sidebar-collapsed',
+          `agent-${agentRailState}`,
+        ].filter(Boolean).join(' ')}
+        style={appShellStyle}
+      >
+        <WindowChrome
+          agentOpen={agentOpen}
+          sidebarOpen={sidebarOpen}
+          onToggleAgent={toggleAgentRail}
+          onToggleSidebar={() => setSidebarOpen((open) => !open)}
+        />
+        <div className="app-shell app-startup-shell" aria-busy={error ? undefined : 'true'}>
+          {error ? (
+            <div className="loading-panel" role="alert">
+              {t.shell.startupError({ error })}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

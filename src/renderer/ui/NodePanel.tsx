@@ -69,6 +69,7 @@ import { dispatchPreviewTargetOpen } from './preview/previewEvents';
 import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { PanelDateNavigation } from './PanelDateNavigation';
 import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock } from './PanelShared';
+import { RECURSIVE_OUTLINER_FALLBACK_ENABLED } from './outliner/OutlinerFlatView';
 import { useT } from '../i18n/I18nProvider';
 import { referenceSummaryForIndex } from '../state/referenceSummary';
 
@@ -212,11 +213,14 @@ export function NodePanel(props: NodePanelProps) {
     && props.ui.focusSurface === 'panel-title'
     && props.ui.focusedPanelId === props.panelId;
   const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
-  const systemFieldContext = useMemo(() => ({ referenceSummary }), [referenceSummary]);
-  const panelRows = useMemo(() => buildOutlinerRows(rootNode, props.index.byId, {
-    expandedHiddenFields: props.ui.expandedHiddenFields,
-    systemFieldContext,
-  }), [props.index.byId, props.ui.expandedHiddenFields, rootNode, systemFieldContext]);
+  const panelRows = useMemo(() => (
+    RECURSIVE_OUTLINER_FALLBACK_ENABLED
+      ? buildOutlinerRows(rootNode, props.index.byId, {
+        expandedHiddenFields: props.ui.expandedHiddenFields,
+        systemFieldContext: { referenceSummary },
+      })
+      : undefined
+  ), [props.index.byId, props.ui.expandedHiddenFields, referenceSummary, rootNode]);
 
   const handleOutlinerDragOver = (event: DragEvent<HTMLDivElement>) => {
     if (!props.dragId) return;

@@ -86,9 +86,10 @@ keyboard or pointer change should be checked against this matrix.
 
 | Interaction | Expected behavior |
 | --- | --- |
+| `Enter` at text start on a non-empty row | Create a previous sibling and focus it; the current row and descendants stay in place. |
 | `Enter` at text end on collapsed/leaf row | Create next sibling and focus it. |
 | `Enter` in the middle | Split the row, preserving rich text before/after the cursor. |
-| `Enter` on expanded row with children | Create the first child and focus it. |
+| `Enter` at text end on expanded row with children | Create the first child and focus it. |
 | `Tab` | Indent under previous sibling; pre-expand that sibling and restore cursor offset. |
 | `Tab` on first child | No-op. |
 | `Shift+Tab` | Outdent after parent, collapse the previous parent if it becomes empty, and restore cursor offset. Rows whose parent is the current panel root are a no-op. |

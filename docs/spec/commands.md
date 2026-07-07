@@ -292,24 +292,20 @@ where supported, a native file URL/file-list flavor to the clipboard.
 `agent_rename_conversation`, `agent_delete_conversation`,
 `agent_close_conversation`, `agent_reset_conversation`.
 
-The conversation surface is product-shaped around DMs and Channels:
-`agent_list_conversations` returns one immutable canonical DM row for every
-configured agent, plus named Channels. The reserved `#General` Channel
-(`lin-agent-channel-general`, `title/goal = General`) is ensured by the runtime,
-sorted first among Channels, and auto-includes every current durable peer agent.
-It stores no conversation `kind` and cannot be renamed, deleted, or manually
-membership-edited through ordinary conversation commands. The Agent Dock default
-selection restores a remembered valid DM/Channel first, then `#General`, and only
-then falls back to `agent_restore_latest_conversation` for the legacy coordinator
-DM. The Agent Dock conversation menu lists Channels before Direct Messages so the
-primary surface recommends `#General`/named Channels first. Restoring a canonical
-DM id is find-or-create; DMs are never user-created, renamed, deleted, or
-membership-edited.
-`agent_create_conversation` is the user-facing New Channel command: it requires a
-Channel name, with optional invited agents and an optional opening message. DMs
-never convert into Channels, and their transcript is never shared into a Channel.
-Channel member removal keeps the same runtime guards: the coordinator cannot be
-removed, and removal is blocked while a run is active.
+The conversation surface is product-shaped around one Channels list:
+`agent_list_conversations` returns `#General`, protected `#Dream`, and
+user-created named Channels. The reserved `#General` Channel
+(`lin-agent-channel-general`, `title/goal = General`) is ensured by the runtime
+and sorted first. It stores no conversation `kind` and cannot be renamed,
+deleted, or manually membership-edited through ordinary conversation commands.
+The protected `#Dream` Channel is likewise immutable and rejects ordinary chat.
+The Agent Dock default selection restores a remembered valid Channel first, then
+falls back to `#General`.
+`agent_create_conversation` is the user-facing New Channel command: title is
+optional, blank creation stores the untitled display sentinel, and creation does
+not accept an opening message. `agent_rename_conversation` accepts a blank title
+and restores the untitled display sentinel. Ordinary Channels can be renamed and
+deleted; protected default Channels cannot.
 
 ### Agent — messaging
 `agent_send_message`, `agent_edit_message`, `agent_regenerate_message`,

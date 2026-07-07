@@ -13,15 +13,14 @@ import { CheckboxControl } from '../primitives/CheckboxControl';
 import { EmptyState } from '../primitives/FeedbackState';
 import { Field } from '../primitives/Field';
 import { Input } from '../primitives/Input';
-import { Textarea } from '../primitives/Textarea';
-import { HashIcon, ICON_SIZE, LoaderIcon, WarningIcon } from '../icons';
+import { HashIcon, ICON_SIZE, WarningIcon } from '../icons';
 
 const RUNTIME_UNTITLED_SENTINEL = 'Untitled';
 
 /**
  * Single-agent collapse: a conversation has exactly {user, Neva}, so this window
- * is the channel create / rename dialog — a name (plus an optional opening seed
- * on create). There is no member roster to manage.
+ * is the remaining Channel settings surface. Primary create/rename now happens
+ * inline from the dock, but this route can still edit the name and Dream setting.
  */
 export function ChannelConfigWindow() {
   const t = useT();
@@ -32,7 +31,6 @@ export function ChannelConfigWindow() {
   const [saving, setSaving] = useState(false);
   const [title, setTitle] = useState('');
   const [includeInDreamData, setIncludeInDreamData] = useState(true);
-  const [seedText, setSeedText] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const close = () => { void window.lin?.closeChannelConfig?.(); };
@@ -76,26 +74,19 @@ export function ChannelConfigWindow() {
   const isProtectedDefault = conversation?.id === DEFAULT_GENERAL_CHANNEL_ID || conversation?.id === DEFAULT_DREAM_CHANNEL_ID;
   const canRename = mode === 'configure' && !!conversation && !isProtectedDefault;
   const canEditDreamData = mode === 'configure' && !!conversation && conversation.id !== DEFAULT_DREAM_CHANNEL_ID;
-  const hasEditableSettings = mode === 'create' || canRename || canEditDreamData;
-  const saveDisabled = !hasEditableSettings || ((mode === 'create' || canRename) && !title.trim()) || saving;
+  const hasEditableSettings = !loading && (mode === 'create' || canRename || canEditDreamData);
+  const saveDisabled = loading || !hasEditableSettings || saving;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     const trimmed = title.trim();
     if (!hasEditableSettings) return;
-    if ((mode === 'create' || canRename) && !trimmed) {
-      setError(t.agent.chat.channelNameRequired);
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
       let createdConversationId: string | null = null;
       if (mode === 'create') {
-        const created = await api.agentCreateConversation({
-          title: trimmed,
-          ...(seedText.trim() ? { seedText: seedText.trim() } : {}),
-        });
+        const created = await api.agentCreateConversation(trimmed ? { title: trimmed } : {});
         createdConversationId = created.conversationId;
       } else {
         if (canRename) await api.agentRenameConversation(conversationId, trimmed);
@@ -117,7 +108,7 @@ export function ChannelConfigWindow() {
   const windowSubtitle = mode === 'create' ? t.agent.chat.createChannel : t.agent.chat.channelSettings;
 
   return (
-    <main className="provider-config-window channel-config-window" aria-labelledby={titleId}>
+    <main className="provider-config-window channel-config-window" aria-busy={loading ? 'true' : undefined} aria-labelledby={titleId}>
       <header className="settings-sheet-head">
         <span className="settings-sheet-avatar" aria-hidden="true">
           <span className="settings-sheet-icon-avatar">
@@ -130,18 +121,16 @@ export function ChannelConfigWindow() {
         </span>
       </header>
 
-      {loading ? (
-        <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" title={t.common.loading} />
-      ) : mode === 'configure' && !conversation ? (
+      {mode === 'configure' && !loading && !conversation ? (
         <EmptyState className="agent-settings-empty" title={t.agent.chat.noConversations} />
       ) : (
-        <form className="channel-config-form" onSubmit={(event) => void submit(event)}>
+        <form className="channel-config-form" aria-busy={loading ? 'true' : undefined} onSubmit={(event) => void submit(event)}>
           <div className="settings-sheet-body">
             <div className="inset-card" role="group">
               <Field as="label" className="settings-sheet-row" label={t.agent.chat.channelName} labelClassName="settings-sheet-row-label">
                 <Input
                   className="settings-sheet-row-input"
-                  disabled={mode === 'configure' && !canRename}
+                  disabled={loading || (mode === 'configure' && !canRename)}
                   label={t.agent.chat.channelName}
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder={t.agent.chat.channelNamePlaceholder}
@@ -149,19 +138,6 @@ export function ChannelConfigWindow() {
                   variant="bare"
                 />
               </Field>
-              {mode === 'create' ? (
-                <Field as="label" className="settings-sheet-row settings-sheet-row-stack" label={t.agent.chat.channelSeed} labelClassName="settings-sheet-row-label">
-                  <Textarea
-                    className="settings-sheet-row-input channel-config-seed"
-                    label={t.agent.chat.channelSeed}
-                    onChange={(event) => setSeedText(event.target.value)}
-                    placeholder={t.agent.chat.channelSeedPlaceholder}
-                    rows={3}
-                    value={seedText}
-                    variant="bare"
-                  />
-                </Field>
-              ) : null}
               {mode === 'configure' ? (
                 <div className="settings-sheet-row settings-sheet-row-switch">
                   <span className="settings-sheet-row-text">
@@ -171,7 +147,7 @@ export function ChannelConfigWindow() {
                   <CheckboxControl
                     checked={includeInDreamData}
                     className="agent-settings-checkbox"
-                    disabled={!canEditDreamData}
+                    disabled={loading || !canEditDreamData}
                     onCheckedChange={setIncludeInDreamData}
                   >
                     {includeInDreamData ? t.agent.chat.includedInDreamData : t.agent.chat.excludedFromDreamData}

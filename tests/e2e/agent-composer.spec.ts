@@ -229,9 +229,16 @@ test.describe('agent composer controls', () => {
     await expect(channelsList.locator('.agent-conversation-members')).toHaveCount(0);
     await expect(channelsList.locator('.agent-conversation-channel-icon')).toHaveCount(5);
     const generalRow = channelsList.locator('.agent-conversation-row', { hasText: 'General' }).first();
+    const dreamRow = channelsList.locator('.agent-conversation-row', { hasText: 'Dream' }).first();
+    const planningRow = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
     await expect(channelsList.locator('.agent-conversation-row').first()).toContainText('General');
-    await expect(generalRow.getByRole('button', { name: 'Channel options' })).toHaveCount(1);
-    await expect(channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).locator('.agent-conversation-unread')).toHaveText('3');
+    await expect(generalRow.getByRole('button', { name: 'Rename channel' })).toHaveCount(0);
+    await expect(generalRow.getByRole('button', { name: 'Delete channel' })).toHaveCount(0);
+    await expect(dreamRow.getByRole('button', { name: 'Rename channel' })).toHaveCount(0);
+    await expect(dreamRow.getByRole('button', { name: 'Delete channel' })).toHaveCount(0);
+    await expect(planningRow.getByRole('button', { name: 'Rename channel' })).toHaveCount(1);
+    await expect(planningRow.getByRole('button', { name: 'Delete channel' })).toHaveCount(1);
+    await expect(planningRow.locator('.agent-conversation-unread')).toHaveText('3');
 
     await menu.getByRole('button', { name: /self/ }).click();
     await expect(page.locator('.agent-dock-title')).toHaveText('self');
@@ -359,29 +366,51 @@ test.describe('agent composer controls', () => {
     await expect(menu.getByRole('button', { name: 'New agent' })).toHaveCount(0);
   });
 
-  test('opens row configuration from the conversation More affordance', async ({ page }) => {
+  test('renames a Channel inline from the row edit affordance', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
     const menu = page.getByRole('dialog', { name: 'Channels' });
     const channelsList = menu.locator('.agent-conversation-list').first();
     const channelRow = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
     const channelActions = channelRow.locator('.agent-conversation-row-actions');
-    const channelMore = channelRow.getByRole('button', { name: 'Channel options' });
+    const editButton = channelRow.getByRole('button', { name: 'Rename channel' });
 
     await expect.poll(async () => channelActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
     await channelRow.hover();
     await expect.poll(async () => channelActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
-    await channelMore.click();
-    const channelMenu = page.getByRole('menu', { name: 'Channel options' });
-    await expect(channelMenu).toBeVisible();
-    await channelMenu.getByRole('menuitem', { name: 'Configure channel' }).click();
-    await expect(menu).toHaveCount(0);
+    await editButton.click();
+    const input = menu.getByRole('textbox', { name: 'Rename channel' });
+    await expect(input).toBeFocused();
+    await input.fill('Release plans');
+    await input.press('Enter');
+
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'open_channel_config')?.args;
+      return calls.findLast((call) => call.cmd === 'agent_rename_conversation')?.args;
     }).toMatchObject({
       conversationId: 'lin-agent-channel-planning',
-      mode: 'configure',
+      title: 'Release plans',
     });
+  });
+
+  test('deletes a Channel from the row delete affordance after confirmation', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const menu = page.getByRole('dialog', { name: 'Channels' });
+    const channelsList = menu.locator('.agent-conversation-list').first();
+    const channelRow = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
+
+    await channelRow.hover();
+    await channelRow.getByRole('button', { name: 'Delete channel' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Delete "Planning Channel"?' });
+    await expect(confirm).toContainText('This removes the Channel and its transcript history.');
+    await confirm.getByRole('button', { name: 'Delete channel' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_delete_conversation')?.args;
+    }).toMatchObject({
+      conversationId: 'lin-agent-channel-planning',
+    });
+    await expect(channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' })).toHaveCount(0);
   });
 
   test('shows Channel member count in the header without member avatars', async ({ page }) => {
@@ -395,7 +424,7 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-dock-title-button .agent-dock-title-icon')).toHaveCount(1);
   });
 
-  test('opens New Channel from the Channels section action', async ({ page }) => {
+  test('creates an untitled Channel directly from the Channels section action', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
     const menu = page.getByRole('dialog', { name: 'Channels' });
     await menu.getByRole('button', { name: 'New Channel' }).click();
@@ -403,48 +432,19 @@ test.describe('agent composer controls', () => {
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'open_channel_config')?.args;
-    }).toMatchObject({ mode: 'create' });
+      return calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args ?? null;
+    }).toEqual({});
+    await expect(page.locator('.agent-dock-title')).toHaveText('Untitled');
+    await expect(page.getByLabel('Agent message')).toBeFocused();
   });
 
-  test('creates a Channel with invited agents from the channel config window', async ({ page }) => {
-    await page.goto('/?surface=channel-config&mode=create');
-    const config = page.locator('.channel-config-window');
-    await expect(config.getByRole('heading', { name: 'New Channel' })).toBeVisible();
-    await expect(config.getByRole('button', { name: /self/ })).toBeVisible();
-    await config.getByRole('button', { name: /self/ }).click();
-
-    await config.getByLabel('Channel name').fill('Release blockers');
-    await config.getByRole('button', { name: 'Create Channel' }).click();
-
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'agent_create_conversation')?.args;
-    }).toMatchObject({
-      title: 'Release blockers',
-      agentIds: ['user:mock:self'],
-    });
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'agent_navigate_conversation')?.args.conversationId;
-    }).toMatch(/^lin-agent-channel-created-/);
-  });
-
-  test('adds a member from the channel config window', async ({ page }) => {
+  test('keeps Channel settings focused on name and Dream data', async ({ page }) => {
     await page.goto('/?surface=channel-config&mode=configure&conversation=lin-agent-channel-planning');
     const config = page.locator('.channel-config-window');
     await expect(config.getByLabel('Channel name')).toHaveValue('Planning Channel');
-    await expect(config.getByText('Neva', { exact: true })).toBeVisible();
-    await expect(config.getByText('self', { exact: true })).toBeVisible();
-    await config.getByRole('button', { name: /Add reviewer/ }).click();
-    await expect(config.getByText('reviewer', { exact: true })).toBeVisible();
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'agent_add_conversation_member')?.args;
-    }).toMatchObject({
-      conversationId: 'lin-agent-channel-planning',
-      agentId: 'user:mock:reviewer',
-    });
+    await expect(config.getByText('Dream data')).toBeVisible();
+    await expect(config.getByLabel('Opening message')).toHaveCount(0);
+    await expect(config.getByRole('button', { name: /Add reviewer/ })).toHaveCount(0);
   });
 
   test('renders skill trust approvals as accept/not-now cards', async ({ page }) => {
@@ -3061,7 +3061,7 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-dock-title-button .agent-dock-title-icon')).toHaveCount(1);
   });
 
-  test('opens Channel settings from the row options menu', async ({ page }) => {
+  test('saves a blank inline Channel rename as Untitled', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
     const menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
@@ -3071,42 +3071,19 @@ test.describe('agent composer controls', () => {
     await expect(row).toBeVisible();
 
     await row.hover();
-    await row.getByRole('button', { name: 'Channel options' }).click();
-    await page.getByRole('menu', { name: 'Channel options' }).getByRole('menuitem', { name: 'Configure channel' }).click();
-    await expect(menu).toHaveCount(0);
+    await row.getByRole('button', { name: 'Rename channel' }).click();
+    const input = menu.getByRole('textbox', { name: 'Rename channel' });
+    await input.fill('   ');
+    await input.press('Enter');
+
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'open_channel_config')?.args;
+      return calls.findLast((call) => call.cmd === 'agent_rename_conversation')?.args;
     }).toMatchObject({
       conversationId: 'lin-agent-channel-planning',
-      mode: 'configure',
+      title: '   ',
     });
-  });
-
-  test('opens the Channel member POV inspector from the row options menu', async ({ page }) => {
-    await page.getByRole('button', { name: 'Show conversations' }).click();
-    let menu = page.getByRole('dialog', { name: 'Channels' });
-    await expect(menu).toBeVisible();
-
-    let channelsList = menu.locator('.agent-conversation-list').first();
-    await channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).getByRole('button', { name: /Planning Channel/ }).click();
-    await expect(page.locator('.agent-dock-title')).toHaveText('Planning Channel (3)');
-
-    await page.getByRole('button', { name: 'Show conversations' }).click();
-    menu = page.getByRole('dialog', { name: 'Channels' });
-    channelsList = menu.locator('.agent-conversation-list').first();
-    const row = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
-    await row.hover();
-    await row.getByRole('button', { name: 'Channel options' }).click();
-    await page.getByRole('menu', { name: 'Channel options' }).getByRole('menuitem', { name: "Inspect self's POV" }).click();
-
-    await expect(menu).toHaveCount(0);
-    const inspector = page.locator('.agent-pov-inspector-panel');
-    await expect(inspector).toBeVisible();
-    await expect(inspector).toHaveAttribute('aria-label', "self's assembled POV");
-    await expect(inspector.getByRole('heading', { name: "self's POV" })).toBeVisible();
-    await expect(inspector).toContainText('Prefers terse launch-risk notes.');
-    await expect(inspector).toContainText('Self sees the launch-risk request and answers as itself.');
+    await expect(channelsList.locator('.agent-conversation-row', { hasText: 'Untitled' })).toBeVisible();
   });
 
   test('switches the primary action between stop and steer while streaming', async ({ page }) => {

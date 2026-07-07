@@ -9,8 +9,9 @@ import { agentMentionToken } from '../../../core/agentChannel';
 import { agentConfigParamsFromSearch } from '../../../core/settingsWindow';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
+import { Button } from '../primitives/Button';
 import { EmptyState } from '../primitives/FeedbackState';
-import { WarningIcon, ICON_SIZE, LoaderIcon } from '../icons';
+import { WarningIcon, ICON_SIZE } from '../icons';
 import { AgentEditor } from './AgentEditor';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 
@@ -88,7 +89,7 @@ export function AgentConfigWindow() {
   }
 
   return (
-    <main className="provider-config-window agent-config-window" aria-labelledby={titleId}>
+    <main className="provider-config-window agent-config-window" aria-busy={loading ? 'true' : undefined} aria-labelledby={titleId}>
       <header className="settings-sheet-head agent-config-head">
         <span className="settings-sheet-avatar">
           <AgentIdentityAvatar
@@ -104,7 +105,7 @@ export function AgentConfigWindow() {
       </header>
 
       {loading ? (
-        <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" title={t.common.loading} />
+        <AgentConfigLoadingBody onCancel={close} />
       ) : !selectedAgent ? (
         <EmptyState className="agent-settings-empty" title={t.settings.agents.profileNotFound} />
       ) : (
@@ -126,5 +127,49 @@ export function AgentConfigWindow() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function AgentConfigLoadingBody({ onCancel }: { onCancel: () => void }) {
+  const messages = useT();
+  const t = messages.settings.agents;
+
+  return (
+    <div className="agent-editor agent-editor-loading" aria-busy="true">
+      <header className="agent-editor-header" aria-hidden="true">
+        <span className="agent-profile-title">{messages.common.loading}</span>
+      </header>
+
+      <div className="inset-card agent-editor-fields" role="group">
+        <div className="settings-sheet-row">
+          <span className="settings-sheet-row-label">{t.nameLabel}</span>
+          <span className="settings-sheet-row-input settings-sheet-placeholder">{messages.common.loading}</span>
+        </div>
+        <div className="settings-sheet-row">
+          <span className="settings-sheet-row-label">{t.descriptionLabel}</span>
+          <span className="settings-sheet-row-input settings-sheet-placeholder">{messages.common.loading}</span>
+        </div>
+        <div className="settings-sheet-row">
+          <span className="settings-sheet-row-label">{t.providerOverride}</span>
+          <span className="settings-sheet-row-input settings-sheet-placeholder">{messages.common.loading}</span>
+        </div>
+        <div className="settings-sheet-row">
+          <span className="settings-sheet-row-label">{t.thinkingLevel}</span>
+          <span className="settings-sheet-row-input settings-sheet-placeholder">{messages.common.loading}</span>
+        </div>
+      </div>
+
+      <div className="agent-editor-actions">
+        <span />
+        <span className="agent-editor-actions-right">
+          <Button onClick={onCancel} variant="ghost">
+            {messages.dialog.cancel}
+          </Button>
+          <Button disabled variant="primary">
+            {t.saveAgent}
+          </Button>
+        </span>
+      </div>
+    </div>
   );
 }

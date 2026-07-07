@@ -10,8 +10,64 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Fixed
+
+- **Native-feel loading surfaces** — Settings now paints its toolbar, rail, and
+  active pane before provider settings finish loading, and the main window
+  startup path paints persistent window chrome instead of a generic centered
+  loading page. Provider, Agent, and Channel config child windows now also paint
+  their header, field structure, and footer actions before their data IPC
+  resolves, with only local busy/disabled state while loading. The empty Agent
+  panel stays blank while provider settings load instead of showing a loading card
+  or flashing no-provider onboarding.
+- **Channel deletion affordance** — ordinary Channel rows now expose a confirmed
+  delete action beside inline rename in the conversation menu, while protected
+  General/Dream Channels keep both mutation controls hidden.
+- **Agent skill turn coalescing** — loaded skill steering no longer splits the
+  conversation transcript into a standalone assistant turn when the follow-up
+  assistant segment belongs to the same run. The skill/tool call and continuation
+  now render as one assistant reply, while hidden notifications that separate
+  different runs remain invisible turn boundaries. Verified with targeted
+  renderer coverage, full renderer tests, typecheck, docs check, and diff check.
+
 ### Added
 
+- **Channel create and inline rename (PR #382, codex-3)** — New Channel now
+  creates an untitled Channel immediately, selects it, and focuses the composer.
+  Runtime creation no longer accepts a seed/opening message, ordinary Channel
+  rows expose a direct inline rename edit icon instead of a More menu, protected
+  General/Dream Channels hide rename controls, and blank create/rename stores
+  the existing Untitled sentinel. Specs, i18n, runtime tests, renderer tests,
+  and E2E coverage now match the inline create/rename contract. **Gate (main):**
+  codex-3 fixed the Channel config e2e/stale seed CSS and design-system spec
+  review items; main added the board entry needed for `docs:check`. Verified
+  with typecheck, targeted core/renderer tests, docs check, diff check, and
+  targeted agent-composer, agent-settings, design-system runtime, and typography
+  E2E coverage.
+- **Agent tool naming clarity (PR #381, codex-3)** — renamed the model-visible
+  bash background stop tool from `task_stop` to `bash_stop`, renamed the
+  outliner undo/redo/list tool from `operation_history` to
+  `outline_undo_stack`, and renamed the permission action kind from `task.stop`
+  to `shell.stop`. Specs, permission descriptors, schemas, renderer summaries
+  and icons, i18n strings, and tests now use the clearer names, and the agent
+  tool spec tables now include the implemented `file_delete` tool. **Gate
+  (main):** review found one stale cc-2.1 source-anchor path; codex-3 restored
+  the real `TaskStopTool` path before merge. Verified with typecheck,
+  docs check, diff check, targeted local-tool/node-tool/permission/renderer
+  tests, and the full renderer suite. Full `test:core` remains red on the
+  current `main` baseline for unrelated external `data-analysis` skill text
+  assertions.
+- **Reference summary hot-path cleanup (PR #380, codex-3)** — precomputes Trash
+  descendant sets for renderer/system-field reference summaries and carries a
+  deleted-node id set in the search index, so full reference-summary/search
+  scans use set membership instead of repeated parent-chain walks. Node and File
+  preview panels also skip building recursive fallback row models on the default
+  flat outliner path. **Gate (main):** code review found no reportable findings.
+  Verified with typecheck, targeted search/reference/system-field/row tests,
+  renderer tests, docs check, focused outliner/backlinks E2E coverage, and
+  light/dark NodePanel smoke. Full `test:core` was run but remains red on the
+  current `main` baseline for unrelated `agentSkills.test.ts` assertions against
+  external `linlab-skills/data-analysis` wording.
 - **Design-system calibration audit and guards (PR #377, codex)** — calibrated
   the layered design-system contract into executable metrics and runtime guard
   rails: calibration audit rows, component/source-map drift checks, raw-colour
@@ -281,6 +337,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Outliner row-start Enter insertion (direct main, fast-track)** — pressing
+  `Enter` at the start of a non-empty row now creates and focuses a previous
+  sibling instead of splitting the row or moving the row text under an expanded
+  parent. The editor split payload carries row-start state, the row handler
+  preserves the current subtree, and E2E coverage locks the expanded-parent
+  regression. Verified with typecheck, docs check, diff check, full outliner
+  row-editing E2E coverage, and targeted renderer keymap tests.
 - **Run Details transcript turn coalescing (PR #372, codex-3)** — Run Details
   now adapts raw `assistant(toolCall) -> toolResult -> assistant(text)`
   transcripts into one assistant turn instead of visually splitting the final

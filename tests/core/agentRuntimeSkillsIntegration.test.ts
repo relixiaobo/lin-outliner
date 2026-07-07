@@ -1448,7 +1448,7 @@ describe('agent runtime skill integration', () => {
     expect(childTools).not.toContain('node_create');
     expect(childTools).not.toContain('node_edit');
     expect(childTools).not.toContain('node_delete');
-    expect(childTools).not.toContain('operation_history');
+    expect(childTools).not.toContain('outline_undo_stack');
     expect(childTools).not.toContain('bash');
     expect(childTools).not.toContain('skill');
     expect(childTools).not.toContain('spawn_run');
