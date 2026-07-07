@@ -187,6 +187,7 @@ import {
   piFindImageModel,
   piGenerateImages,
   piImageModelsForProvider,
+  validateImageGenerationOptions,
 } from './piImageModels';
 import {
   generateImagePayloadsFromDetails,
@@ -4763,6 +4764,7 @@ export class AgentRuntime {
         ));
       },
       getActiveProviderId: async () => (await this.getActiveProviderConfig().catch(() => null))?.providerId ?? null,
+      validateOptions: ({ providerId, modelId, options }) => validateImageGenerationOptions(providerId, modelId, options),
       readPayloadImage: async ({ payloadId, runId }) => {
         const payload = await this.previewPayload(conversationId, payloadId, runId);
         if (!payload) throw new Error(`Image payload not found or not readable: ${payloadId}`);

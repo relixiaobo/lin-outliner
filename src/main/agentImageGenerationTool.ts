@@ -33,6 +33,11 @@ export interface AgentImageGenerationInputImage {
 export interface AgentImageGenerationRuntime {
   listModels(): Promise<AgentImageGenerationModel[]>;
   getActiveProviderId(): Promise<string | null>;
+  validateOptions?(input: {
+    providerId: string;
+    modelId: string;
+    options: GenerateImageRuntimeOptions;
+  }): AgentImageGenerationOptionValidationIssue | null;
   readPayloadImage(input: { payloadId: string; runId?: string }): Promise<AgentImageGenerationInputImage>;
   readLocalImage(input: { filePath: string }): Promise<AgentImageGenerationInputImage>;
   writeGeneratedImage(input: {
@@ -60,6 +65,12 @@ export interface GenerateImageRuntimeOptions {
   quality?: string;
   background?: string;
   outputFormat?: string;
+}
+
+export interface AgentImageGenerationOptionValidationIssue {
+  code: string;
+  message: string;
+  instructions?: string;
 }
 
 export interface GenerateImageData {
@@ -192,6 +203,27 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           }));
         }
 
+        const options = {
+          signal,
+          count: params.count,
+          size: params.size,
+          aspectRatio: params.aspectRatio,
+          quality: params.quality,
+          background: params.background,
+          outputFormat: params.outputFormat,
+        };
+        const optionIssue = runtime.validateOptions?.({
+          providerId: selected.providerId,
+          modelId: selected.id,
+          options,
+        });
+        if (optionIssue) {
+          return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, optionIssue.code, optionIssue.message, {
+            instructions: optionIssue.instructions,
+            metrics: { durationMs: elapsed(startedAt) },
+          }));
+        }
+
         const inputImages = await Promise.all(params.imageRefs.map((ref) => resolveImageRef(runtime, ref)));
         if (inputImages.length > 0 && !selected.input.includes('image')) {
           return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, 'model_does_not_accept_images', `${selected.name} does not accept input images.`, {
@@ -214,15 +246,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           providerId: selected.providerId,
           modelId: selected.id,
           context,
-          options: {
-            signal,
-            count: params.count,
-            size: params.size,
-            aspectRatio: params.aspectRatio,
-            quality: params.quality,
-            background: params.background,
-            outputFormat: params.outputFormat,
-          },
+          options,
         });
         if (response.stopReason === 'error') {
           return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, 'provider_error', response.errorMessage ?? 'Image generation failed.', {

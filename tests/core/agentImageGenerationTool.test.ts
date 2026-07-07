@@ -128,4 +128,39 @@ describe('generate_image tool', () => {
     expect(details.data?.providerId).toBe('google');
     expect(details.data?.modelId).toBe('gemini-3.1-flash-image');
   });
+
+  test('returns unsupported option errors before calling the image provider', async () => {
+    const runtime: AgentImageGenerationRuntime = {
+      listModels: async () => [{
+        providerId: 'openai',
+        id: 'gpt-image-1.5',
+        name: 'GPT Image 1.5',
+        input: ['text', 'image'],
+        output: ['image'],
+      }],
+      getActiveProviderId: async () => 'openai',
+      validateOptions: ({ options }) => (
+        options.size === '2048x1024'
+          ? {
+              code: 'unsupported_option',
+              message: 'Size "2048x1024" is not supported by gpt-image-1.5.',
+              instructions: 'Use auto, 1024x1024, 1024x1536, 1536x1024.',
+            }
+          : null
+      ),
+      readPayloadImage: async () => { throw new Error('not used'); },
+      readLocalImage: async () => { throw new Error('not used'); },
+      writeGeneratedImage: async () => { throw new Error('not used'); },
+      generateImages: async () => { throw new Error('provider should not be called'); },
+    };
+
+    const tool = createGenerateImageTool(runtime);
+    const result = await tool.execute('call-3', { prompt: 'A wide poster', size: '2048x1024' });
+    const details = result.details as ToolEnvelope<GenerateImageData>;
+
+    expect(details.ok).toBe(false);
+    expect(details.error?.code).toBe('unsupported_option');
+    expect(details.error?.message).toBe('Size "2048x1024" is not supported by gpt-image-1.5.');
+    expect(details.instructions).toBe('Use auto, 1024x1024, 1024x1536, 1536x1024.');
+  });
 });

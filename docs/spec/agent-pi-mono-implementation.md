@@ -134,7 +134,10 @@ adapter reuses the same pi credential store as language models, registers
 Tenon-owned first-party OpenAI and Google Gemini image providers, and keeps
 OpenRouter image models available through pi-ai's built-in image provider when
 OpenRouter is configured. A disabled or uncredentialed provider is excluded from
-both chat model routing and image model routing.
+both chat model routing and image model routing. Provider-specific image option
+normalization and preflight validation also live in this adapter; the
+`generate_image` tool receives only a structured unsupported-option result when a
+requested option cannot be sent to the selected provider/model.
 
 Current module boundary:
 

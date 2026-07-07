@@ -37,6 +37,12 @@ export interface TenonImagesOptions extends ImagesOptions {
   outputFormat?: string;
 }
 
+export interface TenonImagesOptionValidationIssue {
+  code: 'unsupported_option';
+  message: string;
+  instructions?: string;
+}
+
 let imagesModelsInstance: MutableImagesModels | null = null;
 
 export function piImageModels(): MutableImagesModels {
@@ -71,6 +77,15 @@ export async function piGenerateImages(
   options?: TenonImagesOptions,
 ): Promise<AssistantImages> {
   return piImageModels().generateImages(model, context, options);
+}
+
+export function validateImageGenerationOptions(
+  providerId: string,
+  modelId: string,
+  options?: TenonImagesOptions,
+): TenonImagesOptionValidationIssue | null {
+  if (providerId === OPENAI_IMAGES_PROVIDER_ID) return validateOpenAiImageOptions(modelId, options);
+  return null;
 }
 
 export function imageModelOptionsForProvider(providerId: string): TenonImageModelOption[] {
@@ -176,6 +191,18 @@ const GOOGLE_IMAGE_MODELS = [
   },
 ] satisfies ImagesModel<typeof GOOGLE_IMAGES_API>[];
 
+export function openAiImageRequestParams(modelId: string, prompt: string, options?: TenonImagesOptions): Record<string, unknown> {
+  return definedObject({
+    model: modelId,
+    prompt,
+    n: imageCount(options?.count),
+    size: openAiSize(modelId, options?.size),
+    quality: openAiQuality(options?.quality),
+    background: openAiBackground(options?.background),
+    output_format: openAiOutputFormat(options?.outputFormat),
+  });
+}
+
 async function generateOpenAiImages(
   model: ImagesModel<ImagesApi>,
   context: ImagesContext,
@@ -189,6 +216,7 @@ async function generateOpenAiImages(
 
   const imageInputs = context.input.filter((part) => part.type === 'image');
   const outputFormat = openAiOutputFormat(requestOptions?.outputFormat);
+  const requestParams = openAiImageRequestParams(model.id, prompt, requestOptions);
   const client = new OpenAI({
     apiKey: requestOptions.apiKey,
     timeout: requestOptions.timeoutMs,
@@ -203,24 +231,9 @@ async function generateOpenAiImages(
               type: image.mimeType,
             })
           ))) as Uploadable[],
-          model: model.id,
-          prompt,
-          n: imageCount(requestOptions?.count),
-          size: openAiSize(requestOptions?.size),
-          quality: openAiQuality(requestOptions?.quality),
-          background: openAiBackground(requestOptions?.background),
-          output_format: outputFormat,
+          ...requestParams,
         } as any, { signal: requestOptions.signal })
-      : await client.images.generate({
-          model: model.id,
-          prompt,
-          n: imageCount(requestOptions?.count),
-          size: openAiSize(requestOptions?.size),
-          quality: openAiQuality(requestOptions?.quality),
-          background: openAiBackground(requestOptions?.background),
-          output_format: outputFormat,
-          response_format: 'b64_json',
-        } as any, { signal: requestOptions.signal });
+      : await client.images.generate(requestParams as any, { signal: requestOptions.signal });
 
     const output = await openAiImageOutput(response as { data?: { b64_json?: string; url?: string; revised_prompt?: string }[]; output_format?: string; usage?: unknown }, outputFormat, requestOptions?.signal);
     return {
@@ -408,8 +421,35 @@ function imageCount(value: unknown): number {
   return clampInteger(value, 1, 4, 1);
 }
 
-function openAiSize(value: unknown): 'auto' | '1024x1024' | '1024x1536' | '1536x1024' | undefined {
-  return stringUnion(value, ['auto', '1024x1024', '1024x1536', '1536x1024']);
+const OPENAI_GPT_IMAGE_FIXED_SIZES = ['auto', '1024x1024', '1024x1536', '1536x1024'] as const;
+
+function validateOpenAiImageOptions(modelId: string, options?: TenonImagesOptions): TenonImagesOptionValidationIssue | null {
+  const requestedSize = normalizedString(options?.size);
+  if (requestedSize && !openAiSize(modelId, requestedSize)) {
+    return {
+      code: 'unsupported_option',
+      message: `Size "${requestedSize}" is not supported by ${modelId}.`,
+      instructions: openAiSizeInstructions(modelId),
+    };
+  }
+  return null;
+}
+
+function openAiSize(modelId: string, value: unknown): string | undefined {
+  const size = normalizedString(value);
+  if (!size) return undefined;
+  if (modelId === 'gpt-image-2') return size === 'auto' || isOpenAiWidthHeightSize(size) ? size : undefined;
+  return stringUnion(size, OPENAI_GPT_IMAGE_FIXED_SIZES);
+}
+
+function openAiSizeInstructions(modelId: string): string {
+  return modelId === 'gpt-image-2'
+    ? 'Use auto or a WIDTHxHEIGHT value, for example 1024x1024.'
+    : `Use ${OPENAI_GPT_IMAGE_FIXED_SIZES.join(', ')}.`;
+}
+
+function isOpenAiWidthHeightSize(value: string): boolean {
+  return /^\d+x\d+$/.test(value);
 }
 
 function openAiQuality(value: unknown): 'low' | 'medium' | 'high' | 'auto' | undefined {
@@ -434,6 +474,14 @@ function supportedGoogleImageSize(value: unknown): string | undefined {
 
 function stringUnion<const T extends string>(value: unknown, options: readonly T[]): T | undefined {
   return typeof value === 'string' && (options as readonly string[]).includes(value) ? value as T : undefined;
+}
+
+function normalizedString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : undefined;
+}
+
+function definedObject(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
 
 function clampInteger(value: unknown, min: number, max: number, fallback: number): number {

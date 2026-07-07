@@ -295,6 +295,12 @@ Validation is TypeScript-owned:
   unqualified model id may be used only when the enabled image model catalog can
   resolve it deterministically.
 - Disabled or uncredentialed providers are never candidates.
+- Provider-specific options are validated before the provider call when Tenon can
+  know that the option cannot be sent. Unsupported options return
+  `unsupported_option` with recovery instructions. OpenAI GPT image models do not
+  use the legacy `response_format` option; GPT Image 2 accepts `auto` or
+  `WIDTHxHEIGHT` sizes, while older Tenon-owned OpenAI GPT image entries accept
+  only `auto`, `1024x1024`, `1024x1536`, and `1536x1024`.
 
 Generated images are stored as normal agent payload files before the tool result
 is persisted. The model-visible JSON includes payload ids, mime types, byte
