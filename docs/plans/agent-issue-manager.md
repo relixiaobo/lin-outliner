@@ -30,9 +30,13 @@ references, and user-authored structure. Issues may reference outliner content
 as inputs, outputs, or supporting notes, but the outliner does not own work
 state, recurrence, agent sessions, or activity history.
 
-Build shape: **one complete feature in one PR** after PM ratification. This is a
-protocol/runtime/product-surface replacement for the old scheduled-command
-model, not a timeout patch.
+Build shape: **one complete feature in one implementation PR** after PM
+ratification. The feature is intentionally large because it replaces the
+protocol/runtime/product surface for scheduled agent work, not just a timeout
+patch. Because it touches shared protocol contracts, implementation must begin
+with a human-ratified protocol contract checkpoint inside the PR: the Issue,
+Recurring Issue, Agent Session, Activity, tool, and permission schemas are
+reviewed before runtime, renderer, Dream, or scheduler code is layered on them.
 
 ## Purpose, Evidence, And Assumptions
 
@@ -260,7 +264,7 @@ Use these terms consistently:
 | Relation | Field linking Issues. | Dependencies and related work. |
 | Due date | Field on Issue. | Deadline/display target, not the start mechanism. |
 | Cadence | Field on Recurring Issue. | Repeated materialization trigger. |
-| Delegate | Agent assigned to act on an Issue. | Agent execution assignment. |
+| Delegate | Same-agent execution profile assigned to act on an Issue. | Neva run-profile assignment, not a second agent. |
 | Completion criteria | Field on parent or large Issues. | Outcome acceptance checklist. |
 | Evidence | Field or Activity link proving criteria progress. | Completion support. |
 | Verification policy | Field on Issue or Recurring Issue template. | Completion gate, not a separate tool. |
@@ -318,11 +322,23 @@ interface IssueStatus {
     | 'canceled';
 }
 
+type IssueViewBucket =
+  | IssueStatus['category']
+  | 'blocked'
+  | 'attention-needed'
+  | 'archived'
+  | 'scheduled';
+
 type IssueRelation =
   | { type: 'blocked-by'; issueId: string }
   | { type: 'blocks'; issueId: string }
   | { type: 'related'; issueId: string }
   | { type: 'duplicate-of'; issueId: string };
+
+type AgentRef = {
+  type: 'default-agent';
+  runProfile?: 'default' | 'background' | 'verifier';
+};
 
 type IssueTrigger =
   | { type: 'manual' }
@@ -363,6 +379,19 @@ type IssueConfirmation =
   | { state: 'draft' }
   | { state: 'confirmed'; confirmedBy: ActorRef; confirmedAt: number };
 ```
+
+`AgentRef` is deliberately narrow in V1. Tenon currently has one agent, Neva;
+delegation creates isolated same-agent runs, not peers, personas, team members,
+or independently permissioned agents. `delegate` and `verifier` therefore select
+Neva's execution profile for runtime policy and UI copy. Adding multiple agent
+identities or agent definitions would require a separate permissions, memory,
+and UI design.
+
+`IssueStatus.category` is stored lifecycle state. `IssueViewBucket` values such
+as `blocked`, `attention-needed`, `archived`, and `scheduled` are derived
+projection buckets from relations, Activity, archived timestamps, triggers,
+Agent Sessions, and Recurring Issue next materialization time. They are not
+additional stored status categories.
 
 Required behavior:
 
@@ -458,6 +487,10 @@ Recurring Issue behavior:
   validates generated concrete Issues before starting Agent Sessions.
 - A generated concrete Issue inherits the template fields and receives
   recurrence context. It does not create or reference a hidden Occurrence.
+- V1 materializes concrete Issues at due time, not before due time. Scheduled
+  views show the Recurring Issue's `nextMaterializationAt` before due time.
+- Generated Issue titles include the covered date or window by default; Views can
+  choose how prominently to display that date.
 - Single scheduled work is an ordinary Issue with a `scheduled` trigger, not a
   Recurring Issue.
 - V1 cadence is calendar-based: daily, weekly, and monthly. Workday schedules,
@@ -488,6 +521,7 @@ interface AgentSession {
   source:
     | { type: 'delegation'; actor: ActorRef }
     | { type: 'recurring-issue'; recurringIssueId: string; dueAt: number }
+    | { type: 'runtime-authorized-action'; actor: ActorRef }
     | { type: 'orchestration'; coordinatorAgentSessionId: string }
     | { type: 'manual'; actor: ActorRef };
   issueSnapshot: AgentIssue;
@@ -770,21 +804,48 @@ names are View presets, not ontology.
 - **Entry state:** System-owned Recurring Issue or Issue family is configured by
   Dream settings.
 - **Mainline:**
-  1. Dream creates a concrete system-owned Issue for the due window.
-  2. Dream assigns a protected delegate, permissions, and ready trigger.
+  1. Runtime, not the model-facing tools, materializes a system-owned Dream Issue
+     for the due window.
+  2. Runtime applies the protected Dream run profile, tool whitelist, permission
+     scope, and Dream-channel anchor.
   3. Runtime creates an Agent Session from the ready trigger.
-  4. Dream emits Activity and terminal state.
-  5. Dream output links to memory or dream nodes.
-- **Result:** Dream shares Issue, Recurring Issue, Agent Session, Activity,
-  deadlines, and recovery semantics, while keeping protected edit rules.
+  4. Dream emits protected Activity and terminal state.
+  5. Dream output links to durable memory nodes when there is memory worth
+     writing.
+- **Result:** Dream can share the Issue, Recurring Issue, Agent Session, and
+  Activity mechanics internally, but it preserves the existing Dream safety
+  boundary: no model-facing Issue tool can invoke Dream, ordinary work Views do
+  not show Dream as user work, Dream audit history remains in Settings -> Agent
+  "Memory & activity", and Dream transcript/evidence stays excluded from normal
+  chat retrieval and Issue evidence.
+
+### Dream Compatibility Boundary
+
+Dream is a protected system routine, not ordinary user-created work:
+
+- Dream Issues and Recurring Issues are runtime-owned and cannot be created,
+  edited, confirmed, paused, resumed, or started through model-facing
+  `issue_*` or `agent_session_*` tools.
+- Dream execution uses the existing protected Dream channel and Dream-only run
+  profile. The model-facing `AgentRef` surface cannot select that profile.
+- Dream has a restricted tool scope: it reads visible conversation spans through
+  the approved memory path, gathers outline context through the approved node
+  tools, and writes durable memory nodes only under the current Dream rules.
+- Dream transcript and Activity are audit history, not ordinary evidence for
+  user Issues and not context for normal `past_chats` retrieval.
+- Dream history remains surfaced through Settings -> Agent "Memory & activity",
+  not the ordinary Work/Activity Views.
+- Dream retention and watermark behavior remains the current Dream-specific
+  policy: bounded retained Dream-channel runs, durable memory nodes preserved,
+  and incomplete/no-write retry semantics preserved.
 
 ### FLOW-6: Main Agent Offloads Long Work
 
 - **Actor:** Main agent acting in the current user conversation.
 - **Entry path:** The main agent decides the user-requested work is long enough
   to run outside the current conversation.
-- **Entry state:** A current user action authorizes delegation and immediate
-  execution, or the agent can only create a draft/proposal for later
+- **Entry state:** Runtime has an authorization capability for this turn's
+  user request, or the agent can only create a draft/proposal for later
   confirmation.
 - **Goal:** Keep the current conversation usable while a separate Agent Session
   executes the work and reports back through Issue Activity.
@@ -792,8 +853,8 @@ names are View presets, not ontology.
   1. Main agent calls `issue_create` for new work or `issue_update` for an
      existing Issue, defining objective, delegate, trigger, input scope, output
      policy, completion criteria, permission mode, and execution policy.
-  2. If new work should immediately run and the current user action authorizes
-     it, the Issue can be created confirmed with
+  2. If new work should immediately run and runtime authorization permits it,
+     the Issue can be created confirmed with
      `trigger: { type: 'when-ready' }`.
   3. If an existing manual or unscheduled Issue should run now, main agent calls
      `agent_session_start`. This starts one Agent Session without changing the
@@ -863,8 +924,9 @@ one execution:
 
 The second question is whether the agent has enough authority:
 
-- A current user action can authorize immediate creation, update, or Session
-  start when the user explicitly asked for it.
+- A user request can create a runtime authorization capability for immediate
+  creation, update, or Session start. The model never supplies that capability as
+  a tool parameter.
 - Unattended triggers, destructive output, broader input scope, and direct
   starts outside current user intent return `needs-confirmation`.
 - A worker Agent Session can create or update sub-issues and start child
@@ -961,8 +1023,11 @@ ambiguous.
   per-input child nodes, or explicitly confirmed in-place edits.
 - **FR-17:** Missed recurring work defaults to coalescing into the latest
   concrete Issue with coverage metadata.
-- **FR-18:** System-owned Dream work uses the same canonical lifecycle with
-  protected ownership and permissions.
+- **FR-18:** System-owned Dream work may use the same Issue, Recurring Issue,
+  Agent Session, and Activity mechanics internally, but it must preserve the
+  existing protected Dream channel, restricted run profile, tool whitelist,
+  ordinary-evidence exclusion, Settings-only surfacing, retention, and watermark
+  rules.
 - **FR-19:** The agent-facing tool surface must stay small and complete:
   Issue discovery, Issue inspection, Issue creation, Issue update, Session
   start, Session read, Session messaging, and Session stop. It must not expose
@@ -987,6 +1052,8 @@ ambiguous.
 - **FR-26:** Activity must be able to target Issues, Recurring Issues, and Agent
   Sessions, and must store user-visible progress rather than raw model
   reasoning.
+- **FR-27:** Model-facing Issue and Agent Session tools must not be able to
+  create, edit, start, stop, or confirm Dream work.
 
 ## Business Rules
 
@@ -1075,6 +1142,15 @@ ambiguous.
   encoded as a trigger type.
 - **BR-32:** Due dates never start execution by themselves. Execution starts from
   an Issue trigger or an authorized `agent_session_start` request.
+- **BR-33:** Runtime authorization capabilities are injected by the runtime and
+  bound to actor, operation scope, expiry, and audit reason. Model-facing tool
+  input cannot carry or mint them.
+- **BR-34:** Recurring Issues materialize concrete Issues at due time in V1. They
+  are not pre-materialized for future display.
+- **BR-35:** Generated recurring Issue titles include the covered date or window
+  by default.
+- **BR-36:** Dream Issue-family records, if introduced internally, are protected
+  system records outside normal model-facing Issue tools and ordinary Work Views.
 
 ## Agent Tool Surface
 
@@ -1122,6 +1198,13 @@ durable Issue definition surface. `agent_session_start`,
 are the runtime execution surface. Neither group creates a hidden `Work`,
 `WorkItem`, `Task`, `Project`, or `Run` object.
 
+For tool naming, Recurring Issue belongs to the Issue family. It is a
+first-class durable definition, but it is not a separate tool family in V1. The
+agent first chooses durable Issue-definition work versus runtime Agent Session
+control; `issueType` and `target.type` then distinguish normal Issues from
+Recurring Issues. Adding `recurring_issue_*` would create a second lifecycle
+CRUD family for cadence operations that are still Issue-definition changes.
+
 This eight-tool surface covers the complete agent capability loop:
 
 1. discover existing Issues and Recurring Issues;
@@ -1136,21 +1219,23 @@ This eight-tool surface covers the complete agent capability loop:
 
 The main-agent long-work path has two explicit modes:
 
-- New create-and-run work uses `issue_create` with a ready trigger when the
-  current user action authorizes immediate execution.
+- New create-and-run work uses `issue_create` with a ready trigger when runtime
+  authorization permits immediate execution.
 - Existing manual or unscheduled work uses `agent_session_start` for one
   execution, or `issue_update` to set a durable trigger for future execution.
 
 Naming rules:
 
-- Use concept-prefix names: `issue_*` for Issue and Recurring Issue operations,
-  and `agent_session_*` for one execution's runtime controls.
+- Use concept-prefix names: `issue_*` for Issue-family definition operations
+  including Recurring Issues, and `agent_session_*` for one execution's runtime
+  controls.
 - Split create and update when the agent can know the intent before the call.
   Creation and editing have different required fields, validation, conflict
   behavior, and confirmation copy.
 - Use full concept names for Agent Sessions. Do not shorten the prefix to
   `session_*`, because plain session can mean chat, login, or runtime transport.
-- A tool named `issue` has Issue or Recurring Issue as its primary target.
+- A tool named `issue` has an Issue-family object, normal Issue or Recurring
+  Issue, as its primary target.
   Agent Sessions and Activity can appear only as included context or returned
   targets.
 - Do not use generic `work_*`, `task_*`, `project_*`, or `run_*` tool names in
@@ -1260,11 +1345,27 @@ interface TenonAgentToolDefinition {
 
 interface TenonAgentToolContext {
   actor: ActorRef;
-  currentUserActionId?: string;
+  authorization?: RuntimeAuthorizationCapability;
   coordinatorAgentSessionId?: string;
   permissionMode: AgentPermissionMode;
   now: number;
 }
+
+interface RuntimeAuthorizationCapability {
+  id: string;
+  actor: ActorRef;
+  allowedOperations: AgentOperationScope[];
+  expiresAt: number;
+  auditReason: string;
+}
+
+type AgentOperationScope =
+  | { type: 'issue-create' }
+  | { type: 'issue-update'; issueId?: string }
+  | { type: 'recurring-issue-update'; recurringIssueId?: string }
+  | { type: 'agent-session-start'; issueId?: string }
+  | { type: 'agent-session-message'; agentSessionId?: string }
+  | { type: 'agent-session-stop'; agentSessionId?: string };
 
 interface TenonAgentToolDescriptionContext {
   actor: ActorRef;
@@ -1275,7 +1376,7 @@ interface TenonAgentToolDescriptionContext {
 interface TenonAgentToolPromptContext {
   actor: ActorRef;
   permissionMode: AgentPermissionMode;
-  availableDelegates: AgentRef[];
+  availableRunProfiles: AgentRef[];
 }
 ```
 
@@ -1413,7 +1514,7 @@ type RelatedTargetRef =
 
 type ChangeRequest =
   | { mode: 'preview' }
-  | { mode: 'request'; userActionId?: string };
+  | { mode: 'request' };
 ```
 
 `preview` never persists. `request` persists only what is allowed by the current
@@ -1425,7 +1526,7 @@ Common parameter descriptions:
 
 | Parameter | Required | Description |
 |---|---:|---|
-| `request` | mutation/runtime-control only | Whether the caller wants a non-persistent preview or an actual request. Use `preview` when validating a proposal, estimating scope, or asking for confirmation copy. Use `request` only when a current user action or allowed orchestration source authorizes persistence. |
+| `request` | mutation/runtime-control only | Whether the caller wants a non-persistent preview or an actual request. Use `preview` when validating a proposal, estimating scope, or asking for confirmation copy. Use `request` to ask runtime to apply the change under the current runtime-owned authorization context. |
 | `reason` | mutation/runtime-control only | Short audit summary of why the change or execution request is being made. It is stored with Activity and used for permission prompts and debugging. |
 | `expectedRevision` | no | Revision last observed by the agent. Include it when updating an object previously read in this turn so stale writes return `conflict` instead of overwriting newer state. |
 | `expectedIssueRevision` | no | Revision of the Issue snapshot the agent expects to execute. Include it when starting execution from a prior `issue_read`. |
@@ -1522,7 +1623,7 @@ type IssueSearchInclude =
 | Field | Description |
 |---|---|
 | `ids` | Exact object IDs when the caller already has durable references. |
-| `statusCategories` | Canonical lifecycle and derived buckets such as triage, backlog, unstarted, started, blocked, completed, canceled, archived, or attention-needed. This replaces view-name filtering. |
+| `statusCategories` | Stored lifecycle categories and derived view buckets such as triage, backlog, unstarted, started, blocked, completed, canceled, archived, scheduled, or attention-needed. This replaces view-name filtering. |
 | `delegateIds` | Assigned human or agent delegates. Use when the user asks what a specific agent or person owns. |
 | `issueIds` | Exact Issue IDs. Use only when searching concrete Issues. |
 | `recurringIssueIds` | Exact Recurring Issue IDs. Use only when searching recurrence definitions. |
@@ -1541,7 +1642,7 @@ type IssueSearchInclude =
 | `inputTags` | Issues whose input scope targets nodes by tag query. |
 | `sessionState` | Agent Session states projected onto Issues for execution-status searches. |
 | `activityTypes` | Activity content types, such as field-change, status-change, agent-progress, agent-action, agent-error, output-link, or verification-result. |
-| `activityTarget` | Activity target object when searching by history around a specific Issue, Recurring Issue, Session, or node. |
+| `activityTarget` | Activity target object when searching by history around a specific Issue, Recurring Issue, or Agent Session. Use linked-note, input-node, or output-node filters for node-related work. |
 | `createdAt` | Creation-time range. |
 | `updatedAt` | Last durable update-time range. |
 
@@ -1730,9 +1831,9 @@ interface RecurringIssuePatchFields {
 | `request` | Preview or request mode. Use preview for ambiguous natural-language requests, risky triggers, broad input scopes, or missing confirmation. |
 | `reason` | Short audit summary explaining why this object is being created. |
 
-Agents do not set `confirmation.confirmedBy` or `confirmation.confirmedAt`
-inside create fields. Runtime sets confirmation when the current user action or
-an allowed orchestration source authorizes it; otherwise the created object
+Agents do not set `confirmation.confirmedBy`, `confirmation.confirmedAt`, or
+any authorization token inside create fields. Runtime sets confirmation when a
+runtime-owned authorization capability permits it; otherwise the created object
 remains draft or the tool returns `needs-confirmation`.
 
 `issue_update` parameter descriptions:
@@ -1818,9 +1919,6 @@ interface AgentSessionStartInput {
   issueId: string;
   expectedIssueRevision?: string;
   continuation?: AgentSessionContinuationRequest;
-  source:
-    | { type: 'current-user-action'; userActionId: string }
-    | { type: 'orchestration'; coordinatorAgentSessionId: string };
   detach?: boolean;
   executionPolicyOverride?: AgentSessionExecutionPolicyOverride;
   request: ChangeRequest;
@@ -1903,7 +2001,6 @@ interface AgentSessionStopInput {
 | `issueId` | Existing concrete Issue to execute or orchestrate. Do not pass Recurring Issue IDs; recurring definitions first materialize concrete Issues. |
 | `expectedIssueRevision` | Issue revision the caller expects to execute. Include it after reading an Issue so runtime can reject stale execution requests. |
 | `continuation` | Optional link to a previous terminal or stale Agent Session when the caller wants to continue, retry, or revise from prior work. |
-| `source` | Authorization source for the execution request: a current user action or a coordinator Agent Session inside allowed orchestration scope. |
 | `detach` | Whether the caller wants the Session to continue in the background while the current conversation proceeds. Runtime may still notify completion. |
 | `executionPolicyOverride` | Narrow override for this execution only. It must not broaden the Issue's durable permissions without `issue_update`. |
 | `request` | Preview or request mode. Preview validates eligibility, blockers, and confirmation requirements without starting a Session. |
@@ -1984,13 +2081,14 @@ The same concept can be operated under different permissions:
 
 - In an attended chat, if the user explicitly says "start this now", the agent
   can call `agent_session_start` for an existing Issue, or `issue_create` with a
-  ready trigger for new create-and-run work, using the current `userActionId`.
+  ready trigger for new create-and-run work. Runtime decides whether the current
+  turn carries an authorization capability for that operation.
 - A scheduler activates triggers only for concrete Issues created by confirmed
   Recurring Issues.
 - An executing Issue Session can set a ready/scheduled trigger or call
   `agent_session_start` only on a sub-issue inside the confirmed parent Issue
   scope and permission policy.
-- An agent without user action can request Issue changes, but the tools either
+- An agent without runtime authorization can request Issue changes, but the tools either
   create safe drafts/proposals or return `needs-confirmation`; they cannot
   activate an unattended trigger or start an unattended Session.
 - Issue edits that change status, delegate, sub-issues, destructive output, or
@@ -2012,8 +2110,8 @@ Target stores and projections should use canonical names:
 
 Trigger evaluator behavior:
 
-1. reads active Recurring Issues;
-2. creates concrete Issues for due cadences according to missed policy;
+1. reads active and confirmed Recurring Issues;
+2. creates concrete Issues at due time according to cadence and missed policy;
 3. reads concrete Issues whose triggers may be ready;
 4. creates Agent Sessions only for concrete Issues that are confirmed,
    delegated, unblocked, executable, and authorized;
@@ -2026,7 +2124,7 @@ lifecycle owns state, execution policy, activity, and recovery.
 Direct Session-start behavior:
 
 1. accepts `agent_session_start` only for an existing Issue;
-2. validates current user action or orchestration source;
+2. validates the runtime-owned authorization capability or orchestration source;
 3. uses the same Issue readiness, blocker, scope, and execution-policy checks as
    trigger-derived starts;
 4. if `continuation` is present, validates that the previous Session belongs to
@@ -2144,8 +2242,10 @@ Expected file areas:
   outside the outliner.
 - **AC-16:** Unattended Sessions fail closed when they request content or writes
   outside confirmed Issue scope.
-- **AC-17:** Dream uses the same canonical Issue, Recurring Issue, Agent
-  Session, and Activity lifecycle with protected permissions.
+- **AC-17:** Dream compatibility preserves the existing protected Dream channel,
+  restricted run profile, evidence/context exclusion, Settings-only history,
+  retention, and watermark behavior; ordinary model-facing Issue tools cannot
+  invoke or mutate Dream.
 - **AC-18:** New target contracts do not expose Task, WorkItem, Job, Attempt,
   Occurrence, Project, Logbook, or Run as product objects.
 - **AC-19:** The model-facing tool list is limited to `issue_search`,
@@ -2185,6 +2285,16 @@ Expected file areas:
 - **AC-30:** Activity entries exposed to users never contain raw model reasoning;
   progress is stored as concise `agent-progress`, action, question, response,
   error, output, or verification entries.
+- **AC-31:** Model-facing schemas contain no `userActionId` or caller-supplied
+  authorization token; runtime authorization is injected and audited outside tool
+  input.
+- **AC-32:** V1 Recurring Issues are not pre-materialized for future display.
+  Scheduled views show Recurring Issues through `nextMaterializationAt`; concrete
+  Issues are created at due time.
+- **AC-33:** V1 generated recurring Issue titles include the covered date or
+  window by default.
+- **AC-34:** `AgentRef` supports only Neva's V1 run profiles and cannot express
+  multiple agent identities, peers, personas, or teams.
 
 ## Risks
 
@@ -2209,10 +2319,6 @@ Expected file areas:
 
 ## Open Questions
 
-- Should Recurring Issues materialize the concrete Issue at due time or slightly
-  before due time so the user can inspect it in a Scheduled view?
-- Should generated Issue titles include dates by default, or should date display
-  be a View concern?
 - Should `issue_search` and `issue_read` be available in every chat, or only
   after the user intent clearly asks to inspect durable work?
 - Should failed scheduled Issues raise OS notifications by default, or only
