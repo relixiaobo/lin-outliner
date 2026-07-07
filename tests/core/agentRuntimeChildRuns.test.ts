@@ -290,6 +290,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
@@ -357,6 +358,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -429,6 +431,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -479,6 +482,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
@@ -536,6 +540,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
@@ -605,6 +610,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -665,6 +671,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -738,6 +745,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -812,6 +820,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -915,6 +924,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -982,6 +992,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1047,6 +1058,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1126,6 +1138,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1179,6 +1192,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1244,6 +1258,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1308,6 +1323,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1365,6 +1381,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1439,6 +1456,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1537,6 +1555,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1605,6 +1624,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1715,6 +1735,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1827,6 +1848,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1912,6 +1934,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -1988,6 +2011,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2044,6 +2068,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2114,6 +2139,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2188,6 +2214,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2265,6 +2292,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2375,6 +2403,7 @@ describe('agent runtime childRuns', () => {
       () => firstSink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2419,6 +2448,7 @@ describe('agent runtime childRuns', () => {
       () => secondSink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2484,6 +2514,7 @@ describe('agent runtime childRuns', () => {
       () => firstSink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2513,6 +2544,7 @@ describe('agent runtime childRuns', () => {
       () => secondSink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2580,6 +2612,7 @@ describe('agent runtime childRuns', () => {
       () => firstSink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2605,6 +2638,7 @@ describe('agent runtime childRuns', () => {
       () => secondSink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2637,6 +2671,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2706,6 +2741,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2778,6 +2814,7 @@ describe('agent runtime childRuns', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({
@@ -2855,6 +2892,7 @@ describe('agent runtime parallel tool results', () => {
       () => sink.window as never,
       hostFor(Core.new()),
       {
+        legacyRunToolsEnabled: true,
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({

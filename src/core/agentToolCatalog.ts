@@ -6,5 +6,4 @@ export const TOOL_CATALOG = [
   'generate_image',
   'issue_search', 'issue_read', 'issue_create', 'issue_update',
   'agent_session_start', 'agent_session_read', 'agent_session_send_message', 'agent_session_stop',
-  'spawn_run', 'run_status', 'run_steer', 'run_amend', 'run_stop',
 ] as const;

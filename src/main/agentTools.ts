@@ -222,6 +222,7 @@ export interface AgentToolsOptions {
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
   runScope?: AgentRunScope;
+  legacyDelegationToolsEnabled?: boolean;
 }
 
 interface AgentToolCatalogEntry {
@@ -281,7 +282,7 @@ function buildAgentToolCatalog(
     precondition: !!options.skillRuntime && options.skillToolEnabled !== false,
     create: () => options.skillRuntime ? [createSkillTool(options.skillRuntime)] : [],
   }, {
-    precondition: !!options.delegationRuntime,
+    precondition: !!options.delegationRuntime && (options.legacyDelegationToolsEnabled ?? !options.issueRuntime),
     create: () => options.delegationRuntime ? createAgentDelegationTools(options.delegationRuntime) : [],
   }];
 }

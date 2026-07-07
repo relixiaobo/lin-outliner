@@ -1173,8 +1173,9 @@ describe('agent skills', () => {
       argumentHint: '<objective and acceptance criteria>',
       argumentNames: ['objective'],
     });
-    expect(skill?.body).toContain('Use `spawn_run` with `objective`, explicit `criteria`, `detach:true`, `context:"brief"`, and a finite `budget`.');
-    expect(skill?.body).toContain('Never claim completion from the worker result alone');
+    expect(skill?.body).toContain('Use `issue_create` with a concrete objective, explicit acceptance criteria');
+    expect(skill?.body).toContain('use `agent_session_start` for one execution attempt');
+    expect(skill?.body).toContain('Never claim completion from the latest Agent Session result alone');
   });
 
   test('disabled skill gates apply to built-in research', async () => {

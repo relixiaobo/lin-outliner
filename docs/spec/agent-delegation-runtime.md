@@ -9,24 +9,29 @@
 > like a conversation's. Vocabulary below was rewritten accordingly; cc-2.1
 > references describe the SOURCE system's wording, not ours.
 
-> **Goal-run update — same-agent run tree (2026-06-25, `agent-goal`).**
-> The current model-facing delegation tool is `spawn_run`, not `Agent`. There is
-> exactly one agent, **Neva**; delegation creates same-agent sub-runs, never a
-> different persona. The tool schema carries no `agent_type`; `contextMode` is
-> now `full` / `brief` / `none` (`fork` remains only as a persisted legacy value).
-> `spawn_run` defaults to verified execution: criteria are required unless
-> `verify:false`, parents verify worker results through read-only verifier Runs,
-> and failed verification triggers bounded retry before `blocked` /
-> `budget_exhausted`. `/research` and isolated skills are isolated same-agent Runs;
-> runtime Dream uses the protected Dream channel's restricted top-level run
-> profile instead. Read the old "fresh" / by-name agent material below as
-> historical design context, not current behavior.
+> **Issue Manager update — legacy run executor (2026-07-07).** The product
+> model-facing work-management surface is now Issue / Recurring Issue / Agent
+> Session. `spawn_run`, `run_status`, `run_steer`, `run_amend`, and `run_stop`
+> remain as a legacy delegated-Run executor behind explicit compatibility tool
+> profiles; they are not exposed by the default Issue runtime tool registry.
+> There is still exactly one agent, **Neva**; legacy delegation creates
+> same-agent sub-runs, never a different persona. The legacy tool schema carries
+> no `agent_type`; `contextMode` is `full` / `brief` / `none` (`fork` remains only
+> as a persisted legacy value). Agent Sessions may bind to this executor
+> internally, but the model observes and controls them through
+> `agent_session_*` tools. `/research` and isolated skills continue to use the
+> runtime-owned isolated execution path; runtime Dream uses the protected Dream
+> channel's restricted top-level run profile instead. Read the old "fresh" /
+> by-name agent material below as historical design context, not current product
+> surface.
 
 This document is the design and implementation baseline for Tenon's delegation
 runtime. It records both the cc-2.1 source references used for alignment and the
 Lin-specific choices made while implementing the current same-conversation child run
-runtime. Current user-facing and model-facing surfaces call these Runs or sub-runs;
-"child run" appears only in historical source references or persisted test data.
+runtime. Current product work-management surfaces expose Issues and Agent
+Sessions; this document describes the legacy delegated-Run executor underneath
+that surface and behind explicit compatibility profiles. "Child run" appears
+only in historical source references or persisted test data.
 
 ## Local Source References
 
@@ -54,8 +59,8 @@ runtime should use `.agents/*` paths and Lin-owned event store semantics.
 Lin does not introduce Team, Swarm, or Delegate as first-class model-facing
 concepts for the same-conversation delegated-run runtime.
 
-The model-facing concept should be the same mature concept used by cc-2.1's core
-delegated-run path:
+The legacy executor concept follows the same mature concept used by cc-2.1's
+core delegated-run path:
 
 ```text
 main agent conversation
@@ -66,9 +71,9 @@ main agent conversation
           -> status/progress/result notification
 ```
 
-Sub-runs are conversation-scoped execution units. The main agent remains the
-coordinator. Multiple sub-runs run in parallel when the model emits multiple
-`spawn_run` tool calls in the same turn.
+Sub-runs are conversation-scoped execution units. The parent remains the
+coordinator. Multiple sub-runs run in parallel when a legacy-enabled caller emits
+multiple `spawn_run` tool calls in the same turn.
 
 The delegated Run is therefore Lin's isolated cognition and task execution unit. It is not
 a team member, a code-editing sandbox, or a cross-conversation messaging peer.
@@ -83,7 +88,7 @@ cc-2.1 contains two layers:
 
 | cc-2.1 source | Behavior to study | Lin decision |
 | --- | --- | --- |
-| `src/tools/AgentTool/constants.ts` | Tool name is `Agent`; legacy alias is `Task`. | Historical source reference only; Lin's current model-facing tool is `spawn_run`. |
+| `src/tools/AgentTool/constants.ts` | Tool name is `Agent`; legacy alias is `Task`. | Historical source reference only; Lin's legacy executor tool is `spawn_run`; current product work starts through Issue / Agent Session tools. |
 | `src/tools/AgentTool/AgentTool.tsx` | Launches fresh/fork agents, async/background agents, teammate variants, worktree/remote variants, result mapping. | Reuse the core child-run path. Omit teammate, team, worktree, and remote branches. |
 | `src/tools/AgentTool/prompt.ts` | Teaches when to use child runs, how to brief fresh agents, how to launch multiple agents in one turn, and how fork differs from fresh. | Reuse the guidance style and parallelism rules, with Lin terminology. |
 | `src/tools/AgentTool/forkSubagent.ts` | Fork gate, implicit fork by omitting `agent_type`, cache-stable fork directive, recursive fork guard. | Reuse cache-stable context copying, but expose Lin-owned `context` modes and bounded recursive `spawn_run`. |
@@ -201,8 +206,8 @@ Borrow spawn/fork semantics, depth and cycle guard, bounded concurrency,
 project-agent trust checks, final-result-only parent content, and expandable
 execution details. Prefer pi-mono in-process `Agent` instances over shelling out
 to `pi` when Lin can preserve the same isolation contract. Under one-Neva, keep
-the in-process run-tree shape and model-facing `spawn_run` tool, but do not load
-project agent definitions.
+the in-process run-tree shape and the legacy `spawn_run` executor, but do not
+load project agent definitions.
 
 [ECA](https://eca.dev/)
 
@@ -304,10 +309,12 @@ crew/team/workflow/memory concepts into the first child run implementation.
 
 ### External Research Conclusions
 
-- Keep one primary model-facing tool: `spawn_run`. Avoid separate Team, Delegate,
-  or general Send Message tools in the first version. Multiple child runs are
-  launched by multiple `spawn_run` tool calls in the same turn, matching cc-2.1's
-  model guidance and avoiding a second orchestration abstraction.
+- In the original delegated-Run implementation, keep one primary legacy executor
+  tool: `spawn_run`. Avoid separate Team, Delegate, or general Send Message tools
+  for that executor. Multiple child runs are launched by multiple `spawn_run`
+  tool calls in the same turn when a legacy profile is explicitly enabled,
+  matching cc-2.1's model guidance and avoiding a second legacy orchestration
+  abstraction.
 - `spawn_run` must support explicit context modes. External Pi and ECA
   implementations validate the underlying split between clean child contexts
   and inherited-context child work; Lin exposes that as `context:'none'`,
@@ -1048,16 +1055,16 @@ smallest Lin-owned policy that supports useful child runs with clear boundaries.
 
 ## Tool Profiles
 
-The main agent can see:
+When an explicit legacy delegated-Run profile is enabled, the caller can see:
 
-- normal Lin tools;
+- normal Lin tools allowed by that profile;
 - `spawn_run`;
 - `run_status` for explicit status/wait checks;
 - `run_steer`;
 - `run_amend`;
 - `run_stop`.
 
-Child Runs can see:
+Legacy child Runs can see:
 
 - tools allowed by the current definition/scope intersection;
 - skill tool if enabled for the definition;
@@ -1073,9 +1080,13 @@ Background child runs can see only tools that can run without direct UI control.
 This should be implemented as a profile over Lin tools rather than a separate
 tool system.
 
-## Agent-Facing Prompt Guidance
+## Legacy Agent-Facing Prompt Guidance
 
-The delegation prompt should teach:
+This guidance applies only to explicit legacy delegated-Run tool profiles. The
+default Issue runtime prompt should instead use `issue_*` and `agent_session_*`
+tools.
+
+The legacy delegation prompt should teach:
 
 - Use `spawn_run` for complex, multi-step, or independent work.
 - Launch multiple child runs in one turn when the tasks are independent.

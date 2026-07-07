@@ -471,6 +471,7 @@ interface AgentRuntimeOptions {
   streamFn?: StreamFn;
   dreamMemoryExtractionEnabled?: boolean;
   errorReporter?: ErrorReporter;
+  legacyRunToolsEnabled?: boolean;
 }
 
 interface AgentToolApprovalInput {
@@ -2664,6 +2665,7 @@ export class AgentRuntime {
           imageGeneration: this.createImageGenerationRuntime(conversationId, localWorkspace, () => conversationRef.current),
           allowedTools: agentToolFilter.allowedTools,
           disallowedTools: agentToolFilter.disallowedTools,
+          legacyRunToolsEnabled: this.options.legacyRunToolsEnabled,
           permissionScopeIdProvider: () => {
             const current = conversationRef.current;
             return current ? this.activeRunId(current) : null;
@@ -2855,6 +2857,7 @@ export class AgentRuntime {
       imageGeneration: this.createImageGenerationRuntime(conversation.eventState.conversation?.id ?? 'unknown', conversation.localWorkspace, () => conversation),
       allowedTools: conversation.agentToolFilter.allowedTools,
       disallowedTools: conversation.agentToolFilter.disallowedTools,
+      legacyDelegationToolsEnabled: this.options.legacyRunToolsEnabled,
     });
   }
 
@@ -2904,6 +2907,7 @@ export class AgentRuntime {
       runScope: input.scope,
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
+      legacyRunToolsEnabled: this.options.legacyRunToolsEnabled,
       preapprovedToolRules: input.preapprovedToolRules,
       permissionScopeIdProvider: () => input.conversationId,
       // Unattended (scheduled command) runs have NO interactive approval channel:
@@ -7956,6 +7960,7 @@ function createConfiguredAgent(
     runScope?: AgentRunScope;
     allowedTools?: readonly string[];
     disallowedTools?: readonly string[];
+    legacyRunToolsEnabled?: boolean;
     preapprovedToolRules?: string[];
     l0CacheBreakpointEnabled?: boolean;
     permissionScopeIdProvider?: () => string | null;
@@ -8008,6 +8013,7 @@ function createConfiguredAgent(
     runScope: options.runScope,
     allowedTools: options.allowedTools,
     disallowedTools: options.disallowedTools,
+    legacyDelegationToolsEnabled: options.legacyRunToolsEnabled,
   });
   let agent: Agent;
   agent = new Agent({

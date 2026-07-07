@@ -40,6 +40,38 @@ describe('agent tool catalog', () => {
     expect(filteredNames).toEqual([...TOOL_CATALOG].sort());
   });
 
+  test('Issue runtime suppresses legacy Run tools unless explicitly enabled', async () => {
+    const { createAgentTools } = await import('../../src/main/agentTools');
+    const currentNames = createAgentTools(undefined, {
+      localFileRoot: '/tmp',
+      delegationRuntime: {} as AgentDelegationRuntime,
+      issueRuntime: issueRuntimeStub(),
+    }).map((tool) => tool.name);
+    expect(currentNames).toEqual(expect.arrayContaining([
+      'issue_search',
+      'agent_session_start',
+    ]));
+    expect(currentNames).not.toContain('spawn_run');
+    expect(currentNames).not.toContain('run_status');
+    expect(currentNames).not.toContain('run_steer');
+    expect(currentNames).not.toContain('run_amend');
+    expect(currentNames).not.toContain('run_stop');
+
+    const legacyNames = createAgentTools(undefined, {
+      localFileRoot: '/tmp',
+      delegationRuntime: {} as AgentDelegationRuntime,
+      issueRuntime: issueRuntimeStub(),
+      legacyDelegationToolsEnabled: true,
+    }).map((tool) => tool.name);
+    expect(legacyNames).toEqual(expect.arrayContaining([
+      'spawn_run',
+      'run_status',
+      'run_steer',
+      'run_amend',
+      'run_stop',
+    ]));
+  });
+
   test('default outliner-backed tools do not expose the internal data import adapter', async () => {
     const { createAgentTools } = await import('../../src/main/agentTools');
     const host: OutlinerToolHost = {

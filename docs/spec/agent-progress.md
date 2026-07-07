@@ -130,8 +130,10 @@ truth.
   - embedded skill shell expansion through the shared permission layer
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact
-  - same-conversation `spawn_run`, `run_status`, `run_steer`, `run_amend`, and
-    `run_stop`
+  - legacy same-conversation delegated-Run tools (`spawn_run`, `run_status`,
+    `run_steer`, `run_amend`, and `run_stop`) retained behind explicit
+    compatibility profiles; ordinary work management uses Issue and Agent
+    Session tools
   - child runs with full/brief/none context modes, verifier retry, and their OWN
     run ledger (run unification; sidechain transcripts replay from the ledger)
     plus background notifications

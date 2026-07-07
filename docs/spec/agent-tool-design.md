@@ -62,15 +62,22 @@ surface.
 |---|---|---:|---|---|
 | `past_chats` | agent | No | No | Read/search visible prior conversation history and raw cited spans. |
 | `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
-| `spawn_run` | agent | No document mutation | No | Start a scoped child Run for a focused objective, with criteria unless `verify:false`. |
-| `run_status` | agent | No | No | Inspect a same-session background or child Run by `runId`/name. |
-| `run_steer` | agent | No | No | Send soft execution guidance to a live Run without changing its contract. |
-| `run_amend` | agent | No document mutation | No | Hard-amend a Run's objective, criteria, or budget; invalidates verifier conclusions. |
-| `run_stop` | agent | No document mutation | No | Stop a live same-session Run. |
 | `generate_image` | agent | Creates image files | Usually yes | Generate or edit raster images through enabled image-capable providers. |
+| `issue_search` | agent | No | No | Search concrete Issues and Recurring Issues by canonical work fields, execution state, node/tag scope, Activity state, and ordering fields. |
+| `issue_read` | agent | No | No | Read one Issue or Recurring Issue with requested detail slices for sessions, Activity, hierarchy, generated Issues, or verification evidence. |
+| `issue_create` | agent | Yes | Usually yes | Draft or confirm an Issue or Recurring Issue with objective, criteria, trigger, input scope, delegate profile, and verification policy. |
+| `issue_update` | agent | Yes | Usually yes | Draft or confirm field, status, trigger, recurrence, hierarchy, or lifecycle changes on existing Issues and Recurring Issues. |
+| `agent_session_start` | agent | Runtime execution | Yes when execution-enabling | Start one Agent Session for an Issue from the confirmed input snapshot. |
+| `agent_session_read` | agent | No | No | Read an Agent Session's status, latest output, Activity, and executor-facing state without exposing a Run id. |
+| `agent_session_send_message` | agent | Runtime execution | Yes | Send soft guidance or requested input to a live Agent Session. |
+| `agent_session_stop` | agent | Runtime execution | Yes | Request cancellation of a live Agent Session. |
 
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
+Legacy delegated-Run tools (`spawn_run`, `run_status`, `run_steer`,
+`run_amend`, and `run_stop`) remain as an internal compatibility executor and
+can be enabled only through an explicit legacy tool profile. They are not part
+of the default product model-facing tool registry when Issue runtime is active.
 
 ### Agent Issue Manager Contract Checkpoint
 
@@ -218,10 +225,13 @@ and links the verifier Agent Session as Issue evidence. There is no
 `verification_*` model-facing tool and a verifier verdict does not automatically
 complete the Issue.
 
-## Run Delegation Tools
+## Legacy Run Delegation Executor
 
-`spawn_run` is the only downward delegation primitive. It forks Neva into an isolated
-child Run and takes:
+The delegated-Run executor remains in the runtime for compatibility, isolated
+skill execution, tests, and as the implementation substrate for some Agent
+Session starts. It is not the ordinary product work-management API. When a
+legacy tool profile explicitly enables it, `spawn_run` forks Neva into an
+isolated child Run and takes:
 
 ```ts
 interface SpawnInput {
