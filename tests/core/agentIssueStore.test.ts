@@ -215,6 +215,56 @@ describe('agent issue store', () => {
     });
   });
 
+  test('coalesces missed Recurring Issue windows into the latest concrete Issue', async () => {
+    await withStore(async (store) => {
+      const createdAt = new Date(2026, 6, 7, 17, 0).getTime();
+      const laterDue = new Date(2026, 6, 10, 18, 5).getTime();
+      await store.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Daily digest',
+          cadence: { type: 'daily', time: '18:00' },
+          timeZone: 'Asia/Shanghai',
+          missedPolicy: { type: 'coalesce-latest' },
+          issueTemplate: {
+            delegate: { type: 'default-agent', runProfile: 'background' },
+            trigger: { type: 'when-ready' },
+            permissionMode: 'unattended',
+          },
+        },
+        request: { mode: 'request' },
+        reason: 'Create digest routine.',
+      }, actor, createdAt);
+      const recurring = (await store.search({ targets: ['recurring-issue'] })).rows[0];
+      await store.update({
+        target: { type: 'recurring-issue', id: recurring.target.id, expectedRevision: recurring.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm digest routine.',
+      }, actor, createdAt + 1);
+
+      const materialized = await store.materializeDueRecurringIssues(laterDue, actor);
+      expect(materialized).toHaveLength(1);
+      expect(materialized[0].title).toBe('Daily digest - 2026-07-10');
+      expect(materialized[0].recurrence).toMatchObject({
+        recurringIssueId: recurring.target.id,
+        skippedWindowCount: 3,
+      });
+      const read = await store.read({ target: recurring.target, include: ['activity', 'generated-issues'] });
+      expect(read.generatedIssues?.map((issue) => issue.title)).toEqual(['Daily digest - 2026-07-10']);
+      expect(read.activity).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          content: {
+            type: 'agent-action',
+            action: 'materialize',
+            parameter: 'coalesced:3',
+            result: materialized[0].id,
+          },
+        }),
+      ]));
+    });
+  });
+
   test('previews do not persist Issues', async () => {
     await withStore(async (store) => {
       const preview = await store.create({

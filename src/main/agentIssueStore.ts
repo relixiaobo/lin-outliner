@@ -510,7 +510,8 @@ export class AgentIssueStore {
           continue;
         }
         const nextDue = nextDueAfter(recurringIssue.cadence, dueAt + 1);
-        const issue = issueFromRecurringIssue(recurringIssue, dueAt, nextDue ?? dueAt, now);
+        const skippedWindowCount = countSkippedWindows(state, recurringIssue, dueAt);
+        const issue = issueFromRecurringIssue(recurringIssue, dueAt, nextDue ?? dueAt, now, skippedWindowCount);
         state.issues[issue.id] = issue;
         linkIssueToParent(state, issue);
         recurringIssue.nextMaterializationAt = nextDue ?? undefined;
@@ -519,7 +520,12 @@ export class AgentIssueStore {
         appendActivity(state, {
           target: { type: 'recurring-issue', recurringIssueId: recurringIssue.id },
           actor,
-          content: { type: 'agent-action', action: 'materialize', result: issue.id },
+          content: {
+            type: 'agent-action',
+            action: 'materialize',
+            ...(skippedWindowCount > 0 ? { parameter: `coalesced:${skippedWindowCount}` } : {}),
+            result: issue.id,
+          },
           relatedTargets: [{ type: 'issue', id: issue.id }],
           createdAt: now,
         });
@@ -644,6 +650,7 @@ function issueFromRecurringIssue(
   windowStartAt: number,
   windowEndAt: number,
   now: number,
+  skippedWindowCount = 0,
 ): AgentIssue {
   const template = recurringIssue.issueTemplate;
   const date = formatIssueWindowDate(windowStartAt);
@@ -662,6 +669,7 @@ function issueFromRecurringIssue(
       windowStartAt,
       windowEndAt,
       materializedAt: now,
+      ...(skippedWindowCount > 0 ? { skippedWindowCount } : {}),
     },
     ...(template.completionCriteria ? { completionCriteria: template.completionCriteria } : {}),
     ...(template.verificationPolicy ? { verificationPolicy: template.verificationPolicy } : {}),
@@ -1310,6 +1318,27 @@ function hasGeneratedIssueForWindow(state: AgentIssueStoreState, recurringIssueI
     issue.recurrence?.recurringIssueId === recurringIssueId
     && issue.recurrence.windowStartAt === windowStartAt
   ));
+}
+
+function countSkippedWindows(
+  state: AgentIssueStoreState,
+  recurringIssue: AgentRecurringIssue,
+  dueAt: number,
+): number {
+  const generatedWindowStarts = Object.values(state.issues)
+    .map((issue) => issue.recurrence?.recurringIssueId === recurringIssue.id ? issue.recurrence.windowStartAt : undefined)
+    .filter((value): value is number => value !== undefined)
+    .sort((left, right) => right - left);
+  const boundary = generatedWindowStarts[0] ?? recurringIssue.createdAt;
+  let cursor = nextDueAfter(recurringIssue.cadence, boundary);
+  let skipped = 0;
+  let guard = 0;
+  while (cursor !== null && cursor < dueAt && guard < 10_000) {
+    if (!hasGeneratedIssueForWindow(state, recurringIssue.id, cursor)) skipped += 1;
+    cursor = nextDueAfter(recurringIssue.cadence, cursor + 1);
+    guard += 1;
+  }
+  return skipped;
 }
 
 function mostRecentDueAtOrBefore(cadence: RecurringIssueCadence, now: number, notBefore: number): number | null {

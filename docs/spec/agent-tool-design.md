@@ -171,7 +171,10 @@ Recurring Issue materialization is store-owned and due-time only. Active,
 confirmed Recurring Issues can create concrete Issues when a cadence is due;
 draft, paused, or archived Recurring Issues do not. Generated Issue titles
 include the covered local date by default, and repeated sweeps do not create
-duplicate Issues for the same recurrence window.
+duplicate Issues for the same recurrence window. When multiple due windows were
+missed, the default `coalesce-latest` policy creates only the latest concrete
+Issue, stores `skippedWindowCount` on the Issue recurrence context, and records
+the coalesced count in Recurring Issue Activity.
 
 Automatic trigger execution is one-shot per concrete Issue in V1: a confirmed
 unattended `when-ready` Issue or due `scheduled` Issue without any prior Agent
