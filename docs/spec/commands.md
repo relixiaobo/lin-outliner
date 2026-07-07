@@ -113,13 +113,17 @@ toggles the owner node's done state.
 `create_search_node`, `set_search_node`, `set_search_query_outline`,
 `refresh_search_node_results`.
 
-### Document — command nodes (scheduled routines)
+### Document — command nodes (manual compatibility)
 `set_command_node`, `set_command_schedule`, `mark_command_fired`.
 
 A `command` node is **node-native**: its text content is a natural-language brief,
 its body (the non-field child outline) is the prompt detail, and its config lives
-in one real child field row — `Schedule`. Arming its schedule makes it run
-unattended on a timer. (Design history: `docs/plans/archive/agent-scheduled-routines.md`.)
+in one real child field row — `Schedule`. Command-node scheduled execution is
+retired: the stored schedule value is legacy compatibility data and does not
+auto-fire. Issue and Recurring Issue triggers are the only automatic scheduled
+agent-work source of truth. (Design history:
+`docs/plans/archive/agent-scheduled-routines.md`; replacement design:
+`docs/plans/agent-issue-manager.md`.)
 
 - `set_command_node(nodeId)` converts a plain content row into a `command` node
   (brief stays in the node's content), seeds the user-only `commandSchedule`
@@ -127,74 +131,35 @@ unattended on a timer. (Design history: `docs/plans/archive/agent-scheduled-rout
   field `sys:commandSchedule`, whose value editor writes the gated scalar.
   Idempotent (find-or-create — a re-conversion never duplicates the row). Drafting
   a command is allowed from any origin.
-- `set_command_schedule(nodeId, schedule?)` arms / changes / clears the schedule
-  — a canonical `<endpoint> RRULE:...` string parsed by `dateSchedule.ts`. **The
-  bright line: a command node's schedule is rejected unless `origin === 'user'`**
-  (gated on the `command` node-type invariant, not the mutable `protectedFields`
-  array, so it can never fail open). The agent can draft a brief and propose a
-  schedule as text, but only the user can arm an unattended run. A non-empty
-  value re-arms the watermark (`sysLastRunAt = now`); clearing it makes the node
-  manual-only and leaves the watermark untouched.
-- `mark_command_fired(nodeId, firedAt)` advances the system fire watermark
-  (`sysLastRunAt`) after a successful run. **Forward-only** — a fire that captured
-  an older sweep-start time never moves the watermark backward (so a long run that
-  straddled a user re-arm can't re-expose a covered occurrence). Like the schedule
-  bright line it is **system-managed**: an `origin === 'agent'` write is rejected
-  at the gateway (symmetric to `set_command_schedule`, so an agent can never
-  suppress a user's schedule by jumping the watermark ahead).
+- `set_command_schedule(nodeId, schedule?)` stores / changes / clears the legacy
+  schedule string — a canonical `<endpoint> RRULE:...` string parsed by
+  `dateSchedule.ts`. **The bright line remains:** a command node's schedule is
+  rejected unless `origin === 'user'` (gated on the `command` node-type
+  invariant, not the mutable `protectedFields` array, so it can never fail open).
+  The agent can draft a brief and propose a schedule as text, but this field no
+  longer grants unattended execution. A non-empty value keeps the historical
+  watermark behavior (`sysLastRunAt = now`) only so old data remains stable;
+  clearing it leaves the watermark untouched.
+- `mark_command_fired(nodeId, firedAt)` is a legacy system watermark command
+  (`sysLastRunAt`) retained for compatibility with older command-run code and
+  tests. **Forward-only** — it never moves the watermark backward. It remains
+  **system-managed**: an `origin === 'agent'` write is rejected at the gateway.
 - `mark_command_attempted(nodeId, attemptedAt)` records the at-most-once marker
-  (`sysLastAttemptAt`) **before** a run starts, so a crash mid-run can be told
-  apart from a clean failure on the next launch. Forward-only and agent-rejected,
-  exactly like `mark_command_fired`.
+  (`sysLastAttemptAt`) retained for the same legacy compatibility boundary.
+  Forward-only and agent-rejected, exactly like `mark_command_fired`.
 
-The anacron scheduler (main process) sweeps command nodes on a 60s tick, on app
-launch, and on `powerMonitor.resume`, firing each due node once (catch-up
-coalesces a multi-day gap). Due nodes fire **concurrently** — one slow/hung run
-never blocks the others or subsequent sweeps. A fire runs the brief as a
-**delegated child run** anchored to the command's own delivery conversation. The
-run is recorded in the Run index, surfaces in Work/Runs and durable
-notifications, and its full detail/transcript is available through the Run detail
-view; it is not inserted into the chat transcript as an inline child-run row.
-Under the one-Neva invariant there is exactly one agent, so a scheduled command
-always forks the current agent (Neva), running under its identity and
-capabilities — a command never selects an executing agent. The run prompt is the
-brief — the command's title plus its non-field child outline serialized as a
-nested bullet list (`commandBriefText`, with inline references reconstructed via
-reference markup so they survive); field-entry children (the Schedule row) are
-config, not prompt, and are excluded. An
-empty brief is skipped (never fires, never advances the watermark). **Only a run
-that actually
-completes advances the watermark** — a failed run (no provider, bad key, rate
-limit) leaves the occurrence due and arms an in-memory backoff ladder (measured
-from the failure time, not the sweep-start time, so the ladder doesn't collapse
-on a slow run). The sweep also prunes backoff state and deletes the delivery
-conversation of a command node that was permanently removed.
-
-**At-most-once across a crash.** Before each fire the scheduler persists
-`mark_command_attempted(dueAt)`, then starts the run. The due check itself reads
-only `sysLastRunAt`, so an in-process failure still retries through the backoff
-ladder. But a crash *during* a run would otherwise re-fire the same occurrence on
-the next launch (the watermark never advanced). To prevent that, a one-time
-startup pass — `reconcileCommandAttempts()`, run once before the first sweep —
-advances the watermark past any occurrence whose `sysLastAttemptAt` is newer than
-its `sysLastRunAt`: an interrupted run is **skipped, not re-fired** (at-most-once
-for the crash case; the user re-arms or the next occurrence picks it up). A clean
-node (`sysLastAttemptAt <= sysLastRunAt`) is left untouched.
-
-**Unattended permission model.** A scheduled fire runs with no interactive
-approval channel (`unattended: true` → no `approvalHandler`), so it can never
-hang waiting on a human. Tools whose policy resolves to **soft_blocked** are
-denied and reported (the run continues and records the denial) rather than
-blocking; matching `softBlockAllows` exceptions are still honored.
-`agent_run_command_now` runs attended (the human is present), so it can surface
-the soft-block card.
+There is no command-node anacron scheduler. The main process no longer sweeps
+command nodes on a timer, app launch, or `powerMonitor.resume`; `runCommandCatchUp`
+is a compatibility no-op. Old command nodes therefore cannot create unattended
+background work. Scheduled work must be represented as an Issue with a scheduled
+trigger or as a Recurring Issue that materializes concrete Issues.
 
 `agent_run_command_now(nodeId)` (agent command) runs the brief attended, right
 now: the same no-human-turn execution with a `{type:'node'}` trigger and **no
-watermark advance**, so testing a command never disturbs its schedule. It
-coordinates with the scheduled sweep through a shared in-flight guard — if a fire
-for the same node is already running it returns the existing conversation rather
-than colliding. Returns the delivery `conversationId`.
+watermark advance**, so testing a command never disturbs the legacy schedule
+field. It coordinates through a shared in-flight guard — if a run for the same
+node is already running it returns the existing conversation rather than
+colliding. Returns the delivery `conversationId`.
 
 `agent_ensure_command_conversation(nodeId)` ensures the command's delivery
 conversation exists (creating an empty one titled from the brief if needed) and
@@ -216,8 +181,9 @@ title like the inline Done checkbox) sits at the start of the command title;
 `useCommandRun` drives the attended run: ensure the delivery conversation
 (`agent_ensure_command_conversation`), reveal the agent panel on it (without
 auto-opening Work — that was abrupt), then run it
-(`agent_run_command_now`), so the run streams through the Run index and can be
-opened from Work/Runs. While the run is in flight the **command bullet glyph becomes a
+(`agent_run_command_now`), so the run streams through the delivery conversation
+and can be inspected from run-source detail references. While the run is in
+flight the **command bullet glyph becomes a
 spinner** (`RowMarker` `processing` → `.is-processing`) — that is the *only*
 running indicator; the Run button never reflects running/failed state (a
 `runningRef` in the hook just guards against a double-trigger). The two config

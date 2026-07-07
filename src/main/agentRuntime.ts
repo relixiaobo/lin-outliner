@@ -879,7 +879,6 @@ export class AgentRuntime {
     });
     this.startDreamScheduler();
     this.startIssueScheduler();
-    this.startCommandScheduler();
   }
 
   ready() {
@@ -893,14 +892,6 @@ export class AgentRuntime {
     this.queueScheduledDream(new Date());
     this.queueIssueRecovery(new Date());
     this.queueIssueSweep(new Date());
-    // Crash recovery FIRST: reconcile any occurrence that was attempted but never
-    // recorded success (the app crashed/quit/slept mid-run) — at-most-once, so it
-    // is skipped, not re-fired. Chained on the same sweep tail, so the catch-up
-    // sweep below sees the reconciled watermark.
-    this.queueCommandReconcile();
-    // Anacron catch-up on launch: fire any command whose occurrence elapsed
-    // while the app was closed (coalesced to one fire per command).
-    this.queueCommandSweep(new Date());
   }
 
   async drainDreamMemoryExtractionForTest(): Promise<void> {
@@ -3475,7 +3466,9 @@ export class AgentRuntime {
   // Catch-up hook for app launch (see ready()) and `powerMonitor.resume` (wired
   // in main.ts). Idle-safe: queued behind any in-flight sweep.
   runCommandCatchUp() {
-    this.queueCommandSweep(new Date());
+    // Scheduled command-node execution is retired as an automatic work source.
+    // Issue/Recurring Issue triggers own scheduled agent work; command nodes can
+    // still be run manually through runCommandNow for compatibility.
   }
 
   runIssueCatchUp() {

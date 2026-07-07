@@ -2870,11 +2870,10 @@ if (!app.requestSingleInstanceLock()) {
     configureSessionSecurity();
     registerIpc();
     createWindow();
-    // Anacron catch-up on system wake: a command whose occurrence elapsed while
-    // the device slept fires once on resume (coalesced via the watermark).
+    // Anacron catch-up on system wake belongs to Issue triggers. Legacy
+    // command-node schedules no longer auto-fire.
     powerMonitor.on('resume', () => {
       agentRuntime.runIssueCatchUp();
-      agentRuntime.runCommandCatchUp();
     });
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     createLauncherWindow({

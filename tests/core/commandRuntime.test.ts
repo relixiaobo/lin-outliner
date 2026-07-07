@@ -61,6 +61,25 @@ async function createRuntime(dataRoot: string, core: Core, calls: HandleCall[]) 
 }
 
 describe('command runtime — failed fires', () => {
+  test('scheduled command catch-up is retired and does not auto-fire command nodes', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-runtime-'));
+    roots.push(dataRoot);
+    const calls: HandleCall[] = [];
+    const core = Core.new();
+    const libraryId = core.projection().libraryId;
+    const nodeId = core.createNode(libraryId, null, 'Summarize my unread feeds').focus!.nodeId;
+    core.setCommandNode(nodeId);
+    core.setCommandSchedule(nodeId, '2026-06-09T09:00 RRULE:FREQ=DAILY', 'user');
+    const runtime = await createRuntime(dataRoot, core, calls);
+
+    runtime.runCommandCatchUp();
+    await Promise.resolve();
+
+    expect(calls.some((call) => call.command === 'mark_command_attempted')).toBe(false);
+    expect(calls.some((call) => call.command === 'mark_command_fired')).toBe(false);
+    runtime.stopCommandScheduler();
+  });
+
   test('a fire that cannot complete does NOT advance the watermark and arms backoff', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-command-runtime-'));
     roots.push(dataRoot);

@@ -1290,7 +1290,7 @@ Implemented for the current first-class surfaces.
 Deferred UI polish:
 
 - cross-conversation per-agent aggregation and non-child run task adapters
-  (Dream, scheduled routines, background shell tasks);
+  (Dream, Issue-backed scheduled work, background shell tasks);
 - richer progress summaries for long background runs;
 - metrics and diagnostics beyond sidechain transcript replay.
 
