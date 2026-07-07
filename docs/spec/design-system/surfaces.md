@@ -188,7 +188,11 @@ focuses the composer. Ordinary Channel rows expose a trailing edit icon for inli
 rename and a trailing trash icon for confirmed deletion; protected default
 Channels do not show rename or delete controls. Channel settings surfaces, when
 opened directly, use the settings sheet/inset-list language for remaining
-per-Channel settings such as Dream-data inclusion.
+per-Channel settings such as Dream-data inclusion. Agent and Channel config
+windows render their header, field structure, and footer actions before their
+agent/conversation IPC data resolves; the body carries `aria-busy` and disables
+mutable controls instead of replacing the child window with a generic loading
+state.
 
 **Transcript.** Agent UI uses Tenon foundations: neutral text, translucent chrome,
 opaque content surfaces, sparse semantic colour, low elevation, and compact
@@ -243,7 +247,10 @@ scrollport starts below fixed chrome via margin, not scroll padding.
 Providers, Permissions, Skills, Agent Profiles. The content pane is a flat opaque
 Preferences base with constrained grouped content (`--settings-content-max-width`,
 920px). There is no permanent detail pane; per-provider config opens a native
-child window. Categories, not providers, are top-level rail rows.
+child window. Categories, not providers, are top-level rail rows. The rail,
+toolbar, and selected category surface render immediately; provider/runtime data
+loads into the pane asynchronously instead of replacing the window with a loading
+page.
 
 **General.** General owns app-wide preferences: Theme and Language. Theme uses
 `SegmentedControl` (System / Light / Dark) with neutral selected state, ARIA
@@ -256,7 +263,8 @@ without a save footer.
 Pane-level intro copy is minimized. Rows are text-led; switches, selects, and
 segmented controls trail. Inline chips show quiet metadata only and do not
 duplicate a trailing control's value. Empty/loading states use `FeedbackState`;
-notices use neutral fill with status colour on text only.
+loading states are local to a row group or content section, never the whole
+window. Notices use neutral fill with status colour on text only.
 
 **Provider rows.** Providers group into Configured and Add Providers. Configured
 means a deliberate Tenon row or an externally configured provider such as CC
@@ -275,7 +283,10 @@ non-blocking validation. Model and effort belong to the agent profile, not the
 provider connection. Saved user-pasted keys stay masked until explicit show/copy;
 externally managed keys such as CC Switch's Codex key are never shown or copied.
 Raw-key show/copy is available only inside the provider config child window, and
-main rejects the dedicated key-read IPC from all other windows.
+main rejects the dedicated key-read IPC from all other windows. Before provider
+settings resolve, the window still paints the provider title/avatar, reserved
+credential/base-URL rows, and disabled footer actions with `aria-busy`; it never
+falls back to a whole-window loading page.
 
 Every framed content block in the config window uses `--radius-md`; row-level
 field focus uses `:focus-within` on the row because inset cards clip outer rings.

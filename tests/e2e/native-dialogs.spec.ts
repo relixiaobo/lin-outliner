@@ -11,6 +11,16 @@ import { ids, installElectronMock, openMockedApp, row } from './outlinerMock';
 // T4 — so the guard now rides on the "Add tag" in-menu input, which is
 // icon-independent and the same class of would-be-prompt flow.)
 test.describe('in-app dialogs replace native browser prompts', () => {
+  test('main window paints chrome before workspace initialization finishes', async ({ page }) => {
+    await installElectronMock(page, { initWorkspaceDelayMs: 1_000 });
+    await page.goto('/');
+
+    await expect(page.locator('.window-chrome-zone')).toHaveCount(2);
+    await expect(page.locator('.app-startup-shell')).toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('.loading-panel')).toHaveCount(0);
+    await expect(row(page, ids.alpha)).toHaveCount(0);
+  });
+
   test('context-menu text entry uses an in-app field, not window.prompt', async ({ page }) => {
     const browserDialogs: string[] = [];
     page.on('dialog', (dialog) => {

@@ -17,8 +17,9 @@ import {
 } from './providerCatalog';
 import { ProviderConfigForm, type ProviderConfigDraft } from './ProviderConfigForm';
 import { ProviderOAuthForm } from './ProviderOAuthForm';
-import { EmptyState, ErrorState } from '../primitives/FeedbackState';
-import { LoaderIcon } from '../icons';
+import { Button } from '../primitives/Button';
+import { ErrorState } from '../primitives/FeedbackState';
+import { Input } from '../primitives/Input';
 
 // Root rendered in the dedicated per-provider config window (?surface=provider-config),
 // a modal child of the settings window. It fetches its own provider settings, derives
@@ -65,8 +66,13 @@ export function ProviderConfigWindow() {
   }
   if (!settings) {
     return (
-      <main className="provider-config-window" aria-label={t.window.providerConfigTitle}>
-        <EmptyState icon={LoaderIcon} loading role="status" title={t.common.loading} />
+      <main className="provider-config-window" aria-busy="true" aria-labelledby={titleId}>
+        <ProviderConfigLoadingShell
+          isCustom={isCustom}
+          onClose={close}
+          providerId={providerId}
+          titleId={titleId}
+        />
       </main>
     );
   }
@@ -189,5 +195,93 @@ export function ProviderConfigWindow() {
         titleId={titleId}
       />
     </main>
+  );
+}
+
+function ProviderConfigLoadingShell({
+  isCustom,
+  onClose,
+  providerId,
+  titleId,
+}: {
+  isCustom: boolean;
+  onClose: () => void;
+  providerId: string;
+  titleId: string;
+}) {
+  const t = useT();
+  const providerName = isCustom
+    ? t.providerCatalog.customProvider
+    : (providerId ? formatProviderName(providerId) : t.window.providerConfigTitle);
+
+  return (
+    <>
+      <header className="settings-sheet-head">
+        <span aria-hidden="true" className="settings-sheet-avatar">
+          {isCustom
+            ? <span className="settings-provider-avatar is-large">+</span>
+            : <ProviderAvatar large providerId={providerId} />}
+        </span>
+        <div className="settings-sheet-head-text">
+          <h2 className="settings-sheet-title" id={titleId}>{providerName}</h2>
+          <p className="settings-sheet-subtitle">{isCustom ? t.providerCatalog.openAiCompatible : t.common.loading}</p>
+        </div>
+      </header>
+
+      <div className="settings-sheet-body provider-config-loading-body" aria-busy="true">
+        <div className="inset-card" role="group">
+          {isCustom ? (
+            <label className="settings-sheet-row">
+              <span className="settings-sheet-row-label">{t.providerConfig.providerIdLabel}</span>
+              <Input
+                className="settings-sheet-row-input"
+                disabled
+                label={t.providerConfig.providerIdLabel}
+                placeholder={t.providerConfig.providerIdPlaceholder}
+                value=""
+                variant="bare"
+              />
+            </label>
+          ) : null}
+          <label className="settings-sheet-row">
+            <span className="settings-sheet-row-label">{t.providerConfig.apiKeyLabel}</span>
+            <Input
+              className="settings-sheet-row-input"
+              disabled
+              label={t.providerConfig.apiKeyLabel}
+              placeholder={t.common.loading}
+              value=""
+              variant="bare"
+            />
+          </label>
+          <label className="settings-sheet-row">
+            <span className="settings-sheet-row-label">{t.providerConfig.baseUrlLabel}</span>
+            <Input
+              className="settings-sheet-row-input"
+              disabled
+              label={t.providerConfig.baseUrlLabel}
+              placeholder={t.common.loading}
+              value=""
+              variant="bare"
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="settings-sheet-actions">
+        <div className="settings-sheet-actions-left" />
+        <div className="settings-sheet-actions-right">
+          <Button onClick={onClose} variant="ghost">
+            {t.providerConfig.cancel}
+          </Button>
+          <Button disabled variant="secondary">
+            {t.providerConfig.validate}
+          </Button>
+          <Button disabled variant="primary">
+            {t.providerConfig.save}
+          </Button>
+        </div>
+      </div>
+    </>
   );
 }

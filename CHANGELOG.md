@@ -12,6 +12,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Native-feel loading surfaces** — Settings now paints its toolbar, rail, and
+  active pane before provider settings finish loading, and the main window
+  startup path paints persistent window chrome instead of a generic centered
+  loading page. Provider, Agent, and Channel config child windows now also paint
+  their header, field structure, and footer actions before their data IPC
+  resolves, with only local busy/disabled state while loading. The empty Agent
+  panel stays blank while provider settings load instead of showing a loading card
+  or flashing no-provider onboarding.
 - **Channel deletion affordance** — ordinary Channel rows now expose a confirmed
   delete action beside inline rename in the conversation menu, while protected
   General/Dream Channels keep both mutation controls hidden.

@@ -248,7 +248,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const canGoBack = nav.index > 0;
   const canGoForward = nav.index < nav.stack.length - 1;
   const [creatingCustom, setCreatingCustom] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -878,36 +878,33 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
           <h1 className="settings-toolbar-title" id="settings-page-title">{categoryLabel}</h1>
         </div>
       </div>
-      {loading ? (
-        <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" title={t.settings.loading} />
-      ) : (
-        <div className="settings-layout">
-          <aside className="settings-rail">
-            <h2 className="settings-rail-title">{t.settings.railTitle}</h2>
-            <nav className="settings-nav" aria-label={t.settings.categoriesAriaLabel}>
-              {SETTINGS_CATEGORY_IDS.map((id) => {
-                const cat = t.settings.categories[id];
-                const CategoryIcon = SETTINGS_CATEGORY_ICONS[id];
-                return (
-                  <ButtonControl
-                    aria-current={category === id ? 'page' : undefined}
-                    className={`settings-nav-item ${category === id ? 'is-active' : ''}`}
-                    key={id}
-                    onClick={() => navigateCategory(id)}
-                  >
-                    <span className="settings-nav-icon" aria-hidden="true">
-                      <CategoryIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
-                    </span>
-                    <span className="settings-nav-copy">
-                      <span className="settings-nav-label">{cat.label}</span>
-                    </span>
-                  </ButtonControl>
-                );
-              })}
-            </nav>
-          </aside>
+      <div className="settings-layout">
+        <aside className="settings-rail">
+          <h2 className="settings-rail-title">{t.settings.railTitle}</h2>
+          <nav className="settings-nav" aria-label={t.settings.categoriesAriaLabel}>
+            {SETTINGS_CATEGORY_IDS.map((id) => {
+              const cat = t.settings.categories[id];
+              const CategoryIcon = SETTINGS_CATEGORY_ICONS[id];
+              return (
+                <ButtonControl
+                  aria-current={category === id ? 'page' : undefined}
+                  className={`settings-nav-item ${category === id ? 'is-active' : ''}`}
+                  key={id}
+                  onClick={() => navigateCategory(id)}
+                >
+                  <span className="settings-nav-icon" aria-hidden="true">
+                    <CategoryIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+                  </span>
+                  <span className="settings-nav-copy">
+                    <span className="settings-nav-label">{cat.label}</span>
+                  </span>
+                </ButtonControl>
+              );
+            })}
+          </nav>
+        </aside>
 
-          <div className="settings-content">
+        <div className="settings-content" aria-busy={loading ? 'true' : undefined}>
             {category === 'general' ? (
               <section className="agent-settings-section settings-general-section" aria-label={t.settings.categories.general.label}>
                 <InsetGroup ariaLabel={t.settings.general.appearanceGroup} label={t.settings.general.appearanceGroup}>
@@ -1383,7 +1380,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
             ) : null}
           </div>
         </div>
-      )}
     </main>
   );
 }
