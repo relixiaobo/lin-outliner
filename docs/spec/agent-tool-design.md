@@ -72,6 +72,58 @@ surface.
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
 
+### Agent Issue Manager Contract Checkpoint
+
+The Issue Manager implementation has a canonical protocol/store checkpoint in
+code, but it is not yet registered into the default model-facing tool catalog.
+Until runtime wiring is complete, `spawn_run` / `run_*` remain the active
+delegation tools described below.
+
+The checkpoint defines the target concepts and schemas that later replace the
+Run-first product surface:
+
+- canonical types live in `src/core/agentIssue.ts`: Issue, Recurring Issue,
+  Agent Session, Activity, runtime authorization capability, and the eight
+  Issue/Agent Session tool input/result contracts;
+- JSON Schema parameter contracts live in
+  `src/main/agentIssueToolSchemas.ts`, with descriptions on every visible
+  field and no model-facing `userActionId`, authorization token, or capability
+  id;
+- tool definitions live in `src/main/agentIssueToolDefinitions.ts`, keeping
+  name, kind, search hint, schema, read/destructive classifiers, and runtime
+  authorization classifier in one place;
+- `src/main/agentIssueTools.ts` adapts those definitions to the existing
+  `ToolEnvelope` result format behind an explicit `AgentIssueToolRuntime`;
+- `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
+  Sessions, and Activity in `issue-manager.json`, including draft creation,
+  parent/sub-issue links, revision conflicts, session message/stop Activity,
+  and due-time Recurring Issue materialization.
+
+The target model-facing tool names are exactly:
+
+```text
+issue_search
+issue_read
+issue_create
+issue_update
+agent_session_start
+agent_session_read
+agent_session_send_message
+agent_session_stop
+```
+
+Recurring Issue belongs to the Issue family, so there is no
+`recurring_issue_*` tool family. Agent Session tools are runtime-control/read
+tools for one execution record; Activity is emitted by runtime/store code and
+is not exposed through an `activity_record` tool. The checkpoint deliberately
+does not add `task_*`, `run_*`, `project_*`, `cron_*`, or `logbook_*` tools.
+
+Recurring Issue materialization is store-owned and due-time only. Active,
+confirmed Recurring Issues can create concrete Issues when a cadence is due;
+draft, paused, or archived Recurring Issues do not. Generated Issue titles
+include the covered local date by default, and repeated sweeps do not create
+duplicate Issues for the same recurrence window.
+
 ## Run Delegation Tools
 
 `spawn_run` is the only downward delegation primitive. It forks Neva into an isolated

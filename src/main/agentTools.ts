@@ -14,6 +14,7 @@ import { createNodeTools, type ChatSourceValidator, type OutlinerToolHost } from
 import { createLocalTools, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { createAgentDelegationTools, type AgentDelegationRuntime } from './agentDelegation';
+import { createAgentIssueTools, type AgentIssueToolRuntime } from './agentIssueTools';
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
 import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
@@ -212,6 +213,7 @@ export interface AgentToolsOptions {
   skillRuntime?: AgentSkillRuntime;
   skillToolEnabled?: boolean;
   delegationRuntime?: AgentDelegationRuntime;
+  issueRuntime?: AgentIssueToolRuntime;
   pastChats?: PastChatsToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
   imageGeneration?: AgentImageGenerationRuntime;
@@ -260,6 +262,9 @@ function buildAgentToolCatalog(
   }, {
     precondition: true,
     create: () => [createWebFetchTool(scratchRoot)],
+  }, {
+    precondition: !!options.issueRuntime,
+    create: () => options.issueRuntime ? createAgentIssueTools(options.issueRuntime) : [],
   }, {
     precondition: !!options.pastChats,
     create: () => options.pastChats ? [createPastChatsTool(options.pastChats)] : [],
