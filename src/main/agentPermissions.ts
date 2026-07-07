@@ -185,6 +185,8 @@ const TOOL_ALIASES = new Map<string, string>([
   ['web_fetch', 'web_fetch'],
   ['websearch', 'web_search'],
   ['web_search', 'web_search'],
+  ['generateimage', 'generate_image'],
+  ['generate_image', 'generate_image'],
   ['past_chats', 'past_chats'],
   ['pastchats', 'past_chats'],
   ['ask_user_question', 'ask_user_question'],
@@ -582,6 +584,19 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'web fetch',
       summary: `Fetch external content from ${url}.`,
       consequence: 'This contacts an external website and reads its response.',
+      reversible: true,
+      externalEffect: true,
+      highConsequence: false,
+    })];
+  }
+
+  if (toolName === 'generate_image') {
+    const model = getStringArg(input.args, 'model');
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.image.generate'), {
+      accessScope: 'external_system',
+      title: 'image generation',
+      summary: model ? `Generate an image with ${model}.` : 'Generate an image with an enabled image provider.',
+      consequence: 'This sends the prompt and referenced images to an external image provider and may consume provider quota.',
       reversible: true,
       externalEffect: true,
       highConsequence: false,
@@ -2122,7 +2137,7 @@ export function toolPathArgumentName(toolNameInput: string): string | null {
 
 function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'bash_stop' || toolName === 'spawn_run' || toolName === 'run_status' || toolName === 'run_steer' || toolName === 'run_amend' || toolName === 'run_stop' || toolName === 'skill' || toolName === 'ask_user_question') return 'control';
+  if (toolName === 'bash_stop' || toolName === 'spawn_run' || toolName === 'run_status' || toolName === 'run_steer' || toolName === 'run_amend' || toolName === 'run_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'generate_image') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete' || toolName === 'data_import') return 'write';
   if (toolName === 'outline_undo_stack') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';

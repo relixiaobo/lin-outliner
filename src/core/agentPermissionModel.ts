@@ -70,6 +70,7 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'agent.memory.recall',
   'agent.user_question.ask',
   'agent.skill.invoke',
+  'agent.image.generate',
   'agent.delegate.spawn',
   'agent.delegate.status',
   'agent.delegate.send',
@@ -111,6 +112,7 @@ const READ_ONLY_ACTION_KIND_FLAGS = {
   'agent.memory.recall': true,
   'agent.user_question.ask': false,
   'agent.skill.invoke': false,
+  'agent.image.generate': false,
   'agent.delegate.spawn': false,
   'agent.delegate.status': true,
   'agent.delegate.send': false,
@@ -185,6 +187,7 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
   run_amend: ['agent.delegate.amend'],
   run_stop: ['agent.delegate.stop'],
   skill: ['agent.skill.invoke'],
+  generate_image: ['agent.image.generate'],
 } satisfies Record<string, readonly AgentToolActionKind[]>;
 
 const READ_ONLY_AGENT_TOOL_NAMES = Object.entries(AGENT_TOOL_ACTION_KIND_PROFILES)

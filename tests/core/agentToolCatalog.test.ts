@@ -23,6 +23,14 @@ describe('agent tool catalog', () => {
     const filteredNames = createAgentTools(undefined, {
       localFileRoot: '/tmp',
       delegationRuntime: {} as AgentDelegationRuntime,
+      imageGeneration: {
+        listModels: async () => [],
+        getActiveProviderId: async () => null,
+        readPayloadImage: async () => { throw new Error('not used'); },
+        readLocalImage: async () => { throw new Error('not used'); },
+        writeGeneratedImage: async () => { throw new Error('not used'); },
+        generateImages: async () => { throw new Error('not used'); },
+      },
       allowedTools: [...TOOL_CATALOG],
     })
       .map((tool) => tool.name.toLowerCase())

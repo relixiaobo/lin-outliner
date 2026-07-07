@@ -166,6 +166,7 @@ import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
   getBuiltInAgentProfile,
+  getProviderSettings,
   setBuiltInAgentProfile,
   providerStreamOptionsFromRuntimeSettings,
   rankedModels,
@@ -182,6 +183,15 @@ import {
   piProviders,
   piStreamSimple,
 } from './piModels';
+import {
+  piFindImageModel,
+  piGenerateImages,
+  piImageModelsForProvider,
+} from './piImageModels';
+import {
+  generateImagePayloadsFromDetails,
+  type AgentImageGenerationRuntime,
+} from './agentImageGenerationTool';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
 import { isLocalGatewayProviderId } from '../core/localGatewayProviders';
 import {
@@ -239,6 +249,8 @@ import {
 } from './agentPermissionEvents';
 import {
   createAgentLocalWorkspaceContext,
+  readAgentImageDimensions,
+  resolveAgentLocalReadPath,
   scratchRootForWorkdir,
   setAgentLocalPermissionRoots,
   type AgentLocalWorkspaceContext,
@@ -2601,6 +2613,7 @@ export class AgentRuntime {
           chatSourceValidator: this.createChatSourceValidator(),
           pastChats: this.createPastChatsToolRuntime(() => conversationId),
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
+          imageGeneration: this.createImageGenerationRuntime(conversationId, localWorkspace, () => conversationRef.current),
           allowedTools: agentToolFilter.allowedTools,
           disallowedTools: agentToolFilter.disallowedTools,
           permissionScopeIdProvider: () => {
@@ -2785,6 +2798,7 @@ export class AgentRuntime {
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => conversation.eventState.conversation?.id ?? 'unknown'),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
+      imageGeneration: this.createImageGenerationRuntime(conversation.eventState.conversation?.id ?? 'unknown', conversation.localWorkspace, () => conversation),
       allowedTools: conversation.agentToolFilter.allowedTools,
       disallowedTools: conversation.agentToolFilter.disallowedTools,
     });
@@ -4723,6 +4737,72 @@ export class AgentRuntime {
     };
   }
 
+  private createImageGenerationRuntime(
+    conversationId: string,
+    localWorkspace: AgentLocalWorkspaceContext,
+    getConversation: () => AgentConversationState | null,
+  ): AgentImageGenerationRuntime {
+    return {
+      listModels: async () => {
+        const settings = await getProviderSettings();
+        const activeProviderId = (await this.getActiveProviderConfig().catch(() => null))?.providerId
+          ?? settings.activeProviderId
+          ?? null;
+        const providerPriority = [...new Set([activeProviderId, 'openai', 'google', 'openrouter'].filter((value): value is string => Boolean(value)))];
+        const configuredProviders = settings.providers
+          .filter((provider) => provider.enabled && (provider.auth?.credentialed ?? (provider.hasApiKey || provider.hasEnvApiKey)))
+          .sort((left, right) => imageProviderPriorityIndex(providerPriority, left.providerId) - imageProviderPriorityIndex(providerPriority, right.providerId));
+        return configuredProviders.flatMap((provider) => (
+          piImageModelsForProvider(provider.providerId).map((model) => ({
+            providerId: provider.providerId,
+            id: model.id,
+            name: model.name,
+            input: [...model.input],
+            output: [...model.output],
+          }))
+        ));
+      },
+      getActiveProviderId: async () => (await this.getActiveProviderConfig().catch(() => null))?.providerId ?? null,
+      readPayloadImage: async ({ payloadId, runId }) => {
+        const payload = await this.previewPayload(conversationId, payloadId, runId);
+        if (!payload) throw new Error(`Image payload not found or not readable: ${payloadId}`);
+        if (!payload.mimeType.startsWith('image/')) throw new Error(`Payload is not an image: ${payloadId}`);
+        return {
+          data: await this.getEventStore().readPayload(conversationId, payload),
+          mimeType: payload.mimeType,
+          label: payload.summary ?? payload.id,
+        };
+      },
+      readLocalImage: async ({ filePath }) => {
+        const resolved = resolveAgentLocalReadPath(localWorkspace, filePath);
+        const data = await readFile(resolved);
+        const mimeType = sniffMimeType(data, resolved);
+        if (!mimeType?.startsWith('image/')) throw new Error(`File is not a supported image: ${filePath}`);
+        return {
+          data,
+          mimeType,
+          label: path.basename(resolved),
+        };
+      },
+      writeGeneratedImage: async ({ toolCallId, index, providerId, modelId, data, mimeType, prompt }) => (
+        this.getEventStore().writePayload(conversationId, {
+          id: `tool-output-${toolCallId}-image-${index}`,
+          data,
+          mimeType,
+          runId: getConversation()?.activeRun?.id ?? undefined,
+          role: 'tool_output',
+          summary: summarizeGeneratedImagePayload(providerId, modelId, prompt),
+          display: readAgentImageDimensions(data, mimeType),
+        })
+      ),
+      generateImages: async ({ providerId, modelId, context, options }) => {
+        const model = piFindImageModel(providerId, modelId);
+        if (!model) throw new Error(`Unknown image model: ${providerId}:${modelId}`);
+        return piGenerateImages(model, context, options);
+      },
+    };
+  }
+
   private createChatSourceValidator(): AgentToolsOptions['chatSourceValidator'] {
     return async (target) => {
       const result = await this.getPastChatsService().readSource({
@@ -6059,11 +6139,16 @@ export class AgentRuntime {
     const actor = toolActor(message.toolName, message.toolCallId);
     const prePersisted = activeRun.toolOutputPayloads.get(message.toolCallId);
     activeRun.toolOutputPayloads.delete(message.toolCallId);
+    const generatedImagePayloads = prePersisted ? null : generateImagePayloadsFromDetails(message.details);
     const persisted = prePersisted
       ? {
           content: [{ type: 'payload_ref', payload: prePersisted.payload, label: prePersisted.label }] satisfies AgentPersistedContent[],
           payloads: [prePersisted.payload],
         }
+      : generatedImagePayloads
+        ? await this.persistGeneratedImageToolResultContent(conversationId, message, generatedImagePayloads, {
+            runId: this.activeRunId(conversation) ?? undefined,
+          })
       : await this.persistPiUserContent(conversationId, message.content, {
           imageSummary: `${message.toolName} image output`,
           runId: this.activeRunId(conversation) ?? undefined,
@@ -6105,6 +6190,38 @@ export class AgentRuntime {
     // The tool result is now the run's tail: the next continuation segment
     // chains onto it, keeping this run's spine linear (see `lastMessageId`).
     activeRun.lastMessageId = toolResultMessageId;
+  }
+
+  private async persistGeneratedImageToolResultContent(
+    conversationId: string,
+    message: ToolResultMessage,
+    payloads: AgentPayloadRef[],
+    options: { runId?: string },
+  ): Promise<{ content: AgentPersistedContent[]; payloads: AgentPayloadRef[] }> {
+    const content: AgentPersistedContent[] = [];
+    const textPayloads: AgentPayloadRef[] = [];
+    const textParts = message.content.filter((part): part is PiTextContent => part.type === 'text');
+    for (const [index, part] of textParts.entries()) {
+      const saved = await this.persistTextContent(conversationId, part.text, {
+        textPayloadRole: 'tool_output',
+        textSummary: `${message.toolName} output`,
+        textPayloadId: textParts.length <= 1
+          ? `tool-output-${message.toolCallId}`
+          : `tool-output-${message.toolCallId}-${index}`,
+        runId: options.runId,
+      });
+      content.push(saved.content);
+      if (saved.payload) textPayloads.push(saved.payload);
+    }
+    content.push(...payloads.map((payload): AgentPersistedContent => ({
+      type: 'image',
+      imageRef: payload,
+      alt: payload.summary ?? `${message.toolName} image output`,
+    })));
+    return {
+      content: content.length > 0 ? content : textPersistedContent(''),
+      payloads: [...textPayloads, ...payloads],
+    };
   }
 
   private async appendToolCallEventsFromAssistant(conversationId: string, conversation: AgentConversationState, message: AssistantMessage) {
@@ -7128,6 +7245,16 @@ function isPreviewPayloadRole(role: AgentPayloadRef['role']): boolean {
     || role === 'tool_output';
 }
 
+function imageProviderPriorityIndex(priority: readonly string[], providerId: string): number {
+  const index = priority.indexOf(providerId);
+  return index >= 0 ? index : priority.length;
+}
+
+function summarizeGeneratedImagePayload(providerId: string, modelId: string, prompt: string): string {
+  const preview = prompt.length > 80 ? `${prompt.slice(0, 77)}...` : prompt;
+  return `Generated image from ${providerId}:${modelId}${preview ? ` - ${preview}` : ''}`;
+}
+
 function payloadScopeMatchesPreviewTarget(
   payload: AgentPayloadRef,
   conversationId: string,
@@ -7522,6 +7649,7 @@ function createConfiguredAgent(
     chatSourceValidator?: AgentToolsOptions['chatSourceValidator'];
     pastChats?: AgentToolsOptions['pastChats'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
+    imageGeneration?: AgentToolsOptions['imageGeneration'];
     localWorkspace?: AgentLocalWorkspaceContext;
     allowedTools?: readonly string[];
     disallowedTools?: readonly string[];
@@ -7567,6 +7695,7 @@ function createConfiguredAgent(
     chatSourceValidator: options.chatSourceValidator,
     pastChats: options.pastChats,
     askUserQuestion: options.askUserQuestion,
+    imageGeneration: options.imageGeneration,
     allowedTools: options.allowedTools,
     disallowedTools: options.disallowedTools,
   });

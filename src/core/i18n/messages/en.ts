@@ -1338,6 +1338,11 @@ commandPalette: {
     cancel: 'Cancel',
     connectionSuccessful: 'Connection successful',
     validationFailed: 'Validation failed',
+    capabilitiesTitle: 'Capabilities',
+    capabilityLanguage: 'Language',
+    capabilityImageGeneration: 'Image generation',
+    capabilityIncludesModels: ({ models, more }: { models: string; more: boolean }) =>
+      `${models}${more ? ', and more' : ''}`,
     removeProvider: 'Remove provider',
     setActive: 'Set as Active',
     validate: 'Validate',

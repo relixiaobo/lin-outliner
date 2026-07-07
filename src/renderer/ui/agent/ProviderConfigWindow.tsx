@@ -169,6 +169,7 @@ export function ProviderConfigWindow() {
           ? <span className="settings-provider-avatar is-large" aria-hidden="true">+</span>
           : <ProviderAvatar large providerId={providerId} />}
         baseUrlPlaceholder={catalog?.defaultBaseUrl ?? 'https://api.example.com/v1'}
+        capabilities={catalog?.capabilities}
         defaultBaseUrl={catalog?.defaultBaseUrl}
         description={isCustom ? t.providerCatalog.openAiCompatible : providerDescription(catalog, t)}
         docsUrl={docsUrl}

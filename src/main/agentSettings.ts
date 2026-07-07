@@ -14,6 +14,7 @@ import type {
   AgentRuntimeSettingsInput,
   AgentProviderConfigInput,
   AgentProviderConfigView,
+  AgentProviderCapabilitySummary,
   AgentProviderOption,
   AgentReasoningLevelLabels,
   AgentReasoningLevel,
@@ -44,6 +45,10 @@ import {
   piProviders,
   piResolveAuthApiKey,
 } from './piModels';
+import {
+  imageModelOptionsForProvider,
+  piRefreshImageModels,
+} from './piImageModels';
 import { customOpenAIResponsesPayloadProfileOption } from './openAIResponsesCompat';
 
 const PROVIDERS_FILE = 'agent-providers.json';
@@ -190,6 +195,7 @@ export async function refreshProviderModels(providerIdInput: string): Promise<Ag
     const configured = file.providers.find((provider) => provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
     await refreshCcSwitchModelDescriptors(configured?.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL);
   }
+  await piRefreshImageModels(providerId).catch(() => undefined);
   return getProviderSettings();
 }
 
@@ -614,14 +620,18 @@ function normalizeInteger(value: unknown, fallback: number | null, min: number):
 }
 
 async function getAvailableProviders(configuredProviders: readonly AgentProviderConfig[]): Promise<AgentProviderOption[]> {
-  const builtinProviders = await Promise.all(piProviders().map(async (providerId) => ({
-    providerId,
-    authKind: getProviderAuthKind(providerId),
-    hasEnvApiKey: await piProviderHasAmbientAuth(providerId),
-    envKeyNames: [],
-    defaultBaseUrl: piModelsForProvider(providerId)[0]?.baseUrl,
-    models: providerModelOptions(providerId, piModelsForProvider(providerId)),
-  })));
+  const builtinProviders = await Promise.all(piProviders().map(async (providerId) => {
+    const models = providerModelOptions(providerId, piModelsForProvider(providerId));
+    return {
+      providerId,
+      authKind: getProviderAuthKind(providerId),
+      hasEnvApiKey: await piProviderHasAmbientAuth(providerId),
+      envKeyNames: [],
+      defaultBaseUrl: piModelsForProvider(providerId)[0]?.baseUrl,
+      capabilities: providerCapabilities(providerId, models),
+      models,
+    };
+  }));
   const ccSwitchProvider = await getCcSwitchProviderOption(configuredProviders);
   return ccSwitchProvider ? [...builtinProviders, ccSwitchProvider] : builtinProviders;
 }
@@ -637,6 +647,7 @@ async function getCcSwitchProviderOption(
   const installationDetected = detectCcSwitchLocalInstallation();
   const detected = Boolean((mirror && (configured || installationDetected)) || gatewayHealthy || installationDetected);
   if (!configured && !detected) return null;
+  const models = await getCcSwitchModelOptions({ mirror, gatewayHealthy, baseUrl });
   return {
     providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
     authKind: 'api-key',
@@ -645,7 +656,8 @@ async function getCcSwitchProviderOption(
     hasEnvApiKey: false,
     envKeyNames: [],
     defaultBaseUrl: baseUrl,
-    models: await getCcSwitchModelOptions({ mirror, gatewayHealthy, baseUrl }),
+    capabilities: providerCapabilities(CC_SWITCH_LOCAL_PROVIDER_ID, models),
+    models,
   };
 }
 
@@ -1039,6 +1051,36 @@ function formatDiscoveredModelName(modelId: string): string {
       return part.charAt(0).toUpperCase() + part.slice(1);
     })
     .join(' ') || modelId;
+}
+
+function providerCapabilities(providerId: string, languageModels: readonly AgentModelOption[]): AgentProviderCapabilitySummary[] {
+  const capabilities: AgentProviderCapabilitySummary[] = [];
+  if (languageModels.length > 0) {
+    capabilities.push({
+      kind: 'language',
+      models: languageModels.map((model) => ({
+        id: model.id,
+        name: model.name,
+        providerId,
+        input: ['text'],
+        output: ['text'],
+      })),
+    });
+  }
+  const imageModels = imageModelOptionsForProvider(providerId);
+  if (imageModels.length > 0) {
+    capabilities.push({
+      kind: 'image_generation',
+      models: imageModels.map((model) => ({
+        id: model.id,
+        name: model.name,
+        providerId: model.providerId,
+        input: [...model.input],
+        output: [...model.output],
+      })),
+    });
+  }
+  return capabilities;
 }
 
 function providerModelOptions(providerId: string, models: readonly Model<Api>[]): AgentModelOption[] {

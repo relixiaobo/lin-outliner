@@ -17,6 +17,7 @@ import { createAgentDelegationTools, type AgentDelegationRuntime } from './agent
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
 import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
+import { createGenerateImageTool, type AgentImageGenerationRuntime } from './agentImageGenerationTool';
 import {
   agentToolResult,
   errorEnvelope,
@@ -213,6 +214,7 @@ export interface AgentToolsOptions {
   delegationRuntime?: AgentDelegationRuntime;
   pastChats?: PastChatsToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
+  imageGeneration?: AgentImageGenerationRuntime;
   chatSourceValidator?: ChatSourceValidator;
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
@@ -264,6 +266,9 @@ function buildAgentToolCatalog(
   }, {
     precondition: !!options.askUserQuestion,
     create: () => options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : [],
+  }, {
+    precondition: !!options.imageGeneration,
+    create: () => options.imageGeneration ? [createGenerateImageTool(options.imageGeneration)] : [],
   }, {
     precondition: !!options.skillRuntime && options.skillToolEnabled !== false,
     create: () => options.skillRuntime ? [createSkillTool(options.skillRuntime)] : [],

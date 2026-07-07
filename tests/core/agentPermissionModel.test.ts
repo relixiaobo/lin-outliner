@@ -37,6 +37,7 @@ describe('agent permission model', () => {
     expect(isReadOnlyActionKind('agent.delegate.status')).toBe(true);
     expect(isReadOnlyActionKind('file.edit.allowed_file_area')).toBe(false);
     expect(isReadOnlyActionKind('agent.skill.invoke')).toBe(false);
+    expect(isReadOnlyActionKind('agent.image.generate')).toBe(false);
     expect(isReadOnlyActionKind('agent.delegate.spawn')).toBe(false);
 
     const tools = readOnlyAgentToolNames();
@@ -57,6 +58,7 @@ describe('agent permission model', () => {
     expect(tools).not.toContain('outline_undo_stack');
     expect(tools).not.toContain('bash');
     expect(tools).not.toContain('skill');
+    expect(tools).not.toContain('generate_image');
     expect(tools).not.toContain('spawn_run');
     expect(tools).not.toContain('recall');
     expect(tools).not.toContain('dream');
@@ -67,6 +69,7 @@ describe('agent permission model', () => {
     ]);
     expect(agentToolActionKindProfile('outline_undo_stack', { action: 'list' })).toEqual(['outline.read']);
     expect(agentToolActionKindProfile('outline_undo_stack', { action: 'undo' })).toEqual(['outline.edit']);
+    expect(agentToolActionKindProfile('generate_image')).toEqual(['agent.image.generate']);
     expect(agentToolActionKindProfile('data_import')).toBeNull();
     expect(readOnlyAgentToolNames()).not.toContain('data_import');
   });

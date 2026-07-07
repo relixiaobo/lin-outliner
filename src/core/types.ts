@@ -963,6 +963,24 @@ export interface AgentModelOption {
   maxTokens: number;
 }
 
+export type AgentProviderCapabilityKind = 'language' | 'image_generation';
+export type AgentProviderCapabilityIO = 'text' | 'image';
+
+export interface AgentProviderCapabilityModelOption {
+  id: string;
+  name: string;
+  providerId: string;
+  input: AgentProviderCapabilityIO[];
+  output: AgentProviderCapabilityIO[];
+}
+
+export interface AgentProviderCapabilitySummary {
+  kind: AgentProviderCapabilityKind;
+  models: AgentProviderCapabilityModelOption[];
+  refreshable?: boolean;
+  lastRefreshError?: string;
+}
+
 export interface AgentProviderOption {
   providerId: string;
   /** Auth class for an as-yet-unconfigured provider, so the config window can pick the right UI. */
@@ -974,6 +992,11 @@ export interface AgentProviderOption {
   hasEnvApiKey: boolean;
   envKeyNames: string[];
   defaultBaseUrl?: string;
+  /**
+   * Capability catalog grouped by runtime surface. `models` below remains the
+   * legacy language-model list used by the composer/profile model picker.
+   */
+  capabilities?: AgentProviderCapabilitySummary[];
   models: AgentModelOption[];
 }
 

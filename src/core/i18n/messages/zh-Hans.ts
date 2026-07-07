@@ -1241,6 +1241,11 @@ commandPalette: {
     cancel: '取消',
     connectionSuccessful: '连接成功',
     validationFailed: '校验失败',
+    capabilitiesTitle: '能力',
+    capabilityLanguage: '语言',
+    capabilityImageGeneration: '图片生成',
+    capabilityIncludesModels: ({ models, more }: { models: string; more: boolean }) =>
+      `${models}${more ? ' 等更多模型' : ''}`,
     removeProvider: '移除提供方',
     setActive: '设为当前',
     validate: '校验',

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CheckIcon, CopyIcon, HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
+import type { AgentProviderCapabilityKind, AgentProviderCapabilitySummary } from '../../../core/types';
+import type { Messages } from '../../../core/i18n';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { ErrorState } from '../primitives/FeedbackState';
@@ -39,6 +41,7 @@ interface ProviderConfigFormProps {
   hasCredential: boolean;
   hasStoredKey: boolean;
   isActive: boolean;
+  capabilities?: readonly AgentProviderCapabilitySummary[];
   /** Managed-credential providers (e.g. AWS Bedrock) show a note instead of a key field. */
   authNote?: AuthNote;
   docsUrl?: string;
@@ -73,6 +76,7 @@ export function ProviderConfigForm({
   hasCredential,
   hasStoredKey,
   isActive,
+  capabilities,
   authNote,
   docsUrl,
   titleId,
@@ -311,6 +315,18 @@ export function ProviderConfigForm({
           </ButtonControl>
         ) : null}
 
+        {capabilities?.length ? (
+          <section className="inset-card settings-sheet-capabilities" aria-label={t.providerConfig.capabilitiesTitle}>
+            <h3 className="settings-sheet-section-title">{t.providerConfig.capabilitiesTitle}</h3>
+            {capabilities.map((capability) => (
+              <div className="settings-sheet-capability" key={capability.kind}>
+                <span className="settings-sheet-capability-kind">{capabilityLabel(capability.kind, t)}</span>
+                <span className="settings-sheet-capability-models">{capabilityModels(capability, t)}</span>
+              </div>
+            ))}
+          </section>
+        ) : null}
+
         {validating ? (
           <div className="settings-sheet-result" role="status">
             <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} />
@@ -360,4 +376,17 @@ export function ProviderConfigForm({
       </div>
     </>
   );
+}
+
+function capabilityLabel(kind: AgentProviderCapabilityKind, t: Messages): string {
+  if (kind === 'image_generation') return t.providerConfig.capabilityImageGeneration;
+  return t.providerConfig.capabilityLanguage;
+}
+
+function capabilityModels(capability: AgentProviderCapabilitySummary, t: Messages): string {
+  const names = capability.models.slice(0, 3).map((model) => model.name);
+  return t.providerConfig.capabilityIncludesModels({
+    models: names.join(', '),
+    more: capability.models.length > names.length,
+  });
 }

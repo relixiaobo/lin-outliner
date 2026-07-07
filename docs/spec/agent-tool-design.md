@@ -67,6 +67,7 @@ surface.
 | `run_steer` | agent | No | No | Send soft execution guidance to a live Run without changing its contract. |
 | `run_amend` | agent | No document mutation | No | Hard-amend a Run's objective, criteria, or budget; invalidates verifier conclusions. |
 | `run_stop` | agent | No document mutation | No | Stop a live same-session Run. |
+| `generate_image` | agent | Creates payloads | Usually yes | Generate or edit raster images through enabled image-capable providers. |
 
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
@@ -143,6 +144,8 @@ permission behavior harder to reason about.
 - Use `ask_user_question` for decisions or missing context, not permission
   approval. Permission approval answers "may the agent do this"; this tool
   answers "what information or direction should the agent use next".
+- Use `generate_image` for raster image generation/editing only; normal
+  multimodal chat and `file_read` remain the way to inspect existing images.
 - Local file tools should mirror proven read, edit, write, glob, and grep roles,
   while keeping Lin's lower snake case names.
 - The local tool list is intentionally smaller than broader terminal-first tool registries.
@@ -248,6 +251,80 @@ answer validation, resolves the tool call with `answers: []` plus
 clarifying question in the normal conversation. If structured input is still
 needed after discussion, the agent must call `ask_user_question` again with a
 fresh request.
+
+## `generate_image`
+
+`generate_image` is a run-scoped image generation and image-editing tool. It is
+the product surface for generated raster images; Tenon may use pi-ai
+`ImagesModels` internally, but the agent sees a Tenon-owned tool with Tenon-owned
+permissions and payload persistence.
+
+The tool is available only when the runtime has at least one enabled,
+credentialed image-capable provider. Provider records do not store a default
+image model. If the model parameter is omitted, runtime selects an enabled image
+model by deterministic provider priority: the active provider when it has image
+models, then first-party OpenAI, first-party Google Gemini, then OpenRouter.
+
+Input:
+
+```ts
+interface GenerateImageInput {
+  prompt: string;
+  model?: string; // model id, provider:model, or provider/model
+  image_refs?: Array<
+    | string // workspace path or payload:<id>
+    | { path: string }
+    | { payload_id: string; run_id?: string }
+  >;
+  count?: number; // default 1, capped at 4
+  size?: string;
+  aspect_ratio?: string;
+  quality?: "auto" | "low" | "medium" | "high";
+  background?: "auto" | "opaque" | "transparent";
+  output_format?: "png" | "jpeg" | "webp";
+}
+```
+
+Validation is TypeScript-owned:
+
+- `prompt` is required, non-empty, and capped.
+- `image_refs` are capped and resolve through either the local file boundary or
+  existing agent payload reads. The selected model must advertise image input
+  before references are sent.
+- A provider-qualified model selects that exact provider/model pair. An
+  unqualified model id may be used only when the enabled image model catalog can
+  resolve it deterministically.
+- Disabled or uncredentialed providers are never candidates.
+
+Generated images are stored as normal agent payload files before the tool result
+is persisted. The model-visible JSON includes payload ids, mime types, byte
+length, and dimensions when known; it does not include base64 image bytes. The
+tool result also returns image content blocks to the pi-agent loop so the same
+turn can inspect or use the generated image without re-reading debug payloads.
+
+Result:
+
+```ts
+interface GenerateImageData {
+  providerId: string;
+  modelId: string;
+  modelName: string;
+  images: Array<{
+    payload: AgentPayloadRef;
+    mimeType: string;
+    byteLength: number;
+    width?: number;
+    height?: number;
+  }>;
+  text: string[];
+  promptPreview: string;
+}
+```
+
+`generate_image` does not automatically insert the image into the outline or
+write a local file outside the payload store. If the user asks for a file or
+document insertion, the agent must use the normal file or node tools after the
+image result exists.
 
 ## Import Pack CLI/API
 
@@ -2901,6 +2978,7 @@ coverage maps as follows:
 | `bash_stop` | Implemented TypeScript background task stop command scoped to Lin-created bash tasks. |
 | `web_search` | Needed web search adapter: provider-backed search or embedded-browser SERP extraction, host permission scope, rate limiting, structured hints. |
 | `web_fetch` | Needed URL fetch adapter: TypeScript HTTP and/or embedded browser session fetch, HTML-to-markdown extraction, pagination, find mode, structured hints. |
+| `generate_image` | Implemented TypeScript image-generation adapter that resolves enabled image-capable providers, writes generated image payloads, and returns model-visible payload refs plus image content blocks. |
 
 Lin should prefer adding semantic TypeScript core commands where the current command
 set is too UI-shaped. For example, semantic target/source merge is better for
@@ -2938,6 +3016,7 @@ Mutating tools still pass through the global permission layer:
 - `file_write`
 - `bash`
 - `bash_stop`
+- `generate_image`
 
 How risk maps to allow / ask / deny (broad node/file edits, user-origin
 undo/redo, risky shell, exfiltration redlines, permissive-mode behavior) is owned
