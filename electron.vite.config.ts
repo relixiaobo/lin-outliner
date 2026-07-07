@@ -3,10 +3,14 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   main: {
+    define: {
+      'process.env.WS_NO_BUFFER_UTIL': JSON.stringify('1'),
+      'process.env.WS_NO_UTF_8_VALIDATE': JSON.stringify('1'),
+    },
     build: {
       rollupOptions: {
         input: 'src/main/main.ts',
-        external: ['electron', 'ws', 'bufferutil', 'utf-8-validate'],
+        external: ['electron'],
       },
     },
   },
