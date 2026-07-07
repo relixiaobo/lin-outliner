@@ -6,7 +6,7 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: 'src/main/main.ts',
-        external: ['electron'],
+        external: ['electron', 'ws', 'bufferutil', 'utf-8-validate'],
       },
     },
   },
