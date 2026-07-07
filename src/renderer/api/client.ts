@@ -13,6 +13,10 @@ import type {
   AgentDreamReadiness,
   AgentRenderDreamRunEntity,
   AgentRunListEntry,
+  IssueReadInput,
+  IssueReadResult,
+  IssueSearchInput,
+  IssueSearchResult,
   AgentPickScopeFolderResult,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
@@ -324,6 +328,10 @@ export const api = {
     command<void>('agent_delete_conversation', { conversationId }),
   agentListRuns: (options: { limit?: number; perConversationLimit?: number } = {}) =>
     command<AgentRunListEntry[]>('agent_list_runs', options),
+  agentIssueSearch: (input: IssueSearchInput = {}) =>
+    command<IssueSearchResult>('agent_issue_search', input as Record<string, unknown>),
+  agentIssueRead: (input: IssueReadInput) =>
+    command<IssueReadResult>('agent_issue_read', input as unknown as Record<string, unknown>),
   agentListDreamHistory: (options: { limit?: number } = {}) =>
     command<AgentRenderDreamRunEntity[]>('agent_list_dream_history', options),
   agentDreamReadiness: () =>

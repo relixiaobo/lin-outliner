@@ -122,7 +122,11 @@ import type {
   AgentSessionStartInput,
   IssueCompletionCriterion,
   IssueInputScope,
+  IssueReadInput,
+  IssueSearchInput,
+  IssueSearchResult,
   IssueOutputPolicy,
+  IssueReadResult,
 } from '../core/agentIssue';
 import { isSystemReminderBlock, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
@@ -1289,6 +1293,14 @@ export class AgentRuntime {
     return runs
       .sort(compareRunListEntries)
       .slice(0, limit);
+  }
+
+  async searchIssues(input: IssueSearchInput = {}): Promise<IssueSearchResult> {
+    return this.getIssueStore().search(input);
+  }
+
+  async readIssue(input: IssueReadInput): Promise<IssueReadResult> {
+    return this.getIssueStore().read(input);
   }
 
   async listSlashCommands(conversationId: string): Promise<AgentSlashCommandView[]> {

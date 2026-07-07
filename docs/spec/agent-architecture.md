@@ -106,8 +106,9 @@ and every conversation's members are `{user, Neva}`.
   evidence + watermark scheme exists everywhere; sub-run compaction is
   event-sourced like a conversation's. The former entity-grade species
   (transcript payload snapshots, the `runId:message:N` codec, the positional Dream
-  cursor) is deleted. Delegated runs surface in the global Work/Runs view
-  (non-turn, non-Dream runs only).
+  cursor) is deleted. Delegated execution now surfaces through Issue-backed Work
+  rows when attached to an Issue; legacy Run transcript drill-in remains available
+  from process links and debug surfaces.
 
 ### Verified goal runs
 
@@ -214,8 +215,8 @@ the foreground `dream` tool are cut.
 **Dream/run surfacing is relocated.** Dream history lives in Settings → Agent
 "Memory & activity" panel (alongside memory inspect/correct/forget), fetched via
 `agent_list_dream_history`, and the actual run transcript lives in the protected
-Dream channel. The Work/Runs view keeps Dream out and lists ordinary non-turn
-runs across channels.
+Dream channel. The ordinary Work view keeps Dream out and lists Issue-backed work
+with Agent Sessions and Activity.
 
 ## The runtime/policy seam (trigger · mechanism · policy)
 
@@ -314,7 +315,7 @@ leftover; only the single-agent value is ever assigned.)
 | One editable agent — Neva | ✅ built | built-in `built-in:tenon:assistant` (handle `assistant`); user edits layer as a stored overlay (`builtInAgentProfiles` in `agent-providers.json`); directly editable in Settings → Agent (model/effort/persona/tools/skills); Save persists the overlay, Delete suppressed for the built-in |
 | Channels-only conversations (no DM) | ✅ built | every conversation is single-agent + inline-streaming + steerable; one conversation list (no two sections / two "+" buttons), no nav-lock, "General" and protected "Dream" default channels; `canonicalDmAgentId` / `lin-agent-dm-` prefix / DM-vs-Channel branching removed |
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
-| Delegation / sub-run runtime (#164) | ✅ built | helper runs spawned for a bounded objective (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; surfaced in the Work/Runs view (non-turn, non-Dream runs only) |
+| Delegation / sub-run runtime (#164) | ✅ built | helper runs spawned for a bounded objective (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; Issue-backed Work shows Agent Sessions and Activity, while Run ledgers remain internal execution detail |
 | Timeline memory nodes | ✅ built | durable memory lives in per-day generated-headline `#d-memory` plus optional `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
 | One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` Dream-channel runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; the Dream channel retains the newest 512 run transcripts and prunes older run ledgers/anchor markers/search entries; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
 | Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |

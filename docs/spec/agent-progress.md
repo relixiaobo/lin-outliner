@@ -135,11 +135,10 @@ truth.
   - child runs with full/brief/none context modes, verifier retry, and their OWN
     run ledger (run unification; sidechain transcripts replay from the ledger)
     plus background notifications
-  - Work/Runs view backed by the global `agent_list_runs` index: it replaces the
-    agent dock's chat body with a top-level run list and shared drill-in detail
-    view for non-turn, non-Dream runs across channels with open-details/stop
-    actions, breadcrumb navigation, and sub-run progress chips
-    (Dream history moved to the Settings → Agent "Memory & activity" panel)
+  - Issue-first Work view backed by `agent_issue_search` / `agent_issue_read`:
+    it replaces the agent dock's chat body with Issue, Recurring Issue, Agent
+    Session, and Activity projections while keeping Dream history in the Settings
+    → Agent "Memory & activity" panel
   - skill `execution: isolated` routed through the delegation runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai

@@ -97,7 +97,7 @@ export class AgentIssueStore {
     }
     if (targets.has('recurring-issue')) {
       for (const recurringIssue of Object.values(state.recurringIssues)) {
-        if (matchesRecurringIssue(recurringIssue, input)) rows.push(recurringIssueRow(recurringIssue));
+        if (matchesRecurringIssue(recurringIssue, input, state)) rows.push(recurringIssueRow(recurringIssue));
       }
     }
     rows.sort((left, right) => right.updatedAt - left.updatedAt || left.title.localeCompare(right.title));
@@ -819,18 +819,23 @@ function matchesIssue(issue: AgentIssue, state: AgentIssueStoreState, input: Iss
     const sessions = Object.values(state.sessions).filter((session) => session.issueId === issue.id);
     if (!sessions.some((session) => filter.sessionState!.includes(session.state))) return false;
   }
+  if (filter?.activityTypes && !issueActivity(state, issue).some((activity) => filter.activityTypes!.includes(activity.content.type))) return false;
+  if (filter?.activityTarget && !issueMatchesActivityTarget(state, issue, filter.activityTarget)) return false;
   return true;
 }
 
-function matchesRecurringIssue(recurringIssue: AgentRecurringIssue, input: IssueSearchInput): boolean {
+function matchesRecurringIssue(recurringIssue: AgentRecurringIssue, input: IssueSearchInput, state?: AgentIssueStoreState): boolean {
   const filter = input.filter;
   if (input.text && !textMatches([recurringIssue.titleTemplate, recurringIssue.descriptionTemplate], input.text)) return false;
   if (filter?.ids && !filter.ids.includes(recurringIssue.id)) return false;
   if (filter?.recurringIssueIds && !filter.recurringIssueIds.includes(recurringIssue.id)) return false;
+  if (filter?.statusCategories && !derivedRecurringIssueBuckets(recurringIssue).some((bucket) => filter.statusCategories!.includes(bucket))) return false;
   if (filter?.cadence && !filter.cadence.includes(recurringIssue.cadence.type)) return false;
   if (filter?.confirmed !== undefined && (recurringIssue.confirmation.state === 'confirmed') !== filter.confirmed) return false;
   if (filter?.archived !== undefined && Boolean(recurringIssue.archivedAt || recurringIssue.status === 'archived') !== filter.archived) return false;
   if (filter?.nextMaterializationAt && !timeInRange(recurringIssue.nextMaterializationAt, filter.nextMaterializationAt)) return false;
+  if (filter?.activityTypes && state && !recurringIssueActivity(state, recurringIssue).some((activity) => filter.activityTypes!.includes(activity.content.type))) return false;
+  if (filter?.activityTarget && !sameActivityTarget(filter.activityTarget, { type: 'recurring-issue', recurringIssueId: recurringIssue.id })) return false;
   return true;
 }
 
@@ -841,6 +846,14 @@ function derivedIssueBuckets(issue: AgentIssue, state: AgentIssueStoreState): Is
   if (issue.relations.some((relation) => relation.type === 'blocked-by')) buckets.push('blocked');
   const sessions = Object.values(state.sessions).filter((session) => session.issueId === issue.id);
   if (sessions.some((session) => session.state === 'error' || session.state === 'awaitingInput' || session.state === 'stale')) buckets.push('attention-needed');
+  return buckets;
+}
+
+function derivedRecurringIssueBuckets(recurringIssue: AgentRecurringIssue): IssueViewBucket[] {
+  const buckets: IssueViewBucket[] = [];
+  if (recurringIssue.archivedAt || recurringIssue.status === 'archived') buckets.push('archived');
+  if (recurringIssue.confirmation.state !== 'confirmed') buckets.push('triage');
+  if (recurringIssue.nextMaterializationAt !== undefined) buckets.push('scheduled');
   return buckets;
 }
 
@@ -958,6 +971,38 @@ function activityForTarget(state: AgentIssueStoreState, target: ActivityTarget):
   return state.activityOrder
     .map((id) => state.activity[id])
     .filter((activity): activity is Activity => Boolean(activity) && sameActivityTarget(activity.target, target));
+}
+
+function issueActivity(state: AgentIssueStoreState, issue: AgentIssue): Activity[] {
+  const sessionIds = new Set(Object.values(state.sessions)
+    .filter((session) => session.issueId === issue.id)
+    .map((session) => session.id));
+  return state.activityOrder
+    .map((id) => state.activity[id])
+    .filter((activity): activity is Activity => {
+      if (!activity) return false;
+      if (activity.target.type === 'issue' && activity.target.issueId === issue.id) return true;
+      if (activity.target.type === 'agent-session' && sessionIds.has(activity.target.agentSessionId)) return true;
+      return activity.relatedTargets?.some((target) => (
+        (target.type === 'issue' && target.id === issue.id)
+        || (target.type === 'agent-session' && sessionIds.has(target.id))
+      )) ?? false;
+    });
+}
+
+function recurringIssueActivity(state: AgentIssueStoreState, recurringIssue: AgentRecurringIssue): Activity[] {
+  return state.activityOrder
+    .map((id) => state.activity[id])
+    .filter((activity): activity is Activity => Boolean(activity) && (
+      (activity.target.type === 'recurring-issue' && activity.target.recurringIssueId === recurringIssue.id)
+      || (activity.relatedTargets?.some((target) => target.type === 'recurring-issue' && target.id === recurringIssue.id) ?? false)
+    ));
+}
+
+function issueMatchesActivityTarget(state: AgentIssueStoreState, issue: AgentIssue, target: ActivityTarget): boolean {
+  if (target.type === 'issue') return target.issueId === issue.id;
+  if (target.type === 'agent-session') return state.sessions[target.agentSessionId]?.issueId === issue.id;
+  return false;
 }
 
 function sameActivityTarget(left: ActivityTarget, right: ActivityTarget): boolean {

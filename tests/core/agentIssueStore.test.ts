@@ -47,6 +47,65 @@ describe('agent issue store', () => {
     });
   });
 
+  test('searches derived scheduled, active session, and Activity state', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Daily news - {{date}}',
+          cadence: { type: 'daily', time: '08:00' },
+          timeZone: 'Asia/Shanghai',
+          issueTemplate: {
+            delegate: { type: 'default-agent', runProfile: 'background' },
+            trigger: { type: 'when-ready' },
+            permissionMode: 'unattended',
+          },
+        },
+        request: { mode: 'request' },
+        reason: 'Create recurring work.',
+      }, actor, 1_800_000_000_000);
+
+      expect((await store.search({
+        targets: ['recurring-issue'],
+        filter: { statusCategories: ['triage'] },
+      })).rows).toHaveLength(1);
+      expect((await store.search({
+        targets: ['recurring-issue'],
+        filter: { statusCategories: ['scheduled'] },
+      })).rows).toHaveLength(1);
+
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Summarize tagged invoices', trigger: { type: 'when-ready' } },
+        request: { mode: 'request' },
+        reason: 'Create one-off work.',
+      }, actor, 10);
+      const issue = (await store.search({ targets: ['issue'], text: 'invoices' })).rows[0];
+      await store.update({
+        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm one-off work.',
+      }, actor, 20);
+      const confirmed = (await store.search({ targets: ['issue'], text: 'invoices' })).rows[0];
+      await store.startSession({
+        issueId: confirmed.target.id,
+        expectedIssueRevision: confirmed.revision,
+        request: { mode: 'request' },
+        reason: 'Start one-off work.',
+      }, { type: 'runtime-authorized-action', actor }, actor, 30);
+
+      expect((await store.search({
+        targets: ['issue'],
+        filter: { hasActiveSession: true },
+      })).rows.map((row) => row.target.id)).toContain(confirmed.target.id);
+      expect((await store.search({
+        targets: ['issue'],
+        filter: { activityTypes: ['agent-progress'] },
+      })).rows.map((row) => row.target.id)).toContain(confirmed.target.id);
+    });
+  });
+
   test('materializes confirmed active Recurring Issues only when due', async () => {
     await withStore(async (store) => {
       const createdAt = new Date(2026, 6, 7, 17, 0).getTime();

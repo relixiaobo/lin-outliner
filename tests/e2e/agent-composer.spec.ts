@@ -1815,7 +1815,6 @@ test.describe('agent composer controls', () => {
         isError: false,
       }],
     });
-
     // The interim text + lone tool produced no final answer, so the result-first
     // process block auto-expands (a resultless turn) — the narration markdown and,
     // below, the tool are already reachable without toggling it open.
@@ -3130,7 +3129,7 @@ test.describe('agent composer controls', () => {
     await expect(page.getByText('Compare tag layout stability.')).toBeVisible();
   });
 
-  test('opens child run details and expands nested tool calls', async ({ page }) => {
+  test('opens Issue work details from the Work panel', async ({ page }) => {
     const usage = {
       input: 0,
       output: 0,
@@ -3195,6 +3194,58 @@ test.describe('agent composer controls', () => {
         parentToolCallId: 'tool-agent-1',
       }],
     });
+    await page.evaluate(() => {
+      const win = window as E2EWindow;
+      const target = { type: 'issue', id: 'issue-work-1' };
+      const issue = {
+        id: 'issue-work-1',
+        title: 'Inspect Run UI',
+        status: { name: 'Started', category: 'started' },
+        delegate: { type: 'default-agent' },
+        subIssueIds: [],
+        relations: [],
+        trigger: { type: 'when-ready' },
+        permissionMode: 'unattended',
+        confirmation: { state: 'confirmed', confirmedBy: { type: 'user', userId: 'e2e' }, confirmedAt: 1_800_000_000_700 },
+        revision: 'issue-rev-1',
+        createdAt: 1_800_000_000_700,
+        updatedAt: 1_800_000_001_200,
+      };
+      win.__LIN_E2E__?.setAgentIssues([{
+        target,
+        title: 'Inspect Run UI',
+        status: 'Started',
+        revision: 'issue-rev-1',
+        updatedAt: 1_800_000_001_200,
+        confirmed: true,
+        hasActiveSession: true,
+        statusCategories: ['started'],
+      }], {
+        'issue:issue-work-1': {
+          target,
+          issue,
+          sessions: [{
+            id: 'session-work-1',
+            issueId: 'issue-work-1',
+            delegate: { type: 'default-agent' },
+            state: 'active',
+            source: { type: 'delegation', actor: { type: 'agent', agentId: 'neva' } },
+            issueSnapshot: issue,
+            plan: [],
+            revision: 'session-rev-1',
+            createdAt: 1_800_000_000_800,
+            updatedAt: 1_800_000_001_200,
+          }],
+          activity: [{
+            id: 'activity-work-1',
+            target: { type: 'issue', issueId: 'issue-work-1' },
+            actor: { type: 'agent', agentId: 'neva' },
+            content: { type: 'agent-progress', body: 'Inspecting current UI.' },
+            createdAt: 1_800_000_001_200,
+          }],
+        },
+      });
+    });
 
     // A DM main-agent child run stays anchored to its spawning ordinary Agent
     // tool-call row, NOT a free-floating conversation-level boundary. So there
@@ -3203,25 +3254,25 @@ test.describe('agent composer controls', () => {
     await expect(page.getByRole('button', { name: 'Running agent run "Inspect Run UI"' }).first()).toBeVisible();
 
     await page.getByRole('button', { name: /^Open Work/ }).click();
-    const runs = page.getByRole('region', { name: 'Agent runs' });
-    await expect(runs).toBeVisible();
-    await expect(runs).toHaveCSS('position', 'static');
-    await expect(page.locator('.agent-dock-header')).toContainText('Runs');
+    const work = page.getByRole('region', { name: 'Agent work' });
+    await expect(work).toBeVisible();
+    await expect(work).toHaveCSS('position', 'static');
+    await expect(page.locator('.agent-dock-header')).toContainText('Issues');
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to chat' })).toBeVisible();
     await expect(page.locator('.agent-dock-header .agent-dock-title-leading')).toHaveCount(0);
-    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Refresh runs' })).toHaveCount(0);
+    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Refresh Issues' })).toHaveCount(0);
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: /^Open Work/ })).toHaveCount(0);
-    await expect(runs.getByRole('button', { name: 'Close Work' })).toHaveCount(0);
+    await expect(work.getByRole('button', { name: 'Close Work' })).toHaveCount(0);
     await expect(page.locator('.agent-composer-region')).toHaveCount(0);
-    await expect(runs.getByText('Inspect Run UI')).toBeVisible();
-    await expect(runs.locator('[role="treeitem"]')).toHaveCount(0);
-    await runs.getByRole('button', { name: /Inspect Run UI/ }).click();
+    await expect(work.getByText('Inspect Run UI')).toBeVisible();
+    await expect(work.locator('[role="treeitem"]')).toHaveCount(0);
+    await work.getByRole('button', { name: /Inspect Run UI/ }).click();
 
     const detailDialog = page.locator('.agent-run-detail-drawer');
     await expect(detailDialog).toBeVisible();
     await expect(detailDialog).toHaveAttribute('role', 'dialog');
-    await expect(detailDialog).toHaveAttribute('aria-label', 'Run details');
+    await expect(detailDialog).toHaveAttribute('aria-label', 'Issue details');
     await expect(detailDialog).toHaveCSS('position', 'relative');
     await expect(page.locator('.agent-run-detail-drawer-backdrop')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     const [headerBox, detailDialogBox] = await Promise.all([
@@ -3231,75 +3282,22 @@ test.describe('agent composer controls', () => {
     expect(headerBox).toBeTruthy();
     expect(detailDialogBox).toBeTruthy();
     expect(detailDialogBox!.y).toBeGreaterThanOrEqual(headerBox!.y + headerBox!.height - 1);
-    const resizeHandle = detailDialog.locator('.agent-run-detail-resize-handle');
-    await expect(resizeHandle).toBeVisible();
-    const resizeHandleBox = await resizeHandle.boundingBox();
-    expect(resizeHandleBox).toBeTruthy();
-    await page.mouse.move(resizeHandleBox!.x + resizeHandleBox!.width / 2, resizeHandleBox!.y + resizeHandleBox!.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(resizeHandleBox!.x + resizeHandleBox!.width / 2, resizeHandleBox!.y + resizeHandleBox!.height / 2 + 120);
-    await page.mouse.up();
-    const resizedDialogBox = await detailDialog.boundingBox();
-    expect(resizedDialogBox).toBeTruthy();
-    expect(resizedDialogBox!.height).toBeLessThan(detailDialogBox!.height - 40);
-    const details = page.getByRole('region', { name: 'Run details' });
+    const details = page.getByRole('region', { name: 'Issue details' });
     await expect(details).toBeVisible();
-    await expect(runs).toBeVisible();
-    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to runs' })).toHaveCount(0);
+    await expect(work).toBeVisible();
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Back to runs' })).toBeDisabled();
     const detailHeading = details.getByRole('heading', { name: 'Inspect Run UI', level: 3 });
     await expect(detailHeading).toBeVisible();
-    await expect(details.locator('.agent-run-detail-current-row')).toHaveCount(0);
-    await expect(details.getByText(/4 messages ·/)).toHaveCount(0);
-    const breadcrumb = details.getByRole('navigation', { name: 'Run details' });
-    await expect(breadcrumb).toContainText('Neva');
-    await expect(details.locator('.agent-run-breadcrumb-root-icon')).toBeVisible();
-    await expect(breadcrumb).toHaveCSS('flex-wrap', 'nowrap');
-    const [breadcrumbBox, titleBox] = await Promise.all([
-      breadcrumb.boundingBox(),
-      detailHeading.boundingBox(),
-    ]);
-    expect(breadcrumbBox).toBeTruthy();
-    expect(titleBox).toBeTruthy();
-    expect(breadcrumbBox!.y).toBeLessThan(titleBox!.y);
+    await expect(details.getByText('Agent Sessions')).toBeVisible();
+    await expect(details.getByText('Active')).toBeVisible();
+    await expect(details.getByText('Activity')).toBeVisible();
+    await expect(details.getByText('Inspecting current UI.')).toBeVisible();
 
-    await expect(details).toBeVisible();
-    await expect(details.getByText('Activity log (4)')).toHaveCount(0);
-    const processSummary = details.locator('.agent-run-detail-disclosure-section.is-process summary');
-    await expect(processSummary).toHaveText('Working');
-    await expect(details.getByText('Inspect the current UI.')).toBeHidden();
-
-    await processSummary.click();
-    await expect(details.getByText('Inspect the current UI.')).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Thought · Read the visible outline before summarizing.' })).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Read node "today"' })).toBeVisible();
-
-    await details.locator('.agent-tool-call-toggle').first().click();
-    await expect(details.getByText('Daily note content from the Run.')).toBeVisible();
-
-    await expect(details.getByLabel('Agent run follow-up')).toHaveCount(0);
-    await details.getByRole('button', { name: 'Stop' }).click();
-
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.filter((call) => call.cmd === 'agent_run_steer' || call.cmd === 'agent_run_stop')
-        .map((call) => ({ cmd: call.cmd, args: call.args }));
-    }).toEqual([
-      {
-        cmd: 'agent_run_stop',
-        args: {
-          runId: 'child-run-1',
-          conversationId: DEFAULT_DM_CONVERSATION_ID,
-        },
-      },
-    ]);
-
-    await details.getByRole('button', { name: 'Close run details' }).click();
+    await details.getByRole('button', { name: 'Close Issue details' }).click();
     await expect(details).toHaveCount(0);
     await expect(detailDialog).toHaveCount(0);
-    await expect(runs).toBeVisible();
+    await expect(work).toBeVisible();
     await page.locator('.agent-dock-header').getByRole('button', { name: 'Back to chat' }).click();
-    await expect(runs).toHaveCount(0);
+    await expect(work).toHaveCount(0);
   });
 });

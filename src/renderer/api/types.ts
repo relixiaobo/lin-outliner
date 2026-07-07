@@ -78,6 +78,19 @@ export type {
 } from '../../core/agentTypes';
 
 export type {
+  Activity,
+  AgentIssue,
+  AgentRecurringIssue,
+  AgentSession,
+  IssueReadInput,
+  IssueReadResult,
+  IssueSearchInput,
+  IssueSearchResult,
+  IssueSearchRow,
+  IssueTargetRef,
+} from '../../core/agentIssue';
+
+export type {
   AgentDreamReadiness,
   AgentRenderDreamRunEntity,
 } from '../../core/agentRenderProjection';

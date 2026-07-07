@@ -85,6 +85,7 @@ type E2EWindow = Window & {
     emitDocumentEvent: (event: unknown) => void;
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
+    setAgentIssues: (rows: unknown[], details?: Record<string, unknown>) => void;
     setAgentRuns: (runs: unknown[]) => void;
     setAgentMessageContextMenuAction: (action: 'copy' | 'retry' | 'regenerate' | 'details' | null) => void;
   };
@@ -348,6 +349,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const documentListeners: Array<(event: unknown) => void> = [];
     const oauthListeners: Array<(envelope: unknown) => void> = [];
     let messageContextMenuAction: 'copy' | 'retry' | 'regenerate' | 'details' | null = null;
+    let agentIssueRows: unknown[] = [];
+    let agentIssueDetails: Record<string, unknown> = {};
     let agentRuns: unknown[] = [];
     const providerApiKeys = new Map<string, string>([['openai', 'sk-openai-saved']]);
     // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
@@ -1676,6 +1679,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       emitDocumentEvent,
       emitOAuthEvent,
       resolveOAuthLogin,
+      setAgentIssues: (rows, details = {}) => {
+        agentIssueRows = rows;
+        agentIssueDetails = details;
+      },
       setAgentRuns: (runs) => { agentRuns = runs; },
       setAgentMessageContextMenuAction: (action) => { messageContextMenuAction = action; },
     };
@@ -1899,6 +1906,34 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(agentConversations) as T;
         }
         if (cmd === 'agent_list_runs') return clone(agentRuns) as T;
+        if (cmd === 'agent_issue_search') {
+          const targets = Array.isArray(args.targets) ? new Set(args.targets.map(String)) : null;
+          const filter = args.filter && typeof args.filter === 'object' ? args.filter as Record<string, unknown> : {};
+          const statusCategories = Array.isArray(filter.statusCategories) ? new Set(filter.statusCategories.map(String)) : null;
+          const rows = agentIssueRows.filter((row) => {
+            if (!row || typeof row !== 'object') return false;
+            const record = row as Record<string, unknown>;
+            const target = record.target && typeof record.target === 'object' ? record.target as Record<string, unknown> : {};
+            if (targets && !targets.has(String(target.type))) return false;
+            if (filter.hasActiveSession === true && record.hasActiveSession !== true) return false;
+            if (filter.confirmed === false && record.confirmed === true) return false;
+            if (filter.archived === false && record.archived === true) return false;
+            if (statusCategories) {
+              const buckets = Array.isArray(record.statusCategories) ? record.statusCategories.map(String) : [String(record.statusCategory ?? '')];
+              if (!buckets.some((bucket) => statusCategories.has(bucket))) return false;
+            }
+            return true;
+          }).map((row) => {
+            const { hasActiveSession: _hasActiveSession, confirmed: _confirmed, archived: _archived, statusCategory: _statusCategory, statusCategories: _statusCategories, ...publicRow } = row as Record<string, unknown>;
+            return publicRow;
+          });
+          return clone({ rows }) as T;
+        }
+        if (cmd === 'agent_issue_read') {
+          const target = args.target && typeof args.target === 'object' ? args.target as Record<string, unknown> : {};
+          const key = `${String(target.type)}:${String(target.id)}`;
+          return clone(agentIssueDetails[key] ?? { target }) as T;
+        }
         if (cmd === 'agent_rename_conversation') {
           const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
           if (target) {

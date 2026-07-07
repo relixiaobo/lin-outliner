@@ -78,11 +78,9 @@ The Issue Manager implementation has a canonical protocol/store checkpoint in
 code, and the Issue/Agent Session tools are wired into ordinary and child-agent
 tool pools through `AgentIssueToolRuntime`. The product/tool surface uses
 Issue, Recurring Issue, Agent Session, and Activity; V1 reuses the existing
-delegation engine as an internal Agent Session executor while the old Run UI is
-being retired.
+delegation engine as an internal Agent Session executor.
 
-The checkpoint defines the target concepts and schemas that later replace the
-Run-first product surface:
+The checkpoint defines the concepts, schemas, and Issue-first Work surface:
 
 - canonical types live in `src/core/agentIssue.ts`: Issue, Recurring Issue,
   Agent Session, Activity, runtime authorization capability, and the eight
@@ -118,6 +116,11 @@ Run-first product surface:
   Startup recovery marks any persisted `pending`, `active`, or `awaitingInput`
   Agent Session as `stale` when there is no live executor in the restored
   runtime.
+- The renderer-facing Work panel is Issue-first: it reads Work rows with
+  `agent_issue_search`, opens Issue details with `agent_issue_read`, and renders
+  Agent Sessions and Activity as Issue detail sections. The panel's Triage,
+  Active, Scheduled, Completed, and Activity tabs are renderer presets translated
+  into canonical Issue filters, not model-facing view enums.
 
 The internal executor binding is intentionally not part of the model-facing
 schema. `agent_session_read` returns Agent Session state and Activity, not a Run
