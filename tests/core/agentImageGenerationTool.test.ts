@@ -55,6 +55,9 @@ describe('generate_image tool', () => {
 
     expect(details.ok).toBe(true);
     expect(details.tool).toBe('generate_image');
+    expect(details.data?.providerId).toBe('openai');
+    expect(details.data?.modelId).toBe('gpt-image-2');
+    expect(details.data?.modelName).toBe('GPT Image 2');
     expect(details.data?.images).toHaveLength(1);
     expect(details.data?.images[0]?.payload.id).toBe('payload-0');
     expect(writtenPayloads).toHaveLength(1);
@@ -67,9 +70,6 @@ describe('generate_image tool', () => {
     expect(JSON.parse(text.text)).toEqual({
       ok: true,
       data: {
-        providerId: 'openai',
-        modelId: 'gpt-image-2',
-        modelName: 'GPT Image 2',
         images: [{
           payloadId: 'payload-0',
           mimeType: 'image/png',
@@ -127,6 +127,96 @@ describe('generate_image tool', () => {
     expect(details.ok).toBe(true);
     expect(details.data?.providerId).toBe('google');
     expect(details.data?.modelId).toBe('gemini-3.1-flash-image');
+  });
+
+  test('uses the saved default model before automatic provider priority', async () => {
+    const runtime: AgentImageGenerationRuntime = {
+      listModels: async () => [{
+        providerId: 'openai',
+        id: 'gpt-image-2',
+        name: 'GPT Image 2',
+        input: ['text', 'image'],
+        output: ['image'],
+      }, {
+        providerId: 'google',
+        id: 'gemini-3.1-flash-image',
+        name: 'Nano Banana',
+        input: ['text', 'image'],
+        output: ['text', 'image'],
+      }],
+      getActiveProviderId: async () => 'openai',
+      getDefaultModel: async () => 'google/gemini-3.1-flash-image',
+      readPayloadImage: async () => { throw new Error('not used'); },
+      readLocalImage: async () => { throw new Error('not used'); },
+      writeGeneratedImage: async ({ index, data, mimeType }) => ({
+        kind: 'payload_ref',
+        id: `payload-${index}`,
+        storage: 'file',
+        mimeType,
+        byteLength: data.byteLength,
+        sha256: createHash('sha256').update(data).digest('hex'),
+        role: 'tool_output',
+        summary: 'Generated image',
+      }),
+      generateImages: async ({ providerId, modelId }) => ({
+        api: `${providerId}-images`,
+        provider: providerId,
+        model: modelId,
+        output: [{ type: 'image', data: ONE_PIXEL_PNG_BASE64, mimeType: 'image/png' }],
+        stopReason: 'stop',
+        timestamp: Date.now(),
+      }),
+    };
+
+    const tool = createGenerateImageTool(runtime);
+    const result = await tool.execute('call-default', { prompt: 'A tiny banana icon' });
+    const details = result.details as ToolEnvelope<GenerateImageData>;
+
+    expect(details.ok).toBe(true);
+    expect(details.data?.providerId).toBe('google');
+    expect(details.data?.modelId).toBe('gemini-3.1-flash-image');
+  });
+
+  test('falls back to automatic selection when the saved default model is unavailable', async () => {
+    const runtime: AgentImageGenerationRuntime = {
+      listModels: async () => [{
+        providerId: 'openai',
+        id: 'gpt-image-2',
+        name: 'GPT Image 2',
+        input: ['text', 'image'],
+        output: ['image'],
+      }],
+      getActiveProviderId: async () => 'openai',
+      getDefaultModel: async () => 'google/gemini-3.1-flash-image',
+      readPayloadImage: async () => { throw new Error('not used'); },
+      readLocalImage: async () => { throw new Error('not used'); },
+      writeGeneratedImage: async ({ index, data, mimeType }) => ({
+        kind: 'payload_ref',
+        id: `payload-${index}`,
+        storage: 'file',
+        mimeType,
+        byteLength: data.byteLength,
+        sha256: createHash('sha256').update(data).digest('hex'),
+        role: 'tool_output',
+        summary: 'Generated image',
+      }),
+      generateImages: async ({ providerId, modelId }) => ({
+        api: `${providerId}-images`,
+        provider: providerId,
+        model: modelId,
+        output: [{ type: 'image', data: ONE_PIXEL_PNG_BASE64, mimeType: 'image/png' }],
+        stopReason: 'stop',
+        timestamp: Date.now(),
+      }),
+    };
+
+    const tool = createGenerateImageTool(runtime);
+    const result = await tool.execute('call-fallback', { prompt: 'A tiny icon' });
+    const details = result.details as ToolEnvelope<GenerateImageData>;
+
+    expect(details.ok).toBe(true);
+    expect(details.data?.providerId).toBe('openai');
+    expect(details.data?.modelId).toBe('gpt-image-2');
   });
 
   test('returns unsupported option errors before calling the image provider', async () => {

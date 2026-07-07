@@ -135,6 +135,7 @@ export const AGENT_COMMANDS = [
   'agent_get_provider_settings',
   'agent_refresh_provider_models',
   'agent_update_runtime_settings',
+  'agent_update_image_generation_settings',
   'agent_get_tool_permission_settings',
   'agent_update_tool_permission_settings',
   'agent_append_tool_permission_block',

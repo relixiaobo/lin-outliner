@@ -33,6 +33,7 @@ export interface AgentImageGenerationInputImage {
 export interface AgentImageGenerationRuntime {
   listModels(): Promise<AgentImageGenerationModel[]>;
   getActiveProviderId(): Promise<string | null>;
+  getDefaultModel?(): Promise<string | null>;
   validateOptions?(input: {
     providerId: string;
     modelId: string;
@@ -199,7 +200,9 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
       try {
         const models = await runtime.listModels();
         const activeProviderId = await runtime.getActiveProviderId();
-        const selected = selectImageModel(models, params.model, activeProviderId);
+        const defaultModel = params.model ? null : (await runtime.getDefaultModel?.() ?? null);
+        const selected = selectImageModel(models, params.model ?? defaultModel ?? undefined, activeProviderId)
+          ?? (!params.model && defaultModel ? selectImageModel(models, undefined, activeProviderId) : null);
         if (!selected) {
           return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, 'no_image_model', noImageModelMessage(params.model), {
             instructions: 'Enable an image-capable provider such as OpenAI, Google Gemini, or OpenRouter in Settings > Providers.',
@@ -437,9 +440,6 @@ function noImageModelMessage(requested: string | undefined): string {
 
 function modelVisibleGenerateImageData(data: GenerateImageData) {
   return {
-    providerId: data.providerId,
-    modelId: data.modelId,
-    modelName: data.modelName,
     images: data.images.map((image) => ({
       payloadId: image.payload.id,
       mimeType: image.mimeType,

@@ -4764,6 +4764,7 @@ export class AgentRuntime {
         ));
       },
       getActiveProviderId: async () => (await this.getActiveProviderConfig().catch(() => null))?.providerId ?? null,
+      getDefaultModel: async () => (await getProviderSettings()).imageGeneration.defaultModel ?? null,
       validateOptions: ({ providerId, modelId, options }) => validateImageGenerationOptions(providerId, modelId, options),
       readPayloadImage: async ({ payloadId, runId }) => {
         const payload = await this.previewPayload(conversationId, payloadId, runId);

@@ -29,6 +29,7 @@ const {
   getProviderSettings,
   reconcileProviderConfig,
   setActiveProvider,
+  updateImageGenerationSettings,
   upsertProviderConfig,
   ensureProviderConfig,
   setProviderApiKey,
@@ -91,6 +92,17 @@ describe('provider config startup reconcile (Part A)', () => {
       providers: [],
     });
     expect(await getAgentRuntimeSettings()).not.toHaveProperty('safetyMode');
+  });
+
+  test('stores image generation defaults separately from provider connection rows', async () => {
+    await updateImageGenerationSettings({ defaultModel: 'google/gemini-3.1-flash-image' });
+
+    const view = await getProviderSettings();
+    expect(view.imageGeneration.defaultModel).toBe('google/gemini-3.1-flash-image');
+    expect(view.providers).toHaveLength(0);
+
+    await updateImageGenerationSettings({ defaultModel: null });
+    expect((await getProviderSettings()).imageGeneration.defaultModel).toBeUndefined();
   });
 
   test('prunes a keyless junk row and clears the active pointer', async () => {

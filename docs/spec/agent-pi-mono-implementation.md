@@ -575,8 +575,11 @@ interface AgentProviderCapabilitySummary {
 The provider detail window renders capabilities as informational sections:
 language models, image-generation models, and future capability groups. It does
 not ask for or persist a default model. The composer/model picker reads only
-enabled providers' language models; image-generation models are consumed by the
-`generate_image` tool and future image-specific settings.
+enabled providers' language models. The `generate_image` tool reads
+image-generation models and the separate `imageGeneration.defaultModel` tool
+preference; that default is stored outside provider connection rows and uses the
+canonical provider-qualified `providerId/modelId` format, with empty meaning
+Auto.
 
 ### Provider rows are deliberate; state cannot contradict
 
@@ -992,9 +995,12 @@ Each command should return:
 - optional `operation` with `undoGroupId` for document mutations
 - optional `requiresApproval` for deferred execution
 
-`generate_image` returns normal tool-envelope data plus payload refs for each
-generated image. The raw image bytes are written through the agent payload store
-and are not copied into model-visible JSON or renderer debug text.
+`generate_image` returns normal tool-envelope details plus payload refs for each
+generated image. Runtime details keep the actual provider/model used for UI and
+debug display, but the model-visible JSON contains only payload ids and file
+metadata needed for follow-up work. The raw image bytes are written through the
+agent payload store and are not copied into model-visible JSON or renderer debug
+text.
 
 TypeScript should validate paths, workspace boundaries, command timeouts, output size,
 and mutation legality. TypeScript validation is useful for fast feedback, but it

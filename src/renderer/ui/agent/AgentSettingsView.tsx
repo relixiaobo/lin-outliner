@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppIcon } from '../icons';
 import type {
+  AgentProviderCapabilityModelOption,
   AgentProviderConfigView,
   AgentProviderOption,
   AgentProviderSettingsView,
@@ -11,6 +12,7 @@ import type {
   SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
+import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import {
   AddIcon,
   AgentIcon,
@@ -95,6 +97,17 @@ interface ProviderRowHandlers {
   onToggleEnabled: (id: string, enabled: boolean) => void;
   onRemove: (id: string) => void;
   onMenuOpenChange: (id: string, open: boolean) => void;
+}
+
+interface ImageModelChoice {
+  value: string;
+  label: string;
+}
+
+interface ImageModelGroup {
+  providerId: string;
+  label: string;
+  models: ImageModelChoice[];
 }
 
 // A single provider row in the inset grouped list. Configured rows expose an
@@ -571,6 +584,10 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     () => providerChoices.filter((choice) => !choice.configured && !choice.quickEnable),
     [providerChoices],
   );
+  const imageModelMenu = useMemo(
+    () => settings ? buildImageModelMenu(settings, providerCatalog) : { groups: [], defaultUnavailable: false },
+    [providerCatalog, settings],
+  );
 
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
   const permissionGrants = permissionDraft?.grants ?? permissionSettings?.grants ?? [];
@@ -723,6 +740,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
 
   function refreshProviderModels(providerId: string) {
     void runProviderMutation(() => api.agentRefreshProviderModels(providerId), t.settings.providers.modelsRefreshedNotice);
+  }
+
+  function changeDefaultImageModel(defaultModel: string) {
+    void runProviderMutation(
+      () => api.agentUpdateImageGenerationSettings({ defaultModel: defaultModel || null }),
+      t.settings.providers.defaultImageModelSavedNotice,
+    );
   }
 
   function toggleProviderEnabled(providerId: string, enabled: boolean) {
@@ -1000,6 +1024,42 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     the pane. Custom providers are added from the last row of the
                     add-provider list (no separate floating add control). */}
                 <div className="settings-provider-groups">
+                  <InsetGroup
+                    ariaLabel={t.settings.providers.imageGenerationAriaLabel}
+                    label={t.settings.providers.imageGenerationGroup}
+                  >
+                    <InsetRow
+                      label={t.settings.providers.defaultImageModelLabel}
+                      sublabel={imageModelMenu.defaultUnavailable
+                        ? t.settings.providers.defaultImageModelUnavailable
+                        : t.settings.providers.defaultImageModelSublabel}
+                      trailing={(
+                        <SelectControl
+                          className="settings-image-model-select"
+                          disabled={saving}
+                          label={t.settings.providers.defaultImageModelLabel}
+                          onChange={(event) => changeDefaultImageModel(event.target.value)}
+                          value={settings?.imageGeneration.defaultModel ?? ''}
+                          variant="popup"
+                        >
+                          <option value="">{t.settings.providers.imageModelAuto}</option>
+                          {imageModelMenu.defaultUnavailable && settings?.imageGeneration.defaultModel ? (
+                            <option value={settings.imageGeneration.defaultModel}>
+                              {t.settings.providers.imageModelUnavailableOption({ model: settings.imageGeneration.defaultModel })}
+                            </option>
+                          ) : null}
+                          {imageModelMenu.groups.map((group) => (
+                            <optgroup key={group.providerId} label={group.label}>
+                              {group.models.map((model) => (
+                                <option key={model.value} value={model.value}>{model.label}</option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </SelectControl>
+                      )}
+                      wrap
+                    />
+                  </InsetGroup>
                   {configuredChoices.length > 0 ? (
                     <InsetGroup ariaLabel={t.settings.providers.connectedAriaLabel} label={t.settings.providers.connectedGroup}>
                       {configuredChoices.map(renderProviderRow)}
@@ -1461,6 +1521,44 @@ function buildProviderChoices(
   }
 
   return [...choices.values()].sort(compareProviderChoices);
+}
+
+function buildImageModelMenu(
+  settings: AgentProviderSettingsView,
+  catalog: Map<string, AgentProviderOption>,
+): { groups: ImageModelGroup[]; defaultUnavailable: boolean } {
+  const groups: ImageModelGroup[] = [];
+  const values = new Set<string>();
+  for (const provider of settings.providers) {
+    if (!provider.enabled) continue;
+    const providerOption = catalog.get(provider.providerId);
+    if (!providerHasCredential(provider, providerOption)) continue;
+    const models = imageGenerationModelsForProvider(providerOption)
+      .map((model) => {
+        const value = composeProviderQualifiedModel(model.providerId || provider.providerId, model.id);
+        values.add(value);
+        return {
+          value,
+          label: model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id,
+        };
+      });
+    if (models.length > 0) {
+      groups.push({
+        providerId: provider.providerId,
+        label: formatProviderName(provider.providerId),
+        models,
+      });
+    }
+  }
+  const defaultModel = settings.imageGeneration.defaultModel ?? '';
+  return {
+    groups,
+    defaultUnavailable: Boolean(defaultModel && !values.has(defaultModel)),
+  };
+}
+
+function imageGenerationModelsForProvider(provider: AgentProviderOption | undefined): AgentProviderCapabilityModelOption[] {
+  return provider?.capabilities?.find((capability) => capability.kind === 'image_generation')?.models ?? [];
 }
 
 function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): number {

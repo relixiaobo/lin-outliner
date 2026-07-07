@@ -76,6 +76,7 @@ import {
   refreshProviderModels,
   setActiveProvider,
   setProviderApiKey,
+  updateImageGenerationSettings,
   updateAgentRuntimeSettings,
   upsertProviderConfig,
   testProviderConnection,
@@ -100,7 +101,7 @@ import { oauthLoginManager } from './agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import { resolveRipgrepCommand } from './agentRipgrep';
 import { buildAgentLocalToolProcessEnv } from './agentToolProcess';
-import type { AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
+import type { AgentImageGenerationSettingsInput, AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
 import {
   loadAppPreferences,
@@ -2685,6 +2686,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return refreshProviderModels(String(args.providerId));
     case 'agent_update_runtime_settings':
       return updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
+    case 'agent_update_image_generation_settings':
+      return updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput);
     case 'agent_get_tool_permission_settings':
       return readAgentToolPermissionSettingsView();
     case 'agent_update_tool_permission_settings':

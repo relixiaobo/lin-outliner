@@ -807,6 +807,19 @@ export interface AgentRuntimeSettingsInput {
   disabledAgents?: string[];
 }
 
+export interface AgentImageGenerationSettings {
+  /**
+   * Provider-qualified default image model (`providerId/modelId`). Missing means
+   * Auto: choose the best enabled image-capable provider/model at run time.
+   */
+  defaultModel?: string;
+}
+
+export interface AgentImageGenerationSettingsInput {
+  /** Provider-qualified model id, or null/empty to use Auto. */
+  defaultModel?: string | null;
+}
+
 export interface AgentDefinition {
   name: string;
   displayName?: string;
@@ -1005,6 +1018,7 @@ export interface AgentProviderSettingsView {
   providers: AgentProviderConfigView[];
   availableProviders: AgentProviderOption[];
   agent: AgentRuntimeSettings;
+  imageGeneration: AgentImageGenerationSettings;
 }
 
 export interface AgentProviderSecretStatus {

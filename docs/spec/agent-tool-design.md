@@ -261,9 +261,12 @@ permissions and payload persistence.
 
 The tool is available only when the runtime has at least one enabled,
 credentialed image-capable provider. Provider records do not store a default
-image model. If the model parameter is omitted, runtime selects an enabled image
-model by deterministic provider priority: the active provider when it has image
-models, then first-party OpenAI, first-party Google Gemini, then OpenRouter.
+image model; the optional default lives in `imageGeneration.defaultModel`, a
+tool preference stored separately from provider connection rows. If the `model`
+parameter is omitted or `auto`, runtime first tries that saved default. If the
+saved default is unavailable, runtime falls back to deterministic provider
+priority: the active provider when it has image models, then first-party OpenAI,
+first-party Google Gemini, then OpenRouter.
 
 Input:
 
@@ -307,12 +310,14 @@ Validation is TypeScript-owned:
   accept only `auto`, `1024x1024`, `1024x1536`, and `1536x1024` sizes.
 
 Generated images are stored as normal agent payload files before the tool result
-is persisted. The model-visible JSON includes payload ids, mime types, byte
-length, and dimensions when known; it does not include base64 image bytes. The
-tool result also returns image content blocks to the pi-agent loop so the same
-turn can inspect or use the generated image without re-reading debug payloads.
+is persisted. The model-visible JSON includes only payload ids, mime types, byte
+length, and dimensions when known; it does not include provider/model execution
+metadata or base64 image bytes. The complete runtime details retain
+`providerId`, `modelId`, and `modelName` for UI/debug display. The tool result
+also returns image content blocks to the pi-agent loop so the same turn can
+inspect or use the generated image without re-reading debug payloads.
 
-Result:
+Runtime details:
 
 ```ts
 interface GenerateImageData {
@@ -328,6 +333,21 @@ interface GenerateImageData {
   }>;
   text: string[];
   promptPreview: string;
+}
+```
+
+Model-visible `data`:
+
+```ts
+interface GenerateImageVisibleData {
+  images: Array<{
+    payloadId: string;
+    mimeType: string;
+    byteLength: number;
+    width?: number;
+    height?: number;
+  }>;
+  text?: string[];
 }
 ```
 

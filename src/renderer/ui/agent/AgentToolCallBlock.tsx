@@ -66,6 +66,12 @@ interface LoadedSkillDetails {
   skill: string;
 }
 
+interface GeneratedImageDetails {
+  providerId: string;
+  modelId: string;
+  modelName: string;
+}
+
 export function getToolCallStatus(
   toolCallId: string,
   result: AgentToolResultWithPayloads | undefined,
@@ -296,6 +302,19 @@ function resultImages(result: AgentToolResultWithPayloads | undefined): Array<{ 
     .filter((block): block is Extract<AgentToolResultWithPayloads['content'][number], { type: 'image' }> =>
       block.type === 'image')
     .map((block) => ({ data: block.data, mimeType: block.mimeType }));
+}
+
+function generatedImageDetails(result: AgentToolResultWithPayloads | undefined): GeneratedImageDetails | null {
+  if (!result || result.isError) return null;
+  const details = result.details;
+  if (!isRecord(details) || details.tool !== 'generate_image' || !isRecord(details.data)) return null;
+  const data = details.data;
+  if (typeof data.providerId !== 'string' || typeof data.modelId !== 'string') return null;
+  return {
+    providerId: data.providerId,
+    modelId: data.modelId,
+    modelName: typeof data.modelName === 'string' && data.modelName.trim() ? data.modelName.trim() : data.modelId,
+  };
 }
 
 function isJsonText(text: string): boolean {
@@ -607,6 +626,19 @@ function ToolResultImages({ images }: { images: Array<{ data: string; mimeType: 
   );
 }
 
+function GeneratedImageMeta({ details }: { details: GeneratedImageDetails | null }) {
+  const t = useT();
+  if (!details) return null;
+  return (
+    <div className="agent-tool-image-meta">
+      {t.agent.toolCall.generatedWith({
+        provider: details.providerId,
+        model: details.modelName,
+      })}
+    </div>
+  );
+}
+
 function PersistedToolOutput({
   initialText,
   index,
@@ -748,6 +780,7 @@ export function AgentToolCallBlock({
     [toolCall, result, outputText],
   );
   const images = useMemo(() => resultImages(result), [result]);
+  const imageDetails = useMemo(() => generatedImageDetails(result), [result]);
   // A file output renders its own chip + diff, so the generic output parts (and
   // their flat-map over content) are only needed when there is no file output.
   const parts = useMemo(
@@ -779,7 +812,12 @@ export function AgentToolCallBlock({
       disclosureId={`tool:${toolCall.id}`}
       expanded={isExpanded}
       hasDetails={hasDetails}
-      images={<ToolResultImages images={images} />}
+      images={(
+        <>
+          <ToolResultImages images={images} />
+          <GeneratedImageMeta details={imageDetails} />
+        </>
+      )}
       onToggle={toggle}
       status={status}
       statusIcon={StatusIcon}

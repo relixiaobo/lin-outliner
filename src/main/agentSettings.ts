@@ -12,6 +12,8 @@ import type {
   AgentProviderAuthKind,
   AgentRuntimeSettings,
   AgentRuntimeSettingsInput,
+  AgentImageGenerationSettings,
+  AgentImageGenerationSettingsInput,
   AgentProviderConfigInput,
   AgentProviderConfigView,
   AgentProviderCapabilitySummary,
@@ -88,12 +90,17 @@ export interface StoredBuiltInAgentProfile {
 interface ProviderConfigFile {
   activeProviderId?: string;
   agent?: StoredAgentRuntimeSettings;
+  imageGeneration?: StoredImageGenerationSettings;
   providers: AgentProviderConfig[];
   builtInAgentProfiles?: Record<string, StoredBuiltInAgentProfile>;
 }
 
 type StoredAgentRuntimeSettings = Partial<AgentRuntimeSettings> & {
   permissionMode?: 'trusted' | 'restricted';
+};
+
+type StoredImageGenerationSettings = {
+  defaultModel?: string | null;
 };
 
 // Stored credential shape — mirrors pi-mono's coding-agent `AuthCredential`
@@ -317,6 +324,16 @@ export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInpu
   return getProviderSettings();
 }
 
+export async function updateImageGenerationSettings(input: AgentImageGenerationSettingsInput) {
+  const file = await readProviderFile();
+  file.imageGeneration = normalizeImageGenerationSettings({
+    ...normalizeImageGenerationSettings(file.imageGeneration),
+    ...input,
+  });
+  await writeProviderFile(file);
+  return getProviderSettings();
+}
+
 export function providerStreamOptionsFromRuntimeSettings(
   settings?: Pick<
     AgentRuntimeSettings,
@@ -523,6 +540,7 @@ async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Pr
   return {
     activeProviderId: file.activeProviderId,
     agent: normalizeAgentRuntimeSettings(file.agent),
+    imageGeneration: normalizeImageGenerationSettings(file.imageGeneration),
     providers: await Promise.all(file.providers.map(async (provider): Promise<AgentProviderConfigView> => {
       const catalogProvider = availableProviderById.get(provider.providerId);
       const cred = secrets.credentials[provider.providerId];
@@ -561,6 +579,11 @@ async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Pr
     })),
     availableProviders,
   };
+}
+
+function normalizeImageGenerationSettings(input?: StoredImageGenerationSettings | null): AgentImageGenerationSettings {
+  const defaultModel = normalizeOptionalString(input?.defaultModel);
+  return defaultModel && defaultModel !== 'auto' ? { defaultModel } : {};
 }
 
 function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null): AgentRuntimeSettings {
