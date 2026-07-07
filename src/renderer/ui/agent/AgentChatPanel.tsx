@@ -75,6 +75,7 @@ import {
   issueSearchInputForWorkPreset,
   type IssueWorkPreset,
 } from './AgentIssuesPanel';
+import { AgentRunDetailsPanel } from './AgentRunDetailsPanel';
 import { composerCurrentNodeId } from './userViewContext';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { Button } from '../primitives/Button';
@@ -107,6 +108,11 @@ interface PendingTranscriptReveal {
   deferUntilDockOpen: boolean;
   reachedTargetConversation: boolean;
   target: AgentChatSourceRevealTarget;
+}
+
+interface RunDetailTarget {
+  conversationId: string | null;
+  runId: string;
 }
 
 function parseCssTimeMs(value: string): number | null {
@@ -456,6 +462,7 @@ export function AgentChatPanel({
   const [pendingDeleteConversation, setPendingDeleteConversation] = useState<AgentConversationListMeta | null>(null);
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [workPanelOpen, setWorkPanelOpen] = useState(false);
+  const [runDetailStack, setRunDetailStack] = useState<RunDetailTarget[]>([]);
   const [issueDetailStack, setIssueDetailStack] = useState<IssueTargetRef[]>([]);
   const [issueIndexPreset, setIssueIndexPreset] = useState<IssueWorkPreset>('active');
   const [issueIndex, setIssueIndex] = useState<IssueSearchRow[]>([]);
@@ -533,6 +540,7 @@ export function AgentChatPanel({
     [entries, turnPhase],
   );
   const selectedIssueTarget = issueDetailStack.length > 0 ? issueDetailStack[issueDetailStack.length - 1]! : null;
+  const selectedRunTarget = runDetailStack.length > 0 ? runDetailStack[runDetailStack.length - 1]! : null;
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
   const agentDefinitionById = useMemo(() => {
     const map = new Map<string, AgentDefinitionView>();
@@ -901,7 +909,9 @@ export function AgentChatPanel({
     const blankProjection = revision === `${conversationId}-0-0-0-`;
 
     if (target.stream === 'run') {
-      onOpenRunDetailsPanel?.(conversationId, target.streamId);
+      setWorkPanelOpen(true);
+      setIssueDetailStack([]);
+      setRunDetailStack([{ conversationId, runId: target.streamId }]);
       if (rowIndex >= 0) revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
       if (!blankProjection || rowIndex >= 0) setPendingTranscriptReveal(null);
       return;
@@ -955,7 +965,6 @@ export function AgentChatPanel({
   useEffect(() => {
     mountedRef.current = true;
     void loadProviderSettings();
-    void loadIssueIndex();
     return () => {
       mountedRef.current = false;
       providerSettingsRequestRef.current += 1;
@@ -968,11 +977,18 @@ export function AgentChatPanel({
         issueIndexRefreshTimerRef.current = null;
       }
     };
-  }, [loadProviderSettings, loadIssueIndex]);
+  }, [loadProviderSettings]);
 
-  useEffect(() => window.lin?.onAgentEvent(() => {
-    scheduleIssueIndexRefresh();
-  }), [scheduleIssueIndexRefresh]);
+  useEffect(() => {
+    if (!workPanelOpen) return undefined;
+    return window.lin?.onAgentEvent(() => {
+      scheduleIssueIndexRefresh();
+    });
+  }, [scheduleIssueIndexRefresh, workPanelOpen]);
+
+  useEffect(() => {
+    if (workPanelOpen) void loadIssueIndex();
+  }, [loadIssueIndex, workPanelOpen]);
 
   useEffect(() => {
     void loadSlashCommands();
@@ -999,12 +1015,13 @@ export function AgentChatPanel({
     }
     if (!options.openWork) return;
     setIssueDetailStack([]);
+    setRunDetailStack([]);
     setWorkPanelOpen(true);
-    scheduleIssueIndexRefresh();
-  }), [scheduleIssueIndexRefresh]);
+  }), []);
 
   const openIssueFromWorkPanel = useCallback((target: IssueTargetRef) => {
     setWorkPanelOpen(true);
+    setRunDetailStack([]);
     setIssueDetailStack([target]);
   }, []);
 
@@ -1012,24 +1029,47 @@ export function AgentChatPanel({
     setIssueDetailStack([]);
   }, []);
 
+  const closeRunDetailDrawer = useCallback(() => {
+    setRunDetailStack([]);
+  }, []);
+
   const handleDockHeaderMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    if (!selectedIssueTarget) return;
+    if (!selectedIssueTarget && !selectedRunTarget) return;
     suppressHeaderClickRef.current = true;
     window.setTimeout(() => {
       suppressHeaderClickRef.current = false;
     }, 500);
     event.preventDefault();
     event.stopPropagation();
-    closeIssueDetailDrawer();
-  }, [closeIssueDetailDrawer, selectedIssueTarget]);
+    if (selectedRunTarget) closeRunDetailDrawer();
+    else closeIssueDetailDrawer();
+  }, [closeIssueDetailDrawer, closeRunDetailDrawer, selectedIssueTarget, selectedRunTarget]);
 
   const handleDockHeaderClickCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    if (!suppressHeaderClickRef.current && !selectedIssueTarget) return;
+    if (!suppressHeaderClickRef.current && !selectedIssueTarget && !selectedRunTarget) return;
     suppressHeaderClickRef.current = false;
     event.preventDefault();
     event.stopPropagation();
-    if (selectedIssueTarget) closeIssueDetailDrawer();
-  }, [closeIssueDetailDrawer, selectedIssueTarget]);
+    if (selectedRunTarget) closeRunDetailDrawer();
+    else if (selectedIssueTarget) closeIssueDetailDrawer();
+  }, [closeIssueDetailDrawer, closeRunDetailDrawer, selectedIssueTarget, selectedRunTarget]);
+
+  const goBackInRunDetailDrawer = useCallback(() => {
+    setRunDetailStack((stack) => stack.length > 1 ? stack.slice(0, -1) : []);
+  }, []);
+
+  const openRunInDetailDrawer = useCallback((runId: string, runConversationId: string | null) => {
+    const nextConversationId = runConversationId ?? selectedRunTarget?.conversationId ?? conversationId;
+    setIssueDetailStack([]);
+    setWorkPanelOpen(true);
+    setRunDetailStack((stack) => {
+      const existingIndex = stack.findIndex((item) => (
+        item.runId === runId && item.conversationId === nextConversationId
+      ));
+      if (existingIndex >= 0) return stack.slice(0, existingIndex + 1);
+      return [...stack, { conversationId: nextConversationId, runId }];
+    });
+  }, [conversationId, selectedRunTarget?.conversationId]);
 
   const setIssueWorkPreset = useCallback((preset: IssueWorkPreset) => {
     setIssueIndexPreset(preset);
@@ -1072,14 +1112,15 @@ export function AgentChatPanel({
   }, [resolveApproval]);
 
   async function refreshAfterSettingsChange() {
-    await Promise.all([
+    const refreshes: Array<Promise<unknown>> = [
       loadProviderSettings(),
       loadConversations(),
-      loadIssueIndex(),
       loadSlashCommands(),
       loadAgentDefinitions(),
       reloadConversation(),
-    ]);
+    ];
+    if (workPanelOpen) refreshes.push(loadIssueIndex());
+    await Promise.all(refreshes);
   }
 
   // Settings now live in a separate window; when it applies changes the main
@@ -1607,7 +1648,26 @@ export function AgentChatPanel({
             preset={issueIndexPreset}
             rows={issueIndex}
           />
-          {selectedIssueTarget ? (
+          {selectedRunTarget ? (
+            <Dialog
+              backdropClassName="agent-run-detail-drawer-backdrop"
+              label={t.agent.runDetail.detailsAriaLabel}
+              onBackdropMouseDown={closeRunDetailDrawer}
+              onEscapeKeyDown={closeRunDetailDrawer}
+              surfaceClassName="agent-run-detail-drawer"
+            >
+              <AgentRunDetailsPanel
+                breadcrumbRootLabel={displayTitle}
+                onBack={runDetailStack.length > 1 ? goBackInRunDetailDrawer : undefined}
+                onClose={closeRunDetailDrawer}
+                conversationId={selectedRunTarget.conversationId}
+                index={index}
+                runId={selectedRunTarget.runId}
+                onNodeReferenceOpen={onOpenNodeReference}
+                onOpenRun={openRunInDetailDrawer}
+              />
+            </Dialog>
+          ) : selectedIssueTarget ? (
             <Dialog
               backdropClassName="agent-run-detail-drawer-backdrop"
               label={t.agent.issueDetail.detailsAriaLabel}

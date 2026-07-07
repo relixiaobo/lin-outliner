@@ -76,7 +76,7 @@
 }
 
 .agent-issue-view-tab.is-selected {
-  background: var(--fill-hover);
+  background: var(--fill-2);
 }
 
 .agent-issue-active-summary {
@@ -956,8 +956,8 @@
 
 .agent-issue-detail-description {
   color: var(--text-primary);
-  font-size: var(--font-ui);
-  line-height: var(--line-ui);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
   white-space: pre-wrap;
 }
 
@@ -971,7 +971,7 @@
 .agent-issue-detail-section h4 {
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
-  font-weight: var(--font-weight-semibold);
+  font-weight: 600;
   line-height: var(--line-ui-sm);
   margin: 0;
 }
