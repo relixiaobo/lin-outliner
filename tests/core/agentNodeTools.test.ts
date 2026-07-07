@@ -305,6 +305,29 @@ describe('agent node tools', () => {
     ]);
   });
 
+  test('node_create top-level fields preserve after_id root insertion position', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const first = mustFocus(core.createNode(today, null, 'A'));
+    const second = mustFocus(core.createNode(today, null, 'B'));
+
+    const envelope = await executeTool<{ createdRootIds: string[]; createdFieldEntryIds?: string[] }>(core, 'node_create', {
+      after_id: second,
+      outline: [
+        '- Source:: RSS',
+        '- New',
+      ].join('\n'),
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.createdFieldEntryIds).toHaveLength(1);
+    expect(core.state().nodes[today]!.children.filter((childId) => core.state().nodes[childId]?.type !== 'fieldEntry')).toEqual([
+      first,
+      second,
+      envelope.data!.createdRootIds[0],
+    ]);
+  });
+
   test('node_create infers conservative field types for new field definitions', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -437,6 +460,25 @@ describe('agent node tools', () => {
     ]);
   });
 
+  test('node_create does not match empty draft fields as the Field placeholder name', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const feed = mustFocus(core.createNode(today, null, 'Feed'));
+    const draftEntry = mustFocus(core.createInlineField(feed, null, '', 'plain'));
+
+    const envelope = await executeTool<{ createdFieldEntryIds?: string[] }>(core, 'node_create', {
+      parent_id: feed,
+      outline: '- Field:: value',
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.createdFieldEntryIds).toHaveLength(1);
+    expect(envelope.data!.createdFieldEntryIds).not.toContain(draftEntry);
+    expect(core.state().nodes[feed]!.children.filter((childId) => core.state().nodes[childId]?.type === 'fieldEntry')).toHaveLength(2);
+    expect(core.state().nodes[draftEntry]!.children).toEqual([]);
+    expect(core.state().nodes[fieldEntryByName(core, feed, 'Field')]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['value']);
+  });
+
   test('node_create rejects ambiguous duplicate owner fields and duplicate definitions', async () => {
     const duplicateOwnerCore = coreWithDirtyDuplicateOwnerFields();
     const duplicateOwner = await executeTool(duplicateOwnerCore, 'node_create', {
@@ -469,6 +511,8 @@ describe('agent node tools', () => {
     const doneEntry = core.state().nodes[task]!.children.find((childId) => core.state().nodes[childId]?.fieldDefId === 'sys:done');
     expect(doneEntry).toBeDefined();
     expect(core.state().nodes[doneEntry!]!.children).toEqual([]);
+    const read = await executeTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', { node_id: task, depth: 0 });
+    expect(read.data!.items[0]!.outline).toBe('- [x] Task\n  - Done::');
 
     const created = await executeTool(core, 'node_create', {
       parent_id: task,

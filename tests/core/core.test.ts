@@ -889,6 +889,17 @@ describe('Core', () => {
     expect(() => core.createInlineField(today, null, '', 'plain')).not.toThrow();
   });
 
+  test('empty draft fields do not reserve the display placeholder name', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const draftEntry = mustFocus(core.createInlineField(today, null, '', 'plain'));
+
+    expect(() => core.createInlineField(today, null, 'Field', 'plain')).not.toThrow();
+    const fieldEntries = core.state().nodes[today]!.children.filter((childId) => core.state().nodes[childId]?.type === 'fieldEntry');
+    expect(fieldEntries).toHaveLength(2);
+    expect(fieldEntries).toContain(draftEntry);
+  });
+
   test('field definition rename rejects duplicate owner field names', () => {
     const core = Core.new();
     const today = core.projection().todayId;

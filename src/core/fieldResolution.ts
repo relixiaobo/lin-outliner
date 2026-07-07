@@ -91,7 +91,7 @@ export function fieldEntryDisplayName(
     const fieldDef = byId.get(fieldDefId);
     if (fieldDef?.content.text.trim()) return fieldDef.content.text;
   }
-  return fieldEntry.content.text || 'Field';
+  return fieldEntry.content.text.trim();
 }
 
 export function fieldTypeForFieldDef(

@@ -930,6 +930,9 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
             usedFieldIds,
           });
         }
+        if (parsed.document.fields.length > 0) {
+          insertIndex = currentRootInsertionIndex(indexProjection(host.getProjection()), insertion);
+        }
         for (const root of parsed.document.roots) {
           const createdId = await createOutlineNode(host, root, insertion.parentId, insertIndex, tracker, warnings);
           tracker.createdRootIds.push(createdId);
@@ -1308,6 +1311,18 @@ function resolveInsertion(index: ProjectionIndex, params: NodeCreateParams): {
   const parentId = params.parentId ?? index.projection.todayId;
   if (!index.nodes.has(parentId)) return parentNotFound(parentId);
   return { parentId, index: null };
+}
+
+function currentRootInsertionIndex(
+  index: ProjectionIndex,
+  insertion: { parentId: string; afterId?: string | null; index: number | null },
+): number | null {
+  if (insertion.afterId === undefined) return null;
+  if (insertion.afterId === null) return fieldSectionInsertIndex(index, insertion.parentId);
+  const parent = requiredNode(index, insertion.parentId);
+  const childIndex = parent.children.indexOf(insertion.afterId);
+  if (childIndex < 0) throw new Error(`after_id is no longer a child of parent_id ${insertion.parentId}: ${insertion.afterId}`);
+  return childIndex + 1;
 }
 
 function validateMutableNodeIds(index: ProjectionIndex, nodeIds: string[]): { code: string; error: string; instructions: string } | null {
