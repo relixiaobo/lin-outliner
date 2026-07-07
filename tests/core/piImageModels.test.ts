@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  openAiImageClientOptions,
   openAiImageRequestParams,
   sanitizeImageProviderErrorMessage,
   validateImageGenerationOptions,
@@ -19,6 +20,16 @@ describe('pi image models', () => {
       output_format: 'png',
     });
     expect(params).not.toHaveProperty('response_format');
+  });
+
+  test('uses configured OpenAI-compatible image base URLs', () => {
+    expect(openAiImageClientOptions(
+      { baseUrl: 'https://api.openai.com/v1' },
+      { apiKey: 'test-key', baseUrl: 'https://sub2api.wisebox.ai/v1' },
+    )).toMatchObject({
+      apiKey: 'test-key',
+      baseURL: 'https://sub2api.wisebox.ai/v1',
+    });
   });
 
   test('rejects GPT Image 2 sizes that violate OpenAI constraints', () => {

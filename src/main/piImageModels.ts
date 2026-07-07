@@ -29,6 +29,7 @@ export type TenonImageModelOption = {
 };
 
 export interface TenonImagesOptions extends ImagesOptions {
+  baseUrl?: string;
   count?: number;
   size?: string;
   aspectRatio?: string;
@@ -203,6 +204,18 @@ export function openAiImageRequestParams(modelId: string, prompt: string, option
   });
 }
 
+export function openAiImageClientOptions(
+  model: Pick<ImagesModel<ImagesApi>, 'baseUrl'>,
+  options?: TenonImagesOptions,
+): ConstructorParameters<typeof OpenAI>[0] {
+  return definedObject({
+    apiKey: options?.apiKey,
+    baseURL: normalizedUrl(options?.baseUrl) ?? normalizedUrl(model.baseUrl),
+    timeout: options?.timeoutMs,
+    maxRetries: options?.maxRetries,
+  }) as ConstructorParameters<typeof OpenAI>[0];
+}
+
 async function generateOpenAiImages(
   model: ImagesModel<ImagesApi>,
   context: ImagesContext,
@@ -217,11 +230,7 @@ async function generateOpenAiImages(
   const imageInputs = context.input.filter((part) => part.type === 'image');
   const outputFormat = openAiOutputFormat(requestOptions?.outputFormat);
   const requestParams = openAiImageRequestParams(model.id, prompt, requestOptions);
-  const client = new OpenAI({
-    apiKey: requestOptions.apiKey,
-    timeout: requestOptions.timeoutMs,
-    maxRetries: requestOptions.maxRetries,
-  });
+  const client = new OpenAI(openAiImageClientOptions(model, requestOptions));
 
   try {
     const response = imageInputs.length > 0
@@ -521,6 +530,10 @@ function stringUnion<const T extends string>(value: unknown, options: readonly T
 
 function normalizedString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : undefined;
+}
+
+function normalizedUrl(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function definedObject(input: Record<string, unknown>): Record<string, unknown> {

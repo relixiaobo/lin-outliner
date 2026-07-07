@@ -4801,7 +4801,12 @@ export class AgentRuntime {
       generateImages: async ({ providerId, modelId, context, options }) => {
         const model = piFindImageModel(providerId, modelId);
         if (!model) throw new Error(`Unknown image model: ${providerId}:${modelId}`);
-        return piGenerateImages(model, context, options);
+        const settings = await getProviderSettings();
+        const provider = settings.providers.find((candidate) => candidate.providerId === providerId);
+        return piGenerateImages(model, context, {
+          ...options,
+          baseUrl: provider?.baseUrl,
+        });
       },
     };
   }

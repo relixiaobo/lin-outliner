@@ -60,6 +60,7 @@ export interface AgentImageGenerationRuntime {
 
 export interface GenerateImageRuntimeOptions {
   signal?: AbortSignal;
+  baseUrl?: string;
   count?: number;
   size?: string;
   aspectRatio?: string;

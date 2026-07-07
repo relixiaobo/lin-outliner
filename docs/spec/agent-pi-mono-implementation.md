@@ -140,7 +140,10 @@ normalization and preflight validation also live in this adapter; the
 requested option cannot be sent to the selected provider/model. OpenAI-specific
 image constraints are kept here rather than in the generic tool schema so other
 image providers can keep their own size, aspect-ratio, background, and output
-format semantics.
+format semantics. Image generation calls inherit the same provider-row
+credential and endpoint settings as chat calls, including a custom Base URL for
+an OpenAI-compatible endpoint, so users configure a provider connection only
+once.
 
 Current module boundary:
 
