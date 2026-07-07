@@ -111,9 +111,9 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
     name: GENERATE_IMAGE_TOOL_NAME,
     label: 'Generate Image',
     description: [
-      'Generate or edit raster images with a configured image-capable provider.',
-      'Use this for bitmap illustrations, photos, mockups, textures, and transparent-background assets.',
-      'Pass image_refs to edit or transform existing images. Omit model to use the best enabled image model.',
+      'Generate or edit raster images with an enabled image-capable provider.',
+      'Use this for original bitmap assets such as illustrations, photos, mockups, textures, and UI artwork. Do not use it for web image search or file conversion.',
+      'Omit model to use the best enabled image model. Omit image_refs for text-to-image; pass image_refs only when editing or transforming existing images.',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -124,27 +124,31 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           type: 'string',
           minLength: 1,
           maxLength: MAX_PROMPT_CHARS,
-          description: 'The image generation or edit instruction.',
+          description: 'Required visual instruction for generation or editing. Include subject, style, composition, text to render, and constraints the image must follow.',
         },
         model: {
           type: 'string',
           minLength: 1,
-          description: 'Optional image model id, either model id or provider:model. Defaults to auto.',
+          description: 'Optional image model id. Use a bare model id when unambiguous, or provider:model / provider/model to select a provider explicitly. Omit or pass auto to use the default enabled image model.',
         },
         image_refs: {
           type: 'array',
           maxItems: MAX_IMAGE_REFS,
-          description: 'Optional source images to edit. Use a workspace path, payload:<id>, or { path } / { payload_id }.',
+          description: 'Optional source images for edits or transformations. Each item may be a workspace path, payload:<id>, { path }, or { payload_id, run_id }. Omit for text-to-image.',
           items: {
             anyOf: [
-              { type: 'string', minLength: 1 },
+              { type: 'string', minLength: 1, description: 'Workspace file path or payload:<id> image reference.' },
               {
                 type: 'object',
                 additionalProperties: false,
+                anyOf: [
+                  { required: ['path'] },
+                  { required: ['payload_id'] },
+                ],
                 properties: {
-                  path: { type: 'string', minLength: 1 },
-                  payload_id: { type: 'string', minLength: 1 },
-                  run_id: { type: 'string', minLength: 1 },
+                  path: { type: 'string', minLength: 1, description: 'Workspace image path to read and send as edit input.' },
+                  payload_id: { type: 'string', minLength: 1, description: 'Agent payload id for a previously stored image.' },
+                  run_id: { type: 'string', minLength: 1, description: 'Optional run id when reading an image payload from another run.' },
                 },
               },
             ],
@@ -154,30 +158,30 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           type: 'integer',
           minimum: 1,
           maximum: MAX_GENERATED_IMAGES,
-          description: 'Number of images to request. Default 1.',
+          description: `Optional number of images to request. Default 1, max ${MAX_GENERATED_IMAGES}. Providers may still return fewer images.`,
         },
         size: {
           type: 'string',
-          description: 'Provider-specific output size, for example 1024x1024, 1536x1024, 1024x1536, 1K, 2K, or 4K.',
+          description: 'Optional provider-specific output size. Examples: OpenAI 1024x1024, 1536x1024, 1024x1536, or a supported WIDTHxHEIGHT value for gpt-image-2; Google image size hints include 1K, 2K, and 4K. Omit for provider default.',
         },
         aspect_ratio: {
           type: 'string',
-          description: 'Provider-specific aspect ratio, for example 1:1, 16:9, 9:16, 4:3, or 3:4.',
+          description: 'Optional provider-specific aspect ratio, for example 1:1, 16:9, 9:16, 4:3, or 3:4. Use mainly for providers that expose aspect ratio separately from size. Omit for provider default.',
         },
         quality: {
           type: 'string',
           enum: ['auto', 'low', 'medium', 'high'],
-          description: 'Optional quality hint.',
+          description: 'Optional quality or speed hint. Use low for drafts, medium/high for final assets, or auto for provider choice. Omit for provider default.',
         },
         background: {
           type: 'string',
           enum: ['auto', 'opaque', 'transparent'],
-          description: 'Optional background hint for providers that support it.',
+          description: 'Optional background hint. Use transparent only with models that support transparency; otherwise omit, use auto, or use opaque.',
         },
         output_format: {
           type: 'string',
           enum: ['png', 'jpeg', 'webp'],
-          description: 'Optional output image format. Default png where supported.',
+          description: 'Optional requested output file format where supported. OpenAI defaults to png; jpeg and webp are useful when smaller files matter. Omit for provider default.',
         },
       },
     } as any,

@@ -198,7 +198,7 @@ export function openAiImageRequestParams(modelId: string, prompt: string, option
     n: imageCount(options?.count),
     size: openAiSize(modelId, options?.size),
     quality: openAiQuality(options?.quality),
-    background: openAiBackground(options?.background),
+    background: openAiBackground(modelId, options?.background),
     output_format: openAiOutputFormat(options?.outputFormat),
   });
 }
@@ -422,6 +422,12 @@ function imageCount(value: unknown): number {
 }
 
 const OPENAI_GPT_IMAGE_FIXED_SIZES = ['auto', '1024x1024', '1024x1536', '1536x1024'] as const;
+const GPT_IMAGE_2_MIN_PIXELS = 655_360;
+const GPT_IMAGE_2_MAX_PIXELS = 8_294_400;
+const GPT_IMAGE_2_MAX_EDGE = 3_840;
+const GPT_IMAGE_2_SIZE_MULTIPLE = 16;
+const GPT_IMAGE_2_MAX_EDGE_RATIO = 3;
+const GPT_IMAGE_2_SIZE_EXAMPLES = ['1024x1024', '2048x1152', '3840x2160', '2160x3840'] as const;
 
 function validateOpenAiImageOptions(modelId: string, options?: TenonImagesOptions): TenonImagesOptionValidationIssue | null {
   const requestedSize = normalizedString(options?.size);
@@ -432,32 +438,63 @@ function validateOpenAiImageOptions(modelId: string, options?: TenonImagesOption
       instructions: openAiSizeInstructions(modelId),
     };
   }
+  const requestedBackground = normalizedString(options?.background);
+  if (requestedBackground && !openAiBackground(modelId, requestedBackground)) {
+    return {
+      code: 'unsupported_option',
+      message: `Background "${requestedBackground}" is not supported by ${modelId}.`,
+      instructions: openAiBackgroundInstructions(modelId),
+    };
+  }
   return null;
 }
 
 function openAiSize(modelId: string, value: unknown): string | undefined {
   const size = normalizedString(value);
   if (!size) return undefined;
-  if (modelId === 'gpt-image-2') return size === 'auto' || isOpenAiWidthHeightSize(size) ? size : undefined;
+  if (modelId === 'gpt-image-2') return size === 'auto' || isValidGptImage2Size(size) ? size : undefined;
   return stringUnion(size, OPENAI_GPT_IMAGE_FIXED_SIZES);
 }
 
 function openAiSizeInstructions(modelId: string): string {
   return modelId === 'gpt-image-2'
-    ? 'Use auto or a WIDTHxHEIGHT value, for example 1024x1024.'
+    ? `Use auto or WIDTHxHEIGHT with both edges <= ${GPT_IMAGE_2_MAX_EDGE}, both edges multiples of ${GPT_IMAGE_2_SIZE_MULTIPLE}, ratio <= ${GPT_IMAGE_2_MAX_EDGE_RATIO}:1, and total pixels ${GPT_IMAGE_2_MIN_PIXELS}-${GPT_IMAGE_2_MAX_PIXELS}. Examples: ${GPT_IMAGE_2_SIZE_EXAMPLES.join(', ')}.`
     : `Use ${OPENAI_GPT_IMAGE_FIXED_SIZES.join(', ')}.`;
 }
 
-function isOpenAiWidthHeightSize(value: string): boolean {
-  return /^\d+x\d+$/.test(value);
+function isValidGptImage2Size(value: string): boolean {
+  const size = parseWidthHeightSize(value);
+  if (!size) return false;
+  const { width, height } = size;
+  if (width > GPT_IMAGE_2_MAX_EDGE || height > GPT_IMAGE_2_MAX_EDGE) return false;
+  if (width % GPT_IMAGE_2_SIZE_MULTIPLE !== 0 || height % GPT_IMAGE_2_SIZE_MULTIPLE !== 0) return false;
+  if (Math.max(width, height) / Math.min(width, height) > GPT_IMAGE_2_MAX_EDGE_RATIO) return false;
+  const pixels = width * height;
+  return pixels >= GPT_IMAGE_2_MIN_PIXELS && pixels <= GPT_IMAGE_2_MAX_PIXELS;
+}
+
+function parseWidthHeightSize(value: string): { width: number; height: number } | null {
+  const match = /^([1-9]\d*)x([1-9]\d*)$/.exec(value);
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  return Number.isSafeInteger(width) && Number.isSafeInteger(height) ? { width, height } : null;
 }
 
 function openAiQuality(value: unknown): 'low' | 'medium' | 'high' | 'auto' | undefined {
   return stringUnion(value, ['low', 'medium', 'high', 'auto']);
 }
 
-function openAiBackground(value: unknown): 'transparent' | 'opaque' | 'auto' | undefined {
-  return stringUnion(value, ['transparent', 'opaque', 'auto']);
+function openAiBackground(modelId: string, value: unknown): 'transparent' | 'opaque' | 'auto' | undefined {
+  const background = stringUnion(normalizedString(value), ['transparent', 'opaque', 'auto']);
+  if (modelId === 'gpt-image-2' && background === 'transparent') return undefined;
+  return background;
+}
+
+function openAiBackgroundInstructions(modelId: string): string {
+  return modelId === 'gpt-image-2'
+    ? 'Use auto or opaque with gpt-image-2, or select an image model that supports transparent backgrounds.'
+    : 'Use auto, opaque, or transparent when supported by the selected model.';
 }
 
 function openAiOutputFormat(value: unknown): 'png' | 'jpeg' | 'webp' {

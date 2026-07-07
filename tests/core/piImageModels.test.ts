@@ -5,7 +5,7 @@ import {
 } from '../../src/main/piImageModels';
 
 describe('pi image models', () => {
-  test('passes GPT Image 2 WIDTHxHEIGHT sizes without response_format', () => {
+  test('passes GPT Image 2 valid WIDTHxHEIGHT sizes without response_format', () => {
     const params = openAiImageRequestParams('gpt-image-2', 'Draw a landscape poster.', {
       size: '2048x1024',
     });
@@ -20,15 +20,25 @@ describe('pi image models', () => {
     expect(params).not.toHaveProperty('response_format');
   });
 
-  test('rejects OpenAI image sizes that cannot be sent', () => {
+  test('rejects GPT Image 2 sizes that violate OpenAI constraints', () => {
     expect(validateImageGenerationOptions('openai', 'gpt-image-2', {
       size: 'not-a-size',
     })).toMatchObject({
       code: 'unsupported_option',
       message: 'Size "not-a-size" is not supported by gpt-image-2.',
-      instructions: 'Use auto or a WIDTHxHEIGHT value, for example 1024x1024.',
+      instructions: 'Use auto or WIDTHxHEIGHT with both edges <= 3840, both edges multiples of 16, ratio <= 3:1, and total pixels 655360-8294400. Examples: 1024x1024, 2048x1152, 3840x2160, 2160x3840.',
     });
 
+    for (const size of ['123x123', '4096x1024', '2048x512', '3840x3840']) {
+      expect(validateImageGenerationOptions('openai', 'gpt-image-2', { size })).toMatchObject({
+        code: 'unsupported_option',
+        message: `Size "${size}" is not supported by gpt-image-2.`,
+      });
+      expect(openAiImageRequestParams('gpt-image-2', 'Draw.', { size })).not.toHaveProperty('size');
+    }
+  });
+
+  test('rejects fixed-size OpenAI image model sizes that cannot be sent', () => {
     expect(validateImageGenerationOptions('openai', 'gpt-image-1.5', {
       size: '2048x1024',
     })).toMatchObject({
@@ -38,6 +48,19 @@ describe('pi image models', () => {
     });
   });
 
+  test('rejects transparent background for GPT Image 2', () => {
+    expect(validateImageGenerationOptions('openai', 'gpt-image-2', {
+      background: 'transparent',
+    })).toMatchObject({
+      code: 'unsupported_option',
+      message: 'Background "transparent" is not supported by gpt-image-2.',
+      instructions: 'Use auto or opaque with gpt-image-2, or select an image model that supports transparent backgrounds.',
+    });
+    expect(openAiImageRequestParams('gpt-image-2', 'Draw.', {
+      background: 'transparent',
+    })).not.toHaveProperty('background');
+  });
+
   test('accepts fixed GPT image sizes for non-GPT-Image-2 OpenAI models', () => {
     expect(validateImageGenerationOptions('openai', 'gpt-image-1.5', {
       size: '1024x1536',
@@ -45,6 +68,15 @@ describe('pi image models', () => {
     expect(openAiImageRequestParams('gpt-image-1.5', 'Draw a portrait.', {
       size: '1024x1536',
     }).size).toBe('1024x1536');
+  });
+
+  test('keeps transparent background available for OpenAI image models that can receive it', () => {
+    expect(validateImageGenerationOptions('openai', 'gpt-image-1.5', {
+      background: 'transparent',
+    })).toBeNull();
+    expect(openAiImageRequestParams('gpt-image-1.5', 'Draw a sticker.', {
+      background: 'transparent',
+    }).background).toBe('transparent');
   });
 
   test('leaves non-OpenAI image provider option validation to provider adapters', () => {

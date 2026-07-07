@@ -269,19 +269,19 @@ Input:
 
 ```ts
 interface GenerateImageInput {
-  prompt: string;
-  model?: string; // model id, provider:model, or provider/model
+  prompt: string; // required visual generation/edit instruction
+  model?: string; // model id, provider:model, provider/model, or auto; omitted = auto
   image_refs?: Array<
     | string // workspace path or payload:<id>
     | { path: string }
-    | { payload_id: string; run_id?: string }
-  >;
+    | { payload_id: string; run_id?: string } // run_id is optional for cross-run payload reads
+  >; // omitted = text-to-image
   count?: number; // default 1, capped at 4
-  size?: string;
-  aspect_ratio?: string;
-  quality?: "auto" | "low" | "medium" | "high";
-  background?: "auto" | "opaque" | "transparent";
-  output_format?: "png" | "jpeg" | "webp";
+  size?: string; // provider-specific; omitted = provider default
+  aspect_ratio?: string; // provider-specific; omitted = provider default
+  quality?: "auto" | "low" | "medium" | "high"; // omitted = provider default
+  background?: "auto" | "opaque" | "transparent"; // provider-specific
+  output_format?: "png" | "jpeg" | "webp"; // provider-specific; omitted = provider default
 }
 ```
 
@@ -298,9 +298,13 @@ Validation is TypeScript-owned:
 - Provider-specific options are validated before the provider call when Tenon can
   know that the option cannot be sent. Unsupported options return
   `unsupported_option` with recovery instructions. OpenAI GPT image models do not
-  use the legacy `response_format` option; GPT Image 2 accepts `auto` or
-  `WIDTHxHEIGHT` sizes, while older Tenon-owned OpenAI GPT image entries accept
-  only `auto`, `1024x1024`, `1024x1536`, and `1536x1024`.
+  use the legacy `response_format` option. GPT Image 2 accepts `auto` or
+  constrained `WIDTHxHEIGHT` sizes: both edges at most 3840px, both edges
+  multiples of 16px, long-edge/short-edge ratio at most 3:1, and total pixels
+  from 655,360 through 8,294,400. GPT Image 2 rejects
+  `background: "transparent"`; use `auto`/`opaque` or select a model that
+  supports transparent backgrounds. Older Tenon-owned OpenAI GPT image entries
+  accept only `auto`, `1024x1024`, `1024x1536`, and `1536x1024` sizes.
 
 Generated images are stored as normal agent payload files before the tool result
 is persisted. The model-visible JSON includes payload ids, mime types, byte

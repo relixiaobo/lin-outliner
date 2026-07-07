@@ -137,7 +137,10 @@ OpenRouter is configured. A disabled or uncredentialed provider is excluded from
 both chat model routing and image model routing. Provider-specific image option
 normalization and preflight validation also live in this adapter; the
 `generate_image` tool receives only a structured unsupported-option result when a
-requested option cannot be sent to the selected provider/model.
+requested option cannot be sent to the selected provider/model. OpenAI-specific
+image constraints are kept here rather than in the generic tool schema so other
+image providers can keep their own size, aspect-ratio, background, and output
+format semantics.
 
 Current module boundary:
 
