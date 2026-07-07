@@ -364,9 +364,15 @@ function imageGenerationError(
     model: model.id,
     output: [],
     stopReason: 'error',
-    errorMessage: message,
+    errorMessage: sanitizeImageProviderErrorMessage(message),
     timestamp,
   };
+}
+
+export function sanitizeImageProviderErrorMessage(message: string): string {
+  return message
+    .replace(/\bsk-[A-Za-z0-9_*\-]{8,}/g, '[redacted API key]')
+    .replace(/\bAIza[A-Za-z0-9_*\-]{8,}/g, '[redacted API key]');
 }
 
 function usageFromOpenAi(raw: unknown): Usage | undefined {

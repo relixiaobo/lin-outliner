@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   openAiImageRequestParams,
+  sanitizeImageProviderErrorMessage,
   validateImageGenerationOptions,
 } from '../../src/main/piImageModels';
 
@@ -83,5 +84,14 @@ describe('pi image models', () => {
     expect(validateImageGenerationOptions('google', 'gemini-3.1-flash-image', {
       size: '4K',
     })).toBeNull();
+  });
+
+  test('redacts provider error messages before they enter tool output', () => {
+    expect(sanitizeImageProviderErrorMessage(
+      '401 Incorrect API key provided: sk-f08c0*******************************************************3686.',
+    )).toBe('401 Incorrect API key provided: [redacted API key].');
+    expect(sanitizeImageProviderErrorMessage(
+      'Gemini rejected key AIza********************************1234 for this project.',
+    )).toBe('Gemini rejected key [redacted API key] for this project.');
   });
 });
