@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { TOOL_CATALOG } from '../../src/core/agentToolCatalog';
 import type { AgentDelegationRuntime } from '../../src/main/agentDelegation';
+import type { AgentIssueToolRuntime } from '../../src/main/agentIssueTools';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 mock.module('electron', () => ({
@@ -30,6 +31,7 @@ describe('agent tool catalog', () => {
         writeGeneratedImage: async () => { throw new Error('not used'); },
         generateImages: async () => { throw new Error('not used'); },
       },
+      issueRuntime: issueRuntimeStub(),
       allowedTools: [...TOOL_CATALOG],
     })
       .map((tool) => tool.name.toLowerCase())
@@ -50,3 +52,16 @@ describe('agent tool catalog', () => {
     expect(names).toContain('node_create');
   });
 });
+
+function issueRuntimeStub(): AgentIssueToolRuntime {
+  return {
+    search: () => ({ rows: [] }),
+    read: (input) => ({ target: input.target }),
+    create: () => ({ status: 'preview', targets: [] }),
+    update: () => ({ status: 'preview', targets: [] }),
+    startSession: () => ({ status: 'preview', targets: [] }),
+    readSession: () => null,
+    sendSessionMessage: () => ({ status: 'preview', targets: [] }),
+    stopSession: () => ({ status: 'preview', targets: [] }),
+  };
+}

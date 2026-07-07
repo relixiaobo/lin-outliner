@@ -219,6 +219,8 @@ export interface AgentSession {
   executionPolicy?: AgentExecutionPolicy;
   continuationOfAgentSessionId?: AgentSessionId;
   plan: AgentSessionPlanItem[];
+  latestOutput?: string;
+  errorMessage?: string;
   startedAt?: number;
   completedAt?: number;
   revision: ObjectRevisionValue;

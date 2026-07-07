@@ -7,6 +7,7 @@ import type {
   AgentIssue,
   AgentRecurringIssue,
   AgentSession,
+  AgentSessionId,
   AgentSessionReadInput,
   AgentSessionReadResult,
   AgentSessionSendMessageInput,
@@ -51,8 +52,26 @@ export interface AgentIssueStoreState {
   issues: Record<string, AgentIssue>;
   recurringIssues: Record<string, AgentRecurringIssue>;
   sessions: Record<string, AgentSession>;
+  sessionExecutions: Record<string, AgentSessionExecutionBinding>;
   activity: Record<string, Activity>;
   activityOrder: string[];
+}
+
+export interface AgentSessionExecutionBinding {
+  engine: 'delegation';
+  conversationId: string;
+  executionId: string;
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface AgentSessionExecutionSyncInput {
+  engine: AgentSessionExecutionBinding['engine'];
+  executionId: string;
+  state: 'running' | 'completed' | 'failed' | 'cancelled';
+  latestOutput?: string;
+  errorMessage?: string;
+  completedAt?: number;
 }
 
 export class AgentIssueStore {
@@ -258,6 +277,127 @@ export class AgentIssueStore {
     };
   }
 
+  async executionForSession(agentSessionId: AgentSessionId): Promise<AgentSessionExecutionBinding | undefined> {
+    const state = await this.state();
+    return state.sessionExecutions[agentSessionId];
+  }
+
+  async bindSessionExecution(
+    agentSessionId: AgentSessionId,
+    binding: Omit<AgentSessionExecutionBinding, 'updatedAt'>,
+    actor: ActorRef = DEFAULT_ACTOR,
+    now = Date.now(),
+  ): Promise<TenonAgentToolResult> {
+    const target: RelatedTargetRef = { type: 'agent-session', id: agentSessionId };
+    return updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+      const session = state.sessions[agentSessionId];
+      if (!session) return state;
+      state.sessionExecutions[agentSessionId] = { ...binding, updatedAt: now };
+      const previousState = session.state;
+      session.state = 'active';
+      session.startedAt ??= binding.startedAt;
+      session.updatedAt = now;
+      session.revision = revision(now);
+      if (previousState !== 'active') {
+        appendActivity(state, {
+          target: { type: 'agent-session', agentSessionId },
+          actor,
+          content: { type: 'agent-progress', body: 'Agent Session execution started.' },
+          relatedTargets: [{ type: 'issue', id: session.issueId }],
+          createdAt: now,
+        });
+      }
+      return state;
+    }, PRIVATE_JSON_FILE_OPTIONS).then((state) => {
+      const session = state.sessions[agentSessionId];
+      if (!session) {
+        return { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
+      }
+      return {
+        status: 'applied',
+        targets: [target],
+        revisions: [{ target, revision: session.revision }],
+      };
+    });
+  }
+
+  async failSessionStart(
+    agentSessionId: AgentSessionId,
+    message: string,
+    actor: ActorRef = DEFAULT_ACTOR,
+    now = Date.now(),
+  ): Promise<TenonAgentToolResult> {
+    const target: RelatedTargetRef = { type: 'agent-session', id: agentSessionId };
+    return updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+      const session = state.sessions[agentSessionId];
+      if (!session) return state;
+      if (session.state === 'complete' || session.state === 'canceled') return state;
+      session.state = 'error';
+      session.errorMessage = message;
+      session.completedAt = now;
+      session.updatedAt = now;
+      session.revision = revision(now);
+      appendActivity(state, {
+        target: { type: 'agent-session', agentSessionId },
+        actor,
+        content: { type: 'agent-error', body: message },
+        relatedTargets: [{ type: 'issue', id: session.issueId }],
+        createdAt: now,
+      });
+      return state;
+    }, PRIVATE_JSON_FILE_OPTIONS).then((state) => {
+      const session = state.sessions[agentSessionId];
+      if (!session) {
+        return { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
+      }
+      return {
+        status: 'applied',
+        targets: [target],
+        revisions: [{ target, revision: session.revision }],
+      };
+    });
+  }
+
+  async syncSessionExecution(
+    input: AgentSessionExecutionSyncInput,
+    actor: ActorRef = DEFAULT_ACTOR,
+    now = Date.now(),
+  ): Promise<AgentSession | null> {
+    let syncedSessionId: string | null = null;
+    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+      const entry = Object.entries(state.sessionExecutions).find(([, binding]) => (
+        binding.engine === input.engine && binding.executionId === input.executionId
+      ));
+      if (!entry) return state;
+      const [agentSessionId, binding] = entry;
+      const session = state.sessions[agentSessionId];
+      if (!session) return state;
+      syncedSessionId = agentSessionId;
+      binding.updatedAt = now;
+      const previousState = session.state;
+      const nextState = agentSessionStateFromExecution(input.state);
+      session.state = nextState;
+      session.latestOutput = input.latestOutput ?? session.latestOutput;
+      session.errorMessage = input.errorMessage ?? session.errorMessage;
+      if (nextState === 'active') session.startedAt ??= binding.startedAt;
+      if (nextState !== 'active' && nextState !== 'pending') session.completedAt = input.completedAt ?? now;
+      session.updatedAt = now;
+      session.revision = revision(now);
+      if (previousState !== nextState) {
+        appendActivity(state, {
+          target: { type: 'agent-session', agentSessionId },
+          actor,
+          content: sessionStateActivityContent(nextState, input),
+          relatedTargets: [{ type: 'issue', id: session.issueId }],
+          createdAt: now,
+        });
+      }
+      return state;
+    }, PRIVATE_JSON_FILE_OPTIONS);
+    if (!syncedSessionId) return null;
+    return (await this.readSession({ agentSessionId: syncedSessionId }))?.agentSession ?? null;
+  }
+
   async sendSessionMessage(input: AgentSessionSendMessageInput, actor: ActorRef = DEFAULT_ACTOR, now = Date.now()): Promise<TenonAgentToolResult> {
     const target: RelatedTargetRef = { type: 'agent-session', id: input.agentSessionId };
     if (input.request.mode === 'preview') return { status: 'preview', targets: [target] };
@@ -371,6 +511,13 @@ export class AgentIssueStore {
     }, PRIVATE_JSON_FILE_OPTIONS);
     return materialized;
   }
+
+  async listReadyIssuesForExecution(now = Date.now()): Promise<AgentIssue[]> {
+    const state = await this.state();
+    return Object.values(state.issues)
+      .filter((issue) => isIssueReadyForExecution(issue, state, now))
+      .sort((left, right) => triggerSortTime(left) - triggerSortTime(right) || left.createdAt - right.createdAt);
+  }
 }
 
 function emptyState(): AgentIssueStoreState {
@@ -379,6 +526,7 @@ function emptyState(): AgentIssueStoreState {
     issues: {},
     recurringIssues: {},
     sessions: {},
+    sessionExecutions: {},
     activity: {},
     activityOrder: [],
   };
@@ -391,6 +539,7 @@ function parseState(value: unknown): AgentIssueStoreState {
     issues: isRecord(value.issues) ? value.issues as Record<string, AgentIssue> : {},
     recurringIssues: isRecord(value.recurringIssues) ? value.recurringIssues as Record<string, AgentRecurringIssue> : {},
     sessions: isRecord(value.sessions) ? value.sessions as Record<string, AgentSession> : {},
+    sessionExecutions: isRecord(value.sessionExecutions) ? value.sessionExecutions as Record<string, AgentSessionExecutionBinding> : {},
     activity: isRecord(value.activity) ? value.activity as Record<string, Activity> : {},
     activityOrder: Array.isArray(value.activityOrder) ? value.activityOrder.filter((id): id is string => typeof id === 'string') : [],
   };
@@ -625,6 +774,11 @@ function matchesIssue(issue: AgentIssue, state: AgentIssueStoreState, input: Iss
   if (filter?.triggerTypes && !filter.triggerTypes.includes(issue.trigger.type)) return false;
   if (filter?.confirmed !== undefined && (issue.confirmation.state === 'confirmed') !== filter.confirmed) return false;
   if (filter?.archived !== undefined && Boolean(issue.archivedAt) !== filter.archived) return false;
+  if (filter?.hasActiveSession !== undefined && issueHasActiveSession(issue, state) !== filter.hasActiveSession) return false;
+  if (filter?.needsAttention !== undefined && issueNeedsAttention(issue, state) !== filter.needsAttention) return false;
+  if (filter?.dueDate && !timeInRange(issue.dueDate?.targetAt, filter.dueDate)) return false;
+  if (filter?.createdAt && !timeInRange(issue.createdAt, filter.createdAt)) return false;
+  if (filter?.updatedAt && !timeInRange(issue.updatedAt, filter.updatedAt)) return false;
   if (filter?.inputNodeIds && !filter.inputNodeIds.some((nodeId) => issue.input?.type === 'selected-nodes' && issue.input.nodeIds.includes(nodeId))) return false;
   if (filter?.inputTags && !filter.inputTags.some((tag) => issue.input?.type === 'tag-query' && issue.input.tag === tag)) return false;
   if (filter?.sessionState) {
@@ -654,6 +808,41 @@ function derivedIssueBuckets(issue: AgentIssue, state: AgentIssueStoreState): Is
   const sessions = Object.values(state.sessions).filter((session) => session.issueId === issue.id);
   if (sessions.some((session) => session.state === 'error' || session.state === 'awaitingInput' || session.state === 'stale')) buckets.push('attention-needed');
   return buckets;
+}
+
+function isIssueReadyForExecution(issue: AgentIssue, state: AgentIssueStoreState, now: number): boolean {
+  if (issue.archivedAt) return false;
+  if (issue.confirmation.state !== 'confirmed') return false;
+  if (issue.status.category === 'completed' || issue.status.category === 'canceled') return false;
+  if (issueHasAnySession(issue, state)) return false;
+  if (issue.relations.some((relation) => relation.type === 'blocked-by' && !isBlockingIssueCompleted(state.issues[relation.issueId]))) return false;
+  if (issue.trigger.type === 'manual') return false;
+  if (issue.trigger.type === 'when-ready') return true;
+  return issue.trigger.startAt <= now;
+}
+
+function issueHasActiveSession(issue: AgentIssue, state: AgentIssueStoreState): boolean {
+  return Object.values(state.sessions).some((session) => (
+    session.issueId === issue.id
+    && (session.state === 'pending' || session.state === 'active' || session.state === 'awaitingInput')
+  ));
+}
+
+function issueHasAnySession(issue: AgentIssue, state: AgentIssueStoreState): boolean {
+  return Object.values(state.sessions).some((session) => session.issueId === issue.id);
+}
+
+function isBlockingIssueCompleted(issue: AgentIssue | undefined): boolean {
+  return Boolean(issue && issue.status.category === 'completed');
+}
+
+function issueNeedsAttention(issue: AgentIssue, state: AgentIssueStoreState): boolean {
+  return derivedIssueBuckets(issue, state).includes('attention-needed')
+    || issue.relations.some((relation) => relation.type === 'blocked-by' && !isBlockingIssueCompleted(state.issues[relation.issueId]));
+}
+
+function triggerSortTime(issue: AgentIssue): number {
+  return issue.trigger.type === 'scheduled' ? issue.trigger.startAt : issue.createdAt;
 }
 
 function issueRow(issue: AgentIssue): IssueSearchRow {
@@ -709,6 +898,43 @@ function canMessageSession(state: AgentSession['state']): boolean {
 
 function canStopSession(state: AgentSession['state']): boolean {
   return state === 'pending' || state === 'active' || state === 'awaitingInput';
+}
+
+function agentSessionStateFromExecution(state: AgentSessionExecutionSyncInput['state']): AgentSession['state'] {
+  switch (state) {
+    case 'running':
+      return 'active';
+    case 'completed':
+      return 'complete';
+    case 'failed':
+      return 'error';
+    case 'cancelled':
+      return 'canceled';
+  }
+}
+
+function sessionStateActivityContent(
+  state: AgentSession['state'],
+  input: AgentSessionExecutionSyncInput,
+): ActivityContent {
+  switch (state) {
+    case 'complete':
+      return input.latestOutput
+        ? { type: 'agent-response', body: input.latestOutput }
+        : { type: 'agent-progress', body: 'Agent Session completed.' };
+    case 'error':
+      return { type: 'agent-error', body: input.errorMessage ?? 'Agent Session failed.' };
+    case 'canceled':
+      return { type: 'agent-action', action: 'agent_session_stop', result: 'canceled' };
+    case 'active':
+      return { type: 'agent-progress', body: 'Agent Session is active.' };
+    case 'awaitingInput':
+      return { type: 'agent-question', body: input.errorMessage ?? 'Agent Session needs input.' };
+    case 'stale':
+      return { type: 'agent-error', body: input.errorMessage ?? 'Agent Session became stale.' };
+    case 'pending':
+      return { type: 'agent-progress', body: 'Agent Session is pending.' };
+  }
 }
 
 function latestActivity(state: AgentIssueStoreState): Activity | null {

@@ -114,6 +114,16 @@ import {
 } from '../core/referenceMarkup';
 import { normalizeConversationTitle, sanitizeConversationTitle } from '../core/agentConversationTitle';
 import { TOOL_CATALOG } from '../core/agentToolCatalog';
+import type {
+  AgentIssueRunProfile,
+  AgentIssue,
+  AgentSession,
+  AgentSessionReadInput,
+  AgentSessionStartInput,
+  IssueCompletionCriterion,
+  IssueInputScope,
+  IssueOutputPolicy,
+} from '../core/agentIssue';
 import { isSystemReminderBlock, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
 import {
@@ -151,7 +161,7 @@ import {
   type AgentConversationIndexEntry,
   type AgentRunMetaProjection,
 } from './agentEventStore';
-import { AgentIssueStore } from './agentIssueStore';
+import { AgentIssueStore, type AgentSessionExecutionSyncInput } from './agentIssueStore';
 import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
   dreamWindowSummary,
@@ -217,7 +227,7 @@ import {
   type SkillListingReservation,
   type SkillTurnEffect,
 } from './agentSkills';
-import { createAgentIssueToolRuntime } from './agentIssueRuntime';
+import { createAgentIssueToolRuntime, type AgentSessionExecutor } from './agentIssueRuntime';
 import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
   AGENT_DELEGATE_TOOL_NAME,
@@ -753,6 +763,7 @@ export class AgentRuntime {
   private issueSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private commandSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private commandSweepTail: Promise<void> = Promise.resolve();
+  private readonly firingIssueIds = new Set<string>();
   private readonly firingCommandNodeIds = new Set<string>();
   private readonly commandFailureCounts = new Map<string, number>();
   private readonly commandBackoffUntil = new Map<string, number>();
@@ -2624,7 +2635,10 @@ export class AgentRuntime {
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
           delegationRuntime,
-          issueRuntime: this.createIssueToolRuntime(defaultAgentId),
+          issueRuntime: this.createIssueToolRuntime(defaultAgentId, this.createIssueSessionExecutor(
+            () => this.currentRuntimeConversation(conversationRef.current)?.delegationRuntime ?? null,
+            () => conversationId,
+          )),
           chatSourceValidator: this.createChatSourceValidator(),
           pastChats: this.createPastChatsToolRuntime(() => conversationId),
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
@@ -2810,7 +2824,10 @@ export class AgentRuntime {
       skillRuntime: conversation.skillRuntime,
       skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
       delegationRuntime: conversation.delegationRuntime,
-      issueRuntime: this.createIssueToolRuntime(conversation.defaultAgentId),
+      issueRuntime: this.createIssueToolRuntime(conversation.defaultAgentId, this.createIssueSessionExecutor(
+        () => conversation.delegationRuntime,
+        () => conversation.eventState.conversation?.id ?? 'unknown',
+      )),
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => conversation.eventState.conversation?.id ?? 'unknown'),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
@@ -2847,7 +2864,10 @@ export class AgentRuntime {
       skillToolEnabled: true,
       skillRuntime: input.skillRuntime,
       delegationRuntime: input.delegationRuntime,
-      issueRuntime: this.createIssueToolRuntime(input.executingAgentId),
+      issueRuntime: this.createIssueToolRuntime(input.executingAgentId, this.createIssueSessionExecutor(
+        () => input.delegationRuntime,
+        () => parentConversationId,
+      )),
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => input.conversationId),
       streamFn: this.options.streamFn,
@@ -3007,8 +3027,41 @@ export class AgentRuntime {
       blockedReason: snapshot.blockedReason,
       latestVerifierGap: snapshot.latestVerifierGap,
     });
+    await this.syncIssueSessionFromDelegationSnapshot(snapshot);
     await this.refreshConversationRunMetas(conversationId, conversation);
     this.emitProjection(conversationId, snapshot.status === 'running' ? 'run.started' : `run.${snapshot.status}`, 'coalesce');
+  }
+
+  private async syncIssueSessionFromDelegationSnapshot(snapshot: AgentRunSnapshot): Promise<void> {
+    await this.getIssueStore().syncSessionExecution({
+      engine: 'delegation',
+      executionId: snapshot.id,
+      state: issueSessionExecutionStateFromRunStatus(snapshot.status, snapshot.objectiveStatus),
+      latestOutput: snapshot.result,
+      errorMessage: snapshot.error ?? snapshot.blockedReason ?? snapshot.latestVerifierGap,
+      completedAt: snapshot.completedAt,
+    }, { type: 'agent', agentId: snapshot.executingAgentId }, snapshot.updatedAt);
+  }
+
+  private async syncIssueSessionFromDelegationData(data: {
+    status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'cancelled';
+    runId: string;
+    objective_status?: AgentRunSnapshot['objectiveStatus'];
+    result?: string;
+    error?: string;
+    blocked_reason?: string;
+    latest_verifier_gap?: string;
+    updated_at?: number;
+    completed_at?: number;
+  }): Promise<void> {
+    await this.getIssueStore().syncSessionExecution({
+      engine: 'delegation',
+      executionId: data.runId,
+      state: issueSessionExecutionStateFromRunStatus(data.status, data.objective_status),
+      latestOutput: data.result,
+      errorMessage: data.error ?? data.blocked_reason ?? data.latest_verifier_gap,
+      completedAt: data.completed_at,
+    }, { type: 'system' }, data.updated_at ?? Date.now());
   }
 
   private async notifyRun(
@@ -3404,7 +3457,27 @@ export class AgentRuntime {
 
   private async sweepIssueSchedules(now: Date) {
     try {
-      await this.getIssueStore().materializeDueRecurringIssues(now.getTime(), { type: 'system' });
+      const store = this.getIssueStore();
+      await store.materializeDueRecurringIssues(now.getTime(), { type: 'system' });
+      const readyIssues = await store.listReadyIssuesForExecution(now.getTime());
+      for (const issue of readyIssues) {
+        if (issue.permissionMode !== 'unattended') continue;
+        if (this.firingIssueIds.has(issue.id)) continue;
+        this.firingIssueIds.add(issue.id);
+        void this.startTriggeredIssueSession(issue, now)
+          .catch((error) => {
+            this.reportWarn(
+              'agent-runtime',
+              `Issue trigger failed for ${issue.id}: ${error instanceof Error ? error.message : String(error)}`,
+              error,
+              { operation: 'startTriggeredIssueSession', issueId: issue.id },
+              'issue-trigger-start-failed',
+            );
+          })
+          .finally(() => {
+            this.firingIssueIds.delete(issue.id);
+          });
+      }
     } catch (error) {
       this.reportWarn(
         'agent-runtime',
@@ -3414,6 +3487,44 @@ export class AgentRuntime {
         'issue-schedule-sweep-failed',
       );
     }
+  }
+
+  private async startTriggeredIssueSession(issue: AgentIssue, now: Date): Promise<void> {
+    const conversationId = this.issueConversationId(issue.id);
+    const conversation = await this.ensureConversationWithId(conversationId, issue.title);
+    await this.refreshRuntimeSettings(conversation);
+    const actor = { type: 'system' as const };
+    const runtime = createAgentIssueToolRuntime({
+      store: this.getIssueStore(),
+      actor,
+      authorization: {
+        id: `issue-trigger:${issue.id}:${now.getTime()}`,
+        actor,
+        allowedOperations: [{ type: 'agent-session-start', issueId: issue.id }],
+        expiresAt: Date.now() + 60_000,
+        auditReason: 'Issue trigger became ready.',
+      },
+      executor: this.createIssueSessionExecutor(
+        () => conversation.delegationRuntime,
+        () => conversationId,
+      ),
+      startSource: () => issue.recurrence
+        ? { type: 'recurring-issue', recurringIssueId: issue.recurrence.recurringIssueId, dueAt: issue.recurrence.windowStartAt }
+        : { type: 'runtime-authorized-action', actor },
+    });
+    const result = await runtime.startSession({
+      issueId: issue.id,
+      expectedIssueRevision: issue.revision,
+      request: { mode: 'request' },
+      reason: 'Issue trigger became ready.',
+    });
+    if (result.status === 'blocked' || result.status === 'conflict' || result.status === 'needs-confirmation') {
+      throw new Error(result.validation?.[0]?.message ?? result.confirmation?.body ?? `Issue trigger could not start: ${result.status}`);
+    }
+  }
+
+  private issueConversationId(issueId: string): string {
+    return `lin-agent-issue-${hashJson({ agentId: this.agentIdentity.agentId, issueId }).slice(0, 16)}`;
   }
 
   private queueCommandSweep(now: Date) {
@@ -4862,11 +4973,54 @@ export class AgentRuntime {
     };
   }
 
-  private createIssueToolRuntime(agentId: string): AgentToolsOptions['issueRuntime'] {
+  private createIssueToolRuntime(agentId: string, executor?: AgentSessionExecutor): AgentToolsOptions['issueRuntime'] {
     return createAgentIssueToolRuntime({
       store: this.getIssueStore(),
       actor: { type: 'agent', agentId },
+      executor,
     });
+  }
+
+  private createIssueSessionExecutor(
+    getDelegationRuntime: () => AgentDelegationRuntime | null,
+    getConversationId: () => string,
+  ): AgentSessionExecutor {
+    return {
+      start: async ({ session, startInput, now }) => {
+        const delegationRuntime = getDelegationRuntime();
+        if (!delegationRuntime) throw new Error('No live agent execution runtime is available for this Agent Session.');
+        const data = await delegationRuntime.invokeAgent(agentSessionDelegationInput(session, startInput), undefined);
+        await this.syncIssueSessionFromDelegationData(data);
+        return {
+          engine: 'delegation',
+          conversationId: getConversationId(),
+          executionId: data.runId,
+          startedAt: data.started_at ?? now,
+        };
+      },
+      read: async (binding, input) => {
+        const delegationRuntime = getDelegationRuntime();
+        if (!delegationRuntime) return;
+        const data = await delegationRuntime.status({
+          runId: binding.executionId,
+          wait: input.wait === true,
+          timeout_ms: input.timeoutMs,
+        });
+        await this.syncIssueSessionFromDelegationData(data);
+      },
+      sendMessage: async (binding, message) => {
+        const delegationRuntime = getDelegationRuntime();
+        if (!delegationRuntime) throw new Error('No live agent execution runtime is available for this Agent Session.');
+        const data = await delegationRuntime.send({ runId: binding.executionId, message });
+        await this.syncIssueSessionFromDelegationData(data);
+      },
+      stop: async (binding) => {
+        const delegationRuntime = getDelegationRuntime();
+        if (!delegationRuntime) throw new Error('No live agent execution runtime is available for this Agent Session.');
+        const data = await delegationRuntime.stop({ runId: binding.executionId });
+        await this.syncIssueSessionFromDelegationData(data);
+      },
+    };
   }
 
   private createChatSourceValidator(): AgentToolsOptions['chatSourceValidator'] {
@@ -8967,6 +9121,106 @@ function commandConversationTitle(brief: string): string {
   const firstLine = brief.split('\n').map((line) => line.trim()).find((line) => line.length > 0);
   if (!firstLine) return 'Command';
   return firstLine.length > 60 ? `${firstLine.slice(0, 59)}…` : firstLine;
+}
+
+function issueSessionExecutionStateFromRunStatus(
+  status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'cancelled',
+  objectiveStatus?: AgentRunSnapshot['objectiveStatus'],
+): AgentSessionExecutionSyncInput['state'] {
+  if (status === 'async_launched' || status === 'queued' || status === 'running') return 'running';
+  if (status === 'cancelled') return 'cancelled';
+  if (status === 'failed') return 'failed';
+  return objectiveStatus === 'blocked' || objectiveStatus === 'budget_exhausted'
+    ? 'failed'
+    : 'completed';
+}
+
+function agentSessionDelegationInput(
+  session: AgentSession,
+  startInput: AgentSessionStartInput,
+): Record<string, unknown> {
+  const criteria = agentSessionCriteria(session.issueSnapshot.completionCriteria);
+  return {
+    description: commandConversationTitle(session.issueSnapshot.title),
+    objective: agentSessionObjective(session, startInput),
+    criteria,
+    verify: false,
+    context: 'brief',
+    detach: startInput.detach ?? true,
+    unattended: session.issueSnapshot.permissionMode === 'unattended',
+    runProfile: runProfileForAgentSession(session.delegate.runProfile),
+    budget: agentSessionBudget(session),
+  };
+}
+
+function agentSessionObjective(session: AgentSession, startInput: AgentSessionStartInput): string {
+  const issue = session.issueSnapshot;
+  return [
+    'You are executing one Agent Session for a Tenon Issue.',
+    '',
+    `Agent Session id: ${session.id}`,
+    `Issue id: ${issue.id}`,
+    `Issue title: ${issue.title}`,
+    issue.description ? `Issue description:\n${issue.description}` : '',
+    issue.parentIssueId ? `Parent Issue id: ${issue.parentIssueId}` : '',
+    issue.recurrence ? `Recurring Issue id: ${issue.recurrence.recurringIssueId}` : '',
+    issue.input ? `Input scope:\n${formatIssueInputScope(issue.input)}` : 'Input scope: none',
+    issue.output ? `Output policy:\n${formatIssueOutputPolicy(issue.output)}` : 'Output policy: activity only',
+    formatIssueCriteria(issue.completionCriteria),
+    formatIssueContinuation(startInput),
+    '',
+    'Execution rules:',
+    '1. Work only within this Issue snapshot and its confirmed input scope.',
+    '2. If the work must be split, create or update sub-issues with the Issue tools; do not invent hidden child work as the durable breakdown.',
+    '3. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
+    '4. Completing this Agent Session does not automatically complete the Issue.',
+  ].filter(Boolean).join('\n');
+}
+
+function agentSessionCriteria(criteria: readonly IssueCompletionCriterion[] | undefined): string[] | undefined {
+  const open = (criteria ?? [])
+    .filter((criterion) => criterion.state !== 'waived')
+    .map((criterion) => criterion.text.trim())
+    .filter((text) => text.length > 0);
+  return open.length > 0 ? open : undefined;
+}
+
+function formatIssueCriteria(criteria: readonly IssueCompletionCriterion[] | undefined): string {
+  const lines = (criteria ?? [])
+    .map((criterion, index) => `${index + 1}. [${criterion.state}] ${criterion.text}`)
+    .filter((line) => line.trim().length > 0);
+  return lines.length ? ['Completion criteria:', ...lines].join('\n') : 'Completion criteria: none';
+}
+
+function formatIssueContinuation(startInput: AgentSessionStartInput): string {
+  const continuation = startInput.continuation;
+  if (!continuation) return '';
+  return [
+    `Continuation: ${continuation.intent} ${continuation.previousAgentSessionId}`,
+    continuation.guidance ? `Continuation guidance:\n${continuation.guidance}` : '',
+    `Continuation context: ${continuation.context ?? 'summary'}`,
+  ].filter(Boolean).join('\n');
+}
+
+function formatIssueInputScope(input: IssueInputScope): string {
+  return JSON.stringify(input);
+}
+
+function formatIssueOutputPolicy(output: IssueOutputPolicy): string {
+  return JSON.stringify(output);
+}
+
+function runProfileForAgentSession(profile: AgentIssueRunProfile | undefined): AgentRunProfileId | undefined {
+  if (!profile || profile === 'default' || profile === 'background') return 'default';
+  return undefined;
+}
+
+function agentSessionBudget(session: AgentSession): { wallClockMinutes: number } | undefined {
+  const deadlineAt = session.executionPolicy?.deadlineAt;
+  if (!deadlineAt) return undefined;
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) return { wallClockMinutes: 1 };
+  return { wallClockMinutes: Math.max(1, Math.ceil(remainingMs / 60_000)) };
 }
 
 function uniqueStrings(values: readonly string[] | undefined): string[] {

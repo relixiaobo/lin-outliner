@@ -76,9 +76,10 @@ agent tool, so there are no channel-management tools on the surface.
 
 The Issue Manager implementation has a canonical protocol/store checkpoint in
 code, and the Issue/Agent Session tools are wired into ordinary and child-agent
-tool pools through `AgentIssueToolRuntime`. Until execution-worker wiring is
-complete, `spawn_run` / `run_*` remain the active delegation tools described
-below.
+tool pools through `AgentIssueToolRuntime`. The product/tool surface uses
+Issue, Recurring Issue, Agent Session, and Activity; V1 reuses the existing
+delegation engine as an internal Agent Session executor while the old Run UI is
+being retired.
 
 The checkpoint defines the target concepts and schemas that later replace the
 Run-first product surface:
@@ -98,17 +99,28 @@ Run-first product surface:
 - `src/main/agentIssueRuntime.ts` wraps the store as an
   `AgentIssueToolRuntime` and applies runtime-owned authorization capability
   checks before confirmation, execution-enabling updates, Agent Session starts,
-  messages, or stops;
+  messages, or stops. A request-mode `agent_session_start` creates the Agent
+  Session first, then immediately hands it to the configured executor. If no
+  executor is available, the Session is marked `error` instead of remaining
+  indefinitely `pending`;
 - `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
   Sessions, and Activity in `issue-manager.json`, including draft creation,
   parent/sub-issue links, revision conflicts, session message/stop Activity,
-  and due-time Recurring Issue materialization.
+  due-time Recurring Issue materialization, internal Session-to-executor
+  bindings, and execution status sync into `active`, `complete`, `error`, or
+  `canceled`;
 - `src/main/agentRuntime.ts` owns the Issue store lifecycle and runs a
-  lightweight Issue scheduler tick. At this checkpoint the tick materializes
-  due confirmed Recurring Issues into concrete Issues only; Agent Session worker
-  start remains a later runtime wiring step in the same implementation PR.
-  Ordinary and child-agent tool pools receive `issueRuntime`; Dream does not, so
+  lightweight Issue scheduler tick. The tick materializes due confirmed
+  Recurring Issues into concrete Issues, then starts one Agent Session for each
+  confirmed unattended ready Issue that has not already had a Session. Ordinary
+  and child-agent tool pools receive `issueRuntime`; Dream does not, so
   model-facing Issue tools cannot create, mutate, or start Dream work.
+
+The internal executor binding is intentionally not part of the model-facing
+schema. `agent_session_read` returns Agent Session state and Activity, not a Run
+id. `agent_session_send_message` and `agent_session_stop` route through the
+binding when a live executor is available and otherwise report a warning or
+blocked state through the normal tool result.
 
 The target model-facing tool names are exactly:
 
@@ -134,6 +146,14 @@ confirmed Recurring Issues can create concrete Issues when a cadence is due;
 draft, paused, or archived Recurring Issues do not. Generated Issue titles
 include the covered local date by default, and repeated sweeps do not create
 duplicate Issues for the same recurrence window.
+
+Automatic trigger execution is one-shot per concrete Issue in V1: a confirmed
+unattended `when-ready` Issue or due `scheduled` Issue without any prior Agent
+Session can start one Agent Session from the scheduler. Attended Issues require
+an explicit runtime-authorized `agent_session_start` path. Completion or failure
+of that Session does not by itself complete the Issue and does not cause the
+scheduler to loop on the same Issue. Retrying or continuing terminal work
+creates a new Agent Session through an explicit `agent_session_start` request.
 
 ## Run Delegation Tools
 

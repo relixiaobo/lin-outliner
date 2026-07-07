@@ -219,4 +219,107 @@ describe('agent issue store', () => {
       ]);
     });
   });
+
+  test('binds Agent Sessions to runtime execution and syncs terminal state', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Research launch risks',
+          trigger: { type: 'when-ready' },
+          permissionMode: 'unattended',
+        },
+        request: { mode: 'request' },
+        reason: 'Create executable work.',
+      }, actor, 100);
+      const issue = (await store.search({ targets: ['issue'] })).rows[0];
+      await store.update({
+        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm execution.',
+      }, actor, 110);
+      const confirmed = (await store.search({ targets: ['issue'] })).rows[0];
+      const started = await store.startSession({
+        issueId: confirmed.target.id,
+        expectedIssueRevision: confirmed.revision,
+        request: { mode: 'request' },
+        reason: 'Start work.',
+      }, { type: 'runtime-authorized-action', actor }, actor, 120);
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+
+      const bound = await store.bindSessionExecution(sessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:issue',
+        executionId: 'execution:1',
+        startedAt: 130,
+      }, actor, 130);
+      expect(bound.status).toBe('applied');
+      expect((await store.readSession({ agentSessionId: sessionId }))?.agentSession.state).toBe('active');
+
+      const synced = await store.syncSessionExecution({
+        engine: 'delegation',
+        executionId: 'execution:1',
+        state: 'completed',
+        latestOutput: 'Launch risks summarized.',
+        completedAt: 200,
+      }, actor, 200);
+      expect(synced?.state).toBe('complete');
+      expect(synced?.latestOutput).toBe('Launch risks summarized.');
+      const read = await store.readSession({ agentSessionId: sessionId, include: ['activity-summary'] });
+      expect(read?.activity?.map((entry) => entry.content.type)).toContain('agent-response');
+    });
+  });
+
+  test('lists ready Issues once and excludes Issues that already have a Session', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Manual only', trigger: { type: 'manual' } },
+        request: { mode: 'request' },
+        reason: 'Create manual issue.',
+      }, actor, 10);
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Ready now', trigger: { type: 'when-ready' } },
+        request: { mode: 'request' },
+        reason: 'Create ready issue.',
+      }, actor, 20);
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Scheduled later', trigger: { type: 'scheduled', startAt: 500, timeZone: 'UTC' } },
+        request: { mode: 'request' },
+        reason: 'Create scheduled issue.',
+      }, actor, 30);
+      const rows = await store.search({ targets: ['issue'] });
+      for (const row of rows.rows) {
+        await store.update({
+          target: { type: 'issue', id: row.target.id, expectedRevision: row.revision },
+          change: { type: 'confirm' },
+          request: { mode: 'request' },
+          reason: 'Confirm issue.',
+        }, actor, 40);
+      }
+
+      expect((await store.listReadyIssuesForExecution(100)).map((issue) => issue.title)).toEqual(['Ready now']);
+      expect((await store.search({ filter: { hasActiveSession: false } })).rows.map((row) => row.title).sort()).toEqual([
+        'Manual only',
+        'Ready now',
+        'Scheduled later',
+      ]);
+
+      const ready = (await store.search({ text: 'Ready now' })).rows[0];
+      await store.startSession({
+        issueId: ready.target.id,
+        expectedIssueRevision: ready.revision,
+        request: { mode: 'request' },
+        reason: 'Auto start once.',
+      }, { type: 'runtime-authorized-action', actor }, actor, 120);
+
+      expect(await store.listReadyIssuesForExecution(600)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ title: 'Scheduled later' }),
+      ]));
+      expect((await store.listReadyIssuesForExecution(600)).map((issue) => issue.title)).not.toContain('Ready now');
+    });
+  });
 });

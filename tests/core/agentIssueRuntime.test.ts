@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ActorRef, RuntimeAuthorizationCapability } from '../../src/core/agentIssue';
-import { createAgentIssueToolRuntime } from '../../src/main/agentIssueRuntime';
+import { createAgentIssueToolRuntime, type AgentSessionExecutor } from '../../src/main/agentIssueRuntime';
 import { AgentIssueStore } from '../../src/main/agentIssueStore';
 
 const actor: ActorRef = { type: 'agent', agentId: 'built-in:tenon:assistant' };
@@ -98,6 +98,80 @@ describe('agent issue tool runtime authorization', () => {
       });
       expect(started.status).toBe('applied');
       expect(started.targets.some((target) => target.type === 'agent-session')).toBe(true);
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+      const read = await authorized.readSession({ agentSessionId: sessionId });
+      expect(read?.agentSession.state).toBe('error');
+      expect(read?.agentSession.errorMessage).toBe('No Agent Session executor is configured.');
+    });
+  });
+
+  test('starts Agent Sessions through the configured runtime executor', async () => {
+    await withStore(async (store) => {
+      const authorization: RuntimeAuthorizationCapability = {
+        id: 'auth:executor',
+        actor,
+        allowedOperations: [
+          { type: 'issue-update' },
+          { type: 'agent-session-start' },
+        ],
+        expiresAt: 1_000,
+        auditReason: 'User confirmed this execution.',
+      };
+      const startedSessions: string[] = [];
+      const executor: AgentSessionExecutor = {
+        start: ({ session }) => {
+          startedSessions.push(session.id);
+          return {
+            engine: 'delegation',
+            conversationId: 'conversation:issue',
+            executionId: 'execution:issue',
+            startedAt: 300,
+          };
+        },
+        read: async () => undefined,
+      };
+      const runtime = createAgentIssueToolRuntime({ store, actor, authorization, executor, now: () => 300 });
+      await runtime.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Run through executor',
+          trigger: { type: 'when-ready' },
+          permissionMode: 'unattended',
+        },
+        request: { mode: 'request' },
+        reason: 'Create executable issue.',
+      });
+      const issue = (await runtime.search({ targets: ['issue'] })).rows[0];
+      await runtime.update({
+        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
+        change: { type: 'confirm' },
+        request: { mode: 'request' },
+        reason: 'Confirm execution.',
+      });
+      const confirmed = (await runtime.search({ targets: ['issue'] })).rows[0];
+
+      const started = await runtime.startSession({
+        issueId: confirmed.target.id,
+        expectedIssueRevision: confirmed.revision,
+        request: { mode: 'request' },
+        reason: 'Start execution.',
+      });
+      expect(started.status).toBe('applied');
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+      expect(startedSessions).toEqual([sessionId]);
+      expect((await runtime.readSession({ agentSessionId: sessionId }))?.agentSession.state).toBe('active');
+
+      await store.syncSessionExecution({
+        engine: 'delegation',
+        executionId: 'execution:issue',
+        state: 'completed',
+        latestOutput: 'Executor completed.',
+        completedAt: 400,
+      }, actor, 400);
+      expect((await runtime.readSession({ agentSessionId: sessionId }))?.agentSession).toMatchObject({
+        state: 'complete',
+        latestOutput: 'Executor completed.',
+      });
     });
   });
 });
