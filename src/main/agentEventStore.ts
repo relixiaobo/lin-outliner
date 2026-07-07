@@ -2372,8 +2372,11 @@ function normalizeAgentRunScope(value: unknown): AgentRunScope | undefined {
     paths: Array.isArray(rawResources.paths)
       ? uniqueStrings(rawResources.paths.filter((item): item is string => typeof item === 'string'))
       : undefined,
+    nodes: Array.isArray(rawResources.nodes)
+      ? uniqueStrings(rawResources.nodes.filter((item): item is string => typeof item === 'string'))
+      : undefined,
   } : undefined;
-  const compactResources = resources && (resources.docs?.length || resources.paths?.length)
+  const compactResources = resources && (resources.docs?.length || resources.paths?.length || resources.nodes?.length)
     ? resources
     : undefined;
   return capabilities?.length || compactResources

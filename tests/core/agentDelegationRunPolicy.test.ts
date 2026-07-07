@@ -85,12 +85,12 @@ describe('agent delegation run policy', () => {
   test('normalizes and narrows run scope without widening parent constraints', () => {
     const parent: AgentRunScope = {
       capabilities: ['file.read.allowed_file_area', 'outline.read'],
-      resources: { docs: ['spec'], paths: ['src'] },
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a', 'node:b'] },
     };
 
     expect(normalizeRunScope({
       capabilities: ['file_read', 'outline.read', 'unknown'],
-      resources: { docs: [' spec '], paths: [' src '] },
+      resources: { docs: [' spec '], paths: [' src '], nodes: [' node:a '] },
     })).toEqual({
       capabilities: [
         'file.read.allowed_file_area',
@@ -98,22 +98,24 @@ describe('agent delegation run policy', () => {
         'file.read.sensitive_local_path',
         'outline.read',
       ],
-      resources: { docs: ['spec'], paths: ['src'] },
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
     });
 
     expect(narrowRunScope(parent, undefined)).toEqual(parent);
     expect(narrowRunScope(parent, {
       capabilities: ['outline.read'],
-      resources: { docs: ['spec'], paths: ['src'] },
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
     })).toEqual({
       capabilities: ['outline.read'],
-      resources: { docs: ['spec'], paths: ['src'] },
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
     });
 
     expect(() => narrowRunScope(parent, { capabilities: ['outline.edit'] }))
       .toThrow('Run scope cannot widen capabilities: outline.edit');
     expect(() => narrowRunScope(parent, { resources: { paths: ['tmp'] } }))
       .toThrow('Run scope cannot widen paths: tmp');
+    expect(() => narrowRunScope(parent, { resources: { nodes: ['node:c'] } }))
+      .toThrow('Run scope cannot widen nodes: node:c');
   });
 
   test('derives allowed tools and verifier-only read scope from capabilities', () => {
@@ -152,7 +154,7 @@ describe('agent delegation run policy', () => {
     expect(formatRunBudgetForPrompt({ tokens: 10, wallClockMinutes: 2 })).toBe('- token budget: 10\n- wall-clock budget: 2 minutes');
     expect(formatRunScopeForPrompt({
       capabilities: ['outline.read'],
-      resources: { docs: ['spec'], paths: ['src'] },
-    })).toBe('- capabilities: outline.read\n- docs: spec\n- paths: src');
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
+    })).toBe('- capabilities: outline.read\n- docs: spec\n- paths: src\n- nodes: node:a');
   });
 });

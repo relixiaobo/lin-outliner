@@ -285,6 +285,7 @@ export interface AgentChildAgentCreateInput {
   skillRuntime: AgentSkillRuntime;
   localWorkspace: AgentLocalWorkspaceContext;
   delegationRuntime: AgentDelegationRuntime;
+  scope?: AgentRunScope;
   allowedTools?: string[];
   disallowedTools?: string[];
   preapprovedToolRules?: string[];
@@ -1060,6 +1061,7 @@ export class AgentDelegationRuntime {
       skillRuntime,
       localWorkspace,
       delegationRuntime: subRunRuntime,
+      scope: input.scope,
       allowedTools: input.definition.tools,
       disallowedTools: input.definition.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,

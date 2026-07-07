@@ -178,8 +178,14 @@ function coreWithDirtyDuplicateFieldDefs(): Core {
   return Core.fromState(legacy.serialize('__legacy__'));
 }
 
-async function executeTool<TData>(core: Core, name: string, params: unknown): Promise<ToolEnvelope<TData>> {
-  const result = await executeRawTool<TData>(core, name, params);
+async function executeTool<TData>(
+  core: Core,
+  name: string,
+  params: unknown,
+  options?: Parameters<typeof createNodeTools>[1],
+  hostOverrides: Partial<OutlinerToolHost> = {},
+): Promise<ToolEnvelope<TData>> {
+  const result = await executeRawTool<TData>(core, name, params, options, hostOverrides);
   return result.details;
 }
 
@@ -247,6 +253,90 @@ describe('agent node tools', () => {
     expect(JSON.stringify(nodeEdit.parameters)).toContain('leading %%node:id%% marker may be omitted');
     expect(JSON.stringify(nodeEdit.parameters)).toContain('Include enough surrounding lines');
     expect(history.description).toContain('Use action "list" first');
+  });
+
+  test('node tools enforce run-scoped node resources for Issue Sessions', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const allowed = mustFocus(core.createNode(today, null, 'Allowed invoice'));
+    const outside = mustFocus(core.createNode(today, null, 'Outside invoice'));
+    const options = { runScope: { resources: { nodes: [allowed] } } };
+
+    const outsideRead = await executeTool(core, 'node_read', { node_id: outside }, options);
+    expect(outsideRead.ok).toBe(false);
+    expect(outsideRead.error?.code).toBe('outside_scope');
+
+    const search = await executeTool<{
+      total: number;
+      items?: Array<{ nodeId: string; title: string }>;
+    }>(core, 'node_search', {
+      outline: '- %%search%% Invoice\n  - STRING_MATCH\n    - value:: invoice',
+      limit: 10,
+    }, options);
+    expect(search.ok).toBe(true);
+    expect(search.data?.total).toBe(1);
+    expect(search.data?.items?.map((item) => item.nodeId)).toEqual([allowed]);
+
+    const blockedCreate = await executeTool(core, 'node_create', {
+      parent_id: outside,
+      outline: '- Should not be created',
+    }, options);
+    expect(blockedCreate.ok).toBe(false);
+    expect(blockedCreate.error?.code).toBe('outside_scope');
+
+    const allowedCreate = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: allowed,
+      outline: '- Scoped child',
+    }, options);
+    expect(allowedCreate.ok).toBe(true);
+    expect(allowedCreate.data?.createdRootIds).toHaveLength(1);
+
+    const createdChildId = allowedCreate.data!.createdRootIds[0]!;
+    const createdRead = await executeTool(core, 'node_read', { node_id: createdChildId, depth: 0 }, options);
+    expect(createdRead.ok).toBe(true);
+
+    const blockedDefinitionCreate = await executeTool(core, 'node_create', {
+      definition: { kind: 'field', name: 'Scoped definition create' },
+    }, options);
+    expect(blockedDefinitionCreate.ok).toBe(false);
+    expect(blockedDefinitionCreate.error?.code).toBe('outside_scope');
+
+    const configOwner = mustFocus(core.createNode(today, null, 'Config owner'));
+    const configEntryId = mustFocus(core.createInlineField(configOwner, null, 'Scoped config field', 'plain'));
+    const configEntry = core.projection().nodes.find((node) => node.id === configEntryId);
+    if (configEntry?.type !== 'fieldEntry' || !configEntry.fieldDefId) throw new Error('Expected a field entry definition.');
+    const blockedConfig = await executeTool(core, 'node_edit', {
+      operation: 'configure_definition',
+      node_id: configEntry.fieldDefId,
+      definition_patch: { field_type: 'url' },
+    }, { runScope: { resources: { nodes: [configEntry.fieldDefId] } } });
+    expect(blockedConfig.ok).toBe(false);
+    expect(blockedConfig.error?.code).toBe('outside_scope');
+
+    const scopedEntryId = mustFocus(core.createInlineField(allowed, null, 'Scoped draft field', 'plain'));
+    const targetOwner = mustFocus(core.createNode(today, null, 'Target definition owner'));
+    const targetEntryId = mustFocus(core.createInlineField(targetOwner, null, 'Canonical scoped field', 'plain'));
+    const targetEntry = core.projection().nodes.find((node) => node.id === targetEntryId);
+    if (targetEntry?.type !== 'fieldEntry' || !targetEntry.fieldDefId) throw new Error('Expected a target field definition.');
+    const blockedReuse = await executeTool(core, 'node_edit', {
+      operation: 'reuse_field_definition',
+      node_id: scopedEntryId,
+      target_definition_id: targetEntry.fieldDefId,
+    }, options);
+    expect(blockedReuse.ok).toBe(false);
+    expect(blockedReuse.error?.code).toBe('outside_scope');
+
+    const sourceOwner = mustFocus(core.createNode(today, null, 'Source definition owner'));
+    const sourceEntryId = mustFocus(core.createInlineField(sourceOwner, null, 'Duplicate scoped field', 'plain'));
+    const sourceEntry = core.projection().nodes.find((node) => node.id === sourceEntryId);
+    if (sourceEntry?.type !== 'fieldEntry' || !sourceEntry.fieldDefId) throw new Error('Expected a source field definition.');
+    const blockedMerge = await executeTool(core, 'node_edit', {
+      operation: 'merge_definition',
+      node_id: targetEntry.fieldDefId,
+      merge_from_node_ids: [sourceEntry.fieldDefId],
+    }, { runScope: { resources: { nodes: [targetEntry.fieldDefId, sourceEntry.fieldDefId] } } });
+    expect(blockedMerge.ok).toBe(false);
+    expect(blockedMerge.error?.code).toBe('outside_scope');
   });
 
   test('node_create creates outline trees with tags fields descriptions and completion', async () => {

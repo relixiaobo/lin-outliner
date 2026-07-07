@@ -90,6 +90,7 @@ import {
   type AgentRunMeta,
   type AgentRunProfileId,
   type AgentRunPurpose,
+  type AgentRunScope,
   type AgentUserQuestionAnswer,
   type AgentUserQuestionAttachment,
   type AgentUserQuestionFileReference,
@@ -166,6 +167,7 @@ import {
 } from './agentEventStore';
 import { AgentIssueStore, type AgentSessionExecutionSyncInput } from './agentIssueStore';
 import { resolveIssueInputScopeFromProjection } from './agentIssueInputResolver';
+import { agentSessionRunScope } from './agentIssueSessionScope';
 import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
   dreamWindowSummary,
@@ -2892,6 +2894,7 @@ export class AgentRuntime {
       },
       systemPrompt: input.systemPrompt,
       l0CacheBreakpointEnabled: input.l0CacheBreakpointEnabled,
+      runScope: input.scope,
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
@@ -7904,6 +7907,7 @@ function createConfiguredAgent(
     imageGeneration?: AgentToolsOptions['imageGeneration'];
     issueRuntime?: AgentToolsOptions['issueRuntime'];
     localWorkspace?: AgentLocalWorkspaceContext;
+    runScope?: AgentRunScope;
     allowedTools?: readonly string[];
     disallowedTools?: readonly string[];
     preapprovedToolRules?: string[];
@@ -7950,6 +7954,7 @@ function createConfiguredAgent(
     askUserQuestion: options.askUserQuestion,
     imageGeneration: options.imageGeneration,
     issueRuntime: options.issueRuntime,
+    runScope: options.runScope,
     allowedTools: options.allowedTools,
     disallowedTools: options.disallowedTools,
   });
@@ -9176,11 +9181,13 @@ function agentSessionDelegationInput(
   startInput: AgentSessionStartInput,
 ): Record<string, unknown> {
   const criteria = agentSessionCriteria(session.issueSnapshot.completionCriteria);
+  const scope = agentSessionRunScope(session);
   return {
     description: commandConversationTitle(session.issueSnapshot.title),
     objective: agentSessionObjective(session, startInput),
     criteria,
     verify: false,
+    scope,
     context: 'brief',
     detach: startInput.detach ?? true,
     unattended: session.issueSnapshot.permissionMode === 'unattended',

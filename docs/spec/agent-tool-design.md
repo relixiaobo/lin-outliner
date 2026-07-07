@@ -106,6 +106,16 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   `selected-nodes`, `node-children`, and `tag-query` scopes become a bounded
   `inputSnapshot` with concrete node ids and a preview on the Agent Session;
   the Issue remains the durable work object, and nodes do not store work state.
+- `src/main/agentIssueSessionScope.ts` maps an Agent Session's confirmed
+  `inputSnapshot` and `outputSnapshot` into delegated Run
+  `scope.resources.nodes` roots. The node tools enforce that resource scope at
+  runtime: `node_search` filters results to scoped node roots and their
+  descendants, `node_read` rejects scoped reads that would expose unscoped nodes
+  or backlinks, and
+  `node_create`/`node_edit`/`node_delete` reject requested targets,
+  destinations, references, duplicate sources, or affected subtrees outside the
+  scoped node set. This makes unattended Issue Sessions fail closed in code
+  instead of relying on prompt instructions.
 - `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
   Sessions, and Activity in `issue-manager.json`, including draft creation,
   parent/sub-issue links, revision conflicts, session message/stop Activity,
@@ -205,7 +215,7 @@ interface SpawnInput {
   verify?: boolean; // default true
   scope?: {
     capabilities?: string[]; // action kinds, or legacy tool names normalized to action kinds
-    resources?: { docs?: string[]; paths?: string[] };
+    resources?: { docs?: string[]; paths?: string[]; nodes?: string[] };
   };
   budget?: { tokens?: number; wallClockMinutes?: number };
   context?: "full" | "brief" | "none"; // verifier Runs are runtime-pinned to "none"

@@ -23,8 +23,9 @@ export function normalizeRunScope(value: unknown): AgentRunScope | undefined {
   const resources = isPlainRecord(value.resources) ? {
     docs: coerceStringArray(value.resources.docs),
     paths: coerceStringArray(value.resources.paths),
+    nodes: coerceStringArray(value.resources.nodes),
   } : undefined;
-  const compactResources = resources && (resources.docs?.length || resources.paths?.length)
+  const compactResources = resources && (resources.docs?.length || resources.paths?.length || resources.nodes?.length)
     ? resources
     : undefined;
   return capabilities?.length || compactResources
@@ -184,6 +185,7 @@ export function formatRunScopeForPrompt(scope: AgentRunScope | undefined): strin
   if (scope.capabilities?.length) lines.push(`- capabilities: ${scope.capabilities.join(', ')}`);
   if (scope.resources?.docs?.length) lines.push(`- docs: ${scope.resources.docs.join(', ')}`);
   if (scope.resources?.paths?.length) lines.push(`- paths: ${scope.resources.paths.join(', ')}`);
+  if (scope.resources?.nodes?.length) lines.push(`- nodes: ${scope.resources.nodes.join(', ')}`);
   return lines.length ? lines.join('\n') : null;
 }
 
@@ -211,7 +213,10 @@ function narrowRunResources(parent: AgentRunScope['resources'] | undefined, requ
   const paths = parent?.paths?.length
     ? (requested?.paths?.length ? assertScopeSubset(requested.paths, parent.paths, 'paths') : parent.paths)
     : requested?.paths;
-  return docs?.length || paths?.length ? { docs, paths } : undefined;
+  const nodes = parent?.nodes?.length
+    ? (requested?.nodes?.length ? assertScopeSubset(requested.nodes, parent.nodes, 'nodes') : parent.nodes)
+    : requested?.nodes;
+  return docs?.length || paths?.length || nodes?.length ? { docs, paths, nodes } : undefined;
 }
 
 function coerceStringArray(value: unknown): string[] | undefined {

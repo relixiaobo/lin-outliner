@@ -7,6 +7,7 @@ import {
   type WebContentsWillRedirectEventParams,
 } from 'electron';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { AgentRunScope } from '../core/agentEventLog';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -220,6 +221,7 @@ export interface AgentToolsOptions {
   chatSourceValidator?: ChatSourceValidator;
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
+  runScope?: AgentRunScope;
 }
 
 interface AgentToolCatalogEntry {
@@ -248,6 +250,7 @@ function buildAgentToolCatalog(
     create: () => outliner ? createNodeTools(outliner, {
       chatSourceValidator: options.chatSourceValidator,
       localFileRoot: options.localFileRoot,
+      runScope: options.runScope,
     }) : [],
   }, {
     precondition: true,

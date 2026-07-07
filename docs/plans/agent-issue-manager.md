@@ -2143,6 +2143,10 @@ Runtime responsibilities are mechanical and auditable:
 - validate Issue revision, confirmation, blockers, permission scope, and
   execution policy before creating a Session;
 - snapshot the Issue and resolved input/output scope at Session start;
+- map the confirmed input/output node scope into delegated Run
+  `scope.resources.nodes` roots, and have node tools fail closed on reads,
+  searches, writes, destinations, references, duplicate sources, or affected
+  subtrees outside those scoped roots and descendants;
 - start, monitor, stop, recover, and terminalize the worker;
 - emit Activity for starts, progress summaries, outputs, errors, questions,
   stops, stale recovery, child Issue links, and terminal states;
@@ -2172,8 +2176,10 @@ scope:
   Session with no live executor, recovery changes the Session to `stale` or
   `error` and emits Activity. It never leaves the Session active.
 - **EDGE-4 out-of-scope action:** If an unattended Session requests content or
-  writes outside the confirmed Issue scope, the Session emits `agent-question` or
-  `agent-error` Activity and becomes `awaitingInput` or `error`.
+  writes outside the confirmed Issue scope, node tools return `outside_scope`
+  without reading or mutating the out-of-scope node. Runtime records the failed
+  tool result in the Agent Session transcript and the Session can then ask for a
+  scope change or finish with an error/blocker.
 - **EDGE-5 large outcome scope creep:** If Issue fields are not enough for a
   large outcome request, the agent should create supporting outliner notes or
   sub-issues rather than introducing a new object in V1.

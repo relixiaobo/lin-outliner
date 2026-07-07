@@ -227,6 +227,7 @@ export interface AgentRunScope {
   resources?: {
     docs?: string[];
     paths?: string[];
+    nodes?: string[];
   };
 }
 
