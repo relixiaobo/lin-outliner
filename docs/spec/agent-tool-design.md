@@ -669,6 +669,34 @@ Rules:
 - Field syntax creates or updates structured data. Use fields when the user asks
   for structured properties, when preserving existing fields, or when the data
   must be filterable/sortable; ordinary notes belong in child nodes.
+- Semantic field writes resolve before creating anything. Resolution order is:
+  the target owner has exactly one active field entry with that normalized display
+  name; a writable system field such as `Done` / `sys:done`; exactly one active
+  user field definition with that normalized display name; otherwise a new user
+  field definition. Matching trims outer whitespace, collapses internal
+  whitespace, case-folds, and ignores trashed entries/definitions.
+- Existing field types win. Reused `url`, `date`, `number`, `email`,
+  `checkbox`, `reference`, `options`, and `options_from_supertag` definitions
+  keep their stored type/config, and values are validated against that type
+  before mutation.
+- Reused `options` fields use option semantics: text values select an existing
+  option by name when present and otherwise collect a local option value; node
+  reference values select that exact option node. Reused `options_from_supertag`
+  fields require node reference values and core validates that the target node
+  belongs to the configured source supertag.
+- New field definitions use conservative inference only: all node references
+  become `reference`; canonical date values become `date`; finite numbers become
+  `number`; URL-shaped text becomes `url`; email-shaped text becomes `email`;
+  `true` / `false` become `checkbox`; everything else becomes `plain`. Outline
+  parsing never infers `options` or `options_from_supertag`.
+- Ambiguous field writes fail closed. Multiple active owner entries with the same
+  normalized display name, or multiple active global field definitions with that
+  name and no owner entry to disambiguate, return an error with the relevant ids
+  instead of creating another field.
+- `Done:: true` and `Done:: false` write the node's completion state through the
+  `sys:done` system field. Other system fields such as `Created`, `Last edited`,
+  `Tags`, `References`, `Owner`, and `Day` are read-only through field syntax;
+  use the normal outline syntax for tags, references, and date placement.
 - Date field values use the canonical date field language from
   `docs/spec/date-field-values.md`: `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or
   `start/end` with `/`, for example `2026-05-20/2026-05-24`. Tool prompts and
@@ -1107,6 +1135,7 @@ interface NodeCreateData {
   createdFieldEntryIds?: string[];
   createdTagIds?: string[];
   createdFieldDefIds?: string[];
+  matchedNodeIds?: string[];
   duplicatedFrom?: string;
   targetId?: string;
   outline?: string;
@@ -1119,6 +1148,9 @@ Result behavior:
 - If both are provided, `after_id` must be a child of `parent_id`.
 - If `outline` has multiple root lines, the first root is inserted at the
   requested position and following roots are inserted after the previous root.
+- Top-level `Field:: value` lines in `node_create.outline` write structured
+  fields onto `parent_id` itself and do not create root nodes. Indented
+  `Field::` lines under a created node write fields onto that created node.
 - `target_id` creates one reference node at the requested position.
 - `duplicate_id` deep-copies the source subtree at the requested position.
 - Normal user-authored detail belongs in child nodes, not in node descriptions.
@@ -1217,8 +1249,9 @@ Outline edit semantics:
   replacement must be valid Lin Outline Format and contain exactly one root line.
 - Existing field/value lines should preserve their `%%node:id%%` marker. The
   target root line may omit it because `node_id` already names that node.
-  Unmarked field lines create/upsert fields by name; unmarked value lines append
-  values. Omitted fields and values are preserved.
+  Unmarked field lines resolve through the semantic field write resolver by
+  display name; unmarked value lines append values. Omitted fields and values are
+  preserved.
 - Annotated field value ids can update text in place only when the stored value
   kind stays compatible. Changing a plain value into a reference, a reference into
   text, or a reference target is rejected before mutation; delete the old value id
@@ -1590,7 +1623,8 @@ Identity rules:
 - If the root line carries `%%node:id%%`, that id must match the `node_id`
   argument.
 - Existing field and value lines keep identity through their marker.
-- Unmarked field lines upsert by field display name or create a new field.
+- Unmarked field lines resolve by field display name and reuse an existing owner
+  field entry or unique field definition before creating a new field.
 - Unmarked value lines append a new value unless they exactly match one existing
   unambiguous value.
 - Removed marked lines are preserved. Delete nodes, field entries, or field value

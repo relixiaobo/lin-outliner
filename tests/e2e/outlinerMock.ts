@@ -48,6 +48,16 @@ interface MockFixtureOptions {
   permissionBlocks?: string[];
   /** Preloads built-in soft-block exceptions for settings/security specs. */
   permissionSoftBlockAllows?: string[];
+  /** Delays initial workspace restoration so startup chrome can be asserted before data arrives. */
+  initWorkspaceDelayMs?: number;
+  /** Delays provider settings so Settings chrome can be asserted before settings data arrives. */
+  providerSettingsDelayMs?: number;
+  /** Delays agent definitions so agent-config first paint can be asserted before data arrives. */
+  agentDefinitionsDelayMs?: number;
+  /** Delays agent skills so agent-config first paint can be asserted before data arrives. */
+  agentSkillsDelayMs?: number;
+  /** Delays conversation list loading so channel-config first paint can be asserted before data arrives. */
+  agentConversationsDelayMs?: number;
 }
 
 const DEBUG_USAGE = {
@@ -793,6 +803,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     ];
 
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+    const delay = (ms: number) => new Promise((resolve) => { window.setTimeout(resolve, ms); });
     const previewPdfBytes = () => {
       const base64 = 'JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUiA1IDAgUiA3IDAgUl0gL0NvdW50IDMgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA5IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0OSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDcyIDcyMCBUZCAoUHJldmlldyBQREYgUGFnZSAxKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA5IDAgUiA+PiA+PiAvQ29udGVudHMgNiAwIFIgPj4KZW5kb2JqCjYgMCBvYmoKPDwgL0xlbmd0aCA0OSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDcyIDcyMCBUZCAoUHJldmlldyBQREYgUGFnZSAyKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjcgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA5IDAgUiA+PiA+PiAvQ29udGVudHMgOCAwIFIgPj4KZW5kb2JqCjggMCBvYmoKPDwgL0xlbmd0aCA0OSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDcyIDcyMCBUZCAoUHJldmlldyBQREYgUGFnZSAzKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjkgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgMTAKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDEyNyAwMDAwMCBuIAowMDAwMDAwMjUzIDAwMDAwIG4gCjAwMDAwMDAzNTIgMDAwMDAgbiAKMDAwMDAwMDQ3OCAwMDAwMCBuIAowMDAwMDAwNTc3IDAwMDAwIG4gCjAwMDAwMDA3MDMgMDAwMDAgbiAKMDAwMDAwMDgwMiAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDEwIC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo4NzIKJSVFT0YK';
       const binary = atob(base64);
@@ -1852,7 +1863,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             }),
           }) as T;
         }
-        if (cmd === 'agent_get_provider_settings') return clone(agentSettings) as T;
+        if (cmd === 'agent_get_provider_settings') {
+          if (options.providerSettingsDelayMs) await delay(options.providerSettingsDelayMs);
+          return clone(agentSettings) as T;
+        }
         if (cmd === 'agent_refresh_provider_models') {
           const providerId = String(args.providerId ?? '');
           const provider = agentSettings.availableProviders.find((item) => item.providerId === providerId);
@@ -1878,7 +1892,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }
           return clone(agentSettings) as T;
         }
-        if (cmd === 'agent_list_conversations') return clone(agentConversations) as T;
+        if (cmd === 'agent_list_conversations') {
+          if (options.agentConversationsDelayMs) await delay(options.agentConversationsDelayMs);
+          return clone(agentConversations) as T;
+        }
         if (cmd === 'agent_list_runs') return clone(agentRuns) as T;
         if (cmd === 'agent_rename_conversation') {
           const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
@@ -2007,6 +2024,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }) as T;
         }
         if (cmd === 'agent_list_all_skills') {
+          if (options.agentSkillsDelayMs) await delay(options.agentSkillsDelayMs);
           return clone(agentSkills) as T;
         }
         if (cmd === 'agent_accept_skill') {
@@ -2029,6 +2047,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(agentSkills) as T;
         }
         if (cmd === 'agent_list_all_definitions') {
+          if (options.agentDefinitionsDelayMs) await delay(options.agentDefinitionsDelayMs);
           return clone(agentDefinitions) as T;
         }
         if (cmd === 'agent_update_tool_permission_settings') {
@@ -2314,7 +2333,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(dreamHistory) as T;
         }
         if (cmd.startsWith('agent_')) return undefined as T;
-        if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projectionSnapshot());
+        if (cmd === 'init_workspace' || cmd === 'get_projection') {
+          if (cmd === 'init_workspace' && options.initWorkspaceDelayMs) await delay(options.initWorkspaceDelayMs);
+          return clone(projectionSnapshot()) as T;
+        }
         if (cmd === 'ingest_asset') {
           const data = args.data as { byteLength?: number } | undefined;
           return clone(createAsset({

@@ -8,6 +8,16 @@ async function waitForAgentReady(page: import('@playwright/test').Page) {
 }
 
 test.describe('agent panel empty state', () => {
+  test('while provider settings load: stays blank without a loading card or onboarding flash', async ({ page }) => {
+    await openMockedApp(page, { providerSettingsDelayMs: 1_000 });
+
+    const emptyState = page.locator('.agent-empty-state');
+    await expect(emptyState).toBeVisible();
+    await expect(emptyState.locator('.feedback-state', { hasText: 'Loading' })).toHaveCount(0);
+    await expect(page.getByText('Connect an AI provider to start.')).toHaveCount(0);
+    await expect(page.getByLabel('Agent message')).toBeVisible();
+  });
+
   test('with a provider: stays blank and sends normally', async ({ page }) => {
     await openMockedApp(page);
     await waitForAgentReady(page);

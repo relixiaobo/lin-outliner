@@ -6,6 +6,7 @@ import {
   plainText,
   referenceTargetSortKey,
   replaceAllRichTextPatch,
+  type FieldType,
   type NodeProjection,
   type ReferenceTarget,
   type RichText,
@@ -109,6 +110,16 @@ import type {
 import { parseReferenceMarkers, splitFileReferenceMarkers } from '../core/referenceMarkup';
 import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
 import { isPathInside } from './agentAttachmentMaterialization';
+import {
+  inferFieldTypeFromValues,
+  normalizeFieldNameKey,
+  resolveFieldWriteTarget,
+  validateFieldValuesForType,
+  type FieldResolutionNode,
+  type FieldResolutionValue,
+  type FieldWriteTarget,
+} from '../core/fieldResolution';
+import { DONE_FIELD, isSystemFieldId } from '../core/systemFields';
 
 export type { OutlinerToolHost } from './agentNodeToolTypes';
 
@@ -442,6 +453,12 @@ async function executeOutlineEdit(
   if (!parsed.ok) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'parse_error', parsed.error.message, {
       instructions: `Fix new_string so the one-node outline remains valid outline format. Line ${parsed.error.line}, column ${parsed.error.column}.`,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  if (parsed.document.fields.length > 0) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_outline_root', 'node_edit cannot place field lines outside the target root node.', {
+      instructions: 'Indent field lines under the target root line, or use node_create to add fields to an existing parent node.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -897,6 +914,25 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
       const warnings = [...parsed.warnings];
       let insertIndex = insertion.index;
       try {
+        const usedFieldIds = new Set<string>();
+        for (const field of parsed.document.fields) {
+          const latest = indexProjection(host.getProjection());
+          const resolution = resolveFieldWriteTarget(
+            fieldResolutionMap(latest),
+            insertion.parentId,
+            field.name,
+            fieldResolutionValues(field),
+            { isDeleted: (nodeId) => isInTrash(latest, nodeId) },
+          );
+          if (!resolution.ok) throw new Error(`${resolution.error} ${resolution.instructions}`);
+          await applyResolvedField(host, insertion.parentId, field, resolution.target, tracker, warnings, {
+            index: fieldSectionInsertIndex(latest, insertion.parentId),
+            usedFieldIds,
+          });
+        }
+        if (parsed.document.fields.length > 0) {
+          insertIndex = currentRootInsertionIndex(indexProjection(host.getProjection()), insertion);
+        }
         for (const root of parsed.document.roots) {
           const createdId = await createOutlineNode(host, root, insertion.parentId, insertIndex, tracker, warnings);
           tracker.createdRootIds.push(createdId);
@@ -916,6 +952,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
         createdFieldEntryIds: tracker.createdFieldEntryIds.length ? tracker.createdFieldEntryIds : undefined,
         createdTagIds: tracker.createdTagIds.length ? tracker.createdTagIds : undefined,
         createdFieldDefIds: tracker.createdFieldDefIds.length ? tracker.createdFieldDefIds : undefined,
+        matchedNodeIds: tracker.matchedNodeIds.length ? tracker.matchedNodeIds : undefined,
         duplicatedFrom: params.duplicateId,
         outline: outline.outline,
       };
@@ -1276,6 +1313,18 @@ function resolveInsertion(index: ProjectionIndex, params: NodeCreateParams): {
   return { parentId, index: null };
 }
 
+function currentRootInsertionIndex(
+  index: ProjectionIndex,
+  insertion: { parentId: string; afterId?: string | null; index: number | null },
+): number | null {
+  if (insertion.afterId === undefined) return null;
+  if (insertion.afterId === null) return fieldSectionInsertIndex(index, insertion.parentId);
+  const parent = requiredNode(index, insertion.parentId);
+  const childIndex = parent.children.indexOf(insertion.afterId);
+  if (childIndex < 0) throw new Error(`after_id is no longer a child of parent_id ${insertion.parentId}: ${insertion.afterId}`);
+  return childIndex + 1;
+}
+
 function validateMutableNodeIds(index: ProjectionIndex, nodeIds: string[]): { code: string; error: string; instructions: string } | null {
   const missing = nodeIds.find((nodeId) => !index.nodes.has(nodeId));
   if (missing) return { code: 'node_not_found', error: `Node not found: ${missing}`, instructions: 'Use node_search or node_read to locate the current node id.' };
@@ -1520,20 +1569,33 @@ async function upsertFields(
       return child?.type === 'fieldEntry' && !isInTrash(latest, childId);
     });
     let fieldEntryId = field.nodeId;
-    if (!fieldEntryId) {
-      const key = normalizedFieldNameKey(field.name);
-      const candidates = latestExistingFieldIds.filter((candidateId) =>
-        !usedFieldIds.has(candidateId) && normalizedFieldNameKey(fieldName(latest, requiredNode(latest, candidateId))) === key);
-      fieldEntryId = candidates.length === 1 ? candidates[0] : undefined;
-    }
     if (fieldEntryId) {
       usedFieldIds.add(fieldEntryId);
       trackMatchedNode(tracker, fieldEntryId);
+      const existing = latest.nodes.get(fieldEntryId);
+      if (existing?.type === 'fieldEntry' && existing.fieldDefId === DONE_FIELD) {
+        await setDoneFieldValue(host, parentId, field, warnings);
+        continue;
+      }
+      if (existing?.type === 'fieldEntry' && isSystemFieldId(existing.fieldDefId)) {
+        throw new Error(`System field "${field.name}" is read-only. Use normal node syntax for tags, references, and dates; only Done can be written through field syntax.`);
+      }
       await upsertFieldValues(host, fieldEntryId, field, tracker, warnings);
       continue;
     }
-    const createdId = await createField(host, parentId, field, tracker, fieldSectionInsertIndex(latest, parentId));
-    usedFieldIds.add(createdId);
+    const resolution = resolveFieldWriteTarget(
+      fieldResolutionMap(latest),
+      parentId,
+      field.name,
+      fieldResolutionValues(field),
+      { isDeleted: (nodeId) => isInTrash(latest, nodeId) },
+    );
+    if (!resolution.ok) throw new Error(`${resolution.error} ${resolution.instructions}`);
+    const appliedId = await applyResolvedField(host, parentId, field, resolution.target, tracker, warnings, {
+      index: fieldSectionInsertIndex(latest, parentId),
+      usedFieldIds,
+    });
+    usedFieldIds.add(appliedId);
   }
 }
 
@@ -1546,6 +1608,7 @@ async function upsertFieldValues(
 ) {
   const index = indexProjection(host.getProjection());
   const normalizedField = normalizeFieldValuesForEntry(index, fieldEntryId, field);
+  const fieldType = fieldTypeForEntry(index, fieldEntryId);
   const existingValueIds = [...requiredNode(index, fieldEntryId).children].filter((childId) => !isInTrash(index, childId));
   const desiredValues = normalizedField.clear ? [] : normalizedField.values;
   const misplacedAnnotatedValue = desiredValues.find((value) => value.nodeId && !existingValueIds.includes(value.nodeId));
@@ -1583,8 +1646,7 @@ async function upsertFieldValues(
       }
       continue;
     }
-    const createdId = await createFieldValue(host, fieldEntryId, desired);
-    tracker.createdNodeIds.push(createdId);
+    tracker.createdNodeIds.push(...await appendFieldValue(host, fieldEntryId, desired, fieldType));
   }
 }
 
@@ -1600,18 +1662,17 @@ function validateFieldValueKindUpdates(
   for (const field of root.fields) {
     let fieldEntryId = field.nodeId;
     if (!fieldEntryId) {
-      const key = normalizedFieldNameKey(field.name);
+      const key = normalizeFieldNameKey(field.name);
       const candidates = existingFieldIds.filter((candidateId) =>
-        !usedFieldIds.has(candidateId) && normalizedFieldNameKey(fieldName(index, requiredNode(index, candidateId))) === key);
+        !usedFieldIds.has(candidateId) && normalizeFieldNameKey(fieldName(index, requiredNode(index, candidateId))) === key);
       fieldEntryId = candidates.length === 1 ? candidates[0] : undefined;
     }
     if (!fieldEntryId) continue;
     usedFieldIds.add(fieldEntryId);
-    const normalizedField = normalizeFieldValuesForEntry(index, fieldEntryId, field);
-    if (normalizedField.clear) continue;
+    if (field.clear) continue;
     const existingValueIds = activeChildIds(index, fieldEntryId);
     const usedValueIds = new Set<string>();
-    for (const desired of normalizedField.values) {
+    for (const desired of field.values) {
       let targetValueId = desired.nodeId;
       if (!targetValueId) {
         const key = outlineValueKey(desired);
@@ -1634,8 +1695,15 @@ function validateFieldValueKindUpdates(
 }
 
 function normalizeFieldValuesForEntry(index: ProjectionIndex, fieldEntryId: string, field: OutlineField): OutlineField {
+  const fieldType = fieldTypeForEntry(index, fieldEntryId);
+  return normalizeFieldValuesForType(field, fieldType);
+}
+
+function normalizeFieldValuesForType(field: OutlineField, fieldType: FieldType): OutlineField {
+  const validation = validateFieldValuesForType(field.name, fieldType, fieldResolutionValues(field));
+  if (!validation.ok) throw new Error(validation.error);
   if (field.clear) return field;
-  if (fieldTypeForEntry(index, fieldEntryId) !== 'date') return field;
+  if (fieldType !== 'date') return field;
 
   return {
     ...field,
@@ -1654,9 +1722,10 @@ function normalizeDateOutlineValue(fieldName: string, value: OutlineValue): Outl
   return normalized === value.text ? value : { ...value, text: normalized };
 }
 
-function fieldTypeForEntry(index: ProjectionIndex, fieldEntryId: string): string {
+function fieldTypeForEntry(index: ProjectionIndex, fieldEntryId: string): FieldType {
   const fieldEntry = requiredNode(index, fieldEntryId);
   const fieldDefId = fieldEntry.type === 'fieldEntry' ? fieldEntry.fieldDefId : undefined;
+  if (fieldDefId === DONE_FIELD) return 'checkbox';
   const fieldDef = fieldDefId ? index.nodes.get(fieldDefId) : undefined;
   return fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain';
 }
@@ -2101,17 +2170,17 @@ async function createOutlineNode(
   await setCheckboxState(host, createdId, node.checked);
 
   await applyTags(host, createdId, node.tags, tracker);
-  const reusableFieldEntries = reusableFieldEntriesForCreate(indexProjection(host.getProjection()), createdId);
   for (const field of node.fields) {
-    const fieldKey = normalizedFieldNameKey(field.name);
-    const existingFieldEntryId = reusableFieldEntries.get(fieldKey);
-    if (existingFieldEntryId) {
-      reusableFieldEntries.delete(fieldKey);
-      trackMatchedNode(tracker, existingFieldEntryId);
-      await upsertFieldValues(host, existingFieldEntryId, field, tracker, warnings);
-    } else {
-      await createField(host, createdId, field, tracker);
-    }
+    const latest = indexProjection(host.getProjection());
+    const resolution = resolveFieldWriteTarget(
+      fieldResolutionMap(latest),
+      createdId,
+      field.name,
+      fieldResolutionValues(field),
+      { isDeleted: (nodeId) => isInTrash(latest, nodeId) },
+    );
+    if (!resolution.ok) throw new Error(`${resolution.error} ${resolution.instructions}`);
+    await applyResolvedField(host, createdId, field, resolution.target, tracker, warnings);
   }
   for (const child of node.children) {
     await createOutlineNode(host, child, createdId, null, tracker, warnings);
@@ -2158,24 +2227,98 @@ async function applyTags(host: OutlinerToolHost, nodeId: string, tags: string[],
   }
 }
 
-function reusableFieldEntriesForCreate(index: ProjectionIndex, parentId: string): Map<string, string> {
-  const byName = new Map<string, string[]>();
-  for (const childId of requiredNode(index, parentId).children) {
-    const child = index.nodes.get(childId);
-    if (child?.type !== 'fieldEntry' || isInTrash(index, childId)) continue;
-    const key = normalizedFieldNameKey(fieldName(index, child));
-    byName.set(key, [...(byName.get(key) ?? []), childId]);
+async function applyResolvedField(
+  host: OutlinerToolHost,
+  parentId: string,
+  field: OutlineField,
+  target: FieldWriteTarget,
+  tracker: MutationTracker,
+  warnings: string[],
+  options: { index?: number | null; usedFieldIds?: Set<string> } = {},
+): Promise<string> {
+  if (target.kind === 'existingEntry') {
+    if (options.usedFieldIds?.has(target.fieldEntryId)) {
+      throw new Error(`Duplicate desired field "${field.name}" targets the same field entry: ${target.fieldEntryId}`);
+    }
+    trackMatchedNode(tracker, target.fieldEntryId);
+    await upsertFieldValues(host, target.fieldEntryId, field, tracker, warnings);
+    return target.fieldEntryId;
   }
-
-  const reusable = new Map<string, string>();
-  for (const [key, ids] of byName) {
-    if (ids.length === 1) reusable.set(key, ids[0]!);
+  if (target.kind === 'existingFieldDef') {
+    const fieldEntryId = await createFieldEntryForDefinition(host, parentId, target.fieldDefId, tracker, options.index ?? null);
+    await upsertFieldValues(host, fieldEntryId, field, tracker, warnings);
+    return fieldEntryId;
   }
-  return reusable;
+  if (target.kind === 'systemDone') {
+    const fieldEntryId = await ensureSystemFieldEntry(host, parentId, target.fieldDefId, tracker, options.index ?? null);
+    await setDoneFieldValue(host, parentId, field, warnings);
+    return fieldEntryId;
+  }
+  return createField(host, parentId, field, tracker, options.index ?? null, target.fieldType);
 }
 
-function normalizedFieldNameKey(name: string): string {
-  return name.trim().toLowerCase();
+async function createFieldEntryForDefinition(
+  host: OutlinerToolHost,
+  parentId: string,
+  targetDefId: string,
+  tracker: MutationTracker,
+  index: number | null,
+): Promise<string> {
+  const fieldEntryId = focusFromOutcome(await host.handle('create_inline_field', {
+    parentId,
+    index,
+    name: '',
+    fieldType: 'plain',
+  }));
+  tracker.createdFieldEntryIds.push(fieldEntryId);
+  await host.handle('reuse_field_definition', { entryId: fieldEntryId, targetDefId });
+  trackMatchedNode(tracker, targetDefId);
+  return fieldEntryId;
+}
+
+async function ensureSystemFieldEntry(
+  host: OutlinerToolHost,
+  parentId: string,
+  targetDefId: string,
+  tracker: MutationTracker,
+  index: number | null,
+): Promise<string> {
+  const latest = indexProjection(host.getProjection());
+  const existing = requiredNode(latest, parentId).children.find((childId) => {
+    const child = latest.nodes.get(childId);
+    return child?.type === 'fieldEntry' && child.fieldDefId === targetDefId && !isInTrash(latest, childId);
+  });
+  if (existing) {
+    trackMatchedNode(tracker, existing);
+    return existing;
+  }
+  return createFieldEntryForDefinition(host, parentId, targetDefId, tracker, index);
+}
+
+async function setDoneFieldValue(
+  host: OutlinerToolHost,
+  parentId: string,
+  field: OutlineField,
+  warnings: string[],
+): Promise<void> {
+  const desired = field.values.at(-1)?.text.trim().toLowerCase();
+  if (!desired) {
+    warnings.push(`Field "${field.name}" was left unchanged because Done requires true or false.`);
+    return;
+  }
+  await setCheckboxState(host, parentId, desired === 'true');
+}
+
+function fieldResolutionMap(index: ProjectionIndex): ReadonlyMap<string, FieldResolutionNode> {
+  return index.nodes as ReadonlyMap<string, FieldResolutionNode>;
+}
+
+function fieldResolutionValues(field: OutlineField): FieldResolutionValue[] {
+  if (field.clear) return [];
+  return field.values.map((value) => ({
+    text: value.text,
+    ...(value.targetId ? { targetId: value.targetId } : {}),
+  }));
 }
 
 async function createField(
@@ -2184,33 +2327,55 @@ async function createField(
   field: OutlineField,
   tracker: MutationTracker,
   index: number | null = null,
+  fieldType: FieldType = inferFieldTypeFromValues(fieldResolutionValues(field)),
 ): Promise<string> {
   const fieldEntryId = focusFromOutcome(await host.handle('create_inline_field', {
     parentId,
     index,
     name: field.name,
-    fieldType: 'plain',
+    fieldType,
   }));
   tracker.createdFieldEntryIds.push(fieldEntryId);
   const fieldEntry = indexProjection(host.getProjection()).nodes.get(fieldEntryId);
   if (fieldEntry?.type === 'fieldEntry' && fieldEntry.fieldDefId) tracker.createdFieldDefIds.push(fieldEntry.fieldDefId);
-  for (const value of field.values) {
-    const valueNodeId = await createFieldValue(host, fieldEntryId, value);
-    tracker.createdNodeIds.push(valueNodeId);
+  const normalizedField = normalizeFieldValuesForType(field, fieldType);
+  for (const value of normalizedField.values) {
+    tracker.createdNodeIds.push(...await appendFieldValue(host, fieldEntryId, value, fieldType));
   }
   return fieldEntryId;
 }
 
-async function createFieldValue(
+async function appendFieldValue(
   host: OutlinerToolHost,
   fieldEntryId: string,
   value: OutlineValue,
-  index: number | null = null,
-): Promise<string> {
-  if (value.targetId) {
-    return focusFromOutcome(await host.handle('add_reference', { parentId: fieldEntryId, targetId: value.targetId, index }));
+  fieldType: FieldType,
+): Promise<string[]> {
+  const before = new Set(activeChildIds(indexProjection(host.getProjection()), fieldEntryId));
+  if (fieldType === 'reference') {
+    if (!value.targetId) throw new Error('Reference field values must use [[node:Display^id]].');
+    await host.handle('add_field_reference', { fieldEntryId, targetNodeId: value.targetId });
+    return appendedChildIds(host, fieldEntryId, before);
   }
-  return createPlainNode(host, fieldEntryId, index, value.text);
+  if (fieldType === 'options') {
+    if (value.targetId) {
+      await host.handle('select_field_option', { fieldEntryId, optionNodeId: value.targetId });
+    } else {
+      await host.handle('create_collected_field_option', { fieldEntryId, name: value.text });
+    }
+    return appendedChildIds(host, fieldEntryId, before);
+  }
+  if (fieldType === 'options_from_supertag') {
+    if (!value.targetId) throw new Error('Options-from-supertag field values must use [[node:Display^id]].');
+    await host.handle('select_field_option', { fieldEntryId, optionNodeId: value.targetId });
+    return appendedChildIds(host, fieldEntryId, before);
+  }
+  return [await createPlainNode(host, fieldEntryId, null, value.text)];
+}
+
+function appendedChildIds(host: OutlinerToolHost, fieldEntryId: string, before: ReadonlySet<string>): string[] {
+  const after = activeChildIds(indexProjection(host.getProjection()), fieldEntryId);
+  return after.filter((childId) => !before.has(childId));
 }
 
 function duplicateOutline(index: ProjectionIndex, duplicateId: string): { ok: true; outline: string } | { ok: false; code: string; error: string; instructions: string } {
@@ -2262,6 +2427,7 @@ async function validateOutlineReferenceTargets(
 
 function collectReferenceTargets(document: OutlineDocument): ReferenceTarget[] {
   const targets: ReferenceTarget[] = [];
+  for (const field of document.fields) collectFieldReferenceTargets(field, targets);
   for (const root of document.roots) collectNodeReferenceTargets(root, targets);
   return dedupeReferenceTargets(targets);
 }
@@ -2302,8 +2468,14 @@ function localFileReferencePathIsInside(root: string, filePath: string): boolean
 
 function collectLocalFileReferencePaths(document: OutlineDocument): string[] {
   const paths: string[] = [];
+  for (const field of document.fields) collectFieldLocalFileReferencePaths(field, paths);
   for (const root of document.roots) collectNodeLocalFileReferencePaths(root, paths);
   return paths;
+}
+
+function collectFieldLocalFileReferencePaths(field: OutlineField, paths: string[]) {
+  collectTextLocalFileReferencePaths(field.name, paths);
+  for (const value of field.values) collectTextLocalFileReferencePaths(value.text, paths);
 }
 
 function collectNodeLocalFileReferencePaths(node: OutlineNode, paths: string[]) {
@@ -2325,8 +2497,16 @@ function collectTextLocalFileReferencePaths(text: string, paths: string[]) {
 
 function collectOutlineAnnotationIds(document: OutlineDocument): string[] {
   const ids: string[] = [];
+  for (const field of document.fields) collectFieldAnnotationIds(field, ids);
   for (const root of document.roots) collectNodeAnnotationIds(root, ids);
   return unique(ids);
+}
+
+function collectFieldAnnotationIds(field: OutlineField, ids: string[]) {
+  if (field.nodeId) ids.push(field.nodeId);
+  for (const value of field.values) {
+    if (value.nodeId) ids.push(value.nodeId);
+  }
 }
 
 function collectNodeAnnotationIds(node: OutlineNode, ids: string[]) {
@@ -2400,12 +2580,16 @@ function collectNodeReferenceTargets(node: OutlineNode, targets: ReferenceTarget
   if (node.referenceTargetId) targets.push({ kind: 'node', nodeId: node.referenceTargetId });
   collectTextReferenceTargets(node.title, targets);
   for (const field of node.fields) {
-    for (const value of field.values) {
-      if (value.targetId) targets.push({ kind: 'node', nodeId: value.targetId });
-      collectTextReferenceTargets(value.text, targets);
-    }
+    collectFieldReferenceTargets(field, targets);
   }
   for (const child of node.children) collectNodeReferenceTargets(child, targets);
+}
+
+function collectFieldReferenceTargets(field: OutlineField, targets: ReferenceTarget[]) {
+  for (const value of field.values) {
+    if (value.targetId) targets.push({ kind: 'node', nodeId: value.targetId });
+    collectTextReferenceTargets(value.text, targets);
+  }
 }
 
 function collectTextReferenceTargets(text: string, targets: ReferenceTarget[]) {

@@ -14,6 +14,7 @@ export const LIN_OUTLINE_CREATE_GUIDANCE = [
   'Use "- ```lang" followed by raw code lines and a closing "```" line to create a code-block node.',
   'Use child nodes for ordinary notes, task details, meeting notes, and explanatory body text. Use "Title - description" only when the user explicitly asks for a description/caption, when preserving an existing description, or when importing external metadata that belongs in the node description.',
   'Use Field:: values, #tags, and [ ]/[x] checkbox state conservatively: only when the user asks for structured fields/tags/tasks, when preserving existing structure, or when the outline must be filterable/searchable as that structure.',
+  'Field:: writes resolve existing owner fields and document field definitions before creating new fields; existing field types are preserved and incompatible values are rejected.',
   DATE_FIELD_VALUE_GUIDANCE,
   'Do not include %%node:id%% markers when creating new nodes; those markers belong to node_read/node_edit protocol.',
 ].join(' ');

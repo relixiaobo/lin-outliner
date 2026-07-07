@@ -13,7 +13,7 @@ import { CheckboxControl } from '../primitives/CheckboxControl';
 import { EmptyState } from '../primitives/FeedbackState';
 import { Field } from '../primitives/Field';
 import { Input } from '../primitives/Input';
-import { HashIcon, ICON_SIZE, LoaderIcon, WarningIcon } from '../icons';
+import { HashIcon, ICON_SIZE, WarningIcon } from '../icons';
 
 const RUNTIME_UNTITLED_SENTINEL = 'Untitled';
 
@@ -74,8 +74,8 @@ export function ChannelConfigWindow() {
   const isProtectedDefault = conversation?.id === DEFAULT_GENERAL_CHANNEL_ID || conversation?.id === DEFAULT_DREAM_CHANNEL_ID;
   const canRename = mode === 'configure' && !!conversation && !isProtectedDefault;
   const canEditDreamData = mode === 'configure' && !!conversation && conversation.id !== DEFAULT_DREAM_CHANNEL_ID;
-  const hasEditableSettings = mode === 'create' || canRename || canEditDreamData;
-  const saveDisabled = !hasEditableSettings || saving;
+  const hasEditableSettings = !loading && (mode === 'create' || canRename || canEditDreamData);
+  const saveDisabled = loading || !hasEditableSettings || saving;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -108,7 +108,7 @@ export function ChannelConfigWindow() {
   const windowSubtitle = mode === 'create' ? t.agent.chat.createChannel : t.agent.chat.channelSettings;
 
   return (
-    <main className="provider-config-window channel-config-window" aria-labelledby={titleId}>
+    <main className="provider-config-window channel-config-window" aria-busy={loading ? 'true' : undefined} aria-labelledby={titleId}>
       <header className="settings-sheet-head">
         <span className="settings-sheet-avatar" aria-hidden="true">
           <span className="settings-sheet-icon-avatar">
@@ -121,18 +121,16 @@ export function ChannelConfigWindow() {
         </span>
       </header>
 
-      {loading ? (
-        <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" title={t.common.loading} />
-      ) : mode === 'configure' && !conversation ? (
+      {mode === 'configure' && !loading && !conversation ? (
         <EmptyState className="agent-settings-empty" title={t.agent.chat.noConversations} />
       ) : (
-        <form className="channel-config-form" onSubmit={(event) => void submit(event)}>
+        <form className="channel-config-form" aria-busy={loading ? 'true' : undefined} onSubmit={(event) => void submit(event)}>
           <div className="settings-sheet-body">
             <div className="inset-card" role="group">
               <Field as="label" className="settings-sheet-row" label={t.agent.chat.channelName} labelClassName="settings-sheet-row-label">
                 <Input
                   className="settings-sheet-row-input"
-                  disabled={mode === 'configure' && !canRename}
+                  disabled={loading || (mode === 'configure' && !canRename)}
                   label={t.agent.chat.channelName}
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder={t.agent.chat.channelNamePlaceholder}
@@ -149,7 +147,7 @@ export function ChannelConfigWindow() {
                   <CheckboxControl
                     checked={includeInDreamData}
                     className="agent-settings-checkbox"
-                    disabled={!canEditDreamData}
+                    disabled={loading || !canEditDreamData}
                     onCheckedChange={setIncludeInDreamData}
                   >
                     {includeInDreamData ? t.agent.chat.includedInDreamData : t.agent.chat.excludedFromDreamData}

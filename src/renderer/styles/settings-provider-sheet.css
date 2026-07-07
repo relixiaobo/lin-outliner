@@ -164,6 +164,10 @@
   font-size: var(--font-ui-sm);
 }
 
+.settings-sheet-placeholder {
+  color: var(--text-tertiary);
+}
+
 /* The field inputs are borderless inside the clipped inset card, so the global
    outer text-control ring (base.css) would be cropped by the card's
    overflow:hidden — show the neutral keyboard focus on the ROW instead, as the

@@ -31,6 +31,12 @@
   background: var(--bg-content);
 }
 
+.app-startup-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* ── Persistent window chrome ──────────────────────────────────────────────── */
 
 /* The title-bar band is shared by ZONES, not one full-width strip (Apple's

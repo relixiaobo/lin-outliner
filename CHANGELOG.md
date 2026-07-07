@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Structured field resolution (PR #385, codex)** — semantic `Field:: value`
+  writes now reuse an existing owner field or unique field definition before
+  creating a new definition, preserve existing typed field configs, infer new
+  field types conservatively, and fail closed on duplicate active field matches.
+  Agent `node_create` / `node_edit` and paste metadata now share the resolver,
+  `Done:: true/false` writes through the synced system Done field, and core
+  guards prevent manual field creation, field-definition rename, and definition
+  reuse from creating duplicate active field names on one owner.
+- **Native-feel loading surfaces** — Settings now paints its toolbar, rail, and
+  active pane before provider settings finish loading, and the main window
+  startup path paints persistent window chrome instead of a generic centered
+  loading page. Provider, Agent, and Channel config child windows now also paint
+  their header, field structure, and footer actions before their data IPC
+  resolves, with only local busy/disabled state while loading. The empty Agent
+  panel stays blank while provider settings load instead of showing a loading card
+  or flashing no-provider onboarding.
 - **Channel deletion affordance** — ordinary Channel rows now expose a confirmed
   delete action beside inline rename in the conversation menu, while protected
   General/Dream Channels keep both mutation controls hidden.
@@ -24,6 +40,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent Issue Manager plan (PR #384, codex-4)** — added the active P1
+  implementation plan for replacing scheduled command / Run-centered work with
+  the Agent Issue Manager model: Issues and sub-issues for durable work,
+  Recurring Issues for cadence, Agent Sessions for execution, Activity for
+  progress/audit, and UI Views as filters over those objects. The ratified build
+  shape is one complete implementation PR by PM decision, with no migration or
+  back-compat reader because the product is pre-release. The plan also pins the
+  runtime-owned authorization boundary, protected Dream compatibility boundary,
+  due-time recurring materialization rule, Neva-only run profile `AgentRef`, and
+  eight-tool model-facing surface.
 - **Channel create and inline rename (PR #382, codex-3)** — New Channel now
   creates an untitled Channel immediately, selects it, and focuses the composer.
   Runtime creation no longer accepts a seed/opening message, ordinary Channel

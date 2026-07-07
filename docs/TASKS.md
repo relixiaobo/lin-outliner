@@ -21,18 +21,21 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377**) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382**) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373, agent-bundled-search-tools #374, data-import-cli-api-boundary #375, ask-user-question-stepper #376 + polish #378, model-effort-labels #379) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373, agent-bundled-search-tools #374, data-import-cli-api-boundary #375, ask-user-question-stepper #376 + polish #378, model-effort-labels #379, agent-issue-manager plan #384) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-06).** Open PR queue: none. Recently merged: #382
-(`codex-3/channel-create-inline-rename`), #381
+**In flight (2026-07-07).** Open PR queue: none. Recently merged: #385
+(`codex/structured-field-resolution`) merged 2026-07-07; see *Recently
+completed*. #384 (`codex-4/scheduled-agent-work`) merged 2026-07-07 as the active P1 Agent
+Issue Manager implementation plan; see *Agent capabilities* and *Recently
+completed*. #382 (`codex-3/channel-create-inline-rename`), #381
 (`codex-3/agent-tool-clarity-names`), and #380
 (`codex-3/performance-hotspots`) merged 2026-07-06 after main review; see
 *Recently completed*. #377 (`codex/design-system-calibration-audit`) and #379
@@ -268,6 +271,15 @@ before any directional/security-sensitive build.
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
+- **agent-issue-manager** (P1, plan merged #384, implementation pending) —
+  replaces scheduled command / Run-centered work with a clean Issue-based agent
+  work model: Issues and sub-issues for durable work, Recurring Issues for
+  cadence, Agent Sessions for execution, and Activity for progress/audit. Shape
+  is one complete implementation PR by PM decision, with no migration or
+  back-compat reader because the product is pre-release. Implementation must
+  checkpoint the shared protocol, tool, permission, and schema contracts inside
+  that PR before runtime, renderer, Dream, or scheduler layers build on them.
+  See `docs/plans/agent-issue-manager.md`.
 - **agent-browser-control** (P1, plan merged #361, implementation pending) —
   Tenon-native browser-use tool family covering the useful `browser-pilot`
   surface: CDP-backed logged-in browser sessions, Pilot tabs, observe/read,
@@ -477,6 +489,37 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **structured-field-resolution** (`codex/structured-field-resolution`, PR #385,
+  codex, merged 2026-07-07, plan-track) — makes semantic `Field:: value`
+  writes deterministic across core paste metadata and agent `node_create` /
+  `node_edit`: owner field entries and unique field definitions are reused,
+  existing field types/configs win, new field definitions infer only
+  conservative scalar/reference types, duplicate owner/global matches fail
+  closed, and `Done:: true/false` writes through the synced system Done field.
+  Core guards now prevent manual inline field creation, field-definition rename,
+  and definition reuse from creating duplicate active field names on one owner.
+  **Gate (main):** review found three issues around top-level field insertion
+  disturbing `after_id`, empty draft fields matching the display placeholder
+  `Field`, and `Done` reading back as `Field::`; codex fixed all before merge.
+  Verified on the final PR head with typecheck, `test:core`, targeted
+  core/agent-node-tool tests, `git diff --check`, and focused manual
+  reproductions. Plan archived `done`:
+  `docs/plans/archive/structured-field-resolution.md`.
+
+- **agent-issue-manager-plan** (`codex-4/scheduled-agent-work`, PR #384,
+  codex-4, merged 2026-07-07, plan-track) — adds the active P1 implementation
+  plan for replacing scheduled command / Run-centered work with the Agent Issue
+  Manager model: Issues, Recurring Issues, Agent Sessions, Activity, and UI
+  Views as filters over those objects. The ratified shape is one complete
+  implementation PR, no migration/back-compat reader pre-release, and a
+  protocol/schema checkpoint inside the PR before runtime, renderer, Dream, or
+  scheduler code is layered on top. **Gate (main):** adversarial plan review
+  found PR-shape, authorization, Dream-boundary, AgentRef, recurring
+  materialization, and tool-naming risks; codex-4 revised the plan and the PM
+  explicitly kept the one-PR / no-compat requirement. Verified on the merge with
+  `bun run docs:check` and `git diff --check`. Shape (a), active plan file:
+  `docs/plans/agent-issue-manager.md`.
 
 - **channel-create-inline-rename** (`codex-3/channel-create-inline-rename`,
   PR #382, codex-3, merged 2026-07-06, plan-track) — makes Channel creation a
