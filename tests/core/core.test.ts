@@ -879,14 +879,50 @@ describe('Core', () => {
     expect(core.state().nodes[fieldEntryId].children).toEqual([]);
   });
 
+  test('creating a non-empty inline field rejects duplicate owner field names', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    core.createInlineField(today, null, 'Status', 'plain');
+
+    expect(() => core.createInlineField(today, null, ' status ', 'plain')).toThrow('duplicate field');
+
+    expect(() => core.createInlineField(today, null, '', 'plain')).not.toThrow();
+  });
+
+  test('field definition rename rejects duplicate owner field names', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    core.createInlineField(today, null, 'Status', 'plain');
+    const ownerEntry = mustFocus(core.createInlineField(today, null, 'Owner', 'plain'));
+    const ownerDef = core.state().nodes[ownerEntry].fieldDefId!;
+
+    expect(() => core.applyNodeTextPatch(ownerDef, replaceAllRichTextPatch(plainText(' status ')))).toThrow('field rename would create duplicate field');
+    expect(core.state().nodes[ownerDef].content.text).toBe('Owner');
+  });
+
+  test('reusing a field definition rejects duplicate owner field names', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const statusEntry = mustFocus(core.createInlineField(today, null, 'Status', 'plain'));
+    const statusDef = core.state().nodes[statusEntry].fieldDefId!;
+    const ownerEntry = mustFocus(core.createInlineField(today, null, 'Owner', 'plain'));
+    const ownerDef = core.state().nodes[ownerEntry].fieldDefId!;
+
+    expect(() => core.reuseFieldDefinition(ownerEntry, statusDef)).toThrow('duplicate field');
+    expect(core.state().nodes[ownerEntry].fieldDefId).toBe(ownerDef);
+  });
+
   test('reusing a field definition relinks the entry and drops the orphaned draft def', () => {
     const core = Core.new();
     const today = core.projection().todayId;
-    const keepEntry = mustFocus(core.createInlineField(today, null, 'Status', 'plain'));
+    const source = mustFocus(core.createNode(today, null, 'Source'));
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const keepEntry = mustFocus(core.createInlineField(source, null, 'Status', 'plain'));
     const keepDef = core.state().nodes[keepEntry].fieldDefId!;
-    // A second `>` mints its own throwaway draft def; the user then picks the
-    // existing "Status" field from the popover instead of naming a new one.
-    const draftEntry = mustFocus(core.createInlineField(today, null, '', 'plain'));
+    // A `>` on another owner mints its own throwaway draft def; the user then
+    // picks the existing "Status" field from the popover instead of naming a new
+    // one.
+    const draftEntry = mustFocus(core.createInlineField(target, null, '', 'plain'));
     const draftDef = core.state().nodes[draftEntry].fieldDefId!;
     expect(draftDef).not.toBe(keepDef);
 

@@ -2,6 +2,31 @@ import { describe, expect, test } from 'bun:test';
 import { parseLinOutline } from '../../src/main/agentOutlineParser';
 
 describe('agent outline parser', () => {
+  test('parses top-level field lines as document fields', () => {
+    const parsed = parseLinOutline([
+      '- xmlUrl:: https://example.com/feed.xml',
+      '- Status::',
+      '  - Active',
+      '  - Paused',
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots).toEqual([]);
+    expect(parsed.document.fields).toEqual([
+      {
+        name: 'xmlUrl',
+        values: [{ text: 'https://example.com/feed.xml' }],
+        clear: false,
+      },
+      {
+        name: 'Status',
+        values: [{ text: 'Active' }, { text: 'Paused' }],
+        clear: false,
+      },
+    ]);
+  });
+
   test('parses full-line node references with and without display names', () => {
     const parsed = parseLinOutline([
       '- [[node:Alpha^node-alpha]]',

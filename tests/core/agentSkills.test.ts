@@ -21,6 +21,10 @@ import { resolveLinlabSkillsRoot } from '../../src/main/builtInSkillConfig';
 
 const execFile = promisify(execFileCallback);
 
+function expectPandasDuckdbDependency(text: string): void {
+  expect(text).toMatch(/`?pandas`?\s+\+\s+`?duckdb`?/);
+}
+
 describe('resolveSkillContentTarget (single skill-path source of truth)', () => {
   const root = path.join(path.sep, 'work', 'project');
 
@@ -708,7 +712,7 @@ describe('agent skills', () => {
       expect(invocation.renderedContent).not.toContain('${AGENT_SKILL_DIR}');
       expect(invocation.renderedContent).not.toContain('{baseDir}');
       if (name === 'data-analysis') {
-        expect(invocation.renderedContent).toContain('pandas + duckdb');
+        expectPandasDuckdbDependency(invocation.renderedContent);
       } else if (name === 'pdf') {
         expect(invocation.renderedContent).toContain('pdf_tool.py');
       } else if (name === 'spreadsheet') {
@@ -756,8 +760,8 @@ describe('agent skills', () => {
     expect(skill?.rootDir).toBe(path.join(linlabSkillsRoot, 'data-analysis'));
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
-    expect(invocation.renderedContent).toContain('python3 -m pip install -r');
-    expect(invocation.renderedContent).toContain('pandas + duckdb');
+    expect(invocation.renderedContent).toContain('requirements.txt');
+    expectPandasDuckdbDependency(invocation.renderedContent);
     expect(invocation.renderedContent).toContain('query_duckdb.py');
     expect(invocation.renderedContent).not.toContain('{baseDir}');
   });
@@ -1661,7 +1665,7 @@ describe('built-in skill resource packaging', () => {
     const presentationSkill = await readFile(path.join(generatedRoot, 'presentation', 'SKILL.md'), 'utf8');
     const spreadsheetSkill = await readFile(path.join(generatedRoot, 'spreadsheet', 'SKILL.md'), 'utf8');
 
-    expect(dataSkill).toContain('pandas + duckdb');
+    expectPandasDuckdbDependency(dataSkill);
     await expect(readFile(path.join(generatedRoot, 'data-analysis', 'evals', 'README.md'), 'utf8')).rejects.toThrow();
     await expect(readFile(path.join(generatedRoot, 'data-analysis', 'scripts', '__pycache__'), 'utf8')).rejects.toThrow();
     await expect(readFile(path.join(generatedRoot, 'data-analysis', 'analysis_runs', 'local-output.txt'), 'utf8')).rejects.toThrow();
