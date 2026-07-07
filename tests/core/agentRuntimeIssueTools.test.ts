@@ -230,4 +230,100 @@ describe('agent runtime Issue tools', () => {
       }),
     ]));
   });
+
+  test('catch-up materializes due Recurring Issues and starts Agent Sessions', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-scheduler-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-scheduler-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const calls: Array<{ tools: string[]; text: string }> = [];
+    const script = scriptedStream([
+      fauxAssistantMessage(fauxText('Daily recurring work completed.')),
+    ], (_model, context) => {
+      calls.push({
+        tools: context.tools?.map((tool) => tool.name) ?? [],
+        text: JSON.stringify(context.messages),
+      });
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+    await runtime.restoreLatestConversation();
+
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const createdAt = Date.now() - 48 * 60 * 60 * 1000;
+    const dueHour = (new Date().getHours() + 23) % 24;
+    const dueTime = `${String(dueHour).padStart(2, '0')}:00`;
+    await store.create({
+      issueType: 'recurring-issue',
+      fields: {
+        titleTemplate: 'Runtime daily report',
+        cadence: { type: 'daily', time: dueTime },
+        timeZone: 'Local',
+        issueTemplate: {
+          delegate: { type: 'default-agent', runProfile: 'background' },
+          trigger: { type: 'when-ready' },
+          permissionMode: 'unattended',
+          output: { type: 'activity-only' },
+        },
+      },
+      request: { mode: 'request' },
+      reason: 'Create due recurring work.',
+    }, actor, createdAt);
+    const recurring = (await store.search({ targets: ['recurring-issue'] })).rows[0];
+    await store.update({
+      target: { type: 'recurring-issue', id: recurring.target.id, expectedRevision: recurring.revision },
+      change: { type: 'confirm' },
+      request: { mode: 'request' },
+      reason: 'Confirm due recurring work.',
+    }, actor, Date.now() - 1_000);
+
+    runtime.runIssueCatchUp();
+    await waitFor(async () => {
+      const state = await store.state();
+      const sessions = Object.values(state.sessions);
+      return Object.keys(state.issues).length === 1
+        && sessions.length === 1
+        && sessions[0].state !== 'pending'
+        && script.pendingCount() === 0;
+    }, 2_000);
+
+    const read = await store.read({ target: recurring.target, include: ['generated-issues', 'activity'] });
+    const generated = read.generatedIssues?.[0];
+    expect(generated?.title).toContain('Runtime daily report');
+    expect(generated?.recurrence?.recurringIssueId).toBe(recurring.target.id);
+    const sessions = Object.values((await store.state()).sessions);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      issueId: generated?.id,
+      source: {
+        type: 'recurring-issue',
+        recurringIssueId: recurring.target.id,
+        dueAt: generated?.recurrence?.windowStartAt,
+      },
+    });
+    expect(['active', 'complete']).toContain(sessions[0].state);
+    expect(calls[0]?.tools).toContain('issue_search');
+    expect(calls[0]?.text).toContain('You are executing one Agent Session for a Tenon Issue.');
+    expect(script.pendingCount()).toBe(0);
+    expect(read.activity).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        content: expect.objectContaining({ type: 'agent-action', action: 'materialize' }),
+      }),
+    ]));
+  });
 });
