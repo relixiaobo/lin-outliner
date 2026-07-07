@@ -679,7 +679,7 @@ describe('agent skills', () => {
   test('ships goal-oriented resource-backed built-in skills', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const listing = await runtime.buildSkillListingReminderText(200_000);
-    const expected = ['data-analysis', 'document', 'pdf', 'presentation', 'spreadsheet'];
+    const expected = ['data-analysis', 'document', 'feed-processing', 'pdf', 'presentation', 'spreadsheet'];
     const linlabSkillsRoot = await realpath(resolveLinlabSkillsRoot({
       repoRoot: path.resolve(import.meta.dir, '..', '..'),
     }));
@@ -708,11 +708,15 @@ describe('agent skills', () => {
       expect(invocation.renderedContent).not.toContain('${AGENT_SKILL_DIR}');
       expect(invocation.renderedContent).not.toContain('{baseDir}');
       if (name === 'data-analysis') {
-        expect(invocation.renderedContent).toContain('pandas + duckdb');
+        expect(invocation.renderedContent).toContain('pandas');
+        expect(invocation.renderedContent).toContain('duckdb');
       } else if (name === 'pdf') {
         expect(invocation.renderedContent).toContain('pdf_tool.py');
       } else if (name === 'spreadsheet') {
         expect(invocation.renderedContent).toContain('workbook_tool.py');
+      } else if (name === 'feed-processing') {
+        expect(invocation.renderedContent).toContain('feed-content pack');
+        expect(invocation.renderedContent).toContain('source_list.mjs');
       } else {
         expect(invocation.renderedContent).toContain('portable baseline tools');
       }
@@ -756,8 +760,9 @@ describe('agent skills', () => {
     expect(skill?.rootDir).toBe(path.join(linlabSkillsRoot, 'data-analysis'));
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
-    expect(invocation.renderedContent).toContain('python3 -m pip install -r');
-    expect(invocation.renderedContent).toContain('pandas + duckdb');
+    expect(invocation.renderedContent).toContain('Runtime Dependencies');
+    expect(invocation.renderedContent).toContain('pandas');
+    expect(invocation.renderedContent).toContain('duckdb');
     expect(invocation.renderedContent).toContain('query_duckdb.py');
     expect(invocation.renderedContent).not.toContain('{baseDir}');
   });
@@ -1033,6 +1038,7 @@ describe('agent skills', () => {
       'data-analysis',
       'data-cleanup',
       'document',
+      'feed-processing',
       'goal-launching',
       'memory-dream',
       'pdf',
@@ -1074,6 +1080,7 @@ describe('agent skills', () => {
       .toEqual([
         path.join(linlabSkillsRoot, 'data-analysis'),
         path.join(linlabSkillsRoot, 'document'),
+        path.join(linlabSkillsRoot, 'feed-processing'),
         path.join(linlabSkillsRoot, 'pdf'),
         path.join(linlabSkillsRoot, 'presentation'),
         path.join(linlabSkillsRoot, 'spreadsheet'),
@@ -1657,14 +1664,17 @@ describe('built-in skill resource packaging', () => {
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
     const dataSkill = await readFile(path.join(generatedRoot, 'data-analysis', 'SKILL.md'), 'utf8');
     const documentSkill = await readFile(path.join(generatedRoot, 'document', 'SKILL.md'), 'utf8');
+    const feedProcessingSkill = await readFile(path.join(generatedRoot, 'feed-processing', 'SKILL.md'), 'utf8');
     const pdfSkill = await readFile(path.join(generatedRoot, 'pdf', 'SKILL.md'), 'utf8');
     const presentationSkill = await readFile(path.join(generatedRoot, 'presentation', 'SKILL.md'), 'utf8');
     const spreadsheetSkill = await readFile(path.join(generatedRoot, 'spreadsheet', 'SKILL.md'), 'utf8');
 
-    expect(dataSkill).toContain('pandas + duckdb');
+    expect(dataSkill).toContain('pandas');
+    expect(dataSkill).toContain('duckdb');
     await expect(readFile(path.join(generatedRoot, 'data-analysis', 'evals', 'README.md'), 'utf8')).rejects.toThrow();
     await expect(readFile(path.join(generatedRoot, 'data-analysis', 'scripts', '__pycache__'), 'utf8')).rejects.toThrow();
     await expect(readFile(path.join(generatedRoot, 'data-analysis', 'analysis_runs', 'local-output.txt'), 'utf8')).rejects.toThrow();
+    expect(feedProcessingSkill).toContain('feed-content pack');
     expect(presentationSkill).toContain('Presentation');
     expect(documentSkill).toContain('Document');
     expect(pdfSkill).toContain('pdf_tool.py');
