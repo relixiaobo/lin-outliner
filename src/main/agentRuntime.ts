@@ -4770,7 +4770,8 @@ export class AgentRuntime {
       getDefaultModel: async () => (await getProviderSettings()).imageGeneration.defaultModel ?? null,
       validateOptions: ({ providerId, modelId, options }) => validateImageGenerationOptions(providerId, modelId, options),
       readLocalImage: async ({ filePath }) => {
-        const resolved = resolveAgentLocalReadPath(localWorkspace, filePath);
+        const resolved = resolveGeneratedImageReadPath(localWorkspace, filePath)
+          ?? resolveAgentLocalReadPath(localWorkspace, filePath);
         const data = await readFile(resolved);
         const mimeType = sniffMimeType(data, resolved);
         if (!mimeType?.startsWith('image/')) throw new Error(`File is not a supported image: ${filePath}`);
@@ -6552,18 +6553,14 @@ export class AgentRuntime {
       toolCallId: string;
     },
   ): Promise<string> {
-    const runPart = safeAttachmentFileName(input.runId || 'conversation');
+    const runPart = shortGeneratedImagePathPart(input.runId || 'conversation', 'run');
     const dir = path.join(this.scratchRoot(), AGENT_GENERATED_IMAGE_DIR, runPart);
     await mkdir(dir, { recursive: true });
-    const promptPart = safeAttachmentFileName(input.prompt.slice(0, 48) || 'generated-image');
-    const providerPart = safeAttachmentFileName(`${input.providerId}-${input.modelId}`.slice(0, 64));
-    const toolPart = safeAttachmentFileName(input.toolCallId.slice(0, 32));
-    const filePath = path.join(
-      dir,
-      `${Date.now()}-${toolPart}-${input.index}-${providerPart}-${promptPart}${generatedImageExtension(input.mimeType)}`,
-    );
+    const callDigest = createHash('sha256').update(input.toolCallId).digest('hex').slice(0, 6);
+    const fileName = `image-${input.index}-${callDigest}${generatedImageExtension(input.mimeType)}`;
+    const filePath = path.join(dir, fileName);
     await writeFile(filePath, input.data);
-    return filePath;
+    return path.posix.join(AGENT_GENERATED_IMAGE_DIR, runPart, fileName);
   }
 
   private async materializeFileAttachments(attachments: AgentMessageAttachmentInput[]): Promise<{
@@ -7240,6 +7237,24 @@ function isPreviewPayloadRole(role: AgentPayloadRef['role']): boolean {
 function imageProviderPriorityIndex(priority: readonly string[], providerId: string): number {
   const index = priority.indexOf(providerId);
   return index >= 0 ? index : priority.length;
+}
+
+function resolveGeneratedImageReadPath(workspace: AgentLocalWorkspaceContext, inputPath: string): string | null {
+  if (path.isAbsolute(inputPath)) return null;
+  const normalized = path.normalize(inputPath.trim());
+  if (
+    normalized !== AGENT_GENERATED_IMAGE_DIR
+    && !normalized.startsWith(`${AGENT_GENERATED_IMAGE_DIR}${path.sep}`)
+  ) {
+    return null;
+  }
+  return path.join(workspace.scratchRoot, normalized);
+}
+
+function shortGeneratedImagePathPart(value: string, fallback: string): string {
+  const safe = safeAttachmentFileName(value).slice(0, 10).replace(/[._-]+$/u, '') || fallback;
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 6);
+  return `${safe}-${digest}`;
 }
 
 function generatedImageExtension(mimeType: string): string {

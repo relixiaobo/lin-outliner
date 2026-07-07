@@ -1099,7 +1099,7 @@ describe('agent runtime store', () => {
   });
 
   test('preserves tool result details for generated image path rendering', async () => {
-    const generatedPath = '/tmp/tenon/generated/puppy.png';
+    const generatedPath = 'generated-images/run-a/puppy.png';
     const details = {
       ok: true,
       tool: 'generate_image',

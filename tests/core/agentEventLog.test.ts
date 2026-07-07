@@ -117,7 +117,7 @@ describe('agent event log', () => {
       ok: true,
       tool: 'generate_image',
       data: {
-        images: [{ path: '/tmp/tenon/generated/image.png', mimeType: 'image/png' }],
+        images: [{ path: 'generated-images/run-a/image.png', mimeType: 'image/png' }],
       },
     };
     const state = replayAgentEvents([

@@ -7,6 +7,12 @@ import {
   type ToolEnvelope,
 } from './agentToolEnvelope';
 import { readAgentImageDimensions } from './agentLocalTools';
+import {
+  basenameForPath,
+  formatFileReferenceMarker,
+  splitFileReferenceMarkers,
+  type FileReferenceSegment,
+} from '../core/referenceMarkup';
 
 export const GENERATE_IMAGE_TOOL_NAME = 'generate_image';
 
@@ -83,6 +89,8 @@ export interface GenerateImageData {
 
 export interface GeneratedImageResult {
   path: string;
+  fileRef: string;
+  markdownImage: string;
   mimeType: string;
   byteLength: number;
   width?: number;
@@ -108,7 +116,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
     description: [
       'Generate or edit raster images with an enabled image-capable provider.',
       'Use this for original bitmap assets such as illustrations, photos, mockups, textures, and UI artwork. Do not use it for web image search or file conversion.',
-      'Omit model to use the best enabled image model. Omit image_paths for text-to-image; pass image_paths only when editing or transforming existing local images. When the user should see generated images, place the returned paths in the final answer with Markdown image syntax, for example ![description](</absolute/path.png>).',
+      'Omit model to use the best enabled image model. Omit image_paths for text-to-image; pass image_paths only when editing or transforming existing local images. When the user should see generated images, place the returned markdownImage exactly where each image belongs in the final answer.',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -129,8 +137,8 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         image_paths: {
           type: 'array',
           maxItems: MAX_IMAGE_PATHS,
-          description: 'Optional local image paths for edits or transformations. Use absolute paths returned by earlier tool results or workspace-relative paths for user files. Omit for text-to-image.',
-          items: { type: 'string', minLength: 1, description: 'Readable local image path to use as an edit/reference input.' },
+          description: 'Optional local image paths for edits or transformations. Use paths or fileRef markers returned by earlier tool results, absolute paths, or workspace-relative paths for user files. Omit for text-to-image.',
+          items: { type: 'string', minLength: 1, description: 'Readable local image path or [[file:...]] marker to use as an edit/reference input.' },
         },
         count: {
           type: 'integer',
@@ -274,8 +282,12 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
             mimeType: image.mimeType,
             prompt: params.prompt,
           });
+          const label = generatedImageLabel(saved.path, index);
+          const fileRef = formatFileReferenceMarker(label, saved.path);
           return {
             path: saved.path,
+            fileRef,
+            markdownImage: `!${fileRef}`,
             mimeType: image.mimeType,
             byteLength: data.byteLength,
             ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
@@ -292,7 +304,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         };
         return agentToolResult(
           successEnvelope(GENERATE_IMAGE_TOOL_NAME, data, {
-            instructions: 'Use Markdown image syntax such as ![description](</absolute/path.png>) with the returned image paths to place images in the final answer when the user should see them.',
+            instructions: 'Use each returned markdownImage value verbatim to place generated images in the final answer. Use path or fileRef in image_paths for follow-up edits.',
             metrics: {
               durationMs: elapsed(startedAt),
               outputBytes: images.reduce((total, image) => total + image.byteLength, 0),
@@ -382,7 +394,7 @@ function normalizeImagePaths(raw: unknown):
     if (typeof item === 'string') {
       const value = item.trim();
       if (!value) continue;
-      paths.push(value);
+      paths.push(normalizeImagePathValue(value));
       continue;
     }
     return { ok: false, code: 'invalid_image_path', message: 'Each image_paths item must be a local image path string.' };
@@ -434,12 +446,30 @@ function modelVisibleGenerateImageData(data: GenerateImageData) {
   return {
     images: data.images.map((image) => ({
       path: image.path,
+      fileRef: image.fileRef,
+      markdownImage: image.markdownImage,
       mimeType: image.mimeType,
       byteLength: image.byteLength,
       ...(image.width && image.height ? { width: image.width, height: image.height } : {}),
     })),
     ...(data.text.length ? { text: data.text } : {}),
   };
+}
+
+function normalizeImagePathValue(value: string): string {
+  const segments = splitFileReferenceMarkers(value);
+  const files = segments.filter((segment): segment is FileReferenceSegment => segment.type === 'file');
+  if (files.length !== 1) return value;
+  const text = segments
+    .filter((segment) => segment.type === 'text')
+    .map((segment) => segment.text)
+    .join('');
+  if (text === '' || text === '!' || text.trim() === '') return files[0]!.path;
+  return value;
+}
+
+function generatedImageLabel(filePath: string, index: number): string {
+  return basenameForPath(filePath) || `image-${index + 1}.png`;
 }
 
 function stringParam(value: unknown): string | undefined {

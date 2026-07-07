@@ -32,6 +32,26 @@ describe('local file reference security', () => {
     expect(reference && isSafeLocalFileOpenTarget(reference)).toBe(true);
   });
 
+  test('accepts relative references under allowed roots only', async () => {
+    const root = await mkdtempRoot('lin-local-file-root-');
+    const scratch = await mkdtempRoot('lin-local-file-scratch-');
+    const generatedDir = path.join(scratch, 'generated-images', 'run-123');
+    await mkdir(generatedDir, { recursive: true });
+    const generatedPath = path.join(generatedDir, 'image-0.png');
+    await writeFile(generatedPath, 'image');
+
+    const reference = await resolveTrustedLocalFileReference(
+      'generated-images/run-123/image-0.png',
+      [root, scratch],
+    );
+
+    expect(reference?.entryKind).toBe('file');
+    expect(reference?.path).toBe(await realpath(generatedPath));
+    await writeFile(path.join(root, 'notes.md'), 'note');
+    await expect(resolveTrustedLocalFileReference('notes.md', [root, scratch])).resolves.toBeNull();
+    await expect(resolveTrustedLocalFileReference('../secret.png', [root, scratch])).resolves.toBeNull();
+  });
+
   test('rejects files outside all allowed roots', async () => {
     const root = await mkdtempRoot('lin-local-file-root-');
     const outsideRoot = await mkdtempRoot('lin-local-file-outside-');

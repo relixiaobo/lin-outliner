@@ -194,11 +194,11 @@ describe('transcript file-chip location marker', () => {
     }]);
   });
 
-  test('AgentMarkdown renders local Markdown images through preview bytes', async () => {
-    const imagePath = '/tmp/tenon/generated/puppy.png';
+  test('AgentMarkdown renders embedded file image markers through preview bytes', async () => {
+    const imagePath = 'generated-images/run-a/puppy.png';
     const opened: PreviewTargetOpenDetail[] = [];
     const rendered = render(
-      <AgentMarkdown index={0} keyPrefix="probe" text={`![Puppy](<${imagePath}>)`} />,
+      <AgentMarkdown index={0} keyPrefix="probe" text={`Here is the image:\n\n!${formatFileReferenceMarker('Puppy', imagePath)}`} />,
       (window) => {
         window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
           opened.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
@@ -252,9 +252,9 @@ describe('transcript file-chip location marker', () => {
   });
 
   test('AgentMarkdown shows a placeholder when a local Markdown image is missing', async () => {
-    const imagePath = '/tmp/tenon/generated/missing.png';
+    const imagePath = 'generated-images/run-a/missing.png';
     const rendered = render(
-      <AgentMarkdown index={0} keyPrefix="probe" text={`![Missing image](<${imagePath}>)`} />,
+      <AgentMarkdown index={0} keyPrefix="probe" text={`!${formatFileReferenceMarker('Missing image', imagePath)}`} />,
       (window) => {
         Object.assign(window, {
           lin: {

@@ -140,7 +140,7 @@ describe('agent tool output view', () => {
   });
 
   test('renders generated image paths as inline previews', async () => {
-    const generatedPath = '/tmp/tenon/generated/puppy.png';
+    const generatedPath = 'generated-images/run-a/puppy.png';
     const modelVisible = {
       ok: true,
       data: {
@@ -237,7 +237,7 @@ describe('agent tool output view', () => {
   });
 
   test('shows generated image placeholders when the local image was removed', async () => {
-    const generatedPath = '/tmp/tenon/generated/missing.png';
+    const generatedPath = 'generated-images/run-a/missing.png';
     const result: AgentToolResultWithPayloads = {
       role: 'toolResult',
       toolCallId: 'tool-generate-image-missing',

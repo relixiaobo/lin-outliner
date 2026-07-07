@@ -5,9 +5,10 @@ import {
   type GenerateImageData,
 } from '../../src/main/agentImageGenerationTool';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
+import { formatFileReferenceMarker } from '../../src/core/referenceMarkup';
 
 const ONE_PIXEL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==';
-const GENERATED_IMAGE_PATH = '/tmp/tenon/generated/image-0.png';
+const GENERATED_IMAGE_PATH = 'generated-images/run-a/image-0.png';
 
 describe('generate_image tool', () => {
   test('returns generated image paths without embedding image bytes in the tool result', async () => {
@@ -23,7 +24,7 @@ describe('generate_image tool', () => {
       getActiveProviderId: async () => 'openai',
       readLocalImage: async () => { throw new Error('not used'); },
       writeGeneratedImage: async ({ index }) => {
-        const path = `/tmp/tenon/generated/image-${index}.png`;
+        const path = `generated-images/run-a/image-${index}.png`;
         writtenPaths.push(path);
         return { path };
       },
@@ -47,8 +48,10 @@ describe('generate_image tool', () => {
     expect(details.data?.modelId).toBe('gpt-image-2');
     expect(details.data?.modelName).toBe('GPT Image 2');
     expect(details.data?.images).toHaveLength(1);
-    expect(details.data?.images[0]?.path).toBe('/tmp/tenon/generated/image-0.png');
-    expect(writtenPaths).toEqual(['/tmp/tenon/generated/image-0.png']);
+    expect(details.data?.images[0]?.path).toBe('generated-images/run-a/image-0.png');
+    expect(details.data?.images[0]?.fileRef).toBe(formatFileReferenceMarker('image-0.png', 'generated-images/run-a/image-0.png'));
+    expect(details.data?.images[0]?.markdownImage).toBe(`!${formatFileReferenceMarker('image-0.png', 'generated-images/run-a/image-0.png')}`);
+    expect(writtenPaths).toEqual(['generated-images/run-a/image-0.png']);
 
     const text = result.content.find((part) => part.type === 'text');
     const image = result.content.find((part) => part.type === 'image');
@@ -59,14 +62,16 @@ describe('generate_image tool', () => {
       ok: true,
       data: {
         images: [{
-          path: '/tmp/tenon/generated/image-0.png',
+          path: 'generated-images/run-a/image-0.png',
+          fileRef: formatFileReferenceMarker('image-0.png', 'generated-images/run-a/image-0.png'),
+          markdownImage: `!${formatFileReferenceMarker('image-0.png', 'generated-images/run-a/image-0.png')}`,
           mimeType: 'image/png',
           byteLength: Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64').byteLength,
           width: 1,
           height: 1,
         }],
       },
-      instructions: 'Use Markdown image syntax such as ![description](</absolute/path.png>) with the returned image paths to place images in the final answer when the user should see them.',
+      instructions: 'Use each returned markdownImage value verbatim to place generated images in the final answer. Use path or fileRef in image_paths for follow-up edits.',
     });
   });
 
@@ -247,6 +252,7 @@ describe('generate_image tool', () => {
   });
 
   test('returns a recoverable error when an input image path is missing', async () => {
+    let attemptedPath = '';
     const runtime: AgentImageGenerationRuntime = {
       listModels: async () => [{
         providerId: 'openai',
@@ -257,6 +263,7 @@ describe('generate_image tool', () => {
       }],
       getActiveProviderId: async () => 'openai',
       readLocalImage: async ({ filePath }) => {
+        attemptedPath = filePath;
         throw new Error(`ENOENT: no such file or directory, open '${filePath}'`);
       },
       writeGeneratedImage: async () => { throw new Error('not used'); },
@@ -264,16 +271,18 @@ describe('generate_image tool', () => {
     };
 
     const tool = createGenerateImageTool(runtime);
+    const missingPath = 'generated-images/run-a/missing.png';
     const result = await tool.execute('call-missing-input', {
       prompt: 'Edit this image',
-      image_paths: ['/tmp/tenon/generated/missing.png'],
+      image_paths: [`!${formatFileReferenceMarker('missing.png', missingPath)}`],
     });
     const details = result.details as ToolEnvelope<GenerateImageData>;
     const visible = JSON.parse(result.content.find((part) => part.type === 'text')?.text ?? '{}');
 
     expect(details.ok).toBe(false);
     expect(details.error?.code).toBe('input_image_unavailable');
-    expect(details.error?.message).toContain('/tmp/tenon/generated/missing.png');
+    expect(attemptedPath).toBe(missingPath);
+    expect(details.error?.message).toContain(missingPath);
     expect(details.instructions).toContain('regenerate the missing image');
     expect(visible.error.code).toBe('input_image_unavailable');
   });

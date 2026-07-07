@@ -11,7 +11,7 @@ import { Lexer } from 'marked';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remend from 'remend';
-import { basenameForPath, splitReferenceMarkers } from '../../../core/referenceMarkup';
+import { basenameForPath, parseReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
@@ -44,6 +44,7 @@ interface AgentMarkdownProps {
 }
 
 interface MarkdownAstNode {
+  alt?: string;
   children?: MarkdownAstNode[];
   title?: string | null;
   type?: string;
@@ -84,32 +85,57 @@ function transformNodeReferenceText(node: MarkdownAstNode): void {
 }
 
 function referenceMarkdownNodes(text: string): MarkdownAstNode[] {
-  return splitReferenceMarkers(text).map((segment) => {
-    if (segment.type === 'text') return { type: 'text', value: segment.text };
-    if (segment.target.kind === 'local-file') {
-      const label = segment.label || basenameForPath(segment.target.path) || segment.target.path;
-      return {
-        children: [{ type: 'text', value: label }],
-        title: segment.target.entryKind,
-        type: 'link',
-        url: localFileReferenceHref(segment.target.path, segment.target.entryKind),
-      };
+  const markers = parseReferenceMarkers(text);
+  if (markers.length === 0) return [{ type: 'text', value: text }];
+
+  const nodes: MarkdownAstNode[] = [];
+  let cursor = 0;
+  for (const marker of markers) {
+    const imageStart = marker.target.kind === 'local-file' && text[marker.start - 1] === '!'
+      ? marker.start - 1
+      : marker.start;
+    if (imageStart < cursor) continue;
+    if (imageStart > cursor) nodes.push({ type: 'text', value: text.slice(cursor, imageStart) });
+    if (marker.target.kind === 'local-file') {
+      const label = marker.label || basenameForPath(marker.target.path) || marker.target.path;
+      if (imageStart === marker.start - 1) {
+        nodes.push({
+          alt: label,
+          title: marker.target.entryKind,
+          type: 'image',
+          url: localFileReferenceHref(marker.target.path, marker.target.entryKind),
+        });
+      } else {
+        nodes.push({
+          children: [{ type: 'text', value: label }],
+          title: marker.target.entryKind,
+          type: 'link',
+          url: localFileReferenceHref(marker.target.path, marker.target.entryKind),
+        });
+      }
+      cursor = marker.end;
+      continue;
     }
-    if (segment.target.kind === 'chat-source') {
-      return {
-        children: [{ type: 'text', value: segment.label || segment.raw }],
+    if (marker.target.kind === 'chat-source') {
+      nodes.push({
+        children: [{ type: 'text', value: marker.label || marker.raw }],
         title: null,
         type: 'link',
-        url: chatSourceReferenceHref(segment.raw),
-      };
+        url: chatSourceReferenceHref(marker.raw),
+      });
+      cursor = marker.end;
+      continue;
     }
-    return {
-      children: [{ type: 'text', value: segment.label }],
+    nodes.push({
+      children: [{ type: 'text', value: marker.label }],
       title: null,
       type: 'link',
-      url: `#${NODE_REFERENCE_LINK_PREFIX}${encodeURIComponent(segment.target.nodeId)}`,
-    };
-  });
+      url: `#${NODE_REFERENCE_LINK_PREFIX}${encodeURIComponent(marker.target.nodeId)}`,
+    });
+    cursor = marker.end;
+  }
+  if (cursor < text.length) nodes.push({ type: 'text', value: text.slice(cursor) });
+  return nodes;
 }
 
 function nodeIdFromReferenceHref(href: string | undefined): NodeId | null {

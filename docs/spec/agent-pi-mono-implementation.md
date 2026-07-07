@@ -998,20 +998,21 @@ Each command should return:
 - optional `operation` with `undoGroupId` for document mutations
 - optional `requiresApproval` for deferred execution
 
-`generate_image` returns normal tool-envelope details plus local paths for each
-generated image. Runtime details keep the actual provider/model used for UI and
-debug display, but the model-visible JSON contains only paths and file metadata
-needed for follow-up work. The raw image bytes are written to the app-owned
-generated-image directory under the agent scratch root and are not copied into
-model-visible JSON, renderer debug text, or extra image content blocks. When the
-user should see the images, the assistant places those paths in the final
-response with Markdown image syntax; the renderer loads the bytes through the
-trusted local preview bridge. The tool result details are persisted with the
-event and are the renderer's source for generated image paths. If a generated
-file is later cleared, path preview surfaces keep the image slot and show an
-unavailable-image placeholder; if the agent reuses a missing generated path as an
-edit input, `generate_image` returns `input_image_unavailable` before calling the
-provider.
+`generate_image` returns normal tool-envelope details plus short
+scratch-relative local paths for each generated image. Runtime details keep the
+actual provider/model used for UI and debug display, but the model-visible JSON
+contains only paths, `fileRef`, `markdownImage`, and file metadata needed for
+follow-up work. The raw image bytes are written to the app-owned generated-image
+directory under the agent scratch root and are not copied into model-visible
+JSON, renderer debug text, or extra image content blocks. When the user should
+see the images, the assistant places each returned `markdownImage` marker in the
+final response; this is the image form of the normal `[[file:...]]` marker. The
+renderer loads the bytes through the trusted local preview bridge. The tool
+result details are persisted with the event and are the renderer's source for
+generated image paths. If a generated file is later cleared, path preview surfaces
+keep the image slot and show an unavailable-image placeholder; if the agent
+reuses a missing generated path or file marker as an edit input, `generate_image`
+returns `input_image_unavailable` before calling the provider.
 
 TypeScript should validate paths, workspace boundaries, command timeouts, output size,
 and mutation legality. TypeScript validation is useful for fast feedback, but it
