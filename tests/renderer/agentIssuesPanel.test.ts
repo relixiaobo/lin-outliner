@@ -90,12 +90,12 @@ describe('AgentIssuesPanel smart views', () => {
     const parent = row({
       target: { type: 'issue', id: 'issue-parent-1' },
       title: 'Parent issue',
-      subIssuesSummary: { total: 2, completed: 1, active: 0, needsAttention: 0, latestUpdatedAt: TODAY_18 },
+      subIssuesSummary: { total: 2, completed: 1, active: 0, needsAttention: 0, latestUpdatedAt: TODAY - 30 * 60 * 1000 },
     });
     expect(issueRowMatchesWorkPreset(child, 'today', TODAY)).toBe(false);
     expect(issueRowMatchesWorkPreset(parent, 'today', TODAY)).toBe(true);
     expect(issueRowMatchesWorkPreset(parent, 'inbox', TODAY)).toBe(false);
-    expect(issueRowSummaryForRow(parent, 'today', en, TODAY)).toBe('Sub-issues 1/2');
+    expect(issueRowSummaryForRow(parent, 'today', en, TODAY)).toBe('30 minutes ago');
   });
 
   test('surfaces parent Issues when scheduled sub-issues are upcoming', () => {
@@ -111,7 +111,8 @@ describe('AgentIssuesPanel smart views', () => {
       },
     });
     expect(issueRowMatchesWorkPreset(parent, 'upcoming', TODAY)).toBe(true);
-    expect(issueRowSummaryForRow(parent, 'upcoming', en, TODAY)).toBe('Sub-issues 0/3');
+    expect(issueRowSummaryForRow(parent, 'upcoming', en, TODAY)).toContain('9:00');
+    expect(issueRowSummaryForRow(parent, 'upcoming', en, TODAY)).not.toContain('Sub-issues');
   });
 
   test('displays Recurring Issue templates as readable rule names', () => {

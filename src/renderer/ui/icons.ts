@@ -73,6 +73,7 @@ export {
   ListChecks as OptionsIcon,
   ListPlus as AddChildIcon,
   ListPlus as NodeCreateToolIcon,
+  ListTree as SubIssueIcon,
   ListTodo as RunsIcon,
   ListTree as NodeReadToolIcon,
   ListX as NodeDeleteToolIcon,

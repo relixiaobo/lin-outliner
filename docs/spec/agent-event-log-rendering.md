@@ -1027,9 +1027,9 @@ Rules:
   appear in Running, Needs Attention, Today, or Upcoming when any descendant is
   active, blocked, updated today, or scheduled. Control and result acceptance
   still remain adjacent: each sub-Issue reports to its direct parent, and each
-  parent summarizes upward. The parent row's meta line can show compact progress
-  such as `Sub-issues 1/3` instead of listing each child outside its parent. Each
-  row shows a concept/status marker, title, and one
+  parent summarizes upward. The parent row can show compact child progress as a
+  sub-Issue icon plus `1/3` badge instead of listing each child outside its
+  parent. Each row shows a concept/status marker, title, and one
   context-sensitive meta line. The meta line avoids repeating the current
   section: an Upcoming recurring row can show `8:00 AM · Daily`, while a Today
   completed row can show only the completion recency. Active Agent Session count

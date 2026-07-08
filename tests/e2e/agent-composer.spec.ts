@@ -3342,7 +3342,8 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-composer-region')).toHaveCount(0);
     await expect(work.getByText('Inspect Run UI')).toBeVisible();
     await expect(work.getByRole('button', { name: /Inspect child UI/ })).toHaveCount(0);
-    await expect(work.getByText('Sub-issues 0/1')).toBeVisible();
+    await expect(work.locator('.agent-issue-subissue-chip', { hasText: '0/1' })).toBeVisible();
+    await expect(work.getByText('Sub-issues 0/1')).toHaveCount(0);
     await expect(work.locator('[role="treeitem"]')).toHaveCount(0);
     await work.getByRole('button', { name: /Inspect Run UI/ }).click();
 

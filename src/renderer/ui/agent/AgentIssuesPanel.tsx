@@ -24,6 +24,7 @@ import {
   LoaderIcon,
   RepeatIcon,
   ScheduledIcon,
+  SubIssueIcon,
   WarningIcon,
 } from '../icons';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
@@ -183,10 +184,20 @@ function rowIsTopLevelWorkItem(row: IssueSearchRow): boolean {
   return row.target.type !== 'issue' || !row.parentIssueId;
 }
 
-function rowSubIssuesProgress(row: IssueSearchRow, labels: ReturnType<typeof useT>['agent']['issue']): string | undefined {
+interface RowSubIssueProgress {
+  completed: number;
+  label: string;
+  total: number;
+}
+
+function rowSubIssuesProgress(row: IssueSearchRow, labels: ReturnType<typeof useT>['agent']['issue']): RowSubIssueProgress | null {
   const summary = row.subIssuesSummary;
-  if (!summary || summary.total === 0) return undefined;
-  return labels.summary.subIssueProgress({ completed: summary.completed, total: summary.total });
+  if (!summary || summary.total === 0) return null;
+  return {
+    completed: summary.completed,
+    label: labels.summary.subIssueProgress({ completed: summary.completed, total: summary.total }),
+    total: summary.total,
+  };
 }
 
 export function issueDisplayTitleForRow(row: IssueSearchRow): string {
@@ -606,7 +617,7 @@ function IssueStatusMarker({ row }: { row: IssueSearchRow }) {
   );
 }
 
-export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPreset, labels: ReturnType<typeof useT>, now = Date.now()): string {
+export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPreset, labels: ReturnType<typeof useT>, now = Date.now()): string | null {
   const issueLabels = labels.agent.issue;
   const sessionState = row.latestSessionState ? sessionStateLabel(row.latestSessionState, issueLabels) : null;
   const subIssueProgress = rowSubIssuesProgress(row, issueLabels);
@@ -633,10 +644,17 @@ export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPres
   if (rowIsTerminal(row)) {
     const terminalLabel = row.statusCategory === 'canceled' ? issueLabels.summary.canceled : issueLabels.summary.done;
     const recency = relativeTimeLabel(row.updatedAt, labels.agent.run, now);
-    if (preset === 'today') return joinRowSummaryParts([subIssueProgress, recency]);
-    return joinRowSummaryParts([terminalLabel, subIssueProgress, recency]);
+    if (preset === 'today') return recency;
+    return joinRowSummaryParts([terminalLabel, recency]);
   }
-  if (subIssueProgress) return subIssueProgress;
+  const scheduledAt = rowScheduledAt(row);
+  if (scheduledAt !== undefined && (row.trigger?.type === 'scheduled' || row.subIssuesSummary?.nextScheduledAt !== undefined)) {
+    return joinRowSummaryParts([
+      scheduleTimeForPreset(scheduledAt, preset, now, issueLabels),
+      row.trigger?.type === 'scheduled' ? issueLabels.summary.scheduled : undefined,
+    ]);
+  }
+  if (subIssueProgress) return relativeTimeLabel(row.subIssuesSummary?.latestUpdatedAt ?? row.updatedAt, labels.agent.run, now);
   if (row.trigger?.type === 'scheduled') {
     return joinRowSummaryParts([
       scheduleTimeForPreset(row.trigger.startAt, preset, now, issueLabels),
@@ -708,25 +726,38 @@ export function AgentIssuesPanel({
             {sections.map((section) => (
               <section className="agent-issue-list-section" key={section.key}>
                 {section.label ? <h3 className="agent-issue-section-title">{section.label}</h3> : null}
-                {section.rows.map((row) => (
-                  <button
-                    className="agent-run-row agent-issue-row is-clickable"
-                    key={targetKey(row.target)}
-                    onClick={() => onOpenIssue(row.target)}
-                    type="button"
-                  >
-                    <IssueStatusMarker row={row} />
-                    <span className="agent-run-main">
-                      <span className="agent-run-title-row">
-                        <span className="agent-run-title">{issueDisplayTitleForRow(row)}</span>
+                {section.rows.map((row) => {
+                  const subIssueProgress = rowSubIssuesProgress(row, t.agent.issue);
+                  const summary = issueRowSummaryForRow(row, preset, t, now);
+                  return (
+                    <button
+                      aria-label={[issueDisplayTitleForRow(row), subIssueProgress?.label, summary].filter(Boolean).join(', ')}
+                      className="agent-run-row agent-issue-row is-clickable"
+                      key={targetKey(row.target)}
+                      onClick={() => onOpenIssue(row.target)}
+                      type="button"
+                    >
+                      <IssueStatusMarker row={row} />
+                      <span className="agent-run-main">
+                        <span className="agent-run-title-row">
+                          <span className="agent-run-title">{issueDisplayTitleForRow(row)}</span>
+                        </span>
+                        {subIssueProgress || summary ? (
+                          <span className="agent-run-meta-row">
+                            {subIssueProgress ? (
+                              <span className="agent-run-branch-chip agent-issue-subissue-chip" aria-label={subIssueProgress.label} title={subIssueProgress.label}>
+                                <SubIssueIcon aria-hidden="true" size={ICON_SIZE.menu} />
+                                <span>{subIssueProgress.completed}/{subIssueProgress.total}</span>
+                              </span>
+                            ) : null}
+                            {summary ? <span className="agent-run-meta-chip" title={summary}>{summary}</span> : null}
+                          </span>
+                        ) : null}
                       </span>
-                      <span className="agent-run-summary">
-                        {issueRowSummaryForRow(row, preset, t, now)}
-                      </span>
-                    </span>
-                    <ChevronRightIcon className="agent-run-open-affordance" size={ICON_SIZE.menu} />
-                  </button>
-                ))}
+                      <ChevronRightIcon className="agent-run-open-affordance" size={ICON_SIZE.menu} />
+                    </button>
+                  );
+                })}
               </section>
             ))}
           </div>
