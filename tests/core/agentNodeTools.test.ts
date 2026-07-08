@@ -38,8 +38,12 @@ function hostFor(core: Core, overrides: Partial<OutlinerToolHost> = {}): Outline
       if (command === 'create_tag') return core.createTag(String(args.name ?? ''));
       if (command === 'apply_tag') return core.applyTag(String(args.nodeId), String(args.tagId));
       if (command === 'remove_tag') return core.removeTag(String(args.nodeId), String(args.tagId));
+      if (command === 'set_tag_config') return core.setTagConfig(String(args.tagId), args.patch as any);
+      if (command === 'set_field_config') return core.setFieldConfig(String(args.fieldId), args.patch as any);
+      if (command === 'create_field_definition') return core.createFieldDefinition(String(args.name), fieldTypeArg(args.fieldType));
       if (command === 'create_inline_field') return core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), fieldTypeArg(args.fieldType));
       if (command === 'reuse_field_definition') return core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
+      if (command === 'merge_definitions') return core.mergeDefinitions(String(args.targetId), arrayArg(args.sourceIds));
       if (command === 'create_collected_field_option') return core.createCollectedFieldOption(String(args.fieldEntryId), String(args.name));
       if (command === 'select_field_option') return core.selectFieldOption(String(args.fieldEntryId), String(args.optionNodeId));
       if (command === 'add_field_reference') return core.addFieldReference(String(args.fieldEntryId), String(args.targetNodeId));
@@ -377,6 +381,262 @@ describe('agent node tools', () => {
     const entryId = fieldEntryByName(core, root, 'xmlUrl');
     expect(core.state().nodes[entryId]!.fieldDefId).toBe(fieldDefId);
     expect(fieldTypeOf(core, entryId)).toBe('url');
+  });
+
+  test('node_read exposes definition config for editable field definitions', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const seedEntry = mustFocus(core.createInlineField(seed, null, 'xmlUrl', 'url'));
+    const fieldDefId = core.state().nodes[seedEntry]!.fieldDefId!;
+
+    const result = await executeRawTool<{ items: Array<{ definition?: unknown }> }>(core, 'node_read', {
+      node_id: fieldDefId,
+      depth: 0,
+    });
+
+    expect(result.details.ok).toBe(true);
+    expect(result.details.data!.items[0]!.definition).toMatchObject({
+      kind: 'field',
+      config: { fieldType: 'url' },
+    });
+    const visible = parseVisibleToolResult<{ data?: { definitions?: Array<{ kind: string; config: { fieldType?: string } }> } }>(result.contentText);
+    expect(visible.data!.definitions).toEqual([
+      expect.objectContaining({ kind: 'field', config: expect.objectContaining({ fieldType: 'url' }) }),
+    ]);
+  });
+
+  test('node_create definition creates a field definition without a field entry', async () => {
+    const core = Core.new();
+
+    const envelope = await executeTool<{ createdRootIds: string[]; definition?: { nodeId: string } }>(core, 'node_create', {
+      definition: {
+        kind: 'field',
+        name: 'xmlUrl',
+        config: { field_type: 'url' },
+      },
+    });
+
+    expect(envelope.ok).toBe(true);
+    const fieldDefId = envelope.data!.definition!.nodeId;
+    expect(envelope.data!.createdRootIds).toEqual([fieldDefId]);
+    expect(core.state().nodes[fieldDefId]).toMatchObject({ type: 'fieldDef', parentId: SCHEMA_ID });
+    expect(projectFieldConfig(new Map(Object.values(core.state().nodes).map((node) => [node.id, node])), core.state().nodes[fieldDefId]!)).toMatchObject({
+      fieldType: 'url',
+    });
+    expect(Object.values(core.state().nodes).some((node) => node.type === 'fieldEntry' && node.fieldDefId === fieldDefId)).toBe(false);
+  });
+
+  test('node_edit configure_definition changes field type after validating existing values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const entry = mustFocus(core.createInlineField(seed, null, 'xmlUrl', 'plain'));
+    core.setFieldFreeTextValue(entry, 'https://example.com/feed.xml');
+    const fieldDefId = core.state().nodes[entry]!.fieldDefId!;
+
+    const envelope = await executeTool<{ definition?: { validation?: { checkedFieldEntryIds?: string[] } } }>(core, 'node_edit', {
+      operation: 'configure_definition',
+      node_id: fieldDefId,
+      definition_patch: { field_type: 'url' },
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(projectFieldConfig(new Map(Object.values(core.state().nodes).map((node) => [node.id, node])), core.state().nodes[fieldDefId]!)).toMatchObject({
+      fieldType: 'url',
+    });
+    expect(envelope.data!.definition!.validation!.checkedFieldEntryIds).toContain(entry);
+  });
+
+  test('node_edit configure_definition rejects incompatible existing values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const entry = mustFocus(core.createInlineField(seed, null, 'xmlUrl', 'plain'));
+    core.setFieldFreeTextValue(entry, 'not a url');
+    const fieldDefId = core.state().nodes[entry]!.fieldDefId!;
+
+    const result = await executeRawTool<{ definition?: { validation?: { incompatibleValues?: Array<{ fieldEntryId: string; valueNodeId?: string }> } } }>(core, 'node_edit', {
+      operation: 'configure_definition',
+      node_id: fieldDefId,
+      definition_patch: { field_type: 'url' },
+    });
+    const envelope = result.details;
+    const visible = parseVisibleToolResult<{
+      data?: {
+        definition?: {
+          validation?: {
+            incompatibleValues?: Array<{ fieldEntryId: string; valueNodeId?: string }>;
+          };
+        };
+      };
+    }>(result.contentText);
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('incompatible_existing_values');
+    expect(envelope.data!.definition!.validation!.incompatibleValues).toEqual([
+      expect.objectContaining({ fieldEntryId: entry }),
+    ]);
+    expect(visible.data!.definition!.validation!.incompatibleValues).toEqual([
+      expect.objectContaining({
+        fieldEntryId: entry,
+        valueNodeId: envelope.data!.definition!.validation!.incompatibleValues![0]!.valueNodeId,
+      }),
+    ]);
+    expect(fieldTypeOf(core, entry)).toBe('plain');
+  });
+
+  test('node_edit reuse_field_definition relinks a field entry to an existing definition', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const canonicalEntry = mustFocus(core.createInlineField(seed, null, 'xmlUrl', 'url'));
+    const canonicalDefId = core.state().nodes[canonicalEntry]!.fieldDefId!;
+    const feed = mustFocus(core.createNode(today, null, 'Feed'));
+    const draftEntry = mustFocus(core.createInlineField(feed, null, 'xml URL', 'plain'));
+    core.setFieldFreeTextValue(draftEntry, 'https://example.com/feed.xml');
+
+    const envelope = await executeTool<{ reusedFieldDefinition?: { fieldEntryId: string; targetDefinitionId: string } }>(core, 'node_edit', {
+      operation: 'reuse_field_definition',
+      node_id: draftEntry,
+      target_definition_id: canonicalDefId,
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.reusedFieldDefinition).toEqual({
+      fieldEntryId: draftEntry,
+      targetDefinitionId: canonicalDefId,
+    });
+    expect(core.state().nodes[draftEntry]!.fieldDefId).toBe(canonicalDefId);
+    expect(fieldTypeOf(core, draftEntry)).toBe('url');
+  });
+
+  test('node_edit merge_definition merges duplicate field definitions globally', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const canonicalEntry = mustFocus(core.createInlineField(seed, null, 'URL', 'url'));
+    const targetDefId = core.state().nodes[canonicalEntry]!.fieldDefId!;
+    const feed = mustFocus(core.createNode(today, null, 'Feed'));
+    const sourceEntry = mustFocus(core.createInlineField(feed, null, 'Link', 'url'));
+    const sourceDefId = core.state().nodes[sourceEntry]!.fieldDefId!;
+    core.setFieldFreeTextValue(sourceEntry, 'https://example.com/feed.xml');
+
+    const both = mustFocus(core.createNode(today, null, 'Both'));
+    const bothTarget = mustFocus(core.createInlineField(both, null, 'URL draft', 'url'));
+    core.reuseFieldDefinition(bothTarget, targetDefId);
+    core.setFieldFreeTextValue(bothTarget, 'https://target.example/feed.xml');
+    const bothSource = mustFocus(core.createInlineField(both, null, 'Link draft', 'url'));
+    core.reuseFieldDefinition(bothSource, sourceDefId);
+    core.setFieldFreeTextValue(bothSource, 'https://source.example/feed.xml');
+
+    const envelope = await executeTool<{ definitionMerge?: { relinkedFieldEntryIds?: string[]; mergedFieldEntryIds?: string[] } }>(core, 'node_edit', {
+      operation: 'merge_definition',
+      node_id: targetDefId,
+      merge_from_node_ids: [sourceDefId],
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.definitionMerge!.relinkedFieldEntryIds).toContain(sourceEntry);
+    expect(envelope.data!.definitionMerge!.mergedFieldEntryIds).toContain(bothSource);
+    expect(core.state().nodes[sourceDefId]).toBeUndefined();
+    expect(core.state().nodes[sourceEntry]!.fieldDefId).toBe(targetDefId);
+    expect(core.state().nodes[bothSource]).toBeUndefined();
+    expect(core.state().nodes[bothTarget]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
+      'https://target.example/feed.xml',
+      'https://source.example/feed.xml',
+    ]);
+  });
+
+  test('node_edit merge_definition maps duplicate options by label', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targetOwner = mustFocus(core.createNode(today, null, 'Target owner'));
+    const targetEntry = mustFocus(core.createInlineField(targetOwner, null, 'Status', 'options'));
+    const targetDefId = core.state().nodes[targetEntry]!.fieldDefId!;
+    const targetActive = mustFocus(core.registerCollectedOption(targetDefId, 'Active'));
+    const sourceOwner = mustFocus(core.createNode(today, null, 'Source owner'));
+    const sourceEntry = mustFocus(core.createInlineField(sourceOwner, null, 'State', 'options'));
+    const sourceDefId = core.state().nodes[sourceEntry]!.fieldDefId!;
+    const sourceActive = mustFocus(core.registerCollectedOption(sourceDefId, 'Active'));
+    core.selectFieldOption(sourceEntry, sourceActive);
+
+    const envelope = await executeTool(core, 'node_edit', {
+      operation: 'merge_definition',
+      node_id: targetDefId,
+      merge_from_node_ids: [sourceDefId],
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(core.state().nodes[sourceDefId]).toBeUndefined();
+    expect(core.state().nodes[sourceActive]).toBeUndefined();
+    expect(core.state().nodes[sourceEntry]!.fieldDefId).toBe(targetDefId);
+    const valueId = core.state().nodes[sourceEntry]!.children[0]!;
+    expect(core.state().nodes[valueId]).toMatchObject({
+      type: 'reference',
+      targetId: targetActive,
+    });
+  });
+
+  test('node_edit merge_definition merges duplicate supertags globally', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targetTagId = mustFocus(core.createTag('Project'));
+    const sourceTagId = mustFocus(core.createTag('project-old'));
+    const tagged = mustFocus(core.createNode(today, null, 'Tagged'));
+    core.applyTag(tagged, sourceTagId);
+    const fieldOwner = mustFocus(core.createNode(today, null, 'Field owner'));
+    const fieldEntry = mustFocus(core.createInlineField(fieldOwner, null, 'Related project', 'options_from_supertag'));
+    const fieldDefId = core.state().nodes[fieldEntry]!.fieldDefId!;
+    core.setFieldConfig(fieldDefId, { fieldType: 'options_from_supertag', sourceSupertag: sourceTagId });
+    const inlineRefHost = mustFocus(core.createNode(today, null, 'Inline ref host'));
+    core.applyNodeTextPatch(inlineRefHost, {
+      ops: [{
+        type: 'replace_all',
+        content: {
+          text: 'See  here',
+          marks: [],
+          inlineRefs: [{
+            offset: 4,
+            target: { kind: 'node', nodeId: sourceTagId },
+            displayName: '#project-old',
+          }],
+        },
+      }],
+    });
+    const search = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: `- %%search%% Old projects\n  - HAS_TAG\n    - tag:: ${nodeRef(core, sourceTagId, '#project-old')}`,
+    });
+    const searchId = search.data!.createdRootIds[0]!;
+
+    const preview = await executeTool<{ definitionMerge?: { rewrittenInlineReferenceNodeIds?: string[] }; affectedNodeIds: string[] }>(core, 'node_edit', {
+      operation: 'merge_definition',
+      node_id: targetTagId,
+      merge_from_node_ids: [sourceTagId],
+      preview_only: true,
+    });
+    const envelope = await executeTool<{ definitionMerge?: { retaggedNodeIds?: string[]; rewrittenInlineReferenceNodeIds?: string[] } }>(core, 'node_edit', {
+      operation: 'merge_definition',
+      node_id: targetTagId,
+      merge_from_node_ids: [sourceTagId],
+    });
+
+    expect(preview.ok).toBe(true);
+    expect(preview.data!.affectedNodeIds).toContain(inlineRefHost);
+    expect(preview.data!.definitionMerge!.rewrittenInlineReferenceNodeIds).toContain(inlineRefHost);
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.definitionMerge!.retaggedNodeIds).toContain(tagged);
+    expect(envelope.data!.definitionMerge!.rewrittenInlineReferenceNodeIds).toContain(inlineRefHost);
+    expect(core.state().nodes[sourceTagId]).toBeUndefined();
+    expect(core.state().nodes[tagged]!.tags).toEqual([targetTagId]);
+    expect(core.state().nodes[inlineRefHost]!.content.inlineRefs).toEqual([
+      expect.objectContaining({ target: { kind: 'node', nodeId: targetTagId } }),
+    ]);
+    const byId = new Map(Object.values(core.state().nodes).map((node) => [node.id, node]));
+    expect(projectFieldConfig(byId, core.state().nodes[fieldDefId]!)).toMatchObject({ sourceSupertag: targetTagId });
+    const conditionId = core.state().nodes[searchId]!.children.find((childId) => core.state().nodes[childId]?.type === 'queryCondition')!;
+    expect(core.state().nodes[conditionId]!.queryTagDefId).toBe(targetTagId);
   });
 
   test('node_create selects existing options when reusing an options field definition', async () => {
@@ -1788,6 +2048,37 @@ describe('agent node tools', () => {
     expect(envelope.ok).toBe(true);
     expect(envelope.data!.merge!.redirectedReferences).toBe(1);
     expect(core.state().nodes[referenceId]!.targetId).toBe(target);
+  });
+
+  test('node_edit ordinary merge rejects non-content nodes', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const fieldEntry = mustFocus(core.createInlineField(target, null, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[fieldEntry]!.fieldDefId!;
+    const referenceTarget = mustFocus(core.createNode(today, null, 'Reference target'));
+    const referenceParent = mustFocus(core.createNode(today, null, 'Reference parent'));
+    const referenceId = mustFocus(core.addReference(referenceParent, referenceTarget, null));
+
+    const definitionEnvelope = await executeTool(core, 'node_edit', {
+      operation: 'merge',
+      node_id: target,
+      merge_from_node_ids: [fieldDefId],
+    });
+    const referenceEnvelope = await executeTool(core, 'node_edit', {
+      operation: 'merge',
+      node_id: target,
+      merge_from_node_ids: [referenceId],
+    });
+
+    expect(definitionEnvelope.ok).toBe(false);
+    expect(definitionEnvelope.error?.code).toBe('invalid_merge_node_type');
+    expect(definitionEnvelope.instructions).toContain('merge_definition');
+    expect(referenceEnvelope.ok).toBe(false);
+    expect(referenceEnvelope.error?.code).toBe('invalid_merge_node_type');
+    expect(referenceEnvelope.instructions).toContain('dedicated field, reference, search, view, or delete operations');
+    expect(core.state().nodes[fieldDefId]!.parentId).toBe(SCHEMA_ID);
+    expect(core.state().nodes[referenceId]!.parentId).toBe(referenceParent);
   });
 
   test('outline_undo_stack undo and redo use the agent Loro stack', async () => {

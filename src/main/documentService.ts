@@ -632,6 +632,8 @@ export class DocumentService {
         return this.core.setTagConfig(String(args.tagId), args.patch as TagConfigPatch);
       case 'set_field_config':
         return this.core.setFieldConfig(String(args.fieldId), args.patch as FieldConfigPatch);
+      case 'create_field_definition':
+        return this.core.createFieldDefinition(String(args.name), fieldType(args.fieldType));
       case 'create_field_def':
         return this.core.createFieldDef(String(args.tagId), String(args.name), fieldType(args.fieldType));
       case 'create_inline_field_after_node':
@@ -640,6 +642,8 @@ export class DocumentService {
         return this.core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), fieldType(args.fieldType));
       case 'reuse_field_definition':
         return this.core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
+      case 'merge_definitions':
+        return this.core.mergeDefinitions(String(args.targetId), stringArray(args.sourceIds));
       case 'register_collected_option':
         return this.core.registerCollectedOption(String(args.fieldDefId), String(args.name));
       case 'create_collected_field_option':
@@ -1103,6 +1107,10 @@ function displayPlacement(value: unknown): DisplayPlacement | null {
   return null;
 }
 
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
 function fieldType(value: unknown): FieldType {
   if (
     value === 'plain'
@@ -1113,6 +1121,7 @@ function fieldType(value: unknown): FieldType {
     || value === 'url'
     || value === 'email'
     || value === 'checkbox'
+    || value === 'reference'
   ) {
     return value;
   }

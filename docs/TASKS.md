@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369, agent-image-generation-tool #383; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382, feed-processing-built-in #387**) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382, feed-processing-built-in #387, definition-node-edit-parity #388**) |
 | Codex 4 | `lin-outliner-codex-4/` | `codex-4/agent-issue-manager` | ready PR #386 (agent issue manager implementation) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -32,7 +32,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-08).** Open PR queue: #386
-(`codex-4/agent-issue-manager`). Recently merged: #383
+(`codex-4/agent-issue-manager`). Recently merged: #388
+(`codex-3/definition-node-edit-parity`) and #383
 (`codex-2/agent-image-generation-tool`) merged 2026-07-08 after main review;
 see *Recently completed*. #387 (`codex-3/feed-processing-built-in`) and #385
 (`codex/structured-field-resolution`) merged 2026-07-07; see *Recently
@@ -492,6 +493,24 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **definition-node-edit-parity** (`codex-3/definition-node-edit-parity`, PR
+  #388, codex-3, merged 2026-07-08, plan-track) — adds model-visible tag/field
+  definition create/edit/merge parity to agent node tools. `node_read` projects
+  definition config on parent `fieldDef` / `tagDef` nodes;
+  `node_create.definition` creates definitions under Schema with typed initial
+  config; and `node_edit` adds `configure_definition`,
+  `reuse_field_definition`, and `merge_definition`. Field type changes validate
+  active values and return incompatible value ids, definition merge retargets
+  field entries, tag applications, search/view/config refs, reference nodes, and
+  rich-text inline refs, and ordinary content merge now rejects definitions and
+  structural nodes in favor of dedicated operations. **Gate (main):** initial
+  review found that incompatible-value ids were hidden from model-visible error
+  content and tag definition merge dropped rich-text source references; codex-3
+  fixed both before merge. Verified on the final PR head with typecheck,
+  targeted agent node tool tests, `test:core`, `docs:check`, and
+  `git diff --check`. Plan archived `done`:
+  `docs/plans/archive/definition-node-edit-parity.md`.
 
 - **agent-image-generation-tool** (`codex-2/agent-image-generation-tool`, PR
   #383, codex-2, merged 2026-07-08, plan-track) — adds a model-visible

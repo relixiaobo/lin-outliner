@@ -1,4 +1,5 @@
 import type { AgentToolResult } from '@earendil-works/pi-agent-core';
+import { projectFieldConfig, projectTagConfig } from '../core/configProjection';
 import { formatNodeReferenceMarker } from '../core/referenceMarkup';
 import { agentToolResult, dropUndefinedFields, modelVisibleEnvelope, type ToolEnvelope } from './agentToolEnvelope';
 import { FINAL_ANSWER_NODE_REFERENCE_GUIDANCE } from './agentNodeToolGuidance';
@@ -7,6 +8,7 @@ import { serializeAnnotatedOutlines } from './agentNodeToolRead';
 import type {
   ChildrenPage,
   NodeCreateData,
+  NodeDefinitionRead,
   NodeDeleteData,
   NodeEditData,
   NodeSearchData,
@@ -61,9 +63,16 @@ export function nodeToolResult<TData>(
 
 export function nodeErrorResult<TData>(
   envelope: ToolEnvelope<TData>,
+  payload?: NodeVisiblePayload,
 ): AgentToolResult<ToolEnvelope<TData>> {
-  // Errors use the standard projection: no data block, just `error` +
-  // `instructions` (the error object already carries code + message).
+  if (payload) {
+    const guidance = nodeInstructions(envelope, payload.visible, payload.ctx);
+    const instructions = [envelope.instructions, guidance].filter(Boolean).join(' ');
+    return agentToolResult({ ...envelope, instructions }, payload.visible);
+  }
+  // Errors use the standard projection by default: no data block, just `error` +
+  // `instructions` (the error object already carries code + message). Callers
+  // pass a payload only when the model needs structured recovery details.
   return agentToolResult(envelope);
 }
 
@@ -79,10 +88,33 @@ export function visibleReadResult(
   const page = rootPages.length === 1 ? rootPages[0] : undefined;
   const visible: NodeVisibleReadResult = compactVisibleResult({
     outline,
+    definitions: visibleDefinitionReads(index, nodeIds),
     references: visibleReferences(index, visibleReadReferenceIds(index, nodeIds, params)),
     page,
   });
   return { visible, ctx: {} };
+}
+
+function visibleDefinitionReads(index: ProjectionIndex, nodeIds: string[]): NodeDefinitionRead[] | undefined {
+  const definitions: NodeDefinitionRead[] = [];
+  for (const nodeId of nodeIds) {
+    const node = index.nodes.get(nodeId);
+    if (node?.type === 'fieldDef') {
+      definitions.push({
+        kind: 'field' as const,
+        config: projectFieldConfig(index.nodes, node),
+        editableWith: 'node_edit operation "configure_definition" with node_id and definition_patch.',
+      });
+    }
+    if (node?.type === 'tagDef') {
+      definitions.push({
+        kind: 'tag' as const,
+        config: projectTagConfig(index.nodes, node),
+        editableWith: 'node_edit operation "configure_definition" with node_id and definition_patch.',
+      });
+    }
+  }
+  return definitions.length ? definitions : undefined;
 }
 
 function visibleReadPage(
@@ -144,6 +176,7 @@ export function visibleEditResult(data: NodeEditData, previewOnly: boolean, inde
     outline,
     revisions: data.revisions,
     changes,
+    definition: data.definition,
   });
   // A non-preview edit can still be a real no-op (afterOutline == current).
   const outcome = previewOnly ? 'preview' : data.status === 'updated' ? 'applied' : 'unchanged';

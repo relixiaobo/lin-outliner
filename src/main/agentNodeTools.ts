@@ -1,15 +1,20 @@
-import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import path from 'node:path';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
-import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
+import { projectFieldConfig, projectTagConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import {
+  SCHEMA_ID,
   plainText,
   referenceTargetSortKey,
   replaceAllRichTextPatch,
+  type FieldConfigPatch,
   type FieldType,
+  type HideFieldMode,
+  type NodeId,
   type NodeProjection,
   type ReferenceTarget,
   type RichText,
+  type TagConfigPatch,
 } from '../core/types';
 import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from './agentToolEnvelope';
 import {
@@ -90,14 +95,21 @@ import {
 } from './agentNodeToolVisibility';
 import type {
   NodeCreateData,
+  NodeDefinitionCreateParams,
+  NodeDefinitionMerge,
+  NodeDefinitionMutation,
   NodeCreateParams,
   NodeDeleteData,
   NodeDeleteParams,
   NodeDeletePreview,
   NodeDeleteSkip,
+  DefinitionIncompatibleValue,
+  DefinitionValueValidationReport,
   NodeEditData,
   NodeEditMoveParams,
+  NodeEditParams,
   NodeMergeFieldPreview,
+  ProjectedDefinitionConfig,
   NodeReadData,
   NodeSearchData,
   NormalizedEditParams,
@@ -268,6 +280,12 @@ function createNodeEditTool(host: OutlinerToolHost, options: NodeToolsOptions): 
           return executeMergeEdit(host, params, started);
         case 'replace_with_reference':
           return executeReferenceReplaceEdit(host, params, started);
+        case 'configure_definition':
+          return executeDefinitionConfigEdit(host, params, started);
+        case 'reuse_field_definition':
+          return executeReuseFieldDefinitionEdit(host, params, started);
+        case 'merge_definition':
+          return executeDefinitionMergeEdit(host, params, started);
       }
     },
   };
@@ -649,6 +667,13 @@ async function executeMergeEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
+  const typeValidation = validateOrdinaryMergeNodeTypes(index, params.nodeId, params.mergeFromNodeIds);
+  if (typeValidation) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', typeValidation.code, typeValidation.error, {
+      instructions: typeValidation.instructions,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
   const ancestorSource = params.mergeFromNodeIds.find((sourceId) => isDescendantOf(index, params.nodeId, sourceId));
   if (ancestorSource) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_merge', `Cannot merge ancestor ${ancestorSource} into descendant ${params.nodeId}.`, {
@@ -785,6 +810,659 @@ async function executeReferenceReplaceEdit(
   }), visibleEditResult(data, false, indexProjection(host.getProjection())));
 }
 
+async function executeDefinitionConfigEdit(
+  host: OutlinerToolHost,
+  params: Extract<NormalizedEditParams, { action: 'configure_definition' }>,
+  started: number,
+) {
+  const index = indexProjection(host.getProjection());
+  const validation = validateMutableNodeIds(index, [params.nodeId]);
+  if (validation) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
+      instructions: validation.instructions,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  const node = requiredNode(index, params.nodeId);
+  const kind = definitionKind(node);
+  if (!kind) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_definition_target', `Node is not a tag or field definition: ${params.nodeId}`, {
+      instructions: 'Use node_read/node_search to locate a tagDef or fieldDef node, then retry configure_definition.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  const foreignKeys = kind === 'field' ? presentPatchKeys(params.definitionPatch, TAG_PATCH_KEYS) : presentPatchKeys(params.definitionPatch, FIELD_PATCH_KEYS);
+  if (foreignKeys.length > 0) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_definition_patch', `${kind} definitions cannot use these config keys: ${foreignKeys.join(', ')}.`, {
+      instructions: kind === 'field'
+        ? 'Use field config keys such as field_type, source_supertag, nullable, hide_field, auto_initialize, autocollect_options, min_value, or max_value.'
+        : 'Use tag config keys such as color, extends, child_supertag, show_checkbox, done_state_enabled, done_map_checked, or done_map_unchecked.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+
+  const beforeConfig = projectDefinitionConfig(index, node);
+  const validationReport = kind === 'field'
+    ? validateFieldDefinitionPatchAgainstExistingValues(index, node, params.definitionPatch as FieldConfigPatch, params.existingValues)
+    : { strategy: params.existingValues } satisfies DefinitionValueValidationReport;
+  const incompatibleValues = validationReport.incompatibleValues ?? [];
+  if (incompatibleValues.length > 0) {
+    const data: NodeEditData = {
+      action: 'configure_definition',
+      status: 'unchanged',
+      affectedNodeIds: [params.nodeId],
+      definition: {
+        kind,
+        nodeId: params.nodeId,
+        beforeConfig,
+        afterConfig: beforeConfig,
+        patch: params.definitionPatch,
+        validation: validationReport,
+      },
+      revisions: { [params.nodeId]: revisionOf(node) },
+    };
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'incompatible_existing_values', 'Field type change is incompatible with existing field values.', {
+      instructions: 'Fix or clear the listed field values first, or choose a field type compatible with all existing values.',
+      data,
+      metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+    }), visibleEditResult(data, false, index));
+  }
+
+  if (params.previewOnly) {
+    const afterConfig = applyProjectedDefinitionPatch(kind, beforeConfig, params.definitionPatch);
+    const data: NodeEditData = {
+      action: 'configure_definition',
+      status: sameJsonValue(beforeConfig, afterConfig) ? 'unchanged' : 'updated',
+      affectedNodeIds: [params.nodeId],
+      definition: {
+        kind,
+        nodeId: params.nodeId,
+        beforeConfig,
+        afterConfig,
+        patch: params.definitionPatch,
+        validation: validationReport,
+      },
+      revisions: { [params.nodeId]: revisionOf(node) },
+    };
+    return nodeToolResult(successEnvelope('node_edit', data, {
+      status: 'unchanged',
+      metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+    }), visibleEditResult(data, true, index));
+  }
+
+  try {
+    if (kind === 'field') {
+      await host.handle('set_field_config', { fieldId: params.nodeId, patch: params.definitionPatch });
+    } else {
+      await host.handle('set_tag_config', { tagId: params.nodeId, patch: params.definitionPatch });
+    }
+  } catch (error) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
+      instructions: 'Use node_read to refresh the definition, verify referenced tag/option ids, and retry with a smaller config patch.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+
+  const updatedIndex = indexProjection(host.getProjection());
+  const updatedNode = requiredNode(updatedIndex, params.nodeId);
+  const afterConfig = projectDefinitionConfig(updatedIndex, updatedNode);
+  const status = sameJsonValue(beforeConfig, afterConfig) ? 'unchanged' : 'updated';
+  const data: NodeEditData = {
+    action: 'configure_definition',
+    status,
+    affectedNodeIds: [params.nodeId],
+    definition: {
+      kind,
+      nodeId: params.nodeId,
+      beforeConfig,
+      afterConfig,
+      patch: params.definitionPatch,
+      validation: validationReport,
+    },
+    revisions: { [params.nodeId]: revisionOf(updatedNode) },
+  };
+  return nodeToolResult(successEnvelope('node_edit', data, {
+    status: status === 'unchanged' ? 'unchanged' : undefined,
+    metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+  }), visibleEditResult(data, false, updatedIndex));
+}
+
+async function executeReuseFieldDefinitionEdit(
+  host: OutlinerToolHost,
+  params: Extract<NormalizedEditParams, { action: 'reuse_field_definition' }>,
+  started: number,
+) {
+  const index = indexProjection(host.getProjection());
+  const validation = validateMutableNodeIds(index, [params.nodeId]);
+  if (validation) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
+      instructions: validation.instructions,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  const entry = requiredNode(index, params.nodeId);
+  if (entry.type !== 'fieldEntry') {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_field_entry', `Node is not a field entry: ${params.nodeId}`, {
+      instructions: 'Use node_read on the owner node and pass the fieldEntryId from the field you want to relink.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  const targetIsSystemField = isSystemFieldId(params.targetDefinitionId);
+  const target = targetIsSystemField ? undefined : index.nodes.get(params.targetDefinitionId);
+  if (!targetIsSystemField && target?.type !== 'fieldDef') {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_field_definition', `Target is not an active field definition: ${params.targetDefinitionId}`, {
+      instructions: 'Use node_read/node_search to locate a fieldDef node, or pass a supported sys:* field id.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  if (!targetIsSystemField && isInTrash(index, params.targetDefinitionId)) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'node_in_trash', `Target field definition is in Trash: ${params.targetDefinitionId}`, {
+      instructions: 'Restore the field definition or choose an active field definition.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+
+  const previousDefinitionId = entry.fieldDefId;
+  const targetFieldDef = target?.type === 'fieldDef' ? target : undefined;
+  const targetType = targetFieldDef ? projectFieldConfig(index.nodes, targetFieldDef).fieldType : undefined;
+  if (targetType) {
+    const valueValidation = validateFieldValuesForType(
+      fieldName(index, targetFieldDef!),
+      targetType,
+      fieldResolutionValuesFromEntry(index, entry),
+    );
+    if (!valueValidation.ok) {
+      return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'incompatible_existing_values', valueValidation.error, {
+        instructions: valueValidation.instructions,
+        metrics: { durationMs: elapsed(started) },
+      }));
+    }
+  }
+
+  const affectedNodeIds = unique([
+    params.nodeId,
+    params.targetDefinitionId,
+    ...(previousDefinitionId ? [previousDefinitionId] : []),
+  ]);
+  const data: NodeEditData = {
+    action: 'reuse_field_definition',
+    status: previousDefinitionId === params.targetDefinitionId ? 'unchanged' : 'updated',
+    affectedNodeIds,
+    reusedFieldDefinition: {
+      fieldEntryId: params.nodeId,
+      targetDefinitionId: params.targetDefinitionId,
+    },
+    revisions: { [params.nodeId]: revisionOf(entry) },
+  };
+  if (params.previewOnly || data.status === 'unchanged') {
+    return nodeToolResult(successEnvelope('node_edit', data, {
+      status: params.previewOnly || data.status === 'unchanged' ? 'unchanged' : undefined,
+      metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+    }), visibleEditResult(data, params.previewOnly === true, index));
+  }
+
+  try {
+    await host.handle('reuse_field_definition', { entryId: params.nodeId, targetDefId: params.targetDefinitionId });
+  } catch (error) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
+      instructions: 'Use node_read to refresh the field entry and target definition ids before retrying.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  const updatedIndex = indexProjection(host.getProjection());
+  const updatedEntry = updatedIndex.nodes.get(params.nodeId);
+  data.affectedNodeIds = data.affectedNodeIds.filter((nodeId) => updatedIndex.nodes.has(nodeId));
+  if (updatedEntry) data.revisions = { [params.nodeId]: revisionOf(updatedEntry) };
+  return nodeToolResult(successEnvelope('node_edit', data, {
+    metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+  }), visibleEditResult(data, false, updatedIndex));
+}
+
+async function executeDefinitionMergeEdit(
+  host: OutlinerToolHost,
+  params: Extract<NormalizedEditParams, { action: 'merge_definition' }>,
+  started: number,
+) {
+  const index = indexProjection(host.getProjection());
+  const validation = validateMutableNodeIds(index, [params.nodeId, ...params.mergeFromNodeIds]);
+  if (validation) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
+      instructions: validation.instructions,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  const preview = definitionMergePreview(index, params.nodeId, params.mergeFromNodeIds, params.existingValues);
+  if ('error' in preview) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', preview.code, preview.error, {
+      instructions: preview.instructions,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  const target = requiredNode(index, params.nodeId);
+  const data: NodeEditData = {
+    action: 'merge_definition',
+    status: 'updated',
+    affectedNodeIds: preview.affectedNodeIds,
+    definitionMerge: preview.merge,
+    revisions: { [params.nodeId]: revisionOf(target) },
+  };
+  if (params.previewOnly) {
+    return nodeToolResult(successEnvelope('node_edit', data, {
+      status: 'unchanged',
+      metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+    }), visibleEditResult(data, true, index));
+  }
+
+  try {
+    await host.handle('merge_definitions', { targetId: params.nodeId, sourceIds: params.mergeFromNodeIds });
+  } catch (error) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
+      instructions: 'Use node_read to refresh the target/source definition ids, verify they are the same definition kind and field type, then retry.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+
+  const updatedIndex = indexProjection(host.getProjection());
+  const updatedTarget = updatedIndex.nodes.get(params.nodeId);
+  data.affectedNodeIds = data.affectedNodeIds.filter((nodeId) => updatedIndex.nodes.has(nodeId));
+  data.revisions = updatedTarget ? { [params.nodeId]: revisionOf(updatedTarget) } : undefined;
+  return nodeToolResult(successEnvelope('node_edit', data, {
+    metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+  }), visibleEditResult(data, false, updatedIndex));
+}
+
+async function executeDefinitionCreate(
+  host: OutlinerToolHost,
+  definition: NodeDefinitionCreateParams,
+  previewOnly: boolean,
+  started: number,
+): Promise<AgentToolResult<ToolEnvelope<NodeCreateData>>> {
+  const initialIndex = indexProjection(host.getProjection());
+  const existing = findDefinitionByName(initialIndex, definition.kind, definition.name);
+  const beforeConfig = existing ? projectDefinitionConfig(initialIndex, existing) : undefined;
+  const projectedDefault = beforeConfig ?? defaultDefinitionConfig(definition.kind, definition.config);
+  const projectedAfter = existing
+    ? beforeConfig
+    : applyProjectedDefinitionPatch(definition.kind, projectedDefault, definition.config ?? {});
+  const dataBase: NodeCreateData = {
+    parentId: SCHEMA_ID,
+    createdRootIds: [],
+    createdNodeIds: [],
+    matchedNodeIds: existing ? [existing.id] : undefined,
+    definition: {
+      kind: definition.kind,
+      nodeId: existing?.id ?? 'preview:new-definition',
+      beforeConfig,
+      afterConfig: projectedAfter,
+      patch: definition.config,
+    },
+  };
+
+  if (previewOnly) {
+    const data: NodeCreateData = {
+      ...dataBase,
+      createdRootIds: [],
+      createdNodeIds: [],
+    };
+    return nodeToolResult(successEnvelope('node_create', data, {
+      status: 'unchanged',
+      warnings: existing && definition.config ? ['Definition already exists; node_create preview will not change its config. Use node_edit configure_definition to update it.'] : undefined,
+      metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+    }), visibleCreateResult(data, true, initialIndex));
+  }
+
+  if (existing) {
+    const data: NodeCreateData = {
+      ...dataBase,
+      definition: {
+        ...dataBase.definition!,
+        nodeId: existing.id,
+      },
+    };
+    return nodeToolResult(successEnvelope('node_create', data, {
+      status: 'unchanged',
+      warnings: definition.config ? ['Definition already existed; config was not changed. Use node_edit configure_definition to update it.'] : undefined,
+      metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+    }), visibleCreateResult(data, false, initialIndex));
+  }
+
+  try {
+    const createdId = definition.kind === 'field'
+      ? focusFromOutcome(await host.handle('create_field_definition', {
+        name: definition.name,
+        fieldType: (definition.config as FieldConfigPatch | undefined)?.fieldType ?? 'plain',
+      }))
+      : focusFromOutcome(await host.handle('create_tag', { name: definition.name }));
+    if (definition.config && Object.keys(definition.config).length > 0) {
+      if (definition.kind === 'field') {
+        await host.handle('set_field_config', { fieldId: createdId, patch: definition.config });
+      } else {
+        await host.handle('set_tag_config', { tagId: createdId, patch: definition.config });
+      }
+    }
+    const updatedIndex = indexProjection(host.getProjection());
+    const created = requiredNode(updatedIndex, createdId);
+    const afterConfig = projectDefinitionConfig(updatedIndex, created);
+    const data: NodeCreateData = {
+      parentId: SCHEMA_ID,
+      createdRootIds: [createdId],
+      createdNodeIds: [createdId],
+      createdFieldDefIds: definition.kind === 'field' ? [createdId] : undefined,
+      createdTagIds: definition.kind === 'tag' ? [createdId] : undefined,
+      definition: {
+        kind: definition.kind,
+        nodeId: createdId,
+        afterConfig,
+        patch: definition.config,
+      },
+    };
+    return nodeToolResult(successEnvelope('node_create', data, {
+      metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+    }), visibleCreateResult(data, false, updatedIndex));
+  } catch (error) {
+    return nodeErrorResult(errorEnvelope('node_create', 'mutation_failed', errorMessage(error), {
+      instructions: 'Verify referenced tag/option ids in definition.config and retry with a smaller config patch.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+}
+
+function definitionKind(node: NodeProjection): 'field' | 'tag' | null {
+  if (node.type === 'fieldDef') return 'field';
+  if (node.type === 'tagDef') return 'tag';
+  return null;
+}
+
+function findDefinitionByName(index: ProjectionIndex, kind: 'field' | 'tag', name: string): NodeProjection | undefined {
+  const key = name.trim().toLowerCase();
+  if (!key) return undefined;
+  return index.projection.nodes.find((node) =>
+    node.type === (kind === 'field' ? 'fieldDef' : 'tagDef')
+    && node.parentId === SCHEMA_ID
+    && node.content.text.trim().toLowerCase() === key
+    && !isInTrash(index, node.id));
+}
+
+function projectDefinitionConfig(index: ProjectionIndex, node: NodeProjection): ProjectedDefinitionConfig {
+  if (node.type === 'fieldDef') return projectFieldConfig(index.nodes, node);
+  if (node.type === 'tagDef') return projectTagConfig(index.nodes, node);
+  throw new Error(`Node is not a definition: ${node.id}`);
+}
+
+function defaultDefinitionConfig(kind: 'field' | 'tag', patch: FieldConfigPatch | TagConfigPatch | undefined): ProjectedDefinitionConfig {
+  if (kind === 'field') {
+    return {
+      fieldType: (patch as FieldConfigPatch | undefined)?.fieldType ?? 'plain',
+      sourceSupertag: undefined,
+      nullable: true,
+      hideField: 'never',
+      autoInitialize: [],
+      autocollectOptions: false,
+      minValue: undefined,
+      maxValue: undefined,
+    };
+  }
+  return {
+    color: undefined,
+    extends: undefined,
+    childSupertag: undefined,
+    showCheckbox: false,
+    doneStateEnabled: false,
+    doneMapChecked: [],
+    doneMapUnchecked: [],
+  };
+}
+
+function applyProjectedDefinitionPatch(
+  kind: 'field' | 'tag',
+  config: ProjectedDefinitionConfig,
+  patch: FieldConfigPatch | TagConfigPatch,
+): ProjectedDefinitionConfig {
+  if (kind === 'field') {
+    const current = config as Extract<ProjectedDefinitionConfig, { fieldType: string }>;
+    const fieldPatch = patch as FieldConfigPatch;
+    const nextFieldType = fieldPatch.fieldType ?? current.fieldType;
+    return {
+      ...current,
+      fieldType: nextFieldType,
+      sourceSupertag: 'sourceSupertag' in fieldPatch
+        ? fieldPatch.sourceSupertag ?? undefined
+        : nextFieldType === 'options_from_supertag' ? current.sourceSupertag : undefined,
+      nullable: 'nullable' in fieldPatch ? fieldPatch.nullable ?? true : current.nullable,
+      hideField: 'hideField' in fieldPatch ? fieldPatch.hideField ?? 'never' : current.hideField,
+      autoInitialize: 'autoInitialize' in fieldPatch
+        ? splitAutoInitialize(fieldPatch.autoInitialize)
+        : current.autoInitialize,
+      autocollectOptions: fieldPatch.autocollectOptions ?? (nextFieldType === 'options' ? current.autocollectOptions : false),
+      minValue: 'minValue' in fieldPatch ? fieldPatch.minValue ?? undefined : nextFieldType === 'number' ? current.minValue : undefined,
+      maxValue: 'maxValue' in fieldPatch ? fieldPatch.maxValue ?? undefined : nextFieldType === 'number' ? current.maxValue : undefined,
+    };
+  }
+  const current = config as Extract<ProjectedDefinitionConfig, { showCheckbox: boolean }>;
+  const tagPatch = patch as TagConfigPatch;
+  return {
+    ...current,
+    color: 'color' in tagPatch ? tagPatch.color ?? undefined : current.color,
+    extends: 'extends' in tagPatch ? tagPatch.extends ?? undefined : current.extends,
+    childSupertag: 'childSupertag' in tagPatch ? tagPatch.childSupertag ?? undefined : current.childSupertag,
+    showCheckbox: tagPatch.showCheckbox ?? current.showCheckbox,
+    doneStateEnabled: tagPatch.doneStateEnabled ?? current.doneStateEnabled,
+    doneMapChecked: tagPatch.doneMapChecked ?? current.doneMapChecked,
+    doneMapUnchecked: tagPatch.doneMapUnchecked ?? current.doneMapUnchecked,
+  };
+}
+
+function splitAutoInitialize(value: string | null | undefined): string[] {
+  return value?.split(',').map((strategy) => strategy.trim()).filter(Boolean) ?? [];
+}
+
+function presentPatchKeys<K extends readonly string[]>(
+  patch: FieldConfigPatch | TagConfigPatch,
+  keys: K,
+): string[] {
+  const input = patch as Record<string, unknown>;
+  return keys.filter((key) => hasOwn(input, key));
+}
+
+function validateFieldDefinitionPatchAgainstExistingValues(
+  index: ProjectionIndex,
+  fieldDef: NodeProjection,
+  patch: FieldConfigPatch,
+  strategy: 'validate',
+): DefinitionValueValidationReport {
+  const fieldType = patch.fieldType;
+  const fieldEntries = activeFieldEntriesForDefinition(index, fieldDef.id);
+  const checkedFieldEntryIds = fieldEntries.map((entry) => entry.id);
+  if (!fieldType) return { strategy, checkedFieldEntryIds };
+  const incompatibleValues: DefinitionIncompatibleValue[] = [];
+  for (const entry of fieldEntries) {
+    for (const value of fieldResolutionValuesFromEntry(index, entry)) {
+      const validation = validateFieldValuesForType(fieldName(index, entry), fieldType, [value]);
+      if (!validation.ok) {
+        incompatibleValues.push({
+          fieldEntryId: entry.id,
+          valueNodeId: value.valueNodeId,
+          value: value.text,
+          reason: validation.error,
+        });
+      }
+    }
+  }
+  return { strategy, checkedFieldEntryIds, incompatibleValues: incompatibleValues.length ? incompatibleValues : undefined };
+}
+
+function activeFieldEntriesForDefinition(index: ProjectionIndex, fieldDefId: NodeId): Extract<NodeProjection, { type: 'fieldEntry' }>[] {
+  return index.projection.nodes.filter((node): node is Extract<NodeProjection, { type: 'fieldEntry' }> =>
+    node.type === 'fieldEntry'
+    && node.fieldDefId === fieldDefId
+    && !isInTrash(index, node.id));
+}
+
+function fieldResolutionValuesFromEntry(
+  index: ProjectionIndex,
+  entry: Extract<NodeProjection, { type: 'fieldEntry' }>,
+): Array<FieldResolutionValue & { valueNodeId?: string }> {
+  return entry.children
+    .map((childId) => index.nodes.get(childId))
+    .filter((value): value is NodeProjection => Boolean(value) && !isInTrash(index, value!.id))
+    .map((value) => ({
+      valueNodeId: value.id,
+      text: value.content.text,
+      targetId: value.type === 'reference' ? value.targetId : undefined,
+    }));
+}
+
+function definitionMergePreview(
+  index: ProjectionIndex,
+  targetNodeId: string,
+  sourceNodeIds: string[],
+  existingValues: 'validate',
+): { merge: NodeDefinitionMerge; affectedNodeIds: string[] } | { code: string; error: string; instructions: string } {
+  const target = requiredNode(index, targetNodeId);
+  const kind = definitionKind(target);
+  if (!kind) {
+    return {
+      code: 'invalid_definition_target',
+      error: `Node is not a tag or field definition: ${targetNodeId}`,
+      instructions: 'Use merge_definition only with a fieldDef or tagDef target node.',
+    };
+  }
+  if (sourceNodeIds.includes(targetNodeId)) {
+    return {
+      code: 'invalid_definition_merge',
+      error: 'merge_from_node_ids cannot include the target definition.',
+      instructions: 'Pass only duplicate source definitions in merge_from_node_ids.',
+    };
+  }
+  const sourceNodes = sourceNodeIds.map((sourceId) => requiredNode(index, sourceId));
+  const wrongKind = sourceNodes.find((node) => definitionKind(node) !== kind);
+  if (wrongKind) {
+    return {
+      code: 'invalid_definition_merge',
+      error: `Definition merge requires all sources to be ${kind} definitions: ${wrongKind.id}`,
+      instructions: 'Split field and tag merges into separate node_edit merge_definition calls.',
+    };
+  }
+
+  if (kind === 'field') {
+    const targetConfig = projectFieldConfig(index.nodes, target);
+    for (const source of sourceNodes) {
+      const sourceConfig = projectFieldConfig(index.nodes, source);
+      if (sourceConfig.fieldType !== targetConfig.fieldType) {
+        return {
+          code: 'incompatible_definition_merge',
+          error: `Field definition merge currently requires matching field types: ${source.id} is ${sourceConfig.fieldType}, target is ${targetConfig.fieldType}.`,
+          instructions: 'Change the source or target field type first, or migrate values explicitly before merging definitions.',
+        };
+      }
+      if (sourceConfig.fieldType === 'options_from_supertag' && sourceConfig.sourceSupertag !== targetConfig.sourceSupertag) {
+        return {
+          code: 'incompatible_definition_merge',
+          error: `options_from_supertag field definitions require the same source supertag before merge: ${source.id}.`,
+          instructions: 'Set the same source_supertag on the definitions before merging.',
+        };
+      }
+      const validation = validateFieldDefinitionPatchAgainstExistingValues(index, source, { fieldType: targetConfig.fieldType as FieldType }, existingValues);
+      if (validation.incompatibleValues?.length) {
+        return {
+          code: 'incompatible_existing_values',
+          error: `Source field values are incompatible with target field type: ${source.id}`,
+          instructions: 'Fix or clear incompatible source field values before merging definitions.',
+        };
+      }
+    }
+    const relinkedFieldEntryIds: string[] = [];
+    const mergedFieldEntryIds: string[] = [];
+    const targetReferenceIds = targetReferenceNodeIds(index, sourceNodeIds);
+    const inlineReferenceNodeIds = inlineReferenceHostNodeIds(index, sourceNodeIds);
+    for (const source of sourceNodes) {
+      for (const entry of activeFieldEntriesForDefinition(index, source.id)) {
+        const ownerId = entry.parentId;
+        const targetEntry = ownerId
+          ? requiredNode(index, ownerId).children
+            .map((childId) => index.nodes.get(childId))
+            .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === targetNodeId && !isInTrash(index, child.id))
+          : undefined;
+        if (targetEntry) mergedFieldEntryIds.push(entry.id);
+        else relinkedFieldEntryIds.push(entry.id);
+      }
+    }
+    const merge: NodeDefinitionMerge = {
+      kind,
+      targetNodeId,
+      sourceNodeIds,
+      relinkedFieldEntryIds: relinkedFieldEntryIds.length ? unique(relinkedFieldEntryIds) : undefined,
+      mergedFieldEntryIds: mergedFieldEntryIds.length ? unique(mergedFieldEntryIds) : undefined,
+      rewrittenReferenceIds: targetReferenceIds.length ? targetReferenceIds : undefined,
+      rewrittenInlineReferenceNodeIds: inlineReferenceNodeIds.length ? inlineReferenceNodeIds : undefined,
+    };
+    return {
+      merge,
+      affectedNodeIds: unique([
+        targetNodeId,
+        ...sourceNodeIds,
+        ...relinkedFieldEntryIds,
+        ...mergedFieldEntryIds,
+        ...targetReferenceIds,
+        ...inlineReferenceNodeIds,
+      ]),
+    };
+  }
+
+  const retaggedNodeIds = index.projection.nodes
+    .filter((node) => sourceNodeIds.some((sourceId) => node.tags.includes(sourceId)) && !isInTrash(index, node.id))
+    .map((node) => node.id);
+  const rewrittenReferenceIds = targetReferenceNodeIds(index, sourceNodeIds);
+  const rewrittenInlineReferenceNodeIds = inlineReferenceHostNodeIds(index, sourceNodeIds);
+  const merge: NodeDefinitionMerge = {
+    kind,
+    targetNodeId,
+    sourceNodeIds,
+    retaggedNodeIds: retaggedNodeIds.length ? unique(retaggedNodeIds) : undefined,
+    rewrittenReferenceIds: rewrittenReferenceIds.length ? rewrittenReferenceIds : undefined,
+    rewrittenInlineReferenceNodeIds: rewrittenInlineReferenceNodeIds.length ? rewrittenInlineReferenceNodeIds : undefined,
+  };
+  return {
+    merge,
+    affectedNodeIds: unique([
+      targetNodeId,
+      ...sourceNodeIds,
+      ...retaggedNodeIds,
+      ...rewrittenReferenceIds,
+      ...rewrittenInlineReferenceNodeIds,
+    ]),
+  };
+}
+
+function targetReferenceNodeIds(index: ProjectionIndex, targetIds: string[]): string[] {
+  const targets = new Set(targetIds);
+  return index.projection.nodes
+    .filter((node) =>
+      !isInTrash(index, node.id)
+      && (
+        (node.type === 'reference' && node.targetId && targets.has(node.targetId))
+        || ((node.type === 'search' || node.type === 'queryCondition') && (
+          (node.queryFieldDefId && targets.has(node.queryFieldDefId))
+          || (node.queryTagDefId && targets.has(node.queryTagDefId))
+          || (node.queryTargetId && targets.has(node.queryTargetId))
+        ))
+        || (node.type === 'viewDef' && node.groupField && targets.has(node.groupField))
+        || (node.type === 'sortRule' && node.sortField && targets.has(node.sortField))
+        || (node.type === 'filterRule' && node.filterField && targets.has(node.filterField))
+        || (node.type === 'displayField' && node.displayField && targets.has(node.displayField))
+      ))
+    .map((node) => node.id);
+}
+
+function inlineReferenceHostNodeIds(index: ProjectionIndex, targetIds: string[]): string[] {
+  const targets = new Set(targetIds);
+  return index.projection.nodes
+    .filter((node) =>
+      !isInTrash(index, node.id)
+      && node.content.inlineRefs.some((ref) => ref.target.kind === 'node' && targets.has(ref.target.nodeId)))
+    .map((node) => node.id);
+}
+
 function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeCreateData>> {
   return {
     name: 'node_create',
@@ -796,10 +1474,14 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
       const started = Date.now();
       const params = normalizeCreateParams(rawParams);
       if (params.error) {
-        return nodeErrorResult(errorEnvelope('node_create', 'invalid_args', params.error, {
-          instructions: 'Call node_create with exactly one of outline, target_id, or duplicate_id.',
+        return nodeErrorResult(errorEnvelope<NodeCreateData>('node_create', 'invalid_args', params.error, {
+          instructions: 'Call node_create with exactly one of outline, target_id, duplicate_id, or definition.',
           metrics: { durationMs: elapsed(started) },
         }));
+      }
+
+      if (params.definition) {
+        return executeDefinitionCreate(host, params.definition, params.previewOnly === true, started);
       }
 
       const initialIndex = indexProjection(host.getProjection());
@@ -1105,16 +1787,300 @@ function normalizeCreateParams(rawParams: unknown): NodeCreateParams & { error?:
   const outline = typeof input.outline === 'string' && input.outline.trim() ? input.outline.trim() : undefined;
   const targetId = typeof input.target_id === 'string' && input.target_id.trim() ? input.target_id.trim() : undefined;
   const duplicateId = typeof input.duplicate_id === 'string' && input.duplicate_id.trim() ? input.duplicate_id.trim() : undefined;
-  const provided = [outline, targetId, duplicateId].filter(Boolean).length;
+  const definitionResult = normalizeDefinitionCreateParams(input.definition);
+  if (definitionResult.error) {
+    return { previewOnly: input.preview_only === true, error: definitionResult.error };
+  }
+  if (definitionResult.definition && (parentId !== undefined || afterId !== undefined)) {
+    return { previewOnly: input.preview_only === true, error: 'definition creates under Schema; omit parent_id and after_id.' };
+  }
+  const provided = [outline, targetId, duplicateId, definitionResult.definition].filter(Boolean).length;
   return {
     parentId,
     afterId,
     outline,
     targetId,
     duplicateId,
+    definition: definitionResult.definition,
     previewOnly: input.preview_only === true,
-    error: provided === 1 ? undefined : 'Exactly one of outline, target_id, or duplicate_id is required.',
+    error: provided === 1 ? undefined : 'Exactly one of outline, target_id, duplicate_id, or definition is required.',
   };
+}
+
+type DefinitionPatchNormalizeResult = {
+  provided: boolean;
+  patch: FieldConfigPatch | TagConfigPatch;
+  fieldKeys: string[];
+  tagKeys: string[];
+  error?: string;
+};
+
+const FIELD_TYPES: readonly FieldType[] = [
+  'plain',
+  'options',
+  'options_from_supertag',
+  'date',
+  'number',
+  'url',
+  'email',
+  'checkbox',
+  'reference',
+];
+
+const HIDE_FIELD_MODES: readonly HideFieldMode[] = ['never', 'empty', 'not_empty', 'value_is_default', 'always'];
+
+const FIELD_PATCH_KEYS = [
+  'fieldType',
+  'sourceSupertag',
+  'nullable',
+  'hideField',
+  'autoInitialize',
+  'autocollectOptions',
+  'minValue',
+  'maxValue',
+] as const;
+
+const TAG_PATCH_KEYS = [
+  'color',
+  'extends',
+  'childSupertag',
+  'showCheckbox',
+  'doneStateEnabled',
+  'doneMapChecked',
+  'doneMapUnchecked',
+] as const;
+
+function normalizeDefinitionCreateParams(value: unknown): { definition?: NodeDefinitionCreateParams; error?: string } {
+  if (value === undefined) return {};
+  const input = asRecord(value);
+  if (Object.keys(input).length === 0) return { error: 'definition must be an object with kind and name.' };
+  const kind = input.kind === 'field' || input.kind === 'tag' ? input.kind : undefined;
+  if (!kind) return { error: 'definition.kind must be "field" or "tag".' };
+  const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim() : undefined;
+  if (!name) return { error: 'definition.name is required.' };
+  const patchResult = normalizeDefinitionPatchParams(input.config);
+  if (patchResult.error) return { error: patchResult.error.replace('definition_patch', 'definition.config') };
+  if (kind === 'field' && patchResult.tagKeys.length > 0) {
+    return { error: `field definitions cannot use tag config keys: ${patchResult.tagKeys.join(', ')}.` };
+  }
+  if (kind === 'tag' && patchResult.fieldKeys.length > 0) {
+    return { error: `tag definitions cannot use field config keys: ${patchResult.fieldKeys.join(', ')}.` };
+  }
+  return {
+    definition: {
+      kind,
+      name,
+      config: patchResult.provided && Object.keys(patchResult.patch).length > 0 ? patchResult.patch : undefined,
+    },
+  };
+}
+
+function normalizeDefinitionPatchParams(value: unknown): DefinitionPatchNormalizeResult {
+  if (value === undefined) return { provided: false, patch: {}, fieldKeys: [], tagKeys: [] };
+  const input = asRecord(value);
+  if (Object.keys(input).length === 0 && (value === null || typeof value !== 'object' || Array.isArray(value))) {
+    return { provided: true, patch: {}, fieldKeys: [], tagKeys: [], error: 'definition_patch must be an object.' };
+  }
+  const patch: FieldConfigPatch & TagConfigPatch = {};
+  const fieldKeys: string[] = [];
+  const tagKeys: string[] = [];
+
+  const fieldType = readAliasedValue(input, 'field_type', 'fieldType');
+  if (fieldType.error) return failedDefinitionPatch(fieldType.error);
+  if (fieldType.provided) {
+    if (!isFieldType(fieldType.value)) return failedDefinitionPatch('definition_patch.field_type must be a supported field type.');
+    patch.fieldType = fieldType.value;
+    fieldKeys.push('field_type');
+  }
+
+  const sourceSupertag = readAliasedValue(input, 'source_supertag', 'sourceSupertag');
+  if (sourceSupertag.error) return failedDefinitionPatch(sourceSupertag.error);
+  if (sourceSupertag.provided) {
+    const parsed = stringOrNull(sourceSupertag.value, 'definition_patch.source_supertag');
+    if ('error' in parsed) return failedDefinitionPatch(parsed.error);
+    patch.sourceSupertag = parsed.value;
+    fieldKeys.push('source_supertag');
+  }
+
+  const autocollectOptions = readAliasedValue(input, 'autocollect_options', 'autocollectOptions');
+  if (autocollectOptions.error) return failedDefinitionPatch(autocollectOptions.error);
+  if (autocollectOptions.provided) {
+    if (typeof autocollectOptions.value !== 'boolean') return failedDefinitionPatch('definition_patch.autocollect_options must be boolean.');
+    patch.autocollectOptions = autocollectOptions.value;
+    fieldKeys.push('autocollect_options');
+  }
+
+  const autoInitialize = readAliasedValue(input, 'auto_initialize', 'autoInitialize');
+  if (autoInitialize.error) return failedDefinitionPatch(autoInitialize.error);
+  if (autoInitialize.provided) {
+    const parsed = stringOrNull(autoInitialize.value, 'definition_patch.auto_initialize', { allowEmptyString: true });
+    if ('error' in parsed) return failedDefinitionPatch(parsed.error);
+    patch.autoInitialize = parsed.value;
+    fieldKeys.push('auto_initialize');
+  }
+
+  const nullable = readAliasedValue(input, 'nullable');
+  if (nullable.error) return failedDefinitionPatch(nullable.error);
+  const required = readAliasedValue(input, 'required');
+  if (required.error) return failedDefinitionPatch(required.error);
+  if (nullable.provided) {
+    if (nullable.value !== null && typeof nullable.value !== 'boolean') return failedDefinitionPatch('definition_patch.nullable must be boolean or null.');
+    patch.nullable = nullable.value;
+    fieldKeys.push('nullable');
+  }
+  if (required.provided) {
+    if (typeof required.value !== 'boolean') return failedDefinitionPatch('definition_patch.required must be boolean.');
+    const requiredNullable = !required.value;
+    if (nullable.provided && nullable.value !== null && nullable.value !== requiredNullable) {
+      return failedDefinitionPatch('definition_patch cannot provide conflicting nullable and required values.');
+    }
+    if (!nullable.provided) {
+      patch.nullable = requiredNullable;
+      fieldKeys.push('required');
+    }
+  }
+
+  const hideField = readAliasedValue(input, 'hide_field', 'hideField');
+  if (hideField.error) return failedDefinitionPatch(hideField.error);
+  if (hideField.provided) {
+    if (hideField.value !== null && !isHideFieldMode(hideField.value)) {
+      return failedDefinitionPatch('definition_patch.hide_field must be a supported hide mode or null.');
+    }
+    patch.hideField = hideField.value;
+    fieldKeys.push('hide_field');
+  }
+
+  const minValue = readAliasedValue(input, 'min_value', 'minValue');
+  if (minValue.error) return failedDefinitionPatch(minValue.error);
+  if (minValue.provided) {
+    const parsed = numberOrNull(minValue.value, 'definition_patch.min_value');
+    if ('error' in parsed) return failedDefinitionPatch(parsed.error);
+    patch.minValue = parsed.value;
+    fieldKeys.push('min_value');
+  }
+
+  const maxValue = readAliasedValue(input, 'max_value', 'maxValue');
+  if (maxValue.error) return failedDefinitionPatch(maxValue.error);
+  if (maxValue.provided) {
+    const parsed = numberOrNull(maxValue.value, 'definition_patch.max_value');
+    if ('error' in parsed) return failedDefinitionPatch(parsed.error);
+    patch.maxValue = parsed.value;
+    fieldKeys.push('max_value');
+  }
+
+  const color = readAliasedValue(input, 'color');
+  if (color.error) return failedDefinitionPatch(color.error);
+  if (color.provided) {
+    const parsed = stringOrNull(color.value, 'definition_patch.color');
+    if ('error' in parsed) return failedDefinitionPatch(parsed.error);
+    patch.color = parsed.value;
+    tagKeys.push('color');
+  }
+
+  const extendsTag = readAliasedValue(input, 'extends');
+  if (extendsTag.error) return failedDefinitionPatch(extendsTag.error);
+  if (extendsTag.provided) {
+    const parsed = stringOrNull(extendsTag.value, 'definition_patch.extends');
+    if ('error' in parsed) return failedDefinitionPatch(parsed.error);
+    patch.extends = parsed.value;
+    tagKeys.push('extends');
+  }
+
+  const childSupertag = readAliasedValue(input, 'child_supertag', 'childSupertag');
+  if (childSupertag.error) return failedDefinitionPatch(childSupertag.error);
+  if (childSupertag.provided) {
+    const parsed = stringOrNull(childSupertag.value, 'definition_patch.child_supertag');
+    if ('error' in parsed) return failedDefinitionPatch(parsed.error);
+    patch.childSupertag = parsed.value;
+    tagKeys.push('child_supertag');
+  }
+
+  const showCheckbox = readAliasedValue(input, 'show_checkbox', 'showCheckbox');
+  if (showCheckbox.error) return failedDefinitionPatch(showCheckbox.error);
+  if (showCheckbox.provided) {
+    if (typeof showCheckbox.value !== 'boolean') return failedDefinitionPatch('definition_patch.show_checkbox must be boolean.');
+    patch.showCheckbox = showCheckbox.value;
+    tagKeys.push('show_checkbox');
+  }
+
+  const doneStateEnabled = readAliasedValue(input, 'done_state_enabled', 'doneStateEnabled');
+  if (doneStateEnabled.error) return failedDefinitionPatch(doneStateEnabled.error);
+  if (doneStateEnabled.provided) {
+    if (typeof doneStateEnabled.value !== 'boolean') return failedDefinitionPatch('definition_patch.done_state_enabled must be boolean.');
+    patch.doneStateEnabled = doneStateEnabled.value;
+    tagKeys.push('done_state_enabled');
+  }
+
+  const doneMapChecked = readAliasedValue(input, 'done_map_checked', 'doneMapChecked');
+  if (doneMapChecked.error) return failedDefinitionPatch(doneMapChecked.error);
+  if (doneMapChecked.provided) {
+    const parsed = stringArray(doneMapChecked.value, 'definition_patch.done_map_checked');
+    if ('error' in parsed) return failedDefinitionPatch(parsed.error);
+    patch.doneMapChecked = parsed.value;
+    tagKeys.push('done_map_checked');
+  }
+
+  const doneMapUnchecked = readAliasedValue(input, 'done_map_unchecked', 'doneMapUnchecked');
+  if (doneMapUnchecked.error) return failedDefinitionPatch(doneMapUnchecked.error);
+  if (doneMapUnchecked.provided) {
+    const parsed = stringArray(doneMapUnchecked.value, 'definition_patch.done_map_unchecked');
+    if ('error' in parsed) return failedDefinitionPatch(parsed.error);
+    patch.doneMapUnchecked = parsed.value;
+    tagKeys.push('done_map_unchecked');
+  }
+
+  return { provided: true, patch, fieldKeys, tagKeys };
+}
+
+function failedDefinitionPatch(error: string): DefinitionPatchNormalizeResult {
+  return { provided: true, patch: {}, fieldKeys: [], tagKeys: [], error };
+}
+
+function readAliasedValue(input: Record<string, unknown>, key: string, alias?: string): { provided: boolean; value?: unknown; error?: string } {
+  const hasKey = hasOwn(input, key);
+  const hasAlias = alias ? hasOwn(input, alias) : false;
+  if (!hasKey && !hasAlias) return { provided: false };
+  if (hasKey && hasAlias && !sameJsonValue(input[key], input[alias!])) {
+    return { provided: true, error: `definition_patch.${key} and ${alias} disagree.` };
+  }
+  return { provided: true, value: hasKey ? input[key] : input[alias!] };
+}
+
+function hasOwn(input: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(input, key);
+}
+
+function sameJsonValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function stringOrNull(value: unknown, label: string, options: { allowEmptyString?: boolean } = {}): { value: string | null } | { error: string } {
+  if (value === null) return { value: null };
+  if (typeof value !== 'string') return { error: `${label} must be a string or null.` };
+  const normalized = options.allowEmptyString ? value.trim() : value.trim();
+  if (!normalized && !options.allowEmptyString) return { error: `${label} must be a non-empty string or null.` };
+  return { value: normalized };
+}
+
+function numberOrNull(value: unknown, label: string): { value: number | null } | { error: string } {
+  if (value === null) return { value: null };
+  if (typeof value !== 'number' || !Number.isFinite(value)) return { error: `${label} must be a finite number or null.` };
+  return { value };
+}
+
+function stringArray(value: unknown, label: string): { value: string[] } | { error: string } {
+  if (!Array.isArray(value)) return { error: `${label} must be an array of node ids.` };
+  const strings = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map((item) => item.trim());
+  if (strings.length !== value.length) return { error: `${label} must contain only non-empty strings.` };
+  return { value: strings };
+}
+
+function isFieldType(value: unknown): value is FieldType {
+  return FIELD_TYPES.includes(value as FieldType);
+}
+
+function isHideFieldMode(value: unknown): value is HideFieldMode {
+  return HIDE_FIELD_MODES.includes(value as HideFieldMode);
 }
 
 function normalizeDeleteParams(rawParams: unknown): NodeDeleteParams & { error?: string } {
@@ -1135,7 +2101,7 @@ function normalizeDeleteParams(rawParams: unknown): NodeDeleteParams & { error?:
 function normalizeEditParams(rawParams: unknown): NormalizedEditParams {
   const input = asRecord(rawParams);
   const operation = normalizeEditOperation(input.operation);
-  if (operation === null) return { error: 'operation must be one of replace_outline, move, merge, or replace_with_reference.' };
+  if (operation === null) return { error: 'operation must be one of replace_outline, move, merge, replace_with_reference, configure_definition, reuse_field_definition, or merge_definition.' };
   const nodeId = typeof input.node_id === 'string' && input.node_id.trim() ? input.node_id.trim() : undefined;
   const nodeIds = Array.isArray(input.node_ids)
     ? unique(input.node_ids.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim()))
@@ -1150,13 +2116,36 @@ function normalizeEditParams(rawParams: unknown): NormalizedEditParams {
   const replaceWithReferenceTo = typeof input.replace_with_reference_to === 'string' && input.replace_with_reference_to.trim()
     ? input.replace_with_reference_to.trim()
     : undefined;
+  const definitionPatchResult = normalizeDefinitionPatchParams(input.definition_patch);
+  if (definitionPatchResult.error) return { error: definitionPatchResult.error };
+  const definitionPatch = definitionPatchResult.provided ? definitionPatchResult.patch : undefined;
+  const existingValues = input.existing_values === undefined
+    ? 'validate'
+    : input.existing_values === 'validate'
+      ? 'validate'
+      : undefined;
+  if (input.existing_values !== undefined && existingValues === undefined) {
+    return { error: 'existing_values must be "validate".' };
+  }
+  const targetDefinitionId = typeof input.target_definition_id === 'string' && input.target_definition_id.trim()
+    ? input.target_definition_id.trim()
+    : undefined;
   const previewOnly = input.preview_only === true;
 
   const outlineAction = Boolean(nodeId && oldString !== undefined && newString !== undefined);
   const moveAction = Boolean(move !== undefined && (nodeId || nodeIds));
   const mergeAction = Boolean(nodeId && mergeFromNodeIds !== undefined);
   const referenceAction = Boolean(nodeId && replaceWithReferenceTo !== undefined);
-  const inferredOperation = inferEditOperation({ outlineAction, moveAction, mergeAction, referenceAction });
+  const configureDefinitionAction = Boolean(nodeId && definitionPatch !== undefined);
+  const reuseFieldDefinitionAction = Boolean(nodeId && targetDefinitionId !== undefined);
+  const inferredOperation = inferEditOperation({
+    outlineAction,
+    moveAction,
+    mergeAction,
+    referenceAction,
+    configureDefinitionAction,
+    reuseFieldDefinitionAction,
+  });
   if (!operation && !inferredOperation) return { error: 'Exactly one node_edit operation is required. Prefer setting operation explicitly.' };
   const selectedOperation = operation ?? inferredOperation!;
 
@@ -1168,6 +2157,9 @@ function normalizeEditParams(rawParams: unknown): NormalizedEditParams {
     move,
     mergeFromNodeIds,
     replaceWithReferenceTo,
+    definitionPatch,
+    existingValues: input.existing_values === undefined ? undefined : existingValues,
+    targetDefinitionId,
   });
   if (extraFields.length > 0) {
     return { error: `operation "${selectedOperation}" cannot be combined with: ${extraFields.join(', ')}.` };
@@ -1193,34 +2185,79 @@ function normalizeEditParams(rawParams: unknown): NormalizedEditParams {
     return { action: 'merge', operation: selectedOperation, nodeId, mergeFromNodeIds, previewOnly };
   }
 
-  if (!nodeId) return { error: 'operation "replace_with_reference" requires node_id.' };
-  if (!replaceWithReferenceTo) return { error: 'operation "replace_with_reference" requires replace_with_reference_to.' };
-  return { action: 'replace_with_reference', operation: selectedOperation, nodeId, replaceWithReferenceTo, previewOnly };
+  if (selectedOperation === 'merge_definition') {
+    if (!nodeId) return { error: 'operation "merge_definition" requires node_id.' };
+    if (mergeFromNodeIds === undefined) return { error: 'operation "merge_definition" requires merge_from_node_ids.' };
+    return {
+      action: 'merge_definition',
+      operation: selectedOperation,
+      nodeId,
+      mergeFromNodeIds,
+      existingValues: existingValues ?? 'validate',
+      previewOnly,
+    };
+  }
+
+  if (selectedOperation === 'replace_with_reference') {
+    if (!nodeId) return { error: 'operation "replace_with_reference" requires node_id.' };
+    if (!replaceWithReferenceTo) return { error: 'operation "replace_with_reference" requires replace_with_reference_to.' };
+    return { action: 'replace_with_reference', operation: selectedOperation, nodeId, replaceWithReferenceTo, previewOnly };
+  }
+
+  if (selectedOperation === 'configure_definition') {
+    if (!nodeId) return { error: 'operation "configure_definition" requires node_id.' };
+    if (definitionPatch === undefined) return { error: 'operation "configure_definition" requires definition_patch.' };
+    if (Object.keys(definitionPatch).length === 0) return { error: 'definition_patch must include at least one config key.' };
+    return {
+      action: 'configure_definition',
+      operation: selectedOperation,
+      nodeId,
+      definitionPatch,
+      existingValues: existingValues ?? 'validate',
+      previewOnly,
+    };
+  }
+
+  if (!nodeId) return { error: 'operation "reuse_field_definition" requires node_id.' };
+  if (!targetDefinitionId) return { error: 'operation "reuse_field_definition" requires target_definition_id.' };
+  return { action: 'reuse_field_definition', operation: selectedOperation, nodeId, targetDefinitionId, previewOnly };
 }
 
-function normalizeEditOperation(value: unknown): 'replace_outline' | 'move' | 'merge' | 'replace_with_reference' | undefined | null {
+function normalizeEditOperation(value: unknown): NodeEditParams['operation'] | undefined | null {
   if (value === undefined) return undefined;
-  return value === 'replace_outline' || value === 'move' || value === 'merge' || value === 'replace_with_reference'
+  return value === 'replace_outline'
+    || value === 'move'
+    || value === 'merge'
+    || value === 'replace_with_reference'
+    || value === 'configure_definition'
+    || value === 'reuse_field_definition'
+    || value === 'merge_definition'
     ? value
     : null;
 }
+
+type ConcreteNodeEditOperation = NonNullable<NodeEditParams['operation']>;
 
 function inferEditOperation(actions: {
   outlineAction: boolean;
   moveAction: boolean;
   mergeAction: boolean;
   referenceAction: boolean;
-}): 'replace_outline' | 'move' | 'merge' | 'replace_with_reference' | null {
+  configureDefinitionAction: boolean;
+  reuseFieldDefinitionAction: boolean;
+}): ConcreteNodeEditOperation | null {
   const provided = [
     actions.outlineAction ? 'replace_outline' : null,
     actions.moveAction ? 'move' : null,
     actions.mergeAction ? 'merge' : null,
     actions.referenceAction ? 'replace_with_reference' : null,
-  ].filter((value): value is 'replace_outline' | 'move' | 'merge' | 'replace_with_reference' => Boolean(value));
+    actions.configureDefinitionAction ? 'configure_definition' : null,
+    actions.reuseFieldDefinitionAction ? 'reuse_field_definition' : null,
+  ].filter((value): value is ConcreteNodeEditOperation => value !== null);
   return provided.length === 1 ? provided[0]! : null;
 }
 
-function invalidEditOperationFields(operation: 'replace_outline' | 'move' | 'merge' | 'replace_with_reference', fields: {
+function invalidEditOperationFields(operation: ConcreteNodeEditOperation, fields: {
   nodeIds?: string[];
   oldString?: string;
   newString?: string;
@@ -1228,6 +2265,9 @@ function invalidEditOperationFields(operation: 'replace_outline' | 'move' | 'mer
   move?: NodeEditMoveParams;
   mergeFromNodeIds?: string[];
   replaceWithReferenceTo?: string;
+  definitionPatch?: FieldConfigPatch | TagConfigPatch;
+  existingValues?: string;
+  targetDefinitionId?: string;
 }): string[] {
   const extras: string[] = [];
   if (operation !== 'replace_outline') {
@@ -1239,8 +2279,15 @@ function invalidEditOperationFields(operation: 'replace_outline' | 'move' | 'mer
     if (fields.nodeIds !== undefined) extras.push('node_ids');
     if (fields.move !== undefined) extras.push('move');
   }
-  if (operation !== 'merge' && fields.mergeFromNodeIds !== undefined) extras.push('merge_from_node_ids');
+  if (operation !== 'merge' && operation !== 'merge_definition' && fields.mergeFromNodeIds !== undefined) extras.push('merge_from_node_ids');
   if (operation !== 'replace_with_reference' && fields.replaceWithReferenceTo !== undefined) extras.push('replace_with_reference_to');
+  if (operation !== 'configure_definition') {
+    if (fields.definitionPatch !== undefined) extras.push('definition_patch');
+  }
+  if (operation !== 'configure_definition' && operation !== 'merge_definition') {
+    if (fields.existingValues !== undefined) extras.push('existing_values');
+  }
+  if (operation !== 'reuse_field_definition' && fields.targetDefinitionId !== undefined) extras.push('target_definition_id');
   return extras;
 }
 
@@ -1335,6 +2382,43 @@ function validateMutableNodeIds(index: ProjectionIndex, nodeIds: string[]): { co
   const trashed = nodeIds.find((nodeId) => isInTrash(index, nodeId));
   if (trashed) return { code: 'node_in_trash', error: `Node is in Trash: ${trashed}`, instructions: 'Restore the node before editing it.' };
   return null;
+}
+
+function validateOrdinaryMergeNodeTypes(index: ProjectionIndex, targetNodeId: string, sourceNodeIds: string[]): { code: string; error: string; instructions: string } | null {
+  const target = requiredNode(index, targetNodeId);
+  if (!isContentNode(target)) {
+    return {
+      code: 'invalid_merge_node_type',
+      error: `Ordinary merge requires a content-node target; ${targetNodeId} is ${displayNodeType(target)}.`,
+      instructions: ordinaryMergeNodeTypeInstructions(target),
+    };
+  }
+  for (const sourceNodeId of sourceNodeIds) {
+    const source = requiredNode(index, sourceNodeId);
+    if (!isContentNode(source)) {
+      return {
+        code: 'invalid_merge_node_type',
+        error: `Ordinary merge requires content-node sources; ${sourceNodeId} is ${displayNodeType(source)}.`,
+        instructions: ordinaryMergeNodeTypeInstructions(source),
+      };
+    }
+  }
+  return null;
+}
+
+function isContentNode(node: NodeProjection): boolean {
+  return node.type === undefined;
+}
+
+function displayNodeType(node: NodeProjection): string {
+  return node.type ?? 'content';
+}
+
+function ordinaryMergeNodeTypeInstructions(node: NodeProjection): string {
+  if (node.type === 'fieldDef' || node.type === 'tagDef') {
+    return 'Use node_edit operation "merge_definition" for field/tag definitions.';
+  }
+  return 'Use ordinary merge only for duplicate content nodes. Use dedicated field, reference, search, view, or delete operations for structural nodes.';
 }
 
 function replaceOutline(currentOutline: string, oldString: string, newString: string, rootNodeId: string): {

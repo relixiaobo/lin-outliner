@@ -94,7 +94,7 @@ export const NODE_SEARCH_PARAMETERS = {
 export const NODE_CREATE_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
-  // Exactly one of outline / target_id / duplicate_id required (enforced in normalizeCreateParams).
+  // Exactly one of outline / target_id / duplicate_id / definition required (enforced in normalizeCreateParams).
   properties: {
     parent_id: {
       type: 'string',
@@ -120,6 +120,29 @@ export const NODE_CREATE_PARAMETERS = {
       type: 'string',
       minLength: 1,
       description: 'Duplicate an existing subtree by serializing and recreating its outline with new node ids.',
+    },
+    definition: {
+      type: 'object',
+      additionalProperties: false,
+      description: 'Create a tag or field definition node under Schema. Use this for schema definitions, not ordinary content nodes.',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['field', 'tag'],
+          description: 'Definition kind to create.',
+        },
+        name: {
+          type: 'string',
+          minLength: 1,
+          description: 'Definition display name.',
+        },
+        config: {
+          type: 'object',
+          additionalProperties: false,
+          description: 'Initial definition config. Field definitions accept field_type/source_supertag/etc.; tag definitions accept color/show_checkbox/etc.',
+          properties: definitionConfigPatchProperties(),
+        },
+      },
     },
     preview_only: {
       type: 'boolean',
@@ -165,8 +188,8 @@ export const NODE_EDIT_PARAMETERS = {
   properties: {
     operation: {
       type: 'string',
-      enum: ['replace_outline', 'move', 'merge', 'replace_with_reference'],
-      description: 'Edit operation to perform. Use replace_outline with node_id + old_string + new_string for content/field/search edits; move with move + node_id or node_ids; merge with node_id + merge_from_node_ids; replace_with_reference with node_id + replace_with_reference_to.',
+      enum: ['replace_outline', 'move', 'merge', 'replace_with_reference', 'configure_definition', 'reuse_field_definition', 'merge_definition'],
+      description: 'Edit operation to perform. Use replace_outline with node_id + old_string + new_string for content/field/search edits; configure_definition with node_id + definition_patch for tag/field definition config; reuse_field_definition with a field entry node_id + target_definition_id; merge_definition with a target definition node_id + merge_from_node_ids; move with move + node_id or node_ids; merge with node_id + merge_from_node_ids; replace_with_reference with node_id + replace_with_reference_to.',
     },
     node_id: {
       type: 'string',
@@ -219,12 +242,28 @@ export const NODE_EDIT_PARAMETERS = {
       minItems: 1,
       maxItems: 20,
       items: { type: 'string', minLength: 1 },
-      description: 'Source node ids to merge into node_id. Children, fields, tags, and references are merged into the target; source nodes are then moved to Trash.',
+      description: 'For operation "merge", source content node ids to merge into node_id. For operation "merge_definition", source field/tag definition ids to merge into target definition node_id.',
     },
     replace_with_reference_to: {
       type: 'string',
       minLength: 1,
       description: 'Replace node_id with a reference to this target node id at the same position.',
+    },
+    definition_patch: {
+      type: 'object',
+      additionalProperties: false,
+      description: 'Config patch for operation "configure_definition". Use snake_case keys such as field_type, source_supertag, show_checkbox, or color.',
+      properties: definitionConfigPatchProperties(),
+    },
+    existing_values: {
+      type: 'string',
+      enum: ['validate'],
+      description: 'How field type changes treat existing field values. v1 supports validate: reject incompatible existing values before mutation.',
+    },
+    target_definition_id: {
+      type: 'string',
+      minLength: 1,
+      description: 'Target field definition id for operation "reuse_field_definition". May be a user fieldDef id or supported sys:* field id.',
     },
     preview_only: {
       type: 'boolean',
@@ -232,6 +271,59 @@ export const NODE_EDIT_PARAMETERS = {
     },
   },
 };
+
+function definitionConfigPatchProperties() {
+  return {
+    field_type: {
+      type: 'string',
+      enum: ['plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox', 'reference'],
+      description: 'Field definition type.',
+    },
+    fieldType: {
+      type: 'string',
+      enum: ['plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox', 'reference'],
+      description: 'Alias for field_type.',
+    },
+    source_supertag: {
+      anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }],
+      description: 'Tag definition id used by options_from_supertag fields.',
+    },
+    sourceSupertag: {
+      anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }],
+      description: 'Alias for source_supertag.',
+    },
+    autocollect_options: { type: 'boolean', description: 'Whether an options field auto-collects new values.' },
+    autocollectOptions: { type: 'boolean', description: 'Alias for autocollect_options.' },
+    auto_initialize: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'Comma-separated auto-initialize strategies.' },
+    autoInitialize: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'Alias for auto_initialize.' },
+    nullable: { anyOf: [{ type: 'boolean' }, { type: 'null' }], description: 'Whether a field value may be empty.' },
+    required: { type: 'boolean', description: 'Convenience inverse of nullable.' },
+    hide_field: {
+      anyOf: [{ type: 'string', enum: ['never', 'empty', 'not_empty', 'value_is_default', 'always'] }, { type: 'null' }],
+      description: 'When to hide this field.',
+    },
+    hideField: {
+      anyOf: [{ type: 'string', enum: ['never', 'empty', 'not_empty', 'value_is_default', 'always'] }, { type: 'null' }],
+      description: 'Alias for hide_field.',
+    },
+    min_value: { anyOf: [{ type: 'number' }, { type: 'null' }], description: 'Minimum value for number fields.' },
+    minValue: { anyOf: [{ type: 'number' }, { type: 'null' }], description: 'Alias for min_value.' },
+    max_value: { anyOf: [{ type: 'number' }, { type: 'null' }], description: 'Maximum value for number fields.' },
+    maxValue: { anyOf: [{ type: 'number' }, { type: 'null' }], description: 'Alias for max_value.' },
+    color: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'Tag color token.' },
+    extends: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }], description: 'Parent tag definition id to extend.' },
+    child_supertag: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }], description: 'Default child supertag id.' },
+    childSupertag: { anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }], description: 'Alias for child_supertag.' },
+    show_checkbox: { type: 'boolean', description: 'Whether nodes with this tag show a checkbox.' },
+    showCheckbox: { type: 'boolean', description: 'Alias for show_checkbox.' },
+    done_state_enabled: { type: 'boolean', description: 'Whether done-state mapping is enabled.' },
+    doneStateEnabled: { type: 'boolean', description: 'Alias for done_state_enabled.' },
+    done_map_checked: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Option node ids mapped to checked state.' },
+    doneMapChecked: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Alias for done_map_checked.' },
+    done_map_unchecked: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Option node ids mapped to unchecked state.' },
+    doneMapUnchecked: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Alias for done_map_unchecked.' },
+  };
+}
 
 export const OUTLINE_UNDO_STACK_PARAMETERS = {
   type: 'object',
