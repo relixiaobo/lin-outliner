@@ -40,6 +40,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Definition node edit parity (PR #388, codex-3)** — agent `node_read` now
+  projects editable tag and field definition config from parent definition
+  nodes; `node_create.definition` creates tag and field definitions with typed
+  initial config; and `node_edit` supports `configure_definition`,
+  `reuse_field_definition`, and `merge_definition`. Field type changes validate
+  existing values and report incompatible value ids, definition merge rewrites
+  field/tag uses plus saved-search, view, config, reference-node, and rich-text
+  inline references, and ordinary content merge is no longer used for definition
+  nodes.
 - **Agent image generation tool (PR #383, codex-2)** — added the
   `generate_image` agent tool for provider-backed raster image generation and
   edits. The tool supports OpenAI and Gemini image models through the existing
