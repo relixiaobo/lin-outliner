@@ -59,6 +59,75 @@ describe('CC Switch registry normalization', () => {
     expect(ccSwitchSourceApiKey(source)).toBe('registry-key');
   });
 
+  test('extracts the selected model from CC Switch Codex TOML config rows', () => {
+    const snapshot = buildCcSwitchRegistryFromRows({
+      providers: [
+        {
+          id: 'default',
+          app_type: 'codex',
+          name: 'default',
+          settings_config: JSON.stringify({
+            auth: {
+              OPENAI_API_KEY: {},
+              auth_mode: 'chatgpt',
+              tokens: { access_token: 'oauth-access-token', refresh_token: 'oauth-refresh-token' },
+            },
+            config: 'model = "gpt-5.5"\nmodel_reasoning_effort = "xhigh"\n',
+          }),
+          meta: JSON.stringify({}),
+          is_current: 0,
+          sort_index: 0,
+        },
+        {
+          id: 'provider-openai',
+          app_type: 'codex',
+          name: 'OpenAI',
+          settings_config: JSON.stringify({
+            auth: { OPENAI_API_KEY: 'registry-key' },
+            config: [
+              'model_provider = "custom"',
+              'model = "gpt-5.5"',
+              'disable_response_storage = true',
+              '',
+              '[model_providers.custom]',
+              'base_url = "https://registry.example.com/v1"',
+            ].join('\n'),
+          }),
+          meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+          is_current: 1,
+          sort_index: 1,
+        },
+      ],
+      endpoints: [{
+        provider_id: 'provider-openai',
+        app_type: 'codex',
+        url: 'https://registry.example.com/v1',
+        added_at: '2026-07-08T00:00:00.000Z',
+      }],
+      proxyConfigs: [{
+        app_type: 'codex',
+        listen_address: '127.0.0.1',
+        listen_port: 15721,
+        enabled: 1,
+        proxy_enabled: 1,
+      }],
+    });
+
+    expect(snapshot.status).toBe('ready');
+    expect(snapshot.statusMessage).toBeUndefined();
+    expect(snapshot.sources.find((source) => source.providerId === 'default')).toMatchObject({
+      routeKind: 'proxy-required',
+      authKind: 'oauth',
+    });
+    const source = ccSwitchRunnableSources(snapshot)[0]!;
+    expect(source).toMatchObject({
+      providerId: 'provider-openai',
+      routeKind: 'direct',
+      modelId: 'gpt-5.5',
+    });
+    expect(ccSwitchSourceApiKey(source)).toBe('registry-key');
+  });
+
   test('marks Codex Chat Completions rows as proxy-required', () => {
     const snapshot = buildCcSwitchRegistryFromRows(registryRows({
       apiFormat: 'openai_chat',

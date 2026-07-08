@@ -294,7 +294,7 @@ function normalizeProviderSource(
   const appType = normalizeAppType(row.app_type);
   const providerId = stringValue(row.id);
   if (!appType || !providerId) return null;
-  const settingsConfig = parseJsonObject(row.settings_config);
+  const settingsConfig = normalizeSettingsConfig(parseJsonObject(row.settings_config));
   const meta = parseJsonObject(row.meta);
   const endpoints = uniqueStrings([
     ...(endpointsBySource.get(sourceKey(appType, providerId)) ?? []),
@@ -431,6 +431,96 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function normalizeSettingsConfig(settingsConfig: Record<string, unknown>): Record<string, unknown> {
+  const config = settingsConfig.config;
+  if (typeof config !== 'string') return settingsConfig;
+  const parsedConfig = parseTomlScalars(config);
+  if (Object.keys(parsedConfig).length === 0) return settingsConfig;
+  return {
+    ...settingsConfig,
+    config: parsedConfig,
+  };
+}
+
+function parseTomlScalars(value: string): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  let target = root;
+  for (const rawLine of value.split(/\r?\n/g)) {
+    const line = stripTomlComment(rawLine).trim();
+    if (!line) continue;
+    const sectionMatch = line.match(/^\[([A-Za-z0-9_.-]+)\]$/);
+    if (sectionMatch) {
+      target = ensureTomlSection(root, sectionMatch[1]!);
+      continue;
+    }
+    const assignmentMatch = line.match(/^([A-Za-z0-9_-]+)\s*=\s*(.+)$/);
+    if (!assignmentMatch) continue;
+    const key = assignmentMatch[1]!;
+    const parsedValue = parseTomlScalar(assignmentMatch[2]!.trim());
+    if (parsedValue !== undefined) target[key] = parsedValue;
+  }
+  return root;
+}
+
+function ensureTomlSection(root: Record<string, unknown>, path: string): Record<string, unknown> {
+  let target = root;
+  for (const part of path.split('.').filter(Boolean)) {
+    const existing = target[part];
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+      const next: Record<string, unknown> = {};
+      target[part] = next;
+      target = next;
+      continue;
+    }
+    target = existing as Record<string, unknown>;
+  }
+  return target;
+}
+
+function stripTomlComment(line: string): string {
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote === '"') {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (quote === "'") {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '#') return line.slice(0, index);
+  }
+  return line;
+}
+
+function parseTomlScalar(value: string): unknown {
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value.slice(1, -1);
+    }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1);
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  const numeric = Number(value.replace(/_/g, ''));
+  if (value && Number.isFinite(numeric) && /^[+-]?(?:\d+|\d*\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) return numeric;
+  return undefined;
 }
 
 function classifyAuthKind(settingsConfig: Record<string, unknown>): CcSwitchAuthKind {
