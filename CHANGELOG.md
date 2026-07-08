@@ -40,6 +40,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent image generation tool (PR #383, codex-2)** — added the
+  `generate_image` agent tool for provider-backed raster image generation and
+  edits. The tool supports OpenAI and Gemini image models through the existing
+  provider credential path, validates provider-specific options before dispatch,
+  stores generated images as app-owned scratch artifacts, renders image previews
+  in the transcript, and persists only slim render metadata for replay. Settings
+  now exposes a default image model selector and provider capability summaries
+  include image-generation models.
 - **Feed-processing built-in skill (PR #387, codex-3)** — enabled the
   `feed-processing` skill from `linlab-skills` as a default resource-backed
   built-in. Development runs now load it from the sibling linlab checkout, and

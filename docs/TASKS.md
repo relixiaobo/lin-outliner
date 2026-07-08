@@ -22,17 +22,19 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369, agent-image-generation-tool #383; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382, feed-processing-built-in #387**) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373, agent-bundled-search-tools #374, data-import-cli-api-boundary #375, ask-user-question-stepper #376 + polish #378, model-effort-labels #379, agent-issue-manager plan #384) |
+| Codex 4 | `lin-outliner-codex-4/` | `codex-4/agent-issue-manager` | ready PR #386 (agent issue manager implementation) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-07).** Open PR queue: none. Recently merged: #387
-(`codex-3/feed-processing-built-in`) and #385
+**In flight (2026-07-08).** Open PR queue: #386
+(`codex-4/agent-issue-manager`). Recently merged: #383
+(`codex-2/agent-image-generation-tool`) merged 2026-07-08 after main review;
+see *Recently completed*. #387 (`codex-3/feed-processing-built-in`) and #385
 (`codex/structured-field-resolution`) merged 2026-07-07; see *Recently
 completed*. #384 (`codex-4/scheduled-agent-work`) merged 2026-07-07 as the active P1 Agent
 Issue Manager implementation plan; see *Agent capabilities* and *Recently
@@ -490,6 +492,24 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-image-generation-tool** (`codex-2/agent-image-generation-tool`, PR
+  #383, codex-2, merged 2026-07-08, plan-track) — adds a model-visible
+  `generate_image` tool for raster generation and edits. OpenAI and Gemini image
+  models are exposed through the existing provider credential path; Settings has
+  a default image model selector; provider-specific options are validated before
+  dispatch; generated images are written under app-owned scratch
+  `generated-images/` paths; transcript tool output and Markdown images render
+  previews that open as file-only readers; replay persists only slim generated
+  image metadata instead of base64/tool envelopes. **Gate (main):** review found
+  a tool-result persistence leak, a generated-image symlink escape, a merge
+  conflict with the agent-skills helper, and a relative generated-image preview
+  resolver that could prefer a same-named workspace file over scratch; codex-2
+  fixed each issue before merge. Verified on the final PR head with typecheck,
+  `test:core`, `test:renderer`, `docs:check`, `bun run build`,
+  `git diff --check`, targeted generated-image path/security/preview/agent-skills
+  tests, and a local collision repro for `generated-images/...`. Plan archived
+  `done`: `docs/plans/archive/agent-image-generation-tool.md`.
 
 - **feed-processing-built-in** (`codex-3/feed-processing-built-in`, PR #387,
   codex-3, merged 2026-07-07, fast-track) — enables the `feed-processing`
