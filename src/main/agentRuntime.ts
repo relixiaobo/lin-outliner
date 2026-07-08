@@ -8297,6 +8297,11 @@ function formatRunNotification(snapshot: AgentRunSnapshot, latestSubmission?: Ag
     `<summary>${escapeXml(summary)}</summary>`,
     result ? `<result>${escapeXml(result)}</result>` : null,
     snapshot.error ? `<error>${escapeXml(snapshot.error)}</error>` : null,
+    '<delivery_instructions>',
+    'If this completed background run contains a result, answer the user with the result itself.',
+    'Do not merely say the result was stored in a run, Issue, Activity, or work record.',
+    'If the result is too long for the chat surface, provide the useful summary first and mention that the full result is available in Work details.',
+    '</delivery_instructions>',
     '</agent-run-notification>',
   ].filter((line): line is string => line !== null).join('\n');
 }
