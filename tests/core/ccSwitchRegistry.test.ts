@@ -128,6 +128,72 @@ describe('CC Switch registry normalization', () => {
     expect(ccSwitchSourceApiKey(source)).toBe('registry-key');
   });
 
+  test('recognizes auth-scoped key and type fields as API-key credentials', () => {
+    const snapshot = buildCcSwitchRegistryFromRows({
+      providers: [{
+        id: 'provider-openai',
+        app_type: 'codex',
+        name: 'OpenAI',
+        settings_config: JSON.stringify({
+          auth: { type: 'api_key', key: 'registry-key' },
+          model: 'gpt-5.5',
+        }),
+        meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+        is_current: 1,
+        sort_index: 0,
+      }],
+      endpoints: [{
+        provider_id: 'provider-openai',
+        app_type: 'codex',
+        url: 'https://registry.example.com/v1',
+        added_at: '2026-07-08T00:00:00.000Z',
+      }],
+      proxyConfigs: [],
+    });
+
+    expect(snapshot.status).toBe('ready');
+    const source = ccSwitchRunnableSources(snapshot)[0]!;
+    expect(source.authKind).toBe('api-key');
+    expect(ccSwitchSourceApiKey(source)).toBe('registry-key');
+  });
+
+  test('ignores model-catalog key and type metadata when classifying credentials', () => {
+    const snapshot = buildCcSwitchRegistryFromRows({
+      providers: [{
+        id: 'provider-openai',
+        app_type: 'codex',
+        name: 'OpenAI',
+        settings_config: JSON.stringify({
+          auth: {},
+          model: 'gpt-5.5',
+          modelCatalog: {
+            models: [
+              { slug: 'gpt-5.5', key: 'model-row-key', type: 'oauth' },
+            ],
+          },
+        }),
+        meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+        is_current: 1,
+        sort_index: 0,
+      }],
+      endpoints: [{
+        provider_id: 'provider-openai',
+        app_type: 'codex',
+        url: 'https://registry.example.com/v1',
+        added_at: '2026-07-08T00:00:00.000Z',
+      }],
+      proxyConfigs: [],
+    });
+
+    expect(snapshot.status).toBe('unsupported');
+    expect(snapshot.sources[0]).toMatchObject({
+      authKind: 'unknown',
+      routeKind: 'unsupported',
+      disabledReason: expect.stringContaining('unsupported credential'),
+    });
+    expect(ccSwitchRunnableSources(snapshot)).toEqual([]);
+  });
+
   test('marks Codex Chat Completions rows as proxy-required', () => {
     const snapshot = buildCcSwitchRegistryFromRows(registryRows({
       apiFormat: 'openai_chat',

@@ -524,16 +524,29 @@ function parseTomlScalar(value: string): unknown {
 }
 
 function classifyAuthKind(settingsConfig: Record<string, unknown>): CcSwitchAuthKind {
-  const explicit = stringValue(deepFindValue(settingsConfig, ['authKind', 'auth_kind', 'credentialType', 'credential_type', 'type']));
-  const normalized = explicit?.toLowerCase().replace(/[-\s]/g, '_');
-  if (normalized === 'api_key' || normalized === 'apikey') return 'api-key';
-  if (normalized === 'oauth' || normalized === 'session') return 'oauth';
-  if (normalized === 'managed') return 'managed';
-  if (normalized === 'none') return 'none';
+  const explicit = normalizeAuthKind(extractExplicitAuthKind(settingsConfig));
+  if (explicit) return explicit;
   if (extractCcSwitchApiKey(settingsConfig)) return 'api-key';
   if (deepHasKey(settingsConfig, ['refresh', 'refresh_token', 'access', 'access_token', 'session', 'oauth'])) return 'oauth';
   if (deepHasKey(settingsConfig, ['managed', 'account_id', 'accountId'])) return 'managed';
   return 'unknown';
+}
+
+function extractExplicitAuthKind(settingsConfig: Record<string, unknown>): string | undefined {
+  const direct = stringValue(firstRecordString(settingsConfig, ['authKind', 'auth_kind', 'credentialType', 'credential_type', 'authMode', 'auth_mode']));
+  if (direct) return direct;
+  const auth = recordValue(settingsConfig.auth);
+  if (!auth) return undefined;
+  return stringValue(firstRecordString(auth, ['authKind', 'auth_kind', 'credentialType', 'credential_type', 'authMode', 'auth_mode', 'type']));
+}
+
+function normalizeAuthKind(value: string | undefined): CcSwitchAuthKind | undefined {
+  const normalized = value?.toLowerCase().replace(/[-\s]/g, '_');
+  if (normalized === 'api_key' || normalized === 'apikey' || normalized === 'key') return 'api-key';
+  if (normalized === 'oauth' || normalized === 'session' || normalized === 'chatgpt') return 'oauth';
+  if (normalized === 'managed') return 'managed';
+  if (normalized === 'none') return 'none';
+  return undefined;
 }
 
 function extractApiFormat(...records: Record<string, unknown>[]): string | null {
@@ -553,7 +566,12 @@ function normalizeApiFormat(value: string | null | undefined): 'openai_responses
 }
 
 function extractCcSwitchApiKey(settingsConfig: Record<string, unknown>): string | undefined {
-  return stringValue(deepFindValue(settingsConfig, ['OPENAI_API_KEY', 'apiKey', 'api_key', 'key']));
+  const auth = recordValue(settingsConfig.auth);
+  const scoped = auth
+    ? stringValue(deepFindValue(auth, ['OPENAI_API_KEY', 'openai_api_key', 'apiKey', 'api_key', 'api-key', 'key']))
+    : undefined;
+  return scoped
+    ?? stringValue(deepFindValue(settingsConfig, ['OPENAI_API_KEY', 'openai_api_key', 'apiKey', 'api_key', 'api-key']));
 }
 
 function extractEndpointFromSettings(settingsConfig: Record<string, unknown>): string | undefined {
@@ -638,6 +656,20 @@ function deepFindValue(record: Record<string, unknown>, names: readonly string[]
 
 function deepHasKey(record: Record<string, unknown>, names: readonly string[]): boolean {
   return deepFindValue(record, names) !== undefined;
+}
+
+function firstRecordString(record: Record<string, unknown>, names: readonly string[]): unknown {
+  for (const name of names) {
+    const value = record[name];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function modelIdFromListEntry(entry: unknown): string | null {
