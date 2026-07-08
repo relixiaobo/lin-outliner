@@ -1,3 +1,5 @@
+import { parseLocalFileReferenceUrl } from '../../../core/referenceMarkup';
+
 export interface InlineFilePreviewDescriptor {
   entryKind?: 'file' | 'directory';
   iconDataUrl?: string;
@@ -36,6 +38,8 @@ export function localFileReferenceFromHref(
   href: string | undefined,
 ): { entryKind: 'file' | 'directory'; path: string } | null {
   const normalizedHref = href?.startsWith('#') ? href.slice(1) : href;
+  const fileReferenceUrl = parseLocalFileReferenceUrl(normalizedHref);
+  if (fileReferenceUrl) return fileReferenceUrl;
   if (!normalizedHref?.startsWith(LOCAL_FILE_REFERENCE_LINK_PREFIX)) return null;
   const body = normalizedHref.slice(LOCAL_FILE_REFERENCE_LINK_PREFIX.length);
   const separator = body.indexOf(':');

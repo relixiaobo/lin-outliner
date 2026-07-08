@@ -1001,13 +1001,14 @@ Each command should return:
 `generate_image` returns normal tool-envelope details plus short
 scratch-relative local paths for each generated image. Runtime details keep the
 actual provider/model used for UI and debug display, but the model-visible JSON
-contains only paths, `fileRef`, `markdownImage`, and file metadata needed for
-follow-up work. The raw image bytes are written to the app-owned generated-image
+contains only paths, `markdownImage`, and file metadata needed for follow-up
+work. The raw image bytes are written to the app-owned generated-image
 directory under the agent scratch root and are not copied into model-visible
 JSON, renderer debug text, or extra image content blocks. When the user should
-see the images, the assistant places each returned `markdownImage` marker in the
-final response; this is the image form of the normal `[[file:...]]` marker. The
-renderer loads the bytes through the trusted local preview bridge. The tool
+see the images, the assistant places each returned `markdownImage` string in the
+final response; this is standard Markdown image syntax with a `file:^...`
+local-file target. The renderer loads the bytes through the trusted local preview
+bridge. The tool
 result details are persisted with the event and are the renderer's source for
 generated image paths. If a generated file is later cleared, path preview surfaces
 keep the image slot and show an unavailable-image placeholder; if the agent

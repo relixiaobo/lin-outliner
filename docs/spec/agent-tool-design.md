@@ -288,10 +288,11 @@ Validation is TypeScript-owned:
 
 - `prompt` is required, non-empty, and capped.
 - `image_paths` are capped and may be absolute paths, workspace-relative paths,
-  generated-image scratch-relative paths, or `[[file:...]]` / `![[file:...]]`
-  markers. They resolve through the same local file boundary used by file tools
-  and previewable agent scratch files. The selected model must advertise image
-  input before references are sent.
+  generated-image scratch-relative paths, `file:^...` local-file targets,
+  generated `markdownImage` values, or normal `[[file:...]]` markers. They
+  resolve through the same local file boundary used by file tools and previewable
+  agent scratch files. The selected model must advertise image input before
+  references are sent.
 - Missing, cleared, inaccessible, or non-image input paths return
   `input_image_unavailable` before any provider call, with instructions to use an
   existing path, regenerate the image, or remove `image_paths`.
@@ -317,33 +318,34 @@ Validation is TypeScript-owned:
 Generated images are written to an app-owned local generated-image directory
 under the agent scratch root, with short scratch-relative paths such as
 `generated-images/<run>/<image>.png` returned to the model. The model-visible JSON
-includes only local paths, normal file reference markers (`fileRef`), embeddable
-image markers (`markdownImage`), mime types, byte lengths, and dimensions when
-known; it does not include provider/model execution metadata or base64 image
-bytes. The complete runtime details retain `providerId`, `modelId`, `modelName`,
-and the generated image path list for UI/debug display, and those details are
-persisted with the tool result event. The tool result does not embed raw image
-bytes or image content blocks; follow-up edits pass the returned `path` or
-`fileRef` back through `image_paths`, and explicit inspection can use the normal
-local file tools. The renderer reads generated image paths from the persisted
-details and displays them inline as lazy-loaded previews through the local
-preview byte reader; opening the preview targets the returned local-file path. If
-the file has been cleared or manually removed, the preview remains in place and
-shows an unavailable-image placeholder.
+includes only local paths, embeddable Markdown image strings (`markdownImage`),
+mime types, byte lengths, and dimensions when known; it does not include
+provider/model execution metadata or base64 image bytes. The complete runtime
+details retain `providerId`, `modelId`, `modelName`, and the generated image path
+list for UI/debug display, and those details are persisted with the tool result
+event. The tool result does not embed raw image bytes or image content blocks;
+follow-up edits pass the returned `path` or `markdownImage` back through
+`image_paths`, and explicit inspection can use the normal local file tools. The
+renderer reads generated image paths from the persisted details and displays them
+inline as lazy-loaded previews through the local preview byte reader; opening the
+preview targets the returned local-file path. If the file has been cleared or
+manually removed, the preview remains in place and shows an unavailable-image
+placeholder.
 
 When the user should see generated images in the final response, the assistant
 places each returned `markdownImage` exactly where that image belongs:
 
 ```md
-![[file:short description^generated-images%2Frun%2Fimage.png]]
+![short description](file:^generated-images%2Frun%2Fimage.png)
 ```
 
-This is the image form of the normal `[[file:...]]` marker, so the model does not
-need a second path syntax. The `path` field remains the unencoded short path for
-follow-up `image_paths`; the returned `fileRef`/`markdownImage` values use the
-same escaping as all other file markers. The marker position is authoritative for
-mixed text/image answers. The image renderer still loads bytes through the
-trusted local preview bridge rather than directly loading `file:` URLs.
+This keeps the display syntax as ordinary Markdown image syntax while reusing the
+same `file:` local-file target vocabulary and percent-escaping as file reference
+markers. The `path` field remains the unencoded short path for follow-up
+`image_paths`; the returned `markdownImage` uses the encoded `file:^...` target.
+The Markdown image position is authoritative for mixed text/image answers. The
+image renderer still loads bytes through the trusted local preview bridge rather
+than directly loading `file:` URLs.
 
 Runtime details:
 
@@ -1940,12 +1942,12 @@ stable system prompt. This follows the agent runtime pattern:
   `[[file:<label>^<path>]]` in its own final answer to surface a file it produced
   for the user — a deliverable they asked for or should review (whether written via
   `file_write` or `bash`), not an intermediate/scratch file — using an absolute path
-  inside the agent local root. Generated image answers use the returned
-  `![[file:...]]` image marker with the short generated-image path instead. The
-  renderer resolves file markers through the trusted-local-file gate
-  (`resolveTrustedLocalFileReference`) and renders an inline file chip or image the
-  user can preview, save, or insert into the outliner — the same chip an incoming
-  attachment marker renders. Preview source resolution issues an opaque
+  inside the agent local root. Generated image answers use the returned standard
+  Markdown image string with a `file:^...` target instead. The renderer resolves
+  file markers and Markdown image file targets through the trusted-local-file
+  gate (`resolveTrustedLocalFileReference`) and renders an inline file chip or
+  image the user can preview, save, or insert into the outliner — the same chip an
+  incoming attachment marker renders. Preview source resolution issues an opaque
   `preview-local://<token>` stream URL for trusted regular files, backed by a
   main-process token registry and range-capable file stream; the renderer never
   receives a `file://` URL or path-read capability. This is what lets a

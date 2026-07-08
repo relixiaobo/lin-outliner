@@ -8,8 +8,8 @@ import {
 } from './agentToolEnvelope';
 import { readAgentImageDimensions } from './agentLocalTools';
 import {
-  basenameForPath,
-  formatFileReferenceMarker,
+  formatLocalFileReferenceUrl,
+  parseLocalFileReferenceUrl,
   splitFileReferenceMarkers,
   type FileReferenceSegment,
 } from '../core/referenceMarkup';
@@ -89,7 +89,6 @@ export interface GenerateImageData {
 
 export interface GeneratedImageResult {
   path: string;
-  fileRef: string;
   markdownImage: string;
   mimeType: string;
   byteLength: number;
@@ -137,8 +136,8 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         image_paths: {
           type: 'array',
           maxItems: MAX_IMAGE_PATHS,
-          description: 'Optional local image paths for edits or transformations. Use paths or fileRef markers returned by earlier tool results, absolute paths, or workspace-relative paths for user files. Omit for text-to-image.',
-          items: { type: 'string', minLength: 1, description: 'Readable local image path or [[file:...]] marker to use as an edit/reference input.' },
+          description: 'Optional local image paths for edits or transformations. Use path values or markdownImage values returned by earlier tool results, absolute paths, or workspace-relative paths for user files. Omit for text-to-image.',
+          items: { type: 'string', minLength: 1, description: 'Readable local image path, file:^... target, Markdown image, or [[file:...]] marker to use as an edit/reference input.' },
         },
         count: {
           type: 'integer',
@@ -282,12 +281,9 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
             mimeType: image.mimeType,
             prompt: params.prompt,
           });
-          const label = generatedImageLabel(saved.path, index);
-          const fileRef = formatFileReferenceMarker(label, saved.path);
           return {
             path: saved.path,
-            fileRef,
-            markdownImage: `!${fileRef}`,
+            markdownImage: `![${generatedImageAlt(index)}](${formatLocalFileReferenceUrl(saved.path)})`,
             mimeType: image.mimeType,
             byteLength: data.byteLength,
             ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
@@ -304,7 +300,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         };
         return agentToolResult(
           successEnvelope(GENERATE_IMAGE_TOOL_NAME, data, {
-            instructions: 'Use each returned markdownImage value verbatim to place generated images in the final answer. Use path or fileRef in image_paths for follow-up edits.',
+            instructions: 'Use each returned markdownImage value verbatim to place generated images in the final answer. Use path or markdownImage in image_paths for follow-up edits.',
             metrics: {
               durationMs: elapsed(startedAt),
               outputBytes: images.reduce((total, image) => total + image.byteLength, 0),
@@ -446,7 +442,6 @@ function modelVisibleGenerateImageData(data: GenerateImageData) {
   return {
     images: data.images.map((image) => ({
       path: image.path,
-      fileRef: image.fileRef,
       markdownImage: image.markdownImage,
       mimeType: image.mimeType,
       byteLength: image.byteLength,
@@ -457,6 +452,13 @@ function modelVisibleGenerateImageData(data: GenerateImageData) {
 }
 
 function normalizeImagePathValue(value: string): string {
+  const fileUrl = parseLocalFileReferenceUrl(value);
+  if (fileUrl?.entryKind === 'file') return fileUrl.path;
+  const markdownTarget = markdownImageTarget(value);
+  if (markdownTarget) {
+    const markdownFileUrl = parseLocalFileReferenceUrl(markdownTarget);
+    if (markdownFileUrl?.entryKind === 'file') return markdownFileUrl.path;
+  }
   const segments = splitFileReferenceMarkers(value);
   const files = segments.filter((segment): segment is FileReferenceSegment => segment.type === 'file');
   if (files.length !== 1) return value;
@@ -468,8 +470,13 @@ function normalizeImagePathValue(value: string): string {
   return value;
 }
 
-function generatedImageLabel(filePath: string, index: number): string {
-  return basenameForPath(filePath) || `image-${index + 1}.png`;
+function markdownImageTarget(value: string): string | null {
+  const match = value.match(/^!\[[^\]\r\n]*\]\(([^()\s]+)\)$/u);
+  return match?.[1] ?? null;
+}
+
+function generatedImageAlt(index: number): string {
+  return `Generated image ${index + 1}`;
 }
 
 function stringParam(value: unknown): string | undefined {

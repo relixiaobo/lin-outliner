@@ -5,7 +5,7 @@ import {
   type GenerateImageData,
 } from '../../src/main/agentImageGenerationTool';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
-import { formatFileReferenceMarker } from '../../src/core/referenceMarkup';
+import { formatLocalFileReferenceUrl } from '../../src/core/referenceMarkup';
 
 const ONE_PIXEL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==';
 const GENERATED_IMAGE_PATH = 'generated-images/run-a/image-0.png';
@@ -49,8 +49,7 @@ describe('generate_image tool', () => {
     expect(details.data?.modelName).toBe('GPT Image 2');
     expect(details.data?.images).toHaveLength(1);
     expect(details.data?.images[0]?.path).toBe('generated-images/run-a/image-0.png');
-    expect(details.data?.images[0]?.fileRef).toBe(formatFileReferenceMarker('image-0.png', 'generated-images/run-a/image-0.png'));
-    expect(details.data?.images[0]?.markdownImage).toBe(`!${formatFileReferenceMarker('image-0.png', 'generated-images/run-a/image-0.png')}`);
+    expect(details.data?.images[0]?.markdownImage).toBe(`![Generated image 1](${formatLocalFileReferenceUrl('generated-images/run-a/image-0.png')})`);
     expect(writtenPaths).toEqual(['generated-images/run-a/image-0.png']);
 
     const text = result.content.find((part) => part.type === 'text');
@@ -63,15 +62,14 @@ describe('generate_image tool', () => {
       data: {
         images: [{
           path: 'generated-images/run-a/image-0.png',
-          fileRef: formatFileReferenceMarker('image-0.png', 'generated-images/run-a/image-0.png'),
-          markdownImage: `!${formatFileReferenceMarker('image-0.png', 'generated-images/run-a/image-0.png')}`,
+          markdownImage: `![Generated image 1](${formatLocalFileReferenceUrl('generated-images/run-a/image-0.png')})`,
           mimeType: 'image/png',
           byteLength: Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64').byteLength,
           width: 1,
           height: 1,
         }],
       },
-      instructions: 'Use each returned markdownImage value verbatim to place generated images in the final answer. Use path or fileRef in image_paths for follow-up edits.',
+      instructions: 'Use each returned markdownImage value verbatim to place generated images in the final answer. Use path or markdownImage in image_paths for follow-up edits.',
     });
   });
 
@@ -274,7 +272,7 @@ describe('generate_image tool', () => {
     const missingPath = 'generated-images/run-a/missing.png';
     const result = await tool.execute('call-missing-input', {
       prompt: 'Edit this image',
-      image_paths: [`!${formatFileReferenceMarker('missing.png', missingPath)}`],
+      image_paths: [`![Missing](${formatLocalFileReferenceUrl(missingPath)})`],
     });
     const details = result.details as ToolEnvelope<GenerateImageData>;
     const visible = JSON.parse(result.content.find((part) => part.type === 'text')?.text ?? '{}');

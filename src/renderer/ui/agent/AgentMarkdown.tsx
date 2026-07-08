@@ -8,10 +8,10 @@ import {
   type ReactNode,
 } from 'react';
 import { Lexer } from 'marked';
-import Markdown from 'react-markdown';
+import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remend from 'remend';
-import { basenameForPath, parseReferenceMarkers } from '../../../core/referenceMarkup';
+import { basenameForPath, splitReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
@@ -44,7 +44,6 @@ interface AgentMarkdownProps {
 }
 
 interface MarkdownAstNode {
-  alt?: string;
   children?: MarkdownAstNode[];
   title?: string | null;
   type?: string;
@@ -85,57 +84,32 @@ function transformNodeReferenceText(node: MarkdownAstNode): void {
 }
 
 function referenceMarkdownNodes(text: string): MarkdownAstNode[] {
-  const markers = parseReferenceMarkers(text);
-  if (markers.length === 0) return [{ type: 'text', value: text }];
-
-  const nodes: MarkdownAstNode[] = [];
-  let cursor = 0;
-  for (const marker of markers) {
-    const imageStart = marker.target.kind === 'local-file' && text[marker.start - 1] === '!'
-      ? marker.start - 1
-      : marker.start;
-    if (imageStart < cursor) continue;
-    if (imageStart > cursor) nodes.push({ type: 'text', value: text.slice(cursor, imageStart) });
-    if (marker.target.kind === 'local-file') {
-      const label = marker.label || basenameForPath(marker.target.path) || marker.target.path;
-      if (imageStart === marker.start - 1) {
-        nodes.push({
-          alt: label,
-          title: marker.target.entryKind,
-          type: 'image',
-          url: localFileReferenceHref(marker.target.path, marker.target.entryKind),
-        });
-      } else {
-        nodes.push({
-          children: [{ type: 'text', value: label }],
-          title: marker.target.entryKind,
-          type: 'link',
-          url: localFileReferenceHref(marker.target.path, marker.target.entryKind),
-        });
-      }
-      cursor = marker.end;
-      continue;
+  return splitReferenceMarkers(text).map((segment) => {
+    if (segment.type === 'text') return { type: 'text', value: segment.text };
+    if (segment.target.kind === 'local-file') {
+      const label = segment.label || basenameForPath(segment.target.path) || segment.target.path;
+      return {
+        children: [{ type: 'text', value: label }],
+        title: segment.target.entryKind,
+        type: 'link',
+        url: localFileReferenceHref(segment.target.path, segment.target.entryKind),
+      };
     }
-    if (marker.target.kind === 'chat-source') {
-      nodes.push({
-        children: [{ type: 'text', value: marker.label || marker.raw }],
+    if (segment.target.kind === 'chat-source') {
+      return {
+        children: [{ type: 'text', value: segment.label || segment.raw }],
         title: null,
         type: 'link',
-        url: chatSourceReferenceHref(marker.raw),
-      });
-      cursor = marker.end;
-      continue;
+        url: chatSourceReferenceHref(segment.raw),
+      };
     }
-    nodes.push({
-      children: [{ type: 'text', value: marker.label }],
+    return {
+      children: [{ type: 'text', value: segment.label }],
       title: null,
       type: 'link',
-      url: `#${NODE_REFERENCE_LINK_PREFIX}${encodeURIComponent(marker.target.nodeId)}`,
-    });
-    cursor = marker.end;
-  }
-  if (cursor < text.length) nodes.push({ type: 'text', value: text.slice(cursor) });
-  return nodes;
+      url: `#${NODE_REFERENCE_LINK_PREFIX}${encodeURIComponent(segment.target.nodeId)}`,
+    };
+  });
 }
 
 function nodeIdFromReferenceHref(href: string | undefined): NodeId | null {
@@ -163,6 +137,10 @@ function markdownLocalImageFromSrc(src: string | undefined): { path: string; lab
   const trimmed = src?.trim();
   if (!trimmed || !trimmed.startsWith('/')) return null;
   return { path: trimmed, label: basenameForPath(trimmed) || trimmed };
+}
+
+function agentMarkdownUrlTransform(value: string): string {
+  return localFileReferenceFromHref(value) ? value : defaultUrlTransform(value);
 }
 
 function AgentMarkdownImage({ alt, src, title }: ComponentPropsWithoutRef<'img'>) {
@@ -347,7 +325,7 @@ const MemoizedMarkdownBlock = memo(
   }) {
     const components = useMarkdownComponents(index, onNodeReferenceOpen);
     return (
-      <Markdown components={components} remarkPlugins={REMARK_PLUGINS}>
+      <Markdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={agentMarkdownUrlTransform}>
         {markdown}
       </Markdown>
     );
@@ -430,7 +408,12 @@ export function AgentMarkdown({
         const blockKey = `${keyPrefix}-block-${blockIndex}`;
         if (streaming && blockIndex === blocks.length - 1) {
           return (
-            <Markdown components={components} key={blockKey} remarkPlugins={REMARK_PLUGINS}>
+            <Markdown
+              components={components}
+              key={blockKey}
+              remarkPlugins={REMARK_PLUGINS}
+              urlTransform={agentMarkdownUrlTransform}
+            >
               {block}
             </Markdown>
           );

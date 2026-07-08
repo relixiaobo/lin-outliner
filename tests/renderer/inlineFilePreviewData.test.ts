@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { formatLocalFileReferenceUrl } from '../../src/core/referenceMarkup';
 import {
   LOCAL_FILE_REFERENCE_LINK_PREFIX,
   localFileReferenceFromHref,
@@ -29,6 +30,11 @@ describe('localFileReferenceHref ⇄ localFileReferenceFromHref', () => {
     // it survives a ':' inside the path only because the path is percent-encoded.
     const path = '/work/My Report: 美国政府限制Fable5事件分析.pptx';
     expect(localFileReferenceFromHref(localFileReferenceHref(path))).toEqual({ entryKind: 'file', path });
+  });
+
+  test('a model-visible file:^ target parses as a local file reference', () => {
+    const path = 'generated-images/run-a/image-0.png';
+    expect(localFileReferenceFromHref(formatLocalFileReferenceUrl(path))).toEqual({ entryKind: 'file', path });
   });
 
   test('a non-local-file href is not a file reference', () => {
