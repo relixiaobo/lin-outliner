@@ -74,6 +74,7 @@ export interface AgentSessionExecutionSyncInput {
   engine: AgentSessionExecutionBinding['engine'];
   executionId: string;
   state: 'running' | 'completed' | 'failed' | 'cancelled';
+  objectiveStatus?: 'active' | 'verifying' | 'verified' | 'blocked' | 'budget_exhausted' | 'stopped';
   latestOutput?: string;
   errorMessage?: string;
   completedAt?: number;
@@ -415,6 +416,9 @@ export class AgentIssueStore {
         if (nextState === 'complete' && session.purpose === 'verify') {
           appendVerifierResultActivity(state, session, input, actor, now);
         }
+      }
+      if (nextState === 'complete' && session.purpose !== 'verify') {
+        completeIssueFromSessionIfAllowed(state, session, input, actor, now);
       }
       return state;
     }, PRIVATE_JSON_FILE_OPTIONS);
@@ -1207,6 +1211,48 @@ function verifierVerdictFromText(text: string): 'pass' | 'fail' | 'partial' {
   if (/^(verdict:\s*)?fail\b/u.test(normalized)) return 'fail';
   if (/^(verdict:\s*)?(partial|pass-or-partial)\b/u.test(normalized)) return 'partial';
   return 'partial';
+}
+
+function completeIssueFromSessionIfAllowed(
+  state: AgentIssueStoreState,
+  session: AgentSession,
+  input: AgentSessionExecutionSyncInput,
+  actor: ActorRef,
+  now: number,
+) {
+  const issue = state.issues[session.issueId];
+  if (!issue || issue.status.category === 'completed' || issue.status.category === 'canceled') return;
+  const verificationMode = issue.verificationPolicy?.mode ?? 'none';
+  if (verificationMode === 'human-review') return;
+  if (verificationMode === 'agent-review' && input.objectiveStatus !== 'verified') return;
+
+  issue.evidence = [
+    ...(issue.evidence ?? []).filter((entry) => !(entry.type === 'agent-session' && entry.agentSessionId === session.id)),
+    { type: 'agent-session', agentSessionId: session.id },
+  ];
+  if (issue.completionCriteria) {
+    issue.completionCriteria = issue.completionCriteria.map((criterion) => (
+      criterion.state === 'open'
+        ? {
+            ...criterion,
+            state: 'met',
+            evidence: [
+              ...(criterion.evidence ?? []).filter((entry) => !(entry.type === 'agent-session' && entry.agentSessionId === session.id)),
+              { type: 'agent-session', agentSessionId: session.id },
+            ],
+          }
+        : criterion
+    ));
+  }
+  appendActivity(state, activityInput(
+    { type: 'issue', issueId: issue.id },
+    actor,
+    { type: 'status-change', from: issue.status.name, to: 'Completed' },
+    now,
+  ));
+  issue.status = { name: 'Completed', category: 'completed' };
+  issue.updatedAt = now;
+  issue.revision = revision(now);
 }
 
 function canMessageSession(state: AgentSession['state']): boolean {

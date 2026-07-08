@@ -122,7 +122,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - Use `issue_search` first when a duplicate or existing related Issue may exist.',
     '   - Use `issue_create` with a concrete objective, explicit acceptance criteria, the narrowest practical input scope, and an appropriate trigger.',
     '   - Use the default when-ready trigger for ordinary durable work; use a scheduled or recurring trigger only when the user asked for time-based work.',
-    '   - Persistent user requests should keep a verification policy; do not treat one successful execution as automatic Issue completion.',
+    '   - Persistent user requests should keep a verification policy; runtime completes eligible Issues when execution satisfies criteria and the review policy allows it.',
     '',
     '4. Start or observe execution through Agent Session tools.',
     '   - Newly created when-ready, scheduled, and recurring Issues rely on runtime eligibility and scheduler behavior to start.',
@@ -132,7 +132,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - More scope requires `issue_update`; do not silently widen an executing Session snapshot.',
     '',
     '5. Outcomes are Issue status, Agent Session status, Activity, and verification evidence.',
-    '   - Never claim completion from the latest Agent Session result alone; rely on Issue criteria, Activity, and verifier evidence.',
+    '   - Claim completion only from Issue status, criteria, Activity, and verifier evidence, not from a live Session being merely started.',
     '   - If blocked, state the blocker and the smallest next user decision needed.',
   ].join('\n'),
 }, {

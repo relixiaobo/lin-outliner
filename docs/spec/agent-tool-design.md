@@ -221,10 +221,11 @@ it does not create a concrete Issue or inflate a later coalesced count.
 
 Automatic trigger execution is one-shot per concrete Issue in V1: an unattended
 `when-ready` Issue or due `scheduled` Issue without any prior Agent Session can
-start one Agent Session from the scheduler. Completion or failure of that
-Session does not by itself complete the Issue and does not cause the scheduler to
-loop on the same Issue. Retrying or continuing terminal work creates a new Agent
-Session through an explicit `agent_session_start` request.
+start one Agent Session from the scheduler. A completed Session finalizes the
+Issue when its criteria are satisfied and the Issue does not require human
+review. Failure does not cause the scheduler to loop on the same Issue. Retrying
+or continuing terminal work creates a new Agent Session through an explicit
+`agent_session_start` request.
 
 Issue verification uses the same Agent Session mechanism. `agent_session_start`
 accepts `purpose: "verify"` only when the Issue has
@@ -232,8 +233,8 @@ accepts `purpose: "verify"` only when the Issue has
 verifier AgentRef, defaulting to Neva's `verifier` run profile. When that
 Session completes, runtime records a `verification-result` Activity on the Issue
 and links the verifier Agent Session as Issue evidence. There is no
-`verification_*` model-facing tool and a verifier verdict does not automatically
-complete the Issue.
+`verification_*` model-facing tool. A pass verdict allows runtime to complete the
+Issue; human-review Issues remain open until an explicit lifecycle transition.
 
 ## Internal Delegation Executor
 

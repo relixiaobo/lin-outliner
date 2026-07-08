@@ -626,6 +626,8 @@ describe('agent issue store', () => {
           title: 'Research launch risks',
           trigger: { type: 'when-ready' },
           permissionMode: 'unattended',
+          completionCriteria: [{ id: 'risks', text: 'Launch risks are summarized.', state: 'open' }],
+          verificationPolicy: { mode: 'criteria-and-evidence' },
         },
         request: { mode: 'request' },
         reason: 'Create executable work.',
@@ -663,6 +665,108 @@ describe('agent issue store', () => {
         type: 'agent-response',
         body: 'Launch risks summarized.',
       });
+      const issueRead = await store.read({ target: issue.target, include: ['activity'] });
+      expect(issueRead.issue?.status).toEqual({ name: 'Completed', category: 'completed' });
+      expect(issueRead.issue?.completionCriteria?.[0]).toMatchObject({
+        id: 'risks',
+        state: 'met',
+        evidence: [{ type: 'agent-session', agentSessionId: sessionId }],
+      });
+      expect(issueRead.issue?.evidence).toContainEqual({ type: 'agent-session', agentSessionId: sessionId });
+      expect(issueRead.activity).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          content: { type: 'status-change', from: 'Triage', to: 'Completed' },
+        }),
+      ]));
+    });
+  });
+
+  test('keeps human-review Issues open after execution completes', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Draft legal summary',
+          verificationPolicy: { mode: 'human-review' },
+          completionCriteria: [{ id: 'draft', text: 'Draft is ready for human review.', state: 'open' }],
+        },
+        request: { mode: 'request' },
+        reason: 'Create review-gated work.',
+      }, actor, 100);
+      const issue = (await store.search({ text: 'Draft legal summary' })).rows[0];
+      const started = await store.startSession({
+        issueId: issue.target.id,
+        expectedIssueRevision: issue.revision,
+        request: { mode: 'request' },
+        reason: 'Start work.',
+      }, { type: 'runtime-action', actor }, actor, 120);
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+      await store.bindSessionExecution(sessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:issue',
+        executionId: 'execution:human-review',
+        startedAt: 130,
+      }, actor, 130);
+      await store.syncSessionExecution({
+        engine: 'delegation',
+        executionId: 'execution:human-review',
+        state: 'completed',
+        latestOutput: 'Draft ready for review.',
+        completedAt: 200,
+      }, actor, 200);
+
+      const read = await store.read({ target: issue.target });
+      expect(read.issue?.status).toEqual({ name: 'Triage', category: 'triage' });
+      expect(read.issue?.completionCriteria?.[0]?.state).toBe('open');
+    });
+  });
+
+  test('completes agent-review Issues only after verified execution', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Verified weather summary',
+          verificationPolicy: { mode: 'agent-review', requiredVerdict: 'pass' },
+          completionCriteria: [{ id: 'summary', text: 'Weather summary is verified.', state: 'open' }],
+        },
+        request: { mode: 'request' },
+        reason: 'Create agent-reviewed work.',
+      }, actor, 100);
+      const issue = (await store.search({ text: 'Verified weather summary' })).rows[0];
+      const started = await store.startSession({
+        issueId: issue.target.id,
+        expectedIssueRevision: issue.revision,
+        request: { mode: 'request' },
+        reason: 'Start work.',
+      }, { type: 'runtime-action', actor }, actor, 120);
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+      await store.bindSessionExecution(sessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:issue',
+        executionId: 'execution:agent-review',
+        startedAt: 130,
+      }, actor, 130);
+      await store.syncSessionExecution({
+        engine: 'delegation',
+        executionId: 'execution:agent-review',
+        state: 'completed',
+        latestOutput: 'Weather summary verified.',
+        completedAt: 200,
+      }, actor, 200);
+      expect((await store.read({ target: issue.target })).issue?.status.category).toBe('triage');
+
+      await store.syncSessionExecution({
+        engine: 'delegation',
+        executionId: 'execution:agent-review',
+        state: 'completed',
+        objectiveStatus: 'verified',
+        latestOutput: 'Weather summary verified.',
+        completedAt: 220,
+      }, actor, 220);
+      const read = await store.read({ target: issue.target });
+      expect(read.issue?.status).toEqual({ name: 'Completed', category: 'completed' });
+      expect(read.issue?.completionCriteria?.[0]?.state).toBe('met');
     });
   });
 

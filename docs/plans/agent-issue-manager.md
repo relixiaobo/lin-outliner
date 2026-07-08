@@ -167,7 +167,9 @@ Verification is an execution policy on an Issue.
   tools.
 - The verifier reviews criteria, evidence, Activity, linked Agent Sessions, and
   output.
-- Verdicts are Activity and do not automatically complete the Issue.
+- Passing execution or verifier evidence can complete the Issue when the review
+  policy allows runtime completion; human-review Issues remain open until an
+  explicit lifecycle transition.
 - Internal breakdown is verified through criteria/evidence on the same Issue.
 
 ### Permissions

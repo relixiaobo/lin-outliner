@@ -3030,6 +3030,7 @@ export class AgentRuntime {
       engine: 'delegation',
       executionId: snapshot.id,
       state: issueSessionExecutionStateFromRunStatus(snapshot.status, snapshot.objectiveStatus),
+      objectiveStatus: snapshot.objectiveStatus,
       latestOutput: snapshot.result,
       errorMessage: snapshot.error ?? snapshot.blockedReason ?? snapshot.latestVerifierGap,
       completedAt: snapshot.completedAt,
@@ -3051,6 +3052,7 @@ export class AgentRuntime {
       engine: 'delegation',
       executionId: data.runId,
       state: issueSessionExecutionStateFromRunStatus(data.status, data.objective_status),
+      objectiveStatus: data.objective_status,
       latestOutput: data.result,
       errorMessage: data.error ?? data.blocked_reason ?? data.latest_verifier_gap,
       completedAt: data.completed_at,
@@ -8855,7 +8857,8 @@ function agentSessionDelegationInput(
     description: shortExecutionTitle(session.issueSnapshot.title),
     objective: agentSessionObjective(session, startInput),
     criteria,
-    verify: false,
+    verify: session.purpose !== 'verify' && session.issueSnapshot.verificationPolicy?.mode === 'agent-review',
+    purpose: session.purpose === 'verify' ? 'verify' : 'work',
     scope,
     context: 'brief',
     detach: startInput.detach ?? true,
@@ -8893,7 +8896,7 @@ function executionSessionRules(): string[] {
     '3. Use Issue relations only when another independently managed Issue is a true external blocker, duplicate, or related outcome.',
     '4. Create a separate flat Issue only when you discover a new independently user-visible outcome that should be managed outside this Issue.',
     '5. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
-    '6. Completing this Agent Session does not automatically complete the Issue.',
+    '6. If your final response satisfies the Issue criteria and no human review is required, runtime may complete the Issue from this Agent Session.',
   ];
 }
 
@@ -8903,7 +8906,7 @@ function verifierSessionRules(): string[] {
     '1. Review the Issue snapshot, completion criteria, evidence, linked Agent Sessions, and available output.',
     '2. Do not perform the work again unless a narrow read is needed to verify evidence.',
     '3. Start the final response with exactly one verdict line: "Verdict: pass", "Verdict: partial", or "Verdict: fail".',
-    '4. Then summarize the evidence and any blockers. Runtime records that verdict as Issue Activity; it does not automatically complete the Issue.',
+    '4. Then summarize the evidence and any blockers. Runtime records that verdict as Issue Activity and may complete the Issue on a pass verdict.',
   ];
 }
 

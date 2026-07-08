@@ -1181,7 +1181,7 @@ describe('agent skills', () => {
     expect(skill?.body).toContain('Use the default when-ready trigger for ordinary durable work');
     expect(skill?.body).toContain('Newly created when-ready, scheduled, and recurring Issues rely on runtime eligibility');
     expect(skill?.body).toContain('Use `agent_session_start` for explicit retries, continuations, verification attempts');
-    expect(skill?.body).toContain('Never claim completion from the latest Agent Session result alone');
+    expect(skill?.body).toContain('Claim completion only from Issue status, criteria, Activity, and verifier evidence');
   });
 
   test('disabled skill gates apply to built-in research', async () => {

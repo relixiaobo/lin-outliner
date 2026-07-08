@@ -107,8 +107,9 @@ Verification remains an execution policy, not a separate model-facing tool.
 - Accepted verifier results are recorded as Activity on the Issue.
 - A rejected worker can create replacement work when budget and livelock guards
   allow it.
-- A verifier verdict does not automatically complete the Issue; Issue completion
-  is a durable lifecycle decision recorded through Issue state and Activity.
+- A pass verifier verdict allows runtime to complete the Issue. Human-review
+  Issues remain open until an explicit lifecycle transition. Issue completion is
+  always recorded through Issue state and Activity.
 
 ## Isolated Skills
 
