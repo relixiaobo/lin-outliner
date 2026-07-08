@@ -19,7 +19,6 @@ export type AgentRef = {
 
 export type IssueStatusCategory =
   | 'triage'
-  | 'backlog'
   | 'unstarted'
   | 'started'
   | 'completed'
@@ -84,9 +83,10 @@ export type IssueEvidenceRef =
   | { type: 'file'; path: string }
   | { type: 'url'; url: string; label?: string };
 
-export type IssueConfirmation =
-  | { state: 'draft' }
-  | { state: 'confirmed'; confirmedBy: ActorRef; confirmedAt: number };
+export interface IssueConfirmation {
+  confirmedBy: ActorRef;
+  confirmedAt: number;
+}
 
 export type IssueInputScope =
   | { type: 'none' }
@@ -194,7 +194,7 @@ export type AgentSessionPurpose = 'execute' | 'verify';
 export type AgentSessionSource =
   | { type: 'delegation'; actor: ActorRef }
   | { type: 'recurring-issue'; recurringIssueId: AgentRecurringIssueId; dueAt: number }
-  | { type: 'runtime-authorized-action'; actor: ActorRef }
+  | { type: 'runtime-action'; actor: ActorRef }
   | { type: 'orchestration'; coordinatorAgentSessionId: AgentSessionId }
   | { type: 'manual'; actor: ActorRef };
 
@@ -286,13 +286,6 @@ export interface PermissionBlock {
   message: string;
 }
 
-export interface ConfirmationProposal {
-  title: string;
-  body: string;
-  operation: AgentOperationScope;
-  targets: RelatedTargetRef[];
-}
-
 export interface ObjectRevision {
   target: RelatedTargetRef;
   revision: ObjectRevisionValue;
@@ -303,34 +296,16 @@ export type ChangeRequest =
   | { mode: 'request' };
 
 export interface TenonAgentToolResult {
-  status: 'preview' | 'applied' | 'needs-confirmation' | 'blocked' | 'conflict';
+  status: 'preview' | 'applied' | 'blocked' | 'conflict';
   targets: RelatedTargetRef[];
   revisions?: ObjectRevision[];
   validation?: ValidationMessage[];
   warnings?: ValidationMessage[];
   permissionBlock?: PermissionBlock;
-  confirmation?: ConfirmationProposal;
 }
-
-export interface RuntimeAuthorizationCapability {
-  id: string;
-  actor: ActorRef;
-  allowedOperations: AgentOperationScope[];
-  expiresAt: number;
-  auditReason: string;
-}
-
-export type AgentOperationScope =
-  | { type: 'issue-create' }
-  | { type: 'issue-update'; issueId?: AgentIssueId }
-  | { type: 'recurring-issue-update'; recurringIssueId?: AgentRecurringIssueId }
-  | { type: 'agent-session-start'; issueId?: AgentIssueId }
-  | { type: 'agent-session-message'; agentSessionId?: AgentSessionId }
-  | { type: 'agent-session-stop'; agentSessionId?: AgentSessionId };
 
 export interface TenonAgentToolContext {
   actor: ActorRef;
-  authorization?: RuntimeAuthorizationCapability;
   coordinatorAgentSessionId?: AgentSessionId;
   permissionMode: 'interactive' | 'non-interactive';
   now: number;
@@ -375,7 +350,6 @@ export interface TenonAgentToolDefinition<Input = unknown, Output = unknown> {
   outputSchema: unknown;
   isReadOnly(input: unknown): boolean;
   isDestructive(input: unknown): boolean;
-  requiresRuntimeAuthorization(input: unknown): boolean;
   validate(input: unknown, context: TenonAgentToolContext): ValidationResult;
   execute(input: Input, context: TenonAgentToolContext): Output | Promise<Output>;
 }
@@ -417,7 +391,6 @@ export interface IssueSearchFilter {
     type: IssueRelation['type'];
     issueId?: AgentIssueId;
   };
-  confirmed?: boolean;
   archived?: boolean;
   hasActiveSession?: boolean;
   needsAttention?: boolean;
@@ -535,13 +508,11 @@ export type IssueCreateInput =
 export type IssueUpdateChange =
   | { type: 'patch'; patch: IssuePatchFields }
   | { type: 'transition'; status: IssueStatus }
-  | { type: 'confirm' }
   | { type: 'archive' }
   | { type: 'delete' };
 
 export type RecurringIssueUpdateChange =
   | { type: 'patch'; patch: RecurringIssuePatchFields }
-  | { type: 'confirm' }
   | { type: 'pause' }
   | { type: 'resume' }
   | { type: 'skip-next' }
@@ -616,6 +587,16 @@ export interface IssueSearchRow {
   target: IssueTargetRef;
   title: string;
   status: string;
+  statusCategory?: IssueStatusCategory;
+  viewBuckets?: IssueViewBucket[];
+  trigger?: IssueTrigger;
+  dueDate?: IssueDueDate;
+  cadence?: RecurringIssueCadence;
+  nextMaterializationAt?: number;
+  hasActiveSession?: boolean;
+  needsAttention?: boolean;
+  latestSessionState?: AgentSessionState;
+  latestSessionUpdatedAt?: number;
   revision: ObjectRevisionValue;
   updatedAt: number;
   latestActivity?: Activity;

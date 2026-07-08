@@ -140,6 +140,7 @@ test.describe('agent composer controls', () => {
 
   test('sends an outliner node to composer as context only', async ({ page }) => {
     await row(page, ids.alpha).click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: /Run selected node|Create Issue from node/i })).toHaveCount(0);
     await page.getByRole('menuitem', { name: 'Send to composer' }).click();
 
     const input = page.getByLabel('Agent message');
@@ -3227,10 +3228,25 @@ test.describe('agent composer controls', () => {
         relations: [],
         trigger: { type: 'when-ready' },
         permissionMode: 'unattended',
-        confirmation: { state: 'confirmed', confirmedBy: { type: 'user', userId: 'e2e' }, confirmedAt: 1_800_000_000_700 },
+        confirmation: { confirmedBy: { type: 'user', userId: 'e2e' }, confirmedAt: 1_800_000_000_700 },
         revision: 'issue-rev-1',
         createdAt: 1_800_000_000_700,
         updatedAt: 1_800_000_001_200,
+      };
+      const subIssue = {
+        id: 'issue-work-child-1',
+        title: 'Inspect child UI',
+        status: { name: 'Unstarted', category: 'unstarted' },
+        parentIssueId: 'issue-work-1',
+        delegate: { type: 'default-agent' },
+        subIssueIds: [],
+        relations: [],
+        trigger: { type: 'manual' },
+        permissionMode: 'unattended',
+        confirmation: { confirmedBy: { type: 'user', userId: 'e2e' }, confirmedAt: 1_800_000_000_900 },
+        revision: 'issue-child-rev-1',
+        createdAt: 1_800_000_000_900,
+        updatedAt: 1_800_000_000_900,
       };
       win.__LIN_E2E__?.setAgentIssues([{
         target,
@@ -3257,12 +3273,25 @@ test.describe('agent composer controls', () => {
             createdAt: 1_800_000_000_800,
             updatedAt: 1_800_000_001_200,
           }],
+          subIssues: [subIssue],
           activity: [{
             id: 'activity-work-1',
             target: { type: 'issue', issueId: 'issue-work-1' },
             actor: { type: 'agent', agentId: 'neva' },
             content: { type: 'agent-progress', body: 'Inspecting current UI.' },
             createdAt: 1_800_000_001_200,
+          }],
+        },
+        'issue:issue-work-child-1': {
+          target: { type: 'issue', id: 'issue-work-child-1' },
+          issue: subIssue,
+          sessions: [],
+          activity: [{
+            id: 'activity-child-1',
+            target: { type: 'issue', issueId: 'issue-work-child-1' },
+            actor: { type: 'agent', agentId: 'neva' },
+            content: { type: 'comment', body: 'Child issue was created.' },
+            createdAt: 1_800_000_000_900,
           }],
         },
       });
@@ -3311,6 +3340,18 @@ test.describe('agent composer controls', () => {
     await expect(detailHeading).toBeVisible();
     await expect(details.getByText('Agent Sessions')).toBeVisible();
     await expect(details.getByText('Active')).toBeVisible();
+    await expect(details.getByText('Sub-issues')).toBeVisible();
+    await details.getByRole('button', { name: /Inspect child UI/ }).click();
+    await expect(details.getByRole('heading', { name: 'Inspect child UI', level: 3 })).toBeVisible();
+    await expect(details.getByText('Child issue was created.')).toBeVisible();
+    await details.getByRole('button', { name: 'Back to parent Issue' }).click();
+    await expect(detailHeading).toBeVisible();
+    await details.getByRole('button', { name: /Active/ }).click();
+    await expect(details.getByRole('heading', { name: 'Agent Session', level: 3 })).toBeVisible();
+    await expect(details.getByText('Transcript')).toBeVisible();
+    await expect(details.getByText('Inspecting current UI.')).toBeVisible();
+    await details.getByRole('button', { name: 'Back to Issue' }).click();
+    await expect(detailHeading).toBeVisible();
     await expect(details.getByText('Activity')).toBeVisible();
     await expect(details.getByText('Inspecting current UI.')).toBeVisible();
 

@@ -152,7 +152,7 @@ describe('agent runtime Issue tools', () => {
     roots.length = 0;
   });
 
-  test('turns approved Issue tool calls into runtime-owned authorization', async () => {
+  test('applies Issue tool calls without an approval interruption', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-tools-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-tools-data-'));
     roots.push(localRoot, dataRoot);
@@ -166,13 +166,13 @@ describe('agent runtime Issue tools', () => {
         return fauxAssistantMessage([
           fauxToolCall('issue_update', {
             target: { type: 'issue', id: issueForToolCall.target.id, expectedRevision: issueForToolCall.revision },
-            change: { type: 'confirm' },
+            change: { type: 'transition', status: { name: 'Started', category: 'started' } },
             request: { mode: 'request' },
-            reason: 'Confirm the Issue after user approval.',
-          }, { id: 'tool-issue-confirm' }),
+            reason: 'Update the Issue without interrupting the user.',
+          }, { id: 'tool-issue-update' }),
         ]);
       },
-      fauxAssistantMessage(fauxText('Issue confirmed.')),
+      fauxAssistantMessage(fauxText('Issue updated.')),
     ], (_model, context) => {
       calls.push({ tools: context.tools?.map((tool) => tool.name) ?? [] });
     });
@@ -198,7 +198,7 @@ describe('agent runtime Issue tools', () => {
     await store.create({
       issueType: 'issue',
       fields: {
-        title: 'Approve issue execution',
+        title: 'Update issue execution',
         trigger: { type: 'when-ready' },
         permissionMode: 'unattended',
       },
@@ -207,26 +207,17 @@ describe('agent runtime Issue tools', () => {
     }, actor, 100);
     const issue = (await store.search({ targets: ['issue'] })).rows[0];
     issueForToolCall = issue;
-    const sendPromise = runtime.sendMessage(conversation.conversationId, 'Confirm this issue.');
-    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
-    const approval = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
-    ));
-    if (!approval) throw new Error('Expected Issue approval request.');
-    expect(approval.request.toolName).toBe('issue_update');
-    expect(approval.request.title).toBe('Confirm Issue change?');
-    expect(approval.request.target).toBe(issue.target.id);
-
-    await runtime.resolveApproval(conversation.conversationId, approval.requestId, true);
-    await sendPromise;
+    await runtime.sendMessage(conversation.conversationId, 'Update this issue.');
 
     expect(script.pendingCount()).toBe(0);
     expect(calls[0]?.tools).toContain('issue_update');
+    expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
     const read = await store.read({ target: issue.target, include: ['activity'] });
-    expect(read.issue?.confirmation.state).toBe('confirmed');
+    expect(read.issue?.confirmation.confirmedBy).toEqual(actor);
+    expect(read.issue?.status).toMatchObject({ name: 'Started', category: 'started' });
     expect(read.activity).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        content: { type: 'field-change', field: 'confirmation', to: 'confirmed' },
+        content: { type: 'status-change', from: 'Triage', to: 'Started' },
       }),
     ]));
   });
@@ -285,12 +276,6 @@ describe('agent runtime Issue tools', () => {
       reason: 'Create due recurring work.',
     }, actor, createdAt);
     const recurring = (await store.search({ targets: ['recurring-issue'] })).rows[0];
-    await store.update({
-      target: { type: 'recurring-issue', id: recurring.target.id, expectedRevision: recurring.revision },
-      change: { type: 'confirm' },
-      request: { mode: 'request' },
-      reason: 'Confirm due recurring work.',
-    }, actor, Date.now() - 1_000);
 
     runtime.runIssueCatchUp();
     await waitFor(async () => {

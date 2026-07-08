@@ -3,7 +3,7 @@ import type { AgentIssue, AgentSession } from '../../src/core/agentIssue';
 import { agentSessionRunScope } from '../../src/main/agentIssueSessionScope';
 
 describe('agent issue session scope', () => {
-  test('maps confirmed input and output node boundaries into run resources', () => {
+  test('maps Issue input and output node boundaries into run resources', () => {
     const session = sessionWith({
       inputSnapshot: {
         scope: { type: 'selected-nodes', nodeIds: ['node:input-a', 'node:input-b'] },
@@ -33,7 +33,7 @@ function sessionWith(overrides: Partial<AgentSession> = {}): AgentSession {
     relations: [],
     trigger: { type: 'manual' },
     permissionMode: 'unattended',
-    confirmation: { state: 'confirmed', confirmedBy: { type: 'user', userId: 'user-1' }, confirmedAt: now },
+    confirmation: { confirmedBy: { type: 'user', userId: 'user-1' }, confirmedAt: now },
     revision: 'rev-1',
     createdAt: now,
     updatedAt: now,

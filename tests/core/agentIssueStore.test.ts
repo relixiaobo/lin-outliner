@@ -17,7 +17,7 @@ async function withStore<T>(fn: (store: AgentIssueStore) => Promise<T>): Promise
 }
 
 describe('agent issue store', () => {
-  test('creates Recurring Issue drafts without confirming unattended execution', async () => {
+  test('creates Recurring Issue automation as active work with provenance by default', async () => {
     await withStore(async (store) => {
       const created = await store.create({
         issueType: 'recurring-issue',
@@ -37,10 +37,11 @@ describe('agent issue store', () => {
       }, actor, 1_800_000_000_000);
 
       expect(created.status).toBe('applied');
-      const search = await store.search({ targets: ['recurring-issue'], filter: { confirmed: false } });
+      const search = await store.search({ targets: ['recurring-issue'] });
       expect(search.rows).toHaveLength(1);
       const read = await store.read({ target: search.rows[0].target, include: ['activity'] });
-      expect(read.recurringIssue?.confirmation.state).toBe('draft');
+      expect(read.recurringIssue?.confirmation.confirmedBy).toEqual(actor);
+      expect(read.recurringIssue?.confirmation.confirmedAt).toBe(1_800_000_000_000);
       expect(read.recurringIssue?.status).toBe('active');
       expect(read.recurringIssue?.issueTemplate.permissionMode).toBe('unattended');
       expect(read.activity?.map((entry) => entry.content.type)).toContain('field-change');
@@ -69,7 +70,7 @@ describe('agent issue store', () => {
       expect((await store.search({
         targets: ['recurring-issue'],
         filter: { statusCategories: ['triage'] },
-      })).rows).toHaveLength(1);
+      })).rows).toHaveLength(0);
       expect((await store.search({
         targets: ['recurring-issue'],
         filter: { statusCategories: ['scheduled'] },
@@ -86,19 +87,12 @@ describe('agent issue store', () => {
         reason: 'Create one-off work.',
       }, actor, 10);
       const issue = (await store.search({ targets: ['issue'], text: 'invoices' })).rows[0];
-      await store.update({
-        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm one-off work.',
-      }, actor, 20);
-      const confirmed = (await store.search({ targets: ['issue'], text: 'invoices' })).rows[0];
       const started = await store.startSession({
-        issueId: confirmed.target.id,
-        expectedIssueRevision: confirmed.revision,
+        issueId: issue.target.id,
+        expectedIssueRevision: issue.revision,
         request: { mode: 'request' },
         reason: 'Start one-off work.',
-      }, { type: 'runtime-authorized-action', actor }, actor, 30);
+      }, { type: 'runtime-action', actor }, actor, 30);
       const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
       await store.sendSessionMessage({
         agentSessionId: sessionId,
@@ -111,16 +105,16 @@ describe('agent issue store', () => {
       expect((await store.search({
         targets: ['issue'],
         filter: { hasActiveSession: true },
-      })).rows.map((row) => row.target.id)).toContain(confirmed.target.id);
+      })).rows.map((row) => row.target.id)).toContain(issue.target.id);
       expect((await store.search({
         targets: ['issue'],
         filter: { activityTypes: ['agent-progress'] },
-      })).rows.map((row) => row.target.id)).toContain(confirmed.target.id);
+      })).rows.map((row) => row.target.id)).toContain(issue.target.id);
       const activityRows = await store.search({
         targets: ['issue'],
         include: ['activity-summary'],
       });
-      const activityRow = activityRows.rows.find((row) => row.target.id === confirmed.target.id);
+      const activityRow = activityRows.rows.find((row) => row.target.id === issue.target.id);
       expect(activityRow?.latestActivity).toMatchObject({
         content: { type: 'comment', body: 'Inspect totals first.' },
         createdAt: 40,
@@ -161,7 +155,7 @@ describe('agent issue store', () => {
     });
   });
 
-  test('materializes confirmed active Recurring Issues only when due', async () => {
+  test('materializes active Recurring Issues only when due', async () => {
     await withStore(async (store) => {
       const createdAt = new Date(2026, 6, 7, 17, 0).getTime();
       const dueAt = new Date(2026, 6, 7, 18, 5).getTime();
@@ -184,22 +178,14 @@ describe('agent issue store', () => {
       }, actor, createdAt);
       const recurring = (await store.search({ targets: ['recurring-issue'] })).rows[0];
 
-      expect(await store.materializeDueRecurringIssues(dueAt, actor)).toEqual([]);
-
-      const confirmed = await store.update({
-        target: { type: 'recurring-issue', id: recurring.target.id, expectedRevision: recurring.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm the daily report routine.',
-      }, actor, dueAt - 1);
-      expect(confirmed.status).toBe('applied');
+      expect(await store.materializeDueRecurringIssues(new Date(2026, 6, 7, 17, 59).getTime(), actor)).toEqual([]);
 
       const materialized = await store.materializeDueRecurringIssues(dueAt, actor);
       expect(materialized).toHaveLength(1);
       expect(materialized[0].title).toBe('Write daily report - 2026-07-07');
       expect(materialized[0].description).toBe('Summarize the work for 2026-07-07.');
       expect(materialized[0].trigger.type).toBe('when-ready');
-      expect(materialized[0].confirmation.state).toBe('confirmed');
+      expect(materialized[0].confirmation.confirmedBy).toEqual(actor);
       expect(materialized[0].recurrence?.recurringIssueId).toBe(recurring.target.id);
       expect(await store.materializeDueRecurringIssues(dueAt, actor)).toEqual([]);
 
@@ -240,14 +226,6 @@ describe('agent issue store', () => {
       const recurring = (await store.search({ targets: ['recurring-issue'] })).rows[0];
       await store.update({
         target: { type: 'recurring-issue', id: recurring.target.id, expectedRevision: recurring.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm review routine.',
-      }, actor, createdAt + 1);
-
-      const confirmed = (await store.search({ targets: ['recurring-issue'] })).rows[0];
-      await store.update({
-        target: { type: 'recurring-issue', id: recurring.target.id, expectedRevision: confirmed.revision },
         change: { type: 'skip-next' },
         request: { mode: 'request' },
         reason: 'Skip today.',
@@ -296,12 +274,6 @@ describe('agent issue store', () => {
         reason: 'Create digest routine.',
       }, actor, createdAt);
       const recurring = (await store.search({ targets: ['recurring-issue'] })).rows[0];
-      await store.update({
-        target: { type: 'recurring-issue', id: recurring.target.id, expectedRevision: recurring.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm digest routine.',
-      }, actor, createdAt + 1);
 
       const materialized = await store.materializeDueRecurringIssues(laterDue, actor);
       expect(materialized).toHaveLength(1);
@@ -447,19 +419,11 @@ describe('agent issue store', () => {
         targets: ['issue'],
         filter: { inputTags: ['invoice'] },
       })).rows.map((row) => row.target.id)).toContain(issue.target.id);
-      const confirmed = await store.update({
-        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm invoice processing.',
-      }, actor, 150);
-      expect(confirmed.status).toBe('applied');
-      const confirmedIssue = (await store.search({ text: 'invoices' })).rows[0];
-      const source: AgentSessionSource = { type: 'runtime-authorized-action', actor };
+      const source: AgentSessionSource = { type: 'runtime-action', actor };
 
       const sessionResult = await store.startSession({
-        issueId: confirmedIssue.target.id,
-        expectedIssueRevision: confirmedIssue.revision,
+        issueId: issue.target.id,
+        expectedIssueRevision: issue.revision,
         detach: true,
         request: { mode: 'request' },
         reason: 'Start invoice processing.',
@@ -487,7 +451,7 @@ describe('agent issue store', () => {
       expect(session?.activity?.[0]?.content.type).toBe('agent-progress');
 
       const transitioned = await store.update({
-        target: { type: 'issue', id: confirmedIssue.target.id, expectedRevision: confirmedIssue.revision },
+        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
         change: { type: 'transition', status: { name: 'Started', category: 'started' } },
         request: { mode: 'request' },
         reason: 'Mark the Issue started.',
@@ -527,7 +491,7 @@ describe('agent issue store', () => {
     });
   });
 
-  test('blocks Agent Session starts that violate confirmation, blocker, or active-session rules', async () => {
+  test('blocks Agent Session starts that violate blocker or active-session rules', async () => {
     await withStore(async (store) => {
       await store.create({
         issueType: 'issue',
@@ -535,16 +499,8 @@ describe('agent issue store', () => {
         request: { mode: 'request' },
         reason: 'Create work.',
       }, actor, 10);
-      const unconfirmed = (await store.search({ text: 'Blocked starter' })).rows[0];
-      const source: AgentSessionSource = { type: 'runtime-authorized-action', actor };
-      const unconfirmedStart = await store.startSession({
-        issueId: unconfirmed.target.id,
-        expectedIssueRevision: unconfirmed.revision,
-        request: { mode: 'request' },
-        reason: 'Start too early.',
-      }, source, actor, 20);
-      expect(unconfirmedStart.status).toBe('blocked');
-      expect(unconfirmedStart.validation?.map((entry) => entry.code)).toContain('unconfirmed_issue');
+      const starter = (await store.search({ text: 'Blocked starter' })).rows[0];
+      const source: AgentSessionSource = { type: 'runtime-action', actor };
 
       await store.create({
         issueType: 'issue',
@@ -554,22 +510,15 @@ describe('agent issue store', () => {
       }, actor, 30);
       const blocker = (await store.search({ text: 'Blocking prerequisite' })).rows[0];
       await store.update({
-        target: { type: 'issue', id: unconfirmed.target.id, expectedRevision: unconfirmed.revision },
+        target: { type: 'issue', id: starter.target.id, expectedRevision: starter.revision },
         change: { type: 'patch', patch: { relations: [{ type: 'blocked-by', issueId: blocker.target.id }] } },
         request: { mode: 'request' },
         reason: 'Add dependency.',
       }, actor, 40);
       const patched = (await store.search({ text: 'Blocked starter' })).rows[0];
-      await store.update({
-        target: { type: 'issue', id: patched.target.id, expectedRevision: patched.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm work.',
-      }, actor, 50);
-      const confirmed = (await store.search({ text: 'Blocked starter' })).rows[0];
       const blockedStart = await store.startSession({
-        issueId: confirmed.target.id,
-        expectedIssueRevision: confirmed.revision,
+        issueId: patched.target.id,
+        expectedIssueRevision: patched.revision,
         request: { mode: 'request' },
         reason: 'Start while blocked.',
       }, source, actor, 60);
@@ -578,13 +527,6 @@ describe('agent issue store', () => {
 
       await store.update({
         target: { type: 'issue', id: blocker.target.id, expectedRevision: blocker.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm blocker.',
-      }, actor, 70);
-      const confirmedBlocker = (await store.search({ text: 'Blocking prerequisite' })).rows[0];
-      await store.update({
-        target: { type: 'issue', id: blocker.target.id, expectedRevision: confirmedBlocker.revision },
         change: { type: 'transition', status: { name: 'Done', category: 'completed' } },
         request: { mode: 'request' },
         reason: 'Complete blocker.',
@@ -618,15 +560,8 @@ describe('agent issue store', () => {
           request: { mode: 'request' },
           reason: 'Create issue.',
         }, actor, 10);
-        const row = (await store.search({ text: title })).rows[0];
-        await store.update({
-          target: { type: 'issue', id: row.target.id, expectedRevision: row.revision },
-          change: { type: 'confirm' },
-          request: { mode: 'request' },
-          reason: 'Confirm issue.',
-        }, actor, 20);
       }
-      const source: AgentSessionSource = { type: 'runtime-authorized-action', actor };
+      const source: AgentSessionSource = { type: 'runtime-action', actor };
       const target = (await store.search({ text: 'Continuation target' })).rows[0];
       const other = (await store.search({ text: 'Different issue' })).rows[0];
       const started = await store.startSession({
@@ -688,19 +623,12 @@ describe('agent issue store', () => {
         reason: 'Create executable work.',
       }, actor, 100);
       const issue = (await store.search({ targets: ['issue'] })).rows[0];
-      await store.update({
-        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm execution.',
-      }, actor, 110);
-      const confirmed = (await store.search({ targets: ['issue'] })).rows[0];
       const started = await store.startSession({
-        issueId: confirmed.target.id,
-        expectedIssueRevision: confirmed.revision,
+        issueId: issue.target.id,
+        expectedIssueRevision: issue.revision,
         request: { mode: 'request' },
         reason: 'Start work.',
-      }, { type: 'runtime-authorized-action', actor }, actor, 120);
+      }, { type: 'runtime-action', actor }, actor, 120);
       const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
 
       const bound = await store.bindSessionExecution(sessionId, {
@@ -739,20 +667,13 @@ describe('agent issue store', () => {
         reason: 'Create unverified work.',
       }, actor, 90);
       const noPolicy = (await store.search({ text: 'No verification policy' })).rows[0];
-      await store.update({
-        target: { type: 'issue', id: noPolicy.target.id, expectedRevision: noPolicy.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm work.',
-      }, actor, 95);
-      const confirmedNoPolicy = (await store.search({ text: 'No verification policy' })).rows[0];
       const blocked = await store.startSession({
-        issueId: confirmedNoPolicy.target.id,
+        issueId: noPolicy.target.id,
         purpose: 'verify',
-        expectedIssueRevision: confirmedNoPolicy.revision,
+        expectedIssueRevision: noPolicy.revision,
         request: { mode: 'request' },
         reason: 'Try to verify without policy.',
-      }, { type: 'runtime-authorized-action', actor }, actor, 96);
+      }, { type: 'runtime-action', actor }, actor, 96);
       expect(blocked.status).toBe('blocked');
       expect(blocked.validation?.map((entry) => entry.code)).toContain('missing_agent_review_policy');
 
@@ -770,20 +691,13 @@ describe('agent issue store', () => {
         reason: 'Create verifiable work.',
       }, actor, 100);
       const issue = (await store.search({ text: 'Verify launch checklist' })).rows[0];
-      await store.update({
-        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm verification work.',
-      }, actor, 110);
-      const confirmed = (await store.search({ text: 'Verify launch checklist' })).rows[0];
       const started = await store.startSession({
-        issueId: confirmed.target.id,
+        issueId: issue.target.id,
         purpose: 'verify',
-        expectedIssueRevision: confirmed.revision,
+        expectedIssueRevision: issue.revision,
         request: { mode: 'request' },
         reason: 'Start verifier.',
-      }, { type: 'runtime-authorized-action', actor }, actor, 120);
+      }, { type: 'runtime-action', actor }, actor, 120);
       expect(started.status).toBe('applied');
       const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
       const session = await store.readSession({ agentSessionId: sessionId });
@@ -806,7 +720,7 @@ describe('agent issue store', () => {
         completedAt: 140,
       }, actor, 140);
 
-      const read = await store.read({ target: confirmed.target, include: ['activity'] });
+      const read = await store.read({ target: issue.target, include: ['activity'] });
       expect(read.issue?.evidence).toContainEqual({ type: 'agent-session', agentSessionId: sessionId });
       expect(read.activity).toEqual(expect.arrayContaining([
         expect.objectContaining({
@@ -841,16 +755,6 @@ describe('agent issue store', () => {
         request: { mode: 'request' },
         reason: 'Create scheduled issue.',
       }, actor, 30);
-      const rows = await store.search({ targets: ['issue'] });
-      for (const row of rows.rows) {
-        await store.update({
-          target: { type: 'issue', id: row.target.id, expectedRevision: row.revision },
-          change: { type: 'confirm' },
-          request: { mode: 'request' },
-          reason: 'Confirm issue.',
-        }, actor, 40);
-      }
-
       expect((await store.listReadyIssuesForExecution(100)).map((issue) => issue.title)).toEqual(['Ready now']);
       expect((await store.search({ filter: { hasActiveSession: false } })).rows.map((row) => row.title).sort()).toEqual([
         'Manual only',
@@ -864,7 +768,7 @@ describe('agent issue store', () => {
         expectedIssueRevision: ready.revision,
         request: { mode: 'request' },
         reason: 'Auto start once.',
-      }, { type: 'runtime-authorized-action', actor }, actor, 120);
+      }, { type: 'runtime-action', actor }, actor, 120);
 
       expect(await store.listReadyIssuesForExecution(600)).toEqual(expect.arrayContaining([
         expect.objectContaining({ title: 'Scheduled later' }),
@@ -882,19 +786,12 @@ describe('agent issue store', () => {
         reason: 'Create recoverable work.',
       }, actor, 10);
       const issue = (await store.search({ targets: ['issue'] })).rows[0];
-      await store.update({
-        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm recoverable work.',
-      }, actor, 15);
-      const confirmedIssue = (await store.search({ targets: ['issue'] })).rows[0];
       const started = await store.startSession({
-        issueId: confirmedIssue.target.id,
-        expectedIssueRevision: confirmedIssue.revision,
+        issueId: issue.target.id,
+        expectedIssueRevision: issue.revision,
         request: { mode: 'request' },
         reason: 'Start work.',
-      }, { type: 'runtime-authorized-action', actor }, actor, 20);
+      }, { type: 'runtime-action', actor }, actor, 20);
       const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
       await store.bindSessionExecution(sessionId, {
         engine: 'delegation',

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { ActorRef, RuntimeAuthorizationCapability } from '../../src/core/agentIssue';
+import type { ActorRef } from '../../src/core/agentIssue';
 import { createAgentIssueToolRuntime, type AgentSessionExecutor } from '../../src/main/agentIssueRuntime';
 import { AgentIssueStore } from '../../src/main/agentIssueStore';
 
@@ -17,8 +17,8 @@ async function withStore<T>(fn: (store: AgentIssueStore) => Promise<T>): Promise
   }
 }
 
-describe('agent issue tool runtime authorization', () => {
-  test('allows safe draft creation without a runtime authorization capability', async () => {
+describe('agent issue tool runtime execution', () => {
+  test('creates scheduled recurring work with runtime provenance by default', async () => {
     await withStore(async (store) => {
       const runtime = createAgentIssueToolRuntime({ store, actor, now: () => 1_800_000_000_000 });
       const result = await runtime.create({
@@ -33,79 +33,47 @@ describe('agent issue tool runtime authorization', () => {
           },
         },
         request: { mode: 'request' },
-        reason: 'Draft a daily summary routine.',
+        reason: 'Create a daily summary routine.',
       });
 
       expect(result.status).toBe('applied');
       const row = (await runtime.search({ targets: ['recurring-issue'] })).rows[0];
       const read = await runtime.read({ target: row.target });
-      expect(read.recurringIssue?.confirmation.state).toBe('draft');
+      expect(read.recurringIssue?.confirmation.confirmedBy).toEqual(actor);
+      expect(read.recurringIssue?.confirmation.confirmedAt).toBe(1_800_000_000_000);
+      expect(read.recurringIssue?.status).toBe('active');
     });
   });
 
-  test('requires runtime-owned authorization for confirm and start', async () => {
+  test('starts Issue work without a separate approval handoff', async () => {
     await withStore(async (store) => {
-      const unauthorized = createAgentIssueToolRuntime({ store, actor, now: () => 100 });
-      await unauthorized.create({
+      const runtime = createAgentIssueToolRuntime({ store, actor, now: () => 100 });
+      await runtime.create({
         issueType: 'issue',
         fields: { title: 'Write release report', trigger: { type: 'when-ready' } },
         request: { mode: 'request' },
         reason: 'Create executable work.',
       });
-      const issue = (await unauthorized.search({ targets: ['issue'] })).rows[0];
+      const issue = (await runtime.search({ targets: ['issue'] })).rows[0];
+      const readIssue = await runtime.read({ target: issue.target });
+      expect(readIssue.issue?.confirmation.confirmedBy).toEqual(actor);
 
-      const confirmBlocked = await unauthorized.update({
-        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm executable work.',
-      });
-      expect(confirmBlocked.status).toBe('needs-confirmation');
-
-      const startBlocked = await unauthorized.startSession({
+      const started = await runtime.startSession({
         issueId: issue.target.id,
         expectedIssueRevision: issue.revision,
-        request: { mode: 'request' },
-        reason: 'Start work.',
-      });
-      expect(startBlocked.status).toBe('needs-confirmation');
-
-      const authorization: RuntimeAuthorizationCapability = {
-        id: 'auth:1',
-        actor,
-        allowedOperations: [
-          { type: 'issue-update', issueId: issue.target.id },
-          { type: 'agent-session-start', issueId: issue.target.id },
-        ],
-        expiresAt: 1_000,
-        auditReason: 'User confirmed this Issue in the current runtime action.',
-      };
-      const authorized = createAgentIssueToolRuntime({ store, actor, authorization, now: () => 200 });
-      const confirmed = await authorized.update({
-        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm executable work.',
-      });
-      expect(confirmed.status).toBe('applied');
-      const confirmedIssue = (await authorized.search({ targets: ['issue'] })).rows[0];
-
-      const started = await authorized.startSession({
-        issueId: issue.target.id,
-        expectedIssueRevision: confirmedIssue.revision,
         request: { mode: 'request' },
         reason: 'Start work.',
       });
       expect(started.status).toBe('applied');
       expect(started.targets.some((target) => target.type === 'agent-session')).toBe(true);
       const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
-      const read = await authorized.readSession({ agentSessionId: sessionId });
+      const read = await runtime.readSession({ agentSessionId: sessionId });
       expect(read?.agentSession.state).toBe('error');
       expect(read?.agentSession.errorMessage).toBe('No Agent Session executor is configured.');
     });
   });
 
-  test('accepts runtime-injected authorization from a provider without model-facing tokens', async () => {
+  test('updates lifecycle and starts through an executor without approval handoff', async () => {
     await withStore(async (store) => {
       const executorStarts: string[] = [];
       const executor: AgentSessionExecutor = {
@@ -113,8 +81,8 @@ describe('agent issue tool runtime authorization', () => {
           executorStarts.push(session.id);
           return {
             engine: 'delegation',
-            conversationId: 'conversation:provider-auth',
-            executionId: 'execution:provider-auth',
+            conversationId: 'conversation:silent-start',
+            executionId: 'execution:silent-start',
             startedAt: 500,
           };
         },
@@ -122,7 +90,7 @@ describe('agent issue tool runtime authorization', () => {
       await store.create({
         issueType: 'issue',
         fields: {
-          title: 'Authorized provider issue',
+          title: 'Silent issue start',
           trigger: { type: 'when-ready' },
           permissionMode: 'unattended',
         },
@@ -130,72 +98,35 @@ describe('agent issue tool runtime authorization', () => {
         reason: 'Create executable issue.',
       }, actor, 100);
       const issue = (await store.search({ targets: ['issue'] })).rows[0];
-      const authorizations: RuntimeAuthorizationCapability[] = [
-        {
-          id: 'auth:provider-confirm',
-          actor,
-          allowedOperations: [{ type: 'issue-update', issueId: issue.target.id }],
-          expiresAt: 1_000,
-          auditReason: 'Runtime approval for confirm.',
-        },
-        {
-          id: 'auth:provider-start',
-          actor,
-          allowedOperations: [{ type: 'agent-session-start', issueId: issue.target.id }],
-          expiresAt: 1_000,
-          auditReason: 'Runtime approval for start.',
-        },
-      ];
       const runtime = createAgentIssueToolRuntime({
         store,
         actor,
         executor,
         now: () => 500,
-        authorizationProvider: (scope) => {
-          const index = authorizations.findIndex((authorization) => (
-            authorization.allowedOperations.some((operation) => (
-              operation.type === scope.type
-              && ('issueId' in operation ? operation.issueId === (scope as { issueId?: string }).issueId : true)
-            ))
-          ));
-          if (index < 0) return undefined;
-          return authorizations.splice(index, 1)[0];
-        },
       });
 
-      const confirmed = await runtime.update({
+      const transitioned = await runtime.update({
         target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
-        change: { type: 'confirm' },
+        change: { type: 'transition', status: { name: 'Started', category: 'started' } },
         request: { mode: 'request' },
-        reason: 'Confirm via runtime provider.',
+        reason: 'Mark as started before execution.',
       });
-      expect(confirmed.status).toBe('applied');
-      const confirmedIssue = (await store.search({ targets: ['issue'] })).rows[0];
+      expect(transitioned.status).toBe('applied');
+      const updatedIssue = (await store.search({ targets: ['issue'] })).rows[0];
 
       const started = await runtime.startSession({
         issueId: issue.target.id,
-        expectedIssueRevision: confirmedIssue.revision,
+        expectedIssueRevision: updatedIssue.revision,
         request: { mode: 'request' },
-        reason: 'Start via runtime provider.',
+        reason: 'Start without a separate approval handoff.',
       });
       expect(started.status).toBe('applied');
       expect(executorStarts).toHaveLength(1);
-      expect(authorizations).toEqual([]);
     });
   });
 
   test('starts Agent Sessions through the configured runtime executor', async () => {
     await withStore(async (store) => {
-      const authorization: RuntimeAuthorizationCapability = {
-        id: 'auth:executor',
-        actor,
-        allowedOperations: [
-          { type: 'issue-update' },
-          { type: 'agent-session-start' },
-        ],
-        expiresAt: 1_000,
-        auditReason: 'User confirmed this execution.',
-      };
       const startedSessions: string[] = [];
       const executor: AgentSessionExecutor = {
         start: ({ session }) => {
@@ -209,7 +140,7 @@ describe('agent issue tool runtime authorization', () => {
         },
         read: async () => undefined,
       };
-      const runtime = createAgentIssueToolRuntime({ store, actor, authorization, executor, now: () => 300 });
+      const runtime = createAgentIssueToolRuntime({ store, actor, executor, now: () => 300 });
       await runtime.create({
         issueType: 'issue',
         fields: {
@@ -221,17 +152,10 @@ describe('agent issue tool runtime authorization', () => {
         reason: 'Create executable issue.',
       });
       const issue = (await runtime.search({ targets: ['issue'] })).rows[0];
-      await runtime.update({
-        target: { type: 'issue', id: issue.target.id, expectedRevision: issue.revision },
-        change: { type: 'confirm' },
-        request: { mode: 'request' },
-        reason: 'Confirm execution.',
-      });
-      const confirmed = (await runtime.search({ targets: ['issue'] })).rows[0];
 
       const started = await runtime.startSession({
-        issueId: confirmed.target.id,
-        expectedIssueRevision: confirmed.revision,
+        issueId: issue.target.id,
+        expectedIssueRevision: issue.revision,
         request: { mode: 'request' },
         reason: 'Start execution.',
       });

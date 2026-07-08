@@ -204,9 +204,9 @@ describe('agent tool call block', () => {
       { name: 'issue_create', args: { title: 'Write daily report' }, pending: 'Creating issue "Write daily report"', done: 'Created issue "Write daily report"' },
       { name: 'issue_update', args: { issueId: 'issue-1' }, pending: 'Updating issue "issue-1"', done: 'Updated issue "issue-1"' },
       { name: 'agent_session_start', args: { issueId: 'issue-1' }, pending: 'Starting agent session "issue-1"', done: 'Started agent session "issue-1"' },
-      { name: 'agent_session_read', args: { sessionId: 'session-1' }, pending: 'Reading agent session "session-1"', done: 'Read agent session "session-1"' },
-      { name: 'agent_session_send_message', args: { sessionId: 'session-1' }, pending: 'Messaging agent session "session-1"', done: 'Messaged agent session "session-1"' },
-      { name: 'agent_session_stop', args: { sessionId: 'session-1' }, pending: 'Stopping agent session "session-1"', done: 'Stopped agent session "session-1"' },
+      { name: 'agent_session_read', args: { agentSessionId: 'session-1' }, pending: 'Reading agent session "session-1"', done: 'Read agent session "session-1"' },
+      { name: 'agent_session_send_message', args: { agentSessionId: 'session-1' }, pending: 'Messaging agent session "session-1"', done: 'Messaged agent session "session-1"' },
+      { name: 'agent_session_stop', args: { agentSessionId: 'session-1' }, pending: 'Stopping agent session "session-1"', done: 'Stopped agent session "session-1"' },
       {
         name: 'ask_user_question',
         args: { questions: [{ id: 'scope', type: 'single_choice', question: 'Which scope should I use?' }] },

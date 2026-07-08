@@ -82,6 +82,8 @@ export type {
   AgentIssue,
   AgentRecurringIssue,
   AgentSession,
+  AgentSessionReadInput,
+  AgentSessionReadResult,
   IssueReadInput,
   IssueReadResult,
   IssueSearchInput,

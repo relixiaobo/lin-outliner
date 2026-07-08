@@ -45,7 +45,7 @@ describe('agent permissions', () => {
     }
   });
 
-  test('classifies Issue tools and asks before runtime-authorized execution operations', () => {
+  test('classifies Issue tools as local work management allowed by default', () => {
     const search = evaluateAgentToolPermission({
       toolName: 'issue_search',
       args: { targets: ['issue'] },
@@ -71,22 +71,17 @@ describe('agent permissions', () => {
     expect(create.behavior).toBe('allow');
     expect(create.descriptor?.actionKind).toBe('agent.issue.create');
 
-    const confirm = evaluateAgentToolPermission({
+    const update = evaluateAgentToolPermission({
       toolName: 'issue_update',
       args: {
         target: { type: 'recurring-issue', id: 'recurring:daily-news' },
-        change: { type: 'confirm' },
+        change: { type: 'patch', patch: { titleTemplate: 'Daily news digest' } },
         request: { mode: 'request' },
       },
       policy: { workspaceRoot },
     });
-    expect(confirm.behavior).toBe('soft_blocked');
-    if (confirm.behavior !== 'soft_blocked') throw new Error('expected issue_update confirm to require approval');
-    expect(confirm.code).toBe('agent_issue_authorized_update');
-    expect(confirm.request.title).toBe('Confirm Issue change?');
-    expect(confirm.request.target).toBe('recurring:daily-news');
-    expect(confirm.request.alwaysAllowRule).toBeUndefined();
-    expect(confirm.descriptor?.actionKind).toBe('agent.issue.update');
+    expect(update.behavior).toBe('allow');
+    expect(update.descriptor?.actionKind).toBe('agent.issue.update');
 
     const start = evaluateAgentToolPermission({
       toolName: 'agent_session_start',
@@ -96,11 +91,8 @@ describe('agent permissions', () => {
       },
       policy: { workspaceRoot },
     });
-    expect(start.behavior).toBe('soft_blocked');
-    if (start.behavior !== 'soft_blocked') throw new Error('expected agent_session_start to require approval');
-    expect(start.code).toBe('agent_session_start');
-    expect(start.request.title).toBe('Start Agent Session?');
-    expect(start.request.target).toBe('issue:daily-news-2026-07-07');
+    expect(start.behavior).toBe('allow');
+    expect(start.descriptor?.actionKind).toBe('agent.session.start');
     expect(start.descriptor?.platformHardBlock).toBeUndefined();
   });
 

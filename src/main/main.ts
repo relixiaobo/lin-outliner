@@ -41,7 +41,7 @@ import {
   type AgentMessageContextMenuRequest,
 } from '../core/agentTypes';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
-import type { IssueReadInput, IssueSearchInput } from '../core/agentIssue';
+import type { AgentSessionReadInput, IssueReadInput, IssueSearchInput } from '../core/agentIssue';
 import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
 import { normalizePreviewHttpUrl } from '../core/preview';
 import { handlePreviewCommand } from './previewSource';
@@ -2602,6 +2602,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.searchIssues(args as IssueSearchInput);
     case 'agent_issue_read':
       return agentRuntime.readIssue(args as unknown as IssueReadInput);
+    case 'agent_session_read':
+      return agentRuntime.readAgentSession(args as unknown as AgentSessionReadInput);
     case 'agent_list_dream_history':
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
     case 'agent_dream_readiness':

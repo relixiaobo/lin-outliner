@@ -130,7 +130,7 @@ export class AgentIssueStore {
 
     return updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
       if (input.issueType === 'issue') {
-        const issue = buildIssue(input.fields, now);
+        const issue = buildIssue(input.fields, actor, now);
         state.issues[issue.id] = issue;
         linkIssueToParent(state, issue);
         appendActivity(state, {
@@ -143,7 +143,7 @@ export class AgentIssueStore {
         return state;
       }
 
-      const recurringIssue = buildRecurringIssue(input.fields, now);
+      const recurringIssue = buildRecurringIssue(input.fields, actor, now);
       state.recurringIssues[recurringIssue.id] = recurringIssue;
       appendActivity(state, {
         target: { type: 'recurring-issue', recurringIssueId: recurringIssue.id },
@@ -500,7 +500,7 @@ export class AgentIssueStore {
     const materialized: AgentIssue[] = [];
     await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
       for (const recurringIssue of Object.values(state.recurringIssues)) {
-        if (recurringIssue.status !== 'active' || recurringIssue.confirmation.state !== 'confirmed') continue;
+        if (recurringIssue.status !== 'active') continue;
         const dueAt = mostRecentDueAtOrBefore(recurringIssue.cadence, now, recurringIssue.createdAt);
         if (dueAt === null) {
           recurringIssue.nextMaterializationAt = nextDueAfter(recurringIssue.cadence, now) ?? undefined;
@@ -607,7 +607,7 @@ function parseState(value: unknown): AgentIssueStoreState {
   };
 }
 
-function buildIssue(fields: IssueDraftFields, now: number): AgentIssue {
+function buildIssue(fields: IssueDraftFields, actor: ActorRef, now: number): AgentIssue {
   return {
     id: `issue:${randomUUID()}`,
     title: fields.title.trim(),
@@ -627,14 +627,14 @@ function buildIssue(fields: IssueDraftFields, now: number): AgentIssue {
     ...(fields.output ? { output: fields.output } : {}),
     permissionMode: fields.permissionMode ?? 'attended',
     ...(fields.executionPolicy ? { executionPolicy: fields.executionPolicy } : {}),
-    confirmation: { state: 'draft' },
+    confirmation: { confirmedBy: actor, confirmedAt: now },
     revision: revision(now),
     createdAt: now,
     updatedAt: now,
   };
 }
 
-function buildRecurringIssue(fields: RecurringIssueDraftFields, now: number): AgentRecurringIssue {
+function buildRecurringIssue(fields: RecurringIssueDraftFields, actor: ActorRef, now: number): AgentRecurringIssue {
   return {
     id: `recurring-issue:${randomUUID()}`,
     titleTemplate: fields.titleTemplate.trim(),
@@ -644,7 +644,7 @@ function buildRecurringIssue(fields: RecurringIssueDraftFields, now: number): Ag
     timeZone: fields.timeZone,
     missedPolicy: fields.missedPolicy ?? { type: 'coalesce-latest' },
     issueTemplate: fields.issueTemplate,
-    confirmation: { state: 'draft' },
+    confirmation: { confirmedBy: actor, confirmedAt: now },
     nextMaterializationAt: nextDueAfter(fields.cadence, now) ?? undefined,
     revision: revision(now),
     createdAt: now,
@@ -744,10 +744,6 @@ function applyIssueChange(
       appendActivity(state, activityInput({ type: 'issue', issueId: issue.id }, actor, { type: 'status-change', from: issue.status.name, to: change.status.name }, now));
       issue.status = change.status;
       break;
-    case 'confirm':
-      issue.confirmation = { state: 'confirmed', confirmedBy: actor, confirmedAt: now };
-      appendActivity(state, activityInput({ type: 'issue', issueId: issue.id }, actor, { type: 'field-change', field: 'confirmation', to: 'confirmed' }, now));
-      break;
     case 'archive':
       issue.archivedAt = now;
       appendActivity(state, activityInput({ type: 'issue', issueId: issue.id }, actor, { type: 'field-change', field: 'archivedAt', to: now }, now));
@@ -773,10 +769,6 @@ function applyRecurringIssueChange(
     case 'patch':
       Object.assign(recurringIssue, change.patch);
       appendActivity(state, activityInput({ type: 'recurring-issue', recurringIssueId: recurringIssue.id }, actor, { type: 'field-change', field: 'patch', to: change.patch }, now));
-      break;
-    case 'confirm':
-      recurringIssue.confirmation = { state: 'confirmed', confirmedBy: actor, confirmedAt: now };
-      appendActivity(state, activityInput({ type: 'recurring-issue', recurringIssueId: recurringIssue.id }, actor, { type: 'field-change', field: 'confirmation', to: 'confirmed' }, now));
       break;
     case 'pause':
       recurringIssue.status = 'paused';
@@ -878,7 +870,6 @@ function matchesIssue(issue: AgentIssue, state: AgentIssueStoreState, input: Iss
   if (filter?.parentIssueIds && (!issue.parentIssueId || !filter.parentIssueIds.includes(issue.parentIssueId))) return false;
   if (filter?.hasSubIssues !== undefined && (issue.subIssueIds.length > 0) !== filter.hasSubIssues) return false;
   if (filter?.triggerTypes && !filter.triggerTypes.includes(issue.trigger.type)) return false;
-  if (filter?.confirmed !== undefined && (issue.confirmation.state === 'confirmed') !== filter.confirmed) return false;
   if (filter?.archived !== undefined && Boolean(issue.archivedAt) !== filter.archived) return false;
   if (filter?.hasActiveSession !== undefined && issueHasActiveSession(issue, state) !== filter.hasActiveSession) return false;
   if (filter?.needsAttention !== undefined && issueNeedsAttention(issue, state) !== filter.needsAttention) return false;
@@ -905,7 +896,6 @@ function matchesRecurringIssue(recurringIssue: AgentRecurringIssue, input: Issue
   if (filter?.statusCategories && !derivedRecurringIssueBuckets(recurringIssue).some((bucket) => filter.statusCategories!.includes(bucket))) return false;
   if (filter?.triggerTypes && !filter.triggerTypes.includes((recurringIssue.issueTemplate.trigger ?? { type: 'when-ready' }).type)) return false;
   if (filter?.cadence && !filter.cadence.includes(recurringIssue.cadence.type)) return false;
-  if (filter?.confirmed !== undefined && (recurringIssue.confirmation.state === 'confirmed') !== filter.confirmed) return false;
   if (filter?.archived !== undefined && Boolean(recurringIssue.archivedAt || recurringIssue.status === 'archived') !== filter.archived) return false;
   if (filter?.nextMaterializationAt && !timeInRange(recurringIssue.nextMaterializationAt, filter.nextMaterializationAt)) return false;
   if (filter?.inputNodeIds && !inputScopeMatchesNodeIds(recurringIssue.issueTemplate.input, filter.inputNodeIds)) return false;
@@ -928,14 +918,12 @@ function derivedIssueBuckets(issue: AgentIssue, state: AgentIssueStoreState): Is
 function derivedRecurringIssueBuckets(recurringIssue: AgentRecurringIssue): IssueViewBucket[] {
   const buckets: IssueViewBucket[] = [];
   if (recurringIssue.archivedAt || recurringIssue.status === 'archived') buckets.push('archived');
-  if (recurringIssue.confirmation.state !== 'confirmed') buckets.push('triage');
   if (recurringIssue.nextMaterializationAt !== undefined) buckets.push('scheduled');
   return buckets;
 }
 
 function isIssueReadyForExecution(issue: AgentIssue, state: AgentIssueStoreState, now: number): boolean {
   if (issue.archivedAt) return false;
-  if (issue.confirmation.state !== 'confirmed') return false;
   if (issue.status.category === 'completed' || issue.status.category === 'canceled') return false;
   if (issueHasAnySession(issue, state)) return false;
   if (issue.relations.some((relation) => relation.type === 'blocked-by' && !isBlockingIssueCompleted(state.issues[relation.issueId]))) return false;
@@ -952,9 +940,6 @@ function validateSessionStart(
   const messages: ValidationMessage[] = [];
   if (issue.archivedAt) {
     messages.push({ code: 'archived_issue', message: 'Archived Issues cannot start Agent Sessions.' });
-  }
-  if (issue.confirmation.state !== 'confirmed') {
-    messages.push({ code: 'unconfirmed_issue', message: 'Issue must be confirmed before starting an Agent Session.' });
   }
   if (issue.status.category === 'completed' || issue.status.category === 'canceled') {
     messages.push({ code: 'terminal_issue', message: 'Completed or canceled Issues cannot start new Agent Sessions.' });
@@ -1008,6 +993,16 @@ function issueNeedsAttention(issue: AgentIssue, state: AgentIssueStoreState): bo
     || issue.relations.some((relation) => relation.type === 'blocked-by' && !isBlockingIssueCompleted(state.issues[relation.issueId]));
 }
 
+function latestSessionForIssue(issue: AgentIssue, state: AgentIssueStoreState): AgentSession | undefined {
+  return Object.values(state.sessions)
+    .filter((session) => session.issueId === issue.id)
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+}
+
+function issueViewBuckets(issue: AgentIssue, state: AgentIssueStoreState): IssueViewBucket[] {
+  return [...new Set([issue.status.category, ...derivedIssueBuckets(issue, state)])];
+}
+
 function triggerSortTime(issue: AgentIssue): number {
   return issue.trigger.type === 'scheduled' ? issue.trigger.startAt : issue.createdAt;
 }
@@ -1016,10 +1011,21 @@ function issueRow(issue: AgentIssue, state: AgentIssueStoreState, input: IssueSe
   const activity = input.include?.includes('activity-summary')
     ? sortActivityDescending(issueActivity(state, issue))
     : undefined;
+  const latestSession = latestSessionForIssue(issue, state);
   return {
     target: { type: 'issue', id: issue.id },
     title: issue.title,
     status: issue.status.name,
+    statusCategory: issue.status.category,
+    viewBuckets: issueViewBuckets(issue, state),
+    trigger: issue.trigger,
+    ...(issue.dueDate ? { dueDate: issue.dueDate } : {}),
+    hasActiveSession: issueHasActiveSession(issue, state),
+    needsAttention: issueNeedsAttention(issue, state),
+    ...(latestSession ? {
+      latestSessionState: latestSession.state,
+      latestSessionUpdatedAt: latestSession.updatedAt,
+    } : {}),
     revision: issue.revision,
     updatedAt: issue.updatedAt,
     ...(activity ? { latestActivity: activity[0], activityCount: activity.length } : {}),
@@ -1038,6 +1044,9 @@ function recurringIssueRow(
     target: { type: 'recurring-issue', id: recurringIssue.id },
     title: recurringIssue.titleTemplate,
     status: recurringIssue.status,
+    viewBuckets: derivedRecurringIssueBuckets(recurringIssue),
+    cadence: recurringIssue.cadence,
+    ...(recurringIssue.nextMaterializationAt !== undefined ? { nextMaterializationAt: recurringIssue.nextMaterializationAt } : {}),
     revision: recurringIssue.revision,
     updatedAt: recurringIssue.updatedAt,
     ...(activity ? { latestActivity: activity[0], activityCount: activity.length } : {}),

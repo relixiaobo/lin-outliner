@@ -1012,31 +1012,42 @@ Rules:
 - The Work view is Issue-first. Opening Work replaces the dock's channel header
   with a first-level `Back to chat · Issues` header and replaces the chat body
   with renderer presets over canonical Issue data. The list is backed by
-  `agent_issue_search`, not `agent_list_runs`. Triage, Active, Scheduled,
-  Completed, and Activity are renderer tabs translated into Issue filters such as
-  confirmation state, status categories, scheduled triggers, Recurring Issue
-  `nextMaterializationAt`, active Agent Sessions, and Activity-derived state;
-  they are not model-facing view enums. The Activity tab asks
-  `agent_issue_search` for `activity-summary`, displays the latest Activity
-  summary on each row, and sorts by latest Activity time. It is a projection over
-  Activity attached to Issues and Recurring Issues, not a separate Logbook or an
-  Issue `updatedAt` list.
+  `agent_issue_search`, not `agent_list_runs`. Inbox, Today, Upcoming, and
+  Logbook are renderer smart filters over canonical row facts such as trigger
+  type, status category, due time, Recurring Issue `nextMaterializationAt`, active
+  Agent Sessions, and latest Activity. They are not model-facing view enums or
+  stored categories. Inbox owns unarranged or attention-needed work. Today owns
+  running, due, repeating-today, and done-today work. Upcoming owns future
+  schedules and repeating rules. Logbook owns terminal concrete Issues.
 
   The first-level Work rows are Issues or Recurring Issues. Each row shows a
-  concept marker, title, object kind, status, and relative update time. Active
-  Agent Session count is derived from Issue search filters and appears only as
-  Work button/status chrome, not as a Run count. Dream remains excluded from this
-  ordinary Work surface and stays in Settings -> Agent "Memory & activity".
+  concept/status marker, title, and one context-sensitive meta line. The meta
+  line avoids repeating the current section: an Upcoming recurring row can show
+  `8:00 AM · Daily`, while a Today completed row can show only the completion
+  recency. Active Agent Session count is derived from Issue search filters and
+  appears only as Work button/status chrome, not as a Run count. Dream remains
+  excluded from this ordinary Work surface and stays in Settings -> Agent
+  "Memory & activity".
 
   Opening a Work row overlays an Issue detail drawer on the list. The drawer
-  reads `agent_issue_read` and shows durable Issue fields, trigger/cadence,
-  confirmation state, Agent Sessions, sub-issues or generated Issues, and Activity
-  entries. Activity is high-signal product history and execution progress; raw
-  model reasoning stays in Run transcript/debug surfaces and is not copied into
-  Activity. Agent Session rows show Session state and latest output/error summary
-  when available. The drawer is read-only in this checkpoint; execution controls
-  remain in the model-facing Agent Session tools and in legacy Run transcript
-  detail until the full Agent Session control UI lands.
+  reads `agent_issue_read` and shows the durable work definition as a compact
+  hierarchy: title, status chip, next run/trigger timing, instructions, Agent
+  Sessions, sub-issues or generated Issues, and Activity. It does not repeat the
+  same state through a separate metadata table when an icon, section, or chip
+  already communicates it. Sub-issues and generated Issues open recursively in
+  the same drawer and extend the breadcrumb path, so a parent Issue, child Issue,
+  and Agent Session share one drill-in model.
+
+  Agent Session rows show Session state and a short latest-output/error/plan
+  summary. Selecting a row opens a read-only Agent Session view inside the Issue
+  drawer. That view reads `agent_session_read`, reuses conversation-style
+  markdown rendering for Activity and latest output, and exposes the Session as
+  the Issue's execution thread rather than as a separate chat. Activity remains a
+  high-signal product history and execution progress layer; raw model reasoning
+  stays in Run transcript/debug surfaces and is not copied into Activity. The
+  drawer is read-only in this checkpoint; execution controls remain in the
+  model-facing Agent Session tools and in legacy Run transcript detail until the
+  full Agent Session control UI lands.
 - Long output rows are collapsed by default.
 - **Result-first turn process (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last

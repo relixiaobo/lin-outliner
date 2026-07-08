@@ -65,12 +65,12 @@ surface.
 | `generate_image` | agent | Creates image files | Usually yes | Generate or edit raster images through enabled image-capable providers. |
 | `issue_search` | agent | No | No | Search concrete Issues and Recurring Issues by canonical work fields, execution state, node/tag scope, Activity state, and ordering fields. |
 | `issue_read` | agent | No | No | Read one Issue or Recurring Issue with requested detail slices for sessions, Activity, hierarchy, generated Issues, or verification evidence. |
-| `issue_create` | agent | Yes | Usually yes | Draft or confirm an Issue or Recurring Issue with objective, criteria, trigger, input scope, delegate profile, and verification policy. |
-| `issue_update` | agent | Yes | Usually yes | Draft or confirm field, status, trigger, recurrence, hierarchy, or lifecycle changes on existing Issues and Recurring Issues. |
-| `agent_session_start` | agent | Runtime execution | Yes when execution-enabling | Start one Agent Session for an Issue from the confirmed input snapshot. |
+| `issue_create` | agent | Yes | No | Create an Issue or Recurring Issue with objective, criteria, trigger, input scope, delegate profile, and verification policy. |
+| `issue_update` | agent | Yes | Destructive changes only | Update field, status, trigger, recurrence, hierarchy, or lifecycle changes on existing Issues and Recurring Issues. |
+| `agent_session_start` | agent | Runtime execution | No | Start one Agent Session for an Issue from the Issue input snapshot. |
 | `agent_session_read` | agent | No | No | Read an Agent Session's status, latest output, Activity, and executor-facing state without exposing a Run id. |
-| `agent_session_send_message` | agent | Runtime execution | Yes | Send soft guidance or requested input to a live Agent Session. |
-| `agent_session_stop` | agent | Runtime execution | Yes | Request cancellation of a live Agent Session. |
+| `agent_session_send_message` | agent | Runtime execution | No | Send soft guidance or requested input to a live Agent Session. |
+| `agent_session_stop` | agent | Runtime execution | Destructive cancellation only | Request cancellation of a live Agent Session. |
 
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
@@ -89,36 +89,34 @@ delegation engine as an internal Agent Session executor.
 The checkpoint defines the concepts, schemas, and Issue-first Work surface:
 
 - canonical types live in `src/core/agentIssue.ts`: Issue, Recurring Issue,
-  Agent Session, Activity, runtime authorization capability, and the eight
-  Issue/Agent Session tool input/result contracts;
+  Agent Session, Activity, and the eight Issue/Agent Session tool input/result
+  contracts;
 - JSON Schema parameter contracts live in
   `src/main/agentIssueToolSchemas.ts`, with descriptions on every visible
   field and no model-facing `userActionId`, authorization token, or capability
   id;
 - tool definitions live in `src/main/agentIssueToolDefinitions.ts`, keeping
-  name, kind, search hint, schema, read/destructive classifiers, and runtime
-  authorization classifier in one place;
+  name, kind, search hint, schema, and read/destructive classifiers in one
+  place;
 - `src/main/agentIssueTools.ts` adapts those definitions to the existing
   `ToolEnvelope` result format behind an explicit `AgentIssueToolRuntime`;
 - `src/main/agentIssueRuntime.ts` wraps the store as an
-  `AgentIssueToolRuntime` and applies runtime-owned authorization capability
-  checks before confirmation, execution-enabling updates, Agent Session starts,
-  messages, or stops. A request-mode `agent_session_start` creates the Agent
-  Session first, then immediately hands it to the configured executor. If no
-  executor is available, the Session is marked `error` instead of remaining
-  indefinitely `pending`;
-- `src/main/agentIssueRuntimeAuthorization.ts` is the shared classifier for
-  Issue-tool runtime authorization scopes. The ordinary tool permission layer
-  soft-blocks execution-enabling `issue_update` and `agent_session_*` requests;
-  when the user approves the permission card, `AgentRuntime` injects a short-lived
-  runtime-owned capability into the `AgentIssueToolRuntime`. The model-facing
-  schema still carries no authorization token, capability id, or `userActionId`;
-- `src/main/agentIssueInputResolver.ts` resolves an Issue's confirmed input
+  `AgentIssueToolRuntime` and applies Issue state, revision, blocker, scope, and
+  executor checks before Agent Session starts, messages, or stops. A
+  request-mode `agent_session_start` creates the Agent Session first, then
+  immediately hands it to the configured executor. If no executor is available,
+  the Session is marked `error` instead of remaining indefinitely `pending`;
+- Local Issue lifecycle and Agent Session control tools do not have a separate
+  Issue-specific authorization classifier in V1; the ordinary tool permission
+  layer still blocks destructive or platform-risky downstream tools. The
+  model-facing schema carries no authorization token, capability id, or
+  `userActionId`;
+- `src/main/agentIssueInputResolver.ts` resolves an Issue's input
   scope against the current outliner projection when an Agent Session starts.
   `selected-nodes`, `node-children`, and `tag-query` scopes become a bounded
   `inputSnapshot` with concrete node ids and a preview on the Agent Session;
   the Issue remains the durable work object, and nodes do not store work state.
-- `src/main/agentIssueSessionScope.ts` maps an Agent Session's confirmed
+- `src/main/agentIssueSessionScope.ts` maps an Agent Session's
   `inputSnapshot` and `outputSnapshot` into delegated Run
   `scope.resources.nodes` roots. The node tools enforce that resource scope at
   runtime: `node_search` filters results to scoped node roots and their
@@ -129,28 +127,32 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   scoped node set. This makes unattended Issue Sessions fail closed in code
   instead of relying on prompt instructions.
 - `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
-  Sessions, and Activity in `issue-manager.json`, including draft creation,
+  Sessions, and Activity in `issue-manager.json`, including request-mode
+  creation,
   parent/sub-issue links, revision conflicts, session message/stop Activity,
   due-time Recurring Issue materialization, internal Session-to-executor
   bindings, and execution status sync into `active`, `complete`, `error`, or
   `canceled`;
 - `src/main/agentRuntime.ts` owns the Issue store lifecycle and runs a
-  lightweight Issue scheduler tick. The tick materializes due confirmed
-  Recurring Issues into concrete Issues, then starts one Agent Session for each
-  confirmed unattended ready Issue that has not already had a Session. Ordinary
+  lightweight Issue scheduler tick. The tick materializes due active Recurring
+  Issues into concrete Issues, then starts one Agent Session for each unattended
+  ready Issue that has not already had a Session. Ordinary
   and child-agent tool pools receive `issueRuntime`; Dream does not, so
   model-facing Issue tools cannot create, mutate, or start Dream work.
   Startup recovery marks any persisted `pending`, `active`, or `awaitingInput`
   Agent Session as `stale` when there is no live executor in the restored
   runtime.
 - The renderer-facing Work panel is Issue-first: it reads Work rows with
-  `agent_issue_search`, opens Issue details with `agent_issue_read`, and renders
-  Agent Sessions and Activity as Issue detail sections. The panel's Triage,
-  Active, Scheduled, Completed, and Activity tabs are renderer presets translated
-  into canonical Issue filters, not model-facing view enums. The Activity tab
-  requests `activity-summary` rows and orders them by latest Activity time, so it
-  remains an Activity projection rather than a Logbook object or an Issue
-  `updatedAt` list.
+  `agent_issue_search`, opens Issue details with `agent_issue_read`, and opens a
+  read-only Agent Session thread with `agent_session_read`. The panel's Inbox,
+  Today, Upcoming, and Logbook navigation items are renderer smart filters over
+  canonical row facts, not model-facing view enums or stored categories.
+  Unscheduled/manual work with no active Session belongs in Inbox because it is
+  not yet arranged for execution. Activity feeds row summaries, Issue details,
+  and the Agent Session transcript view; it is not a primary navigation tab, and
+  Logbook is a view name rather than a separate object. Sub-issues and generated
+  Issues are first-class Issue links and open recursively through the same Issue
+  detail reader with breadcrumb context.
 - `issue_search` applies canonical field filters across both concrete Issues
   and Recurring Issues where the field exists, including delegate profile,
   trigger type, input node/tag scope, Activity type, and explicit ordering by
@@ -194,9 +196,9 @@ tools for one execution record; Activity is emitted by runtime/store code and
 is not exposed through an `activity_record` tool. The checkpoint deliberately
 does not add `task_*`, `run_*`, `project_*`, `cron_*`, or `logbook_*` tools.
 
-Recurring Issue materialization is store-owned and due-time only. Active,
-confirmed Recurring Issues can create concrete Issues when a cadence is due;
-draft, paused, or archived Recurring Issues do not. Generated Issue titles
+Recurring Issue materialization is store-owned and due-time only. Active
+Recurring Issues can create concrete Issues when a cadence is due; paused or
+archived Recurring Issues do not. Generated Issue titles
 include the covered local date by default, and repeated sweeps do not create
 duplicate Issues for the same recurrence window. When multiple due windows were
 missed, the default `coalesce-latest` policy creates only the latest concrete
@@ -207,11 +209,11 @@ the coalesced count in Recurring Issue Activity.
 materializer treats that window as intentionally handled rather than missed, so
 it does not create a concrete Issue or inflate a later coalesced count.
 
-Automatic trigger execution is one-shot per concrete Issue in V1: a confirmed
-unattended `when-ready` Issue or due `scheduled` Issue without any prior Agent
+Automatic trigger execution is one-shot per concrete Issue in V1: an unattended
+`when-ready` Issue or due `scheduled` Issue without any prior Agent
 Session can start one Agent Session from the scheduler. Attended Issues require
-an explicit runtime-authorized `agent_session_start` path. Completion or failure
-of that Session does not by itself complete the Issue and does not cause the
+an explicit `agent_session_start` path. Completion or failure of that Session
+does not by itself complete the Issue and does not cause the
 scheduler to loop on the same Issue. Retrying or continuing terminal work
 creates a new Agent Session through an explicit `agent_session_start` request.
 
@@ -228,8 +230,8 @@ complete the Issue.
 
 The delegation executor remains in the runtime for isolated skill execution and
 as the implementation substrate for Agent Session starts. It is not the product
-work-management API and has no model-facing compatibility tools. Runtime maps a
-confirmed Agent Session snapshot into an internal delegation input:
+work-management API and has no model-facing compatibility tools. Runtime maps
+an Agent Session snapshot into an internal delegation input:
 
 ```ts
 interface DelegationInput {

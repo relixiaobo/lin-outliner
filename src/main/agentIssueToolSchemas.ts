@@ -75,7 +75,7 @@ const ISSUE_STATUS_SCHEMA = {
     name: { type: 'string', minLength: 1, description: 'Human-readable status name.' },
     category: {
       type: 'string',
-      enum: ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled'],
+      enum: ['triage', 'unstarted', 'started', 'completed', 'canceled'],
       description: 'Stored lifecycle category for the Issue.',
     },
   },
@@ -105,7 +105,7 @@ const ISSUE_TRIGGER_SCHEMA = {
     type: {
       type: 'string',
       enum: ['manual', 'when-ready', 'scheduled'],
-      description: 'manual never starts automatically; when-ready starts when confirmed/unblocked; scheduled starts at startAt when eligible.',
+      description: 'manual never starts automatically; when-ready starts when unblocked and eligible; scheduled starts at startAt when eligible.',
     },
     startAt: {
       type: 'number',
@@ -252,7 +252,7 @@ const OUTPUT_POLICY_SCHEMA = {
     type: {
       type: 'string',
       enum: ['activity-only', 'daily-note', 'append-to-node', 'create-child-under-node', 'per-input-child', 'replace-input'],
-      description: 'Output destination mode. Defaults should be activity-only unless a write target is confirmed.',
+      description: 'Output destination mode. Defaults should be activity-only unless the user or Issue scope clearly names a write target.',
     },
     datePolicy: {
       type: 'string',
@@ -299,7 +299,7 @@ const EXECUTION_POLICY_SCHEMA = {
 const ISSUE_FIELDS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  description: 'Durable fields for a concrete Issue. Required on create: title. Other fields default to manual, attended, draft, and unstarted-like lifecycle.',
+  description: 'Durable fields for a concrete Issue. Required on create: title. Other fields default to manual, attended local work, and unstarted-like lifecycle.',
   properties: {
     title: { type: 'string', minLength: 1, description: 'Specific human-readable Issue name.' },
     description: { type: 'string', description: 'Stable goal, context, constraints, and acceptance guidance.' },
@@ -318,7 +318,7 @@ const ISSUE_FIELDS_SCHEMA = {
     permissionMode: {
       type: 'string',
       enum: ['attended', 'unattended'],
-      description: 'Execution permission mode. Use unattended only when the confirmed scope allows background execution.',
+      description: 'Execution permission mode. Use unattended only when the Issue scope allows background execution.',
     },
     executionPolicy: EXECUTION_POLICY_SCHEMA,
   },
@@ -401,7 +401,7 @@ const RECURRING_FIELDS_SCHEMA = {
     status: {
       type: 'string',
       enum: ['active', 'paused', 'archived'],
-      description: 'Recurring Issue lifecycle. Draft/confirmation is stored separately from this status.',
+      description: 'Recurring Issue lifecycle. Confirmation provenance is stored separately from this status.',
     },
     cadence: CADENCE_SCHEMA,
     timeZone: { type: 'string', minLength: 1, description: 'IANA time zone used to interpret cadence times.' },
@@ -432,7 +432,7 @@ export const ISSUE_SEARCH_PARAMETERS = {
         ids: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Exact object ids.' },
         statusCategories: {
           type: 'array',
-          items: { type: 'string', enum: ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled', 'blocked', 'attention-needed', 'archived', 'scheduled'] },
+          items: { type: 'string', enum: ['triage', 'unstarted', 'started', 'completed', 'canceled', 'blocked', 'attention-needed', 'archived', 'scheduled'] },
           description: 'Stored lifecycle categories and derived projection buckets. Do not use UI view names as filters.',
         },
         delegateIds: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Delegates or agent profile ids to match.' },
@@ -453,7 +453,6 @@ export const ISSUE_SEARCH_PARAMETERS = {
             issueId: { type: 'string', minLength: 1, description: 'Optional related Issue id to match.' },
           },
         },
-        confirmed: { type: 'boolean', description: 'Whether matched Issues or Recurring Issues must be confirmed for execution.' },
         archived: { type: 'boolean', description: 'Whether archived objects should be included or excluded.' },
         hasActiveSession: { type: 'boolean', description: 'Whether a pending or active Agent Session currently exists.' },
         needsAttention: { type: 'boolean', description: 'Whether user input, failed verification, failed execution, or a blocked dependency needs attention.' },
@@ -558,11 +557,11 @@ export const ISSUE_UPDATE_PARAMETERS = {
       type: 'object',
       additionalProperties: false,
       required: ['type'],
-      description: 'One explicit Issue-family change: patch, transition, confirm, pause/resume, skip-next, archive, or delete.',
+      description: 'One explicit Issue-family change: patch, transition, pause/resume, skip-next, archive, or delete.',
       properties: {
         type: {
           type: 'string',
-          enum: ['patch', 'transition', 'confirm', 'archive', 'delete', 'pause', 'resume', 'skip-next'],
+          enum: ['patch', 'transition', 'archive', 'delete', 'pause', 'resume', 'skip-next'],
           description: 'Change operation. pause/resume/skip-next apply only to Recurring Issues.',
         },
         patch: {

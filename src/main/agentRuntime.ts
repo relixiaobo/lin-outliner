@@ -120,6 +120,7 @@ import type {
   AgentIssue,
   AgentSession,
   AgentSessionReadInput,
+  AgentSessionReadResult,
   AgentSessionStartInput,
   IssueCompletionCriterion,
   IssueReadInput,
@@ -127,8 +128,6 @@ import type {
   IssueSearchResult,
   IssueOutputPolicy,
   IssueReadResult,
-  RuntimeAuthorizationCapability,
-  AgentOperationScope,
 } from '../core/agentIssue';
 import { isSystemReminderBlock, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
@@ -235,10 +234,6 @@ import {
   type SkillTurnEffect,
 } from './agentSkills';
 import { createAgentIssueToolRuntime, type AgentSessionExecutor } from './agentIssueRuntime';
-import {
-  agentIssueOperationMatches,
-  agentIssueRuntimeAuthorizationScope,
-} from './agentIssueRuntimeAuthorization';
 import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
   INTERNAL_DELEGATION_ACTOR_TOOL_NAME,
@@ -479,11 +474,6 @@ interface AgentToolApprovalResolution {
   alwaysAllowRule?: string;
 }
 
-interface AgentIssueRuntimeAuthorizationStore {
-  grant(scope: AgentOperationScope, auditReason: string): void;
-  consume(scope: AgentOperationScope): RuntimeAuthorizationCapability | undefined;
-}
-
 interface AgentPendingApproval {
   conversationId: string;
   runId?: string;
@@ -636,7 +626,6 @@ interface AgentConversationState {
   runtimeSettings: AgentRuntimeSettings;
   skillRuntime: AgentSkillRuntime;
   delegationRuntime: AgentDelegationRuntime;
-  issueRuntimeAuthorizationStore: AgentIssueRuntimeAuthorizationStore;
   localWorkspace: AgentLocalWorkspaceContext;
   toolResultBudgetState: ToolResultBudgetState;
   /** Display names for member agents (agentId → name), for projections + preambles. */
@@ -1290,6 +1279,10 @@ export class AgentRuntime {
 
   async readIssue(input: IssueReadInput): Promise<IssueReadResult> {
     return this.getIssueStore().read(input);
+  }
+
+  async readAgentSession(input: AgentSessionReadInput): Promise<AgentSessionReadResult | null> {
+    return this.getIssueStore().readSession(input);
   }
 
   async listSlashCommands(conversationId: string): Promise<AgentSlashCommandView[]> {
@@ -2609,7 +2602,6 @@ export class AgentRuntime {
     const builtInToolOverlay = defaultAgentId === this.agentIdentity.agentId
       ? await this.materializeBuiltInAgentDefinition().catch(() => null)
       : null;
-    const issueRuntimeAuthorizationStore = createIssueRuntimeAuthorizationStore(() => Date.now());
     const agentToolFilter = resolveAgentToolFilter({
       isBuiltIn: defaultAgentId === this.agentIdentity.agentId,
       tools: defaultAgentProfile?.definition.tools ?? builtInToolOverlay?.tools,
@@ -2640,7 +2632,7 @@ export class AgentRuntime {
           issueRuntime: this.createIssueToolRuntime(defaultAgentId, this.createIssueSessionExecutor(
             () => this.currentRuntimeConversation(conversationRef.current)?.delegationRuntime ?? null,
             () => conversationId,
-          ), issueRuntimeAuthorizationStore),
+          )),
           chatSourceValidator: this.createChatSourceValidator(),
           pastChats: this.createPastChatsToolRuntime(() => conversationId),
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
@@ -2663,7 +2655,6 @@ export class AgentRuntime {
             if (!current) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
             return this.requestToolApproval(conversationId, current, input, signal);
           },
-          issueRuntimeAuthorizationStore,
           afterToolResult: async (toolCallId, toolName, result, isError) => {
             const current = conversationRef.current;
             if (!current) return undefined;
@@ -2714,7 +2705,6 @@ export class AgentRuntime {
       runtimeSettings,
       skillRuntime,
       delegationRuntime,
-      issueRuntimeAuthorizationStore,
       localWorkspace,
       toolResultBudgetState: restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(eventState)),
       memberDisplayNames: {
@@ -2830,7 +2820,7 @@ export class AgentRuntime {
       issueRuntime: this.createIssueToolRuntime(conversation.defaultAgentId, this.createIssueSessionExecutor(
         () => conversation.delegationRuntime,
         () => conversation.eventState.conversation?.id ?? 'unknown',
-      ), conversation.issueRuntimeAuthorizationStore),
+      )),
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => conversation.eventState.conversation?.id ?? 'unknown'),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
@@ -2857,7 +2847,6 @@ export class AgentRuntime {
     // fork → inherited; the user's own agent → undefined). The card resolves the id
     // to its canonical mention; undefined leaves it unattributed.
     const requestedByAgentId = input.requestedByAgentId;
-    const issueRuntimeAuthorizationStore = createIssueRuntimeAuthorizationStore(() => Date.now());
     return createConfiguredAgent(input.conversationId, providerConfig, input.messages, this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: input.localWorkspace,
@@ -2870,7 +2859,7 @@ export class AgentRuntime {
       issueRuntime: this.createIssueToolRuntime(input.executingAgentId, this.createIssueSessionExecutor(
         () => input.delegationRuntime,
         () => parentConversationId,
-      ), issueRuntimeAuthorizationStore),
+      )),
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => input.conversationId),
       streamFn: this.options.streamFn,
@@ -2901,7 +2890,6 @@ export class AgentRuntime {
           // the parent's own agent — those stay unattributed).
           return this.requestToolApproval(parentConversationId, parentConversation, approvalInput, signal, requestedByAgentId);
         },
-      issueRuntimeAuthorizationStore,
       afterToolResult: input.afterToolResult,
     });
   }
@@ -3499,20 +3487,13 @@ export class AgentRuntime {
     const runtime = createAgentIssueToolRuntime({
       store: this.getIssueStore(),
       actor,
-      authorization: {
-        id: `issue-trigger:${issue.id}:${now.getTime()}`,
-        actor,
-        allowedOperations: [{ type: 'agent-session-start', issueId: issue.id }],
-        expiresAt: Date.now() + 60_000,
-        auditReason: 'Issue trigger became ready.',
-      },
       executor: this.createIssueSessionExecutor(
         () => conversation.delegationRuntime,
         () => conversationId,
       ),
       startSource: () => issue.recurrence
         ? { type: 'recurring-issue', recurringIssueId: issue.recurrence.recurringIssueId, dueAt: issue.recurrence.windowStartAt }
-        : { type: 'runtime-authorized-action', actor },
+        : { type: 'runtime-action', actor },
     });
     const result = await runtime.startSession({
       issueId: issue.id,
@@ -3520,8 +3501,8 @@ export class AgentRuntime {
       request: { mode: 'request' },
       reason: 'Issue trigger became ready.',
     });
-    if (result.status === 'blocked' || result.status === 'conflict' || result.status === 'needs-confirmation') {
-      throw new Error(result.validation?.[0]?.message ?? result.confirmation?.body ?? `Issue trigger could not start: ${result.status}`);
+    if (result.status === 'blocked' || result.status === 'conflict') {
+      throw new Error(result.validation?.[0]?.message ?? `Issue trigger could not start: ${result.status}`);
     }
   }
 
@@ -4709,12 +4690,10 @@ export class AgentRuntime {
   private createIssueToolRuntime(
     agentId: string,
     executor?: AgentSessionExecutor,
-    authorizationStore?: AgentIssueRuntimeAuthorizationStore,
   ): AgentToolsOptions['issueRuntime'] {
     return createAgentIssueToolRuntime({
       store: this.getIssueStore(),
       actor: { type: 'agent', agentId },
-      authorizationProvider: authorizationStore ? (scope) => authorizationStore.consume(scope) : undefined,
       executor,
       resolveInputScope: (scope, issue, now) => (
         resolveIssueInputScopeFromProjection(scope, issue, this.outlinerToolHost.getProjection(), now)
@@ -7577,37 +7556,6 @@ function permissionGrantsEqual(left: AgentPermissionGrant, right: AgentPermissio
   return left.kind === 'command' && right.kind === 'command' && left.form === right.form;
 }
 
-function createIssueRuntimeAuthorizationStore(now: () => number): AgentIssueRuntimeAuthorizationStore {
-  const capabilities: RuntimeAuthorizationCapability[] = [];
-  const prune = () => {
-    const current = now();
-    for (let index = capabilities.length - 1; index >= 0; index -= 1) {
-      if (capabilities[index].expiresAt < current) capabilities.splice(index, 1);
-    }
-  };
-  return {
-    grant: (scope, auditReason) => {
-      prune();
-      capabilities.push({
-        id: `issue-runtime-auth:${randomUUID()}`,
-        actor: { type: 'user', userId: LOCAL_USER_ID },
-        allowedOperations: [scope],
-        expiresAt: now() + 60_000,
-        auditReason,
-      });
-    },
-    consume: (scope) => {
-      prune();
-      const index = capabilities.findIndex((capability) => (
-        capability.allowedOperations.some((operation) => agentIssueOperationMatches(operation, scope))
-      ));
-      if (index < 0) return undefined;
-      const [capability] = capabilities.splice(index, 1);
-      return capability;
-    },
-  };
-}
-
 function createConfiguredAgent(
   conversationId: string,
   providerConfig: AgentProviderRuntimeConfig,
@@ -7636,7 +7584,6 @@ function createConfiguredAgent(
     l0CacheBreakpointEnabled?: boolean;
     permissionScopeIdProvider?: () => string | null;
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
-    issueRuntimeAuthorizationStore?: AgentIssueRuntimeAuthorizationStore;
     streamFn?: StreamFn;
     completeSimpleFn?: CompleteSimpleFn;
     permissionEventHandler?: (input: AgentToolPermissionLogInput) => Promise<void> | void;
@@ -7662,10 +7609,6 @@ function createConfiguredAgent(
       runScopedPermissionGrants = [];
     }
     return runScopedPermissionGrants;
-  };
-  const grantIssueRuntimeAuthorization = (scope: AgentOperationScope | null, auditReason: string) => {
-    if (!scope) return;
-    options.issueRuntimeAuthorizationStore?.grant(scope, auditReason);
   };
   const systemPrompt = options.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT;
   let activeLoopModel = model;
@@ -7769,9 +7712,7 @@ function createConfiguredAgent(
         },
       });
       const permissionRequestId = `permission-${randomUUID()}`;
-      const issueAuthorizationScope = agentIssueRuntimeAuthorizationScope(toolCall.name, args);
       if (decision.behavior === 'allow') {
-        grantIssueRuntimeAuthorization(issueAuthorizationScope, 'Tool permission policy allowed this Issue operation.');
         await options.permissionEventHandler?.({
           requestId: permissionRequestId,
           toolCall,
@@ -7846,7 +7787,6 @@ function createConfiguredAgent(
             },
           });
           if (approval.approved) {
-            grantIssueRuntimeAuthorization(issueAuthorizationScope, 'User approved this Issue operation in the current runtime action.');
             if (shouldSyncLocalPermissionRoots) {
               const approvedGrants = (decision.descriptors ?? [])
                 .map((descriptor) => descriptor.effect.grant)
@@ -8949,7 +8889,7 @@ function agentSessionObjective(session: AgentSession, startInput: AgentSessionSt
 function executionSessionRules(): string[] {
   return [
     'Execution rules:',
-    '1. Work only within this Issue snapshot and its confirmed input scope.',
+    '1. Work only within this Issue snapshot and its input scope.',
     '2. If the work must be split, create or update sub-issues with the Issue tools; do not invent hidden child work as the durable breakdown.',
     '3. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
     '4. Completing this Agent Session does not automatically complete the Issue.',

@@ -1893,16 +1893,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             const target = record.target && typeof record.target === 'object' ? record.target as Record<string, unknown> : {};
             if (targets && !targets.has(String(target.type))) return false;
             if (filter.hasActiveSession === true && record.hasActiveSession !== true) return false;
-            if (filter.confirmed === false && record.confirmed === true) return false;
+            if (filter.hasActiveSession === false && record.hasActiveSession === true) return false;
             if (filter.archived === false && record.archived === true) return false;
             if (statusCategories) {
-              const buckets = Array.isArray(record.statusCategories) ? record.statusCategories.map(String) : [String(record.statusCategory ?? '')];
+              const buckets = [
+                ...(Array.isArray(record.viewBuckets) ? record.viewBuckets.map(String) : []),
+                ...(Array.isArray(record.statusCategories) ? record.statusCategories.map(String) : []),
+                String(record.statusCategory ?? ''),
+              ].filter(Boolean);
               if (!buckets.some((bucket) => statusCategories.has(bucket))) return false;
             }
             return true;
-          }).map((row) => {
-            const { hasActiveSession: _hasActiveSession, confirmed: _confirmed, archived: _archived, statusCategory: _statusCategory, statusCategories: _statusCategories, ...publicRow } = row as Record<string, unknown>;
-            return publicRow;
           });
           return clone({ rows }) as T;
         }
@@ -1910,6 +1911,25 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const target = args.target && typeof args.target === 'object' ? args.target as Record<string, unknown> : {};
           const key = `${String(target.type)}:${String(target.id)}`;
           return clone(agentIssueDetails[key] ?? { target }) as T;
+        }
+        if (cmd === 'agent_session_read') {
+          const agentSessionId = String(args.agentSessionId ?? '');
+          for (const detail of Object.values(agentIssueDetails)) {
+            if (!detail || typeof detail !== 'object') continue;
+            const sessions = Array.isArray((detail as Record<string, unknown>).sessions)
+              ? (detail as Record<string, unknown>).sessions as Record<string, unknown>[]
+              : [];
+            const session = sessions.find((entry) => String(entry.id ?? '') === agentSessionId);
+            if (session) {
+              return clone({
+                agentSession: session,
+                activity: Array.isArray((detail as Record<string, unknown>).activity)
+                  ? (detail as Record<string, unknown>).activity
+                  : [],
+              }) as T;
+            }
+          }
+          return clone(null) as T;
         }
         if (cmd === 'agent_rename_conversation') {
           const target = agentConversations.find((conversation) => conversation.id === args.conversationId);

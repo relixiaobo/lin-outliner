@@ -101,6 +101,7 @@ export const AGENT_COMMANDS = [
   'agent_list_runs',
   'agent_issue_search',
   'agent_issue_read',
+  'agent_session_read',
   'agent_list_dream_history',
   'agent_dream_readiness',
   'agent_run_dream_now',

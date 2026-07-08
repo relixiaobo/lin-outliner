@@ -72,7 +72,7 @@ import { systemLineText } from './agentSystemLine';
 import {
   AgentIssueDetailsPanel,
   AgentIssuesPanel,
-  issueSearchInputForWorkPreset,
+  issueSearchInputsForWorkPreset,
   type IssueWorkPreset,
 } from './AgentIssuesPanel';
 import { AgentRunDetailsPanel } from './AgentRunDetailsPanel';
@@ -113,6 +113,11 @@ interface PendingTranscriptReveal {
 interface RunDetailTarget {
   conversationId: string | null;
   runId: string;
+}
+
+interface IssueDetailTarget {
+  target: IssueTargetRef;
+  title?: string;
 }
 
 function parseCssTimeMs(value: string): number | null {
@@ -463,8 +468,8 @@ export function AgentChatPanel({
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
   const [workPanelOpen, setWorkPanelOpen] = useState(false);
   const [runDetailStack, setRunDetailStack] = useState<RunDetailTarget[]>([]);
-  const [issueDetailStack, setIssueDetailStack] = useState<IssueTargetRef[]>([]);
-  const [issueIndexPreset, setIssueIndexPreset] = useState<IssueWorkPreset>('active');
+  const [issueDetailStack, setIssueDetailStack] = useState<IssueDetailTarget[]>([]);
+  const [issueIndexPreset, setIssueIndexPreset] = useState<IssueWorkPreset>('today');
   const [issueIndex, setIssueIndex] = useState<IssueSearchRow[]>([]);
   const [activeIssueSessionCount, setActiveIssueSessionCount] = useState(0);
   const [issueIndexLoading, setIssueIndexLoading] = useState(false);
@@ -539,7 +544,8 @@ export function AgentChatPanel({
     () => buildConversationRenderRows(entries, turnPhase),
     [entries, turnPhase],
   );
-  const selectedIssueTarget = issueDetailStack.length > 0 ? issueDetailStack[issueDetailStack.length - 1]! : null;
+  const selectedIssueDetail = issueDetailStack.length > 0 ? issueDetailStack[issueDetailStack.length - 1]! : null;
+  const selectedIssueTarget = selectedIssueDetail?.target ?? null;
   const selectedRunTarget = runDetailStack.length > 0 ? runDetailStack[runDetailStack.length - 1]! : null;
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
   const agentDefinitionById = useMemo(() => {
@@ -735,15 +741,23 @@ export function AgentChatPanel({
     issueIndexRequestRef.current = requestId;
     setIssueIndexLoading(true);
     try {
-      const [next, active] = await Promise.all([
-        api.agentIssueSearch(issueSearchInputForWorkPreset(preset)),
+      const queries = issueSearchInputsForWorkPreset(preset);
+      const [results, active] = await Promise.all([
+        Promise.all(queries.map((query) => api.agentIssueSearch(query))),
         api.agentIssueSearch({ targets: ['issue'], filter: { hasActiveSession: true, archived: false }, limit: 100 }),
       ]);
       if (!mountedRef.current || requestId !== issueIndexRequestRef.current) return null;
-      setIssueIndex(next.rows);
+      const deduped = new Map<string, IssueSearchRow>();
+      for (const result of results) {
+        for (const row of result.rows) {
+          deduped.set(`${row.target.type}:${row.target.id}`, row);
+        }
+      }
+      const rows = [...deduped.values()];
+      setIssueIndex(rows);
       setActiveIssueSessionCount(active.rows.length);
       setIssueIndexError(null);
-      return next.rows;
+      return rows;
     } catch (caught) {
       if (mountedRef.current && requestId === issueIndexRequestRef.current) {
         setIssueIndexError(caught instanceof Error ? caught.message : String(caught));
@@ -1022,7 +1036,20 @@ export function AgentChatPanel({
   const openIssueFromWorkPanel = useCallback((target: IssueTargetRef) => {
     setWorkPanelOpen(true);
     setRunDetailStack([]);
-    setIssueDetailStack([target]);
+    setIssueDetailStack([{ target }]);
+  }, []);
+
+  const openIssueInDetailDrawer = useCallback((target: IssueTargetRef, title?: string) => {
+    setRunDetailStack([]);
+    setIssueDetailStack((stack) => [...stack, { target, title }]);
+  }, []);
+
+  const goBackInIssueDetailDrawer = useCallback(() => {
+    setIssueDetailStack((stack) => stack.length > 1 ? stack.slice(0, -1) : []);
+  }, []);
+
+  const selectIssueBreadcrumb = useCallback((index: number) => {
+    setIssueDetailStack((stack) => stack.slice(0, index + 1));
   }, []);
 
   const closeIssueDetailDrawer = useCallback(() => {
@@ -1676,7 +1703,11 @@ export function AgentChatPanel({
               surfaceClassName="agent-run-detail-drawer"
             >
               <AgentIssueDetailsPanel
+                breadcrumbs={issueDetailStack}
+                onBack={issueDetailStack.length > 1 ? goBackInIssueDetailDrawer : undefined}
                 onClose={closeIssueDetailDrawer}
+                onOpenIssue={openIssueInDetailDrawer}
+                onSelectBreadcrumb={selectIssueBreadcrumb}
                 target={selectedIssueTarget}
               />
             </Dialog>

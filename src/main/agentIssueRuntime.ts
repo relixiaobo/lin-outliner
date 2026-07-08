@@ -1,5 +1,4 @@
 import type {
-  AgentOperationScope,
   AgentSession,
   AgentSessionSource,
   AgentSessionStartInput,
@@ -7,21 +6,14 @@ import type {
   IssueCreateInput,
   IssueUpdateInput,
   RelatedTargetRef,
-  RuntimeAuthorizationCapability,
   TenonAgentToolResult,
 } from '../core/agentIssue';
 import type { AgentIssueToolRuntime } from './agentIssueTools';
 import type { AgentIssueStore, AgentSessionExecutionBinding, IssueInputResolver } from './agentIssueStore';
-import {
-  agentIssueOperationMatches,
-  issueUpdateRequiresRuntimeAuthorization,
-} from './agentIssueRuntimeAuthorization';
 
 export interface AgentIssueToolRuntimeOptions {
   store: AgentIssueStore;
   actor: ActorRef;
-  authorization?: RuntimeAuthorizationCapability;
-  authorizationProvider?: (scope: AgentOperationScope) => RuntimeAuthorizationCapability | undefined;
   executor?: AgentSessionExecutor;
   startSource?: (input: AgentSessionStartInput) => AgentSessionSource;
   resolveInputScope?: IssueInputResolver;
@@ -49,16 +41,8 @@ export function createAgentIssueToolRuntime(options: AgentIssueToolRuntimeOption
     update: (input) => updateIssue(options, input, now()),
     startSession: (input) => startSession(options, input, now()),
     readSession: (input) => readSession(options, input),
-    sendSessionMessage: (input) => (
-      hasAuthorization(options, { type: 'agent-session-message', agentSessionId: input.agentSessionId }, now())
-        ? sendSessionMessage(options, input, now())
-        : needsConfirmation('Message Agent Session', 'Send this message to the running Agent Session.', { type: 'agent-session-message', agentSessionId: input.agentSessionId }, [{ type: 'agent-session', id: input.agentSessionId }])
-    ),
-    stopSession: (input) => (
-      hasAuthorization(options, { type: 'agent-session-stop', agentSessionId: input.agentSessionId }, now())
-        ? stopSession(options, input, now())
-        : needsConfirmation('Stop Agent Session', 'Stop this Agent Session and mark it canceled.', { type: 'agent-session-stop', agentSessionId: input.agentSessionId }, [{ type: 'agent-session', id: input.agentSessionId }])
-    ),
+    sendSessionMessage: (input) => sendSessionMessage(options, input, now()),
+    stopSession: (input) => stopSession(options, input, now()),
   };
 }
 
@@ -76,17 +60,6 @@ async function updateIssue(
   now: number,
 ): Promise<TenonAgentToolResult> {
   if (input.request.mode === 'preview') return options.store.update(input, options.actor, now);
-  const scope: AgentOperationScope = input.target.type === 'issue'
-    ? { type: 'issue-update', issueId: input.target.id }
-    : { type: 'recurring-issue-update', recurringIssueId: input.target.id };
-  if (issueUpdateRequiresRuntimeAuthorization(input.change) && !hasAuthorization(options, scope, now)) {
-    return needsConfirmation(
-      'Confirm Issue change',
-      'Apply this execution-enabling or lifecycle Issue change.',
-      scope,
-      [input.target.type === 'issue' ? { type: 'issue', id: input.target.id } : { type: 'recurring-issue', id: input.target.id }],
-    );
-  }
   return options.store.update(input, options.actor, now);
 }
 
@@ -96,20 +69,11 @@ async function startSession(
   now: number,
 ): Promise<TenonAgentToolResult> {
   if (input.request.mode === 'preview') {
-    return options.store.startSession(input, options.startSource?.(input) ?? { type: 'runtime-authorized-action', actor: options.actor }, options.actor, now, {
+    return options.store.startSession(input, options.startSource?.(input) ?? { type: 'runtime-action', actor: options.actor }, options.actor, now, {
       resolveInput: options.resolveInputScope,
     });
   }
-  const scope: AgentOperationScope = { type: 'agent-session-start', issueId: input.issueId };
-  if (!hasAuthorization(options, scope, now)) {
-    return needsConfirmation(
-      'Start Agent Session',
-      'Start one Agent Session for this Issue.',
-      scope,
-      [{ type: 'issue', id: input.issueId }],
-    );
-  }
-  const started = await options.store.startSession(input, options.startSource?.(input) ?? { type: 'runtime-authorized-action', actor: options.actor }, options.actor, now, {
+  const started = await options.store.startSession(input, options.startSource?.(input) ?? { type: 'runtime-action', actor: options.actor }, options.actor, now, {
     resolveInput: options.resolveInputScope,
   });
   if (started.status !== 'applied') return started;
@@ -186,34 +150,6 @@ async function stopSession(
   }
   const result = await options.store.stopSession(input, options.actor, now);
   return warning ? withWarning(result, 'executor_stop_failed', warning) : result;
-}
-
-function hasAuthorization(
-  options: AgentIssueToolRuntimeOptions,
-  required: AgentOperationScope,
-  now: number,
-): boolean {
-  const authorization = options.authorizationProvider?.(required) ?? options.authorization;
-  if (!authorization || authorization.expiresAt < now) return false;
-  return authorization.allowedOperations.some((operation) => agentIssueOperationMatches(operation, required));
-}
-
-function needsConfirmation(
-  title: string,
-  body: string,
-  operation: AgentOperationScope,
-  targets: TenonAgentToolResult['targets'],
-): TenonAgentToolResult {
-  return {
-    status: 'needs-confirmation',
-    targets,
-    confirmation: {
-      title,
-      body,
-      operation,
-      targets,
-    },
-  };
 }
 
 function agentSessionIdFromTargets(targets: readonly RelatedTargetRef[]): string | null {

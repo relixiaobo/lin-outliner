@@ -16,7 +16,7 @@ const OUTPUT_SCHEMA = {
 
 type IssueToolStaticDefinition = Pick<
   TenonAgentToolDefinition,
-  'name' | 'kind' | 'searchHint' | 'inputSchema' | 'outputSchema' | 'isReadOnly' | 'isDestructive' | 'requiresRuntimeAuthorization'
+  'name' | 'kind' | 'searchHint' | 'inputSchema' | 'outputSchema' | 'isReadOnly' | 'isDestructive'
 > & {
   label: string;
   descriptionText: string;
@@ -35,31 +35,10 @@ function describe(text: string): (_input: unknown, _context: TenonAgentToolDescr
   return () => text;
 }
 
-function hasRequestMode(input: unknown, mode: 'request' | 'preview'): boolean {
-  return typeof input === 'object'
-    && input !== null
-    && 'request' in input
-    && typeof (input as { request?: unknown }).request === 'object'
-    && (input as { request?: { mode?: unknown } }).request?.mode === mode;
-}
-
 function isDeleteOrArchive(input: unknown): boolean {
   if (typeof input !== 'object' || input === null || !('change' in input)) return false;
   const change = (input as { change?: { type?: unknown } }).change;
   return change?.type === 'delete' || change?.type === 'archive';
-}
-
-function issueUpdateRequiresRuntimeAuthorization(input: unknown): boolean {
-  if (!hasRequestMode(input, 'request')) return false;
-  if (typeof input !== 'object' || input === null || !('change' in input)) return false;
-  const change = (input as { change?: { type?: unknown; patch?: Record<string, unknown> } }).change;
-  if (!change) return false;
-  if (['confirm', 'delete', 'archive', 'pause', 'resume', 'skip-next'].includes(String(change.type))) return true;
-  if (change.type !== 'patch' || !change.patch) return false;
-  return 'trigger' in change.patch
-    || 'permissionMode' in change.patch
-    || 'executionPolicy' in change.patch
-    || 'issueTemplate' in change.patch;
 }
 
 export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] = ([
@@ -74,7 +53,6 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => true,
     isDestructive: () => false,
-    requiresRuntimeAuthorization: () => false,
   },
   {
     name: 'issue_read',
@@ -87,20 +65,18 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => true,
     isDestructive: () => false,
-    requiresRuntimeAuthorization: () => false,
   },
   {
     name: 'issue_create',
     label: 'Issue Create',
     kind: 'mutation',
     searchHint: 'create durable agent work',
-    descriptionText: 'Create a normal Issue or Recurring Issue, or return a confirmation proposal.',
-    promptGuidanceText: 'Use when the durable definition does not exist yet. Use preview for ambiguous or permission-sensitive creation.',
+    descriptionText: 'Create a normal Issue or Recurring Issue.',
+    promptGuidanceText: 'Use when the durable definition does not exist yet. Use preview for ambiguous or broad-scope creation.',
     inputSchema: AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_create,
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => false,
     isDestructive: () => false,
-    requiresRuntimeAuthorization: () => false,
   },
   {
     name: 'issue_update',
@@ -113,7 +89,6 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => false,
     isDestructive: isDeleteOrArchive,
-    requiresRuntimeAuthorization: issueUpdateRequiresRuntimeAuthorization,
   },
   {
     name: 'agent_session_start',
@@ -126,7 +101,6 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => false,
     isDestructive: () => false,
-    requiresRuntimeAuthorization: (input) => hasRequestMode(input, 'request'),
   },
   {
     name: 'agent_session_read',
@@ -139,7 +113,6 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => true,
     isDestructive: () => false,
-    requiresRuntimeAuthorization: () => false,
   },
   {
     name: 'agent_session_send_message',
@@ -152,7 +125,6 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => false,
     isDestructive: () => false,
-    requiresRuntimeAuthorization: (input) => hasRequestMode(input, 'request'),
   },
   {
     name: 'agent_session_stop',
@@ -165,7 +137,6 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => false,
     isDestructive: () => true,
-    requiresRuntimeAuthorization: (input) => hasRequestMode(input, 'request'),
   },
 ] satisfies readonly IssueToolStaticDefinition[]).map((definition) => ({
   ...definition,

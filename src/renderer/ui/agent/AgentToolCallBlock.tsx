@@ -172,16 +172,16 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
     return withSubject(verbByStatus(verbs.updateIssue, status, labels), pickSubject(args, 'issueId', 'recurringIssueId', 'targetId'), labels);
   }
   if (toolCall.name === 'agent_session_start') {
-    return withSubject(verbByStatus(verbs.startAgentSession, status, labels), pickSubject(args, 'issueId', 'sessionId'), labels);
+    return withSubject(verbByStatus(verbs.startAgentSession, status, labels), pickSubject(args, 'issueId', 'agentSessionId', 'sessionId'), labels);
   }
   if (toolCall.name === 'agent_session_read') {
-    return withSubject(verbByStatus(verbs.readAgentSession, status, labels), pickSubject(args, 'sessionId', 'issueId'), labels);
+    return withSubject(verbByStatus(verbs.readAgentSession, status, labels), pickSubject(args, 'agentSessionId', 'sessionId', 'issueId'), labels);
   }
   if (toolCall.name === 'agent_session_send_message') {
-    return withSubject(verbByStatus(verbs.messageAgentSession, status, labels), pickSubject(args, 'sessionId', 'message'), labels);
+    return withSubject(verbByStatus(verbs.messageAgentSession, status, labels), pickSubject(args, 'agentSessionId', 'sessionId', 'message'), labels);
   }
   if (toolCall.name === 'agent_session_stop') {
-    return withSubject(verbByStatus(verbs.stopAgentSession, status, labels), pickSubject(args, 'sessionId', 'issueId'), labels);
+    return withSubject(verbByStatus(verbs.stopAgentSession, status, labels), pickSubject(args, 'agentSessionId', 'sessionId', 'issueId'), labels);
   }
   if (toolCall.name === 'recall') {
     return withSubject(verbByStatus(verbs.recallMemory, status, labels), pickSubject(args, 'query'), labels);

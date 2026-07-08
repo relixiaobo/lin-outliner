@@ -17,6 +17,8 @@ import type {
   IssueReadResult,
   IssueSearchInput,
   IssueSearchResult,
+  AgentSessionReadInput,
+  AgentSessionReadResult,
   AgentPickScopeFolderResult,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
@@ -321,6 +323,8 @@ export const api = {
     command<IssueSearchResult>('agent_issue_search', input as Record<string, unknown>),
   agentIssueRead: (input: IssueReadInput) =>
     command<IssueReadResult>('agent_issue_read', input as unknown as Record<string, unknown>),
+  agentSessionRead: (input: AgentSessionReadInput) =>
+    command<AgentSessionReadResult | null>('agent_session_read', input as unknown as Record<string, unknown>),
   agentListDreamHistory: (options: { limit?: number } = {}) =>
     command<AgentRenderDreamRunEntity[]>('agent_list_dream_history', options),
   agentDreamReadiness: () =>

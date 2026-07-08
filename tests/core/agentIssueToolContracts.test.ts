@@ -34,7 +34,7 @@ describe('agent issue manager tool contracts', () => {
     expect([...AGENT_ISSUE_RUN_PROFILES]).toEqual(['default', 'background', 'verifier']);
   });
 
-  test('classifies read, mutation, runtime-control, and authorization behavior', () => {
+  test('classifies read, mutation, runtime-control, and destructive behavior', () => {
     const byName = new Map(AGENT_ISSUE_TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
     expect(byName.get('issue_search')?.kind).toBe('read');
     expect(byName.get('issue_read')?.kind).toBe('read');
@@ -47,15 +47,9 @@ describe('agent issue manager tool contracts', () => {
 
     for (const tool of AGENT_ISSUE_TOOL_DEFINITIONS.filter((candidate) => candidate.kind === 'read')) {
       expect(tool.isReadOnly({})).toBe(true);
-      expect(tool.requiresRuntimeAuthorization({})).toBe(false);
     }
 
     const request = { request: { mode: 'request' } };
-    const preview = { request: { mode: 'preview' } };
-    expect(byName.get('issue_create')?.requiresRuntimeAuthorization(request)).toBe(false);
-    expect(byName.get('issue_update')?.requiresRuntimeAuthorization({ request: { mode: 'request' }, change: { type: 'patch', patch: { title: 'New title' } } })).toBe(false);
-    expect(byName.get('issue_update')?.requiresRuntimeAuthorization({ request: { mode: 'request' }, change: { type: 'confirm' } })).toBe(true);
-    expect(byName.get('issue_update')?.requiresRuntimeAuthorization({ request: { mode: 'request' }, change: { type: 'patch', patch: { trigger: { type: 'when-ready' } } } })).toBe(true);
 
     for (const tool of AGENT_ISSUE_TOOL_DEFINITIONS.filter((candidate) => (
       candidate.name === 'agent_session_start'
@@ -63,8 +57,6 @@ describe('agent issue manager tool contracts', () => {
       || candidate.name === 'agent_session_stop'
     ))) {
       expect(tool.isReadOnly(request)).toBe(false);
-      expect(tool.requiresRuntimeAuthorization(request)).toBe(true);
-      expect(tool.requiresRuntimeAuthorization(preview)).toBe(false);
     }
     expect(byName.get('agent_session_stop')?.isDestructive(request)).toBe(true);
     expect(byName.get('issue_update')?.isDestructive({ change: { type: 'archive' } })).toBe(true);
