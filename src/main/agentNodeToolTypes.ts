@@ -1,5 +1,13 @@
 import type { DocumentCommand } from '../core/commands';
-import type { CreateNodeTree, DocumentProjection, FocusHint, NodeProjection, SearchQueryExpr } from '../core/types';
+import type {
+  CreateNodeTree,
+  DocumentProjection,
+  FieldConfigPatch,
+  FocusHint,
+  NodeProjection,
+  SearchQueryExpr,
+  TagConfigPatch,
+} from '../core/types';
 import type { TextSearchIndex } from '../core/textSearchIndex';
 import type { NodeAccessSource } from '../core/nodeAccessRanking';
 import type { TransientSearchOptions } from '../core/searchEngine';
@@ -57,8 +65,38 @@ export interface NodeReadItem {
   breadcrumb: NodeRef[];
   children: ChildrenPage;
   backlinks?: NodeBacklink[];
+  definition?: NodeDefinitionRead;
   revision: string;
   outline?: string;
+}
+
+export interface NodeDefinitionRead {
+  kind: 'field' | 'tag';
+  config: ProjectedDefinitionConfig;
+  editableWith: string;
+}
+
+export type ProjectedDefinitionConfig = ProjectedFieldDefinitionConfig | ProjectedTagDefinitionConfig;
+
+export interface ProjectedFieldDefinitionConfig {
+  fieldType: string;
+  sourceSupertag?: string | null;
+  nullable: boolean;
+  hideField: string;
+  autoInitialize: string[];
+  autocollectOptions: boolean;
+  minValue?: number | null;
+  maxValue?: number | null;
+}
+
+export interface ProjectedTagDefinitionConfig {
+  color?: string | null;
+  extends?: string | null;
+  childSupertag?: string | null;
+  showCheckbox: boolean;
+  doneStateEnabled: boolean;
+  doneMapChecked: string[];
+  doneMapUnchecked: string[];
 }
 
 export interface NodeFieldRead {
@@ -150,7 +188,14 @@ export interface NodeCreateParams {
   outline?: string;
   targetId?: string;
   duplicateId?: string;
+  definition?: NodeDefinitionCreateParams;
   previewOnly?: boolean;
+}
+
+export interface NodeDefinitionCreateParams {
+  kind: 'field' | 'tag';
+  name: string;
+  config?: FieldConfigPatch | TagConfigPatch;
 }
 
 export interface NodeDeleteParams {
@@ -170,10 +215,21 @@ export interface NodeEditParams {
   move?: NodeEditMoveParams;
   mergeFromNodeIds?: string[];
   replaceWithReferenceTo?: string;
+  definitionPatch?: FieldConfigPatch | TagConfigPatch;
+  existingValues?: DefinitionExistingValuesStrategy;
+  targetDefinitionId?: string;
   previewOnly?: boolean;
 }
 
-export type NodeEditOperation = 'replace_outline' | 'move' | 'merge' | 'replace_with_reference';
+export type NodeEditOperation =
+  | 'replace_outline'
+  | 'move'
+  | 'merge'
+  | 'replace_with_reference'
+  | 'configure_definition'
+  | 'reuse_field_definition';
+
+export type DefinitionExistingValuesStrategy = 'validate';
 
 export interface NodeEditMoveParams {
   parentId?: string;
@@ -201,6 +257,7 @@ export interface NodeCreateData {
   matchedNodeIds?: string[];
   duplicatedFrom?: string;
   targetId?: string;
+  definition?: NodeDefinitionMutation;
   outline?: string;
 }
 
@@ -230,6 +287,11 @@ export interface NodeEditData {
   beforeOutline?: string;
   afterOutline?: string;
   revisions?: Record<string, string>;
+  definition?: NodeDefinitionMutation;
+  reusedFieldDefinition?: {
+    fieldEntryId: string;
+    targetDefinitionId: string;
+  };
   merge?: {
     targetNodeId: string;
     sourceNodeIds: string[];
@@ -238,6 +300,28 @@ export interface NodeEditData {
     appliedTags: number;
     redirectedReferences: number;
   };
+}
+
+export interface NodeDefinitionMutation {
+  kind: 'field' | 'tag';
+  nodeId: string;
+  beforeConfig?: ProjectedDefinitionConfig;
+  afterConfig?: ProjectedDefinitionConfig;
+  patch?: FieldConfigPatch | TagConfigPatch;
+  validation?: DefinitionValueValidationReport;
+}
+
+export interface DefinitionValueValidationReport {
+  strategy: DefinitionExistingValuesStrategy;
+  checkedFieldEntryIds?: string[];
+  incompatibleValues?: DefinitionIncompatibleValue[];
+}
+
+export interface DefinitionIncompatibleValue {
+  fieldEntryId: string;
+  valueNodeId?: string;
+  value: string;
+  reason: string;
 }
 
 export interface NodeMergeFieldPreview {
@@ -301,6 +385,7 @@ export type NodeVisibleResult =
 
 export interface NodeVisibleReadResult {
   outline?: string;
+  definitions?: NodeDefinitionRead[];
   references?: NodeVisibleReference[];
   page?: NodeVisiblePage;
 }
@@ -368,6 +453,8 @@ export type NormalizedEditParams =
   | (NodeEditParams & { action: 'move'; move: NodeEditMoveParams; nodeIds: string[] })
   | (NodeEditParams & { action: 'merge'; nodeId: string; mergeFromNodeIds: string[] })
   | (NodeEditParams & { action: 'replace_with_reference'; nodeId: string; replaceWithReferenceTo: string })
+  | (NodeEditParams & { action: 'configure_definition'; nodeId: string; definitionPatch: FieldConfigPatch | TagConfigPatch; existingValues: DefinitionExistingValuesStrategy })
+  | (NodeEditParams & { action: 'reuse_field_definition'; nodeId: string; targetDefinitionId: string })
   | { error: string };
 
 export interface NodeToolIssue {

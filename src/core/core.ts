@@ -1706,6 +1706,18 @@ export class Core {
     });
   }
 
+  createFieldDefinition(name: string, fieldType: FieldType = 'plain'): CommandOutcome {
+    const normalized = name.trim();
+    if (!normalized) throw CoreError.invalidOperation('field name cannot be empty');
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const existing = findFieldDefByName(state, normalized);
+      if (existing) return focus(existing);
+      const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType);
+      return focus(fieldDefId);
+    });
+  }
+
   createFieldDef(tagId: string, name: string, fieldType: FieldType): CommandOutcome {
     const normalized = name.trim();
     if (!normalized) throw CoreError.invalidOperation('field name cannot be empty');

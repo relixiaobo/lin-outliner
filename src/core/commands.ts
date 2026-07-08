@@ -63,6 +63,7 @@ export const DOCUMENT_COMMANDS = [
   'remove_tag',
   'set_tag_config',
   'set_field_config',
+  'create_field_definition',
   'create_field_def',
   'create_inline_field_after_node',
   'create_inline_field',

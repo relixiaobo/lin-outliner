@@ -632,6 +632,8 @@ export class DocumentService {
         return this.core.setTagConfig(String(args.tagId), args.patch as TagConfigPatch);
       case 'set_field_config':
         return this.core.setFieldConfig(String(args.fieldId), args.patch as FieldConfigPatch);
+      case 'create_field_definition':
+        return this.core.createFieldDefinition(String(args.name), fieldType(args.fieldType));
       case 'create_field_def':
         return this.core.createFieldDef(String(args.tagId), String(args.name), fieldType(args.fieldType));
       case 'create_inline_field_after_node':
@@ -1113,6 +1115,7 @@ function fieldType(value: unknown): FieldType {
     || value === 'url'
     || value === 'email'
     || value === 'checkbox'
+    || value === 'reference'
   ) {
     return value;
   }

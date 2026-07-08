@@ -1,4 +1,5 @@
 import type { AgentToolResult } from '@earendil-works/pi-agent-core';
+import { projectFieldConfig, projectTagConfig } from '../core/configProjection';
 import { formatNodeReferenceMarker } from '../core/referenceMarkup';
 import { agentToolResult, dropUndefinedFields, modelVisibleEnvelope, type ToolEnvelope } from './agentToolEnvelope';
 import { FINAL_ANSWER_NODE_REFERENCE_GUIDANCE } from './agentNodeToolGuidance';
@@ -7,6 +8,7 @@ import { serializeAnnotatedOutlines } from './agentNodeToolRead';
 import type {
   ChildrenPage,
   NodeCreateData,
+  NodeDefinitionRead,
   NodeDeleteData,
   NodeEditData,
   NodeSearchData,
@@ -79,10 +81,33 @@ export function visibleReadResult(
   const page = rootPages.length === 1 ? rootPages[0] : undefined;
   const visible: NodeVisibleReadResult = compactVisibleResult({
     outline,
+    definitions: visibleDefinitionReads(index, nodeIds),
     references: visibleReferences(index, visibleReadReferenceIds(index, nodeIds, params)),
     page,
   });
   return { visible, ctx: {} };
+}
+
+function visibleDefinitionReads(index: ProjectionIndex, nodeIds: string[]): NodeDefinitionRead[] | undefined {
+  const definitions: NodeDefinitionRead[] = [];
+  for (const nodeId of nodeIds) {
+    const node = index.nodes.get(nodeId);
+    if (node?.type === 'fieldDef') {
+      definitions.push({
+        kind: 'field' as const,
+        config: projectFieldConfig(index.nodes, node),
+        editableWith: 'node_edit operation "configure_definition" with node_id and definition_patch.',
+      });
+    }
+    if (node?.type === 'tagDef') {
+      definitions.push({
+        kind: 'tag' as const,
+        config: projectTagConfig(index.nodes, node),
+        editableWith: 'node_edit operation "configure_definition" with node_id and definition_patch.',
+      });
+    }
+  }
+  return definitions.length ? definitions : undefined;
 }
 
 function visibleReadPage(

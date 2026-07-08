@@ -38,6 +38,9 @@ function hostFor(core: Core, overrides: Partial<OutlinerToolHost> = {}): Outline
       if (command === 'create_tag') return core.createTag(String(args.name ?? ''));
       if (command === 'apply_tag') return core.applyTag(String(args.nodeId), String(args.tagId));
       if (command === 'remove_tag') return core.removeTag(String(args.nodeId), String(args.tagId));
+      if (command === 'set_tag_config') return core.setTagConfig(String(args.tagId), args.patch as any);
+      if (command === 'set_field_config') return core.setFieldConfig(String(args.fieldId), args.patch as any);
+      if (command === 'create_field_definition') return core.createFieldDefinition(String(args.name), fieldTypeArg(args.fieldType));
       if (command === 'create_inline_field') return core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), fieldTypeArg(args.fieldType));
       if (command === 'reuse_field_definition') return core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
       if (command === 'create_collected_field_option') return core.createCollectedFieldOption(String(args.fieldEntryId), String(args.name));
@@ -377,6 +380,118 @@ describe('agent node tools', () => {
     const entryId = fieldEntryByName(core, root, 'xmlUrl');
     expect(core.state().nodes[entryId]!.fieldDefId).toBe(fieldDefId);
     expect(fieldTypeOf(core, entryId)).toBe('url');
+  });
+
+  test('node_read exposes definition config for editable field definitions', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const seedEntry = mustFocus(core.createInlineField(seed, null, 'xmlUrl', 'url'));
+    const fieldDefId = core.state().nodes[seedEntry]!.fieldDefId!;
+
+    const result = await executeRawTool<{ items: Array<{ definition?: unknown }> }>(core, 'node_read', {
+      node_id: fieldDefId,
+      depth: 0,
+    });
+
+    expect(result.details.ok).toBe(true);
+    expect(result.details.data!.items[0]!.definition).toMatchObject({
+      kind: 'field',
+      config: { fieldType: 'url' },
+    });
+    const visible = parseVisibleToolResult<{ data?: { definitions?: Array<{ kind: string; config: { fieldType?: string } }> } }>(result.contentText);
+    expect(visible.data!.definitions).toEqual([
+      expect.objectContaining({ kind: 'field', config: expect.objectContaining({ fieldType: 'url' }) }),
+    ]);
+  });
+
+  test('node_create definition creates a field definition without a field entry', async () => {
+    const core = Core.new();
+
+    const envelope = await executeTool<{ createdRootIds: string[]; definition?: { nodeId: string } }>(core, 'node_create', {
+      definition: {
+        kind: 'field',
+        name: 'xmlUrl',
+        config: { field_type: 'url' },
+      },
+    });
+
+    expect(envelope.ok).toBe(true);
+    const fieldDefId = envelope.data!.definition!.nodeId;
+    expect(envelope.data!.createdRootIds).toEqual([fieldDefId]);
+    expect(core.state().nodes[fieldDefId]).toMatchObject({ type: 'fieldDef', parentId: SCHEMA_ID });
+    expect(projectFieldConfig(new Map(Object.values(core.state().nodes).map((node) => [node.id, node])), core.state().nodes[fieldDefId]!)).toMatchObject({
+      fieldType: 'url',
+    });
+    expect(Object.values(core.state().nodes).some((node) => node.type === 'fieldEntry' && node.fieldDefId === fieldDefId)).toBe(false);
+  });
+
+  test('node_edit configure_definition changes field type after validating existing values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const entry = mustFocus(core.createInlineField(seed, null, 'xmlUrl', 'plain'));
+    core.setFieldFreeTextValue(entry, 'https://example.com/feed.xml');
+    const fieldDefId = core.state().nodes[entry]!.fieldDefId!;
+
+    const envelope = await executeTool<{ definition?: { validation?: { checkedFieldEntryIds?: string[] } } }>(core, 'node_edit', {
+      operation: 'configure_definition',
+      node_id: fieldDefId,
+      definition_patch: { field_type: 'url' },
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(projectFieldConfig(new Map(Object.values(core.state().nodes).map((node) => [node.id, node])), core.state().nodes[fieldDefId]!)).toMatchObject({
+      fieldType: 'url',
+    });
+    expect(envelope.data!.definition!.validation!.checkedFieldEntryIds).toContain(entry);
+  });
+
+  test('node_edit configure_definition rejects incompatible existing values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const entry = mustFocus(core.createInlineField(seed, null, 'xmlUrl', 'plain'));
+    core.setFieldFreeTextValue(entry, 'not a url');
+    const fieldDefId = core.state().nodes[entry]!.fieldDefId!;
+
+    const envelope = await executeTool<{ definition?: { validation?: { incompatibleValues?: Array<{ fieldEntryId: string }> } } }>(core, 'node_edit', {
+      operation: 'configure_definition',
+      node_id: fieldDefId,
+      definition_patch: { field_type: 'url' },
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('incompatible_existing_values');
+    expect(envelope.data!.definition!.validation!.incompatibleValues).toEqual([
+      expect.objectContaining({ fieldEntryId: entry }),
+    ]);
+    expect(fieldTypeOf(core, entry)).toBe('plain');
+  });
+
+  test('node_edit reuse_field_definition relinks a field entry to an existing definition', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const seed = mustFocus(core.createNode(today, null, 'Seed'));
+    const canonicalEntry = mustFocus(core.createInlineField(seed, null, 'xmlUrl', 'url'));
+    const canonicalDefId = core.state().nodes[canonicalEntry]!.fieldDefId!;
+    const feed = mustFocus(core.createNode(today, null, 'Feed'));
+    const draftEntry = mustFocus(core.createInlineField(feed, null, 'xml URL', 'plain'));
+    core.setFieldFreeTextValue(draftEntry, 'https://example.com/feed.xml');
+
+    const envelope = await executeTool<{ reusedFieldDefinition?: { fieldEntryId: string; targetDefinitionId: string } }>(core, 'node_edit', {
+      operation: 'reuse_field_definition',
+      node_id: draftEntry,
+      target_definition_id: canonicalDefId,
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.reusedFieldDefinition).toEqual({
+      fieldEntryId: draftEntry,
+      targetDefinitionId: canonicalDefId,
+    });
+    expect(core.state().nodes[draftEntry]!.fieldDefId).toBe(canonicalDefId);
+    expect(fieldTypeOf(core, draftEntry)).toBe('url');
   });
 
   test('node_create selects existing options when reusing an options field definition', async () => {

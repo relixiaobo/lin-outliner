@@ -1,5 +1,5 @@
 import type { NodeProjection } from '../core/types';
-import { nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
+import { nodeIsDone, nodeShowsCheckbox, projectFieldConfig, projectTagConfig } from '../core/configProjection';
 import {
   backlinks,
   breadcrumb,
@@ -20,6 +20,7 @@ import type {
   ChildrenPage,
   NodeChildSummary,
   NodeReadItem,
+  NodeDefinitionRead,
   NormalizedReadParams,
   ProjectionIndex,
 } from './agentNodeToolTypes';
@@ -57,9 +58,28 @@ export function buildReadItem(index: ProjectionIndex, nodeId: string, params: No
     breadcrumb: breadcrumb(index, nodeId),
     children: buildChildrenPage(index, nodeId, params.depth, params.childOffset, params.childLimit, params.includeDeleted),
     backlinks: params.includeBacklinks ? backlinks(index, nodeId, params.includeDeleted) : undefined,
+    definition: definitionRead(index, node),
     revision: editableOutlineRevision(index, nodeId),
     outline: serializeOutline(index, nodeId, params.depth, params.childOffset, params.childLimit, params.includeDeleted),
   };
+}
+
+function definitionRead(index: ProjectionIndex, node: NodeProjection): NodeDefinitionRead | undefined {
+  if (node.type === 'fieldDef') {
+    return {
+      kind: 'field',
+      config: projectFieldConfig(index.nodes, node),
+      editableWith: 'node_edit operation "configure_definition" with node_id and definition_patch.',
+    };
+  }
+  if (node.type === 'tagDef') {
+    return {
+      kind: 'tag',
+      config: projectTagConfig(index.nodes, node),
+      editableWith: 'node_edit operation "configure_definition" with node_id and definition_patch.',
+    };
+  }
+  return undefined;
 }
 
 function buildChildrenPage(
