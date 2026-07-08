@@ -1508,7 +1508,8 @@ Definition config semantics:
   `done_map_checked`, and `done_map_unchecked`.
 - Field type changes validate all active field entries that use the definition.
   Incompatible existing values reject the mutation and return the incompatible
-  field entry/value ids.
+  field entry/value ids in both runtime details and model-visible `data`
+  (`definition.validation.incompatibleValues`) so the agent can repair them.
 - Agents must not try to edit locked `defConfig` rows with `replace_outline`;
   config rows are internal storage, while definition nodes are the editable
   surface.
@@ -1543,6 +1544,9 @@ Definition merge semantics:
   rewrites saved-search tag refs, config refs such as `extends`,
   `childSupertag`, and `sourceSupertag`, and moves missing template children from
   source tag to target tag.
+- Definition merges rewrite rich-text inline node references that pointed at a
+  source definition before deleting the source, preserving user-authored links;
+  preview/return data includes the affected host node ids.
 - Target definition config wins. Source config is not merged implicitly; use
   `configure_definition` before or after merge for intentional config changes.
 

@@ -865,7 +865,7 @@ async function executeDefinitionConfigEdit(
       instructions: 'Fix or clear the listed field values first, or choose a field type compatible with all existing values.',
       data,
       metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-    }));
+    }), visibleEditResult(data, false, index));
   }
 
   if (params.previewOnly) {
@@ -1374,6 +1374,7 @@ function definitionMergePreview(
     const relinkedFieldEntryIds: string[] = [];
     const mergedFieldEntryIds: string[] = [];
     const targetReferenceIds = targetReferenceNodeIds(index, sourceNodeIds);
+    const inlineReferenceNodeIds = inlineReferenceHostNodeIds(index, sourceNodeIds);
     for (const source of sourceNodes) {
       for (const entry of activeFieldEntriesForDefinition(index, source.id)) {
         const ownerId = entry.parentId;
@@ -1393,6 +1394,7 @@ function definitionMergePreview(
       relinkedFieldEntryIds: relinkedFieldEntryIds.length ? unique(relinkedFieldEntryIds) : undefined,
       mergedFieldEntryIds: mergedFieldEntryIds.length ? unique(mergedFieldEntryIds) : undefined,
       rewrittenReferenceIds: targetReferenceIds.length ? targetReferenceIds : undefined,
+      rewrittenInlineReferenceNodeIds: inlineReferenceNodeIds.length ? inlineReferenceNodeIds : undefined,
     };
     return {
       merge,
@@ -1402,6 +1404,7 @@ function definitionMergePreview(
         ...relinkedFieldEntryIds,
         ...mergedFieldEntryIds,
         ...targetReferenceIds,
+        ...inlineReferenceNodeIds,
       ]),
     };
   }
@@ -1410,12 +1413,14 @@ function definitionMergePreview(
     .filter((node) => sourceNodeIds.some((sourceId) => node.tags.includes(sourceId)) && !isInTrash(index, node.id))
     .map((node) => node.id);
   const rewrittenReferenceIds = targetReferenceNodeIds(index, sourceNodeIds);
+  const rewrittenInlineReferenceNodeIds = inlineReferenceHostNodeIds(index, sourceNodeIds);
   const merge: NodeDefinitionMerge = {
     kind,
     targetNodeId,
     sourceNodeIds,
     retaggedNodeIds: retaggedNodeIds.length ? unique(retaggedNodeIds) : undefined,
     rewrittenReferenceIds: rewrittenReferenceIds.length ? rewrittenReferenceIds : undefined,
+    rewrittenInlineReferenceNodeIds: rewrittenInlineReferenceNodeIds.length ? rewrittenInlineReferenceNodeIds : undefined,
   };
   return {
     merge,
@@ -1424,6 +1429,7 @@ function definitionMergePreview(
       ...sourceNodeIds,
       ...retaggedNodeIds,
       ...rewrittenReferenceIds,
+      ...rewrittenInlineReferenceNodeIds,
     ]),
   };
 }
@@ -1445,6 +1451,15 @@ function targetReferenceNodeIds(index: ProjectionIndex, targetIds: string[]): st
         || (node.type === 'filterRule' && node.filterField && targets.has(node.filterField))
         || (node.type === 'displayField' && node.displayField && targets.has(node.displayField))
       ))
+    .map((node) => node.id);
+}
+
+function inlineReferenceHostNodeIds(index: ProjectionIndex, targetIds: string[]): string[] {
+  const targets = new Set(targetIds);
+  return index.projection.nodes
+    .filter((node) =>
+      !isInTrash(index, node.id)
+      && node.content.inlineRefs.some((ref) => ref.target.kind === 'node' && targets.has(ref.target.nodeId)))
     .map((node) => node.id);
 }
 

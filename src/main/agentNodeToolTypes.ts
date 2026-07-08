@@ -321,6 +321,7 @@ export interface NodeDefinitionMerge {
   mergedFieldEntryIds?: string[];
   retaggedNodeIds?: string[];
   rewrittenReferenceIds?: string[];
+  rewrittenInlineReferenceNodeIds?: string[];
 }
 
 export interface DefinitionValueValidationReport {
@@ -412,6 +413,7 @@ export interface NodeVisibleMutationResult {
   changes?: NodeVisibleChanges;
   outline?: string;
   revisions?: Record<string, string>;
+  definition?: NodeDefinitionMutation;
 }
 
 export interface NodeVisibleCountResult {

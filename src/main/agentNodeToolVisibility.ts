@@ -63,9 +63,16 @@ export function nodeToolResult<TData>(
 
 export function nodeErrorResult<TData>(
   envelope: ToolEnvelope<TData>,
+  payload?: NodeVisiblePayload,
 ): AgentToolResult<ToolEnvelope<TData>> {
-  // Errors use the standard projection: no data block, just `error` +
-  // `instructions` (the error object already carries code + message).
+  if (payload) {
+    const guidance = nodeInstructions(envelope, payload.visible, payload.ctx);
+    const instructions = [envelope.instructions, guidance].filter(Boolean).join(' ');
+    return agentToolResult({ ...envelope, instructions }, payload.visible);
+  }
+  // Errors use the standard projection by default: no data block, just `error` +
+  // `instructions` (the error object already carries code + message). Callers
+  // pass a payload only when the model needs structured recovery details.
   return agentToolResult(envelope);
 }
 
@@ -169,6 +176,7 @@ export function visibleEditResult(data: NodeEditData, previewOnly: boolean, inde
     outline,
     revisions: data.revisions,
     changes,
+    definition: data.definition,
   });
   // A non-preview edit can still be a real no-op (afterOutline == current).
   const outcome = previewOnly ? 'preview' : data.status === 'updated' ? 'applied' : 'unchanged';

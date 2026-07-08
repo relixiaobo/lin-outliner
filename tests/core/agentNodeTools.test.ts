@@ -456,16 +456,32 @@ describe('agent node tools', () => {
     core.setFieldFreeTextValue(entry, 'not a url');
     const fieldDefId = core.state().nodes[entry]!.fieldDefId!;
 
-    const envelope = await executeTool<{ definition?: { validation?: { incompatibleValues?: Array<{ fieldEntryId: string }> } } }>(core, 'node_edit', {
+    const result = await executeRawTool<{ definition?: { validation?: { incompatibleValues?: Array<{ fieldEntryId: string; valueNodeId?: string }> } } }>(core, 'node_edit', {
       operation: 'configure_definition',
       node_id: fieldDefId,
       definition_patch: { field_type: 'url' },
     });
+    const envelope = result.details;
+    const visible = parseVisibleToolResult<{
+      data?: {
+        definition?: {
+          validation?: {
+            incompatibleValues?: Array<{ fieldEntryId: string; valueNodeId?: string }>;
+          };
+        };
+      };
+    }>(result.contentText);
 
     expect(envelope.ok).toBe(false);
     expect(envelope.error?.code).toBe('incompatible_existing_values');
     expect(envelope.data!.definition!.validation!.incompatibleValues).toEqual([
       expect.objectContaining({ fieldEntryId: entry }),
+    ]);
+    expect(visible.data!.definition!.validation!.incompatibleValues).toEqual([
+      expect.objectContaining({
+        fieldEntryId: entry,
+        valueNodeId: envelope.data!.definition!.validation!.incompatibleValues![0]!.valueNodeId,
+      }),
     ]);
     expect(fieldTypeOf(core, entry)).toBe('plain');
   });
@@ -573,22 +589,50 @@ describe('agent node tools', () => {
     const fieldEntry = mustFocus(core.createInlineField(fieldOwner, null, 'Related project', 'options_from_supertag'));
     const fieldDefId = core.state().nodes[fieldEntry]!.fieldDefId!;
     core.setFieldConfig(fieldDefId, { fieldType: 'options_from_supertag', sourceSupertag: sourceTagId });
+    const inlineRefHost = mustFocus(core.createNode(today, null, 'Inline ref host'));
+    core.applyNodeTextPatch(inlineRefHost, {
+      ops: [{
+        type: 'replace_all',
+        content: {
+          text: 'See  here',
+          marks: [],
+          inlineRefs: [{
+            offset: 4,
+            target: { kind: 'node', nodeId: sourceTagId },
+            displayName: '#project-old',
+          }],
+        },
+      }],
+    });
     const search = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
       parent_id: today,
       outline: `- %%search%% Old projects\n  - HAS_TAG\n    - tag:: ${nodeRef(core, sourceTagId, '#project-old')}`,
     });
     const searchId = search.data!.createdRootIds[0]!;
 
-    const envelope = await executeTool<{ definitionMerge?: { retaggedNodeIds?: string[] } }>(core, 'node_edit', {
+    const preview = await executeTool<{ definitionMerge?: { rewrittenInlineReferenceNodeIds?: string[] }; affectedNodeIds: string[] }>(core, 'node_edit', {
+      operation: 'merge_definition',
+      node_id: targetTagId,
+      merge_from_node_ids: [sourceTagId],
+      preview_only: true,
+    });
+    const envelope = await executeTool<{ definitionMerge?: { retaggedNodeIds?: string[]; rewrittenInlineReferenceNodeIds?: string[] } }>(core, 'node_edit', {
       operation: 'merge_definition',
       node_id: targetTagId,
       merge_from_node_ids: [sourceTagId],
     });
 
+    expect(preview.ok).toBe(true);
+    expect(preview.data!.affectedNodeIds).toContain(inlineRefHost);
+    expect(preview.data!.definitionMerge!.rewrittenInlineReferenceNodeIds).toContain(inlineRefHost);
     expect(envelope.ok).toBe(true);
     expect(envelope.data!.definitionMerge!.retaggedNodeIds).toContain(tagged);
+    expect(envelope.data!.definitionMerge!.rewrittenInlineReferenceNodeIds).toContain(inlineRefHost);
     expect(core.state().nodes[sourceTagId]).toBeUndefined();
     expect(core.state().nodes[tagged]!.tags).toEqual([targetTagId]);
+    expect(core.state().nodes[inlineRefHost]!.content.inlineRefs).toEqual([
+      expect.objectContaining({ target: { kind: 'node', nodeId: targetTagId } }),
+    ]);
     const byId = new Map(Object.values(core.state().nodes).map((node) => [node.id, node]));
     expect(projectFieldConfig(byId, core.state().nodes[fieldDefId]!)).toMatchObject({ sourceSupertag: targetTagId });
     const conditionId = core.state().nodes[searchId]!.children.find((childId) => core.state().nodes[childId]?.type === 'queryCondition')!;

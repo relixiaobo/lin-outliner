@@ -2031,6 +2031,7 @@ export class Core {
   }
 
   private rewriteReferenceTargetsDirect(sourceId: string, targetId: string, options: { removeTargetSelfConfigRefs: boolean }) {
+    this.rewriteInlineReferenceTargetsDirect(sourceId, targetId);
     for (const referenceId of Object.values(this.snapshot().nodes)
       .filter((node): node is ReferenceNode => node.type === 'reference' && node.targetId === sourceId)
       .map((node) => node.id)) {
@@ -2046,6 +2047,21 @@ export class Core {
       reference.targetId = targetId;
       reference.updatedAt = nowMs();
       this.loro.writeNode(reference);
+    }
+  }
+
+  private rewriteInlineReferenceTargetsDirect(sourceId: string, targetId: string) {
+    const state = this.snapshot();
+    for (const node of Object.values(state.nodes)) {
+      if (isInTrash(state, node.id)) continue;
+      if (!node.content.inlineRefs.some((ref) => inlineRefNodeId(ref) === sourceId)) continue;
+      const next = clone(node);
+      next.content.inlineRefs = next.content.inlineRefs.map((ref) =>
+        inlineRefNodeId(ref) === sourceId
+          ? { ...ref, target: nodeReferenceTarget(targetId) }
+          : ref);
+      next.updatedAt = nowMs();
+      this.loro.writeNode(next);
     }
   }
 
