@@ -1098,6 +1098,62 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('preserves tool result details for generated image path rendering', async () => {
+    const generatedPath = 'generated-images/run-a/puppy.png';
+    const details = {
+      ok: true,
+      tool: 'generate_image',
+      version: 1,
+      status: 'success',
+      data: {
+        providerId: 'openai',
+        modelId: 'gpt-image-2',
+        modelName: 'GPT Image 2',
+        images: [{
+          path: generatedPath,
+          mimeType: 'image/png',
+          byteLength: 68,
+          width: 1,
+          height: 1,
+        }],
+      },
+    };
+    const assistant = assistantMessage('', 2);
+    assistant.content = [{
+      type: 'toolCall',
+      id: 'tool-image',
+      name: 'generate_image',
+      arguments: { prompt: 'a puppy' },
+    }];
+    const restoredProjection = projection([
+      { nodeId: 'u1', message: userMessage('draw a puppy'), branches: null },
+      { nodeId: 'a1', message: assistant, branches: null },
+    ]);
+    restoredProjection.entities.messages['tool-result-image'] = {
+      id: 'tool-result-image',
+      role: 'toolResult',
+      status: 'completed',
+      parentMessageId: 'a1',
+      content: [{ type: 'text', text: JSON.stringify({ ok: true, data: { images: details.data.images } }) }],
+      createdAt: 3,
+      updatedAt: 3,
+      branches: null,
+      toolCallId: 'tool-image',
+      toolName: 'generate_image',
+      isError: false,
+      details,
+    };
+    const fake = createFakeClient({ latestConversation: conversation('saved', restoredProjection) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    const result = store.getSnapshot().toolResults.get('tool-image');
+    expect(result?.details).toEqual(details);
+    expect(result?.payloadRefs).toBeUndefined();
+    unsubscribe();
+  });
+
   test('indexes sub-runs by parent tool call id for renderer lookup', async () => {
     const subRun = {
       id: 'run-1',

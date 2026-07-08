@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { AgentMessageEntry } from '../../src/renderer/agent/runtime';
 import { serializeAgentAttachmentMarker } from '../../src/core/agentAttachments';
-import { formatChatSourceReferenceMarker, formatFileReferenceMarker } from '../../src/core/referenceMarkup';
+import { formatChatSourceReferenceMarker, formatFileReferenceMarker, formatLocalFileReferenceUrl } from '../../src/core/referenceMarkup';
 import { AgentInlineReferenceText } from '../../src/renderer/ui/agent/AgentInlineReferenceText';
 import { AgentMessageRow } from '../../src/renderer/ui/agent/AgentMessageRow';
 import { AgentMarkdown } from '../../src/renderer/ui/agent/AgentMarkdown';
@@ -35,16 +35,24 @@ afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
 });
 
-function render(node: React.ReactNode): Rendered {
+function render(node: React.ReactNode, setupWindow?: (window: Window) => void | (() => void)): Rendered {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
+  const cleanupWindow = setupWindow?.(window);
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);
   act(() => {
     root.render(node);
   });
-  const rendered: Rendered = { cleanup: () => act(() => root.unmount()), document, window };
+  const rendered: Rendered = {
+    cleanup: () => {
+      act(() => root.unmount());
+      cleanupWindow?.();
+    },
+    document,
+    window,
+  };
   mounted.push(rendered);
   return rendered;
 }
@@ -186,6 +194,87 @@ describe('transcript file-chip location marker', () => {
     }]);
   });
 
+  test('AgentMarkdown renders embedded file image markers through preview bytes', async () => {
+    const imagePath = 'generated-images/run-a/puppy.png';
+    const opened: PreviewTargetOpenDetail[] = [];
+    const rendered = render(
+      <AgentMarkdown index={0} keyPrefix="probe" text={`Here is the image:\n\n![Puppy](${formatLocalFileReferenceUrl(imagePath)})`} />,
+      (window) => {
+        window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+          opened.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
+        });
+        Object.assign(window, {
+          lin: {
+            invoke: async (command: string) => {
+              if (command === 'preview_read_bytes') {
+                return { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer, mimeType: 'image/png' };
+              }
+              throw new Error(`Unexpected command: ${command}`);
+            },
+          },
+        });
+        const originalCreateObjectURL = URL.createObjectURL;
+        const originalRevokeObjectURL = URL.revokeObjectURL;
+        Object.assign(URL, {
+          createObjectURL: () => 'blob:markdown-image',
+          revokeObjectURL: () => undefined,
+        });
+        return () => {
+          Object.assign(URL, {
+            createObjectURL: originalCreateObjectURL,
+            revokeObjectURL: originalRevokeObjectURL,
+          });
+        };
+      },
+    );
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    const image = rendered.document.querySelector('.agent-markdown-image img');
+    expect(image?.getAttribute('src')).toBe('blob:markdown-image');
+    expect(image?.getAttribute('alt')).toBe('Puppy');
+
+    const button = rendered.document.querySelector('.agent-markdown-image');
+    expect(button).not.toBeNull();
+    act(() => {
+      button?.dispatchEvent(new rendered.window.Event('click', { bubbles: true }));
+    });
+
+    expect(opened).toEqual([{
+      presentation: 'reader',
+      target: {
+        kind: 'local-file',
+        path: imagePath,
+        entryKind: 'file',
+        label: 'Puppy',
+      },
+    }]);
+  });
+
+  test('AgentMarkdown shows a placeholder when a local Markdown image is missing', async () => {
+    const imagePath = 'generated-images/run-a/missing.png';
+    const rendered = render(
+      <AgentMarkdown index={0} keyPrefix="probe" text={`![Missing image](${formatLocalFileReferenceUrl(imagePath)})`} />,
+      (window) => {
+        Object.assign(window, {
+          lin: {
+            invoke: async (command: string) => {
+              if (command === 'preview_read_bytes') return { bytes: null, error: 'missing' };
+              throw new Error(`Unexpected command: ${command}`);
+            },
+          },
+        });
+      },
+    );
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(rendered.document.querySelector('.agent-markdown-image img')).toBeNull();
+    expect(rendered.document.querySelector('.agent-markdown-image-placeholder')?.textContent).toBe('Image unavailable');
+  });
+
   test('AgentInlineReferenceText renders chat-source markers with the shared chat icon and label spans', () => {
     const marker = formatChatSourceReferenceMarker('in the weather chat', {
       kind: 'chat-source',
@@ -231,4 +320,8 @@ function installDomGlobals(window: Window) {
     Node: window.Node,
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+}
+
+async function flushMicrotasks() {
+  for (let i = 0; i < 50; i += 1) await Promise.resolve();
 }

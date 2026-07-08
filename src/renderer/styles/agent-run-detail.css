@@ -961,19 +961,46 @@
   margin: var(--space-2) 0 0 20px;
 }
 
-.agent-tool-image-list a {
+.agent-tool-image-list a,
+.agent-tool-image-preview {
   display: block;
   overflow: hidden;
   max-width: min(100%, 420px);
+  padding: 0;
   border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--fill-2);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.agent-tool-image-preview:disabled {
+  opacity: 0.75;
 }
 
 .agent-tool-image-list img {
   display: block;
   max-width: 100%;
   max-height: 260px;
+}
+
+.agent-tool-image-preview-placeholder {
+  display: grid;
+  min-width: 180px;
+  min-height: 120px;
+  place-items: center;
+  padding: var(--space-4);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-tool-image-meta {
+  margin: var(--space-2) 0 0 20px;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
 }
 
 .agent-tool-image-placeholder {

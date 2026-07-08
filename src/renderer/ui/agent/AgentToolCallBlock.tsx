@@ -30,6 +30,7 @@ import { PlainReadOnlyCodeBlock, ReadOnlyCodeBlock } from '../editor/CodeBlockSu
 import { AgentToolCallDisclosure } from './AgentToolCallDisclosure';
 import { displayRunStatus } from './AgentRunRow';
 import { getToolIcon } from './agentToolPresentation';
+import { usePreviewObjectUrl } from '../preview/usePreviewObjectUrl';
 
 interface AgentToolCallBlockProps {
   defaultExpanded?: boolean;
@@ -64,6 +65,18 @@ const TOOL_OUTPUT_WINDOW_TAIL_CHARS = 4_000;
 interface LoadedSkillDetails {
   args: string | null;
   skill: string;
+}
+
+interface GeneratedImageDetails {
+  providerId: string;
+  modelId: string;
+  modelName: string;
+}
+
+interface GeneratedImagePath {
+  path: string;
+  mimeType?: string;
+  label?: string;
 }
 
 export function getToolCallStatus(
@@ -278,8 +291,10 @@ function resultParts(result: AgentToolResultWithPayloads | undefined, expanded: 
   if (!result || !expanded) return [];
   return result.content.flatMap((block, contentIndex): ResultPart[] => {
     if (block.type !== 'text') return [];
+    if (!result.isError && result.toolName === 'generate_image' && isGenerateImageVisibleText(block.text)) return [];
     const payloadRef = result.payloadRefs?.find((ref) => ref.contentIndex === contentIndex);
     if (payloadRef) {
+      if (payloadRef.payload.mimeType.startsWith('image/')) return [];
       return [{ type: 'persistedOutput', payloadRef, text: block.text }];
     }
     return [
@@ -290,12 +305,71 @@ function resultParts(result: AgentToolResultWithPayloads | undefined, expanded: 
   });
 }
 
+function isGenerateImageVisibleText(text: string): boolean {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return isRecord(parsed)
+      && parsed.ok === true
+      && isRecord(parsed.data)
+      && Array.isArray(parsed.data.images)
+      && parsed.data.images.some((image) => isRecord(image) && typeof image.path === 'string' && image.path.trim());
+  } catch {
+    return false;
+  }
+}
+
 function resultImages(result: AgentToolResultWithPayloads | undefined): Array<{ data: string; mimeType: string }> {
   if (!result) return [];
   return result.content
     .filter((block): block is Extract<AgentToolResultWithPayloads['content'][number], { type: 'image' }> =>
       block.type === 'image')
     .map((block) => ({ data: block.data, mimeType: block.mimeType }));
+}
+
+function toolImagePayloadRefs(result: AgentToolResultWithPayloads | undefined): AgentToolResultPayloadPart[] {
+  if (!result?.payloadRefs) return [];
+  return result.payloadRefs.filter((ref) => ref.payload.mimeType.startsWith('image/'));
+}
+
+function generatedImagePaths(result: AgentToolResultWithPayloads | undefined): GeneratedImagePath[] {
+  if (!result || result.isError) return [];
+  const data = generatedImageData(result);
+  if (!isRecord(data) || !Array.isArray(data.images)) return [];
+  return data.images.flatMap((image, index): GeneratedImagePath[] => {
+    if (!isRecord(image) || typeof image.path !== 'string' || !image.path.trim()) return [];
+    const label = basenameForPath(image.path) || `generated-image-${index + 1}`;
+    return [{
+      path: image.path,
+      label,
+      ...(typeof image.mimeType === 'string' && image.mimeType.trim() ? { mimeType: image.mimeType } : {}),
+    }];
+  });
+}
+
+function generatedImageData(result: AgentToolResultWithPayloads): unknown {
+  const details = result.details;
+  if (
+    isRecord(details)
+    && details.tool === 'generate_image'
+    && isRecord(details.data)
+    && Array.isArray(details.data.images)
+  ) {
+    return details.data;
+  }
+  return null;
+}
+
+function generatedImageDetails(result: AgentToolResultWithPayloads | undefined): GeneratedImageDetails | null {
+  if (!result || result.isError) return null;
+  const details = result.details;
+  if (!isRecord(details) || details.tool !== 'generate_image' || !isRecord(details.data)) return null;
+  const data = details.data;
+  if (typeof data.providerId !== 'string' || typeof data.modelId !== 'string') return null;
+  return {
+    providerId: data.providerId,
+    modelId: data.modelId,
+    modelName: typeof data.modelName === 'string' && data.modelName.trim() ? data.modelName.trim() : data.modelId,
+  };
 }
 
 function isJsonText(text: string): boolean {
@@ -590,11 +664,24 @@ function ToolCopyButton({ ariaLabel, text }: { ariaLabel: string; text: string }
   );
 }
 
-function ToolResultImages({ images }: { images: Array<{ data: string; mimeType: string }> }) {
+export function AgentGeneratedImagePreviews({
+  className = '',
+  conversationId,
+  images,
+  paths,
+  payloadRefs,
+}: {
+  className?: string;
+  conversationId?: string | null;
+  images: Array<{ data: string; mimeType: string }>;
+  paths?: GeneratedImagePath[];
+  payloadRefs: AgentToolResultPayloadPart[];
+}) {
   const t = useT();
-  if (images.length === 0) return null;
+  const imagePaths = paths ?? [];
+  if (images.length === 0 && imagePaths.length === 0 && payloadRefs.length === 0) return null;
   return (
-    <div className="agent-tool-image-list">
+    <div className={`agent-tool-image-list${className ? ` ${className}` : ''}`}>
       {images.map((image, index) => {
         const src = `data:${image.mimeType};base64,${image.data}`;
         return (
@@ -602,6 +689,125 @@ function ToolResultImages({ images }: { images: Array<{ data: string; mimeType: 
             <img alt={t.agent.toolCall.resultImageAlt({ index: index + 1 })} loading="lazy" src={src} />
           </a>
         );
+      })}
+      {imagePaths.map((image, index) => (
+        <LocalToolImage
+          fallbackIndex={images.length + index + 1}
+          image={image}
+          key={image.path}
+        />
+      ))}
+      {payloadRefs.map((payloadRef, index) => (
+        <PersistedToolImage
+          conversationId={conversationId}
+          key={payloadRef.payload.id}
+          payloadRef={payloadRef}
+          fallbackIndex={images.length + imagePaths.length + index + 1}
+        />
+      ))}
+    </div>
+  );
+}
+
+function LocalToolImage({
+  fallbackIndex,
+  image,
+}: {
+  fallbackIndex: number;
+  image: GeneratedImagePath;
+}) {
+  const t = useT();
+  const label = image.label || basenameForPath(image.path) || t.agent.toolCall.resultImageAlt({ index: fallbackIndex });
+  const target = useMemo(() => ({
+    kind: 'local-file' as const,
+    path: image.path,
+    entryKind: 'file' as const,
+    label,
+  }), [image.path, label]);
+  const preview = usePreviewObjectUrl(target, { mimeType: image.mimeType });
+
+  function openPreview() {
+    dispatchPreviewTargetOpen({ presentation: 'reader', target });
+  }
+
+  return (
+    <button
+      aria-label={label}
+      className="agent-tool-image-preview"
+      onClick={openPreview}
+      title={label}
+      type="button"
+    >
+      {preview.src ? (
+        <img alt={label} loading="lazy" src={preview.src} />
+      ) : (
+        <span className="agent-tool-image-preview-placeholder">
+          {preview.error ? t.agent.toolCall.imageUnavailable : t.common.loading}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function PersistedToolImage({
+  conversationId,
+  fallbackIndex,
+  payloadRef,
+}: {
+  conversationId?: string | null;
+  fallbackIndex: number;
+  payloadRef: AgentToolResultPayloadPart;
+}) {
+  const t = useT();
+  const payload = payloadRef.payload;
+  const runId = payload.scope?.type === 'run' ? payload.scope.runId : undefined;
+  const target = useMemo(() => (
+    conversationId
+      ? {
+          kind: 'agent-payload' as const,
+          conversationId,
+          ...(runId ? { runId } : {}),
+          payloadId: payload.id,
+          label: payload.summary || payloadRef.label || t.agent.toolCall.storedOutput,
+        }
+      : null
+  ), [conversationId, payload.id, payload.summary, payloadRef.label, runId, t.agent.toolCall.storedOutput]);
+  const preview = usePreviewObjectUrl(target, { enabled: Boolean(target), mimeType: payload.mimeType });
+  const alt = payload.summary || payloadRef.label || t.agent.toolCall.resultImageAlt({ index: fallbackIndex });
+
+  function openPreview() {
+    if (!target) return;
+    dispatchPreviewTargetOpen({ presentation: 'reader', target });
+  }
+
+  return (
+    <button
+      aria-label={alt}
+      className="agent-tool-image-preview"
+      disabled={!target}
+      onClick={openPreview}
+      title={alt}
+      type="button"
+    >
+      {preview.src ? (
+        <img alt={alt} loading="lazy" src={preview.src} />
+      ) : (
+        <span className="agent-tool-image-preview-placeholder">
+          {preview.error ? t.agent.toolCall.payloadUnavailable : t.common.loading}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function GeneratedImageMeta({ details }: { details: GeneratedImageDetails | null }) {
+  const t = useT();
+  if (!details) return null;
+  return (
+    <div className="agent-tool-image-meta">
+      {t.agent.toolCall.generatedWith({
+        provider: details.providerId,
+        model: details.modelName,
       })}
     </div>
   );
@@ -747,7 +953,11 @@ export function AgentToolCallBlock({
     () => parseFileToolOutput(toolCall, result, outputText),
     [toolCall, result, outputText],
   );
-  const images = useMemo(() => resultImages(result), [result]);
+  const isGenerateImageTool = toolCall.name === 'generate_image';
+  const images = useMemo(() => (isGenerateImageTool ? [] : resultImages(result)), [isGenerateImageTool, result]);
+  const imagePayloadRefs = useMemo(() => (isGenerateImageTool ? [] : toolImagePayloadRefs(result)), [isGenerateImageTool, result]);
+  const imagePaths = useMemo(() => generatedImagePaths(result), [result]);
+  const imageDetails = useMemo(() => generatedImageDetails(result), [result]);
   // A file output renders its own chip + diff, so the generic output parts (and
   // their flat-map over content) are only needed when there is no file output.
   const parts = useMemo(
@@ -755,10 +965,11 @@ export function AgentToolCallBlock({
     [fileOutput, result, isExpanded],
   );
   const canOpenRunTranscript = Boolean(subRun && onOpenRunTranscript);
+  const hasImageOutput = images.length > 0 || imagePaths.length > 0 || imagePayloadRefs.length > 0;
   const hasDetails = fileOutput
     ? fileOutput.diff.length > 0 || Boolean(subRun)
-    : inputText !== '{}' || outputText.length > 0 || Boolean(subRun);
-  const hasOutputDetails = outputText.length > 0;
+    : inputText !== '{}' || outputText.length > 0 || hasImageOutput || Boolean(subRun);
+  const hasOutputDetails = outputText.length > 0 || hasImageOutput;
   const loadedSkillDetails = getLoadedSkillDetails(toolCall, result);
 
   function toggle(anchorElement?: HTMLElement | null) {
@@ -779,7 +990,6 @@ export function AgentToolCallBlock({
       disclosureId={`tool:${toolCall.id}`}
       expanded={isExpanded}
       hasDetails={hasDetails}
-      images={<ToolResultImages images={images} />}
       onToggle={toggle}
       status={status}
       statusIcon={StatusIcon}
@@ -821,7 +1031,7 @@ export function AgentToolCallBlock({
           <HighlightedJson code={inputText} />
         </section>
       ) : null}
-      {!fileOutput && result && hasOutputDetails ? (
+      {!fileOutput && result && hasOutputDetails && (parts.length > 0 || hasImageOutput) ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">
@@ -829,6 +1039,13 @@ export function AgentToolCallBlock({
               {result.isError ? <span>{t.agent.toolCall.errorBadge}</span> : null}
             </div>
           </div>
+          <AgentGeneratedImagePreviews
+            conversationId={conversationId}
+            images={images}
+            paths={imagePaths}
+            payloadRefs={imagePayloadRefs}
+          />
+          <GeneratedImageMeta details={imageDetails} />
           {parts.map((part, partIndex) =>
             part.type === 'imagePlaceholder' ? (
               <div className="agent-tool-image-placeholder" key={`placeholder-${partIndex}`}>

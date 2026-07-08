@@ -80,6 +80,38 @@ export function formatFileReferenceMarker(label: string, path = label, entryKind
   });
 }
 
+export function formatLocalFileReferenceUrl(path: string, entryKind: 'file' | 'directory' = 'file'): string {
+  const safePath = path || 'attachment';
+  const kindPrefix = entryKind === 'directory' ? 'directory' : '';
+  return `file:${kindPrefix}^${encodeReferenceValue(safePath)}`;
+}
+
+export function parseLocalFileReferenceUrl(
+  value: string | undefined,
+): { entryKind: 'file' | 'directory'; path: string } | null {
+  const normalized = value?.trim();
+  if (!normalized?.startsWith('file:')) return null;
+  const body = normalized.slice('file:'.length);
+  const separator = fileReferenceUrlSeparator(body);
+  if (!separator) return null;
+  const rawEntryKind = body.slice(0, separator.start);
+  if (rawEntryKind !== '' && rawEntryKind !== 'file' && rawEntryKind !== 'directory') return null;
+  const path = decodeReferenceValue(body.slice(separator.start + separator.length));
+  if (!path) return null;
+  return {
+    entryKind: rawEntryKind === 'directory' ? 'directory' : 'file',
+    path,
+  };
+}
+
+function fileReferenceUrlSeparator(body: string): { start: number; length: number } | null {
+  const raw = body.indexOf('^');
+  const encoded = body.toLowerCase().indexOf('%5e');
+  if (raw < 0 && encoded < 0) return null;
+  if (raw >= 0 && (encoded < 0 || raw < encoded)) return { start: raw, length: 1 };
+  return { start: encoded, length: 3 };
+}
+
 export function sanitizeFileReferenceRef(ref: string): string {
   return sanitizeReferenceLabel(ref) || 'attachment';
 }

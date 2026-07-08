@@ -97,6 +97,37 @@
   border-top: 1px solid var(--separator);
 }
 
+.agent-markdown-image {
+  display: block;
+  overflow: hidden;
+  max-width: min(100%, 520px);
+  margin: var(--space-3) 0;
+  padding: 0;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  background: var(--fill-2);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.agent-markdown-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+}
+
+.agent-markdown-image-placeholder {
+  display: grid;
+  min-width: 200px;
+  min-height: 140px;
+  place-items: center;
+  padding: var(--space-4);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
 .agent-inline-code {
   border-radius: var(--radius-row);
   background: var(--inline-code-bg);

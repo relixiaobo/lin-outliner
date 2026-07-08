@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Lexer } from 'marked';
-import Markdown from 'react-markdown';
+import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remend from 'remend';
 import { basenameForPath, splitReferenceMarkers } from '../../../core/referenceMarkup';
@@ -32,6 +32,8 @@ import {
 import { AgentChatSourceReference } from './AgentChatSourceReference';
 import { ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
 import { openUrlPreviewFromClick } from '../preview/urlPreviewRouting';
+import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
+import { usePreviewObjectUrl } from '../preview/usePreviewObjectUrl';
 
 interface AgentMarkdownProps {
   index?: DocumentIndex;
@@ -125,6 +127,76 @@ function reactNodeText(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node);
   if (Array.isArray(node)) return node.map(reactNodeText).join('');
   return '';
+}
+
+function markdownLocalImageFromSrc(src: string | undefined): { path: string; label: string } | null {
+  const fileRef = localFileReferenceFromHref(src);
+  if (fileRef?.entryKind === 'file') {
+    return { path: fileRef.path, label: basenameForPath(fileRef.path) || fileRef.path };
+  }
+  const trimmed = src?.trim();
+  if (!trimmed || !trimmed.startsWith('/')) return null;
+  return { path: trimmed, label: basenameForPath(trimmed) || trimmed };
+}
+
+function agentMarkdownUrlTransform(value: string): string {
+  return localFileReferenceFromHref(value) ? value : defaultUrlTransform(value);
+}
+
+function AgentMarkdownImage({ alt, src, title }: ComponentPropsWithoutRef<'img'>) {
+  const t = useT();
+  const localImage = markdownLocalImageFromSrc(src);
+  const localPath = localImage?.path ?? null;
+  const localLabel = localImage?.label ?? null;
+  const label = alt || localLabel || src || t.agent.toolCall.storedOutput;
+  const target = useMemo(() => (
+    localPath
+      ? {
+          kind: 'local-file' as const,
+          path: localPath,
+          entryKind: 'file' as const,
+          label,
+        }
+      : null
+  ), [label, localPath]);
+  const preview = usePreviewObjectUrl(target, { enabled: Boolean(target) });
+
+  if (!localImage || !target) {
+    return (
+      <a
+        href={src}
+        onClick={(event) => {
+          if (!src) return;
+          if (!openUrlPreviewFromClick(event.nativeEvent, src, label)) return;
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        rel="noreferrer"
+        target="_blank"
+        title={title}
+      >
+        {label}
+      </a>
+    );
+  }
+
+  return (
+    <button
+      aria-label={label}
+      className="agent-markdown-image"
+      onClick={() => dispatchPreviewTargetOpen({ presentation: 'reader', target })}
+      title={title || label}
+      type="button"
+    >
+      {preview.src ? (
+        <img alt={label} loading="lazy" src={preview.src} />
+      ) : (
+        <span className="agent-markdown-image-placeholder">
+          {preview.error ? t.agent.toolCall.imageUnavailable : t.common.loading}
+        </span>
+      )}
+    </button>
+  );
 }
 
 function useMarkdownComponents(
@@ -225,6 +297,9 @@ function useMarkdownComponents(
     input({ ...rest }: ComponentPropsWithoutRef<'input'>) {
       return <input {...rest} disabled />;
     },
+    img(props: ComponentPropsWithoutRef<'img'>) {
+      return <AgentMarkdownImage {...props} />;
+    },
     pre({ children }: ComponentPropsWithoutRef<'pre'>) {
       return <>{children}</>;
     },
@@ -250,7 +325,7 @@ const MemoizedMarkdownBlock = memo(
   }) {
     const components = useMarkdownComponents(index, onNodeReferenceOpen);
     return (
-      <Markdown components={components} remarkPlugins={REMARK_PLUGINS}>
+      <Markdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={agentMarkdownUrlTransform}>
         {markdown}
       </Markdown>
     );
@@ -323,17 +398,20 @@ export function AgentMarkdown({
   const components = useMarkdownComponents(documentIndex, onNodeReferenceOpen);
 
   return (
-    // The file-chip open behavior (workspace reader vs normal workspace preview) is decided by
-    // location, NOT here: a `[data-agent-transcript-chips]` ancestor (set once on the
-    // live transcript message frame — see AgentMessageFrame) routes chip clicks to
-    // the file-only reader. This markdown renders in both the live transcript and meta
-    // surfaces (compaction/sub-run summaries, the PoV inspector), so it stays neutral.
+    // File-chip open behavior is decided by location (`InlineFilePreviewLayer` routes
+    // transcript chips to the reader). Markdown images are direct visual outputs, so
+    // their image component opens the same file-only reader itself.
     <div className="agent-markdown">
       {blocks.map((block, blockIndex) => {
         const blockKey = `${keyPrefix}-block-${blockIndex}`;
         if (streaming && blockIndex === blocks.length - 1) {
           return (
-            <Markdown components={components} key={blockKey} remarkPlugins={REMARK_PLUGINS}>
+            <Markdown
+              components={components}
+              key={blockKey}
+              remarkPlugins={REMARK_PLUGINS}
+              urlTransform={agentMarkdownUrlTransform}
+            >
               {block}
             </Markdown>
           );

@@ -764,6 +764,8 @@ describe('agent skills', () => {
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
     expect(invocation.renderedContent).toContain('requirements.txt');
+    expect(invocation.renderedContent).toContain('Treat the execution environment as unknown');
+    expect(compactWhitespace(invocation.renderedContent)).toContain('do not run a full preflight by default');
     expectPandasDuckdbDependency(invocation.renderedContent);
     expect(invocation.renderedContent).toContain('query_duckdb.py');
     expect(invocation.renderedContent).not.toContain('{baseDir}');
@@ -1671,6 +1673,7 @@ describe('built-in skill resource packaging', () => {
     const presentationSkill = await readFile(path.join(generatedRoot, 'presentation', 'SKILL.md'), 'utf8');
     const spreadsheetSkill = await readFile(path.join(generatedRoot, 'spreadsheet', 'SKILL.md'), 'utf8');
 
+    expect(compactWhitespace(dataSkill)).toContain('do not run a full preflight by default');
     expectPandasDuckdbDependency(dataSkill);
     await expect(readFile(path.join(generatedRoot, 'data-analysis', 'evals', 'README.md'), 'utf8')).rejects.toThrow();
     await expect(readFile(path.join(generatedRoot, 'data-analysis', 'scripts', '__pycache__'), 'utf8')).rejects.toThrow();
@@ -1683,6 +1686,10 @@ describe('built-in skill resource packaging', () => {
     expect(await readFile(path.join(generatedRoot, 'memory-dream', 'SKILL.md'), 'utf8')).toContain('Memory Dream');
   });
 });
+
+function compactWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ');
+}
 
 async function createBundledBuiltInSkillFixture(
   name: string,

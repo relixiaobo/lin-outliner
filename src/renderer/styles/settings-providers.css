@@ -152,6 +152,10 @@
   gap: var(--space-2);
 }
 
+.settings-image-model-select {
+  max-width: min(360px, 48vw);
+}
+
 /* Holds the Configured / Add Providers InsetGroups (SettingsInsetList). The rows are
    the .inset-* primitive — no bespoke row styling here; inter-group spacing comes
    from the primitive (.inset-group + .inset-group). The content pane scrolls. */

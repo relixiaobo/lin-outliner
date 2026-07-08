@@ -385,7 +385,7 @@ interface OutputWatchdogHandle {
   stopped: boolean;
 }
 
-interface ImageDimensions {
+export interface ImageDimensions {
   width: number;
   height: number;
 }
@@ -888,7 +888,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
               base64: buffer.toString('base64'),
               type: imageType,
               originalSize: buffer.byteLength,
-              dimensions: readImageDimensions(buffer, imageType),
+              dimensions: readAgentImageDimensions(buffer, imageType),
             },
           };
           await notifySuccessfulFileTouch(workspace, filePath);
@@ -2191,7 +2191,7 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(source);
 }
 
-function readImageDimensions(buffer: Buffer, mediaType: FileReadImageData['file']['type']): ImageDimensions | undefined {
+export function readAgentImageDimensions(buffer: Buffer, mediaType: string): ImageDimensions | undefined {
   try {
     if (mediaType === 'image/png') {
       if (buffer.length >= 24 && buffer.toString('ascii', 1, 4) === 'PNG') {

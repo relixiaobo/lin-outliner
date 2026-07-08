@@ -67,6 +67,7 @@ surface.
 | `run_steer` | agent | No | No | Send soft execution guidance to a live Run without changing its contract. |
 | `run_amend` | agent | No document mutation | No | Hard-amend a Run's objective, criteria, or budget; invalidates verifier conclusions. |
 | `run_stop` | agent | No document mutation | No | Stop a live same-session Run. |
+| `generate_image` | agent | Creates image files | Usually yes | Generate or edit raster images through enabled image-capable providers. |
 
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
@@ -143,6 +144,8 @@ permission behavior harder to reason about.
 - Use `ask_user_question` for decisions or missing context, not permission
   approval. Permission approval answers "may the agent do this"; this tool
   answers "what information or direction should the agent use next".
+- Use `generate_image` for raster image generation/editing only; normal
+  multimodal chat and `file_read` remain the way to inspect existing images.
 - Local file tools should mirror proven read, edit, write, glob, and grep roles,
   while keeping Lin's lower snake case names.
 - The local tool list is intentionally smaller than broader terminal-first tool registries.
@@ -248,6 +251,147 @@ answer validation, resolves the tool call with `answers: []` plus
 clarifying question in the normal conversation. If structured input is still
 needed after discussion, the agent must call `ask_user_question` again with a
 fresh request.
+
+## `generate_image`
+
+`generate_image` is a run-scoped image generation and image-editing tool. It is
+the product surface for generated raster images; Tenon may use pi-ai
+`ImagesModels` internally, but the agent sees a Tenon-owned tool with Tenon-owned
+permissions and local-file persistence.
+
+The tool is available only when the runtime has at least one enabled,
+credentialed image-capable provider. Provider records do not store a default
+image model; the optional default lives in `imageGeneration.defaultModel`, a
+tool preference stored separately from provider connection rows. If the `model`
+parameter is omitted or `auto`, runtime first tries that saved default. If the
+saved default is unavailable, runtime falls back to deterministic provider
+priority: the active provider when it has image models, then first-party OpenAI,
+first-party Google Gemini, then OpenRouter.
+
+Input:
+
+```ts
+interface GenerateImageInput {
+  prompt: string; // required visual generation/edit instruction
+  model?: string; // model id, provider:model, provider/model, or auto; omitted = auto
+  image_paths?: string[]; // local image paths or [[file:...]] refs for edits/references; omitted = text-to-image
+  count?: number; // default 1, capped at 4
+  size?: string; // provider-specific; omitted = provider default
+  aspect_ratio?: string; // provider-specific; omitted = provider default
+  quality?: "auto" | "low" | "medium" | "high"; // omitted = provider default
+  background?: "auto" | "opaque" | "transparent"; // provider-specific
+  output_format?: "png" | "jpeg" | "webp"; // provider-specific; omitted = provider default
+}
+```
+
+Validation is TypeScript-owned:
+
+- `prompt` is required, non-empty, and capped.
+- `image_paths` are capped and may be absolute paths, workspace-relative paths,
+  generated-image scratch-relative paths, `file:^...` local-file targets,
+  generated `markdownImage` values, or normal `[[file:...]]` markers. They
+  resolve through the same local file boundary used by file tools and previewable
+  agent scratch files. The selected model must advertise image input before
+  references are sent.
+- Missing, cleared, inaccessible, or non-image input paths return
+  `input_image_unavailable` before any provider call, with instructions to use an
+  existing path, regenerate the image, or remove `image_paths`.
+- A provider-qualified model selects that exact provider/model pair. An
+  unqualified model id may be used only when the enabled image model catalog can
+  resolve it deterministically.
+- Disabled or uncredentialed providers are never candidates.
+- Provider-specific options are validated before the provider call when Tenon can
+  know that the option cannot be sent. Unsupported options return
+  `unsupported_option` with recovery instructions. OpenAI GPT image models do not
+  use the legacy `response_format` option. GPT Image 2 accepts `auto` or
+  constrained `WIDTHxHEIGHT` sizes: both edges at most 3840px, both edges
+  multiples of 16px, long-edge/short-edge ratio at most 3:1, and total pixels
+  from 655,360 through 8,294,400. GPT Image 2 rejects
+  `background: "transparent"`; use `auto`/`opaque` or select a model that
+  supports transparent backgrounds. Older Tenon-owned OpenAI GPT image entries
+  accept only `auto`, `1024x1024`, `1024x1536`, and `1536x1024` sizes.
+- Provider quota and rate-limit failures return `rate_limited` with instructions
+  not to retry immediately. OpenAI image calls disable the SDK's default automatic
+  retries so one tool call maps to one provider request unless the user or agent
+  explicitly tries again.
+
+Generated images are written to an app-owned local generated-image directory
+under the agent scratch root, with short scratch-relative paths such as
+`generated-images/<run>/<image>.png` returned to the model. The model-visible JSON
+includes only local paths, embeddable Markdown image strings (`markdownImage`),
+mime types, byte lengths, and dimensions when known; it does not include
+provider/model execution metadata or base64 image bytes. The complete runtime
+details retain provider/model metadata and the generated image path list while
+the tool call is live. The persisted `tool_result.created.details` field is a
+slim render projection for `generate_image` only: provider id, model id/name, and
+per-image path/Markdown/mime/byte/dimension metadata. Generic tool runtime
+envelopes, raw provider payloads, prompt text, file contents, original file
+contents, and base64 image bytes are not persisted in event details. The tool
+result does not embed raw image bytes or image content blocks; follow-up edits
+pass the returned `path` or `markdownImage` back through `image_paths`, and
+explicit inspection can use the normal local file tools. Generated-image input
+paths resolve through realpath containment under the scratch
+`generated-images/` directory, so a symlink inside scratch cannot make the tool
+read outside that directory. The renderer reads generated image paths from the
+persisted details and displays them inline as lazy-loaded previews through the
+local preview byte reader; opening the preview targets the returned local-file
+path. If the file has been cleared or manually removed, the preview remains in
+place and shows an unavailable-image placeholder.
+
+When the user should see generated images in the final response, the assistant
+places each returned `markdownImage` exactly where that image belongs:
+
+```md
+![short description](file:^generated-images%2Frun%2Fimage.png)
+```
+
+This keeps the display syntax as ordinary Markdown image syntax while reusing the
+same `file:` local-file target vocabulary and percent-escaping as file reference
+markers. The `path` field remains the unencoded short path for follow-up
+`image_paths`; the returned `markdownImage` uses the encoded `file:^...` target.
+The Markdown image position is authoritative for mixed text/image answers. The
+image renderer still loads bytes through the trusted local preview bridge rather
+than directly loading `file:` URLs.
+
+Runtime details:
+
+```ts
+interface GenerateImageData {
+  providerId: string;
+  modelId: string;
+  modelName: string;
+  images: Array<{
+    path: string;
+    markdownImage: string;
+    mimeType: string;
+    byteLength: number;
+    width?: number;
+    height?: number;
+  }>;
+  text: string[];
+  promptPreview: string;
+}
+```
+
+Model-visible `data`:
+
+```ts
+interface GenerateImageVisibleData {
+  images: Array<{
+    path: string;
+    markdownImage: string;
+    mimeType: string;
+    byteLength: number;
+    width?: number;
+    height?: number;
+  }>;
+  text?: string[];
+}
+```
+
+`generate_image` does not automatically insert the image into the outline. If
+the user asks for a file or document insertion, the agent must use the normal
+file or node tools after the image result exists.
 
 ## Import Pack CLI/API
 
@@ -1737,7 +1881,9 @@ File tools are for local files under the configured local file root (the **workd
 the agent's cwd, the default `file_glob`/`file_grep` root, and where `file_write`
 output lands). The app-owned **scratch** sibling (materialized attachments, web-fetch
 binaries, bash overflow logs, PDF pages) is read-accessible by absolute path but is
-never the default listing root — see
+never the default listing root. Generated images are the narrow exception: their
+tool-returned `generated-images/...` paths resolve under scratch for preview and
+follow-up `generate_image.image_paths` use — see
 [`agent-tool-permissions.md` → Allowed file area](./agent-tool-permissions.md#allowed-file-area)
 for the two-root model. They must not mutate the outliner
 document. The design keeps dedicated tools for each local file role:
@@ -1804,10 +1950,12 @@ stable system prompt. This follows the agent runtime pattern:
   `[[file:<label>^<path>]]` in its own final answer to surface a file it produced
   for the user — a deliverable they asked for or should review (whether written via
   `file_write` or `bash`), not an intermediate/scratch file — using an absolute path
-  inside the agent local root. The renderer resolves it through the trusted-local-file
-  gate (`resolveTrustedLocalFileReference`) and renders an inline file chip the user
-  can preview, save, or insert into the outliner — the same chip an incoming
-  attachment marker renders. Preview source resolution issues an opaque
+  inside the agent local root. Generated image answers use the returned standard
+  Markdown image string with a `file:^...` target instead. The renderer resolves
+  file markers and Markdown image file targets through the trusted-local-file
+  gate (`resolveTrustedLocalFileReference`) and renders an inline file chip or
+  image the user can preview, save, or insert into the outliner — the same chip an
+  incoming attachment marker renders. Preview source resolution issues an opaque
   `preview-local://<token>` stream URL for trusted regular files, backed by a
   main-process token registry and range-capable file stream; the renderer never
   receives a `file://` URL or path-read capability. This is what lets a
@@ -2901,6 +3049,7 @@ coverage maps as follows:
 | `bash_stop` | Implemented TypeScript background task stop command scoped to Lin-created bash tasks. |
 | `web_search` | Needed web search adapter: provider-backed search or embedded-browser SERP extraction, host permission scope, rate limiting, structured hints. |
 | `web_fetch` | Needed URL fetch adapter: TypeScript HTTP and/or embedded browser session fetch, HTML-to-markdown extraction, pagination, find mode, structured hints. |
+| `generate_image` | Implemented TypeScript image-generation adapter that resolves enabled image-capable providers, writes generated image files, and returns model-visible local paths. |
 
 Lin should prefer adding semantic TypeScript core commands where the current command
 set is too UI-shaped. For example, semantic target/source merge is better for
@@ -2938,6 +3087,7 @@ Mutating tools still pass through the global permission layer:
 - `file_write`
 - `bash`
 - `bash_stop`
+- `generate_image`
 
 How risk maps to allow / ask / deny (broad node/file edits, user-origin
 undo/redo, risky shell, exfiltration redlines, permissive-mode behavior) is owned

@@ -9,7 +9,6 @@ interface AgentToolCallDisclosureProps {
   disclosureId?: string;
   expanded: boolean;
   hasDetails: boolean;
-  images: ReactNode;
   onToggle: (anchorElement?: HTMLElement | null) => void;
   status: 'pending' | 'done' | 'error' | 'incomplete';
   statusIcon: AppIcon;
@@ -23,7 +22,6 @@ export function AgentToolCallDisclosure({
   disclosureId,
   expanded,
   hasDetails,
-  images,
   onToggle,
   status,
   statusIcon: StatusIcon,
@@ -49,7 +47,6 @@ export function AgentToolCallDisclosure({
           <span className="agent-tool-call-summary">{summary}</span>
         </ButtonControl>
       </div>
-      {images}
       {attachments}
       {expanded && hasDetails ? (
         <div className="agent-tool-call-panel">

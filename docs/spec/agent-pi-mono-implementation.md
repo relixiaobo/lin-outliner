@@ -113,14 +113,37 @@ versions until Tenon has its own compatibility tests around the adapter.
 ```json
 {
   "dependencies": {
-    "@earendil-works/pi-ai": "0.74.0",
-    "@earendil-works/pi-agent-core": "0.74.0"
+    "@earendil-works/pi-ai": "0.80.3",
+    "@earendil-works/pi-agent-core": "0.80.3"
   }
 }
 ```
 
 If pi-mono changes package ownership or names, keep the imports behind Tenon's
 own adapter modules so product code does not depend on package names directly.
+
+pi-ai's chat and image-generation surfaces are separate. Chat/agent runtime
+model calls use `Models`; generated images use `ImagesModels`. Tenon exposes
+image generation through a Tenon-owned `generate_image` tool instead of exposing
+pi-ai's image API directly to the product surface. Provider configuration remains
+a connection/capability record: credentials, endpoint, enabled state, validation,
+and capability discovery. It does not store language or image default models.
+
+Image-capable provider support lives behind `src/main/piImageModels.ts`. The
+adapter reuses the same pi credential store as language models, registers
+Tenon-owned first-party OpenAI and Google Gemini image providers, and keeps
+OpenRouter image models available through pi-ai's built-in image provider when
+OpenRouter is configured. A disabled or uncredentialed provider is excluded from
+both chat model routing and image model routing. Provider-specific image option
+normalization and preflight validation also live in this adapter; the
+`generate_image` tool receives only a structured unsupported-option result when a
+requested option cannot be sent to the selected provider/model. OpenAI-specific
+image constraints are kept here rather than in the generic tool schema so other
+image providers can keep their own size, aspect-ratio, background, and output
+format semantics. Image generation calls inherit the same provider-row
+credential and endpoint settings as chat calls, including a custom Base URL for
+an OpenAI-compatible endpoint, so users configure a provider connection only
+once.
 
 Current module boundary:
 
@@ -535,6 +558,32 @@ and managed providers as credentialed via a single `auth.credentialed` signal,
 not "has a pasted key". Credentialed and enabled are separate states: a provider
 can keep its stored credential but be disabled so it is not eligible to run.
 
+### Provider capabilities
+
+Provider view models expose typed capability summaries so the renderer never has
+to infer capabilities from model id strings. The legacy `models` field on
+`AgentProviderOption` remains the language-model list for existing consumers.
+Additional capability sections live under `capabilities`:
+
+```ts
+type AgentProviderCapabilityKind = 'language' | 'image_generation';
+type AgentProviderCapabilityIO = 'text' | 'image';
+
+interface AgentProviderCapabilitySummary {
+  kind: AgentProviderCapabilityKind;
+  models: AgentProviderCapabilityModelOption[];
+}
+```
+
+The provider detail window renders capabilities as informational sections:
+language models, image-generation models, and future capability groups. It does
+not ask for or persist a default model. The composer/model picker reads only
+enabled providers' language models. The `generate_image` tool reads
+image-generation models and the separate `imageGeneration.defaultModel` tool
+preference; that default is stored outside provider connection rows and uses the
+canonical provider-qualified `providerId/modelId` format, with empty meaning
+Auto.
+
 ### Provider rows are deliberate; state cannot contradict
 
 A row in `agent-providers.json` means the user deliberately added a provider — it
@@ -824,6 +873,7 @@ These are the active core tool surface.
 | `bash_stop` | bash stop role | Yes | Default allow unless blocked | Stop background commands created by `bash`. |
 | `web_search` | web search role | Optional | Default allow unless host/offline policy blocks | Search the web for current external information. |
 | `web_fetch` | web fetch role | Optional | Default allow unless host/offline policy blocks | Fetch and read a specific URL with pagination or snippet search. |
+| `generate_image` | image generation role | Yes | Default allow unless blocked | Generate or edit raster images through enabled image-capable providers and store generated image files. |
 
 P0 intentionally follows nodex's compact outliner surface instead of exposing
 one tool per UI command. Tag, field, reference, move, and merge behavior
@@ -891,6 +941,8 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
   unchanged — so the span is retried. There is no `/dream`
   slash command and no foreground `dream` tool.
 - `web_search` / `web_fetch` for web access.
+- `generate_image` for raster image generation and editing through provider
+  image capabilities.
 
 Do not use:
 
@@ -926,6 +978,7 @@ agent_tool_bash
 agent_tool_bash_stop
 agent_tool_web_search
 agent_tool_web_fetch
+agent_tool_generate_image
 ```
 
 Each command should receive:
@@ -944,6 +997,23 @@ Each command should return:
 - optional `preview` for UI rendering
 - optional `operation` with `undoGroupId` for document mutations
 - optional `requiresApproval` for deferred execution
+
+`generate_image` returns normal tool-envelope details plus short
+scratch-relative local paths for each generated image. Runtime details keep the
+actual provider/model used for UI and debug display, but the model-visible JSON
+contains only paths, `markdownImage`, and file metadata needed for follow-up
+work. The raw image bytes are written to the app-owned generated-image
+directory under the agent scratch root and are not copied into model-visible
+JSON, renderer debug text, or extra image content blocks. When the user should
+see the images, the assistant places each returned `markdownImage` string in the
+final response; this is standard Markdown image syntax with a `file:^...`
+local-file target. The renderer loads the bytes through the trusted local preview
+bridge. The tool
+result details are persisted with the event and are the renderer's source for
+generated image paths. If a generated file is later cleared, path preview surfaces
+keep the image slot and show an unavailable-image placeholder; if the agent
+reuses a missing generated path or file marker as an edit input, `generate_image`
+returns `input_image_unavailable` before calling the provider.
 
 TypeScript should validate paths, workspace boundaries, command timeouts, output size,
 and mutation legality. TypeScript validation is useful for fast feedback, but it

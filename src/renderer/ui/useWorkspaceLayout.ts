@@ -449,11 +449,17 @@ export function useWorkspaceLayout({
       return;
     }
     setActivePanelId(panelId);
-    setPanels((prev) => prev.map((panel) => (
-      panel.id === panelId && isWorkspacePanel(panel)
-        ? navigateWorkspacePanel(panel, filePreviewView(target, options?.nodeId, undefined, options?.presentation))
-        : panel
-    )));
+    const nextView = filePreviewView(target, options?.nodeId, undefined, options?.presentation);
+    setPanels((prev) => {
+      let changed = false;
+      const next = prev.map((panel) => {
+        if (panel.id !== panelId || !isWorkspacePanel(panel)) return panel;
+        const updated = navigateWorkspacePanel(panel, nextView);
+        if (updated !== panel) changed = true;
+        return updated;
+      });
+      return changed ? next : prev;
+    });
     clearPreviewNavigationState();
   }, [clearPreviewNavigationState, openPreviewPanel]);
 

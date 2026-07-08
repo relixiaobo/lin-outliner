@@ -25,7 +25,7 @@ import type {
   ToolResultMessage,
 } from '@earendil-works/pi-ai';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type AgentFileAttachmentInput,
@@ -105,6 +105,7 @@ import {
   channelIncludesInDreamData,
   channelAgentMembers,
 } from '../core/agentChannel';
+import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import {
   formatChatSourceReferenceMarker,
   rewriteFileReferenceMarkerPaths,
@@ -115,7 +116,12 @@ import { normalizeConversationTitle, sanitizeConversationTitle } from '../core/a
 import { TOOL_CATALOG } from '../core/agentToolCatalog';
 import { isSystemReminderBlock, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
-import { materializeAgentLocalPath, materializePathBackedAttachment } from './agentAttachmentMaterialization';
+import {
+  AGENT_GENERATED_IMAGE_DIR,
+  materializeAgentLocalPath,
+  materializePathBackedAttachment,
+} from './agentAttachmentMaterialization';
+import { resolveGeneratedImageReadPath } from './generatedImagePaths';
 import { sniffMimeType } from './assetService';
 import {
   buildReferencedFilesReminder,
@@ -123,6 +129,7 @@ import {
   type MaterializedReferencedFile,
 } from './agentReferencedAssets';
 import { isToolEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
+import { persistedToolResultDetails } from './agentToolResultPersistence';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { agentDefinitionDisplayName } from './agentDefinitionDisplay';
 import { DEFAULT_AGENT_SYSTEM_PROMPT, composeAgentPrompt } from './agentSystemPrompt';
@@ -166,6 +173,7 @@ import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
   getBuiltInAgentProfile,
+  getProviderSettings,
   setBuiltInAgentProfile,
   providerStreamOptionsFromRuntimeSettings,
   rankedModels,
@@ -182,6 +190,15 @@ import {
   piProviders,
   piStreamSimple,
 } from './piModels';
+import {
+  piFindImageModel,
+  piGenerateImages,
+  piImageModelsForProvider,
+  validateImageGenerationOptions,
+} from './piImageModels';
+import {
+  type AgentImageGenerationRuntime,
+} from './agentImageGenerationTool';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
 import { isLocalGatewayProviderId } from '../core/localGatewayProviders';
 import {
@@ -239,6 +256,7 @@ import {
 } from './agentPermissionEvents';
 import {
   createAgentLocalWorkspaceContext,
+  resolveAgentLocalReadPath,
   scratchRootForWorkdir,
   setAgentLocalPermissionRoots,
   type AgentLocalWorkspaceContext,
@@ -2601,6 +2619,7 @@ export class AgentRuntime {
           chatSourceValidator: this.createChatSourceValidator(),
           pastChats: this.createPastChatsToolRuntime(() => conversationId),
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
+          imageGeneration: this.createImageGenerationRuntime(conversationId, localWorkspace, () => conversationRef.current),
           allowedTools: agentToolFilter.allowedTools,
           disallowedTools: agentToolFilter.disallowedTools,
           permissionScopeIdProvider: () => {
@@ -2785,6 +2804,7 @@ export class AgentRuntime {
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => conversation.eventState.conversation?.id ?? 'unknown'),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
+      imageGeneration: this.createImageGenerationRuntime(conversation.eventState.conversation?.id ?? 'unknown', conversation.localWorkspace, () => conversation),
       allowedTools: conversation.agentToolFilter.allowedTools,
       disallowedTools: conversation.agentToolFilter.disallowedTools,
     });
@@ -4723,6 +4743,71 @@ export class AgentRuntime {
     };
   }
 
+  private createImageGenerationRuntime(
+    conversationId: string,
+    localWorkspace: AgentLocalWorkspaceContext,
+    getConversation: () => AgentConversationState | null,
+  ): AgentImageGenerationRuntime {
+    return {
+      listModels: async () => {
+        const settings = await getProviderSettings();
+        const activeProviderId = (await this.getActiveProviderConfig().catch(() => null))?.providerId
+          ?? settings.activeProviderId
+          ?? null;
+        const providerPriority = [...new Set([activeProviderId, 'openai', 'google', 'openrouter'].filter((value): value is string => Boolean(value)))];
+        const configuredProviders = settings.providers
+          .filter((provider) => provider.enabled && (provider.auth?.credentialed ?? (provider.hasApiKey || provider.hasEnvApiKey)))
+          .sort((left, right) => imageProviderPriorityIndex(providerPriority, left.providerId) - imageProviderPriorityIndex(providerPriority, right.providerId));
+        return configuredProviders.flatMap((provider) => (
+          piImageModelsForProvider(provider.providerId).map((model) => ({
+            providerId: provider.providerId,
+            id: model.id,
+            name: model.name,
+            input: [...model.input],
+            output: [...model.output],
+          }))
+        ));
+      },
+      getActiveProviderId: async () => (await this.getActiveProviderConfig().catch(() => null))?.providerId ?? null,
+      getDefaultModel: async () => (await getProviderSettings()).imageGeneration.defaultModel ?? null,
+      validateOptions: ({ providerId, modelId, options }) => validateImageGenerationOptions(providerId, modelId, options),
+      readLocalImage: async ({ filePath }) => {
+        const resolved = await resolveGeneratedImageReadPath(localWorkspace, filePath)
+          ?? resolveAgentLocalReadPath(localWorkspace, filePath);
+        const data = await readFile(resolved);
+        const mimeType = sniffMimeType(data, resolved);
+        if (!mimeType?.startsWith('image/')) throw new Error(`File is not a supported image: ${filePath}`);
+        return {
+          data,
+          mimeType,
+          label: path.basename(resolved),
+        };
+      },
+      writeGeneratedImage: async ({ toolCallId, index, providerId, modelId, data, mimeType, prompt }) => ({
+        path: await this.writeGeneratedImageArtifact({
+          data,
+          index,
+          mimeType,
+          modelId,
+          prompt,
+          providerId,
+          runId: getConversation()?.activeRun?.id ?? undefined,
+          toolCallId,
+        }),
+      }),
+      generateImages: async ({ providerId, modelId, context, options }) => {
+        const model = piFindImageModel(providerId, modelId);
+        if (!model) throw new Error(`Unknown image model: ${providerId}:${modelId}`);
+        const settings = await getProviderSettings();
+        const provider = settings.providers.find((candidate) => candidate.providerId === providerId);
+        return piGenerateImages(model, context, {
+          ...options,
+          baseUrl: provider?.baseUrl,
+        });
+      },
+    };
+  }
+
   private createChatSourceValidator(): AgentToolsOptions['chatSourceValidator'] {
     return async (target) => {
       const result = await this.getPastChatsService().readSource({
@@ -6075,6 +6160,7 @@ export class AgentRuntime {
       ?? persisted.payloads.find((payload) => payload.role === 'tool_output')
       ?? persisted.payloads[0];
     const toolResultMessageId = this.createMessageId('tool-result');
+    const details = persistedToolResultDetails(message);
     await this.appendConversationEvents(conversationId, conversation, [
       ...persisted.payloads.map((payload): AgentEventInput => ({
         type: 'payload.created',
@@ -6098,6 +6184,7 @@ export class AgentRuntime {
         toolName: message.toolName,
         isError: message.isError,
         content: persisted.content,
+        ...(details !== undefined ? { details } : {}),
         outputSummary: summarizeToolResult(message),
         outputRef,
       },
@@ -6455,6 +6542,28 @@ export class AgentRuntime {
   // with only a `localFileRoot` (e.g. in tests) keeps the legacy in-workdir scratch layout.
   private scratchRoot() {
     return scratchRootForWorkdir(this.localFileRoot(), this.options.scratchRoot);
+  }
+
+  private async writeGeneratedImageArtifact(
+    input: {
+      data: Buffer;
+      index: number;
+      mimeType: string;
+      modelId: string;
+      prompt: string;
+      providerId: string;
+      runId?: string;
+      toolCallId: string;
+    },
+  ): Promise<string> {
+    const runPart = shortGeneratedImagePathPart(input.runId || 'conversation', 'run');
+    const dir = path.join(this.scratchRoot(), AGENT_GENERATED_IMAGE_DIR, runPart);
+    await mkdir(dir, { recursive: true });
+    const callDigest = createHash('sha256').update(input.toolCallId).digest('hex').slice(0, 6);
+    const fileName = `image-${input.index}-${callDigest}${generatedImageExtension(input.mimeType)}`;
+    const filePath = path.join(dir, fileName);
+    await writeFile(filePath, input.data);
+    return path.posix.join(AGENT_GENERATED_IMAGE_DIR, runPart, fileName);
   }
 
   private async materializeFileAttachments(attachments: AgentMessageAttachmentInput[]): Promise<{
@@ -7128,6 +7237,25 @@ function isPreviewPayloadRole(role: AgentPayloadRef['role']): boolean {
     || role === 'tool_output';
 }
 
+function imageProviderPriorityIndex(priority: readonly string[], providerId: string): number {
+  const index = priority.indexOf(providerId);
+  return index >= 0 ? index : priority.length;
+}
+
+function shortGeneratedImagePathPart(value: string, fallback: string): string {
+  const safe = safeAttachmentFileName(value).slice(0, 10).replace(/[._-]+$/u, '') || fallback;
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 6);
+  return `${safe}-${digest}`;
+}
+
+function generatedImageExtension(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'image/jpeg') return '.jpg';
+  if (normalized === 'image/webp') return '.webp';
+  if (normalized === 'image/gif') return '.gif';
+  return '.png';
+}
+
 function payloadScopeMatchesPreviewTarget(
   payload: AgentPayloadRef,
   conversationId: string,
@@ -7522,6 +7650,7 @@ function createConfiguredAgent(
     chatSourceValidator?: AgentToolsOptions['chatSourceValidator'];
     pastChats?: AgentToolsOptions['pastChats'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
+    imageGeneration?: AgentToolsOptions['imageGeneration'];
     localWorkspace?: AgentLocalWorkspaceContext;
     allowedTools?: readonly string[];
     disallowedTools?: readonly string[];
@@ -7567,6 +7696,7 @@ function createConfiguredAgent(
     chatSourceValidator: options.chatSourceValidator,
     pastChats: options.pastChats,
     askUserQuestion: options.askUserQuestion,
+    imageGeneration: options.imageGeneration,
     allowedTools: options.allowedTools,
     disallowedTools: options.disallowedTools,
   });

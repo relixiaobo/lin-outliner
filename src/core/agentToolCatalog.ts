@@ -3,5 +3,6 @@
 export const TOOL_CATALOG = [
   'file_read', 'file_glob', 'file_grep', 'file_edit', 'file_write',
   'bash', 'web_search', 'web_fetch',
+  'generate_image',
   'spawn_run', 'run_status', 'run_steer', 'run_amend', 'run_stop',
 ] as const;

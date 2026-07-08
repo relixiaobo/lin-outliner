@@ -5,6 +5,7 @@ import type {
   AgentProviderSecretStatus,
   AgentProviderStoredApiKey,
   AgentProviderSettingsView,
+  AgentImageGenerationSettingsInput,
   AgentRuntimeSettingsInput,
   AgentConversation,
   AgentCreateConversationOptions,
@@ -401,6 +402,8 @@ export const api = {
     command<AgentProviderSettingsView>('agent_refresh_provider_models', { providerId }),
   agentUpdateRuntimeSettings: (settings: AgentRuntimeSettingsInput) =>
     command<AgentProviderSettingsView>('agent_update_runtime_settings', { settings }),
+  agentUpdateImageGenerationSettings: (settings: AgentImageGenerationSettingsInput) =>
+    command<AgentProviderSettingsView>('agent_update_image_generation_settings', { settings }),
   agentGetToolPermissionSettings: () =>
     command<AgentToolPermissionSettingsView>('agent_get_tool_permission_settings'),
   agentUpdateToolPermissionSettings: (settings: AgentToolPermissionSettingsInput) =>

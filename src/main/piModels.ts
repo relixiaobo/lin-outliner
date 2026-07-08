@@ -64,6 +64,10 @@ export function piModels(): MutableModels {
   return modelsInstance;
 }
 
+export function piCredentialStore(): CredentialStore {
+  return credentialStoreAdapter;
+}
+
 export function piProviders(): string[] {
   return piModels().getProviders()
     .map((provider) => provider.id)
