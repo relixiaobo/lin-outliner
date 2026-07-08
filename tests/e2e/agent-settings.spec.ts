@@ -383,7 +383,7 @@ test.describe('agent settings window', () => {
     }).toMatchObject({
       provider: {
         providerId: 'cc-switch',
-        baseUrl: 'http://127.0.0.1:15721/v1',
+        baseUrl: 'https://registry.example.com/v1',
         enabled: true,
       },
     });

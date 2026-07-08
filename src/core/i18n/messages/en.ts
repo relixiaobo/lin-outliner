@@ -151,6 +151,9 @@ export const en = {
         disabled: 'Disabled',
         unavailable: 'Unavailable',
         needsKey: 'Needs key',
+        proxyRequired: 'Proxy required',
+        unsupported: 'Unsupported',
+        notDetected: 'Not detected',
         active: 'Active',
       },
     },
@@ -1387,12 +1390,12 @@ commandPalette: {
   providerCatalog: {
     customProvider: 'Custom provider',
     openAiCompatible: 'Connect any OpenAI-compatible endpoint.',
-    ccSwitchLocalGateway: 'Uses the provider currently applied by CC Switch for Codex.',
+    ccSwitchLocalGateway: 'Reads CC Switch’s provider registry on this Mac.',
     includesModels: ({ models, more }: { models: string; more: boolean }) =>
       `Includes ${models}${more ? ', and more' : ''}.`,
     auth: {
       'cc-switch': {
-        note: 'Reads the Codex provider currently applied by CC Switch on this Mac. Tenon does not store or reveal CC Switch-managed keys.',
+        note: 'Reads CC Switch’s provider registry on this Mac. Tenon does not store or reveal CC Switch-managed keys.',
       },
       'amazon-bedrock': {
         note: 'Bedrock uses your AWS credentials (a named profile, IAM role, or AWS_* environment variables) — there is no API key to paste here.',

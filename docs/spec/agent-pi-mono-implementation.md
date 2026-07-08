@@ -449,58 +449,55 @@ instead of modeling every provider as "paste an API key":
 flows to the renderer on the provider view models so the UI never hardcodes the
 classification.
 
-### CC Switch Codex mirror
+### CC Switch provider registry
 
-Tenon treats CC Switch as an external configuration owner and mirrors the Codex
-configuration that CC Switch has already applied. When CC Switch is detected
-locally, main adds a detected `cc-switch` provider. The primary path reads
-`~/.codex/config.toml` and `~/.codex/auth.json` at settings/runtime time, extracts
-the active Codex `model_provider`, `base_url`, `wire_api`, top-level `model`, and
-the `OPENAI_API_KEY`, and registers a transient OpenAI-compatible connection for
-Tenon. The key remains CC Switch/Codex-managed: Tenon does not copy it into
-`agent-secrets.json`, and the provider config UI does not expose show/copy for
-that external key.
+Tenon treats CC Switch as an external provider manager and reads
+`~/.cc-switch/cc-switch.db` as the only normal source for CC Switch-backed
+provider discovery. Main validates the required `providers`,
+`provider_endpoints`, and `proxy_config` columns before using the database. If
+the database is missing or the schema is unsupported, Tenon does not fall back to
+Codex-generated files and does not expose CC Switch as runnable.
 
-The `cc-switch` row is declared through the local gateway provider registry
-(`src/core/localGatewayProviders.ts`). That registry owns the provider id/name,
-default Local Proxy base URL, default routed model, OpenAI-compatible API shape,
-adapter id, external-secret flag, quick-enable behavior, refreshability, and
-catalog-provider fallbacks. Main and renderer code query the registry for those
-capabilities instead of hardcoding provider-specific UI and credential predicates
-at each callsite. The current registry has one entry, CC Switch; adding another
-local gateway still requires a real adapter for that gateway's config shape.
+The `cc-switch` row remains declared through the local gateway provider registry
+(`src/core/localGatewayProviders.ts`). That registry owns the user-facing
+provider id/name, adapter id, external-secret flag, quick-enable behavior,
+refreshability, and catalog-provider fallbacks. The CC Switch adapter in main
+reads provider rows into source records containing app type, provider id/name,
+endpoints, metadata, settings config, auth kind, API format, model catalog, and
+route classification. Those source records stay main-process only.
 
-The normal user flow is: configure/switch a Codex provider in CC Switch, open
-Tenon Settings → Providers, enable **CC Switch**, and refresh models if needed.
-Local Routing / Local Proxy is not required for the common direct Codex provider
-case. Tenon re-reads the live Codex files before runtime calls, so switching the
-Codex provider in CC Switch updates Tenon's endpoint/model without re-saving the
-Tenon row.
+Route classification is conservative. The first direct route supports Codex
+sources whose CC Switch metadata identifies native OpenAI Responses routing, a
+direct endpoint, an API-key credential, and at least one configured model.
+Codex `openai_chat` sources, OAuth/session/managed-account shapes, failover or
+request-override configurations, and sources that require protocol conversion
+are marked **Proxy required**. Known app types without a direct adapter are
+shown as **Unsupported**. A configured Tenon row with no readable registry is
+shown as **Not detected**.
 
-Model listing is mirror-first. If `model_catalog_json` points at CC Switch's
-generated `cc-switch-model-catalog.json`, Tenon reads that catalog and exposes
-its `slug`/`display_name`/`context_window` entries. Otherwise it tries the
-OpenAI-compatible model list endpoint with the mirrored API key, accepting both
-`{ data: [{ id }] }` and `{ models: [{ model | slug | id }] }` response shapes.
-If neither source lists models, Tenon falls back to the Codex top-level `model`.
-The explicit **Refresh models** action repeats the same mirror-first discovery
-with a longer timeout and caches results per endpoint only, so models from one
-CC Switch endpoint never bleed into another.
+Tenon keeps one user-facing provider group named **CC Switch**. Direct-runnable
+registry sources are exposed as model choices under that group with labels such
+as `Codex / OpenAI / GPT 5.5`. Internally, each source gets a stable
+source-scoped provider id like `cc-switch:codex:<provider-id>`, and the visible
+model id encodes that source id plus the upstream model id. The pi auth resolver
+decodes the model id at request time, re-reads the matching source from the CC
+Switch registry, and returns only that source's API key to the provider request.
+The group-level `cc-switch` provider has no show/copy/edit credential surface,
+and Tenon never copies CC Switch-managed keys into `agent-secrets.json`.
 
-Local Routing remains an advanced fallback. If no usable Codex mirror exists,
-Tenon can still use a healthy `http://127.0.0.1:15721/v1` CC Switch Local Proxy
-and query its `/v1/models` endpoint. A configured-but-stopped proxy is not a
-runtime candidate and does not appear in model pickers, while ordinary custom
-localhost OpenAI-compatible endpoints remain keyless. Keyless local model-list
-requests do not send the internal `local-endpoint` API-key sentinel as an
-Authorization header. Runtime custom models for CC Switch use the mirrored Codex
-`wire_api` when available, defaulting to OpenAI Responses.
+Model discovery is registry-first. Tenon prefers
+`settings_config.modelCatalog.models`, then the configured model id in the
+provider settings. The explicit **Refresh models** action re-reads the registry
+and rebuilds source-scoped model options; it does not require `/models` to prove
+provider existence. Failed model-list probing cannot make a registry-backed
+provider disappear when the registry already supplies a model.
 
-This integration intentionally supports the Codex configuration shape first.
-Other CC Switch-managed apps (Claude, Gemini, OpenCode/OpenClaw, Hermes, OMO,
-and related app-specific formats) are not a single shared provider schema; they
-need separate adapters or the Local Proxy fallback before they can be exposed as
-first-class Tenon providers.
+CC Switch Local Proxy is not used for direct-runnable sources. Proxy-required
+sources remain visible with a route-specific disabled reason; Tenon does not
+start the proxy, enable app routing, write CC Switch state, or switch CC
+Switch's current provider. Future proxy-route support must remain explicit so
+Tenon can distinguish direct registry credentials from Local Proxy routing in
+errors and diagnostics.
 
 ### Single credential resolver
 

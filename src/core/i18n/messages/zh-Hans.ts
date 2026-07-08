@@ -122,6 +122,9 @@ export const zhHans: PartialMessages = {
         disabled: '已禁用',
         unavailable: '不可用',
         needsKey: '需要密钥',
+        proxyRequired: '需要代理',
+        unsupported: '暂不支持',
+        notDetected: '未检测到',
         active: '当前',
       },
     },
@@ -1287,12 +1290,12 @@ commandPalette: {
   providerCatalog: {
     customProvider: '自定义提供方',
     openAiCompatible: '连接任何兼容 OpenAI 的端点。',
-    ccSwitchLocalGateway: '使用 CC Switch 当前应用到 Codex 的提供方。',
+    ccSwitchLocalGateway: '读取这台 Mac 上的 CC Switch 提供方注册表。',
     includesModels: ({ models, more }: { models: string; more: boolean }) =>
       `包含 ${models}${more ? ' 等更多模型' : ''}。`,
     auth: {
       'cc-switch': {
-        note: '读取这台 Mac 上 CC Switch 当前应用到 Codex 的提供方。Tenon 不会保存或展示由 CC Switch 管理的密钥。',
+        note: '读取这台 Mac 上的 CC Switch 提供方注册表。Tenon 不会保存或展示由 CC Switch 管理的密钥。',
       },
       'amazon-bedrock': {
         note: 'Bedrock 使用你的 AWS 凭据（命名配置文件、IAM 角色或 AWS_* 环境变量）— 此处无需粘贴 API 密钥。',

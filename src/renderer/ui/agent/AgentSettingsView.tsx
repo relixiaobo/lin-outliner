@@ -90,6 +90,8 @@ interface ProviderChoice {
   enabled: boolean;
   hasCredential: boolean;
   detected?: boolean;
+  connectionStatus?: AgentProviderOption['connectionStatus'];
+  connectionStatusMessage?: string;
   quickEnable?: boolean;
   defaultBaseUrl?: string;
   canRefreshModels?: boolean;
@@ -196,7 +198,7 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
       onSelect={quickEnable
         ? () => handlers.onToggleEnabled(provider.providerId, true)
         : () => handlers.onConfigure(provider.providerId)}
-      sublabel={!provider.configured && provider.detected ? t.settings.providers.detectedSublabel : undefined}
+      sublabel={provider.connectionStatusMessage ?? (!provider.configured && provider.detected ? t.settings.providers.detectedSublabel : undefined)}
       trailing={trailing}
     />
   );
@@ -1496,6 +1498,8 @@ function buildProviderChoices(
       enabled: provider.enabled,
       hasCredential: providerHasCredential(provider, providerCatalog),
       detected: providerCatalog?.detected,
+      connectionStatus: providerCatalog?.connectionStatus,
+      connectionStatusMessage: providerCatalog?.connectionStatusMessage,
       defaultBaseUrl: providerCatalog?.defaultBaseUrl,
       canRefreshModels: isRefreshableLocalGatewayProviderId(provider.providerId) && provider.enabled,
     });
@@ -1503,7 +1507,7 @@ function buildProviderChoices(
 
   for (const provider of settings.availableProviders) {
     if (choices.has(provider.providerId)) continue;
-    const quickEnable = isQuickEnableProviderId(provider.providerId) && Boolean(provider.detected && provider.defaultBaseUrl);
+    const quickEnable = isQuickEnableProviderId(provider.providerId) && Boolean(provider.detected && provider.defaultBaseUrl && provider.credentialed);
     choices.set(provider.providerId, {
       providerId: provider.providerId,
       configured: false,
@@ -1511,6 +1515,8 @@ function buildProviderChoices(
       enabled: !quickEnable,
       hasCredential: providerHasCredential(undefined, provider),
       detected: provider.detected,
+      connectionStatus: provider.connectionStatus,
+      connectionStatusMessage: provider.connectionStatusMessage,
       quickEnable,
       defaultBaseUrl: provider.defaultBaseUrl,
     });
@@ -1518,7 +1524,7 @@ function buildProviderChoices(
 
   if (draftProviderId && !choices.has(draftProviderId)) {
     const providerCatalog = catalog.get(draftProviderId);
-    const quickEnable = isQuickEnableProviderId(draftProviderId) && Boolean(providerCatalog?.detected && providerCatalog.defaultBaseUrl);
+    const quickEnable = isQuickEnableProviderId(draftProviderId) && Boolean(providerCatalog?.detected && providerCatalog.defaultBaseUrl && providerCatalog.credentialed);
     choices.set(draftProviderId, {
       providerId: draftProviderId,
       configured: false,
@@ -1526,6 +1532,8 @@ function buildProviderChoices(
       enabled: !quickEnable,
       hasCredential: providerHasCredential(undefined, providerCatalog),
       detected: providerCatalog?.detected,
+      connectionStatus: providerCatalog?.connectionStatus,
+      connectionStatusMessage: providerCatalog?.connectionStatusMessage,
       quickEnable,
       defaultBaseUrl: providerCatalog?.defaultBaseUrl,
     });
@@ -1589,6 +1597,9 @@ function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): nu
 // Module-level helper (can't call useT) — the component passes `t` in.
 function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
   const s = t.settings.providers.status;
+  if (provider.connectionStatus === 'proxy-required') return s.proxyRequired;
+  if (provider.connectionStatus === 'unsupported') return s.unsupported;
+  if (provider.connectionStatus === 'not-detected') return s.notDetected;
   if (!provider.configured && provider.detected) return s.detected;
   if (!provider.configured) return provider.hasCredential ? s.ready : s.addKey;
   if (!provider.enabled) return s.disabled;

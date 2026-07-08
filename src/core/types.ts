@@ -1002,6 +1002,10 @@ export interface AgentProviderOption {
   credentialed?: boolean;
   /** True when the provider was found locally, either by endpoint probe or install/config presence. */
   detected?: boolean;
+  /** External-provider connection state, used for CC Switch registry diagnostics. */
+  connectionStatus?: 'ready' | 'proxy-required' | 'unsupported' | 'not-detected';
+  /** Human-readable external-provider diagnostic. Must never contain secrets. */
+  connectionStatusMessage?: string;
   hasEnvApiKey: boolean;
   envKeyNames: string[];
   defaultBaseUrl?: string;

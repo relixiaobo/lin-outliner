@@ -3,9 +3,7 @@ import {
   getSupportedThinkingLevels,
 } from '@earendil-works/pi-ai';
 import type { Api, Credential, Model, OAuthCredentials, SimpleStreamOptions } from '@earendil-works/pi-ai';
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import type {
   AgentDelegationPermissionMode,
   AgentModelOption,
@@ -40,6 +38,7 @@ import {
   configurePiCredentialStorage,
   createOpenAICompatibleModel,
   ensurePiCustomProvider,
+  registerLocalGatewayRuntimeModels,
   piCompleteSimple,
   piFindModel,
   piModels,
@@ -54,6 +53,22 @@ import {
   piRefreshImageModels,
 } from './piImageModels';
 import { customOpenAIResponsesPayloadProfileOption } from './openAIResponsesCompat';
+import { redactSecretLikeContent } from './agentSecretRedaction';
+import {
+  ccSwitchModelOptionId,
+  ccSwitchPiApiForSource,
+  ccSwitchRunnableSources,
+  ccSwitchSourceApiKey,
+  ccSwitchSourceBaseUrl,
+  ccSwitchSourceLabel,
+  ccSwitchSourceModels,
+  ccSwitchSourceRuntimeProviderId,
+  parseCcSwitchRuntimeProviderId,
+  readCcSwitchRegistrySnapshot,
+  type CcSwitchOpenAICompatibleApiId,
+  type CcSwitchProviderSource,
+  type CcSwitchRegistrySnapshot,
+} from './ccSwitchRegistry';
 
 const PROVIDERS_FILE = 'agent-providers.json';
 const SECRETS_FILE = 'agent-secrets.json';
@@ -129,12 +144,6 @@ function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
 
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
-const LOCAL_GATEWAY_DETECT_TIMEOUT_MS = 350;
-const LOCAL_GATEWAY_REFRESH_TIMEOUT_MS = 8000;
-const CODEX_CONFIG_FILE = 'config.toml';
-const CODEX_AUTH_FILE = 'auth.json';
-const CC_SWITCH_CODEX_MODEL_CATALOG_FILE = 'cc-switch-model-catalog.json';
-const CC_SWITCH_PROVIDER = localGatewayProviderDefinition(CC_SWITCH_LOCAL_PROVIDER_ID)!;
 export const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   automaticSkillsEnabled: true,
@@ -150,28 +159,7 @@ const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   disabledAgents: [],
 };
 
-type OpenAICompatibleApiId = 'openai-completions' | 'openai-responses';
-
-interface CcSwitchModelDescriptor {
-  id: string;
-  name?: string;
-  api?: OpenAICompatibleApiId;
-  reasoning?: boolean;
-  contextWindow?: number;
-  maxTokens?: number;
-}
-
-interface CcSwitchCodexMirror {
-  codexDir: string;
-  providerName?: string;
-  baseUrl?: string;
-  api: OpenAICompatibleApiId;
-  currentModelId?: string;
-  modelCatalogPath?: string;
-  apiKey?: string;
-}
-
-let ccSwitchModelDescriptorsCache: { baseUrl: string; models: CcSwitchModelDescriptor[] } | null = null;
+type OpenAICompatibleApiId = CcSwitchOpenAICompatibleApiId;
 
 export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
   apiKey?: string;
@@ -202,9 +190,7 @@ export async function refreshProviderModels(providerIdInput: string): Promise<Ag
   const providerId = normalizeProviderId(providerIdInput);
   const localGatewayProvider = localGatewayProviderDefinition(providerId);
   if (localGatewayProvider?.adapter === 'cc-switch-codex' && localGatewayProvider.refreshableModels) {
-    const file = await readProviderFile();
-    const configured = file.providers.find((provider) => provider.providerId === providerId);
-    await refreshCcSwitchModelDescriptors(localGatewayProvider, configured?.baseUrl ?? localGatewayProvider.defaultBaseUrl);
+    await registerCcSwitchRuntimeModels(localGatewayProvider, await readCcSwitchRegistry());
   }
   await piRefreshImageModels(providerId).catch(() => undefined);
   return getProviderSettings();
@@ -506,10 +492,7 @@ export async function getStoredProviderApiKey(providerIdInput: string): Promise<
 export async function getProviderApiKey(providerIdInput: string): Promise<string | undefined> {
   try {
     const providerId = normalizeProviderId(providerIdInput);
-    const localGatewayProvider = localGatewayProviderDefinition(providerId);
-    if (localGatewayProvider?.externalSecret) {
-      return readLocalGatewayApiKey(localGatewayProvider);
-    }
+    if (parseCcSwitchRuntimeProviderId(providerId) || isExternalSecretProviderId(providerId)) return undefined;
     const file = await readProviderFile();
     const providerConfig = file.providers.find((provider) => provider.providerId === providerId);
     if (providerConfig?.baseUrl) ensurePiCustomProvider(providerConfig);
@@ -683,19 +666,21 @@ async function getCcSwitchProviderOption(
   configuredProviders: readonly AgentProviderConfig[],
 ): Promise<AgentProviderOption | null> {
   const configured = configuredProviders.find((provider) => provider.providerId === localGatewayProvider.providerId);
-  const mirror = await readCcSwitchCodexMirror();
-  const baseUrl = mirror?.baseUrl ?? configured?.baseUrl ?? localGatewayProvider.defaultBaseUrl;
-  const mirrorUsable = isUsableCcSwitchCodexMirror(mirror);
-  const gatewayHealthy = mirrorUsable ? false : await detectCcSwitchLocalGateway(configured?.baseUrl ?? localGatewayProvider.defaultBaseUrl);
-  const installationDetected = detectCcSwitchLocalInstallation();
-  const detected = Boolean((mirror && (configured || installationDetected)) || gatewayHealthy || installationDetected);
+  const snapshot = await readCcSwitchRegistry();
+  const runtimeModels = registerCcSwitchRuntimeModels(localGatewayProvider, snapshot);
+  const detected = snapshot.detected;
   if (!configured && !detected) return null;
-  const models = await getCcSwitchModelOptions({ provider: localGatewayProvider, mirror, gatewayHealthy, baseUrl });
+  const models = providerModelOptions(localGatewayProvider.providerId, runtimeModels);
+  const baseUrl = ccSwitchRunnableSources(snapshot)[0]
+    ? ccSwitchSourceBaseUrl(ccSwitchRunnableSources(snapshot)[0]!)
+    : configured?.baseUrl ?? localGatewayProvider.defaultBaseUrl;
   return {
     providerId: localGatewayProvider.providerId,
     authKind: 'api-key',
-    credentialed: mirrorUsable || gatewayHealthy,
+    credentialed: snapshot.status === 'ready',
     detected,
+    connectionStatus: snapshot.status,
+    connectionStatusMessage: snapshot.statusMessage,
     hasEnvApiKey: false,
     envKeyNames: [],
     defaultBaseUrl: baseUrl,
@@ -704,114 +689,42 @@ async function getCcSwitchProviderOption(
   };
 }
 
-async function getCcSwitchModelOptions(input: {
-  provider: LocalGatewayProviderDefinition;
-  mirror: CcSwitchCodexMirror | null;
-  gatewayHealthy: boolean;
-  baseUrl: string;
-}): Promise<AgentModelOption[]> {
-  if (input.mirror?.baseUrl) {
-    const discovered = await listCcSwitchCodexMirrorModelDescriptors(input.mirror, LOCAL_GATEWAY_DETECT_TIMEOUT_MS);
-    if (discovered.length > 0) {
-      cacheCcSwitchModelDescriptors(input.mirror.baseUrl, discovered);
-      return ccSwitchModelOptions(input.provider, discovered, input.mirror.baseUrl, input.mirror.api);
-    }
-  }
-  const baseUrl = input.baseUrl;
-  const gatewayHealthy = input.gatewayHealthy;
-  if (gatewayHealthy) {
-    try {
-      const auth = await resolveProviderConnectionAuth(input.provider.providerId, baseUrl);
-      const discovered = await listOpenAiCompatibleModels(baseUrl, auth?.listHeaders, LOCAL_GATEWAY_DETECT_TIMEOUT_MS);
-      if (discovered.length > 0) {
-        const descriptors = discovered.map((id): CcSwitchModelDescriptor => ({ id }));
-        cacheCcSwitchModelDescriptors(baseUrl, descriptors);
-        return ccSwitchModelOptions(input.provider, descriptors, baseUrl, input.provider.defaultApi);
-      }
-    } catch {
-      // Settings must stay fast and usable even when the app is installed but the
-      // local proxy fallback is still warming up. Fall back to the routed-model alias.
-    }
-  }
-  if (ccSwitchModelDescriptorsCache?.baseUrl === baseUrl && ccSwitchModelDescriptorsCache.models.length > 0) {
-    return ccSwitchModelOptions(input.provider, ccSwitchModelDescriptorsCache.models, baseUrl, input.provider.defaultApi);
-  }
-  return providerModelOptions(input.provider.providerId, rankedModels(input.provider.providerId));
+async function readCcSwitchRegistry(): Promise<CcSwitchRegistrySnapshot> {
+  return readCcSwitchRegistrySnapshot(getElectronHomePath());
 }
 
-async function refreshCcSwitchModelDescriptors(
+function registerCcSwitchRuntimeModels(
   localGatewayProvider: LocalGatewayProviderDefinition,
-  baseUrl: string,
-): Promise<CcSwitchModelDescriptor[]> {
-  const mirror = await readCcSwitchCodexMirror();
-  if (mirror?.baseUrl) {
-    const models = await refreshCcSwitchCodexMirrorModelDescriptors(mirror);
-    cacheCcSwitchModelDescriptors(mirror.baseUrl, models);
-    return models;
-  }
-  const models = await refreshCcSwitchLocalGatewayModelDescriptors(localGatewayProvider, baseUrl);
-  cacheCcSwitchModelDescriptors(baseUrl, models);
-  return models;
+  snapshot: CcSwitchRegistrySnapshot,
+): Model<Api>[] {
+  const runtimeModels = ccSwitchRunnableSources(snapshot)
+    .flatMap((source) => ccSwitchRuntimeModelsForSource(localGatewayProvider, source));
+  registerLocalGatewayRuntimeModels(localGatewayProvider.providerId, runtimeModels);
+  return runtimeModels;
 }
 
-function cacheCcSwitchModelDescriptors(baseUrl: string, models: CcSwitchModelDescriptor[]): void {
-  ccSwitchModelDescriptorsCache = { baseUrl, models };
-}
-
-async function refreshCcSwitchCodexMirrorModelDescriptors(mirror: CcSwitchCodexMirror): Promise<CcSwitchModelDescriptor[]> {
-  const catalogModels = await readCcSwitchCodexCatalogModelDescriptors(mirror);
-  if (catalogModels.length > 0) return catalogModels;
-  if (!mirror.apiKey) {
-    throw new Error('CC Switch Codex credentials were not found. Open CC Switch, apply a Codex provider, then refresh models.');
-  }
-  const endpointModels = await listCcSwitchCodexMirrorEndpointModelDescriptors(mirror, LOCAL_GATEWAY_REFRESH_TIMEOUT_MS);
-  if (endpointModels.length > 0) return endpointModels;
-  if (mirror.currentModelId) return [{ id: mirror.currentModelId }];
-  throw new Error('CC Switch Codex config did not expose any models.');
-}
-
-async function refreshCcSwitchLocalGatewayModelDescriptors(
+function ccSwitchRuntimeModelsForSource(
   localGatewayProvider: LocalGatewayProviderDefinition,
-  baseUrl: string,
-): Promise<CcSwitchModelDescriptor[]> {
-  const gatewayHealthy = await detectCcSwitchLocalGateway(baseUrl);
-  if (!gatewayHealthy) {
-    throw new Error('No usable CC Switch Codex config was found, and the CC Switch Local Proxy is not reachable.');
-  }
-  const auth = await resolveProviderConnectionAuth(localGatewayProvider.providerId, baseUrl);
-  let models: string[];
-  try {
-    models = await listOpenAiCompatibleModels(baseUrl, auth?.listHeaders, LOCAL_GATEWAY_REFRESH_TIMEOUT_MS);
-  } catch {
-    throw new Error(`CC Switch did not expose a model list at ${baseUrl.replace(/\/+$/, '')}/models. Check the Local Proxy base URL.`);
-  }
-  if (models.length === 0) throw new Error('CC Switch returned no models.');
-  return models.map((id): CcSwitchModelDescriptor => ({ id }));
-}
-
-function ccSwitchModelOptions(
-  localGatewayProvider: LocalGatewayProviderDefinition,
-  models: readonly CcSwitchModelDescriptor[],
-  baseUrl: string,
-  api: OpenAICompatibleApiId,
-): AgentModelOption[] {
-  return providerModelOptions(
-    localGatewayProvider.providerId,
-    models.map((descriptor) => {
-      const modelApi = descriptor.api ?? api;
-      return createOpenAICompatibleModel({
-        providerId: localGatewayProvider.providerId,
-        modelId: descriptor.id,
-        name: descriptor.name ?? formatDiscoveredModelName(descriptor.id),
-        baseUrl,
-        api: modelApi,
-        catalogModel: ccSwitchCatalogModel(localGatewayProvider, descriptor.id),
-        reasoning: descriptor.reasoning ?? modelApi === 'openai-responses',
-        contextWindow: descriptor.contextWindow,
-        maxTokens: descriptor.maxTokens,
-      });
-    }),
-  );
+  source: CcSwitchProviderSource,
+): Model<Api>[] {
+  const baseUrl = ccSwitchSourceBaseUrl(source);
+  if (!baseUrl) return [];
+  const sourceRuntimeProviderId = ccSwitchSourceRuntimeProviderId(source);
+  return ccSwitchSourceModels(source).map((descriptor) => {
+    const modelApi = descriptor.api ?? ccSwitchPiApiForSource(source);
+    const model = createOpenAICompatibleModel({
+      providerId: localGatewayProvider.providerId,
+      modelId: ccSwitchModelOptionId(sourceRuntimeProviderId, descriptor.id),
+      name: ccSwitchSourceLabel(source, descriptor),
+      baseUrl,
+      api: modelApi,
+      catalogModel: ccSwitchCatalogModel(localGatewayProvider, descriptor.id),
+      reasoning: descriptor.reasoning ?? modelApi === 'openai-responses',
+      contextWindow: descriptor.contextWindow,
+      maxTokens: descriptor.maxTokens,
+    });
+    return { ...model, provider: localGatewayProvider.providerId, name: ccSwitchSourceLabel(source, descriptor) };
+  });
 }
 
 function ccSwitchCatalogModel(localGatewayProvider: LocalGatewayProviderDefinition, modelId: string): Model<Api> | null {
@@ -822,298 +735,28 @@ function ccSwitchCatalogModel(localGatewayProvider: LocalGatewayProviderDefiniti
     ?? null;
 }
 
-function isUsableCcSwitchCodexMirror(
-  mirror: CcSwitchCodexMirror | null,
-): mirror is CcSwitchCodexMirror & { baseUrl: string; apiKey: string } {
-  return Boolean(mirror?.baseUrl && mirror.apiKey);
-}
-
-async function readLocalGatewayApiKey(localGatewayProvider: LocalGatewayProviderDefinition): Promise<string | undefined> {
-  if (localGatewayProvider.adapter === 'cc-switch-codex') {
-    return (await readCcSwitchCodexMirror())?.apiKey;
-  }
-  return undefined;
-}
-
 async function resolveCcSwitchRuntimeConfig(
   localGatewayProvider: LocalGatewayProviderDefinition,
   config: AgentProviderConfig,
 ): Promise<AgentProviderRuntimeConfig | null> {
-  const mirror = await readCcSwitchCodexMirror();
-  if (isUsableCcSwitchCodexMirror(mirror)) {
-    return {
-      ...config,
-      baseUrl: mirror.baseUrl,
-      api: mirror.api,
-      modelId: mirror.currentModelId,
-    };
-  }
-  const baseUrl = config.baseUrl ?? localGatewayProvider.defaultBaseUrl;
-  if (await detectCcSwitchLocalGateway(baseUrl)) {
-    return {
-      ...config,
-      baseUrl,
-      api: localGatewayProvider.defaultApi,
-      modelId: localGatewayProvider.defaultModelId,
-    };
-  }
-  return null;
-}
-
-async function readCcSwitchCodexMirror(): Promise<CcSwitchCodexMirror | null> {
-  const codexDir = getCodexConfigDir();
-  if (!codexDir) return null;
-  const configText = await readTextFileOrNull(join(codexDir, CODEX_CONFIG_FILE));
-  if (!configText?.trim()) return null;
-
-  const providerId = parseTomlTopLevelString(configText, 'model_provider');
-  const providerTable = providerId ? parseTomlStringTable(configText, `model_providers.${providerId}`) : {};
-  const baseUrl = normalizeOptionalString(providerTable.base_url ?? parseTomlTopLevelString(configText, 'base_url'));
-  const wireApi = normalizeOptionalString(providerTable.wire_api ?? parseTomlTopLevelString(configText, 'wire_api'));
-  const currentModelId = normalizeOptionalString(parseTomlTopLevelString(configText, 'model'));
-  const modelCatalogPath = resolveCcSwitchCodexModelCatalogPath(
-    codexDir,
-    normalizeOptionalString(parseTomlTopLevelString(configText, 'model_catalog_json')),
-  );
-  const apiKey = await readCodexOpenAiApiKey(join(codexDir, CODEX_AUTH_FILE));
-
-  if (!providerId && !baseUrl && !currentModelId && !modelCatalogPath && !apiKey) return null;
+  const snapshot = await readCcSwitchRegistry();
+  registerCcSwitchRuntimeModels(localGatewayProvider, snapshot);
+  const model = rankedModels(localGatewayProvider.providerId)[0];
+  if (!model) return null;
   return {
-    codexDir,
-    providerName: normalizeOptionalString(providerTable.name),
-    baseUrl,
-    api: codexWireApiToPiApi(wireApi),
-    currentModelId,
-    modelCatalogPath,
-    apiKey,
+    providerId: config.providerId,
+    enabled: config.enabled,
+    modelId: model.id,
+    api: isOpenAICompatibleApiId(model.api) ? model.api : undefined,
   };
 }
 
-async function listCcSwitchCodexMirrorModelDescriptors(
-  mirror: CcSwitchCodexMirror,
-  timeoutMs: number,
-): Promise<CcSwitchModelDescriptor[]> {
-  const catalogModels = await readCcSwitchCodexCatalogModelDescriptors(mirror);
-  if (catalogModels.length > 0) return catalogModels;
-  const endpointModels = await listCcSwitchCodexMirrorEndpointModelDescriptors(mirror, timeoutMs);
-  if (endpointModels.length > 0) return endpointModels;
-  return mirror.currentModelId ? [{ id: mirror.currentModelId, api: mirror.api }] : [];
-}
-
-async function readCcSwitchCodexCatalogModelDescriptors(mirror: CcSwitchCodexMirror): Promise<CcSwitchModelDescriptor[]> {
-  if (!mirror.modelCatalogPath) return [];
-  const text = await readTextFileOrNull(mirror.modelCatalogPath);
-  if (!text) return [];
-  try {
-    return parseCcSwitchCodexCatalogModelDescriptors(JSON.parse(text), mirror.api);
-  } catch {
-    return [];
-  }
-}
-
-async function listCcSwitchCodexMirrorEndpointModelDescriptors(
-  mirror: CcSwitchCodexMirror,
-  timeoutMs: number,
-): Promise<CcSwitchModelDescriptor[]> {
-  if (!mirror.baseUrl || !mirror.apiKey) return [];
-  const headers = { Authorization: `Bearer ${mirror.apiKey}` };
-  for (const candidateBaseUrl of openAiModelListBaseUrlCandidates(mirror.baseUrl)) {
-    try {
-      const ids = await listOpenAiCompatibleModels(candidateBaseUrl, headers, timeoutMs);
-      if (ids.length > 0) return ids.map((id): CcSwitchModelDescriptor => ({ id, api: mirror.api }));
-    } catch {
-      // Try the next compatible model-list URL shape.
-    }
-  }
-  return [];
-}
-
-function openAiModelListBaseUrlCandidates(baseUrl: string): string[] {
-  const trimmed = baseUrl.replace(/\/+$/, '');
-  if (!trimmed) return [];
-  if (trimmed.endsWith('/v1')) return [trimmed];
-  return [trimmed, `${trimmed}/v1`];
-}
-
-function parseCcSwitchCodexCatalogModelDescriptors(body: unknown, api: OpenAICompatibleApiId): CcSwitchModelDescriptor[] {
-  const record = body && typeof body === 'object' ? body as Record<string, unknown> : {};
-  const entries = Array.isArray(record.models)
-    ? record.models
-    : (Array.isArray(record.data) ? record.data : []);
-  const seen = new Set<string>();
-  const descriptors: CcSwitchModelDescriptor[] = [];
-  for (const entry of entries) {
-    const id = modelIdFromListEntry(entry);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    const entryRecord = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
-    descriptors.push({
-      id,
-      api,
-      name: stringField(entryRecord, ['display_name', 'displayName', 'name']),
-      contextWindow: positiveIntegerField(entryRecord, ['context_window', 'max_context_window', 'contextWindow']),
-      maxTokens: positiveIntegerField(entryRecord, ['max_tokens', 'maxTokens']),
-    });
-  }
-  return descriptors;
-}
-
-async function readCodexOpenAiApiKey(authPath: string): Promise<string | undefined> {
-  const text = await readTextFileOrNull(authPath);
-  if (!text) return undefined;
-  try {
-    const body = JSON.parse(text) as Record<string, unknown>;
-    return normalizeOptionalString(body.OPENAI_API_KEY);
-  } catch {
-    return undefined;
-  }
-}
-
-async function readTextFileOrNull(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, 'utf8');
-  } catch {
-    return null;
-  }
-}
-
-function getCodexConfigDir(): string | undefined {
-  const home = getElectronHomePath();
-  return home ? join(home, '.codex') : undefined;
-}
-
-function resolveCcSwitchCodexModelCatalogPath(codexDir: string, catalogPath: string | undefined): string | undefined {
-  if (!catalogPath) return undefined;
-  const fileName = catalogPath.split(/[\\/]/).pop();
-  if (fileName !== CC_SWITCH_CODEX_MODEL_CATALOG_FILE) return undefined;
-  return isAbsolute(catalogPath) ? catalogPath : join(codexDir, catalogPath);
-}
-
-function codexWireApiToPiApi(wireApi: string | undefined): OpenAICompatibleApiId {
-  return wireApi === 'chat' || wireApi === 'chat_completions' || wireApi === 'openai-chat'
-    ? 'openai-completions'
-    : 'openai-responses';
-}
-
-function parseTomlTopLevelString(text: string, key: string): string | undefined {
-  let section = '';
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = stripTomlComment(line).trim();
-    if (!trimmed) continue;
-    const sectionMatch = trimmed.match(/^\[([^\]]+)\]\s*$/);
-    if (sectionMatch) {
-      section = sectionMatch[1]?.trim() ?? '';
-      continue;
-    }
-    if (section) continue;
-    const value = parseTomlStringAssignment(trimmed, key);
-    if (value !== undefined) return value;
-  }
-  return undefined;
-}
-
-function parseTomlStringTable(text: string, tableName: string): Record<string, string> {
-  let section = '';
-  const values: Record<string, string> = {};
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = stripTomlComment(line).trim();
-    if (!trimmed) continue;
-    const sectionMatch = trimmed.match(/^\[([^\]]+)\]\s*$/);
-    if (sectionMatch) {
-      section = sectionMatch[1]?.trim() ?? '';
-      continue;
-    }
-    if (section !== tableName) continue;
-    const assignment = trimmed.match(/^([A-Za-z0-9_-]+)\s*=\s*(.+)$/);
-    if (!assignment) continue;
-    const key = assignment[1];
-    const value = parseTomlStringValue(assignment[2] ?? '');
-    if (key && value !== undefined) values[key] = value;
-  }
-  return values;
-}
-
-function parseTomlStringAssignment(line: string, key: string): string | undefined {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = line.match(new RegExp(`^${escaped}\\s*=\\s*(.+)$`));
-  return match ? parseTomlStringValue(match[1] ?? '') : undefined;
-}
-
-function parseTomlStringValue(raw: string): string | undefined {
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  if (trimmed.startsWith('"')) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      return typeof parsed === 'string' ? parsed : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-  if (trimmed.startsWith("'")) {
-    const end = trimmed.indexOf("'", 1);
-    return end >= 1 ? trimmed.slice(1, end) : undefined;
-  }
-  const bare = trimmed.split(/\s+/)[0]?.trim();
-  return bare || undefined;
-}
-
-function stripTomlComment(line: string): string {
-  let quote: '"' | "'" | null = null;
-  let escaped = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === '\\' && quote === '"') {
-      escaped = true;
-      continue;
-    }
-    if ((char === '"' || char === "'") && (!quote || quote === char)) {
-      quote = quote ? null : char;
-      continue;
-    }
-    if (char === '#' && !quote) return line.slice(0, index);
-  }
-  return line;
-}
-
-function stringField(record: Record<string, unknown>, keys: readonly string[]): string | undefined {
-  for (const key of keys) {
-    const value = normalizeOptionalString(record[key]);
-    if (value) return value;
-  }
-  return undefined;
-}
-
-function positiveIntegerField(record: Record<string, unknown>, keys: readonly string[]): number | undefined {
-  for (const key of keys) {
-    const value = record[key];
-    const parsed = typeof value === 'number'
-      ? value
-      : (typeof value === 'string' ? Number.parseInt(value, 10) : NaN);
-    if (Number.isInteger(parsed) && parsed > 0) return parsed;
-  }
-  return undefined;
+function isOpenAICompatibleApiId(api: Api): api is OpenAICompatibleApiId {
+  return api === 'openai-completions' || api === 'openai-responses';
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function formatDiscoveredModelName(modelId: string): string {
-  return modelId
-    .split(/[-_]/g)
-    .filter(Boolean)
-    .map((part) => {
-      const normalized = part.toLowerCase();
-      if (normalized === 'gpt') return 'GPT';
-      if (normalized === 'llama') return 'Llama';
-      return part.charAt(0).toUpperCase() + part.slice(1);
-    })
-    .join(' ') || modelId;
 }
 
 function providerCapabilities(providerId: string, languageModels: readonly AgentModelOption[]): AgentProviderCapabilitySummary[] {
@@ -1160,39 +803,6 @@ function providerModelOptions(providerId: string, models: readonly Model<Api>[])
     .sort((left, right) => compareModels(providerId, left, right));
 }
 
-async function detectCcSwitchLocalGateway(baseUrl = CC_SWITCH_PROVIDER.defaultBaseUrl): Promise<boolean> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LOCAL_GATEWAY_DETECT_TIMEOUT_MS);
-  try {
-    const response = await fetch(ccSwitchHealthUrlForBaseUrl(baseUrl), {
-      signal: controller.signal,
-    });
-    return response.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function ccSwitchHealthUrlForBaseUrl(baseUrl: string): string {
-  const trimmed = baseUrl.replace(/\/+$/, '');
-  return trimmed.endsWith('/v1') ? `${trimmed.slice(0, -3)}/health` : `${trimmed}/health`;
-}
-
-function detectCcSwitchLocalInstallation(): boolean {
-  const home = getElectronHomePath();
-  const paths = [
-    home ? join(home, '.cc-switch') : undefined,
-    home ? join(home, 'Applications', 'CC Switch.app') : undefined,
-    // Only the real Electron app should inspect the machine-global application
-    // directory. Unit tests run in Bun with mocked Electron and must not depend on
-    // whichever apps happen to be installed on the developer's Mac.
-    process.platform === 'darwin' && process.versions.electron ? '/Applications/CC Switch.app' : undefined,
-  ];
-  return paths.some((candidate) => Boolean(candidate && existsSync(candidate)));
-}
-
 function getElectronHomePath(): string | undefined {
   try {
     return electron.app.getPath('home');
@@ -1203,6 +813,9 @@ function getElectronHomePath(): string | undefined {
 
 function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
   const providerId = normalizeProviderId(input.providerId);
+  if (localGatewayProviderDefinition(providerId)) {
+    return { providerId, enabled: input.enabled ?? true };
+  }
   const baseUrl = input.baseUrl?.trim() || undefined;
   return { providerId, baseUrl, enabled: input.enabled ?? true };
 }
@@ -1211,9 +824,9 @@ async function providerCanRun(provider: AgentProviderConfig, secrets: SecretFile
   if (!provider.enabled) return false;
   const localGatewayProvider = localGatewayProviderDefinition(provider.providerId);
   if (localGatewayProvider?.adapter === 'cc-switch-codex') {
-    const mirror = await readCcSwitchCodexMirror();
-    if (isUsableCcSwitchCodexMirror(mirror)) return true;
-    return detectCcSwitchLocalGateway(provider.baseUrl ?? localGatewayProvider.defaultBaseUrl);
+    const snapshot = await readCcSwitchRegistry();
+    registerCcSwitchRuntimeModels(localGatewayProvider, snapshot);
+    return snapshot.status === 'ready';
   }
   if (secrets.credentials[provider.providerId]) return true;
   if (provider.baseUrl) ensurePiCustomProvider(provider);
@@ -1388,12 +1001,19 @@ async function mutateSecretFile(mutator: (file: SecretFile) => void): Promise<Se
 }
 
 async function readPiCredential(providerId: string): Promise<Credential | undefined> {
-  const localGatewayProvider = localGatewayProviderDefinition(providerId);
-  if (localGatewayProvider?.externalSecret) {
-    const apiKey = await readLocalGatewayApiKey(localGatewayProvider);
-    if (apiKey) return { type: 'api_key', key: apiKey };
-    return undefined;
+  const ccSwitchSource = parseCcSwitchRuntimeProviderId(providerId);
+  if (ccSwitchSource) {
+    const snapshot = await readCcSwitchRegistry();
+    const source = snapshot.sources.find((candidate) => (
+      candidate.appType === ccSwitchSource.appType
+      && candidate.providerId === ccSwitchSource.providerId
+      && candidate.routeKind === 'direct'
+    ));
+    const apiKey = source ? ccSwitchSourceApiKey(source) : undefined;
+    return apiKey ? { type: 'api_key', key: apiKey } : undefined;
   }
+  const localGatewayProvider = localGatewayProviderDefinition(providerId);
+  if (localGatewayProvider?.externalSecret) return undefined;
   return toPiCredential((await readSecretFileSafe()).credentials[providerId]);
 }
 
@@ -1470,7 +1090,15 @@ export async function testProviderConnection(input: {
 }): Promise<{ success: boolean; message: string; statusCode?: number }> {
   try {
     const providerId = normalizeProviderId(input.providerId);
-    const baseUrl = input.baseUrl?.trim() || undefined;
+    const localGatewayProvider = localGatewayProviderDefinition(providerId);
+    if (localGatewayProvider?.adapter === 'cc-switch-codex') {
+      const snapshot = await readCcSwitchRegistry();
+      registerCcSwitchRuntimeModels(localGatewayProvider, snapshot);
+      if (snapshot.status !== 'ready') {
+        return { success: false, message: snapshot.statusMessage ?? 'CC Switch has no direct-runnable registry provider.' };
+      }
+    }
+    const baseUrl = localGatewayProvider ? undefined : input.baseUrl?.trim() || undefined;
 
     const explicitApiKey = input.apiKey?.trim();
     const requestAuth = explicitApiKey
@@ -1538,7 +1166,7 @@ export async function testProviderConnection(input: {
     }
     return { success: false, message: 'Reached the endpoint, but no usable model could be found.' };
   } catch (error: any) {
-    const errMsg = error?.message || String(error);
+    const errMsg = redactProviderErrorMessage(error?.message || String(error));
     // Log only the message, never the raw error: provider SDK errors can embed the
     // Authorization header / API key, and oauth/refresh keys now route through here.
     console.error('Test connection failed:', errMsg);
@@ -1565,12 +1193,18 @@ export async function testProviderConnection(input: {
 async function resolveProviderConnectionAuth(providerId: string, baseUrl?: string): Promise<AgentProviderConnectionAuth | null> {
   const localGatewayProvider = localGatewayProviderDefinition(providerId);
   if (localGatewayProvider?.externalSecret) {
-    const apiKey = await readLocalGatewayApiKey(localGatewayProvider);
-    if (apiKey) {
-      return {
-        listHeaders: { Authorization: `Bearer ${apiKey}` },
-      };
+    if (localGatewayProvider.adapter === 'cc-switch-codex') {
+      registerCcSwitchRuntimeModels(localGatewayProvider, await readCcSwitchRegistry());
+      const model = firstRankedModel(providerId);
+      if (!model) return null;
+      try {
+        const resolved = await piModels().getAuth(model);
+        return resolved ? { listHeaders: providerHeadersForModelList(resolved.auth, resolved.source) } : null;
+      } catch {
+        return null;
+      }
     }
+    return null;
   }
   if (baseUrl) ensurePiCustomProvider({ providerId, baseUrl });
   const model = baseUrl
@@ -1597,6 +1231,10 @@ function providerHeadersForModelList(auth: { apiKey?: string; headers?: Record<s
     else headers[name] = value;
   }
   return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function redactProviderErrorMessage(message: string): string {
+  return redactSecretLikeContent(message);
 }
 
 /**

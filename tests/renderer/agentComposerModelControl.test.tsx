@@ -351,11 +351,12 @@ describe('AgentComposerModelControl', () => {
       authKind: 'api-key',
       credentialed: true,
       detected: true,
+      connectionStatus: 'ready',
       hasEnvApiKey: false,
       envKeyNames: [],
-      defaultBaseUrl: 'http://127.0.0.1:15721/v1',
+      defaultBaseUrl: 'https://registry.example.com/v1',
       models: [
-        { id: 'gpt-5.4', name: 'Current routed model', reasoning: true, supportedThinkingLevels: ['off', 'low', 'medium', 'high'], contextWindow: 0, maxTokens: 0 },
+        { id: 'cc-switch%3Acodex%3Aprovider-openai::gpt-5.4', name: 'Codex / OpenAI / GPT 5.4', reasoning: true, supportedThinkingLevels: ['off', 'low', 'medium', 'high'], contextWindow: 0, maxTokens: 0 },
       ],
     });
     const rendered = renderComponent(
@@ -366,7 +367,7 @@ describe('AgentComposerModelControl', () => {
     );
     await click(rendered, chip(rendered));
     await click(rendered, triggerRow(rendered, 'GPT-5.4'));
-    expect(modelItem(rendered, 'Current routed model')).toBeTruthy();
+    expect(modelItem(rendered, 'Codex / OpenAI / GPT 5.4')).toBeTruthy();
   });
 
   test('a provider with many models shows the recent ones and a Show all expander', async () => {
