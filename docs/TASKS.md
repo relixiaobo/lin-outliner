@@ -304,6 +304,13 @@ before any directional/security-sensitive build.
   annotated captures as payload-backed image tool results. Directional/security-
   sensitive: implementation still needs helper-packaging and hard-prohibition
   decisions before code. See `docs/plans/agent-computer-control.md`.
+- **cc-switch-provider-registry** (P2, **design captured — needs dev one-pager /
+  Draft PR claim before build**) — replace the current Codex-file mirror with a
+  read-only CC Switch database registry integration. Tenon reads
+  `~/.cc-switch/cc-switch.db` as the source of truth, exposes direct-runnable
+  registry sources without copying secrets, and marks conversion / OAuth /
+  managed-account rows as proxy-required or unsupported instead of guessing. See
+  `docs/plans/cc-switch-provider-registry.md`.
 Standalone agent items (not part of the program):
 
 - **third-party-skill-import** (P2, *no plan file yet — draft, to be drafted*) —
