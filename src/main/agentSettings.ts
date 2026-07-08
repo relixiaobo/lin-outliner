@@ -27,9 +27,11 @@ import type {
 } from '../core/types';
 import { isLocalBaseUrl } from '../core/localEndpoint';
 import {
-  CC_SWITCH_LOCAL_BASE_URL,
-  CC_SWITCH_LOCAL_DEFAULT_MODEL_ID,
   CC_SWITCH_LOCAL_PROVIDER_ID,
+  LOCAL_GATEWAY_PROVIDER_REGISTRY,
+  isExternalSecretProviderId,
+  localGatewayProviderDefinition,
+  type LocalGatewayProviderDefinition,
 } from '../core/localGatewayProviders';
 import { parseDateSchedule } from '../core/dateSchedule';
 import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
@@ -132,6 +134,7 @@ const LOCAL_GATEWAY_REFRESH_TIMEOUT_MS = 8000;
 const CODEX_CONFIG_FILE = 'config.toml';
 const CODEX_AUTH_FILE = 'auth.json';
 const CC_SWITCH_CODEX_MODEL_CATALOG_FILE = 'cc-switch-model-catalog.json';
+const CC_SWITCH_PROVIDER = localGatewayProviderDefinition(CC_SWITCH_LOCAL_PROVIDER_ID)!;
 export const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   automaticSkillsEnabled: true,
@@ -197,10 +200,11 @@ export async function getProviderSettings(): Promise<AgentProviderSettingsView> 
 
 export async function refreshProviderModels(providerIdInput: string): Promise<AgentProviderSettingsView> {
   const providerId = normalizeProviderId(providerIdInput);
-  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
+  const localGatewayProvider = localGatewayProviderDefinition(providerId);
+  if (localGatewayProvider?.adapter === 'cc-switch-codex' && localGatewayProvider.refreshableModels) {
     const file = await readProviderFile();
-    const configured = file.providers.find((provider) => provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
-    await refreshCcSwitchModelDescriptors(configured?.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL);
+    const configured = file.providers.find((provider) => provider.providerId === providerId);
+    await refreshCcSwitchModelDescriptors(localGatewayProvider, configured?.baseUrl ?? localGatewayProvider.defaultBaseUrl);
   }
   await piRefreshImageModels(providerId).catch(() => undefined);
   return getProviderSettings();
@@ -217,8 +221,9 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
     ?? await findUsableProvider(file.providers, secrets)
     ?? null;
   if (!active) return null;
-  if (active.providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
-    return resolveCcSwitchRuntimeConfig(active);
+  const localGatewayProvider = localGatewayProviderDefinition(active.providerId);
+  if (localGatewayProvider?.adapter === 'cc-switch-codex') {
+    return resolveCcSwitchRuntimeConfig(localGatewayProvider, active);
   }
   // Connection only. Do not bake auth here. pi `Models.applyAuth()` resolves
   // stored/env/oauth/provider-specific auth at request time; `apiKey` is only an
@@ -443,7 +448,7 @@ export async function setActiveProvider(providerIdInput: string) {
 
 export async function setProviderApiKey(providerIdInput: string, apiKeyInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
-  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
+  if (isExternalSecretProviderId(providerId)) {
     await mutateSecretFile((secrets) => {
       delete secrets.credentials[providerId];
     });
@@ -471,7 +476,7 @@ export async function deleteProviderApiKey(providerIdInput: string): Promise<Age
 
 export async function getProviderSecretStatus(providerIdInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
-  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) return { providerId, hasApiKey: false };
+  if (isExternalSecretProviderId(providerId)) return { providerId, hasApiKey: false };
   const secrets = await readSecretFileSafe();
   return { providerId, hasApiKey: secrets.credentials[providerId]?.type === 'api_key' };
 }
@@ -483,7 +488,7 @@ export async function getProviderSecretStatus(providerIdInput: string): Promise<
  */
 export async function getStoredProviderApiKey(providerIdInput: string): Promise<AgentProviderStoredApiKey> {
   const providerId = normalizeProviderId(providerIdInput);
-  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) return { providerId, apiKey: undefined };
+  if (isExternalSecretProviderId(providerId)) return { providerId, apiKey: undefined };
   const secrets = await readSecretFileSafe();
   const credential = secrets.credentials[providerId];
   return {
@@ -501,8 +506,9 @@ export async function getStoredProviderApiKey(providerIdInput: string): Promise<
 export async function getProviderApiKey(providerIdInput: string): Promise<string | undefined> {
   try {
     const providerId = normalizeProviderId(providerIdInput);
-    if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
-      return (await readCcSwitchCodexMirror())?.apiKey;
+    const localGatewayProvider = localGatewayProviderDefinition(providerId);
+    if (localGatewayProvider?.externalSecret) {
+      return readLocalGatewayApiKey(localGatewayProvider);
     }
     const file = await readProviderFile();
     const providerConfig = file.providers.find((provider) => provider.providerId === providerId);
@@ -544,23 +550,24 @@ async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Pr
     providers: await Promise.all(file.providers.map(async (provider): Promise<AgentProviderConfigView> => {
       const catalogProvider = availableProviderById.get(provider.providerId);
       const cred = secrets.credentials[provider.providerId];
-      const isCcSwitchProvider = provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID;
-      const viewBaseUrl = isCcSwitchProvider ? catalogProvider?.defaultBaseUrl ?? provider.baseUrl : provider.baseUrl;
+      const localGatewayProvider = localGatewayProviderDefinition(provider.providerId);
+      const externalSecretProvider = isExternalSecretProviderId(provider.providerId);
+      const viewBaseUrl = localGatewayProvider ? catalogProvider?.defaultBaseUrl ?? provider.baseUrl : provider.baseUrl;
       if (viewBaseUrl) ensurePiCustomProvider({ ...provider, baseUrl: viewBaseUrl });
-      const hasEnvApiKey = isCcSwitchProvider ? false : await piProviderHasAmbientAuth(provider.providerId);
+      const hasEnvApiKey = localGatewayProvider ? false : await piProviderHasAmbientAuth(provider.providerId);
       const authKind = getProviderAuthKind(provider.providerId);
       const oauthCred = cred?.type === 'oauth' ? cred : undefined;
-      const hasStoredKey = !isCcSwitchProvider && cred?.type === 'api_key';
+      const hasStoredKey = !externalSecretProvider && cred?.type === 'api_key';
       const isKeylessLocalEndpoint = !cred
         && isLocalBaseUrl(viewBaseUrl)
-        && !isCcSwitchProvider;
+        && !localGatewayProvider;
       const auth: ProviderAuthView = {
         authKind,
         // Authoritative "can use models": any stored credential, env key, or
-        // managed sentinel. Keyless local endpoints are allowed; CC Switch is the
-        // exception because its local proxy must be reachable. Renderer reads this
-        // instead of re-deriving.
-        credentialed: isCcSwitchProvider
+        // managed sentinel. Keyless local endpoints are allowed; registered local
+        // gateways are the exception because main must prove their own reachability.
+        // Renderer reads this instead of re-deriving.
+        credentialed: localGatewayProvider
           ? Boolean(catalogProvider?.credentialed)
           : Boolean(cred) || hasEnvApiKey || isKeylessLocalEndpoint,
         hasStoredKey,
@@ -655,36 +662,50 @@ async function getAvailableProviders(configuredProviders: readonly AgentProvider
       models,
     };
   }));
-  const ccSwitchProvider = await getCcSwitchProviderOption(configuredProviders);
-  return ccSwitchProvider ? [...builtinProviders, ccSwitchProvider] : builtinProviders;
+  const localGatewayProviders = (await Promise.all(LOCAL_GATEWAY_PROVIDER_REGISTRY.map((provider) => (
+    getLocalGatewayProviderOption(provider, configuredProviders)
+  )))).filter((provider): provider is AgentProviderOption => Boolean(provider));
+  return [...builtinProviders, ...localGatewayProviders];
+}
+
+async function getLocalGatewayProviderOption(
+  localGatewayProvider: LocalGatewayProviderDefinition,
+  configuredProviders: readonly AgentProviderConfig[],
+): Promise<AgentProviderOption | null> {
+  if (localGatewayProvider.adapter === 'cc-switch-codex') {
+    return getCcSwitchProviderOption(localGatewayProvider, configuredProviders);
+  }
+  return null;
 }
 
 async function getCcSwitchProviderOption(
+  localGatewayProvider: LocalGatewayProviderDefinition,
   configuredProviders: readonly AgentProviderConfig[],
 ): Promise<AgentProviderOption | null> {
-  const configured = configuredProviders.find((provider) => provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+  const configured = configuredProviders.find((provider) => provider.providerId === localGatewayProvider.providerId);
   const mirror = await readCcSwitchCodexMirror();
-  const baseUrl = mirror?.baseUrl ?? configured?.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL;
+  const baseUrl = mirror?.baseUrl ?? configured?.baseUrl ?? localGatewayProvider.defaultBaseUrl;
   const mirrorUsable = isUsableCcSwitchCodexMirror(mirror);
-  const gatewayHealthy = mirrorUsable ? false : await detectCcSwitchLocalGateway(configured?.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL);
+  const gatewayHealthy = mirrorUsable ? false : await detectCcSwitchLocalGateway(configured?.baseUrl ?? localGatewayProvider.defaultBaseUrl);
   const installationDetected = detectCcSwitchLocalInstallation();
   const detected = Boolean((mirror && (configured || installationDetected)) || gatewayHealthy || installationDetected);
   if (!configured && !detected) return null;
-  const models = await getCcSwitchModelOptions({ mirror, gatewayHealthy, baseUrl });
+  const models = await getCcSwitchModelOptions({ provider: localGatewayProvider, mirror, gatewayHealthy, baseUrl });
   return {
-    providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+    providerId: localGatewayProvider.providerId,
     authKind: 'api-key',
     credentialed: mirrorUsable || gatewayHealthy,
     detected,
     hasEnvApiKey: false,
     envKeyNames: [],
     defaultBaseUrl: baseUrl,
-    capabilities: providerCapabilities(CC_SWITCH_LOCAL_PROVIDER_ID, models),
+    capabilities: providerCapabilities(localGatewayProvider.providerId, models),
     models,
   };
 }
 
 async function getCcSwitchModelOptions(input: {
+  provider: LocalGatewayProviderDefinition;
   mirror: CcSwitchCodexMirror | null;
   gatewayHealthy: boolean;
   baseUrl: string;
@@ -693,19 +714,19 @@ async function getCcSwitchModelOptions(input: {
     const discovered = await listCcSwitchCodexMirrorModelDescriptors(input.mirror, LOCAL_GATEWAY_DETECT_TIMEOUT_MS);
     if (discovered.length > 0) {
       cacheCcSwitchModelDescriptors(input.mirror.baseUrl, discovered);
-      return ccSwitchModelOptions(discovered, input.mirror.baseUrl, input.mirror.api);
+      return ccSwitchModelOptions(input.provider, discovered, input.mirror.baseUrl, input.mirror.api);
     }
   }
   const baseUrl = input.baseUrl;
   const gatewayHealthy = input.gatewayHealthy;
   if (gatewayHealthy) {
     try {
-      const auth = await resolveProviderConnectionAuth(CC_SWITCH_LOCAL_PROVIDER_ID, baseUrl);
+      const auth = await resolveProviderConnectionAuth(input.provider.providerId, baseUrl);
       const discovered = await listOpenAiCompatibleModels(baseUrl, auth?.listHeaders, LOCAL_GATEWAY_DETECT_TIMEOUT_MS);
       if (discovered.length > 0) {
         const descriptors = discovered.map((id): CcSwitchModelDescriptor => ({ id }));
         cacheCcSwitchModelDescriptors(baseUrl, descriptors);
-        return ccSwitchModelOptions(descriptors, baseUrl, 'openai-responses');
+        return ccSwitchModelOptions(input.provider, descriptors, baseUrl, input.provider.defaultApi);
       }
     } catch {
       // Settings must stay fast and usable even when the app is installed but the
@@ -713,19 +734,22 @@ async function getCcSwitchModelOptions(input: {
     }
   }
   if (ccSwitchModelDescriptorsCache?.baseUrl === baseUrl && ccSwitchModelDescriptorsCache.models.length > 0) {
-    return ccSwitchModelOptions(ccSwitchModelDescriptorsCache.models, baseUrl, 'openai-responses');
+    return ccSwitchModelOptions(input.provider, ccSwitchModelDescriptorsCache.models, baseUrl, input.provider.defaultApi);
   }
-  return providerModelOptions(CC_SWITCH_LOCAL_PROVIDER_ID, rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID));
+  return providerModelOptions(input.provider.providerId, rankedModels(input.provider.providerId));
 }
 
-async function refreshCcSwitchModelDescriptors(baseUrl: string): Promise<CcSwitchModelDescriptor[]> {
+async function refreshCcSwitchModelDescriptors(
+  localGatewayProvider: LocalGatewayProviderDefinition,
+  baseUrl: string,
+): Promise<CcSwitchModelDescriptor[]> {
   const mirror = await readCcSwitchCodexMirror();
   if (mirror?.baseUrl) {
     const models = await refreshCcSwitchCodexMirrorModelDescriptors(mirror);
     cacheCcSwitchModelDescriptors(mirror.baseUrl, models);
     return models;
   }
-  const models = await refreshCcSwitchLocalGatewayModelDescriptors(baseUrl);
+  const models = await refreshCcSwitchLocalGatewayModelDescriptors(localGatewayProvider, baseUrl);
   cacheCcSwitchModelDescriptors(baseUrl, models);
   return models;
 }
@@ -746,12 +770,15 @@ async function refreshCcSwitchCodexMirrorModelDescriptors(mirror: CcSwitchCodexM
   throw new Error('CC Switch Codex config did not expose any models.');
 }
 
-async function refreshCcSwitchLocalGatewayModelDescriptors(baseUrl: string): Promise<CcSwitchModelDescriptor[]> {
+async function refreshCcSwitchLocalGatewayModelDescriptors(
+  localGatewayProvider: LocalGatewayProviderDefinition,
+  baseUrl: string,
+): Promise<CcSwitchModelDescriptor[]> {
   const gatewayHealthy = await detectCcSwitchLocalGateway(baseUrl);
   if (!gatewayHealthy) {
     throw new Error('No usable CC Switch Codex config was found, and the CC Switch Local Proxy is not reachable.');
   }
-  const auth = await resolveProviderConnectionAuth(CC_SWITCH_LOCAL_PROVIDER_ID, baseUrl);
+  const auth = await resolveProviderConnectionAuth(localGatewayProvider.providerId, baseUrl);
   let models: string[];
   try {
     models = await listOpenAiCompatibleModels(baseUrl, auth?.listHeaders, LOCAL_GATEWAY_REFRESH_TIMEOUT_MS);
@@ -763,21 +790,22 @@ async function refreshCcSwitchLocalGatewayModelDescriptors(baseUrl: string): Pro
 }
 
 function ccSwitchModelOptions(
+  localGatewayProvider: LocalGatewayProviderDefinition,
   models: readonly CcSwitchModelDescriptor[],
   baseUrl: string,
   api: OpenAICompatibleApiId,
 ): AgentModelOption[] {
   return providerModelOptions(
-    CC_SWITCH_LOCAL_PROVIDER_ID,
+    localGatewayProvider.providerId,
     models.map((descriptor) => {
       const modelApi = descriptor.api ?? api;
       return createOpenAICompatibleModel({
-        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+        providerId: localGatewayProvider.providerId,
         modelId: descriptor.id,
         name: descriptor.name ?? formatDiscoveredModelName(descriptor.id),
         baseUrl,
         api: modelApi,
-        catalogModel: ccSwitchCatalogModel(descriptor.id),
+        catalogModel: ccSwitchCatalogModel(localGatewayProvider, descriptor.id),
         reasoning: descriptor.reasoning ?? modelApi === 'openai-responses',
         contextWindow: descriptor.contextWindow,
         maxTokens: descriptor.maxTokens,
@@ -786,10 +814,12 @@ function ccSwitchModelOptions(
   );
 }
 
-function ccSwitchCatalogModel(modelId: string): Model<Api> | null {
-  return piFindModel(CC_SWITCH_LOCAL_PROVIDER_ID, modelId)
-    ?? piFindModel('openai-codex', modelId)
-    ?? piFindModel('openai', modelId);
+function ccSwitchCatalogModel(localGatewayProvider: LocalGatewayProviderDefinition, modelId: string): Model<Api> | null {
+  return piFindModel(localGatewayProvider.providerId, modelId)
+    ?? localGatewayProvider.preferredCatalogProviders
+      .map((providerId) => piFindModel(providerId, modelId))
+      .find((model): model is Model<Api> => Boolean(model))
+    ?? null;
 }
 
 function isUsableCcSwitchCodexMirror(
@@ -798,7 +828,17 @@ function isUsableCcSwitchCodexMirror(
   return Boolean(mirror?.baseUrl && mirror.apiKey);
 }
 
-async function resolveCcSwitchRuntimeConfig(config: AgentProviderConfig): Promise<AgentProviderRuntimeConfig | null> {
+async function readLocalGatewayApiKey(localGatewayProvider: LocalGatewayProviderDefinition): Promise<string | undefined> {
+  if (localGatewayProvider.adapter === 'cc-switch-codex') {
+    return (await readCcSwitchCodexMirror())?.apiKey;
+  }
+  return undefined;
+}
+
+async function resolveCcSwitchRuntimeConfig(
+  localGatewayProvider: LocalGatewayProviderDefinition,
+  config: AgentProviderConfig,
+): Promise<AgentProviderRuntimeConfig | null> {
   const mirror = await readCcSwitchCodexMirror();
   if (isUsableCcSwitchCodexMirror(mirror)) {
     return {
@@ -808,13 +848,13 @@ async function resolveCcSwitchRuntimeConfig(config: AgentProviderConfig): Promis
       modelId: mirror.currentModelId,
     };
   }
-  const baseUrl = config.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL;
+  const baseUrl = config.baseUrl ?? localGatewayProvider.defaultBaseUrl;
   if (await detectCcSwitchLocalGateway(baseUrl)) {
     return {
       ...config,
       baseUrl,
-      api: 'openai-responses',
-      modelId: CC_SWITCH_LOCAL_DEFAULT_MODEL_ID,
+      api: localGatewayProvider.defaultApi,
+      modelId: localGatewayProvider.defaultModelId,
     };
   }
   return null;
@@ -1120,7 +1160,7 @@ function providerModelOptions(providerId: string, models: readonly Model<Api>[])
     .sort((left, right) => compareModels(providerId, left, right));
 }
 
-async function detectCcSwitchLocalGateway(baseUrl = CC_SWITCH_LOCAL_BASE_URL): Promise<boolean> {
+async function detectCcSwitchLocalGateway(baseUrl = CC_SWITCH_PROVIDER.defaultBaseUrl): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LOCAL_GATEWAY_DETECT_TIMEOUT_MS);
   try {
@@ -1169,10 +1209,11 @@ function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
 
 async function providerCanRun(provider: AgentProviderConfig, secrets: SecretFile): Promise<boolean> {
   if (!provider.enabled) return false;
-  if (provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
+  const localGatewayProvider = localGatewayProviderDefinition(provider.providerId);
+  if (localGatewayProvider?.adapter === 'cc-switch-codex') {
     const mirror = await readCcSwitchCodexMirror();
     if (isUsableCcSwitchCodexMirror(mirror)) return true;
-    return detectCcSwitchLocalGateway(provider.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL);
+    return detectCcSwitchLocalGateway(provider.baseUrl ?? localGatewayProvider.defaultBaseUrl);
   }
   if (secrets.credentials[provider.providerId]) return true;
   if (provider.baseUrl) ensurePiCustomProvider(provider);
@@ -1347,9 +1388,10 @@ async function mutateSecretFile(mutator: (file: SecretFile) => void): Promise<Se
 }
 
 async function readPiCredential(providerId: string): Promise<Credential | undefined> {
-  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
-    const mirror = await readCcSwitchCodexMirror();
-    if (mirror?.apiKey) return { type: 'api_key', key: mirror.apiKey };
+  const localGatewayProvider = localGatewayProviderDefinition(providerId);
+  if (localGatewayProvider?.externalSecret) {
+    const apiKey = await readLocalGatewayApiKey(localGatewayProvider);
+    if (apiKey) return { type: 'api_key', key: apiKey };
     return undefined;
   }
   return toPiCredential((await readSecretFileSafe()).credentials[providerId]);
@@ -1521,11 +1563,12 @@ export async function testProviderConnection(input: {
 }
 
 async function resolveProviderConnectionAuth(providerId: string, baseUrl?: string): Promise<AgentProviderConnectionAuth | null> {
-  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
-    const mirror = await readCcSwitchCodexMirror();
-    if (mirror?.apiKey) {
+  const localGatewayProvider = localGatewayProviderDefinition(providerId);
+  if (localGatewayProvider?.externalSecret) {
+    const apiKey = await readLocalGatewayApiKey(localGatewayProvider);
+    if (apiKey) {
       return {
-        listHeaders: { Authorization: `Bearer ${mirror.apiKey}` },
+        listHeaders: { Authorization: `Bearer ${apiKey}` },
       };
     }
   }

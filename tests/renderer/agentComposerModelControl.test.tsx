@@ -109,6 +109,7 @@ function settings(): AgentProviderSettingsView {
       },
     ],
     agent: {} as AgentProviderSettingsView['agent'],
+    imageGeneration: {},
   };
 }
 
@@ -143,6 +144,7 @@ function multiProviderSettings(): AgentProviderSettingsView {
       },
     ],
     agent: {} as AgentProviderSettingsView['agent'],
+    imageGeneration: {},
   };
 }
 
@@ -170,6 +172,7 @@ function manyModelSettings(count: number): AgentProviderSettingsView {
       },
     ],
     agent: {} as AgentProviderSettingsView['agent'],
+    imageGeneration: {},
   };
 }
 

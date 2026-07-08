@@ -16,11 +16,9 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import {
-  CC_SWITCH_LOCAL_BASE_URL,
-  CC_SWITCH_LOCAL_DEFAULT_MODEL_ID,
-  CC_SWITCH_LOCAL_PROVIDER_ID,
-  CC_SWITCH_LOCAL_PROVIDER_NAME,
+  LOCAL_GATEWAY_PROVIDER_REGISTRY,
   isLocalGatewayProviderId,
+  localGatewayProviderDefinition,
 } from '../core/localGatewayProviders';
 import { isLocalBaseUrl } from '../core/localEndpoint';
 
@@ -186,7 +184,7 @@ export function createOpenAICompatibleModel(
   },
 ): Model<OpenAICompatibleApiId> {
   const catalogModel = config.catalogModel;
-  const api = config.api ?? (catalogModel?.api === 'openai-responses' || isLocalGatewayProviderId(config.providerId)
+  const api = config.api ?? (catalogModel?.api === 'openai-responses' || localGatewayProviderDefinition(config.providerId)?.defaultApi === 'openai-responses'
     ? 'openai-responses'
     : 'openai-completions');
   return {
@@ -210,48 +208,52 @@ export function createOpenAICompatibleModel(
 }
 
 function registerLocalGatewayProviders(models: MutableModels): void {
-  const source = models.getModel('openai-codex', CC_SWITCH_LOCAL_DEFAULT_MODEL_ID) as Model<Api> | undefined;
-  models.setProvider(createProvider({
-    id: CC_SWITCH_LOCAL_PROVIDER_ID,
-    name: CC_SWITCH_LOCAL_PROVIDER_NAME,
-    baseUrl: CC_SWITCH_LOCAL_BASE_URL,
-    auth: {
-      apiKey: {
-        name: 'CC Switch key',
-        resolve: async ({ credential, model }) => {
-          if (credential?.key) return { auth: { apiKey: credential.key }, source: 'stored credential' };
-          if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
-          return undefined;
+  for (const provider of LOCAL_GATEWAY_PROVIDER_REGISTRY) {
+    const source = provider.preferredCatalogProviders
+      .map((providerId) => models.getModel(providerId, provider.defaultModelId) as Model<Api> | undefined)
+      .find(Boolean);
+    models.setProvider(createProvider({
+      id: provider.providerId,
+      name: provider.name,
+      baseUrl: provider.defaultBaseUrl,
+      auth: {
+        apiKey: {
+          name: `${provider.name} key`,
+          resolve: async ({ credential, model }) => {
+            if (credential?.key) return { auth: { apiKey: credential.key }, source: 'stored credential' };
+            if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
+            return undefined;
+          },
         },
       },
-    },
-    models: [source ? {
-      ...source,
-      provider: CC_SWITCH_LOCAL_PROVIDER_ID,
-      baseUrl: CC_SWITCH_LOCAL_BASE_URL,
-      name: 'Current routed model',
-    } : {
-      id: CC_SWITCH_LOCAL_DEFAULT_MODEL_ID,
-      name: 'Current routed model',
-      api: 'openai-responses',
-      provider: CC_SWITCH_LOCAL_PROVIDER_ID,
-      baseUrl: CC_SWITCH_LOCAL_BASE_URL,
-      reasoning: true,
-      input: ['text'],
-      cost: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
+      models: [source ? {
+        ...source,
+        provider: provider.providerId,
+        baseUrl: provider.defaultBaseUrl,
+        name: 'Current routed model',
+      } : {
+        id: provider.defaultModelId,
+        name: 'Current routed model',
+        api: provider.defaultApi,
+        provider: provider.providerId,
+        baseUrl: provider.defaultBaseUrl,
+        reasoning: provider.defaultApi === 'openai-responses',
+        input: ['text'],
+        cost: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        contextWindow: DEFAULT_CUSTOM_CONTEXT_WINDOW,
+        maxTokens: DEFAULT_CUSTOM_MAX_TOKENS,
+      }],
+      api: {
+        'openai-completions': openAICompletionsApi(),
+        'openai-responses': openAIResponsesApi(),
       },
-      contextWindow: DEFAULT_CUSTOM_CONTEXT_WINDOW,
-      maxTokens: DEFAULT_CUSTOM_MAX_TOKENS,
-    }],
-    api: {
-      'openai-completions': openAICompletionsApi(),
-      'openai-responses': openAIResponsesApi(),
-    },
-  }));
+    }));
+  }
 }
 
 function ensureProviderForModel(model: Model<Api>): void {
