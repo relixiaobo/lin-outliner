@@ -138,6 +138,9 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   ready Issue that has not already had a Session. Ordinary
   and child-agent tool pools receive `issueRuntime`; Dream does not, so
   model-facing Issue tools cannot create, mutate, or start Dream work.
+  Creating a `when-ready` unattended Issue is enough to hand work to runtime:
+  the `issue_create` result reminds the model not to call `agent_session_start`
+  for the same newly created Issue unless it is retrying or continuing it later.
   Startup recovery marks any persisted `pending`, `active`, or `awaitingInput`
   Agent Session as `stale` when there is no live executor in the restored
   runtime.

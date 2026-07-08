@@ -128,6 +128,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '',
     '4. Start or observe execution through Agent Session tools.',
     '   - Newly created when-ready, scheduled, and recurring Issues rely on runtime eligibility and scheduler behavior to start.',
+    '   - Do not call `agent_session_start` immediately after creating a when-ready unattended Issue; the runtime owns that start.',
     '   - Use `agent_session_start` for explicit retries, continuations, verification attempts, or direct user requests to run an existing eligible Issue now.',
     '   - Use `issue_read` and `agent_session_read` to inspect durable state, Activity, current execution, output, errors, or blockers.',
     '   - Use `agent_session_send_message` for soft guidance to a live Session and `issue_update` when the durable Issue objective, criteria, trigger, or scope changed.',

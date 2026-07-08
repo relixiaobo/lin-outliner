@@ -56,6 +56,17 @@ async function createIssue(
   if (input.request.mode !== 'preview' && result.status === 'applied') {
     options.onIssueCreated?.();
   }
+  if (input.request.mode !== 'preview'
+    && result.status === 'applied'
+    && input.issueType === 'issue'
+    && (input.fields.trigger?.type ?? 'when-ready') === 'when-ready'
+    && (input.fields.permissionMode ?? 'unattended') === 'unattended') {
+    return withWarning(
+      result,
+      'runtime_autostart',
+      'This when-ready unattended Issue is eligible for runtime autostart. Do not call agent_session_start for this newly created Issue unless retrying or continuing it later.',
+    );
+  }
   return result;
 }
 
