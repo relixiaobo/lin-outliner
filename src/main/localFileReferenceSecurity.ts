@@ -46,25 +46,34 @@ export interface TrustedLocalFileReference {
   stats: Stats;
 }
 
+export interface TrustedLocalFileReferenceOptions {
+  relativeGeneratedImageRoots?: readonly string[];
+}
+
 export async function resolveTrustedLocalFileReference(
   value: unknown,
   allowedRoots: readonly string[],
+  options: TrustedLocalFileReferenceOptions = {},
 ): Promise<TrustedLocalFileReference | null> {
   if (typeof value !== 'string' || value.length === 0) return null;
   if (value.includes('\0')) return null;
 
-  const trustedRoots: string[] = [];
-  for (const root of allowedRoots) {
-    const trustedRoot = await trustedRootRealPath(root);
-    if (trustedRoot) trustedRoots.push(trustedRoot);
-  }
+  const trustedRoots = await trustedRootRealPaths(allowedRoots);
   if (trustedRoots.length === 0) return null;
 
-  const candidatePaths = path.isAbsolute(value)
-    ? [path.resolve(value)]
-    : isAllowedRelativeLocalFileReference(value)
-      ? trustedRoots.map((root) => path.resolve(root, value))
-      : [];
+  let candidatePaths: string[];
+  let containmentRoots: readonly string[];
+  if (path.isAbsolute(value)) {
+    candidatePaths = [path.resolve(value)];
+    containmentRoots = trustedRoots;
+  } else if (isAllowedRelativeLocalFileReference(value)) {
+    const trustedGeneratedImageRoots = await trustedRootRealPaths(options.relativeGeneratedImageRoots ?? []);
+    candidatePaths = trustedGeneratedImageRoots.map((root) => path.resolve(root, value));
+    containmentRoots = trustedGeneratedImageRoots;
+  } else {
+    candidatePaths = [];
+    containmentRoots = [];
+  }
   if (candidatePaths.length === 0) return null;
 
   for (const candidatePath of candidatePaths) {
@@ -80,7 +89,7 @@ export async function resolveTrustedLocalFileReference(
     const entryKind = candidateStats.isDirectory() ? 'directory' : candidateStats.isFile() ? 'file' : null;
     if (!entryKind) continue;
 
-    for (const trustedRoot of trustedRoots) {
+    for (const trustedRoot of containmentRoots) {
       if (isPathInside(trustedRoot, candidateRealPath)) {
         return {
           entryKind,
@@ -109,6 +118,15 @@ async function trustedRootRealPath(root: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function trustedRootRealPaths(roots: readonly string[]): Promise<string[]> {
+  const trustedRoots: string[] = [];
+  for (const root of roots) {
+    const trustedRoot = await trustedRootRealPath(root);
+    if (trustedRoot) trustedRoots.push(trustedRoot);
+  }
+  return trustedRoots;
 }
 
 function isAllowedRelativeLocalFileReference(value: string): boolean {

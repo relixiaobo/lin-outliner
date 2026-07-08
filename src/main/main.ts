@@ -1377,6 +1377,12 @@ function openChannelConfigWindow(conversationId: string, mode: ChannelConfigMode
   });
 }
 
+function trustedLocalFileReferenceOptions() {
+  return {
+    relativeGeneratedImageRoots: [agentScratchRoot],
+  };
+}
+
 function registerIpc() {
   ipcMain.handle('lin:invoke', async (event, command: string, args?: Record<string, unknown>) => {
     const dispatch = () => {
@@ -1385,6 +1391,7 @@ function registerIpc() {
       if (isPreviewCommand(command)) {
         return handlePreviewCommand(command, args ?? {}, {
           agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
+          agentGeneratedImageRoots: [agentScratchRoot],
           agentRuntime,
           assetService,
           inferMimeType,
@@ -1773,13 +1780,21 @@ function registerIpc() {
   });
 
   ipcMain.handle('lin:preview-local-file-reference', async (_event, rawOptions?: { path?: unknown }) => {
-    const file = await resolveTrustedLocalFileReference(rawOptions?.path, [agentLocalFileRoot, agentScratchRoot]);
+    const file = await resolveTrustedLocalFileReference(
+      rawOptions?.path,
+      [agentLocalFileRoot, agentScratchRoot],
+      trustedLocalFileReferenceOptions(),
+    );
     if (!file) return { file: null };
     return { file: await localFileReferencePreview(file) };
   });
 
   ipcMain.handle('lin:open-local-file', async (_event, rawOptions?: { path?: unknown }) => {
-    const file = await resolveTrustedLocalFileReference(rawOptions?.path, [agentLocalFileRoot, agentScratchRoot]);
+    const file = await resolveTrustedLocalFileReference(
+      rawOptions?.path,
+      [agentLocalFileRoot, agentScratchRoot],
+      trustedLocalFileReferenceOptions(),
+    );
     if (!file || !isSafeLocalFileOpenTarget(file)) return { opened: false };
     const error = await shell.openPath(file.path);
     return { opened: error.length === 0 };
@@ -1789,7 +1804,11 @@ function registerIpc() {
     // Reveal-in-Finder never executes the file, so it carries no `isSafeLocalFileOpenTarget`
     // gate (an app/script that can't be opened can still be revealed); the same trusted-root
     // boundary as `lin:open-local-file` is the authority.
-    const file = await resolveTrustedLocalFileReference(rawOptions?.path, [agentLocalFileRoot, agentScratchRoot]);
+    const file = await resolveTrustedLocalFileReference(
+      rawOptions?.path,
+      [agentLocalFileRoot, agentScratchRoot],
+      trustedLocalFileReferenceOptions(),
+    );
     if (!file) return { revealed: false };
     shell.showItemInFolder(file.path);
     return { revealed: true };
@@ -1867,6 +1886,7 @@ async function handleAssetCommand(command: AssetCommand, args: Record<string, un
       const file = await resolveTrustedLocalFileReference(
         (args as { path?: unknown }).path,
         [agentLocalFileRoot, agentScratchRoot],
+        trustedLocalFileReferenceOptions(),
       );
       if (!file || file.entryKind !== 'file') return null;
       return assetService.ingest({ kind: 'path', path: file.path });
