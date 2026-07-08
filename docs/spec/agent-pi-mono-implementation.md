@@ -461,6 +461,15 @@ Tenon. The key remains CC Switch/Codex-managed: Tenon does not copy it into
 `agent-secrets.json`, and the provider config UI does not expose show/copy for
 that external key.
 
+The `cc-switch` row is declared through the local gateway provider registry
+(`src/core/localGatewayProviders.ts`). That registry owns the provider id/name,
+default Local Proxy base URL, default routed model, OpenAI-compatible API shape,
+adapter id, external-secret flag, quick-enable behavior, refreshability, and
+catalog-provider fallbacks. Main and renderer code query the registry for those
+capabilities instead of hardcoding provider-specific UI and credential predicates
+at each callsite. The current registry has one entry, CC Switch; adding another
+local gateway still requires a real adapter for that gateway's config shape.
+
 The normal user flow is: configure/switch a Codex provider in CC Switch, open
 Tenon Settings → Providers, enable **CC Switch**, and refresh models if needed.
 Local Routing / Local Proxy is not required for the common direct Codex provider

@@ -111,6 +111,7 @@ function settings(): AgentProviderSettingsView {
       },
     ],
     agent: {} as AgentProviderSettingsView['agent'],
+    imageGeneration: {},
   };
 }
 

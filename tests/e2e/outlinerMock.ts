@@ -367,6 +367,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         providerCacheRetention: 'short',
         dreamSchedule: '2026-01-01T03:00 RRULE:FREQ=DAILY',
       },
+      imageGeneration: {},
       providers: [{
         providerId: 'openai',
         baseUrl: '',

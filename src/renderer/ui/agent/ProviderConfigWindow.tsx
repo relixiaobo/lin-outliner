@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { api } from '../../api/client';
 import { providerConfigParamsFromSearch } from '../../../core/settingsWindow';
-import { CC_SWITCH_LOCAL_PROVIDER_ID } from '../../../core/localGatewayProviders';
+import { localGatewayProviderDefinition } from '../../../core/localGatewayProviders';
 import { useT } from '../../i18n/I18nProvider';
 import {
   formatProviderName,
@@ -91,7 +91,7 @@ export function ProviderConfigWindow() {
   const showOAuth = authKind === 'oauth' && !useApiKey;
   const oauthInfo = oauthSignInInfo(providerId, t);
   const initialBaseUrl = existing?.baseUrl
-    ?? (providerId === CC_SWITCH_LOCAL_PROVIDER_ID ? catalog?.defaultBaseUrl ?? '' : '');
+    ?? (localGatewayProviderDefinition(providerId) ? catalog?.defaultBaseUrl ?? '' : '');
 
   async function handleValidate(draft: ProviderConfigDraft) {
     const pid = draft.providerId.trim() || providerId;
