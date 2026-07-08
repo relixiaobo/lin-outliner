@@ -33,6 +33,7 @@ const ALLOWED_CONTEXT_KEYS = new Set([
   'currentVersion',
   'delayMs',
   'domain',
+  'errorMessage',
   'dueAt',
   'errorName',
   'eventType',
@@ -139,6 +140,7 @@ function normalizeReport(report: ErrorReport): Required<Pick<ErrorReport, 'domai
   const message = truncateText(report.message || serializedError.message || 'Unknown error', MAX_MESSAGE_CHARS);
   const contextSource = {
     ...report.context,
+    ...(serializedError.message ? { errorMessage: serializedError.message } : {}),
     ...(serializedError.name ? { errorName: serializedError.name } : {}),
     ...(serializedError.stack ? { stackHash: shortHash(serializedError.stack) } : {}),
   };

@@ -3493,6 +3493,7 @@ export class AgentRuntime {
         () => conversation.delegationRuntime,
         () => conversationId,
       ),
+      onIssueCreated: () => this.queueIssueSweep(new Date()),
       startSource: () => issue.recurrence
         ? { type: 'recurring-issue', recurringIssueId: issue.recurrence.recurringIssueId, dueAt: issue.recurrence.windowStartAt }
         : { type: 'runtime-action', actor },
@@ -4700,6 +4701,7 @@ export class AgentRuntime {
       resolveInputScope: (scope, issue, now) => (
         resolveIssueInputScopeFromProjection(scope, issue, this.outlinerToolHost.getProjection(), now)
       ),
+      onIssueCreated: () => this.queueIssueSweep(new Date()),
     });
   }
 

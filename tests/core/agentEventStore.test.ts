@@ -637,7 +637,7 @@ describe('agent event store', () => {
     });
   });
 
-  // --- Pre-release clean-cut: any old-format artifact wipes the WHOLE data root ---
+  // --- Pre-release clean-cut: any old-format event artifact wipes event-store owned paths ---
 
   async function seedCurrentLayout(store: AgentEventStore) {
     const conversationId = 'conversation-1';
@@ -661,9 +661,10 @@ describe('agent event store', () => {
     return { conversationId, agentPrincipal, userPrincipal };
   }
 
-  test('pre-sentinel data (no layout.json) is positive proof and wipes the root + writes the sentinel', async () => {
+  test('pre-sentinel data (no layout.json) is positive proof and wipes event paths + writes the sentinel', async () => {
     await withStore(async (store, root) => {
       const { conversationId, agentPrincipal, userPrincipal } = await seedCurrentLayout(store);
+      await writeFile(path.join(root, 'issue-manager.json'), '{"v":1,"issues":{}}\n', 'utf8');
       // Simulate a pre-sentinel generation: data exists but the sentinel does not.
       await rm(path.join(root, LAYOUT_SENTINEL_FILE), { force: true });
 
@@ -673,10 +674,11 @@ describe('agent event store', () => {
       await expect(restarted.listPrincipalRunMetaProjections(agentPrincipal)).resolves.toEqual([]);
       await expect(restarted.listPrincipalRunMetaProjections(userPrincipal)).resolves.toEqual([]);
       expect(JSON.parse(await readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8'))).toEqual({ v: STORAGE_LAYOUT_VERSION });
+      await expect(readFile(path.join(root, 'issue-manager.json'), 'utf8')).resolves.toContain('"issues"');
     });
   });
 
-  test('a stale sentinel generation wipes the root and re-stamps the current one', async () => {
+  test('a stale sentinel generation wipes event paths and re-stamps the current one', async () => {
     await withStore(async (store, root) => {
       const { conversationId } = await seedCurrentLayout(store);
       await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION - 1 })}\n`, 'utf8');

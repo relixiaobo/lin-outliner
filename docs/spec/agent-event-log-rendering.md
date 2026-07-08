@@ -310,16 +310,17 @@ Derived and rebuildable:
 Clean-cut startup policy (pre-release, no migration) — the storage-generation
 sentinel:
 
-- ONE root file `layout.json` `{"v": <generation>}` is written once per on-disk
-  format generation (`STORAGE_LAYOUT_VERSION`, currently `7` = conversation logs
-  no longer store child-run lifecycle markers; Run index + Run ledgers are the
-  execution record). First store access reads this single line; a
-  matching `v` proceeds with no per-conversation probing.
+- ONE event-store root file `layout.json` `{"v": <generation>}` is written once
+  per on-disk format generation (`STORAGE_LAYOUT_VERSION`, currently `7` =
+  conversation logs no longer store child-run lifecycle markers; Run index + Run
+  ledgers are the execution record). First store access reads this single line;
+  a matching `v` proceeds with no per-conversation probing.
 - A stale `v` or a MISSING sentinel is positive proof of another generation:
-  the WHOLE agent data root is hard-deleted (logged with the old generation) —
-  identities, conversations, runs, principal sidecars, indexes — and the layout is recreated
-  lazily with a fresh sentinel. There is no legacy reader, adapter, or
-  migration.
+  event-log owned paths are hard-deleted (logged with the old generation) —
+  identities, conversations, runs, principal sidecars, indexes — and the layout
+  is recreated lazily with a fresh sentinel. Sibling agent stores such as Issue
+  state are not part of this event-log clean-cut. There is no legacy reader,
+  adapter, or migration.
 - An unreadable or corrupt sentinel is AMBIGUITY, not proof: the store fails
   open onto the current layout (warn + re-probe next launch) — a permissions or
   I/O error can never trip a wipe.
@@ -1666,7 +1667,7 @@ user sends prompt
 
 ```txt
 open app
-  -> clean-cut probe: any old-format artifact wipes the agent data root
+  -> clean-cut probe: any old-format event artifact wipes event-log owned paths
   -> load conversation-index cache if it matches conversations/
   -> load selected conversation checkpoint
   -> replay later events

@@ -62,11 +62,11 @@ const AGENT_IDENTITY_FILE = 'identity.json';
 const CONVERSATION_INDEX_FILE = 'conversation-index.json';
 const SEARCH_INDEX_FILE = 'search-index.json';
 // The storage-generation sentinel ([[agent-run-unification]] Design 6): ONE
-// root file `layout.json {v}` written once per on-disk format generation.
+// event-store root file `layout.json {v}` written once per on-disk format generation.
 // Startup reads this single line — current generation proceeds with no
 // per-conversation probing; a stale or missing sentinel is positive proof of
-// another generation and wipes the agent data root (pre-release clean-cut, no
-// migration); an unreadable/corrupt sentinel is AMBIGUITY and fails open to
+// another generation and wipes only event-log owned paths (pre-release clean-cut,
+// no migration); an unreadable/corrupt sentinel is AMBIGUITY and fails open to
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
@@ -95,6 +95,13 @@ const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
 const MAX_CHECKPOINTS_PER_CONVERSATION = 3;
 const MAX_SEARCH_INDEX_TEXT_CHARS = 20_000;
 const SEARCH_INDEX_PREVIEW_CHARS = 240;
+const EVENT_STORE_CLEAN_CUT_PATHS = [
+  'agents',
+  'conversations',
+  'indexes',
+  'principals',
+  'runs',
+] as const;
 
 export interface AgentPayloadWriteInput {
   id?: string;
@@ -776,11 +783,13 @@ export class AgentEventStore {
   /**
    * The `layout.json {v}` storage-generation sentinel. Pre-release clean-cut
    * (no migration, no legacy reader): a missing sentinel (pre-sentinel data or
-   * a fresh install — wiping an empty root is harmless) or a parsed sentinel
-   * from ANOTHER generation is positive proof, and the whole agent data root
-   * is deleted and recreated lazily. An unreadable/corrupt sentinel is
-   * ambiguity, not proof — fail open to operation (#180 invariants: content
-   * can never trip a wipe; probe errors never brick the store).
+   * a fresh install — wiping empty event paths is harmless) or a parsed sentinel
+   * from ANOTHER generation is positive proof, and event-log owned paths are
+   * deleted and recreated lazily. Other agent stores may share the parent root,
+   * so this clean-cut must never delete files it does not own. An
+   * unreadable/corrupt sentinel is ambiguity, not proof — fail open to
+   * operation (#180 invariants: content can never trip a wipe; probe errors
+   * never brick the store).
    */
   private async ensureStorageGeneration(): Promise<void> {
     const sentinelPath = path.join(this.rootDir, LAYOUT_SENTINEL_FILE);
@@ -816,7 +825,7 @@ export class AgentEventStore {
     // Positive proof of another generation (stale `v` or no sentinel at all).
     this.reportStorageWarning(
       `Agent storage layout generation changed (found ${raw === null ? 'no sentinel' : `v=${parseJsonRecord(raw.trim())?.v}`}, `
-      + `current v=${STORAGE_LAYOUT_VERSION}); wiping agent data root`,
+      + `current v=${STORAGE_LAYOUT_VERSION}); wiping event-log owned paths`,
       undefined,
       {
         operation: 'cleanCutStorageLayout',
@@ -825,11 +834,18 @@ export class AgentEventStore {
       },
       'agent-storage-layout-generation-changed',
     );
-    await rm(this.rootDir, { recursive: true, force: true });
+    await this.cleanCutEventStorePaths();
     this.agentEventLog.clear();
     this.runEventLog.clear();
     await mkdir(this.rootDir, { recursive: true });
     await atomicWriteFile(sentinelPath, `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION })}\n`);
+  }
+
+  private async cleanCutEventStorePaths(): Promise<void> {
+    await mkdir(this.rootDir, { recursive: true });
+    await Promise.all(EVENT_STORE_CLEAN_CUT_PATHS.map((name) => (
+      rm(path.join(this.rootDir, name), { recursive: true, force: true })
+    )));
   }
 
   private async replayFromCheckpoint(conversationId: string): Promise<AgentEventReplayState | null> {

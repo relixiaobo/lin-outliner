@@ -67,6 +67,7 @@ describe('DiagnosticLogStore', () => {
       statusCode: 400,
       providerId: 'anthropic',
       source: 'index.ts',
+      errorMessage: 'Bad request',
       errorName: 'TypeError',
       stackHash: expect.any(String),
     });

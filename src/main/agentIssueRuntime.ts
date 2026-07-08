@@ -17,6 +17,7 @@ export interface AgentIssueToolRuntimeOptions {
   executor?: AgentSessionExecutor;
   startSource?: (input: AgentSessionStartInput) => AgentSessionSource;
   resolveInputScope?: IssueInputResolver;
+  onIssueCreated?: () => void;
   now?: () => number;
 }
 
@@ -51,7 +52,11 @@ async function createIssue(
   input: IssueCreateInput,
   now: number,
 ): Promise<TenonAgentToolResult> {
-  return options.store.create(input, options.actor, now);
+  const result = await options.store.create(input, options.actor, now);
+  if (input.request.mode !== 'preview' && result.status === 'applied') {
+    options.onIssueCreated?.();
+  }
+  return result;
 }
 
 async function updateIssue(

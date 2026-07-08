@@ -1177,6 +1177,8 @@ describe('agent skills', () => {
     expect(skill?.body).toContain('Use `issue_create` with a concrete objective, explicit acceptance criteria');
     expect(skill?.body).toContain('district-level queries are internal execution plan items inside those Issues');
     expect(skill?.body).toContain('A good Issue definition gives the later Agent Session enough scope, coverage, output, and verification guidance');
+    expect(skill?.body).toContain('Represent per-city, per-district, per-file, or per-node coverage as a clear coverage list');
+    expect(skill?.body).toContain('owned outcome, boundaries/non-goals, required coverage, expected final response or artifact');
     expect(skill?.body).toContain('Use `relations` only after both sides are independently user-visible Issues');
     expect(skill?.body).toContain('Use the default when-ready trigger for ordinary durable work');
     expect(skill?.body).toContain('Newly created when-ready, scheduled, and recurring Issues rely on runtime eligibility');

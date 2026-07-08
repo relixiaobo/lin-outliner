@@ -122,6 +122,28 @@ function scriptedStream(
   };
 }
 
+function dynamicStream(
+  respond: (context: Context, options: SimpleStreamOptions | undefined, model: Model<Api>) => AssistantMessage,
+  onCall: (model: Model<Api>, context: Context) => void,
+): StreamFn {
+  return ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
+    onCall(model, context);
+    const stream = createAssistantMessageEventStream();
+    queueMicrotask(() => {
+      const response = normalizeAssistantMessage(respond(context, options, model), model);
+      if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+        stream.push({ type: 'error', reason: response.stopReason, error: response });
+        stream.end(response);
+        return;
+      }
+      stream.push({ type: 'start', partial: { ...response, content: [] } });
+      stream.push({ type: 'done', reason: response.stopReason as Exclude<StopReason, 'error' | 'aborted'>, message: response });
+      stream.end(response);
+    });
+    return stream;
+  }) as StreamFn;
+}
+
 function normalizeAssistantMessage(message: AssistantMessage, model: Model<Api>): AssistantMessage {
   return {
     ...message,
@@ -220,6 +242,82 @@ describe('agent runtime Issue tools', () => {
         content: { type: 'status-change', from: 'Triage', to: 'Started' },
       }),
     ]));
+  });
+
+  test('starts a when-ready unattended Issue after issue_create without an explicit session_start tool call', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-autostart-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-autostart-data-'));
+    roots.push(localRoot, dataRoot);
+
+    let issueCreateCalled = false;
+    const callKinds: string[] = [];
+    const streamFn = dynamicStream((context) => {
+      const serializedMessages = JSON.stringify(context.messages);
+      if (serializedMessages.includes('You are executing one Agent Session for a Tenon Issue.')) {
+        return fauxAssistantMessage(fauxText('Weather issue execution result.'));
+      }
+      if (!issueCreateCalled) {
+        issueCreateCalled = true;
+        return fauxAssistantMessage([
+          fauxToolCall('issue_create', {
+            issueType: 'issue',
+            fields: {
+              title: 'Query Beijing district weather',
+              description: 'Query current weather for all Beijing districts and summarize coverage, source, update time, and missing fields.',
+              delegate: { type: 'default-agent', runProfile: 'background' },
+              trigger: { type: 'when-ready' },
+              completionCriteria: [{
+                id: 'weather-summary',
+                text: 'A Beijing district weather summary is produced with sources and update time.',
+                state: 'open',
+              }],
+              output: { type: 'activity-only' },
+              permissionMode: 'unattended',
+            },
+            request: { mode: 'request' },
+            reason: 'Create durable weather work and let runtime execute it when ready.',
+          }, { id: 'tool-issue-create' }),
+        ]);
+      }
+      return fauxAssistantMessage(fauxText('Created and handed off.'));
+    }, (_model, context) => {
+      const serializedMessages = JSON.stringify(context.messages);
+      callKinds.push(serializedMessages.includes('You are executing one Agent Session for a Tenon Issue.') ? 'issue-session' : 'conversation');
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(conversation.conversationId, 'Create and execute a Beijing district weather Issue.');
+
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    await waitFor(async () => {
+      const state = await store.state();
+      return Object.values(state.sessions).some((session) => session.state === 'complete')
+        && Object.values(state.issues).some((issue) => issue.status.category === 'completed');
+    }, 2_000);
+
+    expect(callKinds).toContain('issue-session');
+    expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
+    const state = await store.state();
+    expect(Object.values(state.sessions)).toHaveLength(1);
+    expect(Object.values(state.sessions)[0]?.latestOutput).toContain('Weather issue execution result');
+    expect(Object.values(state.issues)[0]?.completionCriteria?.[0]?.state).toBe('met');
   });
 
   test('catch-up materializes due Recurring Issues and starts Agent Sessions', async () => {
