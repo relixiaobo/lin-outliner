@@ -1471,6 +1471,10 @@ Merge semantics:
 - `node_id` is the target that survives.
 - `merge_from_node_ids` are sources whose children, fields, tags, and references
   are merged into the target.
+- Target and sources must be ordinary content nodes (`type` absent). Field/tag
+  definitions merge only through `merge_definition`; field entries, references,
+  saved searches, views, config nodes, and other structural nodes use dedicated
+  operations instead of ordinary merge.
 - Sources are moved to Trash after merge.
 - Source order determines child and field-value append order.
 - Target title and position are preserved.
@@ -1953,6 +1957,8 @@ Required checks:
 - Batch move operations are homogeneous and preserve selected-root semantics.
 - Merge target and sources are distinct and have no unsafe ancestor/descendant
   relationship.
+- Ordinary merge target and sources are content nodes; definition merges are
+  same-kind field/tag definitions.
 - Field values match field type constraints.
 - Tag and field auto-creation follows the active policy.
 - Search/view directives compile to a canonical `SearchQueryExpr`.

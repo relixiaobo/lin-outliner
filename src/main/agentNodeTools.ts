@@ -667,6 +667,13 @@ async function executeMergeEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
+  const typeValidation = validateOrdinaryMergeNodeTypes(index, params.nodeId, params.mergeFromNodeIds);
+  if (typeValidation) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', typeValidation.code, typeValidation.error, {
+      instructions: typeValidation.instructions,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
   const ancestorSource = params.mergeFromNodeIds.find((sourceId) => isDescendantOf(index, params.nodeId, sourceId));
   if (ancestorSource) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_merge', `Cannot merge ancestor ${ancestorSource} into descendant ${params.nodeId}.`, {
@@ -2360,6 +2367,43 @@ function validateMutableNodeIds(index: ProjectionIndex, nodeIds: string[]): { co
   const trashed = nodeIds.find((nodeId) => isInTrash(index, nodeId));
   if (trashed) return { code: 'node_in_trash', error: `Node is in Trash: ${trashed}`, instructions: 'Restore the node before editing it.' };
   return null;
+}
+
+function validateOrdinaryMergeNodeTypes(index: ProjectionIndex, targetNodeId: string, sourceNodeIds: string[]): { code: string; error: string; instructions: string } | null {
+  const target = requiredNode(index, targetNodeId);
+  if (!isContentNode(target)) {
+    return {
+      code: 'invalid_merge_node_type',
+      error: `Ordinary merge requires a content-node target; ${targetNodeId} is ${displayNodeType(target)}.`,
+      instructions: ordinaryMergeNodeTypeInstructions(target),
+    };
+  }
+  for (const sourceNodeId of sourceNodeIds) {
+    const source = requiredNode(index, sourceNodeId);
+    if (!isContentNode(source)) {
+      return {
+        code: 'invalid_merge_node_type',
+        error: `Ordinary merge requires content-node sources; ${sourceNodeId} is ${displayNodeType(source)}.`,
+        instructions: ordinaryMergeNodeTypeInstructions(source),
+      };
+    }
+  }
+  return null;
+}
+
+function isContentNode(node: NodeProjection): boolean {
+  return node.type === undefined;
+}
+
+function displayNodeType(node: NodeProjection): string {
+  return node.type ?? 'content';
+}
+
+function ordinaryMergeNodeTypeInstructions(node: NodeProjection): string {
+  if (node.type === 'fieldDef' || node.type === 'tagDef') {
+    return 'Use node_edit operation "merge_definition" for field/tag definitions.';
+  }
+  return 'Use ordinary merge only for duplicate content nodes. Use dedicated field, reference, search, view, or delete operations for structural nodes.';
 }
 
 function replaceOutline(currentOutline: string, oldString: string, newString: string, rootNodeId: string): {

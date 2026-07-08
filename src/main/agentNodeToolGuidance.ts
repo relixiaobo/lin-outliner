@@ -117,6 +117,7 @@ export const NODE_EDIT_DESCRIPTION = [
   '- For operation "configure_definition", target a tagDef or fieldDef node_id and pass definition_patch. Do not edit locked defConfig child rows directly.',
   '- For operation "reuse_field_definition", target a field entry node_id and pass target_definition_id to relink the entry to an existing field definition.',
   '- For operation "merge_definition", target the surviving tagDef/fieldDef node_id and pass duplicate definitions in merge_from_node_ids. Do not use ordinary merge for definitions.',
+  '- For operation "merge", target ordinary duplicate content nodes only. Do not merge field entries, references, searches, views, definitions, config nodes, or other structural nodes.',
   '- Use old_string "*" only to replace the target node\'s whole editable outline; include expected_revision unless preview_only is true.',
   `- ${ANNOTATED_OUTLINE_EDIT_GUIDANCE}`,
   `- ${DATE_FIELD_VALUE_GUIDANCE}`,

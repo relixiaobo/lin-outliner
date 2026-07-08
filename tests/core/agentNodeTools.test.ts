@@ -2006,6 +2006,37 @@ describe('agent node tools', () => {
     expect(core.state().nodes[referenceId]!.targetId).toBe(target);
   });
 
+  test('node_edit ordinary merge rejects non-content nodes', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const fieldEntry = mustFocus(core.createInlineField(target, null, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[fieldEntry]!.fieldDefId!;
+    const referenceTarget = mustFocus(core.createNode(today, null, 'Reference target'));
+    const referenceParent = mustFocus(core.createNode(today, null, 'Reference parent'));
+    const referenceId = mustFocus(core.addReference(referenceParent, referenceTarget, null));
+
+    const definitionEnvelope = await executeTool(core, 'node_edit', {
+      operation: 'merge',
+      node_id: target,
+      merge_from_node_ids: [fieldDefId],
+    });
+    const referenceEnvelope = await executeTool(core, 'node_edit', {
+      operation: 'merge',
+      node_id: target,
+      merge_from_node_ids: [referenceId],
+    });
+
+    expect(definitionEnvelope.ok).toBe(false);
+    expect(definitionEnvelope.error?.code).toBe('invalid_merge_node_type');
+    expect(definitionEnvelope.instructions).toContain('merge_definition');
+    expect(referenceEnvelope.ok).toBe(false);
+    expect(referenceEnvelope.error?.code).toBe('invalid_merge_node_type');
+    expect(referenceEnvelope.instructions).toContain('dedicated field, reference, search, view, or delete operations');
+    expect(core.state().nodes[fieldDefId]!.parentId).toBe(SCHEMA_ID);
+    expect(core.state().nodes[referenceId]!.parentId).toBe(referenceParent);
+  });
+
   test('outline_undo_stack undo and redo use the agent Loro stack', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
