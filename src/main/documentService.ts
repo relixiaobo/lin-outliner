@@ -642,6 +642,8 @@ export class DocumentService {
         return this.core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), fieldType(args.fieldType));
       case 'reuse_field_definition':
         return this.core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
+      case 'merge_definitions':
+        return this.core.mergeDefinitions(String(args.targetId), stringArray(args.sourceIds));
       case 'register_collected_option':
         return this.core.registerCollectedOption(String(args.fieldDefId), String(args.name));
       case 'create_collected_field_option':
@@ -1103,6 +1105,10 @@ function iconKind(value: unknown): IconKind | null {
 function displayPlacement(value: unknown): DisplayPlacement | null {
   if (value === 'title' || value === 'body' || value === 'footer' || value === 'hidden') return value;
   return null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
 }
 
 function fieldType(value: unknown): FieldType {

@@ -97,7 +97,7 @@ Inputs:
   operation: "configure_definition";
   node_id: string;
   definition_patch: FieldDefinitionPatch | TagDefinitionPatch;
-  existing_values?: "validate" | "coerce_lossless" | "collect_options";
+  existing_values?: "validate";
   preview_only?: boolean;
 }
 ```
@@ -180,6 +180,41 @@ definition, this is a node edit against the field entry:
 This operation compiles to `reuse_field_definition` and keeps existing duplicate
 field guards.
 
+### 6. Definition merge is a first-class definition-management operation
+
+Merging definitions is not ordinary content merge. It rewrites identity-bearing
+references across the document, so it needs a dedicated operation on the same
+`node_edit` surface:
+
+```ts
+{
+  operation: "merge_definition";
+  node_id: "target-field-or-tag-definition-id";
+  merge_from_node_ids: ["source-definition-id"];
+  existing_values?: "validate";
+  preview_only?: boolean;
+}
+```
+
+Rules:
+
+- Target and sources must be active definitions of the same kind.
+- Field definition merge requires the same field type in v1. Values are still
+  validated against the target type before mutation.
+- Options field merge maps source options to target options by label, moving
+  missing options and retargeting duplicate option references.
+- Field entry uses of the source definition are relinked to the target. If a
+  node already has the target field entry, source values move into the target
+  entry and the source entry is removed.
+- Field ids in saved-search rules, view field refs, and reference nodes are
+  rewritten from source to target.
+- Tag definition merge replaces source tag applications with the target tag,
+  rewrites tag refs in saved-search rules and config references, moves missing
+  template field entries from source tag to target tag, and removes the source
+  tag definition.
+- Target definition config wins. Source config is not merged implicitly; agents
+  should configure the target explicitly before or after merge.
+
 ## Acceptance Criteria
 
 - `node_read` on a `fieldDef` returns projected config and guidance to edit the
@@ -197,13 +232,15 @@ field guards.
 - `node_create` can create a tag definition with initial config.
 - `node_edit` can reuse an existing field definition for a field entry without
   creating duplicate field definitions.
+- `node_edit` can merge duplicate field definitions, relinking all source field
+  entries and search/view references to the target.
+- `node_edit` can merge duplicate supertags, replacing tag applications and
+  tag/search/config references with the target tag.
 - All mutation paths remain previewable and undoable through the existing agent
   transaction wrapper.
 
 ## Open Questions
 
-- Should `collect_options` ship in the first PR, or should the first PR only
-  validate and leave option migration to an explicit follow-up?
 - Should the structured `definition` input create definitions under Schema by
   default when `parent_id` is omitted, or require an explicit parent in v1?
 - Should tag config support every current config key in v1, or only the keys the

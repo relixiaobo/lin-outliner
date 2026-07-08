@@ -227,7 +227,8 @@ export type NodeEditOperation =
   | 'merge'
   | 'replace_with_reference'
   | 'configure_definition'
-  | 'reuse_field_definition';
+  | 'reuse_field_definition'
+  | 'merge_definition';
 
 export type DefinitionExistingValuesStrategy = 'validate';
 
@@ -292,6 +293,7 @@ export interface NodeEditData {
     fieldEntryId: string;
     targetDefinitionId: string;
   };
+  definitionMerge?: NodeDefinitionMerge;
   merge?: {
     targetNodeId: string;
     sourceNodeIds: string[];
@@ -309,6 +311,16 @@ export interface NodeDefinitionMutation {
   afterConfig?: ProjectedDefinitionConfig;
   patch?: FieldConfigPatch | TagConfigPatch;
   validation?: DefinitionValueValidationReport;
+}
+
+export interface NodeDefinitionMerge {
+  kind: 'field' | 'tag';
+  targetNodeId: string;
+  sourceNodeIds: string[];
+  relinkedFieldEntryIds?: string[];
+  mergedFieldEntryIds?: string[];
+  retaggedNodeIds?: string[];
+  rewrittenReferenceIds?: string[];
 }
 
 export interface DefinitionValueValidationReport {
@@ -455,6 +467,7 @@ export type NormalizedEditParams =
   | (NodeEditParams & { action: 'replace_with_reference'; nodeId: string; replaceWithReferenceTo: string })
   | (NodeEditParams & { action: 'configure_definition'; nodeId: string; definitionPatch: FieldConfigPatch | TagConfigPatch; existingValues: DefinitionExistingValuesStrategy })
   | (NodeEditParams & { action: 'reuse_field_definition'; nodeId: string; targetDefinitionId: string })
+  | (NodeEditParams & { action: 'merge_definition'; nodeId: string; mergeFromNodeIds: string[]; existingValues: DefinitionExistingValuesStrategy })
   | { error: string };
 
 export interface NodeToolIssue {

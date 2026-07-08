@@ -188,8 +188,8 @@ export const NODE_EDIT_PARAMETERS = {
   properties: {
     operation: {
       type: 'string',
-      enum: ['replace_outline', 'move', 'merge', 'replace_with_reference', 'configure_definition', 'reuse_field_definition'],
-      description: 'Edit operation to perform. Use replace_outline with node_id + old_string + new_string for content/field/search edits; configure_definition with node_id + definition_patch for tag/field definition config; reuse_field_definition with a field entry node_id + target_definition_id; move with move + node_id or node_ids; merge with node_id + merge_from_node_ids; replace_with_reference with node_id + replace_with_reference_to.',
+      enum: ['replace_outline', 'move', 'merge', 'replace_with_reference', 'configure_definition', 'reuse_field_definition', 'merge_definition'],
+      description: 'Edit operation to perform. Use replace_outline with node_id + old_string + new_string for content/field/search edits; configure_definition with node_id + definition_patch for tag/field definition config; reuse_field_definition with a field entry node_id + target_definition_id; merge_definition with a target definition node_id + merge_from_node_ids; move with move + node_id or node_ids; merge with node_id + merge_from_node_ids; replace_with_reference with node_id + replace_with_reference_to.',
     },
     node_id: {
       type: 'string',
@@ -242,7 +242,7 @@ export const NODE_EDIT_PARAMETERS = {
       minItems: 1,
       maxItems: 20,
       items: { type: 'string', minLength: 1 },
-      description: 'Source node ids to merge into node_id. Children, fields, tags, and references are merged into the target; source nodes are then moved to Trash.',
+      description: 'For operation "merge", source content node ids to merge into node_id. For operation "merge_definition", source field/tag definition ids to merge into target definition node_id.',
     },
     replace_with_reference_to: {
       type: 'string',

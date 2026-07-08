@@ -1351,7 +1351,8 @@ type NodeEditParams =
   | NodeMergeParams
   | NodeReferenceReplaceParams
   | NodeDefinitionConfigParams
-  | NodeFieldDefinitionReuseParams;
+  | NodeFieldDefinitionReuseParams
+  | NodeDefinitionMergeParams;
 
 interface NodeOutlineEditParams {
   operation: "replace_outline";
@@ -1400,6 +1401,14 @@ interface NodeFieldDefinitionReuseParams {
   operation: "reuse_field_definition";
   node_id: string; // fieldEntry
   target_definition_id: string; // fieldDef or supported sys:* field id
+  preview_only?: boolean;
+}
+
+interface NodeDefinitionMergeParams {
+  operation: "merge_definition";
+  node_id: string; // surviving fieldDef or tagDef
+  merge_from_node_ids: string[]; // duplicate definitions
+  existing_values?: "validate"; // default
   preview_only?: boolean;
 }
 ```
@@ -1509,6 +1518,30 @@ Field definition reuse semantics:
 - Core may remove the draft field definition that becomes orphaned after relink;
   model-visible results include only ids still readable after mutation.
 
+Definition merge semantics:
+
+- `merge_definition` is the definition-management merge operation. Ordinary
+  `merge` remains content-node merge and must not be used for field/tag
+  definitions.
+- Target and sources must be active definitions of the same kind: field into
+  field, or tag into tag.
+- Field definition merge currently requires matching field types. Values are
+  still validated against the target type before mutation.
+- Options field merge maps source options to target options by label. Missing
+  options move under the target field definition; duplicate labels retarget
+  option references to the target option before the source option is removed.
+- Field entries using a source field definition are relinked to the target
+  definition. If the owner already has the target field entry, source values move
+  into the target entry and the source entry is removed.
+- Field ids are rewritten in saved-search rules, view field refs
+  (`groupField`, sort/filter/display fields), and reference nodes.
+- Tag definition merge replaces source tag applications with the target tag,
+  rewrites saved-search tag refs, config refs such as `extends`,
+  `childSupertag`, and `sourceSupertag`, and moves missing template children from
+  source tag to target tag.
+- Target definition config wins. Source config is not merged implicitly; use
+  `configure_definition` before or after merge for intentional config changes.
+
 Return data:
 
 ```ts
@@ -1519,7 +1552,8 @@ interface NodeEditData {
     | "merge"
     | "replace_with_reference"
     | "configure_definition"
-    | "reuse_field_definition";
+    | "reuse_field_definition"
+    | "merge_definition";
   status: "updated" | "unchanged";
   affectedNodeIds: string[];
   createdNodeIds?: string[];
@@ -1536,6 +1570,7 @@ interface NodeEditData {
     fieldEntryId: string;
     targetDefinitionId: string;
   };
+  definitionMerge?: NodeDefinitionMerge;
   merge?: {
     targetNodeId: string;
     sourceNodeIds: string[];
@@ -1908,8 +1943,8 @@ Required checks:
 
 - `node_edit.operation` is one of `replace_outline`, `move`, `merge`,
   `replace_with_reference`, `configure_definition`, or
-  `reuse_field_definition`; fields from other operations are rejected before any
-  document state is read or mutated.
+  `reuse_field_definition`, or `merge_definition`; fields from other operations
+  are rejected before any document state is read or mutated.
 - The workspace/document boundary is valid for every referenced node.
 - `parent_id`, `after_id`, `node_id`, `node_ids`, `target_id`, and
   `merge_from_node_ids` exist and are editable.
@@ -3107,7 +3142,7 @@ coverage maps as follows:
 | `node_search` | Temporary/saved search node parser compiled to full-text, tag, field, link-relationship, and view metadata. |
 | `node_read` | `get_projection`, `backlinks`, annotated outline serialization, computed field and child summaries. |
 | `node_create` | `create_node`, `create_tag`, `create_field_definition`, `create_field_def`, `create_inline_field`, `set_node_checkbox_visible`, `add_reference`, `create_search_node`, duplicate support. |
-| `node_edit` | Single-node exact replacement compiled to `apply_node_text_patch`, `set_node_checkbox_visible`, `toggle_done`, tag/field upserts, value appends/updates, `move_node`, `set_reference_target`, `replace_node_with_reference`, `set_search_node`, `set_field_config`, `set_tag_config`, and `reuse_field_definition`. Merge/reference replacement may trash explicitly named source nodes; ordinary deletion belongs to `node_delete`. |
+| `node_edit` | Single-node exact replacement compiled to `apply_node_text_patch`, `set_node_checkbox_visible`, `toggle_done`, tag/field upserts, value appends/updates, `move_node`, `set_reference_target`, `replace_node_with_reference`, `set_search_node`, `set_field_config`, `set_tag_config`, `reuse_field_definition`, and `merge_definitions`. Merge/reference replacement may trash explicitly named source nodes; ordinary deletion belongs to `node_delete`. |
 | `node_delete` | `trash_node`, `batch_trash_nodes`, `restore_node`; permanent delete is not exposed to agent v1. |
 | `outline_undo_stack` | Loro UndoManager-backed `undo`/`redo` plus operation journal listing with origin metadata. |
 | `file_read` | Implemented TypeScript file read command with path normalization, text pagination, image content/dimensions, PDF page rendering, notebook parsing, and freshness tracking. |

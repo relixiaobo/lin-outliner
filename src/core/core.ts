@@ -1828,6 +1828,227 @@ export class Core {
     this.removeSubtreeDirect(defId);
   }
 
+  mergeDefinitions(targetId: string, sourceIds: string[]): CommandOutcome {
+    const uniqueSourceIds = [...new Set(sourceIds.map((id) => id.trim()).filter(Boolean))];
+    if (uniqueSourceIds.length === 0) throw CoreError.invalidOperation('merge_definitions requires at least one source definition');
+    return this.mutate(() => {
+      const state = this.snapshot();
+      const target = requiredNode(state, targetId);
+      if (target.type !== 'fieldDef' && target.type !== 'tagDef') {
+        throw CoreError.invalidOperation('target must be a field or tag definition');
+      }
+      if (isInTrash(state, targetId)) throw CoreError.invalidOperation('target definition is in Trash');
+      for (const sourceId of uniqueSourceIds) {
+        if (sourceId === targetId) throw CoreError.invalidOperation('cannot merge a definition into itself');
+        const source = requiredNode(state, sourceId);
+        if (source.type !== target.type) throw CoreError.invalidOperation('definition merge requires target and sources of the same kind');
+        if (isInTrash(state, sourceId)) throw CoreError.invalidOperation('source definition is in Trash');
+      }
+      if (target.type === 'fieldDef') this.mergeFieldDefinitionsDirect(targetId, uniqueSourceIds);
+      else this.mergeTagDefinitionsDirect(targetId, uniqueSourceIds);
+      return focus(targetId);
+    });
+  }
+
+  private mergeFieldDefinitionsDirect(targetId: string, sourceIds: string[]) {
+    const initial = this.snapshot();
+    const targetType = fieldTypeOf(initial, targetId);
+    const targetSourceSupertag = configRefTarget(initial, targetId, 'sourceSupertag');
+    for (const sourceId of sourceIds) {
+      const sourceType = fieldTypeOf(initial, sourceId);
+      if (sourceType !== targetType) {
+        throw CoreError.invalidOperation('field definition merge currently requires matching field types');
+      }
+      if (targetType === 'options_from_supertag' && configRefTarget(initial, sourceId, 'sourceSupertag') !== targetSourceSupertag) {
+        throw CoreError.invalidOperation('options-from-supertag field merge requires the same source supertag');
+      }
+      this.assertFieldDefinitionValuesCompatible(sourceId, targetId, targetType);
+    }
+
+    for (const sourceId of sourceIds) {
+      if (targetType === 'options') this.mergeOptionsIntoTargetFieldDirect(sourceId, targetId);
+      this.mergeFieldEntryUsesDirect(sourceId, targetId);
+      this.rewriteFieldDefinitionRefsDirect(sourceId, targetId);
+      this.removeSubtreeDirect(sourceId);
+    }
+    this.touchNodeDirect(targetId);
+  }
+
+  private assertFieldDefinitionValuesCompatible(sourceFieldId: string, targetFieldId: string, targetType: FieldType) {
+    const state = this.snapshot();
+    for (const entry of Object.values(state.nodes)) {
+      if (entry.type !== 'fieldEntry' || entry.fieldDefId !== sourceFieldId || isInTrash(state, entry.id)) continue;
+      const values = entry.children
+        .map((valueId) => state.nodes[valueId])
+        .filter((value): value is Node => Boolean(value) && !isInTrash(state, value!.id))
+        .map((value) => ({
+          text: value.content.text,
+          targetId: value.type === 'reference' ? value.targetId : undefined,
+        }));
+      const validation = validateFieldValuesForType(fieldNameForDefId(state, targetFieldId), targetType, values);
+      if (!validation.ok) throw CoreError.invalidOperation(validation.error);
+    }
+  }
+
+  private mergeOptionsIntoTargetFieldDirect(sourceFieldId: string, targetFieldId: string) {
+    for (const optionId of [...this.snapshot().nodes[sourceFieldId]?.children ?? []]) {
+      const state = this.snapshot();
+      const option = state.nodes[optionId];
+      if (!option || isInternalConfigNode(option)) continue;
+      const label = optionLabel(state, optionId);
+      const existing = findOptionByName(state, targetFieldId, label);
+      if (!existing) {
+        this.loro.moveNode(optionId, targetFieldId, undefined);
+        continue;
+      }
+      const sourceTargetId = optionValueTargetId(state, optionId);
+      const targetTargetId = optionValueTargetId(state, existing);
+      this.rewriteReferenceTargetsDirect(sourceTargetId, targetTargetId, { removeTargetSelfConfigRefs: false });
+      this.removeSubtreeDirect(optionId);
+    }
+  }
+
+  private mergeFieldEntryUsesDirect(sourceFieldId: string, targetFieldId: string) {
+    const state = this.snapshot();
+    for (const entryId of Object.values(state.nodes)
+      .filter((node) => node.type === 'fieldEntry' && node.fieldDefId === sourceFieldId && !isInTrash(state, node.id))
+      .map((node) => node.id)) {
+      const latest = this.snapshot();
+      const entry = clone(requiredNode(latest, entryId));
+      if (entry.type !== 'fieldEntry') continue;
+      const ownerId = entry.parentId;
+      const targetEntryId = ownerId
+        ? latest.nodes[ownerId]?.children.find((childId) => {
+          const child = latest.nodes[childId];
+          return child?.type === 'fieldEntry' && child.fieldDefId === targetFieldId && !isInTrash(latest, child.id);
+        })
+        : undefined;
+      if (targetEntryId && targetEntryId !== entryId) {
+        for (const childId of [...entry.children]) this.loro.moveNode(childId, targetEntryId, undefined);
+        this.removeSubtreeDirect(entryId);
+        this.touchNodeDirect(targetEntryId);
+        continue;
+      }
+      entry.fieldDefId = targetFieldId;
+      entry.updatedAt = nowMs();
+      this.loro.writeNode(entry);
+    }
+  }
+
+  private mergeTagDefinitionsDirect(targetId: string, sourceIds: string[]) {
+    for (const sourceId of sourceIds) {
+      this.mergeTagTemplateChildrenDirect(sourceId, targetId);
+      this.rewriteTagDefinitionRefsDirect(sourceId, targetId);
+      this.removeSubtreeDirect(sourceId);
+    }
+    this.touchNodeDirect(targetId);
+  }
+
+  private mergeTagTemplateChildrenDirect(sourceTagId: string, targetTagId: string) {
+    for (const childId of [...this.snapshot().nodes[sourceTagId]?.children ?? []]) {
+      const state = this.snapshot();
+      const child = state.nodes[childId];
+      if (!child || isInternalConfigNode(child)) continue;
+      if (child.type === 'fieldEntry' && child.fieldDefId) {
+        const targetEntryId = state.nodes[targetTagId]?.children.find((candidateId) => {
+          const candidate = state.nodes[candidateId];
+          return candidate?.type === 'fieldEntry' && candidate.fieldDefId === child.fieldDefId && !isInTrash(state, candidate.id);
+        });
+        if (targetEntryId) {
+          for (const valueId of [...child.children]) this.loro.moveNode(valueId, targetEntryId, undefined);
+          this.removeSubtreeDirect(childId);
+          this.touchNodeDirect(targetEntryId);
+          continue;
+        }
+      }
+      this.loro.moveNode(childId, targetTagId, undefined);
+    }
+  }
+
+  private rewriteFieldDefinitionRefsDirect(sourceId: string, targetId: string) {
+    const state = this.snapshot();
+    for (const node of Object.values(state.nodes)) {
+      if (isInTrash(state, node.id)) continue;
+      if (node.type === 'fieldEntry') continue;
+      const next = clone(node);
+      let changed = false;
+      if ((next.type === 'search' || next.type === 'queryCondition') && next.queryFieldDefId === sourceId) {
+        next.queryFieldDefId = targetId;
+        changed = true;
+      }
+      if ((next.type === 'search' || next.type === 'queryCondition') && next.queryTargetId === sourceId) {
+        next.queryTargetId = targetId;
+        changed = true;
+      }
+      if (next.type === 'viewDef' && next.groupField === sourceId) {
+        next.groupField = targetId;
+        changed = true;
+      }
+      if (next.type === 'sortRule' && next.sortField === sourceId) {
+        next.sortField = targetId;
+        changed = true;
+      }
+      if (next.type === 'filterRule' && next.filterField === sourceId) {
+        next.filterField = targetId;
+        changed = true;
+      }
+      if (next.type === 'displayField' && next.displayField === sourceId) {
+        next.displayField = targetId;
+        changed = true;
+      }
+      if (changed) {
+        next.updatedAt = nowMs();
+        this.loro.writeNode(next);
+      }
+    }
+    this.rewriteReferenceTargetsDirect(sourceId, targetId, { removeTargetSelfConfigRefs: false });
+  }
+
+  private rewriteTagDefinitionRefsDirect(sourceId: string, targetId: string) {
+    const state = this.snapshot();
+    for (const node of Object.values(state.nodes)) {
+      if (isInTrash(state, node.id)) continue;
+      const next = clone(node);
+      let changed = false;
+      if (next.tags.includes(sourceId)) {
+        next.tags = [...new Set(next.tags.map((tagId) => tagId === sourceId ? targetId : tagId))];
+        changed = true;
+      }
+      if ((next.type === 'search' || next.type === 'queryCondition') && next.queryTagDefId === sourceId) {
+        next.queryTagDefId = targetId;
+        changed = true;
+      }
+      if ((next.type === 'search' || next.type === 'queryCondition') && next.queryTargetId === sourceId) {
+        next.queryTargetId = targetId;
+        changed = true;
+      }
+      if (changed) {
+        next.updatedAt = nowMs();
+        this.loro.writeNode(next);
+      }
+    }
+    this.rewriteReferenceTargetsDirect(sourceId, targetId, { removeTargetSelfConfigRefs: true });
+  }
+
+  private rewriteReferenceTargetsDirect(sourceId: string, targetId: string, options: { removeTargetSelfConfigRefs: boolean }) {
+    for (const referenceId of Object.values(this.snapshot().nodes)
+      .filter((node): node is ReferenceNode => node.type === 'reference' && node.targetId === sourceId)
+      .map((node) => node.id)) {
+      const state = this.snapshot();
+      const reference = clone(requiredNode(state, referenceId));
+      if (reference.type !== 'reference') continue;
+      const parent = reference.parentId ? state.nodes[reference.parentId] : undefined;
+      const owner = parent?.parentId ? state.nodes[parent.parentId] : undefined;
+      if (options.removeTargetSelfConfigRefs && parent?.type === 'defConfig' && owner?.id === targetId) {
+        this.removeSubtreeDirect(referenceId);
+        continue;
+      }
+      reference.targetId = targetId;
+      reference.updatedAt = nowMs();
+      this.loro.writeNode(reference);
+    }
+  }
+
   registerCollectedOption(fieldDefId: string, name: string): CommandOutcome {
     const normalized = name.trim();
     if (!normalized) throw CoreError.invalidOperation('option name cannot be empty');
