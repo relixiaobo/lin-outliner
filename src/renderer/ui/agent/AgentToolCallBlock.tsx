@@ -727,7 +727,7 @@ function LocalToolImage({
   const preview = usePreviewObjectUrl(target, { mimeType: image.mimeType });
 
   function openPreview() {
-    dispatchPreviewTargetOpen({ target });
+    dispatchPreviewTargetOpen({ presentation: 'reader', target });
   }
 
   return (
@@ -777,7 +777,7 @@ function PersistedToolImage({
 
   function openPreview() {
     if (!target) return;
-    dispatchPreviewTargetOpen({ target });
+    dispatchPreviewTargetOpen({ presentation: 'reader', target });
   }
 
   return (

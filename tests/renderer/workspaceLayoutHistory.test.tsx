@@ -117,6 +117,34 @@ describe('useWorkspaceLayout history focus', () => {
     });
   });
 
+  test('reopening the same preview target is a layout no-op', () => {
+    const target = { kind: 'local-file' as const, path: '/tmp/report.md', entryKind: 'file' as const, label: 'report.md' };
+    const h = renderLayout({
+      activePanelId: 'panel-test',
+      panels: [{
+        id: 'panel-test',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'file-preview', target, presentation: 'reader' },
+        backStack: [{ kind: 'outliner', rootId: 'today' }],
+        forwardStack: [],
+      }],
+    });
+    const beforePanels = h.api.panels;
+
+    act(() => {
+      h.api.navigatePanelPreview('panel-test', target, { presentation: 'reader' });
+    });
+
+    expect(h.api.panels).toBe(beforePanels);
+    expect(h.api.panels[0]).toMatchObject({
+      type: 'workspace',
+      view: { kind: 'file-preview', target, presentation: 'reader' },
+      backStack: [{ kind: 'outliner', rootId: 'today' }],
+      forwardStack: [],
+    });
+  });
+
   test('back to a scrolled outliner view clears focus without clearing selection state', () => {
     const h = renderLayout({
       activePanelId: 'panel-test',

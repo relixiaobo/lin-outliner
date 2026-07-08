@@ -242,6 +242,7 @@ describe('transcript file-chip location marker', () => {
     });
 
     expect(opened).toEqual([{
+      presentation: 'reader',
       target: {
         kind: 'local-file',
         path: imagePath,

@@ -227,6 +227,7 @@ describe('agent tool output view', () => {
       previewButton.dispatchEvent(new rendered.window.Event('click', { bubbles: true }));
     });
     expect(opened).toEqual([{
+      presentation: 'reader',
       target: {
         kind: 'local-file',
         path: generatedPath,

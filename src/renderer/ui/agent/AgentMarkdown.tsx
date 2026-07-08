@@ -184,7 +184,7 @@ function AgentMarkdownImage({ alt, src, title }: ComponentPropsWithoutRef<'img'>
     <button
       aria-label={label}
       className="agent-markdown-image"
-      onClick={() => dispatchPreviewTargetOpen({ target })}
+      onClick={() => dispatchPreviewTargetOpen({ presentation: 'reader', target })}
       title={title || label}
       type="button"
     >
@@ -398,11 +398,9 @@ export function AgentMarkdown({
   const components = useMarkdownComponents(documentIndex, onNodeReferenceOpen);
 
   return (
-    // The file-chip open behavior (workspace reader vs normal workspace preview) is decided by
-    // location, NOT here: a `[data-agent-transcript-chips]` ancestor (set once on the
-    // live transcript message frame — see AgentMessageFrame) routes chip clicks to
-    // the file-only reader. This markdown renders in both the live transcript and meta
-    // surfaces (compaction/sub-run summaries, the PoV inspector), so it stays neutral.
+    // File-chip open behavior is decided by location (`InlineFilePreviewLayer` routes
+    // transcript chips to the reader). Markdown images are direct visual outputs, so
+    // their image component opens the same file-only reader itself.
     <div className="agent-markdown">
       {blocks.map((block, blockIndex) => {
         const blockKey = `${keyPrefix}-block-${blockIndex}`;
