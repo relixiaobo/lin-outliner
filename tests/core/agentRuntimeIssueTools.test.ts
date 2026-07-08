@@ -250,11 +250,27 @@ describe('agent runtime Issue tools', () => {
     roots.push(localRoot, dataRoot);
 
     let issueCreateCalled = false;
+    let agentSessionReadCalled = false;
+    let sessionIdToRead: string | null = null;
     const callKinds: string[] = [];
+    const sessionReadContexts: string[] = [];
     const streamFn = dynamicStream((context) => {
       const serializedMessages = JSON.stringify(context.messages);
       if (serializedMessages.includes('You are executing one Agent Session for a Tenon Issue.')) {
         return fauxAssistantMessage(fauxText('Weather issue execution result.'));
+      }
+      if (sessionIdToRead) {
+        sessionReadContexts.push(serializedMessages);
+        if (!agentSessionReadCalled) {
+          agentSessionReadCalled = true;
+          return fauxAssistantMessage([
+            fauxToolCall('agent_session_read', {
+              agentSessionId: sessionIdToRead,
+              wait: true,
+              timeoutMs: 1_000,
+            }, { id: 'tool-agent-session-read' }),
+          ]);
+        }
       }
       if (!issueCreateCalled) {
         issueCreateCalled = true;
@@ -316,8 +332,17 @@ describe('agent runtime Issue tools', () => {
     expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
     const state = await store.state();
     expect(Object.values(state.sessions)).toHaveLength(1);
-    expect(Object.values(state.sessions)[0]?.latestOutput).toContain('Weather issue execution result');
+    const session = Object.values(state.sessions)[0];
+    expect(session?.latestOutput).toContain('Weather issue execution result');
     expect(Object.values(state.issues)[0]?.completionCriteria?.[0]?.state).toBe('met');
+
+    sessionIdToRead = session?.id ?? null;
+    expect(sessionIdToRead).toBeTruthy();
+    await runtime.sendMessage(conversation.conversationId, 'Read the completed Agent Session.');
+
+    expect(agentSessionReadCalled).toBe(true);
+    expect(sessionReadContexts.some((text) => text.includes('Weather issue execution result'))).toBe(true);
+    expect(sessionReadContexts.some((text) => text.includes('Unknown run'))).toBe(false);
   });
 
   test('catch-up materializes due Recurring Issues and starts Agent Sessions', async () => {

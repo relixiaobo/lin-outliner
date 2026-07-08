@@ -128,8 +128,7 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   instead of relying on prompt instructions.
 - `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
   Sessions, and Activity in `issue-manager.json`, including request-mode
-  creation,
-  parent/sub-issue links, revision conflicts, session message/stop Activity,
+  creation, flat Issue relations, revision conflicts, session message/stop Activity,
   due-time Recurring Issue materialization, internal Session-to-executor
   bindings, and execution status sync into `active`, `complete`, `error`, or
   `canceled`;
@@ -175,9 +174,10 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
 
 The internal executor binding is intentionally not part of the model-facing
 schema. `agent_session_read` returns Agent Session state and Activity, not a Run
-id. `agent_session_send_message` and `agent_session_stop` route through the
-binding when a live executor is available and otherwise report a warning or
-blocked state through the normal tool result.
+id. `agent_session_read`, `agent_session_send_message`, and
+`agent_session_stop` route through the binding's owning conversation when a live
+executor is available and otherwise report a warning or blocked state through the
+normal tool result.
 Activity is a high-signal user-visible summary layer, not the Agent Session
 transcript. Runtime keeps the full terminal output on `AgentSession.latestOutput`
 but strips common reasoning blocks and truncates Activity bodies before writing

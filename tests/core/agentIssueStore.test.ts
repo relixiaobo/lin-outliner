@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { AgentIssueStore } from '../../src/main/agentIssueStore';
+import { AGENT_ISSUE_STORE_FILE, AgentIssueStore } from '../../src/main/agentIssueStore';
 import type { ActorRef, AgentSessionSource } from '../../src/core/agentIssue';
 
 const actor: ActorRef = { type: 'agent', agentId: 'built-in:tenon:assistant' };
@@ -17,6 +17,44 @@ async function withStore<T>(fn: (store: AgentIssueStore) => Promise<T>): Promise
 }
 
 describe('agent issue store', () => {
+  test('treats older Issue store generations as a clean empty state', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-store-legacy-'));
+    try {
+      await writeFile(path.join(root, AGENT_ISSUE_STORE_FILE), JSON.stringify({
+        v: 1,
+        issues: {
+          'issue:legacy': {
+            id: 'issue:legacy',
+            title: 'Legacy manual Issue',
+            status: { name: 'Triage', category: 'triage' },
+            trigger: { type: 'manual' },
+            permissionMode: 'unattended',
+            confirmation: { confirmedBy: actor, confirmedAt: 1 },
+            revision: 'rev:1',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+      }), 'utf8');
+
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      expect((await store.search({ targets: ['issue'] })).rows).toEqual([]);
+
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Current Issue' },
+        request: { mode: 'request' },
+        reason: 'Create current work.',
+      }, actor, 10);
+
+      const persisted = JSON.parse(await readFile(path.join(root, AGENT_ISSUE_STORE_FILE), 'utf8'));
+      expect(persisted.v).toBe(2);
+      expect(Object.keys(persisted.issues)).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('creates Recurring Issue automation as active work with provenance by default', async () => {
     await withStore(async (store) => {
       const created = await store.create({

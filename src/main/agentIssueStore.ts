@@ -43,7 +43,7 @@ import {
   updateJsonFile,
 } from './jsonFileStore';
 
-const STORE_VERSION = 1;
+const STORE_VERSION = 2;
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 const MAX_ACTIVITY_BODY_CHARS = 1_200;

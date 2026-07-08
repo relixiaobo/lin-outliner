@@ -166,7 +166,7 @@ import {
   type AgentConversationIndexEntry,
   type AgentRunMetaProjection,
 } from './agentEventStore';
-import { AgentIssueStore, type AgentSessionExecutionSyncInput } from './agentIssueStore';
+import { AgentIssueStore, type AgentSessionExecutionBinding, type AgentSessionExecutionSyncInput } from './agentIssueStore';
 import { resolveIssueInputScopeFromProjection } from './agentIssueInputResolver';
 import { agentSessionRunScope } from './agentIssueSessionScope';
 import {
@@ -4709,6 +4709,14 @@ export class AgentRuntime {
     getDelegationRuntime: () => AgentDelegationRuntime | null,
     getConversationId: () => string,
   ): AgentSessionExecutor {
+    const runtimeForBinding = async (binding: AgentSessionExecutionBinding): Promise<AgentDelegationRuntime | null> => {
+      const live = this.conversations.get(binding.conversationId)?.delegationRuntime;
+      if (live) return live;
+      const fallback = getConversationId();
+      if (binding.conversationId === fallback) return getDelegationRuntime();
+      const conversation = await this.ensureConversationWithId(binding.conversationId);
+      return conversation.delegationRuntime;
+    };
     return {
       start: async ({ session, startInput, now }) => {
         const delegationRuntime = getDelegationRuntime();
@@ -4723,7 +4731,7 @@ export class AgentRuntime {
         };
       },
       read: async (binding, input) => {
-        const delegationRuntime = getDelegationRuntime();
+        const delegationRuntime = await runtimeForBinding(binding);
         if (!delegationRuntime) return;
         const data = await delegationRuntime.status({
           runId: binding.executionId,
@@ -4733,13 +4741,13 @@ export class AgentRuntime {
         await this.syncIssueSessionFromDelegationData(data);
       },
       sendMessage: async (binding, message) => {
-        const delegationRuntime = getDelegationRuntime();
+        const delegationRuntime = await runtimeForBinding(binding);
         if (!delegationRuntime) throw new Error('No live agent execution runtime is available for this Agent Session.');
         const data = await delegationRuntime.send({ runId: binding.executionId, message });
         await this.syncIssueSessionFromDelegationData(data);
       },
       stop: async (binding) => {
-        const delegationRuntime = getDelegationRuntime();
+        const delegationRuntime = await runtimeForBinding(binding);
         if (!delegationRuntime) throw new Error('No live agent execution runtime is available for this Agent Session.');
         const data = await delegationRuntime.stop({ runId: binding.executionId });
         await this.syncIssueSessionFromDelegationData(data);
