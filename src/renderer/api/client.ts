@@ -121,14 +121,6 @@ export const api = {
     command<CommandResult>('set_code_block', { nodeId, codeLanguage: codeLanguage ?? null }),
   setCodeLanguage: (nodeId: string, codeLanguage: string) =>
     command<CommandResult>('set_code_language', { nodeId, codeLanguage }),
-  // Command nodes. The brief is the node's text content; scheduled work belongs
-  // to Issues and Recurring Issues.
-  setCommandNode: (nodeId: string) =>
-    command<CommandResult>('set_command_node', { nodeId }),
-  runCommandNow: (nodeId: string) =>
-    command<{ conversationId: string }>('agent_run_command_now', { nodeId }),
-  ensureCommandConversation: (nodeId: string) =>
-    command<{ conversationId: string }>('agent_ensure_command_conversation', { nodeId }),
   // An image node's source is exactly one of `assetId` (local) or `mediaUrl`
   // (remote); the core validates that.
   createImageNode: (

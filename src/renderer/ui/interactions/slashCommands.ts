@@ -8,7 +8,6 @@ export type SlashCommandId =
   | 'code'
   | 'image'
   | 'attachment'
-  | 'command'
   | 'command_palette';
 
 export interface SlashCommandDefinition {
@@ -63,12 +62,6 @@ export const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
     id: 'attachment',
     label: 'Attachment',
     keywords: ['attachment', 'file', 'pdf', 'audio', 'video', 'document'],
-    enabled: true,
-  },
-  {
-    id: 'command',
-    label: 'Command',
-    keywords: ['command', 'routine', 'schedule', 'agent', 'task', 'cron'],
     enabled: true,
   },
   {

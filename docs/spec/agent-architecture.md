@@ -241,11 +241,11 @@ Worked classification:
 - **Dream — policy is liftable.** Dream is a *faculty Neva owns* (it produces an
   artifact: memory), so its judgment (segment → distill) can become an editable
   skill, leaving only trigger + mechanism in the runtime. Dream currently keeps
-  its protected runtime-owned schedule and watermark boundary; ordinary
-  command-node schedules are retired and Issue/Recurring Issue triggers own
-  general scheduled agent work. The policy now lives in the private built-in
-  `memory-dream` skill; runtime code still owns triggering, evidence batching,
-  watermarking, restricted tool access, and reflective run metadata.
+  its protected runtime-owned schedule and watermark boundary; ordinary scheduled
+  agent work is owned by Issue/Recurring Issue triggers. The policy now lives in
+  the private built-in `memory-dream` skill; runtime code still owns triggering,
+  evidence batching, watermarking, restricted tool access, and reflective run
+  metadata.
 - **Compaction — the boundary marker; NOT skill-able.** Compaction is *substrate
   Neva runs on* (context management that lets a long run continue), not a faculty
   it owns. A skill is itself an agent run, so implementing compaction as a skill

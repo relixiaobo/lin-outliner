@@ -95,8 +95,8 @@ Not canonical:
   (`DateRecurrenceRule`, `parseDateRecurrenceRule`, `formatDateRecurrenceRule`):
   `src/core/dateFieldValue.ts`. The `single` value variant carries an optional
   `recurrence`; a `range` never does.
-- Recurring Issue materialization builds on the same date/recurrence primitives,
-  but command nodes do not carry schedules or recurrence state.
+- Recurring Issue materialization builds on the same date/recurrence primitives.
+  Outliner nodes do not carry execution schedules or recurrence state.
 - Search date matching: `src/core/searchEngine.ts` (matches on the anchor; a
   recurring value's later occurrences are not expanded for search).
 - Date field UI: `src/renderer/ui/outliner/DateValuePicker.tsx` — a date value is a

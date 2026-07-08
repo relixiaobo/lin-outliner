@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
+import { requestSendNodeReferenceToComposer } from '../../agent/agentReveal';
 import type { CommandResult, NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, ToolbarDropdownSection } from '../../state/document';
 import {
@@ -21,6 +22,7 @@ import {
   runSelectionMove,
 } from '../interactions/selectionBatchActions';
 import {
+  AgentIcon,
   CheckboxIcon,
   CopyIcon,
   DescriptionIcon,
@@ -330,6 +332,10 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     <>
       {item(tc.openInSplitPane, <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId, { newPane: true }))}
       {item(pinned ? tc.unpinNode : tc.pinNode, <PinIcon size={ICON_SIZE.menu} />, () => props.onTogglePin(props.openId))}
+      {item(tc.sendToComposer, <AgentIcon size={ICON_SIZE.menu} />, () => requestSendNodeReferenceToComposer({
+        nodeId: props.targetId,
+        title: textOf(target, t.common.untitled),
+      }))}
       {item(tc.duplicate({ prefix: activeLabelPrefix }), <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDuplicate({
         ids: activeDuplicateIds,
         panelRootId: actionPanelRootId,

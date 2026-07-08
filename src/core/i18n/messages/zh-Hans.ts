@@ -172,7 +172,7 @@ export const zhHans: PartialMessages = {
       dreamControlsGroup: 'Dream',
       dreamControlsAriaLabel: 'Dream 控制',
       dreamScheduleLabel: '定时',
-      dreamScheduleSublabel: '固定本地时间，使用与命令节点相同的日期定时格式。',
+      dreamScheduleSublabel: '固定本地时间，使用共享的日期定时格式。',
       dreamRunNowLabel: '立即运行 Dream',
       dreamRunNowSublabel: '手动把指定日期窗口整理到对应来源日期的记忆节点。定时 Dream 对同一到期最多重试 3 次。',
       dreamRunNowButton: '运行',
@@ -551,6 +551,7 @@ commandPalette: {
       moveTo: '移动到',
       moveNode: '移动节点',
       back: '返回',
+      sendToComposer: '发送到输入框',
       // `prefix` 携带批量选择标签（如“3 个节点 · ”）；单个节点时为空。
       duplicate: ({ prefix }: { prefix: string }) => `${prefix}复制`,
       moveUp: ({ prefix }: { prefix: string }) => `${prefix}上移`,
@@ -652,7 +653,6 @@ commandPalette: {
         image: '图片',
         attachment: '附件',
         command_palette: '命令面板',
-        command: '命令',
       },
       // 图片块工具栏 + 缺失状态。
       // 附件块工具栏 + 元数据标签。
@@ -708,11 +708,6 @@ commandPalette: {
         noOptions: '没有选项',
         create: ({ label }: { label: string }) => `创建“${label}”`,
         optionsListLabel: ({ name }: { name: string }) => `${name}选项`,
-      },
-      // Command node controls. Scheduling belongs to Issues / Recurring Issues;
-      // command nodes only expose a manual Run affordance.
-      command: {
-        runNow: '运行',
       },
     },
   },

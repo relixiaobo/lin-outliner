@@ -81,7 +81,6 @@ import {
   type Node,
   type AttachmentNode,
   type CodeBlockNode,
-  type CommandNode,
   type DefConfigNode,
   type DisplayFieldNode,
   type EmbedNode,
@@ -899,24 +898,6 @@ export class Core {
         throw CoreError.invalidOperation('node is not a code block');
       }
       setOptional(node, 'codeLanguage', normalizeCodeLanguage(codeLanguage));
-    });
-  }
-
-  // Convert a plain content row into a command node (its text content stays the
-  // brief). Command nodes are manual execution surfaces; scheduled work belongs
-  // to Issues and Recurring Issues.
-  setCommandNode(nodeId: string): CommandOutcome {
-    return this.mutate(() => {
-      const state = this.snapshot();
-      ensureNodeEditable(state, nodeId);
-      const node = clone(requiredNode(state, nodeId));
-      if (node.type !== undefined && node.type !== 'command') {
-        throw CoreError.invalidOperation('only plain content nodes can become command nodes');
-      }
-      const command: CommandNode = { ...node, type: 'command' } as CommandNode;
-      command.updatedAt = nowMs();
-      this.loro.writeNode(command);
-      return focus(nodeId);
     });
   }
 

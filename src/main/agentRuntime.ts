@@ -187,7 +187,6 @@ import {
   runContextPolicyFromContextMode,
   runProfileFromStartedRun,
 } from './agentRunProfiles';
-import { commandBriefText } from './commandNodeBrief';
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
@@ -429,9 +428,6 @@ interface DebugConversationContext {
 }
 const DREAM_SCHEDULER_INTERVAL_MS = 60_000;
 const ISSUE_SCHEDULER_INTERVAL_MS = 60_000;
-// How long each `status({wait})` poll blocks while waiting for a background-flagged
-// command Run to finish (it re-polls if the run is still going).
-const COMMAND_RUN_WAIT_MS = 600_000;
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -776,7 +772,6 @@ export class AgentRuntime {
   private dreamSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private issueSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private readonly firingIssueIds = new Set<string>();
-  private readonly firingCommandNodeIds = new Set<string>();
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentConversationState>;
   // Mutable: the primary agent (Neva) is user-customizable, so her display name and
@@ -3417,7 +3412,7 @@ export class AgentRuntime {
    * Settle in-flight best-effort writes so a force-exit on quit (see main.ts's
    * before-quit, which `app.exit`s after this) doesn't truncate them mid-write:
    * each conversation's event-log append (the integrity-critical fast local write),
-   * plus the dream-extraction and command-sweep tails. The latter two are
+   * plus the dream-extraction and issue-sweep tails. The latter two are
    * crash-safe — their watermarks only advance on success, so a cut dream/sweep
    * simply re-fires next launch — so the CALLER SHOULD bound this with a timeout;
    * a slow in-flight dream (an LLM call) must not block ⌘Q.
@@ -3532,100 +3527,6 @@ export class AgentRuntime {
 
   private issueConversationId(issueId: string): string {
     return `lin-agent-issue-${hashJson({ agentId: this.agentIdentity.agentId, issueId }).slice(0, 16)}`;
-  }
-
-  // One delivery conversation per command node — a stable id derived from the
-  // node id so every fire posts into a single thread (find-or-created on each
-  // fire; tolerant of the conversation being deleted).
-  private commandConversationId(nodeId: string): string {
-    return `lin-agent-command-${hashJson({ agentId: this.agentIdentity.agentId, nodeId }).slice(0, 16)}`;
-  }
-
-  // Ensure a command node's delivery conversation EXISTS ON DISK (a `conversation.created`
-  // titled from the brief) and return its id — without materializing an in-memory
-  // conversation. The renderer awaits this, then selects the conversation (which loads
-  // the single in-memory conversation via `restoreConversation`), then runs it. Doing
-  // the persist here instead of `ensureConversationWithId` is deliberate: creating an
-  // in-memory conversation here AND again on restore would `abort()` + recreate the
-  // conversation mid-flight, diverging the event seq ("seq N is not after existing M").
-  async ensureCommandConversation(nodeId: string): Promise<{ conversationId: string }> {
-    const node = this.outlinerToolHost.getProjection().nodes.find((entry) => entry.id === nodeId);
-    if (!node || node.type !== 'command') throw new Error('Not a command node.');
-    const conversationId = this.commandConversationId(nodeId);
-    // Already live (a prior run/restore) — nothing to persist; restore will reuse it.
-    if (!this.conversations.has(conversationId)) {
-      const loaded = await this.loadEventState(conversationId);
-      if (!loaded.conversation) {
-        const title = commandConversationTitle(node.content.text);
-        const eventState = createEmptyAgentEventReplayState();
-        const events = this.buildEvents(eventState, conversationId, [{
-          type: 'conversation.created',
-          actor: systemActor(),
-          title,
-          members: this.defaultConversationMembers(),
-          goal: title,
-        }]);
-        await this.getEventStore().appendEvents(conversationId, events);
-        this.publishPersistedEvents(conversationId, events);
-      }
-    }
-    return { conversationId: conversationId };
-  }
-
-  // Run now (attended): the same execution path with a `node` trigger and NO
-  // scheduled trigger. Returns the delivery conversation so the caller can
-  // surface it.
-  async runCommandNow(nodeId: string): Promise<{ conversationId: string }> {
-    const projection = this.outlinerToolHost.getProjection();
-    const node = projection.nodes.find((entry) => entry.id === nodeId);
-    if (!node || node.type !== 'command') throw new Error('Not a command node.');
-    const conversationId = this.commandConversationId(nodeId);
-    // If another Run-now for this node is already in flight, surface the
-    // existing delivery conversation instead of starting a colliding second run.
-    if (this.firingCommandNodeIds.has(nodeId)) {
-      return { conversationId: conversationId };
-    }
-    // Build the command brief: title + non-field child outline, with inline
-    // references reconstructed (see `commandBriefText`).
-    const byId = new Map(projection.nodes.map((entry) => [entry.id, entry]));
-    const brief = commandBriefText(node, byId).trim();
-    if (!brief) throw new Error('This command has no brief to run.');
-    this.firingCommandNodeIds.add(nodeId);
-    try {
-      await this.runCommandChildAgent(conversationId, brief);
-      return { conversationId: conversationId };
-    } finally {
-      this.firingCommandNodeIds.delete(nodeId);
-    }
-  }
-
-  // Manual command execution: run the command title plus its non-field child
-  // outline as a delegated Run anchored to the command's own delivery
-  // conversation.
-  private async runCommandChildAgent(
-    conversationId: string,
-    brief: string,
-  ): Promise<void> {
-    const conversation = await this.ensureConversationWithId(conversationId, commandConversationTitle(brief));
-    await this.refreshRuntimeSettings(conversation);
-    let data = await conversation.delegationRuntime.invokeAgent({
-      description: commandConversationTitle(brief),
-      objective: brief,
-      runPrompt: brief,
-      verify: false,
-    });
-    // Attended command Runs await completion, but an agent definition flagged
-    // `background: true` launches detached regardless — poll to completion so the
-    // watermark only ever advances on a finished run.
-    while (data.status === 'async_launched' || data.status === 'queued' || data.status === 'running') {
-      data = await conversation.delegationRuntime.status({
-        runId: data.runId,
-        wait: true,
-        timeout_ms: COMMAND_RUN_WAIT_MS,
-      });
-    }
-    if (data.status === 'failed' || data.error) throw new Error(data.error || 'The command run failed.');
-    if (data.status === 'cancelled') throw new Error('The command run was stopped before completing.');
   }
 
   private queueScheduledDream(now: Date) {
@@ -8983,12 +8884,12 @@ function rendererProjectionEventFromDomain(event: RendererProjectionDomainEvent)
   };
 }
 
-// A command's delivery conversation is titled from the first non-empty line of
-// its brief (capped) so it reads sensibly in the conversation history instead of
-// "Untitled". Falls back to a generic label for an empty brief.
-function commandConversationTitle(brief: string): string {
-  const firstLine = brief.split('\n').map((line) => line.trim()).find((line) => line.length > 0);
-  if (!firstLine) return 'Command';
+// Agent Session child executions are titled from the first non-empty line of the
+// Issue title so they read sensibly in debug/history surfaces. Falls back to a
+// generic label for an empty title.
+function shortExecutionTitle(text: string): string {
+  const firstLine = text.split('\n').map((line) => line.trim()).find((line) => line.length > 0);
+  if (!firstLine) return 'Untitled';
   return firstLine.length > 60 ? `${firstLine.slice(0, 59)}…` : firstLine;
 }
 
@@ -9011,7 +8912,7 @@ function agentSessionDelegationInput(
   const criteria = agentSessionCriteria(session.issueSnapshot.completionCriteria);
   const scope = agentSessionRunScope(session);
   return {
-    description: commandConversationTitle(session.issueSnapshot.title),
+    description: shortExecutionTitle(session.issueSnapshot.title),
     objective: agentSessionObjective(session, startInput),
     criteria,
     verify: false,

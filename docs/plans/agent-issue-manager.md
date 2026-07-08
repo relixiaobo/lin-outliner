@@ -21,9 +21,8 @@ UI Views -> filters over Issues, Recurring Issues, Agent Sessions, and Activity
 There must not be separate internal and external names for the same concept. If
 the user sees an Agent Session, the protocol and code should also call it an
 Agent Session, not an Attempt or Run. If the user sees Activity, the stored event
-should also be Activity, not a hidden logbook entry. Legacy Run and command-node
-terms can appear only when describing current implementation debt that this plan
-retires.
+should also be Activity, not a hidden logbook entry. Legacy execution terms can
+appear only when describing current implementation debt that this plan retires.
 
 The outliner remains a content surface: notes, nodes, tags, daily reports,
 references, and user-authored structure. Issues may reference outliner content
@@ -52,7 +51,7 @@ Product direction:
 - Do not add a first-class Project object in V1. It creates a hard model choice
   for agents and users, while parent Issues with sub-issues cover the current
   product need.
-- Do not make Runs, command nodes, GTD tasks, or chat jobs the durable work
+- Do not make Runs, outliner nodes, GTD tasks, or chat jobs the durable work
   object.
 - Let agents manage Issues using the same concepts humans see.
 - Keep the agent tool surface small. Good tools are high-level, structured,
@@ -68,17 +67,17 @@ Linear references used for the concept model:
 
 Current code reality:
 
-- Command-node schedules and node watermarks exist today, but they are
-  implementation debt.
+- Node-owned schedules and watermarks exist today, but they are implementation
+  debt.
 - The current Runs surface lists execution records. It does not yet expose a
   first-class Issue, Recurring Issue, Agent Session, or Activity model.
-- Some scheduled command executions can appear live indefinitely when delegated
+- Some legacy scheduled executions can appear live indefinitely when delegated
   execution does not terminalize. The replacement model must make every Agent
   Session reach a visible terminal or waiting state.
 
 Assumptions:
 
-- V1 can replace the old scheduled-command mechanism without migration because
+- V1 can replace the old node-scheduled mechanism without migration because
   the product is pre-release.
 - One implicit local workspace is enough. It does not need a first-class V1 UI
   or tool surface.
@@ -99,16 +98,15 @@ Assumptions:
 - No full Linear clone: no V1 Teams, Initiatives, Cycles, Project Updates,
   Project Documents, custom workflows, or multi-user permissions.
 - No GPT-style scheduled chat list.
-- No command-node scheduled-routine redesign. Command nodes may later remain as
-  manual prompt nodes or be retired, but they are not the source of truth for
-  agent work.
+- No node-native prompt or scheduled-routine mode. Outliner nodes are content and
+  context only; they are not the source of truth for agent work.
 - No workflow DSL, branch graph, or external cron service.
 - No V1 labels, priorities, assignees, or public identifiers. These are useful
   in collaborative issue trackers, but they are not necessary for the current
   local agent-work model.
 - No hidden unattended automation. Agents can draft or propose work, but
   unattended execution requires a confirmed Issue or Recurring Issue scope.
-- No migration or back-compat reader for old command schedule watermarks.
+- No migration or back-compat reader for old node-schedule watermarks.
 
 ## Objective, Constraints, And Options
 
@@ -123,7 +121,7 @@ Assumptions:
   Recurring Issue, Agent Session, and Activity. Treat hierarchy, triggers,
   completion criteria, due dates, input, output, and permissions as fields.
 - **Selected target:** The clean-slate answer is also the brownfield target. The
-  old command scheduled-routine implementation is replaced because preserving it
+  old node-scheduled routine implementation is replaced because preserving it
   keeps the wrong source-of-truth boundary.
 
 ### Constraints
@@ -142,7 +140,7 @@ Assumptions:
   recurrence, session state, and activity history live in the Issue system.
 - **CON-6 hard:** Agent-facing tools must be few enough for the model to choose
   correctly. Prefer fewer structured tools over many object-specific CRUD tools.
-- **CON-7 legacy:** Current code has command-node schedules, watermarks, and Run
+- **CON-7 legacy:** Current code has node-owned schedules, watermarks, and Run
   records. These names are not target concepts.
 
 ### Options
@@ -212,9 +210,8 @@ Assumptions:
   request start, read status, send guidance, or request stop, but they cannot
   mark a Session complete/error/stale/canceled or append arbitrary Session
   records.
-- **DEC-16:** Legacy Run and command-schedule names must not appear in new
-  public contracts. They may remain only inside deletion/refactor notes until
-  removed.
+- **DEC-16:** Legacy Run and node-schedule names must not appear in new public
+  contracts. They may remain only inside deletion/refactor notes until removed.
 - **DEC-17:** Issue hierarchy is represented by parent/sub-issue fields on
   Issues, following Linear's model. Agent Sessions do not own hidden sub-run or
   sub-job trees.
@@ -1037,8 +1034,8 @@ ambiguous.
   Issue discovery, Issue inspection, Issue creation, Issue update, Session
   start, Session read, Session messaging, and Session stop. It must not expose
   one CRUD family for every object, field, or sub-object.
-- **FR-20:** Old command-node schedule fields and watermark commands must not
-  drive new scheduled behavior.
+- **FR-20:** Old node-owned schedule fields and watermark commands must not drive
+  new scheduled behavior.
 - **FR-21:** Users and agents can continue interrupted work without mutating
   terminal Agent Session history: non-terminal recovery happens in place only
   when valid, and terminal continuation creates a linked new Agent Session.
@@ -1483,10 +1480,10 @@ Issue / Agent Session work management:
   `agent_session_send_message`, `agent_session_stop`.
 
 Direct delegated-Run tools are not retained as compatibility tools. Runtime keeps
-an internal delegation executor for Agent Sessions, isolated skills, and manual
-command-node Run Now, but the model-facing surface is Issue / Agent Session. The
-command-node schedule and watermark protocol is deleted; `agent_run_command_now`
-remains only as the attended manual command runner.
+an internal delegation executor for Agent Sessions and isolated skills, but the
+model-facing surface is Issue / Agent Session. The old node-owned schedule,
+watermark, and attended node-run protocols are deleted; execution starts from
+Issue triggers or explicit Agent Session control.
 
 ### Common Result Shape
 
@@ -2220,7 +2217,7 @@ Expected file areas:
   activity emission, scheduler materialization, and recovery.
 - `src/main/commandScheduler.ts` is deleted, and `src/core/core.ts`,
   `src/core/types.ts`, `src/core/systemFields.ts`, and
-  `src/main/documentService.ts` retire command-node schedule ownership.
+  `src/main/documentService.ts` retire node-owned schedule ownership.
 - `src/renderer/ui/agent/AgentRunsPanel.tsx` and related components to replace
   Run-first UI with Issue, Agent Session, and Activity views.
 - `src/core/i18n/messages/en.ts` and `src/core/i18n/messages/zh-Hans.ts` for
@@ -2233,7 +2230,7 @@ Expected file areas:
 
 - **AC-1:** A user can ask the agent to create a recurring daily news summary
   and the agent creates a Recurring Issue draft, not a Task, Run, Project, or
-  command node.
+  outliner node.
 - **AC-2:** Until the Recurring Issue is confirmed, no unattended Agent Session
   can be created from it.
 - **AC-3:** A due Recurring Issue creates a concrete Issue and then an Agent
@@ -2288,7 +2285,7 @@ Expected file areas:
   `continuation` intent.
 - **AC-24:** For each scenario in the Real Usage Scenario Matrix, the agent can
   choose a primary tool path without needing hidden objects, UI View names,
-  command nodes, or legacy Run concepts.
+  node-execution concepts, or legacy Run concepts.
 - **AC-25:** A verifier is represented as a normal Agent Session selected by
   `verificationPolicy`; its verdict is Activity/evidence, and no
   `verification_*` model-facing tool is required to complete an Issue.

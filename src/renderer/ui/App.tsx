@@ -29,7 +29,7 @@ import { buildAgentUserViewContext, insertionTargetFor } from './agent/userViewC
 import { createAssetNode } from './interactions/attachmentIngest';
 import { onInsertFileIntoOutlinerRequest } from '../agent/agentFileInsert';
 import { ingestPreviewTargetToAsset, onAddPreviewTargetToOutlineRequest } from './preview/previewIngest';
-import { onAgentRevealRequest } from '../agent/agentReveal';
+import { onAgentComposerNodeReferenceRequest, onAgentRevealRequest } from '../agent/agentReveal';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { useResizableLayout } from './useResizableLayout';
 import { useSelectionDismissal } from './useSelectionDismissal';
@@ -220,10 +220,11 @@ export function App() {
     agentOpenRef.current = nextOpen;
     setAgentOpen(nextOpen);
   }, [prepareAgentOpen]);
-  // A content row (e.g. a command node's Run button) can ask to surface the agent
-  // panel on its delivery conversation. Reveals are layout no-ops while the rail is
-  // already open; only the collapsed -> open transition preflows rail width.
+  // Deep content rows can ask to surface the agent panel without prop-drilling
+  // App-local rail state. Reveals are layout no-ops while the rail is already
+  // open; only the collapsed -> open transition preflows rail width.
   useEffect(() => onAgentRevealRequest(() => openAgentRail()), [openAgentRail]);
+  useEffect(() => onAgentComposerNodeReferenceRequest(() => openAgentRail()), [openAgentRail]);
 
   useDragSelection({ rootId, index, ui, setUi });
 

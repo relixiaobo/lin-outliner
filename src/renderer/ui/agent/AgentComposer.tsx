@@ -19,6 +19,7 @@ import {
 } from '../../../core/agentAttachmentLimits';
 import { sanitizeFileReferenceRef } from '../../../core/referenceMarkup';
 import { agentMentionToken } from '../../../core/agentChannel';
+import { onAgentComposerNodeReferenceRequest } from '../../agent/agentReveal';
 import type {
   AgentProviderSettingsView,
   AgentSlashCommandView,
@@ -233,6 +234,15 @@ export function AgentComposer({
     const frame = window.requestAnimationFrame(() => editorRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [focusToken, pendingApproval, pendingUserQuestion]);
+  useEffect(() => onAgentComposerNodeReferenceRequest((request) => {
+    if (!index.byId.has(request.nodeId)) return;
+    window.requestAnimationFrame(() => {
+      editorRef.current?.insertNodeReference({
+        nodeId: request.nodeId,
+        title: request.title,
+      });
+    });
+  }), [index.byId]);
   const hasAttachments = attachments.length > 0;
   const activeProvider = settings ? resolveUsableActiveProvider(settings) ?? null : null;
   // No usable provider once settings have LOADED → block send and explain why.

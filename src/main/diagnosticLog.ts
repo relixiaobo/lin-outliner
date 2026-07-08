@@ -28,7 +28,6 @@ const ALLOWED_CONTEXT_KEYS = new Set([
   'backoffMs',
   'code',
   'column',
-  'commandNodeId',
   'conversationId',
   'count',
   'currentVersion',

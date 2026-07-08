@@ -8,6 +8,7 @@ import {
   emitDocumentEvent,
   ids,
   openMockedApp,
+  row,
   rowEditor,
   setAgentMessageContextMenuAction,
 } from './outlinerMock';
@@ -135,6 +136,27 @@ test.describe('agent composer controls', () => {
     await page.getByTitle('Expand agent').click();
     await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
     await expect(composer).toBeFocused();
+  });
+
+  test('sends an outliner node to composer as context only', async ({ page }) => {
+    await row(page, ids.alpha).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Send to composer' }).click();
+
+    const input = page.getByLabel('Agent message');
+    await expect(page.locator('[data-agent-node-ref="node-alpha"]')).toBeVisible();
+    await expect(input).toContainText('Alpha');
+    await page.keyboard.type('summarize this');
+    await page.getByRole('button', { name: 'Send message' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_send_message')?.args;
+    }).toMatchObject({
+      message: '[[node:Alpha^node-alpha]] summarize this',
+      userViewContext: {
+        referencedNodes: [{ nodeId: 'node-alpha', title: 'Alpha' }],
+      },
+    });
   });
 
   test('resolving a pending question after dock reopen does not steal focus into the composer', async ({ page }) => {

@@ -88,8 +88,8 @@ const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'embedId',
   'sourceUrl',
   'aiSummary',
-  // user-only-writable field keys (e.g. a command node's schedule); a string[]
-  // that round-trips through the generic clone path (same as `capture`).
+  // User-only-writable field keys; a string[] that round-trips through the
+  // generic clone path (same as `capture`).
   'protectedFields',
   // Typed launcher-capture sidecar. A JSON-compatible object persists as a node
   // scalar via the generic writeNodeData/clone path (same as filterValues), and

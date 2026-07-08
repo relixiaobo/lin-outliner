@@ -2648,10 +2648,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         args.attachments,
         args.userViewContext,
       );
-    case 'agent_run_command_now':
-      return agentRuntime.runCommandNow(String(args.nodeId));
-    case 'agent_ensure_command_conversation':
-      return agentRuntime.ensureCommandConversation(String(args.nodeId));
     case 'agent_edit_message':
       return agentRuntime.editMessage(
         conversationId(),
@@ -2870,8 +2866,7 @@ if (!app.requestSingleInstanceLock()) {
     configureSessionSecurity();
     registerIpc();
     createWindow();
-    // Anacron catch-up on system wake belongs to Issue triggers. Legacy
-    // command-node schedules no longer auto-fire.
+    // Anacron catch-up on system wake belongs to Issue triggers.
     powerMonitor.on('resume', () => {
       agentRuntime.runIssueCatchUp();
     });

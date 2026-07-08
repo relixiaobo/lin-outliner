@@ -89,7 +89,7 @@ describe('DiagnosticLogStore', () => {
         severity: 'error',
         code: `command-${index}`,
         message: `Command failed ${index}`,
-        context: { commandNodeId: `node-${index}` },
+        context: { nodeId: `node-${index}` },
       });
     }
 

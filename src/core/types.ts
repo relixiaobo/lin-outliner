@@ -56,8 +56,7 @@ export type NodeType =
   | 'filterRule'
   | 'displayField'
   | 'search'
-  | 'queryCondition'
-  | 'command';
+  | 'queryCondition';
 
 export type FieldType =
   | 'plain'
@@ -494,15 +493,6 @@ export interface QueryParams {
 }
 export interface SearchNode extends NodeBase, QueryParams { type: 'search'; }
 export interface QueryConditionNode extends NodeBase, QueryParams { type: 'queryCondition'; }
-/**
- * A `command` node's text content (`NodeBase.content`) is a natural-language
- * brief the agent executes end-to-end — the prose is the program, so there is no
- * separate brief property. Command nodes are manual execution surfaces; durable
- * scheduled work is represented by Issues and Recurring Issues.
- */
-export interface CommandNode extends NodeBase {
-  type: 'command';
-}
 
 export type Node =
   | ContentNode
@@ -521,8 +511,7 @@ export type Node =
   | FilterRuleNode
   | DisplayFieldNode
   | SearchNode
-  | QueryConditionNode
-  | CommandNode;
+  | QueryConditionNode;
 
 export interface DocumentState {
   schemaVersion: number;

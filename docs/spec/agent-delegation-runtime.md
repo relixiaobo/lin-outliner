@@ -41,9 +41,6 @@ Allowed runtime entry points:
   control contract.
 - Isolated skills use the internal executor to run skill content in a sidechain
   worker and return the final result to the parent skill invocation.
-- Manual command nodes can run their node brief through the same executor. This
-  path is attended and manual-only; scheduled work belongs to Issues and
-  Recurring Issues.
 
 Not allowed:
 
@@ -51,7 +48,7 @@ Not allowed:
 - A model-facing tool that directly reads, messages, amends, or stops an
   internal delegated worker.
 - Compatibility profiles that re-enable retired delegated-run tools.
-- Command-node schedule or watermark protocols.
+- Node-owned schedule, execution, or watermark protocols.
 
 ## Execution Model
 
@@ -63,7 +60,7 @@ An internal delegated worker has:
 - optional verifier workers;
 - optional child workers created by runtime policy, not by a public tool family;
 - terminal notification and Activity synchronization through the owning Agent
-  Session or command conversation.
+  Session.
 
 The executor supports three context modes:
 
@@ -124,16 +121,6 @@ Verification remains an execution policy, not a separate model-facing tool.
 
 The skill surface does not require, describe, or expose direct delegated-run
 tools.
-
-## Manual Command Nodes
-
-Command nodes are a manual document affordance. The command title and non-field
-child outline become the brief for one attended execution in the command's
-delivery conversation.
-
-Command nodes do not store schedules, recurrence rules, last-run timestamps, or
-last-attempt timestamps. Recurring or scheduled automation must be represented
-as Issues / Recurring Issues.
 
 ## Debug Surfaces
 

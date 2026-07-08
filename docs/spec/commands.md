@@ -113,53 +113,17 @@ toggles the owner node's done state.
 `create_search_node`, `set_search_node`, `set_search_query_outline`,
 `refresh_search_node_results`.
 
-### Document — command nodes
-`set_command_node`.
+### Document — composer references
 
-A `command` node is **node-native** and manual-only: its text content is a
-natural-language brief, and its body (the non-field child outline) is prompt
-detail. Durable scheduled work is represented as an Issue with a scheduled
-trigger or as a Recurring Issue that materializes concrete Issues. Command nodes
-do not carry schedule fields, fire watermarks, or unattended execution state.
+Sending an outliner node to the agent composer is a renderer-only draft action.
+It inserts the node as a structured composer reference, equivalent to an
+`@node` mention, and does not mutate the document, create an Issue, or start
+execution.
 
-- `set_command_node(nodeId)` converts a plain content row into a `command` node
-  (brief stays in the node's content). Idempotent. Drafting a command is allowed
-  from any origin.
-
-`agent_run_command_now(nodeId)` (agent command) runs the brief attended, right
-now. It coordinates through a shared in-flight guard — if a run for the same node
-is already running it returns the existing conversation rather than colliding.
-Returns the delivery `conversationId`.
-
-`agent_ensure_command_conversation(nodeId)` ensures the command's delivery
-conversation exists (creating an empty one titled from the brief if needed) and
-returns its id **without running**. The renderer calls this before
-`agent_run_command_now` so it can reveal/select the conversation up front and then
-watch the run stream in live — selecting a not-yet-created conversation would
-throw.
-
-Entry points (renderer): the `/command` slash command converts the current row
-into a command node. A command node is **node-native** — it carries a command
-glyph instead of a bullet (`RowMarker` `command` variant) and is always shown
-expanded so its prompt steps stay visible (`isRowExpanded`). The inline-edited
-row text is the title/brief; any non-field child nodes are serialized as the
-prompt outline.
-
-**Run lives on the title.** A labelled **Run** button (`CommandRunButton` — a
-text action button with a background, aligned with the title like the inline Done
-checkbox) sits at the start of the command title;
-`useCommandRun` drives the attended run: ensure the delivery conversation
-(`agent_ensure_command_conversation`), reveal the agent panel on it (without
-auto-opening Work — that was abrupt), then run it
-(`agent_run_command_now`), so the run streams through the delivery conversation
-and can be inspected from run-source detail references. While the run is in
-flight the **command bullet glyph becomes a spinner** (`RowMarker` `processing`
-→ `.is-processing`) — that is the *only* running indicator; the Run button never
-reflects running/failed state (a `runningRef` in the hook just guards against a
-double-trigger).
-
-Command nodes do not have schedule, recurrence, last-run, or last-attempt fields.
-Scheduled and recurring automation belongs to Issues and Recurring Issues.
+The composer remains the intent surface. If the user or agent wants work to
+exist durably, the agent creates or updates an Issue or Recurring Issue through
+the agent work tools. If execution should start, an Agent Session starts from the
+Issue trigger or from an explicit `agent_session_start` call.
 
 ### Document — history
 `undo`, `redo`.
@@ -262,9 +226,9 @@ pre-release child-run command aliases are not accepted.
 - Origins are tagged on the underlying Loro transaction (`user:`, `agent:`,
   `system:`) so the scoped `UndoManager` can separate user undo from agent
   undo. See `src/core/loroDocument.ts`.
-- `NodeType` reserves `command` for manual command nodes. Command nodes carry no
-  schedule or execution watermark scalar; scheduling is owned by Issue /
-  Recurring Issue runtime state.
+- `NodeType` is content-oriented. It does not include a work/execution node type;
+  scheduling and execution are owned by Issue / Recurring Issue / Agent Session
+  runtime state.
 - When adding or renaming a command, update `DOCUMENT_COMMANDS` or
   `AGENT_COMMANDS` and the matching dispatcher in `src/main/documentService.ts`
   (and `src/main/agentRuntime.ts` for agent commands). Update this category

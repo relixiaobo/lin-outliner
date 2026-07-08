@@ -75,8 +75,8 @@ surface.
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
 The internal delegation executor is not a tool family. It backs Agent Sessions,
-isolated skills, and manual command-node Run Now, but agents control work
-through Issue / Agent Session tools only.
+and isolated skills, but agents control work through Issue / Agent Session tools
+only.
 
 ### Agent Issue Manager Contract Checkpoint
 

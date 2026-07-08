@@ -28,7 +28,6 @@ export const ids = {
   alpha: 'node-alpha',
   beta: 'node-beta',
   gamma: 'node-gamma',
-  commandNode: 'node-command',
 } as const;
 
 interface MockFixtureOptions {
@@ -39,8 +38,6 @@ interface MockFixtureOptions {
   oauthProvider?: boolean;
   /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
   noProvider?: boolean;
-  /** Adds a manual `command` node under today for the command-node specs. */
-  commandNode?: boolean;
   /** Preloads remembered permission grants for settings/security specs. */
   permissionGrants?: string[];
   /** Preloads user blocklist rules for settings/security specs. */
@@ -1558,12 +1555,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.alpha, 'Alpha', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.beta, 'Beta', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.gamma, 'Gamma', { parentId: ids.today, completedAt: 0 });
-    if (options.commandNode) {
-      makeNode(ids.commandNode, 'Summarize my unread feeds and post the highlights', {
-        type: 'command',
-        parentId: ids.today,
-      });
-    }
     appendChild(ids.workspace, ids.root);
     for (const childId of [ids.daily, ids.library, ids.schema, ids.searches, ids.trash]) appendChild(ids.root, childId);
 	    appendChild(ids.searches, ids.recents);
@@ -1586,9 +1577,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     if (options.dateField) appendChild(ids.today, ids.dueEntry);
     if (options.referenceField) appendChild(ids.today, ids.referencesEntry);
     for (const childId of [ids.alpha, ids.beta, ids.gamma]) appendChild(ids.today, childId);
-    if (options.commandNode) {
-      appendChild(ids.today, ids.commandNode);
-    }
 
     Object.defineProperty(navigator, 'clipboard', {
       value: {
@@ -3220,14 +3208,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           || cmd === 'redo'
         ) {
           return clone(outcome());
-        }
-        if (cmd === 'set_command_node') {
-          const node = nodes.get(String(args.nodeId));
-          if (node) {
-            node.type = 'command';
-            // Seed the node-native Schedule config row if absent — find-or-create,
-          }
-          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
         }
         throw new Error(`Unhandled mock invoke: ${cmd}`);
       },

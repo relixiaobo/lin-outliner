@@ -269,16 +269,12 @@ export function useUiState() {
   });
 }
 
-// Whether a row renders its children. A command node is always shown expanded —
-// its config (the Schedule / Agent field rows) and prompt steps are intrinsic to
-// what it is, so they stay visible the way the old controls card always did,
-// independent of the persisted `expanded` set.
 export function isRowExpanded(
   nodeId: NodeId,
-  byId: Map<NodeId, NodeProjection>,
+  _byId: Map<NodeId, NodeProjection>,
   expanded: Set<NodeId>,
 ): boolean {
-  return expanded.has(nodeId) || byId.get(nodeId)?.type === 'command';
+  return expanded.has(nodeId);
 }
 
 export function flattenVisibleRows(

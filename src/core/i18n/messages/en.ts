@@ -201,7 +201,7 @@ export const en = {
       dreamControlsGroup: 'Dream',
       dreamControlsAriaLabel: 'Dream controls',
       dreamScheduleLabel: 'Schedule',
-      dreamScheduleSublabel: 'Fixed local-time schedule using the same date schedule format as command nodes.',
+      dreamScheduleSublabel: 'Fixed local-time schedule using the shared date schedule format.',
       dreamRunNowLabel: 'Run Dream now',
       dreamRunNowSublabel: 'Manually consolidate a date window into its source-date memory nodes. Scheduled Dream retries a due up to three times.',
       dreamRunNowButton: 'Run',
@@ -604,6 +604,7 @@ commandPalette: {
       moveTo: 'Move to',
       moveNode: 'Move node',
       back: 'Back',
+      sendToComposer: 'Send to composer',
       // `prefix` carries the batch-selection label (e.g. "3 nodes · "); empty for
       // a single node.
       duplicate: ({ prefix }: { prefix: string }) => `${prefix}Duplicate`,
@@ -709,7 +710,6 @@ commandPalette: {
         image: 'Image',
         attachment: 'Attachment',
         command_palette: 'Command palette',
-        command: 'Command',
       },
       // Image block toolbar + missing state.
       // Attachment block toolbar + metadata labels.
@@ -766,11 +766,6 @@ commandPalette: {
         noOptions: 'No options',
         create: ({ label }: { label: string }) => `Create "${label}"`,
         optionsListLabel: ({ name }: { name: string }) => `${name} options`,
-      },
-      // Command node controls. Scheduling belongs to Issues / Recurring Issues;
-      // command nodes only expose a manual Run affordance.
-      command: {
-        runNow: 'Run',
       },
     },
   },
