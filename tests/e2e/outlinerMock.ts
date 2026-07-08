@@ -1887,6 +1887,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const targets = Array.isArray(args.targets) ? new Set(args.targets.map(String)) : null;
           const filter = args.filter && typeof args.filter === 'object' ? args.filter as Record<string, unknown> : {};
           const statusCategories = Array.isArray(filter.statusCategories) ? new Set(filter.statusCategories.map(String)) : null;
+          const parentIssueIds = Array.isArray(filter.parentIssueIds) ? new Set(filter.parentIssueIds.map(String)) : null;
           const rows = agentIssueRows.filter((row) => {
             if (!row || typeof row !== 'object') return false;
             const record = row as Record<string, unknown>;
@@ -1894,6 +1895,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             if (targets && !targets.has(String(target.type))) return false;
             if (filter.hasActiveSession === true && record.hasActiveSession !== true) return false;
             if (filter.hasActiveSession === false && record.hasActiveSession === true) return false;
+            if (filter.hasSubIssues !== undefined) {
+              const summary = record.subIssuesSummary && typeof record.subIssuesSummary === 'object'
+                ? record.subIssuesSummary as Record<string, unknown>
+                : null;
+              const hasSubIssues = Number(summary?.total ?? 0) > 0;
+              if (hasSubIssues !== Boolean(filter.hasSubIssues)) return false;
+            }
+            if (parentIssueIds && !parentIssueIds.has(String(record.parentIssueId ?? ''))) return false;
             if (filter.archived === false && record.archived === true) return false;
             if (statusCategories) {
               const buckets = [

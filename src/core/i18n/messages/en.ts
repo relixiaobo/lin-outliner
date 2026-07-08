@@ -1304,6 +1304,7 @@ commandPalette: {
         noNextRun: 'no next run',
         paused: 'paused',
         scheduled: 'Scheduled',
+        subIssueProgress: ({ completed, total }: { completed: number; total: number }) => `Sub-issues ${completed}/${total}`,
         today: 'Today',
       },
       triggerManual: 'Manual',

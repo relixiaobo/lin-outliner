@@ -1007,17 +1007,26 @@ function triggerSortTime(issue: AgentIssue): number {
   return issue.trigger.type === 'scheduled' ? issue.trigger.startAt : issue.createdAt;
 }
 
+function issueScheduledAt(issue: AgentIssue): number | undefined {
+  if (issue.trigger.type === 'scheduled') return issue.trigger.startAt;
+  return issue.dueDate?.targetAt;
+}
+
 function issueRow(issue: AgentIssue, state: AgentIssueStoreState, input: IssueSearchInput): IssueSearchRow {
   const activity = input.include?.includes('activity-summary')
     ? sortActivityDescending(issueActivity(state, issue))
     : undefined;
   const latestSession = latestSessionForIssue(issue, state);
+  const subIssuesSummary = input.include?.includes('sub-issues-summary')
+    ? issueSubIssuesSummary(issue, state)
+    : undefined;
   return {
     target: { type: 'issue', id: issue.id },
     title: issue.title,
     status: issue.status.name,
     statusCategory: issue.status.category,
     viewBuckets: issueViewBuckets(issue, state),
+    ...(issue.parentIssueId ? { parentIssueId: issue.parentIssueId } : {}),
     trigger: issue.trigger,
     ...(issue.dueDate ? { dueDate: issue.dueDate } : {}),
     hasActiveSession: issueHasActiveSession(issue, state),
@@ -1029,6 +1038,41 @@ function issueRow(issue: AgentIssue, state: AgentIssueStoreState, input: IssueSe
     revision: issue.revision,
     updatedAt: issue.updatedAt,
     ...(activity ? { latestActivity: activity[0], activityCount: activity.length } : {}),
+    ...(subIssuesSummary ? { subIssuesSummary } : {}),
+  };
+}
+
+function issueSubIssuesSummary(issue: AgentIssue, state: AgentIssueStoreState): IssueSearchRow['subIssuesSummary'] {
+  const subIssues = issue.subIssueIds
+    .map((id) => state.issues[id])
+    .filter((entry): entry is AgentIssue => Boolean(entry));
+  if (subIssues.length === 0) return undefined;
+  let completed = 0;
+  let active = 0;
+  let needsAttention = 0;
+  let latestUpdatedAt: number | undefined;
+  let nextScheduledAt: number | undefined;
+  for (const subIssue of subIssues) {
+    if (subIssue.status.category === 'completed') completed += 1;
+    if (issueHasActiveSession(subIssue, state)) active += 1;
+    if (issueNeedsAttention(subIssue, state)) needsAttention += 1;
+    latestUpdatedAt = latestUpdatedAt === undefined
+      ? subIssue.updatedAt
+      : Math.max(latestUpdatedAt, subIssue.updatedAt);
+    const scheduledAt = issueScheduledAt(subIssue);
+    if (scheduledAt !== undefined) {
+      nextScheduledAt = nextScheduledAt === undefined
+        ? scheduledAt
+        : Math.min(nextScheduledAt, scheduledAt);
+    }
+  }
+  return {
+    total: subIssues.length,
+    completed,
+    active,
+    needsAttention,
+    ...(latestUpdatedAt !== undefined ? { latestUpdatedAt } : {}),
+    ...(nextScheduledAt !== undefined ? { nextScheduledAt } : {}),
   };
 }
 

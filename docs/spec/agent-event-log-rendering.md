@@ -1020,14 +1020,20 @@ Rules:
   running, due, repeating-today, and done-today work. Upcoming owns future
   schedules and repeating rules. Logbook owns terminal concrete Issues.
 
-  The first-level Work rows are Issues or Recurring Issues. Each row shows a
-  concept/status marker, title, and one context-sensitive meta line. The meta
-  line avoids repeating the current section: an Upcoming recurring row can show
-  `8:00 AM · Daily`, while a Today completed row can show only the completion
-  recency. Active Agent Session count is derived from Issue search filters and
-  appears only as Work button/status chrome, not as a Run count. Dream remains
-  excluded from this ordinary Work surface and stays in Settings -> Agent
-  "Memory & activity".
+  The first-level Work rows are top-level Issues or Recurring Issues. Concrete
+  Issues with `parentIssueId` are sub-issues: they do not appear as independent
+  first-level rows in Inbox, Today, Upcoming, or Logbook. Their state rolls up
+  into the parent row through `subIssuesSummary`, so the parent can appear in
+  Running, Needs Attention, Today, or Upcoming when a child is active, blocked,
+  updated today, or scheduled. The parent row's meta line can show compact
+  progress such as `Sub-issues 1/3` instead of listing each child outside its
+  parent. Each row shows a concept/status marker, title, and one
+  context-sensitive meta line. The meta line avoids repeating the current
+  section: an Upcoming recurring row can show `8:00 AM · Daily`, while a Today
+  completed row can show only the completion recency. Active Agent Session count
+  is derived from Issue search filters and appears only as Work button/status
+  chrome, not as a Run count. Dream remains excluded from this ordinary Work
+  surface and stays in Settings -> Agent "Memory & activity".
 
   Opening a Work row overlays an Issue detail drawer on the list. The drawer
   reads `agent_issue_read` and shows the durable work definition as a compact

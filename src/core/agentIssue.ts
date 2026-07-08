@@ -589,6 +589,7 @@ export interface IssueSearchRow {
   status: string;
   statusCategory?: IssueStatusCategory;
   viewBuckets?: IssueViewBucket[];
+  parentIssueId?: AgentIssueId;
   trigger?: IssueTrigger;
   dueDate?: IssueDueDate;
   cadence?: RecurringIssueCadence;
@@ -601,6 +602,16 @@ export interface IssueSearchRow {
   updatedAt: number;
   latestActivity?: Activity;
   activityCount?: number;
+  subIssuesSummary?: IssueSubIssuesSummary;
+}
+
+export interface IssueSubIssuesSummary {
+  total: number;
+  completed: number;
+  active: number;
+  needsAttention: number;
+  latestUpdatedAt?: number;
+  nextScheduledAt?: number;
 }
 
 export interface IssueSearchResult {

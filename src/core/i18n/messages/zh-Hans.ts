@@ -1211,6 +1211,7 @@ commandPalette: {
         noNextRun: '没有下次运行',
         paused: '已暂停',
         scheduled: '已计划',
+        subIssueProgress: ({ completed, total }) => `子 Issue ${completed}/${total}`,
         today: '今天',
       },
       triggerManual: '手动',

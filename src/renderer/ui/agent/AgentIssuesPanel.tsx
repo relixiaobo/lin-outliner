@@ -44,7 +44,7 @@ const ISSUE_WORK_PRESET_ICONS = {
 } satisfies Record<IssueWorkPreset, AppIcon>;
 const ACTIVE_SESSION_STATES = new Set<AgentSession['state']>(['pending', 'active', 'awaitingInput']);
 const TERMINAL_STATUS_CATEGORIES = new Set(['completed', 'canceled']);
-const ISSUE_ROW_INCLUDE: NonNullable<IssueSearchInput['include']> = ['activity-summary', 'session-summary'];
+const ISSUE_ROW_INCLUDE: NonNullable<IssueSearchInput['include']> = ['activity-summary', 'session-summary', 'sub-issues-summary'];
 
 interface AgentIssuesPanelProps {
   activeSessionCount: number;
@@ -85,10 +85,12 @@ export function issueSearchInputsForWorkPreset(preset: IssueWorkPreset, now = Da
       return [
         { filter: { archived: false, needsAttention: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, triggerTypes: ['manual'], hasActiveSession: false }, include: ISSUE_ROW_INCLUDE, limit: 100 },
+        { targets: ['issue'], filter: { archived: false, hasSubIssues: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
       ];
     case 'today':
       return [
         { targets: ['issue'], filter: { archived: false, hasActiveSession: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
+        { targets: ['issue'], filter: { archived: false, hasSubIssues: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, statusCategories: ['scheduled'] }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, dueDate: { to: end } }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['recurring-issue'], filter: { archived: false, nextMaterializationAt: { to: end } }, include: ISSUE_ROW_INCLUDE, limit: 100 },
@@ -97,6 +99,7 @@ export function issueSearchInputsForWorkPreset(preset: IssueWorkPreset, now = Da
     case 'upcoming':
       return [
         { targets: ['recurring-issue'], filter: { archived: false }, include: ISSUE_ROW_INCLUDE, orderBy: [{ field: 'nextMaterializationAt', direction: 'asc' }], limit: 100 },
+        { targets: ['issue'], filter: { archived: false, hasSubIssues: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, statusCategories: ['scheduled'] }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, dueDate: { from: end + 1 } }, include: ISSUE_ROW_INCLUDE, orderBy: [{ field: 'dueDate', direction: 'asc' }], limit: 100 },
       ];
@@ -174,6 +177,16 @@ function scheduleTimeForPreset(timestamp: number, preset: IssueWorkPreset, now: 
 
 function joinRowSummaryParts(parts: Array<string | undefined>): string {
   return parts.filter(Boolean).join(' · ');
+}
+
+function rowIsTopLevelWorkItem(row: IssueSearchRow): boolean {
+  return row.target.type !== 'issue' || !row.parentIssueId;
+}
+
+function rowSubIssuesProgress(row: IssueSearchRow, labels: ReturnType<typeof useT>['agent']['issue']): string | undefined {
+  const summary = row.subIssuesSummary;
+  if (!summary || summary.total === 0) return undefined;
+  return labels.summary.subIssueProgress({ completed: summary.completed, total: summary.total });
 }
 
 export function issueDisplayTitleForRow(row: IssueSearchRow): string {
@@ -410,7 +423,7 @@ function useSessionElapsedMs(session: AgentSession): number | null {
 function rowScheduledAt(row: IssueSearchRow): number | undefined {
   if (row.target.type === 'recurring-issue') return row.nextMaterializationAt;
   if (row.trigger?.type === 'scheduled') return row.trigger.startAt;
-  return undefined;
+  return row.subIssuesSummary?.nextScheduledAt;
 }
 
 function rowIsTerminal(row: IssueSearchRow): boolean {
@@ -418,23 +431,41 @@ function rowIsTerminal(row: IssueSearchRow): boolean {
 }
 
 function rowHasActiveSession(row: IssueSearchRow): boolean {
-  return Boolean(row.hasActiveSession || (row.latestSessionState && ACTIVE_SESSION_STATES.has(row.latestSessionState)));
+  return Boolean(
+    row.hasActiveSession
+    || (row.latestSessionState && ACTIVE_SESSION_STATES.has(row.latestSessionState))
+    || (row.subIssuesSummary?.active ?? 0) > 0,
+  );
+}
+
+function rowNeedsAttention(row: IssueSearchRow): boolean {
+  return Boolean(row.needsAttention || (row.subIssuesSummary?.needsAttention ?? 0) > 0);
+}
+
+function rowLatestWorkAt(row: IssueSearchRow): number {
+  return Math.max(
+    row.updatedAt,
+    row.latestSessionUpdatedAt ?? 0,
+    row.subIssuesSummary?.latestUpdatedAt ?? 0,
+  );
 }
 
 function rowIsUnarranged(row: IssueSearchRow): boolean {
   return row.target.type === 'issue'
+    && !row.subIssuesSummary
     && !rowIsTerminal(row)
     && !rowHasActiveSession(row)
-    && !row.needsAttention
+    && !rowNeedsAttention(row)
     && row.trigger?.type !== 'scheduled'
     && row.dueDate === undefined;
 }
 
 export function issueRowMatchesWorkPreset(row: IssueSearchRow, preset: IssueWorkPreset, now = Date.now()): boolean {
+  if (!rowIsTopLevelWorkItem(row)) return false;
   const scheduledAt = rowScheduledAt(row);
   switch (preset) {
     case 'inbox':
-      return Boolean(row.needsAttention)
+      return rowNeedsAttention(row)
         || row.latestSessionState === 'awaitingInput'
         || row.latestSessionState === 'error'
         || row.latestSessionState === 'stale'
@@ -445,13 +476,15 @@ export function issueRowMatchesWorkPreset(row: IssueSearchRow, preset: IssueWork
         || isDueByToday(row.dueDate?.targetAt, now)
         || isWithinToday(row.nextMaterializationAt, now)
         || isWithinToday(row.latestSessionUpdatedAt, now)
+        || isWithinToday(row.subIssuesSummary?.latestUpdatedAt, now)
         || (rowIsTerminal(row) && isWithinToday(row.updatedAt, now));
     case 'upcoming':
       return row.target.type === 'recurring-issue'
         ? row.status !== 'archived'
         : !rowIsTerminal(row) && (isAfterToday(scheduledAt, now) || isAfterToday(row.dueDate?.targetAt, now));
     case 'logbook':
-      return row.target.type === 'issue' && (rowIsTerminal(row) || row.viewBuckets?.includes('archived') === true);
+      return row.target.type === 'issue'
+        && (rowIsTerminal(row) || row.viewBuckets?.includes('archived') === true);
   }
 }
 
@@ -479,7 +512,7 @@ function compareIssueRowsForPreset(left: IssueSearchRow, right: IssueSearchRow, 
     const rightTime = rowScheduledAt(right) ?? right.dueDate?.targetAt ?? Number.MAX_SAFE_INTEGER;
     if (leftTime !== rightTime) return leftTime - rightTime;
   }
-  return right.updatedAt - left.updatedAt || left.title.localeCompare(right.title);
+  return rowLatestWorkAt(right) - rowLatestWorkAt(left) || left.title.localeCompare(right.title);
 }
 
 interface IssueRowSection {
@@ -489,7 +522,7 @@ interface IssueRowSection {
 }
 
 function sectionForTodayRow(row: IssueSearchRow, now: number, labels: ReturnType<typeof useT>['agent']['issue']): string {
-  if (row.needsAttention) return labels.section.attention;
+  if (rowNeedsAttention(row)) return labels.section.attention;
   if (rowHasActiveSession(row)) return labels.section.running;
   if (row.target.type === 'recurring-issue' && isDueByToday(row.nextMaterializationAt, now)) return labels.section.repeatingToday;
   if (isDueByToday(rowScheduledAt(row), now) || isDueByToday(row.dueDate?.targetAt, now)) return labels.section.dueToday;
@@ -499,7 +532,7 @@ function sectionForTodayRow(row: IssueSearchRow, now: number, labels: ReturnType
 
 function sectionForInboxRow(row: IssueSearchRow, labels: ReturnType<typeof useT>['agent']['issue']): string {
   if (row.latestSessionState === 'awaitingInput') return labels.section.attention;
-  if (row.latestSessionState === 'error' || row.latestSessionState === 'stale' || row.needsAttention) return labels.section.attention;
+  if (row.latestSessionState === 'error' || row.latestSessionState === 'stale' || rowNeedsAttention(row)) return labels.section.attention;
   return labels.section.unarranged;
 }
 
@@ -541,7 +574,7 @@ function IssueStatusMarker({ row }: { row: IssueSearchRow }) {
   const isRecurring = row.target.type === 'recurring-issue';
   const isActive = rowHasActiveSession(row);
   const isComplete = rowIsTerminal(row);
-  const isAttention = row.target.type !== 'recurring-issue' && Boolean(row.needsAttention);
+  const isAttention = row.target.type !== 'recurring-issue' && rowNeedsAttention(row);
   const isScheduled = !isRecurring && (rowScheduledAt(row) !== undefined || row.dueDate !== undefined);
   const isUnarranged = rowIsUnarranged(row);
   const Icon = isAttention
@@ -576,10 +609,11 @@ function IssueStatusMarker({ row }: { row: IssueSearchRow }) {
 export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPreset, labels: ReturnType<typeof useT>, now = Date.now()): string {
   const issueLabels = labels.agent.issue;
   const sessionState = row.latestSessionState ? sessionStateLabel(row.latestSessionState, issueLabels) : null;
+  const subIssueProgress = rowSubIssuesProgress(row, issueLabels);
   const sessionNeedsAttention = row.latestSessionState === 'awaitingInput'
     || row.latestSessionState === 'error'
     || row.latestSessionState === 'stale'
-    || Boolean(row.needsAttention);
+    || rowNeedsAttention(row);
   if (sessionNeedsAttention && sessionState) {
     return `${sessionState} · ${relativeTimeLabel(row.latestSessionUpdatedAt ?? row.updatedAt, labels.agent.run, now)}`;
   }
@@ -596,6 +630,13 @@ export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPres
       row.status === 'paused' ? issueLabels.summary.paused : undefined,
     ]);
   }
+  if (rowIsTerminal(row)) {
+    const terminalLabel = row.statusCategory === 'canceled' ? issueLabels.summary.canceled : issueLabels.summary.done;
+    const recency = relativeTimeLabel(row.updatedAt, labels.agent.run, now);
+    if (preset === 'today') return joinRowSummaryParts([subIssueProgress, recency]);
+    return joinRowSummaryParts([terminalLabel, subIssueProgress, recency]);
+  }
+  if (subIssueProgress) return subIssueProgress;
   if (row.trigger?.type === 'scheduled') {
     return joinRowSummaryParts([
       scheduleTimeForPreset(row.trigger.startAt, preset, now, issueLabels),
@@ -607,10 +648,6 @@ export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPres
       scheduleTimeForPreset(row.dueDate.targetAt, preset, now, issueLabels),
       issueLabels.summary.due,
     ]);
-  }
-  if (rowIsTerminal(row)) {
-    if (preset === 'today') return relativeTimeLabel(row.updatedAt, labels.agent.run, now);
-    return `${row.statusCategory === 'canceled' ? issueLabels.summary.canceled : issueLabels.summary.done} · ${relativeTimeLabel(row.updatedAt, labels.agent.run, now)}`;
   }
   if (row.latestActivity) {
     return `${activityText(row.latestActivity)} · ${relativeTimeLabel(row.latestActivity.createdAt, labels.agent.run, now)}`;

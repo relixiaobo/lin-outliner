@@ -398,6 +398,15 @@ describe('agent issue store', () => {
       ]));
       const children = await store.search({ filter: { parentIssueIds: [parent.target.id] } });
       expect(children.rows.map((row) => row.title)).toEqual(['Write release notes']);
+      expect(children.rows[0]?.parentIssueId).toBe(parent.target.id);
+      const parentWithSummary = (await store.search({ text: 'July release', include: ['sub-issues-summary'] })).rows[0];
+      expect(parentWithSummary?.subIssuesSummary).toMatchObject({
+        total: 1,
+        completed: 0,
+        active: 0,
+        needsAttention: 0,
+        latestUpdatedAt: 20,
+      });
     });
   });
 
