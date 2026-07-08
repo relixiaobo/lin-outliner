@@ -321,16 +321,22 @@ under the agent scratch root, with short scratch-relative paths such as
 includes only local paths, embeddable Markdown image strings (`markdownImage`),
 mime types, byte lengths, and dimensions when known; it does not include
 provider/model execution metadata or base64 image bytes. The complete runtime
-details retain `providerId`, `modelId`, `modelName`, and the generated image path
-list for UI/debug display, and those details are persisted with the tool result
-event. The tool result does not embed raw image bytes or image content blocks;
-follow-up edits pass the returned `path` or `markdownImage` back through
-`image_paths`, and explicit inspection can use the normal local file tools. The
-renderer reads generated image paths from the persisted details and displays them
-inline as lazy-loaded previews through the local preview byte reader; opening the
-preview targets the returned local-file path. If the file has been cleared or
-manually removed, the preview remains in place and shows an unavailable-image
-placeholder.
+details retain provider/model metadata and the generated image path list while
+the tool call is live. The persisted `tool_result.created.details` field is a
+slim render projection for `generate_image` only: provider id, model id/name, and
+per-image path/Markdown/mime/byte/dimension metadata. Generic tool runtime
+envelopes, raw provider payloads, prompt text, file contents, original file
+contents, and base64 image bytes are not persisted in event details. The tool
+result does not embed raw image bytes or image content blocks; follow-up edits
+pass the returned `path` or `markdownImage` back through `image_paths`, and
+explicit inspection can use the normal local file tools. Generated-image input
+paths resolve through realpath containment under the scratch
+`generated-images/` directory, so a symlink inside scratch cannot make the tool
+read outside that directory. The renderer reads generated image paths from the
+persisted details and displays them inline as lazy-loaded previews through the
+local preview byte reader; opening the preview targets the returned local-file
+path. If the file has been cleared or manually removed, the preview remains in
+place and shows an unavailable-image placeholder.
 
 When the user should see generated images in the final response, the assistant
 places each returned `markdownImage` exactly where that image belongs:
@@ -356,6 +362,7 @@ interface GenerateImageData {
   modelName: string;
   images: Array<{
     path: string;
+    markdownImage: string;
     mimeType: string;
     byteLength: number;
     width?: number;
@@ -372,6 +379,7 @@ Model-visible `data`:
 interface GenerateImageVisibleData {
   images: Array<{
     path: string;
+    markdownImage: string;
     mimeType: string;
     byteLength: number;
     width?: number;

@@ -121,6 +121,7 @@ import {
   materializeAgentLocalPath,
   materializePathBackedAttachment,
 } from './agentAttachmentMaterialization';
+import { resolveGeneratedImageReadPath } from './generatedImagePaths';
 import { sniffMimeType } from './assetService';
 import {
   buildReferencedFilesReminder,
@@ -128,6 +129,7 @@ import {
   type MaterializedReferencedFile,
 } from './agentReferencedAssets';
 import { isToolEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
+import { persistedToolResultDetails } from './agentToolResultPersistence';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { agentDefinitionDisplayName } from './agentDefinitionDisplay';
 import { DEFAULT_AGENT_SYSTEM_PROMPT, composeAgentPrompt } from './agentSystemPrompt';
@@ -4770,7 +4772,7 @@ export class AgentRuntime {
       getDefaultModel: async () => (await getProviderSettings()).imageGeneration.defaultModel ?? null,
       validateOptions: ({ providerId, modelId, options }) => validateImageGenerationOptions(providerId, modelId, options),
       readLocalImage: async ({ filePath }) => {
-        const resolved = resolveGeneratedImageReadPath(localWorkspace, filePath)
+        const resolved = await resolveGeneratedImageReadPath(localWorkspace, filePath)
           ?? resolveAgentLocalReadPath(localWorkspace, filePath);
         const data = await readFile(resolved);
         const mimeType = sniffMimeType(data, resolved);
@@ -6158,6 +6160,7 @@ export class AgentRuntime {
       ?? persisted.payloads.find((payload) => payload.role === 'tool_output')
       ?? persisted.payloads[0];
     const toolResultMessageId = this.createMessageId('tool-result');
+    const details = persistedToolResultDetails(message);
     await this.appendConversationEvents(conversationId, conversation, [
       ...persisted.payloads.map((payload): AgentEventInput => ({
         type: 'payload.created',
@@ -6181,7 +6184,7 @@ export class AgentRuntime {
         toolName: message.toolName,
         isError: message.isError,
         content: persisted.content,
-        details: message.details,
+        ...(details !== undefined ? { details } : {}),
         outputSummary: summarizeToolResult(message),
         outputRef,
       },
@@ -7237,18 +7240,6 @@ function isPreviewPayloadRole(role: AgentPayloadRef['role']): boolean {
 function imageProviderPriorityIndex(priority: readonly string[], providerId: string): number {
   const index = priority.indexOf(providerId);
   return index >= 0 ? index : priority.length;
-}
-
-function resolveGeneratedImageReadPath(workspace: AgentLocalWorkspaceContext, inputPath: string): string | null {
-  if (path.isAbsolute(inputPath)) return null;
-  const normalized = path.normalize(inputPath.trim());
-  if (
-    normalized !== AGENT_GENERATED_IMAGE_DIR
-    && !normalized.startsWith(`${AGENT_GENERATED_IMAGE_DIR}${path.sep}`)
-  ) {
-    return null;
-  }
-  return path.join(workspace.scratchRoot, normalized);
 }
 
 function shortGeneratedImagePathPart(value: string, fallback: string): string {
