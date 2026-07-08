@@ -3218,6 +3218,9 @@ test.describe('agent composer controls', () => {
     });
     await page.evaluate(() => {
       const win = window as E2EWindow;
+      const now = Date.now();
+      const sessionStartedAt = now - 63_000;
+      const sessionCompletedAt = now;
       const target = { type: 'issue', id: 'issue-work-1' };
       const issue = {
         id: 'issue-work-1',
@@ -3231,7 +3234,7 @@ test.describe('agent composer controls', () => {
         confirmation: { confirmedBy: { type: 'user', userId: 'e2e' }, confirmedAt: 1_800_000_000_700 },
         revision: 'issue-rev-1',
         createdAt: 1_800_000_000_700,
-        updatedAt: 1_800_000_001_200,
+        updatedAt: now,
       };
       const subIssue = {
         id: 'issue-work-child-1',
@@ -3253,9 +3256,11 @@ test.describe('agent composer controls', () => {
         title: 'Inspect Run UI',
         status: 'Started',
         revision: 'issue-rev-1',
-        updatedAt: 1_800_000_001_200,
+        updatedAt: now,
         confirmed: true,
-        hasActiveSession: true,
+        hasActiveSession: false,
+        latestSessionState: 'complete',
+        latestSessionUpdatedAt: sessionCompletedAt,
         statusCategories: ['started'],
       }], {
         'issue:issue-work-1': {
@@ -3265,21 +3270,24 @@ test.describe('agent composer controls', () => {
             id: 'session-work-1',
             issueId: 'issue-work-1',
             delegate: { type: 'default-agent' },
-            state: 'active',
+            state: 'complete',
             source: { type: 'delegation', actor: { type: 'agent', agentId: 'neva' } },
             issueSnapshot: issue,
-            plan: [],
+            plan: [{ content: 'Inspect current UI.', status: 'completed' }],
+            latestOutput: 'Inspecting current UI.',
+            startedAt: sessionStartedAt,
+            completedAt: sessionCompletedAt,
             revision: 'session-rev-1',
-            createdAt: 1_800_000_000_800,
-            updatedAt: 1_800_000_001_200,
+            createdAt: sessionStartedAt,
+            updatedAt: sessionCompletedAt,
           }],
           subIssues: [subIssue],
           activity: [{
-            id: 'activity-work-1',
-            target: { type: 'issue', issueId: 'issue-work-1' },
+            id: 'activity-session-work-1',
+            target: { type: 'agent-session', agentSessionId: 'session-work-1' },
             actor: { type: 'agent', agentId: 'neva' },
             content: { type: 'agent-progress', body: 'Inspecting current UI.' },
-            createdAt: 1_800_000_001_200,
+            createdAt: sessionCompletedAt,
           }],
         },
         'issue:issue-work-child-1': {
@@ -3341,21 +3349,23 @@ test.describe('agent composer controls', () => {
     await expect(detailDialog.getByRole('separator', { name: 'Resize details drawer' })).toBeVisible();
     await expect(details.locator('.agent-issue-detail-status-chip')).toHaveCount(0);
     await expect(details.getByText('Agent Sessions')).toBeVisible();
-    await expect(details.getByText('Active')).toBeVisible();
+    const sessionCard = details.locator('.agent-issue-session-card').first();
+    await expect(sessionCard.locator('summary')).toContainText('Worked for 1m 3s');
+    await expect(sessionCard.locator('.agent-issue-session-result')).toContainText('Inspecting current UI.');
+    await expect(sessionCard.locator('.agent-issue-session-process-list').first()).not.toBeVisible();
+    await sessionCard.locator('summary').click();
+    await expect(sessionCard.locator('.agent-issue-session-process-list').first()).toBeVisible();
+    await expect(sessionCard.locator('.agent-issue-session-process-list').first()).toContainText('Inspect current UI.');
+    await expect(details.getByRole('heading', { name: 'Agent Session', level: 3 })).toHaveCount(0);
+    await expect(details.getByText('Transcript')).toHaveCount(0);
     await expect(details.getByText('Sub-issues')).toBeVisible();
     await details.getByRole('button', { name: /Inspect child UI/ }).click();
     await expect(details.getByRole('heading', { name: 'Inspect child UI', level: 3 })).toBeVisible();
     await expect(details.getByText('Child issue was created.')).toBeVisible();
     await details.getByRole('button', { name: 'Back to parent Issue' }).click();
     await expect(detailHeading).toBeVisible();
-    await details.getByRole('button', { name: /Active/ }).click();
-    await expect(details.getByRole('heading', { name: 'Agent Session', level: 3 })).toBeVisible();
-    await expect(details.getByText('Transcript')).toBeVisible();
-    await expect(details.getByText('Inspecting current UI.')).toBeVisible();
-    await details.getByRole('button', { name: 'Back to Issue' }).click();
-    await expect(detailHeading).toBeVisible();
     await expect(details.getByText('Activity')).toBeVisible();
-    await expect(details.getByText('Inspecting current UI.')).toBeVisible();
+    await expect(details.locator('.agent-issue-activity-list').getByText('Inspecting current UI.')).toBeVisible();
 
     await details.getByRole('button', { name: 'Close Issue details' }).click();
     await expect(details).toHaveCount(0);

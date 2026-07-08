@@ -1198,28 +1198,85 @@
   padding: 0;
 }
 
-.agent-issue-session-row {
+.agent-issue-session-card {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   border-top: 1px solid var(--separator);
   padding-top: var(--space-4);
 }
 
-.agent-issue-session-row.is-clickable {
-  width: 100%;
-  border-radius: var(--radius-sm);
-  color: inherit;
-  text-align: left;
+.agent-issue-session-process {
+  min-width: 0;
 }
 
-.agent-issue-session-row.is-clickable:hover,
-.agent-issue-session-row.is-clickable:focus-visible {
+.agent-issue-session-process summary {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  user-select: none;
+}
+
+.agent-issue-session-process summary::marker,
+.agent-issue-session-process summary::-webkit-details-marker {
+  display: none;
+  content: "";
+}
+
+.agent-issue-session-process summary:hover,
+.agent-issue-session-process summary:focus-visible {
   color: var(--text-strong);
 }
 
-.agent-issue-session-head,
+.agent-issue-session-process summary:focus-visible {
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.agent-issue-session-process-chevron {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  transition: transform var(--motion-fast), color var(--motion-fast);
+}
+
+.agent-issue-session-process[open] .agent-issue-session-process-chevron {
+  transform: rotate(90deg);
+}
+
+.agent-issue-session-process-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0 0 0 var(--space-5);
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-issue-session-process-list li {
+  min-width: 0;
+}
+
+.agent-issue-session-process-list small {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-faint);
+}
+
+.agent-issue-session-process-static {
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
 .agent-issue-activity-list li {
   display: flex;
   min-width: 0;
@@ -1228,38 +1285,20 @@
   gap: var(--space-5);
 }
 
-.agent-issue-session-head {
-  color: var(--text-secondary);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-}
-
-.agent-issue-session-row p,
-.agent-issue-session-error {
+.agent-issue-session-result,
+.agent-issue-session-empty {
   color: var(--text-primary);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   margin: 0;
 }
 
-.agent-issue-session-row p {
-  max-height: 220px;
-  overflow: auto;
-}
-
-.agent-issue-session-row.is-clickable p {
-  display: -webkit-box;
-  max-height: none;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.agent-issue-session-error {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.agent-issue-session-result.is-error {
   color: var(--status-danger);
+}
+
+.agent-issue-session-result .agent-markdown > * + * {
+  margin-top: var(--space-3);
 }
 
 .agent-issue-linked-row {
@@ -1315,42 +1354,6 @@
   color: var(--text-faint);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-}
-
-.agent-issue-session-transcript {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.agent-issue-session-message {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-2);
-  border-top: 1px solid var(--separator);
-  padding-top: var(--space-4);
-}
-
-.agent-issue-session-message header {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-5);
-  color: var(--text-secondary);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-}
-
-.agent-issue-session-message time {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-}
-
-.agent-issue-session-message.is-error {
-  color: var(--status-danger);
 }
 
 .agent-issue-detail-list,

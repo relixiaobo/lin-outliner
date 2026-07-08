@@ -31,6 +31,7 @@ import { IconButton } from '../primitives/IconButton';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentDetailDrawerResizeHandle, useAgentDetailDrawerHeight } from './AgentDetailDrawerResize';
+import { formatRunDuration } from './agentProcessTypes';
 
 export type IssueWorkPreset = 'inbox' | 'today' | 'upcoming' | 'logbook';
 
@@ -372,10 +373,38 @@ function sessionSummary(session: AgentSession, labels: ReturnType<typeof useT>):
   return relativeTimeLabel(session.updatedAt, labels.agent.run);
 }
 
-function actorLabel(actor: Activity['actor'], labels: ReturnType<typeof useT>): string {
-  if (actor.type === 'user') return labels.agent.message.you;
-  if (actor.type === 'agent') return actor.agentId;
-  return 'System';
+function sessionIsLive(session: AgentSession): boolean {
+  return session.state === 'active' || session.state === 'pending' || session.state === 'awaitingInput';
+}
+
+function sessionWorkLabel(session: AgentSession, labels: ReturnType<typeof useT>, liveElapsedMs: number | null): string {
+  if (session.state === 'active' || session.state === 'pending' || session.state === 'awaitingInput') {
+    if (liveElapsedMs !== null) {
+      return labels.agent.process.workingFor({ duration: formatRunDuration(liveElapsedMs) });
+    }
+    return labels.agent.process.working;
+  }
+  if (session.state === 'complete' && session.startedAt && session.completedAt) {
+    return labels.agent.process.workedFor({ duration: formatRunDuration(session.completedAt - session.startedAt) });
+  }
+  if (session.state === 'canceled' && session.startedAt && session.completedAt) {
+    return labels.agent.process.stoppedAfter({ duration: formatRunDuration(session.completedAt - session.startedAt) });
+  }
+  return sessionStateLabel(session.state, labels.agent.issue);
+}
+
+function useSessionElapsedMs(session: AgentSession): number | null {
+  const live = sessionIsLive(session);
+  const startedAt = session.startedAt !== undefined && session.startedAt > 0 ? session.startedAt : null;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live || startedAt === null) return;
+    setNow(Date.now());
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [live, startedAt]);
+  if (!live || startedAt === null) return null;
+  return Math.max(0, now - startedAt);
 }
 
 function rowScheduledAt(row: IssueSearchRow): number | undefined {
@@ -689,133 +718,72 @@ export function AgentIssuesPanel({
   );
 }
 
-function AgentSessionDetailsView({
-  issueTitle,
-  onBack,
-  sessionId,
+function sessionActivityEntries(activity: readonly Activity[], session: AgentSession): Activity[] {
+  return activity
+    .filter((entry) => (
+      (entry.target.type === 'agent-session' && entry.target.agentSessionId === session.id)
+      || (entry.relatedTargets?.some((target) => target.type === 'agent-session' && target.id === session.id) ?? false)
+    ))
+    .sort((left, right) => left.createdAt - right.createdAt);
+}
+
+function AgentSessionInlineCard({
+  activity,
+  session,
 }: {
-  issueTitle: string;
-  onBack: () => void;
-  sessionId: string;
+  activity: readonly Activity[];
+  session: AgentSession;
 }) {
   const t = useT();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<Awaited<ReturnType<typeof api.agentSessionRead>> | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setResult(await api.agentSessionRead({ agentSessionId: sessionId, include: ['activity-summary'] }));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const session = result?.agentSession;
-  const activity = useMemo(() => [...(result?.activity ?? [])].sort((left, right) => left.createdAt - right.createdAt), [result?.activity]);
-  const StatusIcon = session?.state === 'complete'
-    ? CheckIcon
-    : session?.state === 'error' || session?.state === 'stale' || session?.state === 'canceled'
-      ? WarningIcon
-      : LoaderIcon;
-  const status = session ? sessionStateLabel(session.state, t.agent.issue) : t.agent.issueDetail.none;
-  const statusClass = session ? sessionStatusClass(session) : '';
+  const processEntries = useMemo(() => sessionActivityEntries(activity, session), [activity, session]);
+  const hasProcessDetails = session.plan.length > 0 || processEntries.length > 0;
+  const liveElapsedMs = useSessionElapsedMs(session);
+  const workLabel = sessionWorkLabel(session, t, liveElapsedMs);
 
   return (
-    <>
-      <div className="agent-run-detail-title-line">
-        <span className={`agent-issue-detail-marker ${statusClass}`}>
-          <StatusIcon aria-hidden="true" size={ICON_SIZE.menu} />
-        </span>
-        <div className="agent-issue-detail-title-copy">
-          <h3>{t.agent.issueDetail.sessionTitle}</h3>
-          <span className={`agent-issue-detail-status-chip ${statusClass}`}>{status}</span>
+    <article className={`agent-issue-session-card ${sessionStatusClass(session)}`}>
+      {hasProcessDetails ? (
+        <details className="agent-issue-session-process">
+          <summary>
+            <span>{workLabel}</span>
+            <ChevronRightIcon aria-hidden className="agent-issue-session-process-chevron" size={ICON_SIZE.tiny} />
+          </summary>
+          {session.plan.length > 0 ? (
+            <ol className="agent-issue-session-process-list">
+              {session.plan.map((item, index) => (
+                <li key={`${index}:${item.content}`}>
+                  <span>{item.content}</span>
+                  <small>{item.status}</small>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          {processEntries.length > 0 ? (
+            <ol className="agent-issue-session-process-list">
+              {processEntries.map((entry) => (
+                <li key={entry.id}>
+                  <span>{activityText(entry)}</span>
+                  <small>{relativeTimeLabel(entry.createdAt, t.agent.run)}</small>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </details>
+      ) : (
+        <div className="agent-issue-session-process-static">{workLabel}</div>
+      )}
+      {session.latestOutput ? (
+        <div className="agent-issue-session-result">
+          <AgentMarkdown keyPrefix={`agent-session-result-${session.id}`} text={session.latestOutput} />
         </div>
-      </div>
-      <div className="agent-run-detail-content-column">
-        <button className="agent-issue-detail-inline-back" onClick={onBack} type="button">
-          <BackIcon aria-hidden="true" size={ICON_SIZE.menu} />
-          <span>{issueTitle}</span>
-        </button>
-        {error ? (
-          <ErrorState
-            className="agent-run-detail-empty"
-            message={error}
-            onRetry={() => void load()}
-            retryLabel={t.agent.issue.refresh}
-          />
-        ) : loading && !session ? (
-          <EmptyState
-            className="agent-run-detail-empty"
-            icon={LoaderIcon}
-            loading
-            title={t.agent.issue.loading}
-          />
-        ) : session ? (
-          <>
-            {session.plan.length > 0 ? (
-              <section className="agent-issue-detail-section">
-                <h4>{t.agent.issueDetail.plan}</h4>
-                <ol className="agent-issue-detail-list">
-                  {session.plan.map((item, index) => (
-                    <li key={`${index}:${item.content}`}>
-                      <span>{item.content}</span>
-                      <small>{item.status}</small>
-                    </li>
-                  ))}
-                </ol>
-              </section>
-            ) : null}
-            <section className="agent-issue-detail-section">
-              <h4>{t.agent.issueDetail.transcript}</h4>
-              {activity.length === 0 && !session.latestOutput && !session.errorMessage ? (
-                <div className="agent-issue-activity-empty">{t.agent.issueDetail.noSessionActivity}</div>
-              ) : (
-                <div className="agent-issue-session-transcript">
-                  {activity.map((entry) => (
-                    <article className="agent-issue-session-message" key={entry.id}>
-                      <header>
-                        <span>{actorLabel(entry.actor, t)}</span>
-                        <time>{relativeTimeLabel(entry.createdAt, t.agent.run)}</time>
-                      </header>
-                      <AgentMarkdown keyPrefix={`agent-session-activity-${entry.id}`} text={activityText(entry)} />
-                    </article>
-                  ))}
-                  {session.latestOutput ? (
-                    <article className="agent-issue-session-message is-result">
-                      <header>
-                        <span>{t.agent.issueDetail.latestResult}</span>
-                        <time>{relativeTimeLabel(session.updatedAt, t.agent.run)}</time>
-                      </header>
-                      <AgentMarkdown keyPrefix={`agent-session-result-${session.id}`} text={session.latestOutput} />
-                    </article>
-                  ) : null}
-                  {session.errorMessage ? (
-                    <article className="agent-issue-session-message is-error">
-                      <header>
-                        <span>{t.agent.issue.sessionState.error}</span>
-                        <time>{relativeTimeLabel(session.updatedAt, t.agent.run)}</time>
-                      </header>
-                      <AgentMarkdown keyPrefix={`agent-session-error-${session.id}`} text={session.errorMessage} />
-                    </article>
-                  ) : null}
-                </div>
-              )}
-            </section>
-          </>
-        ) : (
-          <div className="agent-run-detail-empty">{t.agent.issueDetail.sessionNotFound}</div>
-        )}
-      </div>
-    </>
+      ) : session.errorMessage ? (
+        <div className="agent-issue-session-result is-error">
+          <AgentMarkdown keyPrefix={`agent-session-error-${session.id}`} text={session.errorMessage} />
+        </div>
+      ) : (
+        <p className="agent-issue-session-empty">{sessionSummary(session, t)}</p>
+      )}
+    </article>
   );
 }
 
@@ -831,7 +799,6 @@ export function AgentIssueDetailsPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<IssueReadResult | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   useAgentDetailDrawerHeight(true);
 
   const load = useCallback(async () => {
@@ -849,10 +816,6 @@ export function AgentIssueDetailsPanel({
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    setSelectedSessionId(null);
-  }, [target]);
 
   const issue = detail?.issue;
   const recurringIssue = detail?.recurringIssue;
@@ -872,16 +835,7 @@ export function AgentIssueDetailsPanel({
       <AgentDetailDrawerResizeHandle />
       <header className="agent-run-detail-header">
         <div className="agent-run-detail-breadcrumb-row">
-          {selectedSessionId ? (
-            <IconButton
-              className="agent-run-detail-back"
-              icon={BackIcon}
-              label={t.agent.issueDetail.backToIssue}
-              onClick={() => setSelectedSessionId(null)}
-              title={t.agent.issueDetail.backToIssue}
-              variant="message"
-            />
-          ) : onBack ? (
+          {onBack ? (
             <IconButton
               className="agent-run-detail-back"
               icon={BackIcon}
@@ -911,12 +865,6 @@ export function AgentIssueDetailsPanel({
                 </span>
               );
             })}
-            {selectedSessionId ? (
-              <span className="agent-issue-breadcrumb-segment">
-                <ChevronRightIcon aria-hidden="true" size={ICON_SIZE.tiny} />
-                <span>{t.agent.issueDetail.sessionTitle}</span>
-              </span>
-            ) : null}
           </nav>
           <div className="agent-run-detail-header-actions">
             <IconButton
@@ -946,13 +894,6 @@ export function AgentIssueDetailsPanel({
             title={t.agent.issue.loading}
           />
         ) : (
-          selectedSessionId ? (
-            <AgentSessionDetailsView
-              issueTitle={title}
-              onBack={() => setSelectedSessionId(null)}
-              sessionId={selectedSessionId}
-            />
-          ) : (
           <>
             <div className="agent-run-detail-title-line">
               <span className={`agent-issue-detail-marker ${detailMarker.className}`.trim()}>
@@ -982,24 +923,11 @@ export function AgentIssueDetailsPanel({
                   <h4>{t.agent.issueDetail.sessions}</h4>
                   <div className="agent-issue-session-list">
                     {sessions.map((session) => (
-                      <button
-                        className="agent-issue-session-row is-clickable"
+                      <AgentSessionInlineCard
+                        activity={activity}
                         key={session.id}
-                        onClick={() => setSelectedSessionId(session.id)}
-                        type="button"
-                      >
-                        <div className="agent-issue-session-head">
-                          <span>{sessionStateLabel(session.state, t.agent.issue)}</span>
-                          <span>{relativeTimeLabel(session.updatedAt, t.agent.run)}</span>
-                        </div>
-                        <p>{sessionSummary(session, t)}</p>
-                        {session.errorMessage ? (
-                          <p className="agent-issue-session-error">
-                            <WarningIcon size={ICON_SIZE.menu} />
-                            <span>{session.errorMessage}</span>
-                          </p>
-                        ) : null}
-                      </button>
+                        session={session}
+                      />
                     ))}
                   </div>
                 </section>
@@ -1069,7 +997,6 @@ export function AgentIssueDetailsPanel({
               </section>
             </div>
           </>
-          )
         )}
       </div>
     </section>

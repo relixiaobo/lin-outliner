@@ -143,16 +143,21 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   Agent Session as `stale` when there is no live executor in the restored
   runtime.
 - The renderer-facing Work panel is Issue-first: it reads Work rows with
-  `agent_issue_search`, opens Issue details with `agent_issue_read`, and opens a
-  read-only Agent Session thread with `agent_session_read`. The panel's Inbox,
-  Today, Upcoming, and Logbook navigation items are renderer smart filters over
-  canonical row facts, not model-facing view enums or stored categories.
-  Unscheduled/manual work with no active Session belongs in Inbox because it is
-  not yet arranged for execution. Activity feeds row summaries, Issue details,
-  and the Agent Session transcript view; it is not a primary navigation tab, and
-  Logbook is a view name rather than a separate object. Sub-issues and generated
-  Issues are first-class Issue links and open recursively through the same Issue
-  detail reader with breadcrumb context.
+  `agent_issue_search` and opens Issue details with `agent_issue_read`. The
+  detail payload includes Agent Sessions, so the renderer shows them inline as
+  result-first execution cards: the "Working for ..." / "Worked for ..." process
+  label is visible, process details are collapsed by default, and latest output
+  or error renders below the process summary. `agent_session_read` remains a
+  bounded tool/control surface for explicit Session inspection, but it is not the
+  Work UI's default nested navigation path. The panel's Inbox, Today, Upcoming,
+  and Logbook navigation items are renderer smart filters over canonical row
+  facts, not model-facing view enums or stored categories. Unscheduled/manual
+  work with no active Session belongs in Inbox because it is not yet arranged for
+  execution. Activity feeds row summaries, Issue details, and inline Agent
+  Session process details; it is not a primary navigation tab, and Logbook is a
+  view name rather than a separate object. Sub-issues and generated Issues are
+  first-class Issue links and open recursively through the same Issue detail
+  reader with breadcrumb context.
 - `issue_search` applies canonical field filters across both concrete Issues
   and Recurring Issues where the field exists, including delegate profile,
   trigger type, input node/tag scope, Activity type, and explicit ordering by

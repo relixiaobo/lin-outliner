@@ -1031,23 +1031,26 @@ Rules:
 
   Opening a Work row overlays an Issue detail drawer on the list. The drawer
   reads `agent_issue_read` and shows the durable work definition as a compact
-  hierarchy: title, status chip, next run/trigger timing, instructions, Agent
-  Sessions, sub-issues or generated Issues, and Activity. It does not repeat the
-  same state through a separate metadata table when an icon, section, or chip
-  already communicates it. Sub-issues and generated Issues open recursively in
-  the same drawer and extend the breadcrumb path, so a parent Issue, child Issue,
-  and Agent Session share one drill-in model.
+  hierarchy: title, status chip only when the icon cannot carry the state, next
+  run/trigger timing, instructions, Agent Sessions, sub-issues or generated
+  Issues, and Activity. It does not repeat the same state through a separate
+  metadata table when an icon, section, or chip already communicates it.
+  Sub-issues and generated Issues open recursively in the same drawer and extend
+  the breadcrumb path. Agent Sessions do not consume a drill-in level; the Issue
+  hierarchy owns navigation depth.
 
-  Agent Session rows show Session state and a short latest-output/error/plan
-  summary. Selecting a row opens a read-only Agent Session view inside the Issue
-  drawer. That view reads `agent_session_read`, reuses conversation-style
-  markdown rendering for Activity and latest output, and exposes the Session as
-  the Issue's execution thread rather than as a separate chat. Activity remains a
-  high-signal product history and execution progress layer; raw model reasoning
-  stays in Run transcript/debug surfaces and is not copied into Activity. The
-  drawer is read-only in this checkpoint; execution controls remain in the
-  model-facing Agent Session tools and in legacy Run transcript detail until the
-  full Agent Session control UI lands.
+  Agent Session cards are inline execution summaries. A card shows the same
+  "Working for ..." / "Worked for ..." process label used by conversation turns,
+  keeps process details collapsed by default, and renders the latest output or
+  error below the process summary with conversation-style markdown. Expanding the
+  process reveals the Session plan and high-signal Activity linked to that
+  Session. Activity remains a high-signal product history and execution progress
+  layer; raw model reasoning stays in Run transcript/debug surfaces and is not
+  copied into Activity. `agent_session_read` remains the bounded tool/control
+  surface for explicit Session inspection, but Work UI reading is result-first
+  through the Issue detail payload. The drawer is read-only in this checkpoint;
+  execution controls remain in the model-facing Agent Session tools and in legacy
+  Run transcript detail until the full Agent Session control UI lands.
 - Long output rows are collapsed by default.
 - **Result-first turn process (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last
