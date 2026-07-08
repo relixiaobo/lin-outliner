@@ -158,10 +158,11 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   view name rather than a separate object. Sub-issues remain first-class concrete
   Issues for tools: agents can find them with `parentIssueIds` and read them with
   `issue_read`. They are not first-level Work rows in the renderer presets; their
-  active, attention, schedule, and completion counts roll up through
-  `sub-issues-summary` so the parent row shows compact progress. Sub-issues and
-  generated Issues open recursively through the same Issue detail reader with
-  breadcrumb context.
+  descendant active, attention, schedule, and completion counts roll up through
+  `sub-issues-summary` so the parent row shows compact progress. Control remains
+  adjacent-only: child results are accepted or summarized by their direct parent,
+  then each parent rolls the summary upward. Sub-issues and generated Issues open
+  recursively through the same Issue detail reader with breadcrumb context.
 - `issue_search` applies canonical field filters across both concrete Issues
   and Recurring Issues where the field exists, including delegate profile,
   trigger type, input node/tag scope, Activity type, and explicit ordering by

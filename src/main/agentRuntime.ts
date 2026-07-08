@@ -8891,8 +8891,9 @@ function executionSessionRules(): string[] {
     'Execution rules:',
     '1. Work only within this Issue snapshot and its input scope.',
     '2. If the work must be split, create or update sub-issues with the Issue tools; do not invent hidden child work as the durable breakdown.',
-    '3. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
-    '4. Completing this Agent Session does not automatically complete the Issue.',
+    '3. Treat the Issue hierarchy as adjacent control: report child outcomes to this Issue only, and let parent Issues summarize results upward.',
+    '4. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
+    '5. Completing this Agent Session does not automatically complete the Issue.',
   ];
 }
 

@@ -1023,11 +1023,13 @@ Rules:
   The first-level Work rows are top-level Issues or Recurring Issues. Concrete
   Issues with `parentIssueId` are sub-issues: they do not appear as independent
   first-level rows in Inbox, Today, Upcoming, or Logbook. Their state rolls up
-  into the parent row through `subIssuesSummary`, so the parent can appear in
-  Running, Needs Attention, Today, or Upcoming when a child is active, blocked,
-  updated today, or scheduled. The parent row's meta line can show compact
-  progress such as `Sub-issues 1/3` instead of listing each child outside its
-  parent. Each row shows a concept/status marker, title, and one
+  recursively into ancestor rows through `subIssuesSummary`, so a parent can
+  appear in Running, Needs Attention, Today, or Upcoming when any descendant is
+  active, blocked, updated today, or scheduled. Control and result acceptance
+  still remain adjacent: each sub-Issue reports to its direct parent, and each
+  parent summarizes upward. The parent row's meta line can show compact progress
+  such as `Sub-issues 1/3` instead of listing each child outside its parent. Each
+  row shows a concept/status marker, title, and one
   context-sensitive meta line. The meta line avoids repeating the current
   section: an Upcoming recurring row can show `8:00 AM · Daily`, while a Today
   completed row can show only the completion recency. Active Agent Session count

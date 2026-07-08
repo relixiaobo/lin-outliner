@@ -399,13 +399,40 @@ describe('agent issue store', () => {
       const children = await store.search({ filter: { parentIssueIds: [parent.target.id] } });
       expect(children.rows.map((row) => row.title)).toEqual(['Write release notes']);
       expect(children.rows[0]?.parentIssueId).toBe(parent.target.id);
-      const parentWithSummary = (await store.search({ text: 'July release', include: ['sub-issues-summary'] })).rows[0];
-      expect(parentWithSummary?.subIssuesSummary).toMatchObject({
+
+      await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Collect release screenshots',
+          parentIssueId: children.rows[0]!.target.id,
+          trigger: { type: 'manual' },
+        },
+        request: { mode: 'request' },
+        reason: 'Break child work into a nested sub-issue.',
+      }, actor, 30);
+      const grandchild = (await store.search({ filter: { parentIssueIds: [children.rows[0]!.target.id] } })).rows[0]!;
+      await store.update({
+        target: { type: 'issue', id: grandchild.target.id, expectedRevision: grandchild.revision },
+        change: { type: 'transition', status: { name: 'Completed', category: 'completed' } },
+        request: { mode: 'request' },
+        reason: 'Mark the nested sub-issue complete.',
+      }, actor, 40);
+
+      const childWithSummary = (await store.search({ text: 'Write release notes', include: ['sub-issues-summary'] })).rows[0];
+      expect(childWithSummary?.subIssuesSummary).toMatchObject({
         total: 1,
-        completed: 0,
+        completed: 1,
         active: 0,
         needsAttention: 0,
-        latestUpdatedAt: 20,
+        latestUpdatedAt: 40,
+      });
+      const parentWithSummary = (await store.search({ text: 'July release', include: ['sub-issues-summary'] })).rows[0];
+      expect(parentWithSummary?.subIssuesSummary).toMatchObject({
+        total: 2,
+        completed: 1,
+        active: 0,
+        needsAttention: 0,
+        latestUpdatedAt: 40,
       });
     });
   });

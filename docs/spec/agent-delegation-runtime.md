@@ -95,7 +95,13 @@ or wait for a schedule.
 
 This is intentionally different from recursive public delegation. The durable
 graph is an Issue hierarchy; execution attempts are Agent Sessions bound to
-those Issues.
+those Issues. Control and result acceptance are adjacent-only: a sub-Issue
+records Activity and Agent Session output on itself, its direct parent accepts or
+summarizes that result, and each parent repeats that step upward. A descendant
+does not directly notify chat or bypass ancestor Issues. State can still roll up
+recursively through parent search rows, so a top-level Issue can show compact
+progress for the whole descendant tree without exposing every sub-Issue as a
+first-level Work row.
 
 ## Verification
 

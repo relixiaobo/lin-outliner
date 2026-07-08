@@ -1043,9 +1043,7 @@ function issueRow(issue: AgentIssue, state: AgentIssueStoreState, input: IssueSe
 }
 
 function issueSubIssuesSummary(issue: AgentIssue, state: AgentIssueStoreState): IssueSearchRow['subIssuesSummary'] {
-  const subIssues = issue.subIssueIds
-    .map((id) => state.issues[id])
-    .filter((entry): entry is AgentIssue => Boolean(entry));
+  const subIssues = issueDescendants(issue, state, new Set([issue.id]));
   if (subIssues.length === 0) return undefined;
   let completed = 0;
   let active = 0;
@@ -1074,6 +1072,18 @@ function issueSubIssuesSummary(issue: AgentIssue, state: AgentIssueStoreState): 
     ...(latestUpdatedAt !== undefined ? { latestUpdatedAt } : {}),
     ...(nextScheduledAt !== undefined ? { nextScheduledAt } : {}),
   };
+}
+
+function issueDescendants(issue: AgentIssue, state: AgentIssueStoreState, seen: Set<string>): AgentIssue[] {
+  const descendants: AgentIssue[] = [];
+  for (const subIssueId of issue.subIssueIds) {
+    if (seen.has(subIssueId)) continue;
+    seen.add(subIssueId);
+    const subIssue = state.issues[subIssueId];
+    if (!subIssue) continue;
+    descendants.push(subIssue, ...issueDescendants(subIssue, state, seen));
+  }
+  return descendants;
 }
 
 function recurringIssueRow(
