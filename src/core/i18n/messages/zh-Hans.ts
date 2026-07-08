@@ -1158,7 +1158,7 @@ commandPalette: {
       detailsAriaLabel: '运行详情',
       closeDetails: '关闭运行详情',
       close: '关闭',
-      resizeDrawer: '调整运行详情高度',
+      resizeDrawer: '调整详情抽屉高度',
       sectionSubRuns: ({ completed, total }) => `子运行 ${completed}/${total}`,
       sectionTechnicalDetails: '详情',
       stop: '停止运行',

@@ -1249,7 +1249,7 @@ commandPalette: {
       detailsAriaLabel: 'Run details',
       closeDetails: 'Close run details',
       close: 'Close',
-      resizeDrawer: 'Resize run details',
+      resizeDrawer: 'Resize details drawer',
       sectionSubRuns: ({ completed, total }: { completed: number; total: number }) =>
         `Sub-runs ${completed}/${total}`,
       sectionTechnicalDetails: 'Details',

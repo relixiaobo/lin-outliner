@@ -3338,6 +3338,8 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
     const detailHeading = details.getByRole('heading', { name: 'Inspect Run UI', level: 3 });
     await expect(detailHeading).toBeVisible();
+    await expect(detailDialog.getByRole('separator', { name: 'Resize details drawer' })).toBeVisible();
+    await expect(details.locator('.agent-issue-detail-status-chip')).toHaveCount(0);
     await expect(details.getByText('Agent Sessions')).toBeVisible();
     await expect(details.getByText('Active')).toBeVisible();
     await expect(details.getByText('Sub-issues')).toBeVisible();

@@ -30,6 +30,7 @@ import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentMarkdown } from './AgentMarkdown';
+import { AgentDetailDrawerResizeHandle, useAgentDetailDrawerHeight } from './AgentDetailDrawerResize';
 
 export type IssueWorkPreset = 'inbox' | 'today' | 'upcoming' | 'logbook';
 
@@ -280,15 +281,13 @@ function displayStatusLabel(value: string): string {
 function issueDetailStatusLabel(
   issue: AgentIssue | undefined,
   recurringIssue: AgentRecurringIssue | undefined,
-  fallback: string,
-): string {
-  if (issue) return issue.status.name;
-  if (recurringIssue) return displayStatusLabel(recurringIssue.status);
-  return fallback;
+): string | null {
+  if (issue?.status.category === 'canceled') return issue.status.name;
+  if (recurringIssue?.status === 'paused' || recurringIssue?.status === 'archived') return displayStatusLabel(recurringIssue.status);
+  return null;
 }
 
 function issueDetailStatusClass(issue: AgentIssue | undefined, recurringIssue: AgentRecurringIssue | undefined): string {
-  if (issue?.status.category === 'completed') return 'is-complete';
   if (issue?.status.category === 'canceled') return 'is-attention';
   if (recurringIssue?.status === 'paused') return 'is-paused';
   if (recurringIssue?.status === 'archived') return 'is-muted';
@@ -833,6 +832,7 @@ export function AgentIssueDetailsPanel({
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<IssueReadResult | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  useAgentDetailDrawerHeight(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -861,7 +861,7 @@ export function AgentIssueDetailsPanel({
   const sessions = useMemo(() => [...(detail?.sessions ?? [])].sort((left, right) => right.updatedAt - left.updatedAt), [detail?.sessions]);
   const detailMarker = issueDetailMarker(issue, recurringIssue, sessions);
   const DetailMarkerIcon = detailMarker.icon;
-  const statusLabel = issueDetailStatusLabel(issue, recurringIssue, t.agent.issueDetail.none);
+  const statusLabel = issueDetailStatusLabel(issue, recurringIssue);
   const statusClass = issueDetailStatusClass(issue, recurringIssue);
   const timingLine = issueDetailTimingLine(issue, recurringIssue, t);
   const breadcrumbEntries = breadcrumbs.length > 0 ? breadcrumbs : [{ target }];
@@ -869,6 +869,7 @@ export function AgentIssueDetailsPanel({
 
   return (
     <section className="agent-run-detail-panel agent-issue-detail-panel" aria-label={t.agent.issueDetail.detailsAriaLabel}>
+      <AgentDetailDrawerResizeHandle />
       <header className="agent-run-detail-header">
         <div className="agent-run-detail-breadcrumb-row">
           {selectedSessionId ? (
