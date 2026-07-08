@@ -34,6 +34,17 @@ describe('agent issue manager tool contracts', () => {
     expect([...AGENT_ISSUE_RUN_PROFILES]).toEqual(['default', 'background', 'verifier']);
   });
 
+  test('keeps Issue relations out of decomposition and hierarchy semantics', () => {
+    const createTool = AGENT_ISSUE_TOOL_DEFINITIONS.find((tool) => tool.name === 'issue_create');
+    expect(createTool?.promptGuidance(promptContext())).toContain('do not model internal steps as separate Issues');
+    expect(createTool?.promptGuidance(promptContext())).toContain('never use blocked-by/related links to emulate hierarchy');
+
+    const relationSchema = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_create.properties.fields.properties.relations;
+    expect(relationSchema.description).toContain('never a hierarchy or breakdown mechanism');
+    expect(relationSchema.items.description).toContain('Do not use relations to model child Issues');
+    expect(relationSchema.items.properties.type.description).toContain('not internal decomposition');
+  });
+
   test('classifies read, mutation, runtime-control, and destructive behavior', () => {
     const byName = new Map(AGENT_ISSUE_TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
     expect(byName.get('issue_search')?.kind).toBe('read');

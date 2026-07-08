@@ -64,9 +64,9 @@ surface.
 | `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
 | `generate_image` | agent | Creates image files | Usually yes | Generate or edit raster images through enabled image-capable providers. |
 | `issue_search` | agent | No | No | Search concrete Issues and Recurring Issues by canonical work fields, execution state, node/tag scope, Activity state, and ordering fields. |
-| `issue_read` | agent | No | No | Read one Issue or Recurring Issue with requested detail slices for sessions, Activity, hierarchy, generated Issues, or verification evidence. |
+| `issue_read` | agent | No | No | Read one Issue or Recurring Issue with requested detail slices for sessions, Activity, generated Issues, or verification evidence. |
 | `issue_create` | agent | Yes | No | Create an Issue or Recurring Issue with objective, criteria, trigger, input scope, delegate profile, and verification policy. |
-| `issue_update` | agent | Yes | Destructive changes only | Update field, status, trigger, recurrence, hierarchy, or lifecycle changes on existing Issues and Recurring Issues. |
+| `issue_update` | agent | Yes | Destructive changes only | Update field, status, trigger, recurrence, relations, or lifecycle changes on existing Issues and Recurring Issues. |
 | `agent_session_start` | agent | Runtime execution | No | Start one Agent Session for an Issue from the Issue input snapshot. |
 | `agent_session_read` | agent | No | No | Read an Agent Session's status, latest output, Activity, and executor-facing state without exposing a Run id. |
 | `agent_session_send_message` | agent | Runtime execution | No | Send soft guidance or requested input to a live Agent Session. |
@@ -168,8 +168,10 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   trigger type, input node/tag scope, Activity type, and explicit ordering by
   created, updated, due, next materialization, or status fields. Missing ordered
   values stay last in both ascending and descending order.
-- Creating an Issue never creates hierarchy. Related work can be linked through
-  `relations`, but progress for a complex Issue comes from Agent Sessions,
+- Creating an Issue never creates hierarchy. `relations` only link
+  independently user-visible Issues; they must not be used to emulate child
+  Issues, checklist progress, coverage rows, verification passes, or hidden
+  workflow conditions. Progress for a complex Issue comes from Agent Sessions,
   criteria, evidence, and Activity on that Issue.
 
 The internal executor binding is intentionally not part of the model-facing

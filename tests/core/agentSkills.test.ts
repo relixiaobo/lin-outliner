@@ -1043,7 +1043,7 @@ describe('agent skills', () => {
       'data-cleanup',
       'document',
       'feed-processing',
-      'goal-launching',
+      'issue-planning',
       'memory-dream',
       'pdf',
       'presentation',
@@ -1158,23 +1158,26 @@ describe('agent skills', () => {
     expect(invocation.isolated?.status).toBe('completed');
   });
 
-  test('ships goal-launching as a built-in model guidance skill', async () => {
+  test('ships issue-planning as a built-in flat Issue guidance skill', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const automaticListing = await runtime.buildSkillListingReminderText(200_000);
-    const skill = await runtime.getSkill('goal-launching');
+    const skill = await runtime.getSkill('issue-planning');
 
-    expect(automaticListing).toContain('- goal-launching:');
+    expect(automaticListing).toContain('- issue-planning:');
+    expect(automaticListing).not.toContain('- goal-launching:');
     expect(skill).toMatchObject({
-      name: 'goal-launching',
+      name: 'issue-planning',
       source: 'built-in',
       modelInvocable: true,
       userInvocable: false,
       ratified: true,
-      argumentHint: '<objective and acceptance criteria>',
+      argumentHint: '<durable work request>',
       argumentNames: ['objective'],
     });
     expect(skill?.body).toContain('Use `issue_create` with a concrete objective, explicit acceptance criteria');
-    expect(skill?.body).toContain('use `agent_session_start` for one execution attempt');
+    expect(skill?.body).toContain('district-level queries are internal execution plan items inside those Issues');
+    expect(skill?.body).toContain('Do not simulate hierarchy with `relations`, `blocked-by`');
+    expect(skill?.body).toContain('If an existing manual Issue should run now, use `agent_session_start`');
     expect(skill?.body).toContain('Never claim completion from the latest Agent Session result alone');
   });
 

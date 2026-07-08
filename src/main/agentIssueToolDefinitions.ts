@@ -28,6 +28,8 @@ function prompt(text: string): (context: TenonAgentToolPromptContext) => string 
     text,
     `Available AgentRef profiles: ${context.availableRunProfiles.map((ref) => ref.runProfile ?? 'default').join(', ') || 'default'}.`,
     'Do not use Task, Run, Project, Job, Occurrence, or Logbook concepts for durable work.',
+    'Issues are flat durable work items. Do not create child/sub-Issues, and do not model internal steps as separate Issues.',
+    'Use Issue relations only between independently user-visible Issues; never use blocked-by/related links to emulate hierarchy, checklist progress, coverage items, verification steps, or hidden workflow conditions.',
   ].join('\n');
 }
 
@@ -71,8 +73,8 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     label: 'Issue Create',
     kind: 'mutation',
     searchHint: 'create durable agent work',
-    descriptionText: 'Create a normal Issue or Recurring Issue.',
-    promptGuidanceText: 'Use when the durable definition does not exist yet. Use preview for ambiguous or broad-scope creation.',
+    descriptionText: 'Create one flat Issue or Recurring Issue for an independently user-visible durable work item.',
+    promptGuidanceText: 'Use when the durable definition does not exist yet. Put internal breakdown, coverage lists, and verification expectations in the Issue description and criteria instead of creating child Issues. Use preview for ambiguous or broad-scope creation.',
     inputSchema: AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_create,
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => false,
@@ -84,7 +86,7 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     kind: 'mutation',
     searchHint: 'change durable agent work',
     descriptionText: 'Update an existing Issue or Recurring Issue, including lifecycle, trigger, criteria, verification, and recurrence.',
-    promptGuidanceText: 'Use for durable definition, lifecycle, schedule, criteria, verification, or recurrence changes. Use agent_session_send_message for soft execution guidance.',
+    promptGuidanceText: 'Use for durable definition, lifecycle, schedule, criteria, verification, recurrence, or true independent-Issue relation changes. Use agent_session_send_message for soft execution guidance.',
     inputSchema: AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_update,
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => false,

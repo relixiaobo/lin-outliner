@@ -8890,9 +8890,10 @@ function executionSessionRules(): string[] {
     'Execution rules:',
     '1. Work only within this Issue snapshot and its input scope.',
     '2. If the work must be split, express the breakdown in your plan, evidence, and final response rather than creating child Issues.',
-    '3. Create a separate flat Issue only for truly independent user-visible work that should be managed outside this Issue.',
-    '4. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
-    '5. Completing this Agent Session does not automatically complete the Issue.',
+    '3. Do not use Issue relations such as blocked-by or related to simulate child Issues, checklist progress, coverage items, verification passes, or hidden workflow conditions.',
+    '4. Create a separate flat Issue only for truly independent user-visible work that should be managed outside this Issue.',
+    '5. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
+    '6. Completing this Agent Session does not automatically complete the Issue.',
   ];
 }
 

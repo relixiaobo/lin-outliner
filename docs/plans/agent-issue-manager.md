@@ -81,12 +81,13 @@ Example:
 - The Issue's Agent Session creates plan items for each district and records
   results/evidence on the same Issue.
 
-The main agent should not expand that request into dozens of child Issues. That
-would make the tool trace noisy, make the Work UI harder to scan, and force the
-model to decide when hierarchy is appropriate. If each district is truly
-user-visible work that should be managed separately, the agent can create flat
-Issues with explicit relation links, but that is not the default decomposition
-mechanism.
+The main agent should not expand that request into dozens of child Issues. It
+also should not create dozens of flat Issues and connect them with `blocked-by`
+or `related` as a pseudo hierarchy. That would make the tool trace noisy, make
+the Work UI harder to scan, and force the model to decide when hierarchy is
+appropriate. If each district is truly independently user-visible work that
+should be managed separately, the agent can create separate flat Issues, but that
+is a different user request and not the default decomposition mechanism.
 
 ### Tool Surface
 
@@ -115,6 +116,9 @@ include parent fields, and read includes do not expose child trees.
 
 - Updates flat Issue definition, lifecycle, trigger, criteria, verification,
   evidence, relations, input, output, permission, or execution policy.
+- `relations` connect independently user-visible Issues only. They are not a
+  hierarchy, checklist, coverage, verification, or hidden workflow dependency
+  mechanism.
 - Updates Recurring Issue cadence/template/lifecycle.
 
 `agent_session_start`

@@ -11,7 +11,7 @@ built-in name is a product bug and fails loudly instead of being silently
 dropped. The current user-visible built-in skills are `/skillify`, `/research`,
 `/data-cleanup`, `/data-analysis`, `/document`, `/feed-processing`, `/pdf`,
 `/presentation`, and `/spreadsheet`.
-`goal-launching` is a model-only built-in workflow and is not exposed as a slash
+`issue-planning` is a model-only built-in workflow and is not exposed as a slash
 skill.
 
 `/skillify` is a user- and model-invocable workflow for creating or updating
@@ -26,14 +26,16 @@ this as a skill" or "update the import skill with this workflow" as direct
 `/skillify` user invocations when slash skills are enabled; ordinary questions
 about whether a skill exists or how skills work remain normal conversation.
 
-`goal-launching` is a model-invocable guidance workflow for turning a
-natural-language handoff into a persistent verified Issue. It tells the model to
-separate objective from acceptance criteria, clarify missing criteria when
-needed, create or update durable work through `issue_*` tools, start one
-execution attempt with `agent_session_start` when the trigger should run now,
-and rely on Issue criteria, Activity, and verifier evidence rather than one
-Session's own completion claim. There is no user-facing `/goal` shortcut or
-composer goal button; ordinary prose is the entry point.
+`issue-planning` is a model-invocable guidance workflow for turning a
+natural-language durable-work request into one or more flat verified Issues. It
+tells the model to choose Issue boundaries from independently user-visible
+outcomes, put internal breakdown and coverage lists inside the Issue definition,
+create or update durable work through `issue_*` tools, avoid relation-based
+pseudo-hierarchy, start an existing manual Issue with `agent_session_start` only
+when the user asks it to run now, and rely on Issue criteria, Activity, and
+verifier evidence rather than one Session's own completion claim. There is no
+user-facing `/issue-planning` or `/goal` shortcut, and no composer goal button;
+ordinary prose is the entry point.
 
 `/research` is a user- and model-invocable `execution: isolated` workflow for
 bounded investigation. It starts an isolated same-agent Run and
