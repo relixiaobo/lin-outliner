@@ -343,6 +343,19 @@ function detailTargetForIssue(issue: AgentIssue): IssueTargetRef {
   return { type: 'issue', id: issue.id };
 }
 
+function issueDetailMarker(
+  issue: AgentIssue | undefined,
+  recurringIssue: AgentRecurringIssue | undefined,
+  sessions: readonly AgentSession[],
+): { icon: AppIcon; className: string } {
+  if (issue?.status.category === 'completed') return { icon: CheckIcon, className: 'is-complete' };
+  if (issue?.status.category === 'canceled') return { icon: WarningIcon, className: 'is-attention' };
+  if (sessions.some((session) => ACTIVE_SESSION_STATES.has(session.state))) return { icon: LoaderIcon, className: 'is-active' };
+  if (recurringIssue) return { icon: RepeatIcon, className: recurringIssue.status === 'paused' ? 'is-muted' : '' };
+  if (issue?.trigger.type === 'scheduled' || issue?.dueDate) return { icon: ScheduledIcon, className: 'is-scheduled' };
+  return { icon: ClockIcon, className: '' };
+}
+
 function sessionStatusClass(session: AgentSession): string {
   if (session.state === 'complete') return 'is-complete';
   if (session.state === 'error' || session.state === 'stale' || session.state === 'canceled') return 'is-attention';
@@ -844,13 +857,10 @@ export function AgentIssueDetailsPanel({
   const issue = detail?.issue;
   const recurringIssue = detail?.recurringIssue;
   const title = issueDisplayTitleForDetail(issue, recurringIssue, t.agent.issue.unknown);
-  const DetailMarkerIcon = recurringIssue
-    ? RepeatIcon
-    : issue?.trigger.type === 'scheduled' || issue?.dueDate
-      ? ScheduledIcon
-      : ClockIcon;
   const activity = useMemo(() => [...(detail?.activity ?? [])].sort((left, right) => right.createdAt - left.createdAt), [detail?.activity]);
   const sessions = useMemo(() => [...(detail?.sessions ?? [])].sort((left, right) => right.updatedAt - left.updatedAt), [detail?.sessions]);
+  const detailMarker = issueDetailMarker(issue, recurringIssue, sessions);
+  const DetailMarkerIcon = detailMarker.icon;
   const statusLabel = issueDetailStatusLabel(issue, recurringIssue, t.agent.issueDetail.none);
   const statusClass = issueDetailStatusClass(issue, recurringIssue);
   const timingLine = issueDetailTimingLine(issue, recurringIssue, t);
@@ -944,7 +954,7 @@ export function AgentIssueDetailsPanel({
           ) : (
           <>
             <div className="agent-run-detail-title-line">
-              <span className="agent-issue-detail-marker">
+              <span className={`agent-issue-detail-marker ${detailMarker.className}`.trim()}>
                 <DetailMarkerIcon aria-hidden="true" size={ICON_SIZE.menu} />
               </span>
               <div className="agent-issue-detail-title-copy">
