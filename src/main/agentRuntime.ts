@@ -8875,7 +8875,6 @@ function agentSessionObjective(session: AgentSession, startInput: AgentSessionSt
     `Issue id: ${issue.id}`,
     `Issue title: ${issue.title}`,
     issue.description ? `Issue description:\n${issue.description}` : '',
-    issue.parentIssueId ? `Parent Issue id: ${issue.parentIssueId}` : '',
     issue.recurrence ? `Recurring Issue id: ${issue.recurrence.recurringIssueId}` : '',
     session.inputSnapshot ? `Input snapshot:\n${formatIssueInputSnapshot(session.inputSnapshot)}` : 'Input snapshot: none',
     issue.output ? `Output policy:\n${formatIssueOutputPolicy(issue.output)}` : 'Output policy: activity only',
@@ -8890,8 +8889,8 @@ function executionSessionRules(): string[] {
   return [
     'Execution rules:',
     '1. Work only within this Issue snapshot and its input scope.',
-    '2. If the work must be split, create or update sub-issues with the Issue tools; do not invent hidden child work as the durable breakdown.',
-    '3. Treat the Issue hierarchy as adjacent control: report child outcomes to this Issue only, and let parent Issues summarize results upward.',
+    '2. If the work must be split, express the breakdown in your plan, evidence, and final response rather than creating child Issues.',
+    '3. Create a separate flat Issue only for truly independent user-visible work that should be managed outside this Issue.',
     '4. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
     '5. Completing this Agent Session does not automatically complete the Issue.',
   ];

@@ -132,14 +132,12 @@ export class AgentIssueStore {
       if (input.issueType === 'issue') {
         const issue = buildIssue(input.fields, actor, now);
         state.issues[issue.id] = issue;
-        linkIssueToParent(state, issue);
         appendActivity(state, {
           target: { type: 'issue', issueId: issue.id },
           actor,
           content: { type: 'field-change', field: 'definition', to: 'created' },
           createdAt: now,
         });
-        appendParentSubIssueActivity(state, issue, actor, now);
         return state;
       }
 
@@ -520,7 +518,6 @@ export class AgentIssueStore {
         const skippedWindowCount = countSkippedWindows(state, recurringIssue, dueAt);
         const issue = issueFromRecurringIssue(recurringIssue, dueAt, nextDue ?? dueAt, now, skippedWindowCount);
         state.issues[issue.id] = issue;
-        linkIssueToParent(state, issue);
         recurringIssue.nextMaterializationAt = nextDue ?? undefined;
         recurringIssue.updatedAt = now;
         recurringIssue.revision = revision(now);
@@ -614,8 +611,6 @@ function buildIssue(fields: IssueDraftFields, actor: ActorRef, now: number): Age
     ...(fields.description !== undefined ? { description: fields.description } : {}),
     status: DEFAULT_ISSUE_STATUS,
     ...(fields.delegate ? { delegate: fields.delegate } : {}),
-    ...(fields.parentIssueId ? { parentIssueId: fields.parentIssueId } : {}),
-    subIssueIds: [],
     relations: fields.relations ?? [],
     trigger: fields.trigger ?? { type: 'manual' },
     ...(fields.dueDate ? { dueDate: fields.dueDate } : {}),
@@ -667,8 +662,6 @@ function issueFromRecurringIssue(
     ...(recurringIssue.descriptionTemplate !== undefined ? { description: renderRecurringTemplate(recurringIssue.descriptionTemplate, date) } : {}),
     status: DEFAULT_ISSUE_STATUS,
     ...(template.delegate ? { delegate: template.delegate } : {}),
-    ...(template.parentIssueId ? { parentIssueId: template.parentIssueId } : {}),
-    subIssueIds: [],
     relations: template.relations ?? [],
     trigger: template.trigger ?? { type: 'when-ready' },
     recurrence: {
@@ -735,9 +728,7 @@ function applyIssueChange(
 ) {
   switch (change.type) {
     case 'patch':
-      unlinkIssueFromParent(state, issue);
       Object.assign(issue, change.patch);
-      linkIssueToParent(state, issue);
       appendActivity(state, activityInput({ type: 'issue', issueId: issue.id }, actor, { type: 'field-change', field: 'patch', to: change.patch }, now));
       break;
     case 'transition':
@@ -750,7 +741,6 @@ function applyIssueChange(
       break;
     case 'delete':
       delete state.issues[issue.id];
-      unlinkIssueFromParent(state, issue);
       appendActivity(state, activityInput({ type: 'issue', issueId: issue.id }, actor, { type: 'field-change', field: 'definition', to: 'deleted' }, now));
       return;
   }
@@ -807,36 +797,6 @@ function applyRecurringIssueChange(
   recurringIssue.revision = revision(now);
 }
 
-function linkIssueToParent(state: AgentIssueStoreState, issue: AgentIssue) {
-  if (!issue.parentIssueId) return;
-  const parent = state.issues[issue.parentIssueId];
-  if (!parent || parent.subIssueIds.includes(issue.id)) return;
-  parent.subIssueIds = [...parent.subIssueIds, issue.id];
-}
-
-function appendParentSubIssueActivity(
-  state: AgentIssueStoreState,
-  issue: AgentIssue,
-  actor: ActorRef,
-  now: number,
-) {
-  if (!issue.parentIssueId || !state.issues[issue.parentIssueId]) return;
-  appendActivity(state, {
-    target: { type: 'issue', issueId: issue.parentIssueId },
-    actor,
-    content: { type: 'agent-action', action: 'sub_issue_create', result: issue.id },
-    relatedTargets: [{ type: 'issue', id: issue.id }],
-    createdAt: now,
-  });
-}
-
-function unlinkIssueFromParent(state: AgentIssueStoreState, issue: AgentIssue) {
-  if (!issue.parentIssueId) return;
-  const parent = state.issues[issue.parentIssueId];
-  if (!parent) return;
-  parent.subIssueIds = parent.subIssueIds.filter((id) => id !== issue.id);
-}
-
 function readFromState(state: AgentIssueStoreState, input: IssueReadInput): IssueReadResult {
   if (input.target.type === 'issue') {
     const issue = state.issues[input.target.id];
@@ -845,7 +805,6 @@ function readFromState(state: AgentIssueStoreState, input: IssueReadInput): Issu
       ...(issue ? { issue } : {}),
       ...(issue && input.include?.includes('activity') ? { activity: activityForTarget(state, { type: 'issue', issueId: issue.id }) } : {}),
       ...(issue && input.include?.includes('sessions') ? { sessions: Object.values(state.sessions).filter((session) => session.issueId === issue.id) } : {}),
-      ...(issue && input.include?.includes('sub-issues') ? { subIssues: issue.subIssueIds.map((id) => state.issues[id]).filter((entry): entry is AgentIssue => Boolean(entry)) } : {}),
     };
   }
 
@@ -867,8 +826,6 @@ function matchesIssue(issue: AgentIssue, state: AgentIssueStoreState, input: Iss
   if (filter?.issueIds && !filter.issueIds.includes(issue.id)) return false;
   if (filter?.delegateIds && !agentRefMatches(issue.delegate, filter.delegateIds)) return false;
   if (filter?.statusCategories && !filter.statusCategories.includes(issue.status.category) && !derivedIssueBuckets(issue, state).some((bucket) => filter.statusCategories!.includes(bucket))) return false;
-  if (filter?.parentIssueIds && (!issue.parentIssueId || !filter.parentIssueIds.includes(issue.parentIssueId))) return false;
-  if (filter?.hasSubIssues !== undefined && (issue.subIssueIds.length > 0) !== filter.hasSubIssues) return false;
   if (filter?.triggerTypes && !filter.triggerTypes.includes(issue.trigger.type)) return false;
   if (filter?.archived !== undefined && Boolean(issue.archivedAt) !== filter.archived) return false;
   if (filter?.hasActiveSession !== undefined && issueHasActiveSession(issue, state) !== filter.hasActiveSession) return false;
@@ -1007,26 +964,17 @@ function triggerSortTime(issue: AgentIssue): number {
   return issue.trigger.type === 'scheduled' ? issue.trigger.startAt : issue.createdAt;
 }
 
-function issueScheduledAt(issue: AgentIssue): number | undefined {
-  if (issue.trigger.type === 'scheduled') return issue.trigger.startAt;
-  return issue.dueDate?.targetAt;
-}
-
 function issueRow(issue: AgentIssue, state: AgentIssueStoreState, input: IssueSearchInput): IssueSearchRow {
   const activity = input.include?.includes('activity-summary')
     ? sortActivityDescending(issueActivity(state, issue))
     : undefined;
   const latestSession = latestSessionForIssue(issue, state);
-  const subIssuesSummary = input.include?.includes('sub-issues-summary')
-    ? issueSubIssuesSummary(issue, state)
-    : undefined;
   return {
     target: { type: 'issue', id: issue.id },
     title: issue.title,
     status: issue.status.name,
     statusCategory: issue.status.category,
     viewBuckets: issueViewBuckets(issue, state),
-    ...(issue.parentIssueId ? { parentIssueId: issue.parentIssueId } : {}),
     trigger: issue.trigger,
     ...(issue.dueDate ? { dueDate: issue.dueDate } : {}),
     hasActiveSession: issueHasActiveSession(issue, state),
@@ -1038,52 +986,7 @@ function issueRow(issue: AgentIssue, state: AgentIssueStoreState, input: IssueSe
     revision: issue.revision,
     updatedAt: issue.updatedAt,
     ...(activity ? { latestActivity: activity[0], activityCount: activity.length } : {}),
-    ...(subIssuesSummary ? { subIssuesSummary } : {}),
   };
-}
-
-function issueSubIssuesSummary(issue: AgentIssue, state: AgentIssueStoreState): IssueSearchRow['subIssuesSummary'] {
-  const subIssues = issueDescendants(issue, state, new Set([issue.id]));
-  if (subIssues.length === 0) return undefined;
-  let completed = 0;
-  let active = 0;
-  let needsAttention = 0;
-  let latestUpdatedAt: number | undefined;
-  let nextScheduledAt: number | undefined;
-  for (const subIssue of subIssues) {
-    if (subIssue.status.category === 'completed') completed += 1;
-    if (issueHasActiveSession(subIssue, state)) active += 1;
-    if (issueNeedsAttention(subIssue, state)) needsAttention += 1;
-    latestUpdatedAt = latestUpdatedAt === undefined
-      ? subIssue.updatedAt
-      : Math.max(latestUpdatedAt, subIssue.updatedAt);
-    const scheduledAt = issueScheduledAt(subIssue);
-    if (scheduledAt !== undefined) {
-      nextScheduledAt = nextScheduledAt === undefined
-        ? scheduledAt
-        : Math.min(nextScheduledAt, scheduledAt);
-    }
-  }
-  return {
-    total: subIssues.length,
-    completed,
-    active,
-    needsAttention,
-    ...(latestUpdatedAt !== undefined ? { latestUpdatedAt } : {}),
-    ...(nextScheduledAt !== undefined ? { nextScheduledAt } : {}),
-  };
-}
-
-function issueDescendants(issue: AgentIssue, state: AgentIssueStoreState, seen: Set<string>): AgentIssue[] {
-  const descendants: AgentIssue[] = [];
-  for (const subIssueId of issue.subIssueIds) {
-    if (seen.has(subIssueId)) continue;
-    seen.add(subIssueId);
-    const subIssue = state.issues[subIssueId];
-    if (!subIssue) continue;
-    descendants.push(subIssue, ...issueDescendants(subIssue, state, seen));
-  }
-  return descendants;
 }
 
 function recurringIssueRow(

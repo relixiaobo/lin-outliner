@@ -117,8 +117,6 @@ export interface AgentIssue {
   description?: string;
   status: IssueStatus;
   delegate?: AgentRef;
-  parentIssueId?: AgentIssueId;
-  subIssueIds: AgentIssueId[];
   relations: IssueRelation[];
   trigger: IssueTrigger;
   dueDate?: IssueDueDate;
@@ -151,7 +149,6 @@ export type RecurringIssueMissedPolicy =
 
 export interface RecurringIssueTemplate {
   delegate?: AgentRef;
-  parentIssueId?: AgentIssueId;
   relations?: IssueRelation[];
   trigger?: IssueTrigger;
   completionCriteria?: IssueCompletionCriterion[];
@@ -369,7 +366,6 @@ export interface IssueSearchOrder {
 export type IssueSearchInclude =
   | 'activity-summary'
   | 'session-summary'
-  | 'sub-issues-summary'
   | 'criteria-summary'
   | 'input-preview'
   | 'output-preview'
@@ -381,8 +377,6 @@ export interface IssueSearchFilter {
   delegateIds?: string[];
   issueIds?: AgentIssueId[];
   recurringIssueIds?: AgentRecurringIssueId[];
-  parentIssueIds?: AgentIssueId[];
-  hasSubIssues?: boolean;
   triggerTypes?: IssueTrigger['type'][];
   dueDate?: TimeRangeFilter;
   cadence?: RecurringCadenceType[];
@@ -421,7 +415,6 @@ export type IssueReadInclude =
   | 'definition'
   | 'activity'
   | 'sessions'
-  | 'sub-issues'
   | 'criteria'
   | 'progress'
   | 'generated-issues'
@@ -439,7 +432,6 @@ export interface IssueDraftFields {
   title: string;
   description?: string;
   delegate?: AgentRef;
-  parentIssueId?: AgentIssueId;
   relations?: IssueRelation[];
   trigger?: IssueTrigger;
   dueDate?: IssueDueDate;
@@ -467,7 +459,6 @@ export interface IssuePatchFields {
   description?: string;
   status?: IssueStatus;
   delegate?: AgentRef;
-  parentIssueId?: AgentIssueId | null;
   relations?: IssueRelation[];
   trigger?: IssueTrigger;
   dueDate?: IssueDueDate | null;
@@ -589,7 +580,6 @@ export interface IssueSearchRow {
   status: string;
   statusCategory?: IssueStatusCategory;
   viewBuckets?: IssueViewBucket[];
-  parentIssueId?: AgentIssueId;
   trigger?: IssueTrigger;
   dueDate?: IssueDueDate;
   cadence?: RecurringIssueCadence;
@@ -602,16 +592,6 @@ export interface IssueSearchRow {
   updatedAt: number;
   latestActivity?: Activity;
   activityCount?: number;
-  subIssuesSummary?: IssueSubIssuesSummary;
-}
-
-export interface IssueSubIssuesSummary {
-  total: number;
-  completed: number;
-  active: number;
-  needsAttention: number;
-  latestUpdatedAt?: number;
-  nextScheduledAt?: number;
 }
 
 export interface IssueSearchResult {
@@ -625,7 +605,6 @@ export interface IssueReadResult {
   recurringIssue?: AgentRecurringIssue;
   activity?: Activity[];
   sessions?: AgentSession[];
-  subIssues?: AgentIssue[];
   generatedIssues?: AgentIssue[];
 }
 

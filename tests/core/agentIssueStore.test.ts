@@ -364,7 +364,7 @@ describe('agent issue store', () => {
     });
   });
 
-  test('links sub-issues through visible Issue hierarchy', async () => {
+  test('keeps Issues flat when related work is created separately', async () => {
     await withStore(async (store) => {
       await store.create({
         issueType: 'issue',
@@ -375,65 +375,21 @@ describe('agent issue store', () => {
         request: { mode: 'request' },
         reason: 'Track the July release outcome.',
       }, actor, 10);
-      const parent = (await store.search({ text: 'July release' })).rows[0];
+      const release = (await store.search({ targets: ['issue'], text: 'July release' })).rows[0]!;
 
       await store.create({
         issueType: 'issue',
         fields: {
           title: 'Write release notes',
-          parentIssueId: parent.target.id,
+          relations: [{ type: 'related', issueId: release.target.id }],
           trigger: { type: 'manual' },
         },
         request: { mode: 'request' },
-        reason: 'Break release work into a visible sub-issue.',
+        reason: 'Track related release work as a separate flat Issue.',
       }, actor, 20);
 
-      const read = await store.read({ target: parent.target, include: ['sub-issues', 'activity'] });
-      expect(read.issue?.subIssueIds).toHaveLength(1);
-      expect(read.subIssues?.[0]?.title).toBe('Write release notes');
-      expect(read.activity).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          content: { type: 'agent-action', action: 'sub_issue_create', result: read.subIssues![0]!.id },
-        }),
-      ]));
-      const children = await store.search({ filter: { parentIssueIds: [parent.target.id] } });
-      expect(children.rows.map((row) => row.title)).toEqual(['Write release notes']);
-      expect(children.rows[0]?.parentIssueId).toBe(parent.target.id);
-
-      await store.create({
-        issueType: 'issue',
-        fields: {
-          title: 'Collect release screenshots',
-          parentIssueId: children.rows[0]!.target.id,
-          trigger: { type: 'manual' },
-        },
-        request: { mode: 'request' },
-        reason: 'Break child work into a nested sub-issue.',
-      }, actor, 30);
-      const grandchild = (await store.search({ filter: { parentIssueIds: [children.rows[0]!.target.id] } })).rows[0]!;
-      await store.update({
-        target: { type: 'issue', id: grandchild.target.id, expectedRevision: grandchild.revision },
-        change: { type: 'transition', status: { name: 'Completed', category: 'completed' } },
-        request: { mode: 'request' },
-        reason: 'Mark the nested sub-issue complete.',
-      }, actor, 40);
-
-      const childWithSummary = (await store.search({ text: 'Write release notes', include: ['sub-issues-summary'] })).rows[0];
-      expect(childWithSummary?.subIssuesSummary).toMatchObject({
-        total: 1,
-        completed: 1,
-        active: 0,
-        needsAttention: 0,
-        latestUpdatedAt: 40,
-      });
-      const parentWithSummary = (await store.search({ text: 'July release', include: ['sub-issues-summary'] })).rows[0];
-      expect(parentWithSummary?.subIssuesSummary).toMatchObject({
-        total: 2,
-        completed: 1,
-        active: 0,
-        needsAttention: 0,
-        latestUpdatedAt: 40,
-      });
+      const rows = await store.search({ targets: ['issue'] });
+      expect(rows.rows.map((row) => row.title).sort()).toEqual(['Prepare July release', 'Write release notes']);
     });
   });
 

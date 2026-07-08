@@ -29,7 +29,6 @@ function sessionWith(overrides: Partial<AgentSession> = {}): AgentSession {
     id: 'issue-1',
     title: 'Scoped work',
     status: { name: 'Ready', category: 'unstarted' },
-    subIssueIds: [],
     relations: [],
     trigger: { type: 'manual' },
     permissionMode: 'unattended',

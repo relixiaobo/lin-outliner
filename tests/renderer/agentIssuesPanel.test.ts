@@ -29,7 +29,7 @@ describe('AgentIssuesPanel smart views', () => {
     const inboxQueries = issueSearchInputsForWorkPreset('inbox', TODAY);
     expect(issueSearchInputForWorkPreset('today')).toMatchObject({
       filter: { archived: false },
-      include: ['activity-summary', 'session-summary', 'sub-issues-summary'],
+      include: ['activity-summary', 'session-summary'],
       limit: 100,
     });
     expect(inboxQueries.some((query) => (
@@ -53,7 +53,6 @@ describe('AgentIssuesPanel smart views', () => {
   test('derives Today from active sessions, today schedule, repeating rules, and done today', () => {
     expect(issueRowMatchesWorkPreset(row({ hasActiveSession: true }), 'today', TODAY)).toBe(true);
     expect(issueRowMatchesWorkPreset(row({ trigger: { type: 'scheduled', startAt: TODAY_18, timeZone: 'UTC' } }), 'today', TODAY)).toBe(true);
-    expect(issueRowMatchesWorkPreset(row({ subIssuesSummary: { total: 2, completed: 1, active: 1, needsAttention: 0, latestUpdatedAt: TODAY } }), 'today', TODAY)).toBe(true);
     expect(issueRowMatchesWorkPreset(row({
       target: { type: 'recurring-issue', id: 'recurring-1' },
       status: 'active',
@@ -77,42 +76,6 @@ describe('AgentIssuesPanel smart views', () => {
     expect(issueRowMatchesWorkPreset(recurringToday, 'upcoming', TODAY)).toBe(true);
     expect(issueRowMatchesWorkPreset(recurringTomorrow, 'today', TODAY)).toBe(false);
     expect(issueRowMatchesWorkPreset(recurringTomorrow, 'upcoming', TODAY)).toBe(true);
-  });
-
-  test('keeps sub-issues inside their parent in Work views', () => {
-    const child = row({
-      target: { type: 'issue', id: 'issue-child-1' },
-      title: 'Child issue',
-      parentIssueId: 'issue-parent-1',
-      statusCategory: 'completed',
-      updatedAt: TODAY_18,
-    });
-    const parent = row({
-      target: { type: 'issue', id: 'issue-parent-1' },
-      title: 'Parent issue',
-      subIssuesSummary: { total: 2, completed: 1, active: 0, needsAttention: 0, latestUpdatedAt: TODAY - 30 * 60 * 1000 },
-    });
-    expect(issueRowMatchesWorkPreset(child, 'today', TODAY)).toBe(false);
-    expect(issueRowMatchesWorkPreset(parent, 'today', TODAY)).toBe(true);
-    expect(issueRowMatchesWorkPreset(parent, 'inbox', TODAY)).toBe(false);
-    expect(issueRowSummaryForRow(parent, 'today', en, TODAY)).toBe('30 minutes ago');
-  });
-
-  test('surfaces parent Issues when scheduled sub-issues are upcoming', () => {
-    const parent = row({
-      target: { type: 'issue', id: 'issue-parent-1' },
-      title: 'Parent issue',
-      subIssuesSummary: {
-        total: 3,
-        completed: 0,
-        active: 0,
-        needsAttention: 0,
-        nextScheduledAt: TOMORROW_09,
-      },
-    });
-    expect(issueRowMatchesWorkPreset(parent, 'upcoming', TODAY)).toBe(true);
-    expect(issueRowSummaryForRow(parent, 'upcoming', en, TODAY)).toContain('9:00');
-    expect(issueRowSummaryForRow(parent, 'upcoming', en, TODAY)).not.toContain('Sub-issues');
   });
 
   test('displays Recurring Issue templates as readable rule names', () => {

@@ -24,7 +24,6 @@ import {
   LoaderIcon,
   RepeatIcon,
   ScheduledIcon,
-  SubIssueIcon,
   WarningIcon,
 } from '../icons';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
@@ -45,7 +44,7 @@ const ISSUE_WORK_PRESET_ICONS = {
 } satisfies Record<IssueWorkPreset, AppIcon>;
 const ACTIVE_SESSION_STATES = new Set<AgentSession['state']>(['pending', 'active', 'awaitingInput']);
 const TERMINAL_STATUS_CATEGORIES = new Set(['completed', 'canceled']);
-const ISSUE_ROW_INCLUDE: NonNullable<IssueSearchInput['include']> = ['activity-summary', 'session-summary', 'sub-issues-summary'];
+const ISSUE_ROW_INCLUDE: NonNullable<IssueSearchInput['include']> = ['activity-summary', 'session-summary'];
 
 interface AgentIssuesPanelProps {
   activeSessionCount: number;
@@ -72,7 +71,7 @@ export interface IssueDetailBreadcrumb {
   title?: string;
 }
 
-const ISSUE_DETAIL_INCLUDE = ['activity', 'sessions', 'sub-issues', 'generated-issues', 'criteria'] as const;
+const ISSUE_DETAIL_INCLUDE = ['activity', 'sessions', 'generated-issues', 'criteria'] as const;
 
 export function issueSearchInputForWorkPreset(preset: IssueWorkPreset): IssueSearchInput {
   return issueSearchInputsForWorkPreset(preset)[0]!;
@@ -86,12 +85,10 @@ export function issueSearchInputsForWorkPreset(preset: IssueWorkPreset, now = Da
       return [
         { filter: { archived: false, needsAttention: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, triggerTypes: ['manual'], hasActiveSession: false }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-        { targets: ['issue'], filter: { archived: false, hasSubIssues: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
       ];
     case 'today':
       return [
         { targets: ['issue'], filter: { archived: false, hasActiveSession: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-        { targets: ['issue'], filter: { archived: false, hasSubIssues: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, statusCategories: ['scheduled'] }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, dueDate: { to: end } }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['recurring-issue'], filter: { archived: false, nextMaterializationAt: { to: end } }, include: ISSUE_ROW_INCLUDE, limit: 100 },
@@ -100,7 +97,6 @@ export function issueSearchInputsForWorkPreset(preset: IssueWorkPreset, now = Da
     case 'upcoming':
       return [
         { targets: ['recurring-issue'], filter: { archived: false }, include: ISSUE_ROW_INCLUDE, orderBy: [{ field: 'nextMaterializationAt', direction: 'asc' }], limit: 100 },
-        { targets: ['issue'], filter: { archived: false, hasSubIssues: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, statusCategories: ['scheduled'] }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, dueDate: { from: end + 1 } }, include: ISSUE_ROW_INCLUDE, orderBy: [{ field: 'dueDate', direction: 'asc' }], limit: 100 },
       ];
@@ -178,26 +174,6 @@ function scheduleTimeForPreset(timestamp: number, preset: IssueWorkPreset, now: 
 
 function joinRowSummaryParts(parts: Array<string | undefined>): string {
   return parts.filter(Boolean).join(' · ');
-}
-
-function rowIsTopLevelWorkItem(row: IssueSearchRow): boolean {
-  return row.target.type !== 'issue' || !row.parentIssueId;
-}
-
-interface RowSubIssueProgress {
-  completed: number;
-  label: string;
-  total: number;
-}
-
-function rowSubIssuesProgress(row: IssueSearchRow, labels: ReturnType<typeof useT>['agent']['issue']): RowSubIssueProgress | null {
-  const summary = row.subIssuesSummary;
-  if (!summary || summary.total === 0) return null;
-  return {
-    completed: summary.completed,
-    label: labels.summary.subIssueProgress({ completed: summary.completed, total: summary.total }),
-    total: summary.total,
-  };
 }
 
 export function issueDisplayTitleForRow(row: IssueSearchRow): string {
@@ -434,7 +410,7 @@ function useSessionElapsedMs(session: AgentSession): number | null {
 function rowScheduledAt(row: IssueSearchRow): number | undefined {
   if (row.target.type === 'recurring-issue') return row.nextMaterializationAt;
   if (row.trigger?.type === 'scheduled') return row.trigger.startAt;
-  return row.subIssuesSummary?.nextScheduledAt;
+  return undefined;
 }
 
 function rowIsTerminal(row: IssueSearchRow): boolean {
@@ -444,26 +420,23 @@ function rowIsTerminal(row: IssueSearchRow): boolean {
 function rowHasActiveSession(row: IssueSearchRow): boolean {
   return Boolean(
     row.hasActiveSession
-    || (row.latestSessionState && ACTIVE_SESSION_STATES.has(row.latestSessionState))
-    || (row.subIssuesSummary?.active ?? 0) > 0,
+    || (row.latestSessionState && ACTIVE_SESSION_STATES.has(row.latestSessionState)),
   );
 }
 
 function rowNeedsAttention(row: IssueSearchRow): boolean {
-  return Boolean(row.needsAttention || (row.subIssuesSummary?.needsAttention ?? 0) > 0);
+  return Boolean(row.needsAttention);
 }
 
 function rowLatestWorkAt(row: IssueSearchRow): number {
   return Math.max(
     row.updatedAt,
     row.latestSessionUpdatedAt ?? 0,
-    row.subIssuesSummary?.latestUpdatedAt ?? 0,
   );
 }
 
 function rowIsUnarranged(row: IssueSearchRow): boolean {
   return row.target.type === 'issue'
-    && !row.subIssuesSummary
     && !rowIsTerminal(row)
     && !rowHasActiveSession(row)
     && !rowNeedsAttention(row)
@@ -472,7 +445,6 @@ function rowIsUnarranged(row: IssueSearchRow): boolean {
 }
 
 export function issueRowMatchesWorkPreset(row: IssueSearchRow, preset: IssueWorkPreset, now = Date.now()): boolean {
-  if (!rowIsTopLevelWorkItem(row)) return false;
   const scheduledAt = rowScheduledAt(row);
   switch (preset) {
     case 'inbox':
@@ -487,7 +459,6 @@ export function issueRowMatchesWorkPreset(row: IssueSearchRow, preset: IssueWork
         || isDueByToday(row.dueDate?.targetAt, now)
         || isWithinToday(row.nextMaterializationAt, now)
         || isWithinToday(row.latestSessionUpdatedAt, now)
-        || isWithinToday(row.subIssuesSummary?.latestUpdatedAt, now)
         || (rowIsTerminal(row) && isWithinToday(row.updatedAt, now));
     case 'upcoming':
       return row.target.type === 'recurring-issue'
@@ -620,7 +591,6 @@ function IssueStatusMarker({ row }: { row: IssueSearchRow }) {
 export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPreset, labels: ReturnType<typeof useT>, now = Date.now()): string | null {
   const issueLabels = labels.agent.issue;
   const sessionState = row.latestSessionState ? sessionStateLabel(row.latestSessionState, issueLabels) : null;
-  const subIssueProgress = rowSubIssuesProgress(row, issueLabels);
   const sessionNeedsAttention = row.latestSessionState === 'awaitingInput'
     || row.latestSessionState === 'error'
     || row.latestSessionState === 'stale'
@@ -648,16 +618,9 @@ export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPres
     return joinRowSummaryParts([terminalLabel, recency]);
   }
   const scheduledAt = rowScheduledAt(row);
-  if (scheduledAt !== undefined && (row.trigger?.type === 'scheduled' || row.subIssuesSummary?.nextScheduledAt !== undefined)) {
+  if (scheduledAt !== undefined) {
     return joinRowSummaryParts([
       scheduleTimeForPreset(scheduledAt, preset, now, issueLabels),
-      row.trigger?.type === 'scheduled' ? issueLabels.summary.scheduled : undefined,
-    ]);
-  }
-  if (subIssueProgress) return relativeTimeLabel(row.subIssuesSummary?.latestUpdatedAt ?? row.updatedAt, labels.agent.run, now);
-  if (row.trigger?.type === 'scheduled') {
-    return joinRowSummaryParts([
-      scheduleTimeForPreset(row.trigger.startAt, preset, now, issueLabels),
       issueLabels.summary.scheduled,
     ]);
   }
@@ -727,11 +690,10 @@ export function AgentIssuesPanel({
               <section className="agent-issue-list-section" key={section.key}>
                 {section.label ? <h3 className="agent-issue-section-title">{section.label}</h3> : null}
                 {section.rows.map((row) => {
-                  const subIssueProgress = rowSubIssuesProgress(row, t.agent.issue);
                   const summary = issueRowSummaryForRow(row, preset, t, now);
                   return (
                     <button
-                      aria-label={[issueDisplayTitleForRow(row), subIssueProgress?.label, summary].filter(Boolean).join(', ')}
+                      aria-label={[issueDisplayTitleForRow(row), summary].filter(Boolean).join(', ')}
                       className="agent-run-row agent-issue-row is-clickable"
                       key={targetKey(row.target)}
                       onClick={() => onOpenIssue(row.target)}
@@ -742,15 +704,9 @@ export function AgentIssuesPanel({
                         <span className="agent-run-title-row">
                           <span className="agent-run-title">{issueDisplayTitleForRow(row)}</span>
                         </span>
-                        {subIssueProgress || summary ? (
+                        {summary ? (
                           <span className="agent-run-meta-row">
-                            {subIssueProgress ? (
-                              <span className="agent-run-branch-chip agent-issue-subissue-chip" aria-label={subIssueProgress.label} title={subIssueProgress.label}>
-                                <SubIssueIcon aria-hidden="true" size={ICON_SIZE.menu} />
-                                <span>{subIssueProgress.completed}/{subIssueProgress.total}</span>
-                              </span>
-                            ) : null}
-                            {summary ? <span className="agent-run-meta-chip" title={summary}>{summary}</span> : null}
+                            <span className="agent-run-meta-chip" title={summary}>{summary}</span>
                           </span>
                         ) : null}
                       </span>
@@ -996,30 +952,6 @@ export function AgentIssueDetailsPanel({
                         key={session.id}
                         session={session}
                       />
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-              {detail?.subIssues?.length ? (
-                <section className="agent-issue-detail-section">
-                  <h4>{t.agent.issueDetail.subIssues}</h4>
-                  <div className="agent-issue-detail-list">
-                    {detail.subIssues.map((subIssue) => (
-                      <button
-                        className="agent-issue-linked-row"
-                        key={subIssue.id}
-                        onClick={() => onOpenIssue?.(detailTargetForIssue(subIssue), subIssue.title)}
-                        type="button"
-                      >
-                        <span className={`agent-issue-linked-status ${issueStatusClassForIssue(subIssue)}`}>
-                          {subIssue.status.category === 'completed' ? <CheckIcon size={ICON_SIZE.menu} /> : <ClockIcon size={ICON_SIZE.menu} />}
-                        </span>
-                        <span className="agent-issue-linked-main">
-                          <span>{subIssue.title}</span>
-                          <small>{subIssue.status.name}</small>
-                        </span>
-                        <ChevronRightIcon aria-hidden="true" size={ICON_SIZE.menu} />
-                      </button>
                     ))}
                   </div>
                 </section>

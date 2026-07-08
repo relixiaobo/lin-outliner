@@ -155,23 +155,22 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   work with no active Session belongs in Inbox because it is not yet arranged for
   execution. Activity feeds row summaries, Issue details, and inline Agent
   Session process details; it is not a primary navigation tab, and Logbook is a
-  view name rather than a separate object. Sub-issues remain first-class concrete
-  Issues for tools: agents can find them with `parentIssueIds` and read them with
-  `issue_read`. They are not first-level Work rows in the renderer presets; their
-  descendant active, attention, schedule, and completion counts roll up through
-  `sub-issues-summary` so the parent row shows compact progress. Control remains
-  adjacent-only: child results are accepted or summarized by their direct parent,
-  then each parent rolls the summary upward. Sub-issues and generated Issues open
-  recursively through the same Issue detail reader with breadcrumb context.
+  view name rather than a separate object. Issues are flat durable work items:
+  agent-visible tools cannot create child Issues, filter by parent Issue, or read
+  sub-Issue trees. When work needs internal breakdown, the responsible Agent
+  Session records the breakdown in its plan, criteria, evidence, and final
+  output. A separate Issue is created only for independently user-visible work
+  that should be managed outside the current Issue. Generated Issues from
+  Recurring Issues remain separate flat Issues and can be opened through the same
+  Issue detail reader.
 - `issue_search` applies canonical field filters across both concrete Issues
   and Recurring Issues where the field exists, including delegate profile,
   trigger type, input node/tag scope, Activity type, and explicit ordering by
   created, updated, due, next materialization, or status fields. Missing ordered
   values stay last in both ascending and descending order.
-- Creating an Issue with `parentIssueId` updates the parent's visible
-  `subIssueIds` and records Activity on the parent, so agent-created breakdowns
-  are visible through `issue_search`/`issue_read` hierarchy, parent row
-  `sub-issues-summary`, and the parent Activity feed.
+- Creating an Issue never creates hierarchy. Related work can be linked through
+  `relations`, but progress for a complex Issue comes from Agent Sessions,
+  criteria, evidence, and Activity on that Issue.
 
 The internal executor binding is intentionally not part of the model-facing
 schema. `agent_session_read` returns Agent Session state and Activity, not a Run

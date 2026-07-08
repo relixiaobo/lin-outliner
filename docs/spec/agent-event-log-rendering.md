@@ -1020,32 +1020,25 @@ Rules:
   running, due, repeating-today, and done-today work. Upcoming owns future
   schedules and repeating rules. Logbook owns terminal concrete Issues.
 
-  The first-level Work rows are top-level Issues or Recurring Issues. Concrete
-  Issues with `parentIssueId` are sub-issues: they do not appear as independent
-  first-level rows in Inbox, Today, Upcoming, or Logbook. Their state rolls up
-  recursively into ancestor rows through `subIssuesSummary`, so a parent can
-  appear in Running, Needs Attention, Today, or Upcoming when any descendant is
-  active, blocked, updated today, or scheduled. Control and result acceptance
-  still remain adjacent: each sub-Issue reports to its direct parent, and each
-  parent summarizes upward. The parent row can show compact child progress as a
-  sub-Issue icon plus `1/3` badge instead of listing each child outside its
-  parent. Each row shows a concept/status marker, title, and one
-  context-sensitive meta line. The meta line avoids repeating the current
-  section: an Upcoming recurring row can show `8:00 AM · Daily`, while a Today
-  completed row can show only the completion recency. Active Agent Session count
-  is derived from Issue search filters and appears only as Work button/status
-  chrome, not as a Run count. Dream remains excluded from this ordinary Work
-  surface and stays in Settings -> Agent "Memory & activity".
+  The first-level Work rows are flat Issues or Recurring Issues. Issue hierarchy
+  is not part of the Work model: agent-visible tools cannot create, search, or
+  render sub-Issue trees. Complex work is broken down inside an Agent Session's
+  plan, criteria, evidence, and final output. Each row shows a concept/status
+  marker, title, and one context-sensitive meta line. The meta line avoids
+  repeating the current section: an Upcoming recurring row can show `8:00 AM ·
+  Daily`, while a Today completed row can show only the completion recency.
+  Active Agent Session count is derived from Issue search filters and appears
+  only as Work button/status chrome, not as a Run count. Dream remains excluded
+  from this ordinary Work surface and stays in Settings -> Agent "Memory &
+  activity".
 
   Opening a Work row overlays an Issue detail drawer on the list. The drawer
-  reads `agent_issue_read` and shows the durable work definition as a compact
-  hierarchy: title, status chip only when the icon cannot carry the state, next
-  run/trigger timing, instructions, Agent Sessions, sub-issues or generated
-  Issues, and Activity. It does not repeat the same state through a separate
-  metadata table when an icon, section, or chip already communicates it.
-  Sub-issues and generated Issues open recursively in the same drawer and extend
-  the breadcrumb path. Agent Sessions do not consume a drill-in level; the Issue
-  hierarchy owns navigation depth.
+  reads `agent_issue_read` and shows the durable work definition: title, status
+  chip only when the icon cannot carry the state, next run/trigger timing,
+  instructions, Agent Sessions, generated Issues, and Activity. It does not
+  repeat the same state through a separate metadata table when an icon, section,
+  or chip already communicates it. Generated Issues can open in the same drawer
+  and extend the breadcrumb path. Agent Sessions do not consume a drill-in level.
 
   Agent Session cards are inline execution summaries. A card shows the same
   "Working for ..." / "Worked for ..." process label used by conversation turns,

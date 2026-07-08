@@ -88,20 +88,15 @@ When `agent_session_start` is approved and eligible:
 
 ## Decomposition
 
-When an Agent Session worker needs to split durable work, it should create
-sub-Issues through `issue_create` and set the parent relation. Runtime trigger
-rules decide whether those sub-Issues start immediately, wait for dependencies,
-or wait for a schedule.
+When an Agent Session worker needs to split work, it decomposes inside the
+Session plan, evidence, Activity, and final response. Issues remain flat durable
+work items. A worker can create another Issue only when the new work is
+independently user-visible and should be managed outside the current Issue; it
+must not create child Issues for internal steps.
 
-This is intentionally different from recursive public delegation. The durable
-graph is an Issue hierarchy; execution attempts are Agent Sessions bound to
-those Issues. Control and result acceptance are adjacent-only: a sub-Issue
-records Activity and Agent Session output on itself, its direct parent accepts or
-summarizes that result, and each parent repeats that step upward. A descendant
-does not directly notify chat or bypass ancestor Issues. State can still roll up
-recursively through parent search rows, so a top-level Issue can show compact
-progress for the whole descendant tree without exposing every sub-Issue as a
-first-level Work row.
+This keeps the public work graph simple. Durable ownership is Issue -> Agent
+Sessions, while execution breakdown is carried by Session plan/output and
+criteria/evidence on the same Issue.
 
 ## Verification
 
