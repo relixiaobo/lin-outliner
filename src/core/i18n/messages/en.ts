@@ -1294,7 +1294,6 @@ commandPalette: {
         repeatingToday: 'Repeating Today',
         running: 'Running',
         tomorrow: 'Tomorrow',
-        unarranged: 'Unarranged',
       },
       summary: {
         canceled: 'Canceled',
@@ -1306,7 +1305,6 @@ commandPalette: {
         scheduled: 'Scheduled',
         today: 'Today',
       },
-      triggerManual: 'Manual',
       triggerWhenReady: 'When ready',
       triggerScheduled: 'Scheduled',
       cadenceDaily: 'Daily',

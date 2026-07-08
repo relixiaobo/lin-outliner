@@ -151,9 +151,9 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   bounded tool/control surface for explicit Session inspection, but it is not the
   Work UI's default nested navigation path. The panel's Inbox, Today, Upcoming,
   and Logbook navigation items are renderer smart filters over canonical row
-  facts, not model-facing view enums or stored categories. Unscheduled/manual
-  work with no active Session belongs in Inbox because it is not yet arranged for
-  execution. Activity feeds row summaries, Issue details, and inline Agent
+  facts, not model-facing view enums or stored categories. Attention-needed work
+  belongs in Inbox. When-ready work belongs in Today because it is eligible to
+  start as soon as runtime can run it. Activity feeds row summaries, Issue details, and inline Agent
   Session process details; it is not a primary navigation tab, and Logbook is a
   view name rather than a separate object. Issues are flat durable work items:
   each row represents a user-visible outcome with its own definition, status,
@@ -220,12 +220,11 @@ materializer treats that window as intentionally handled rather than missed, so
 it does not create a concrete Issue or inflate a later coalesced count.
 
 Automatic trigger execution is one-shot per concrete Issue in V1: an unattended
-`when-ready` Issue or due `scheduled` Issue without any prior Agent
-Session can start one Agent Session from the scheduler. Attended Issues require
-an explicit `agent_session_start` path. Completion or failure of that Session
-does not by itself complete the Issue and does not cause the
-scheduler to loop on the same Issue. Retrying or continuing terminal work
-creates a new Agent Session through an explicit `agent_session_start` request.
+`when-ready` Issue or due `scheduled` Issue without any prior Agent Session can
+start one Agent Session from the scheduler. Completion or failure of that
+Session does not by itself complete the Issue and does not cause the scheduler to
+loop on the same Issue. Retrying or continuing terminal work creates a new Agent
+Session through an explicit `agent_session_start` request.
 
 Issue verification uses the same Agent Session mechanism. `agent_session_start`
 accepts `purpose: "verify"` only when the Issue has

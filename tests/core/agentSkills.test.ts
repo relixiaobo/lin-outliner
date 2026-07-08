@@ -1178,7 +1178,9 @@ describe('agent skills', () => {
     expect(skill?.body).toContain('district-level queries are internal execution plan items inside those Issues');
     expect(skill?.body).toContain('A good Issue definition gives the later Agent Session enough scope, coverage, output, and verification guidance');
     expect(skill?.body).toContain('Use `relations` only after both sides are independently user-visible Issues');
-    expect(skill?.body).toContain('If an existing manual Issue should run now, use `agent_session_start`');
+    expect(skill?.body).toContain('Use the default when-ready trigger for ordinary durable work');
+    expect(skill?.body).toContain('Newly created when-ready, scheduled, and recurring Issues rely on runtime eligibility');
+    expect(skill?.body).toContain('Use `agent_session_start` for explicit retries, continuations, verification attempts');
     expect(skill?.body).toContain('Never claim completion from the latest Agent Session result alone');
   });
 

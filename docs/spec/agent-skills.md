@@ -31,11 +31,11 @@ natural-language durable-work request into one or more flat verified Issues. It
 tells the model to choose Issue boundaries from independently user-visible
 outcomes, author the durable objective/scope/criteria/output/trigger/verification
 definition, leave internal sequencing and per-item work to the later Agent
-Session, use relations only between independently managed Issues, start an
-existing manual Issue with `agent_session_start` only when the user asks it to
-run now, and rely on Issue criteria, Activity, and verifier evidence rather than
-one Session's own completion claim. There is no user-facing `/issue-planning` or
-`/goal` shortcut, and no composer goal button; ordinary prose is the entry point.
+Session, use relations only between independently managed Issues, let when-ready,
+scheduled, and recurring triggers start through runtime eligibility, and rely on
+Issue criteria, Activity, and verifier evidence rather than one Session's own
+completion claim. There is no user-facing `/issue-planning` or `/goal` shortcut,
+and no composer goal button; ordinary prose is the entry point.
 
 `/research` is a user- and model-invocable `execution: isolated` workflow for
 bounded investigation. It starts an isolated same-agent Run and

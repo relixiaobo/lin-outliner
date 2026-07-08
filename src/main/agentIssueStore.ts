@@ -612,7 +612,7 @@ function buildIssue(fields: IssueDraftFields, actor: ActorRef, now: number): Age
     status: DEFAULT_ISSUE_STATUS,
     ...(fields.delegate ? { delegate: fields.delegate } : {}),
     relations: fields.relations ?? [],
-    trigger: fields.trigger ?? { type: 'manual' },
+    trigger: fields.trigger ?? { type: 'when-ready' },
     ...(fields.dueDate ? { dueDate: fields.dueDate } : {}),
     ...(fields.completionCriteria ? { completionCriteria: fields.completionCriteria } : {}),
     ...(fields.verificationPolicy ? { verificationPolicy: fields.verificationPolicy } : {}),
@@ -620,7 +620,7 @@ function buildIssue(fields: IssueDraftFields, actor: ActorRef, now: number): Age
     ...(fields.noteNodeIds ? { noteNodeIds: fields.noteNodeIds } : {}),
     ...(fields.input ? { input: fields.input } : {}),
     ...(fields.output ? { output: fields.output } : {}),
-    permissionMode: fields.permissionMode ?? 'attended',
+    permissionMode: fields.permissionMode ?? 'unattended',
     ...(fields.executionPolicy ? { executionPolicy: fields.executionPolicy } : {}),
     confirmation: { confirmedBy: actor, confirmedAt: now },
     revision: revision(now),
@@ -884,7 +884,6 @@ function isIssueReadyForExecution(issue: AgentIssue, state: AgentIssueStoreState
   if (issue.status.category === 'completed' || issue.status.category === 'canceled') return false;
   if (issueHasAnySession(issue, state)) return false;
   if (issue.relations.some((relation) => relation.type === 'blocked-by' && !isBlockingIssueCompleted(state.issues[relation.issueId]))) return false;
-  if (issue.trigger.type === 'manual') return false;
   if (issue.trigger.type === 'when-ready') return true;
   return issue.trigger.startAt <= now;
 }

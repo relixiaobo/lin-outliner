@@ -30,7 +30,7 @@ function sessionWith(overrides: Partial<AgentSession> = {}): AgentSession {
     title: 'Scoped work',
     status: { name: 'Ready', category: 'unstarted' },
     relations: [],
-    trigger: { type: 'manual' },
+    trigger: { type: 'when-ready' },
     permissionMode: 'unattended',
     confirmation: { confirmedBy: { type: 'user', userId: 'user-1' }, confirmedAt: now },
     revision: 'rev-1',

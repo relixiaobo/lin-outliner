@@ -104,8 +104,8 @@ const ISSUE_TRIGGER_SCHEMA = {
   properties: {
     type: {
       type: 'string',
-      enum: ['manual', 'when-ready', 'scheduled'],
-      description: 'manual never starts automatically; when-ready starts when unblocked and eligible; scheduled starts at startAt when eligible.',
+      enum: ['when-ready', 'scheduled'],
+      description: 'when-ready starts when unblocked and eligible; scheduled starts at startAt when eligible.',
     },
     startAt: {
       type: 'number',
@@ -299,7 +299,7 @@ const EXECUTION_POLICY_SCHEMA = {
 const ISSUE_FIELDS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  description: 'Durable fields for a concrete Issue. Required on create: title. Other fields default to manual, attended local work, and unstarted-like lifecycle.',
+  description: 'Durable fields for a concrete Issue. Required on create: title. Other fields default to when-ready unattended work and unstarted-like lifecycle.',
   properties: {
     title: { type: 'string', minLength: 1, description: 'Specific human-readable Issue name.' },
     description: { type: 'string', description: 'Stable goal, context, constraints, and acceptance guidance.' },
@@ -436,7 +436,7 @@ export const ISSUE_SEARCH_PARAMETERS = {
         delegateIds: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Delegates or agent profile ids to match.' },
         issueIds: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Exact concrete Issue ids.' },
         recurringIssueIds: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Exact Recurring Issue ids.' },
-        triggerTypes: { type: 'array', items: { type: 'string', enum: ['manual', 'when-ready', 'scheduled'] }, description: 'Issue trigger types to match.' },
+        triggerTypes: { type: 'array', items: { type: 'string', enum: ['when-ready', 'scheduled'] }, description: 'Issue trigger types to match.' },
         dueDate: TIME_RANGE_SCHEMA,
         cadence: { type: 'array', items: { type: 'string', enum: ['daily', 'weekly', 'monthly'] }, description: 'Recurring Issue cadence types to match.' },
         nextMaterializationAt: TIME_RANGE_SCHEMA,

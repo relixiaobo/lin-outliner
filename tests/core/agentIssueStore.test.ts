@@ -311,6 +311,23 @@ describe('agent issue store', () => {
     });
   });
 
+  test('defaults new Issues to when-ready unattended execution', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Default executable work' },
+        request: { mode: 'request' },
+        reason: 'Create normal work.',
+      }, actor, 10);
+
+      const row = (await store.search({ text: 'Default executable work' })).rows[0];
+      const read = await store.read({ target: { type: 'issue', id: row.target.id } });
+      expect(read.issue?.trigger).toEqual({ type: 'when-ready' });
+      expect(read.issue?.permissionMode).toBe('unattended');
+      expect((await store.listReadyIssuesForExecution(20)).map((issue) => issue.title)).toEqual(['Default executable work']);
+    });
+  });
+
   test('delete lifecycle operations apply and keep Activity audit records', async () => {
     await withStore(async (store) => {
       await store.create({
@@ -382,7 +399,6 @@ describe('agent issue store', () => {
         fields: {
           title: 'Write release notes',
           relations: [{ type: 'related', issueId: release.target.id }],
-          trigger: { type: 'manual' },
         },
         request: { mode: 'request' },
         reason: 'Track related release work as a separate flat Issue.',
@@ -731,12 +747,6 @@ describe('agent issue store', () => {
     await withStore(async (store) => {
       await store.create({
         issueType: 'issue',
-        fields: { title: 'Manual only', trigger: { type: 'manual' } },
-        request: { mode: 'request' },
-        reason: 'Create manual issue.',
-      }, actor, 10);
-      await store.create({
-        issueType: 'issue',
         fields: { title: 'Ready now', trigger: { type: 'when-ready' } },
         request: { mode: 'request' },
         reason: 'Create ready issue.',
@@ -749,7 +759,6 @@ describe('agent issue store', () => {
       }, actor, 30);
       expect((await store.listReadyIssuesForExecution(100)).map((issue) => issue.title)).toEqual(['Ready now']);
       expect((await store.search({ filter: { hasActiveSession: false } })).rows.map((row) => row.title).sort()).toEqual([
-        'Manual only',
         'Ready now',
         'Scheduled later',
       ]);

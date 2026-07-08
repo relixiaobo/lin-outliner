@@ -32,9 +32,11 @@ describe('AgentIssuesPanel smart views', () => {
       include: ['activity-summary', 'session-summary'],
       limit: 100,
     });
-    expect(inboxQueries.some((query) => (
+    expect(inboxQueries).toHaveLength(1);
+    expect(inboxQueries[0]).toMatchObject({ filter: { archived: false, needsAttention: true } });
+    expect(issueSearchInputsForWorkPreset('today', TODAY).some((query) => (
       query.targets?.includes('issue') === true
-      && query.filter?.triggerTypes?.includes('manual') === true
+      && query.filter?.triggerTypes?.includes('when-ready') === true
       && query.filter?.hasActiveSession === false
     ))).toBe(true);
     expect(issueSearchInputForWorkPreset('logbook')).toMatchObject({
@@ -43,15 +45,16 @@ describe('AgentIssuesPanel smart views', () => {
     });
   });
 
-  test('derives Inbox from attention and unarranged facts', () => {
+  test('derives Inbox from attention facts', () => {
     expect(issueRowMatchesWorkPreset(row({ needsAttention: true }), 'inbox', TODAY)).toBe(true);
-    expect(issueRowMatchesWorkPreset(row({ needsAttention: false, trigger: { type: 'manual' } }), 'inbox', TODAY)).toBe(true);
+    expect(issueRowMatchesWorkPreset(row({ needsAttention: false, trigger: { type: 'when-ready' } }), 'inbox', TODAY)).toBe(false);
     expect(issueRowMatchesWorkPreset(row({ needsAttention: false, hasActiveSession: true }), 'inbox', TODAY)).toBe(false);
     expect(issueRowMatchesWorkPreset(row({ needsAttention: false, trigger: { type: 'scheduled', startAt: TOMORROW_09, timeZone: 'UTC' } }), 'inbox', TODAY)).toBe(false);
   });
 
   test('derives Today from active sessions, today schedule, repeating rules, and done today', () => {
     expect(issueRowMatchesWorkPreset(row({ hasActiveSession: true }), 'today', TODAY)).toBe(true);
+    expect(issueRowMatchesWorkPreset(row({ trigger: { type: 'when-ready' } }), 'today', TODAY)).toBe(true);
     expect(issueRowMatchesWorkPreset(row({ trigger: { type: 'scheduled', startAt: TODAY_18, timeZone: 'UTC' } }), 'today', TODAY)).toBe(true);
     expect(issueRowMatchesWorkPreset(row({
       target: { type: 'recurring-issue', id: 'recurring-1' },

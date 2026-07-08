@@ -1201,7 +1201,6 @@ commandPalette: {
         repeatingToday: '今天重复',
         running: '正在执行',
         tomorrow: '明天',
-        unarranged: '未安排',
       },
       summary: {
         canceled: '已取消',
@@ -1213,7 +1212,6 @@ commandPalette: {
         scheduled: '已计划',
         today: '今天',
       },
-      triggerManual: '手动',
       triggerWhenReady: '就绪时',
       triggerScheduled: '计划时间',
       cadenceDaily: '每天',

@@ -45,6 +45,14 @@ describe('agent issue manager tool contracts', () => {
     expect(relationSchema.items.properties.type.description).toContain('another independently managed Issue');
   });
 
+  test('does not expose manual Issue triggers', () => {
+    const triggerTypeSchema = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_create.properties.fields.properties.trigger.properties.type;
+    expect(triggerTypeSchema.enum).toEqual(['when-ready', 'scheduled']);
+
+    const triggerFilterSchema = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_search.properties.filter.properties.triggerTypes.items;
+    expect(triggerFilterSchema.enum).toEqual(['when-ready', 'scheduled']);
+  });
+
   test('classifies read, mutation, runtime-control, and destructive behavior', () => {
     const byName = new Map(AGENT_ISSUE_TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
     expect(byName.get('issue_search')?.kind).toBe('read');

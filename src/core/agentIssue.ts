@@ -44,7 +44,6 @@ export type IssueRelation =
   | { type: 'duplicate-of'; issueId: AgentIssueId };
 
 export type IssueTrigger =
-  | { type: 'manual' }
   | { type: 'when-ready' }
   | { type: 'scheduled'; startAt: number; timeZone: string };
 

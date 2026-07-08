@@ -138,8 +138,8 @@ return Issue-level facts rather than execution breakdown trees.
 
 The Work panel is Issue-first and flat:
 
-- Inbox: unarranged manual work and attention-needed work.
-- Today: running, due, scheduled today, repeating today, and done today work.
+- Inbox: attention-needed work.
+- Today: when-ready, running, due, scheduled today, repeating today, and done today work.
 - Upcoming: future scheduled work and recurring rules.
 - Logbook: terminal concrete Issues.
 

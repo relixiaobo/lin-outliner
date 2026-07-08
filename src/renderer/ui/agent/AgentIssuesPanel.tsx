@@ -84,11 +84,11 @@ export function issueSearchInputsForWorkPreset(preset: IssueWorkPreset, now = Da
     case 'inbox':
       return [
         { filter: { archived: false, needsAttention: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-        { targets: ['issue'], filter: { archived: false, triggerTypes: ['manual'], hasActiveSession: false }, include: ISSUE_ROW_INCLUDE, limit: 100 },
       ];
     case 'today':
       return [
         { targets: ['issue'], filter: { archived: false, hasActiveSession: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
+        { targets: ['issue'], filter: { archived: false, triggerTypes: ['when-ready'], hasActiveSession: false }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, statusCategories: ['scheduled'] }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['issue'], filter: { archived: false, dueDate: { to: end } }, include: ISSUE_ROW_INCLUDE, limit: 100 },
         { targets: ['recurring-issue'], filter: { archived: false, nextMaterializationAt: { to: end } }, include: ISSUE_ROW_INCLUDE, limit: 100 },
@@ -244,7 +244,6 @@ function sessionStateLabel(state: AgentSession['state'], labels: ReturnType<type
 }
 
 function issueTriggerLabel(issue: AgentIssue, labels: ReturnType<typeof useT>['agent']['issue']): string {
-  if (issue.trigger.type === 'manual') return labels.triggerManual;
   if (issue.trigger.type === 'when-ready') return labels.triggerWhenReady;
   return labels.triggerScheduled;
 }
@@ -435,15 +434,6 @@ function rowLatestWorkAt(row: IssueSearchRow): number {
   );
 }
 
-function rowIsUnarranged(row: IssueSearchRow): boolean {
-  return row.target.type === 'issue'
-    && !rowIsTerminal(row)
-    && !rowHasActiveSession(row)
-    && !rowNeedsAttention(row)
-    && row.trigger?.type !== 'scheduled'
-    && row.dueDate === undefined;
-}
-
 export function issueRowMatchesWorkPreset(row: IssueSearchRow, preset: IssueWorkPreset, now = Date.now()): boolean {
   const scheduledAt = rowScheduledAt(row);
   switch (preset) {
@@ -451,10 +441,10 @@ export function issueRowMatchesWorkPreset(row: IssueSearchRow, preset: IssueWork
       return rowNeedsAttention(row)
         || row.latestSessionState === 'awaitingInput'
         || row.latestSessionState === 'error'
-        || row.latestSessionState === 'stale'
-        || rowIsUnarranged(row);
+        || row.latestSessionState === 'stale';
     case 'today':
       return rowHasActiveSession(row)
+        || (row.target.type === 'issue' && row.trigger?.type === 'when-ready' && !rowIsTerminal(row))
         || isDueByToday(scheduledAt, now)
         || isDueByToday(row.dueDate?.targetAt, now)
         || isWithinToday(row.nextMaterializationAt, now)
@@ -474,14 +464,14 @@ function issueWorkPresetRank(row: IssueSearchRow, preset: IssueWorkPreset, now: 
   if (preset === 'today') {
     if (row.needsAttention) return 0;
     if (rowHasActiveSession(row)) return 1;
-    if (row.target.type === 'recurring-issue' && isDueByToday(row.nextMaterializationAt, now)) return 2;
-    if (isDueByToday(rowScheduledAt(row), now) || isDueByToday(row.dueDate?.targetAt, now)) return 3;
-    if (rowIsTerminal(row)) return 4;
+    if (row.target.type === 'issue' && row.trigger?.type === 'when-ready' && !rowIsTerminal(row)) return 2;
+    if (row.target.type === 'recurring-issue' && isDueByToday(row.nextMaterializationAt, now)) return 3;
+    if (isDueByToday(rowScheduledAt(row), now) || isDueByToday(row.dueDate?.targetAt, now)) return 4;
+    if (rowIsTerminal(row)) return 5;
   }
   if (preset === 'inbox') {
     if (row.latestSessionState === 'awaitingInput') return 0;
     if (row.latestSessionState === 'error' || row.latestSessionState === 'stale') return 1;
-    if (rowIsUnarranged(row)) return 2;
   }
   return 10;
 }
@@ -515,7 +505,7 @@ function sectionForTodayRow(row: IssueSearchRow, now: number, labels: ReturnType
 function sectionForInboxRow(row: IssueSearchRow, labels: ReturnType<typeof useT>['agent']['issue']): string {
   if (row.latestSessionState === 'awaitingInput') return labels.section.attention;
   if (row.latestSessionState === 'error' || row.latestSessionState === 'stale' || rowNeedsAttention(row)) return labels.section.attention;
-  return labels.section.unarranged;
+  return labels.view.inbox;
 }
 
 function sectionForUpcomingRow(row: IssueSearchRow, now: number, labels: ReturnType<typeof useT>['agent']['issue']): string {
@@ -558,7 +548,6 @@ function IssueStatusMarker({ row }: { row: IssueSearchRow }) {
   const isComplete = rowIsTerminal(row);
   const isAttention = row.target.type !== 'recurring-issue' && rowNeedsAttention(row);
   const isScheduled = !isRecurring && (rowScheduledAt(row) !== undefined || row.dueDate !== undefined);
-  const isUnarranged = rowIsUnarranged(row);
   const Icon = isAttention
     ? WarningIcon
     : isActive
@@ -569,9 +558,7 @@ function IssueStatusMarker({ row }: { row: IssueSearchRow }) {
           ? RepeatIcon
           : isScheduled
             ? ScheduledIcon
-            : isUnarranged
-              ? InboxIcon
-              : ClockIcon;
+            : ClockIcon;
   const classes = [
     'agent-issue-marker',
     isRecurring ? 'is-recurring' : '',
@@ -579,7 +566,6 @@ function IssueStatusMarker({ row }: { row: IssueSearchRow }) {
     isComplete ? 'is-complete' : '',
     isAttention ? 'is-attention' : '',
     isScheduled ? 'is-scheduled' : '',
-    isUnarranged ? 'is-unarranged' : '',
   ].filter(Boolean).join(' ');
   return (
     <span className={classes}>
