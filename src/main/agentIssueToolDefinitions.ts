@@ -28,8 +28,8 @@ function prompt(text: string): (context: TenonAgentToolPromptContext) => string 
     text,
     `Available AgentRef profiles: ${context.availableRunProfiles.map((ref) => ref.runProfile ?? 'default').join(', ') || 'default'}.`,
     'Do not use Task, Run, Project, Job, Occurrence, or Logbook concepts for durable work.',
-    'Issues are flat durable work items. Do not create child/sub-Issues, and do not model internal steps as separate Issues.',
-    'Use Issue relations only between independently user-visible Issues; never use blocked-by/related links to emulate hierarchy, checklist progress, coverage items, verification steps, or hidden workflow conditions.',
+    'Issues are flat durable work items. Author the durable objective, scope, acceptance criteria, output, trigger, and verification policy; the Agent Session owns internal planning and execution detail.',
+    'Use Issue relations only between independently user-visible Issues that each have their own lifecycle, such as true external blockers, duplicates, or related outcomes.',
   ].join('\n');
 }
 
@@ -74,7 +74,7 @@ export const AGENT_ISSUE_TOOL_DEFINITIONS: readonly TenonAgentToolDefinition[] =
     kind: 'mutation',
     searchHint: 'create durable agent work',
     descriptionText: 'Create one flat Issue or Recurring Issue for an independently user-visible durable work item.',
-    promptGuidanceText: 'Use when the durable definition does not exist yet. Put internal breakdown, coverage lists, and verification expectations in the Issue description and criteria instead of creating child Issues. Use preview for ambiguous or broad-scope creation.',
+    promptGuidanceText: 'Use when the durable definition does not exist yet. Write the objective, scope, coverage, output shape, and verification expectations so the later Agent Session can plan and execute from the Issue snapshot. Use preview for ambiguous or broad-scope creation.',
     inputSchema: AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_create,
     outputSchema: OUTPUT_SCHEMA,
     isReadOnly: () => false,

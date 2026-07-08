@@ -156,23 +156,22 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   execution. Activity feeds row summaries, Issue details, and inline Agent
   Session process details; it is not a primary navigation tab, and Logbook is a
   view name rather than a separate object. Issues are flat durable work items:
-  agent-visible tools cannot create child Issues, filter by parent Issue, or read
-  sub-Issue trees. When work needs internal breakdown, the responsible Agent
-  Session records the breakdown in its plan, criteria, evidence, and final
-  output. A separate Issue is created only for independently user-visible work
-  that should be managed outside the current Issue. Generated Issues from
-  Recurring Issues remain separate flat Issues and can be opened through the same
-  Issue detail reader.
+  each row represents a user-visible outcome with its own definition, status,
+  sessions, criteria, evidence, and Activity. When work needs internal
+  breakdown, the responsible Agent Session records the plan, criteria progress,
+  evidence, and final output on that Issue. A separate Issue is created only for
+  a newly discovered independently user-visible outcome that should be managed
+  outside the current Issue. Generated Issues from Recurring Issues remain
+  separate flat Issues and can be opened through the same Issue detail reader.
 - `issue_search` applies canonical field filters across both concrete Issues
   and Recurring Issues where the field exists, including delegate profile,
   trigger type, input node/tag scope, Activity type, and explicit ordering by
   created, updated, due, next materialization, or status fields. Missing ordered
   values stay last in both ascending and descending order.
-- Creating an Issue never creates hierarchy. `relations` only link
-  independently user-visible Issues; they must not be used to emulate child
-  Issues, checklist progress, coverage rows, verification passes, or hidden
-  workflow conditions. Progress for a complex Issue comes from Agent Sessions,
-  criteria, evidence, and Activity on that Issue.
+- `relations` link independently user-visible Issues whose lifecycle is managed
+  separately, such as true external blockers, duplicates, or related outcomes.
+  Progress for a complex Issue comes from Agent Sessions, criteria, evidence,
+  and Activity on that Issue.
 
 The internal executor binding is intentionally not part of the model-facing
 schema. `agent_session_read` returns Agent Session state and Activity, not a Run

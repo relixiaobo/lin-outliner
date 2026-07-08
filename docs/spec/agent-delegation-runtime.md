@@ -88,11 +88,11 @@ When `agent_session_start` is approved and eligible:
 
 ## Decomposition
 
-When an Agent Session worker needs to split work, it decomposes inside the
-Session plan, evidence, Activity, and final response. Issues remain flat durable
-work items. A worker can create another Issue only when the new work is
-independently user-visible and should be managed outside the current Issue; it
-must not create child Issues for internal steps.
+When an Agent Session worker needs to split work, it owns that execution
+decomposition inside the Session plan, evidence, Activity, and final response.
+Issues remain flat durable work items. A worker creates another Issue only when
+it discovers a new independently user-visible outcome that should be managed
+outside the current Issue.
 
 This keeps the public work graph simple. Durable ownership is Issue -> Agent
 Sessions, while execution breakdown is carried by Session plan/output and

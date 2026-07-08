@@ -1020,11 +1020,12 @@ Rules:
   running, due, repeating-today, and done-today work. Upcoming owns future
   schedules and repeating rules. Logbook owns terminal concrete Issues.
 
-  The first-level Work rows are flat Issues or Recurring Issues. Issue hierarchy
-  is not part of the Work model: agent-visible tools cannot create, search, or
-  render sub-Issue trees. Complex work is broken down inside an Agent Session's
-  plan, criteria, evidence, and final output. Each row shows a concept/status
-  marker, title, and one context-sensitive meta line. The meta line avoids
+  The first-level Work rows are flat Issues or Recurring Issues. Each Issue row
+  represents a durable user-visible outcome. Complex work is planned and
+  evidenced inside an Agent Session for that Issue, while the Work model stays
+  focused on the Issue definition, status, sessions, and Activity. Each row
+  shows a concept/status marker, title, and one context-sensitive meta line. The
+  meta line avoids
   repeating the current section: an Upcoming recurring row can show `8:00 AM ·
   Daily`, while a Today completed row can show only the completion recency.
   Active Agent Session count is derived from Issue search filters and appears

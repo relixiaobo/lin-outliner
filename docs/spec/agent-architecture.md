@@ -110,13 +110,15 @@ and every conversation's members are `{user, Neva}`.
   rows when attached to an Issue; legacy Run transcript drill-in remains available
   from process links and debug surfaces.
 
-### Verified goal runs
+### Verified Issue execution
 
 Long objectives are durable Issues, not a separate Task object. There is no
 user-facing goal mode, `/goal` shortcut, or composer goal button: users describe
 work in ordinary prose, and the agent creates or updates Issues with explicit
-criteria, bounded execution policy, and Agent Session triggers. An Agent Session
-may decompose durable work by creating sub-Issues. Internal workers and verifiers
+criteria, bounded execution policy, and Agent Session triggers. The Issue
+definition carries the durable objective, scope, output shape, and verification
+criteria; the Agent Session owns the internal execution plan, per-item work,
+evidence, and final response for that Issue. Internal workers and verifiers
 remain runtime implementation details, and verifier execution is runtime-pinned
 to minimal context with read-only tools.
 

@@ -17,7 +17,7 @@ user-visible and should be managed separately from the current Issue.
 
 ## Non-goals
 
-- Do not support parent or child Issues in model-facing tools.
+- Keep model-facing Issue tools focused on flat durable Issue definitions.
 - Do not expose Project, Task, Job, Run, Occurrence, or Logbook as durable work
   concepts.
 - Do not keep legacy readers or migrations for previous pre-release Issue
@@ -81,13 +81,14 @@ Example:
 - The Issue's Agent Session creates plan items for each district and records
   results/evidence on the same Issue.
 
-The main agent should not expand that request into dozens of child Issues. It
-also should not create dozens of flat Issues and connect them with `blocked-by`
-or `related` as a pseudo hierarchy. That would make the tool trace noisy, make
-the Work UI harder to scan, and force the model to decide when hierarchy is
-appropriate. If each district is truly independently user-visible work that
-should be managed separately, the agent can create separate flat Issues, but that
-is a different user request and not the default decomposition mechanism.
+The main agent's responsibility is to author a good Issue definition: objective,
+scope, coverage, output shape, trigger, and verification criteria. It does not
+need to pre-plan every execution step because the Agent Session will build that
+plan from the Issue snapshot. This keeps the tool trace small, makes the Work UI
+easy to scan, and gives the executor room to choose the right strategy. If each
+district is truly independently user-visible work that should be managed
+separately, the agent can create separate flat Issues, but that is a different
+user request.
 
 ### Tool Surface
 
@@ -102,8 +103,8 @@ The model-facing tools are:
 - `agent_session_send_message`
 - `agent_session_stop`
 
-Issue tools never accept parent or child Issue parameters. Search filters do not
-include parent fields, and read includes do not expose child trees.
+Issue tools operate on flat Issue definitions. Search filters and read includes
+return Issue-level facts rather than execution breakdown trees.
 
 `issue_create`
 
@@ -116,9 +117,9 @@ include parent fields, and read includes do not expose child trees.
 
 - Updates flat Issue definition, lifecycle, trigger, criteria, verification,
   evidence, relations, input, output, permission, or execution policy.
-- `relations` connect independently user-visible Issues only. They are not a
-  hierarchy, checklist, coverage, verification, or hidden workflow dependency
-  mechanism.
+- `relations` connect independently user-visible Issues whose lifecycle is
+  managed separately, such as true external blockers, duplicates, or related
+  outcomes.
 - Updates Recurring Issue cadence/template/lifecycle.
 
 `agent_session_start`
@@ -167,8 +168,7 @@ Verification is an execution policy on an Issue.
 - The verifier reviews criteria, evidence, Activity, linked Agent Sessions, and
   output.
 - Verdicts are Activity and do not automatically complete the Issue.
-- Internal breakdown can be verified through criteria/evidence on the same Issue,
-  not through child Issue status.
+- Internal breakdown is verified through criteria/evidence on the same Issue.
 
 ### Permissions
 

@@ -1176,7 +1176,8 @@ describe('agent skills', () => {
     });
     expect(skill?.body).toContain('Use `issue_create` with a concrete objective, explicit acceptance criteria');
     expect(skill?.body).toContain('district-level queries are internal execution plan items inside those Issues');
-    expect(skill?.body).toContain('Do not simulate hierarchy with `relations`, `blocked-by`');
+    expect(skill?.body).toContain('A good Issue definition gives the later Agent Session enough scope, coverage, output, and verification guidance');
+    expect(skill?.body).toContain('Use `relations` only after both sides are independently user-visible Issues');
     expect(skill?.body).toContain('If an existing manual Issue should run now, use `agent_session_start`');
     expect(skill?.body).toContain('Never claim completion from the latest Agent Session result alone');
   });
