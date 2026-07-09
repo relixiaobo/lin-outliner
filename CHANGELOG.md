@@ -40,6 +40,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **CC Switch provider registry (PR #389, codex-3)** — replaced the CC Switch
+  Codex-file mirror with read-only discovery from `~/.cc-switch/cc-switch.db`.
+  Tenon now exposes direct-runnable Codex Responses sources as source-scoped
+  models under one CC Switch provider group, resolves the matching registry API
+  key at request time without storing or revealing it, and reports proxy-required,
+  unsupported, and not-detected CC Switch states in Settings.
 - **Definition node edit parity (PR #388, codex-3)** — agent `node_read` now
   projects editable tag and field definition config from parent definition
   nodes; `node_create.definition` creates tag and field definitions with typed

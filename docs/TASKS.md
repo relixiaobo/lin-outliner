@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369, agent-image-generation-tool #383; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382, feed-processing-built-in #387, definition-node-edit-parity #388**) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382, feed-processing-built-in #387, definition-node-edit-parity #388, cc-switch-provider-registry #389**) |
 | Codex 4 | `lin-outliner-codex-4/` | `codex-4/agent-issue-manager` | ready PR #386 (agent issue manager implementation) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,11 +31,12 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-08).** Open PR queue: #386
-(`codex-4/agent-issue-manager`). Recently merged: #388
-(`codex-3/definition-node-edit-parity`) and #383
-(`codex-2/agent-image-generation-tool`) merged 2026-07-08 after main review;
-see *Recently completed*. #387 (`codex-3/feed-processing-built-in`) and #385
+**In flight (2026-07-09).** Open PR queue: #386
+(`codex-4/agent-issue-manager`). Recently merged: #389
+(`codex-3/cc-switch-provider-registry`) merged 2026-07-09 after main review;
+see *Recently completed*. #388 (`codex-3/definition-node-edit-parity`) and
+#383 (`codex-2/agent-image-generation-tool`) merged 2026-07-08 after main
+review; see *Recently completed*. #387 (`codex-3/feed-processing-built-in`) and #385
 (`codex/structured-field-resolution`) merged 2026-07-07; see *Recently
 completed*. #384 (`codex-4/scheduled-agent-work`) merged 2026-07-07 as the active P1 Agent
 Issue Manager implementation plan; see *Agent capabilities* and *Recently
@@ -304,13 +305,6 @@ before any directional/security-sensitive build.
   annotated captures as payload-backed image tool results. Directional/security-
   sensitive: implementation still needs helper-packaging and hard-prohibition
   decisions before code. See `docs/plans/agent-computer-control.md`.
-- **cc-switch-provider-registry** (P2, **design captured — needs dev one-pager /
-  Draft PR claim before build**) — replace the current Codex-file mirror with a
-  read-only CC Switch database registry integration. Tenon reads
-  `~/.cc-switch/cc-switch.db` as the source of truth, exposes direct-runnable
-  registry sources without copying secrets, and marks conversion / OAuth /
-  managed-account rows as proxy-required or unsupported instead of guessing. See
-  `docs/plans/cc-switch-provider-registry.md`.
 Standalone agent items (not part of the program):
 
 - **third-party-skill-import** (P2, *no plan file yet — draft, to be drafted*) —
@@ -500,6 +494,23 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **cc-switch-provider-registry** (`codex-3/cc-switch-provider-registry`, PR
+  #389, codex-3, merged 2026-07-09, plan-track) — replaces the CC Switch Codex
+  file mirror with a read-only registry integration over
+  `~/.cc-switch/cc-switch.db`. Tenon now discovers direct-runnable Codex
+  Responses sources, exposes source-scoped model options under one **CC Switch**
+  provider group, re-reads the matching registry source for request-time API-key
+  auth, and marks Chat Completions / OAuth / managed / conversion-dependent rows
+  as proxy-required or unsupported instead of guessing. The Settings UI now shows
+  Ready / Proxy required / Unsupported / Not detected states without storing or
+  revealing CC Switch-managed keys. **Gate (main):** review found that startup
+  reconcile pruned external-secret `cc-switch` rows and that source-scoped model
+  aliases sorted by UUID digits instead of upstream model ids; codex-3 fixed both
+  before merge. Verified on the final PR head with targeted CC Switch provider
+  tests, registry tests, Responses payload tests, local gateway tests, and a
+  targeted startup-reconcile reproduction. Plan archived `done`:
+  `docs/plans/archive/cc-switch-provider-registry.md`.
 
 - **definition-node-edit-parity** (`codex-3/definition-node-edit-parity`, PR
   #388, codex-3, merged 2026-07-08, plan-track) — adds model-visible tag/field
