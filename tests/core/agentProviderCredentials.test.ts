@@ -23,6 +23,7 @@ import {
 } from '../../src/core/localGatewayProviders';
 import {
   buildCcSwitchRegistryFromRows,
+  parseCcSwitchModelOptionId,
   setCcSwitchRegistryReaderForTests,
 } from '../../src/main/ccSwitchRegistry';
 
@@ -250,6 +251,116 @@ describe('provider credential resolver', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test('sorts CC Switch models by upstream model id instead of source-scoped alias numbers', async () => {
+    const snapshot = buildCcSwitchRegistryFromRows({
+      providers: [
+        {
+          id: '99999999-9999-4999-9999-999999999999',
+          app_type: 'codex',
+          name: 'High UUID',
+          settings_config: JSON.stringify({
+            auth: { OPENAI_API_KEY: 'registry-key-1' },
+            model: 'gpt-5.4',
+          }),
+          meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+          is_current: 0,
+          sort_index: 0,
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000000',
+          app_type: 'codex',
+          name: 'Low UUID',
+          settings_config: JSON.stringify({
+            auth: { OPENAI_API_KEY: 'registry-key-2' },
+            model: 'gpt-5.5',
+          }),
+          meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+          is_current: 0,
+          sort_index: 1,
+        },
+      ],
+      endpoints: [
+        {
+          provider_id: '99999999-9999-4999-9999-999999999999',
+          app_type: 'codex',
+          url: 'https://registry-one.example.com/v1',
+          added_at: '2026-07-08T00:00:00.000Z',
+        },
+        {
+          provider_id: '00000000-0000-4000-8000-000000000000',
+          app_type: 'codex',
+          url: 'https://registry-two.example.com/v1',
+          added_at: '2026-07-08T00:00:00.000Z',
+        },
+      ],
+      proxyConfigs: [],
+    });
+    setCcSwitchRegistryReaderForTests(async () => snapshot);
+
+    const view = await getProviderSettings();
+    const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    expect(provider?.models.map((model) => parseCcSwitchModelOptionId(model.id)?.modelId)).toEqual([
+      'gpt-5.5',
+      'gpt-5.4',
+    ]);
+    expect(parseCcSwitchModelOptionId(rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID)[0]!.id)?.modelId).toBe('gpt-5.5');
+  });
+
+  test('keeps the current CC Switch source ahead of non-current sources', async () => {
+    const snapshot = buildCcSwitchRegistryFromRows({
+      providers: [
+        {
+          id: 'current-source',
+          app_type: 'codex',
+          name: 'Current Source',
+          settings_config: JSON.stringify({
+            auth: { OPENAI_API_KEY: 'registry-key-1' },
+            model: 'gpt-5.4',
+          }),
+          meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+          is_current: 1,
+          sort_index: 0,
+        },
+        {
+          id: 'newer-non-current-source',
+          app_type: 'codex',
+          name: 'Newer Non-current Source',
+          settings_config: JSON.stringify({
+            auth: { OPENAI_API_KEY: 'registry-key-2' },
+            model: 'gpt-5.5',
+          }),
+          meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+          is_current: 0,
+          sort_index: 1,
+        },
+      ],
+      endpoints: [
+        {
+          provider_id: 'current-source',
+          app_type: 'codex',
+          url: 'https://current.example.com/v1',
+          added_at: '2026-07-08T00:00:00.000Z',
+        },
+        {
+          provider_id: 'newer-non-current-source',
+          app_type: 'codex',
+          url: 'https://newer.example.com/v1',
+          added_at: '2026-07-08T00:00:00.000Z',
+        },
+      ],
+      proxyConfigs: [],
+    });
+    setCcSwitchRegistryReaderForTests(async () => snapshot);
+
+    const view = await getProviderSettings();
+    const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    expect(provider?.models.map((model) => parseCcSwitchModelOptionId(model.id)?.modelId)).toEqual([
+      'gpt-5.4',
+      'gpt-5.5',
+    ]);
+    expect(parseCcSwitchModelOptionId(rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID)[0]!.id)?.modelId).toBe('gpt-5.4');
   });
 
   test('keeps a CC Switch registry source without an API key visible but unusable', async () => {

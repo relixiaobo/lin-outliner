@@ -63,6 +63,7 @@ import {
   ccSwitchSourceLabel,
   ccSwitchSourceModels,
   ccSwitchSourceRuntimeProviderId,
+  parseCcSwitchModelOptionId,
   parseCcSwitchRuntimeProviderId,
   readCcSwitchRegistrySnapshot,
   type CcSwitchOpenAICompatibleApiId,
@@ -160,6 +161,13 @@ const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
 };
 
 type OpenAICompatibleApiId = CcSwitchOpenAICompatibleApiId;
+interface CcSwitchModelSortKey {
+  upstreamModelId: string;
+  sourceRank: number;
+  sourceIndex: number;
+}
+
+const ccSwitchModelSortKeysByProvider = new Map<string, Map<string, CcSwitchModelSortKey>>();
 
 export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
   apiKey?: string;
@@ -395,7 +403,7 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
 export function rankedModels(providerId: string): Model<Api>[] {
   try {
     const models = piModelsForProvider(providerId);
-    return [...models].sort((left, right) => compareModels(providerId, left, right));
+    return [...models].sort((left, right) => compareProviderRankables(providerId, left, right));
   } catch {
     return [];
   }
@@ -697,8 +705,10 @@ function registerCcSwitchRuntimeModels(
   localGatewayProvider: LocalGatewayProviderDefinition,
   snapshot: CcSwitchRegistrySnapshot,
 ): Model<Api>[] {
+  const sortKeys = new Map<string, CcSwitchModelSortKey>();
   const runtimeModels = ccSwitchRunnableSources(snapshot)
-    .flatMap((source) => ccSwitchRuntimeModelsForSource(localGatewayProvider, source));
+    .flatMap((source, sourceIndex) => ccSwitchRuntimeModelsForSource(localGatewayProvider, source, sourceIndex, sortKeys));
+  ccSwitchModelSortKeysByProvider.set(localGatewayProvider.providerId, sortKeys);
   registerLocalGatewayRuntimeModels(localGatewayProvider.providerId, runtimeModels);
   return runtimeModels;
 }
@@ -706,15 +716,18 @@ function registerCcSwitchRuntimeModels(
 function ccSwitchRuntimeModelsForSource(
   localGatewayProvider: LocalGatewayProviderDefinition,
   source: CcSwitchProviderSource,
+  sourceIndex: number,
+  sortKeys: Map<string, CcSwitchModelSortKey>,
 ): Model<Api>[] {
   const baseUrl = ccSwitchSourceBaseUrl(source);
   if (!baseUrl) return [];
   const sourceRuntimeProviderId = ccSwitchSourceRuntimeProviderId(source);
   return ccSwitchSourceModels(source).map((descriptor) => {
     const modelApi = descriptor.api ?? ccSwitchPiApiForSource(source);
+    const modelId = ccSwitchModelOptionId(sourceRuntimeProviderId, descriptor.id);
     const model = createOpenAICompatibleModel({
       providerId: localGatewayProvider.providerId,
-      modelId: ccSwitchModelOptionId(sourceRuntimeProviderId, descriptor.id),
+      modelId,
       name: ccSwitchSourceLabel(source, descriptor),
       baseUrl,
       api: modelApi,
@@ -722,6 +735,11 @@ function ccSwitchRuntimeModelsForSource(
       reasoning: descriptor.reasoning ?? modelApi === 'openai-responses',
       contextWindow: descriptor.contextWindow,
       maxTokens: descriptor.maxTokens,
+    });
+    sortKeys.set(modelId, {
+      upstreamModelId: descriptor.id,
+      sourceRank: source.isCurrent ? 0 : 1,
+      sourceIndex,
     });
     return { ...model, provider: localGatewayProvider.providerId, name: ccSwitchSourceLabel(source, descriptor) };
   });
@@ -800,7 +818,35 @@ function providerModelOptions(providerId: string, models: readonly Model<Api>[])
       contextWindow: model.contextWindow,
       maxTokens: model.maxTokens,
     }))
-    .sort((left, right) => compareModels(providerId, left, right));
+    .sort((left, right) => compareProviderRankables(providerId, left, right));
+}
+
+function compareProviderRankables(
+  providerId: string,
+  left: { id: string; reasoning: boolean },
+  right: { id: string; reasoning: boolean },
+): number {
+  if (localGatewayProviderDefinition(providerId)?.adapter !== 'cc-switch-codex') {
+    return compareModels(providerId, left, right);
+  }
+  const leftKey = ccSwitchSortKey(providerId, left.id);
+  const rightKey = ccSwitchSortKey(providerId, right.id);
+  return (
+    leftKey.sourceRank - rightKey.sourceRank
+    || compareModels(providerId, { ...left, id: leftKey.upstreamModelId }, { ...right, id: rightKey.upstreamModelId })
+    || leftKey.sourceIndex - rightKey.sourceIndex
+    || left.id.localeCompare(right.id)
+  );
+}
+
+function ccSwitchSortKey(providerId: string, modelId: string): CcSwitchModelSortKey {
+  const registered = ccSwitchModelSortKeysByProvider.get(providerId)?.get(modelId);
+  if (registered) return registered;
+  return {
+    upstreamModelId: parseCcSwitchModelOptionId(modelId)?.modelId ?? modelId,
+    sourceRank: 1,
+    sourceIndex: Number.MAX_SAFE_INTEGER,
+  };
 }
 
 function getElectronHomePath(): string | undefined {
@@ -910,6 +956,7 @@ function reconcileProviderFile(file: ProviderConfigFile, secrets: SecretFile): b
  * (see `reconcileProviderConfig` rule 2).
  */
 function isPrunableJunkRow(provider: AgentProviderConfig, secrets: SecretFile): boolean {
+  if (isExternalSecretProviderId(provider.providerId)) return false;        // deliberate external-secret row
   if (getProviderAuthKind(provider.providerId) !== 'api-key') return false; // exempt managed + oauth
   if (secrets.credentials[provider.providerId]) return false;               // durable stored credential
   if (provider.baseUrl) return false;                                       // deliberate endpoint
