@@ -16,13 +16,13 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import {
-  CC_SWITCH_LOCAL_BASE_URL,
-  CC_SWITCH_LOCAL_DEFAULT_MODEL_ID,
-  CC_SWITCH_LOCAL_PROVIDER_ID,
-  CC_SWITCH_LOCAL_PROVIDER_NAME,
+  LOCAL_GATEWAY_PROVIDER_REGISTRY,
   isLocalGatewayProviderId,
+  localGatewayProviderDefinition,
+  type LocalGatewayProviderDefinition,
 } from '../core/localGatewayProviders';
 import { isLocalBaseUrl } from '../core/localEndpoint';
+import { parseCcSwitchModelOptionId } from './ccSwitchRegistry';
 
 const DEFAULT_CUSTOM_CONTEXT_WINDOW = 128000;
 const DEFAULT_CUSTOM_MAX_TOKENS = 8192;
@@ -49,6 +49,7 @@ export interface PiCustomProviderConfig {
 
 let credentialStorage: PiCredentialStorage | null = null;
 let modelsInstance: MutableModels | null = null;
+const localGatewayRuntimeModels = new Map<string, Model<Api>[]>();
 
 export function configurePiCredentialStorage(storage: PiCredentialStorage): void {
   credentialStorage = storage;
@@ -66,6 +67,12 @@ export function piModels(): MutableModels {
 
 export function piCredentialStore(): CredentialStore {
   return credentialStoreAdapter;
+}
+
+export function registerLocalGatewayRuntimeModels(providerId: string, models: readonly Model<Api>[]): void {
+  localGatewayRuntimeModels.set(providerId, [...models]);
+  const definition = localGatewayProviderDefinition(providerId);
+  if (definition && modelsInstance) registerLocalGatewayProvider(modelsInstance, definition);
 }
 
 export function piProviders(): string[] {
@@ -186,7 +193,7 @@ export function createOpenAICompatibleModel(
   },
 ): Model<OpenAICompatibleApiId> {
   const catalogModel = config.catalogModel;
-  const api = config.api ?? (catalogModel?.api === 'openai-responses' || isLocalGatewayProviderId(config.providerId)
+  const api = config.api ?? (catalogModel?.api === 'openai-responses' || localGatewayProviderDefinition(config.providerId)?.defaultApi === 'openai-responses'
     ? 'openai-responses'
     : 'openai-completions');
   return {
@@ -210,33 +217,49 @@ export function createOpenAICompatibleModel(
 }
 
 function registerLocalGatewayProviders(models: MutableModels): void {
-  const source = models.getModel('openai-codex', CC_SWITCH_LOCAL_DEFAULT_MODEL_ID) as Model<Api> | undefined;
+  for (const provider of LOCAL_GATEWAY_PROVIDER_REGISTRY) {
+    registerLocalGatewayProvider(models, provider);
+  }
+}
+
+function registerLocalGatewayProvider(models: MutableModels, provider: LocalGatewayProviderDefinition): void {
+  const runtimeModels = localGatewayRuntimeModels.get(provider.providerId);
+  const source = provider.preferredCatalogProviders
+    .map((providerId) => models.getModel(providerId, provider.defaultModelId) as Model<Api> | undefined)
+    .find(Boolean);
   models.setProvider(createProvider({
-    id: CC_SWITCH_LOCAL_PROVIDER_ID,
-    name: CC_SWITCH_LOCAL_PROVIDER_NAME,
-    baseUrl: CC_SWITCH_LOCAL_BASE_URL,
+    id: provider.providerId,
+    name: provider.name,
+    baseUrl: runtimeModels?.[0]?.baseUrl ?? provider.defaultBaseUrl,
     auth: {
       apiKey: {
-        name: 'CC Switch key',
+        name: `${provider.name} key`,
         resolve: async ({ credential, model }) => {
           if (credential?.key) return { auth: { apiKey: credential.key }, source: 'stored credential' };
+          const ccSwitchModel = parseCcSwitchModelOptionId(model.id);
+          if (ccSwitchModel) {
+            const sourceCredential = await readCredential(ccSwitchModel.sourceRuntimeProviderId);
+            if (sourceCredential?.type === 'api_key' && sourceCredential.key) {
+              return { auth: { apiKey: sourceCredential.key }, source: 'CC Switch registry' };
+            }
+          }
           if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
           return undefined;
         },
       },
     },
-    models: [source ? {
+    models: runtimeModels ?? [source ? {
       ...source,
-      provider: CC_SWITCH_LOCAL_PROVIDER_ID,
-      baseUrl: CC_SWITCH_LOCAL_BASE_URL,
+      provider: provider.providerId,
+      baseUrl: provider.defaultBaseUrl,
       name: 'Current routed model',
     } : {
-      id: CC_SWITCH_LOCAL_DEFAULT_MODEL_ID,
+      id: provider.defaultModelId,
       name: 'Current routed model',
-      api: 'openai-responses',
-      provider: CC_SWITCH_LOCAL_PROVIDER_ID,
-      baseUrl: CC_SWITCH_LOCAL_BASE_URL,
-      reasoning: true,
+      api: provider.defaultApi,
+      provider: provider.providerId,
+      baseUrl: provider.defaultBaseUrl,
+      reasoning: provider.defaultApi === 'openai-responses',
       input: ['text'],
       cost: {
         input: 0,

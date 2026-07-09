@@ -8028,6 +8028,10 @@ function resolveModelOverride(
  * custom endpoint with no catalog (where the agent profile must name the model).
  */
 function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<Api> | null {
+  if (config.modelId) {
+    const configured = findKnownModel(config.providerId, config.modelId);
+    if (configured) return configured;
+  }
   const first = rankedModels(config.providerId)[0];
   if (config.baseUrl) {
     const modelId = config.modelId ?? first?.id ?? '__tenon_openai_compatible_probe__';

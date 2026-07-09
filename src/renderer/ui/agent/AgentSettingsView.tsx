@@ -31,7 +31,12 @@ import {
 import type { ThemeMode } from '../../../core/theme';
 import { SUPPORTED_LOCALES, type Locale } from '../../../core/locale';
 import type { SettingsCategoryTarget, SettingsOpenTarget } from '../../../core/settingsWindow';
-import { CC_SWITCH_LOCAL_PROVIDER_ID } from '../../../core/localGatewayProviders';
+import {
+  LOCAL_GATEWAY_PROVIDER_REGISTRY,
+  isLocalGatewayProviderId,
+  isQuickEnableProviderId,
+  isRefreshableLocalGatewayProviderId,
+} from '../../../core/localGatewayProviders';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 import { Button } from '../primitives/Button';
@@ -85,6 +90,8 @@ interface ProviderChoice {
   enabled: boolean;
   hasCredential: boolean;
   detected?: boolean;
+  connectionStatus?: AgentProviderOption['connectionStatus'];
+  connectionStatusMessage?: string;
   quickEnable?: boolean;
   defaultBaseUrl?: string;
   canRefreshModels?: boolean;
@@ -191,7 +198,7 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
       onSelect={quickEnable
         ? () => handlers.onToggleEnabled(provider.providerId, true)
         : () => handlers.onConfigure(provider.providerId)}
-      sublabel={!provider.configured && provider.detected ? t.settings.providers.detectedSublabel : undefined}
+      sublabel={provider.connectionStatusMessage ?? (!provider.configured && provider.detected ? t.settings.providers.detectedSublabel : undefined)}
       trailing={trailing}
     />
   );
@@ -223,7 +230,13 @@ const SETTINGS_CATEGORY_ICONS = {
   agents: AgentIcon,
 } satisfies Record<SettingsCategory, AppIcon>;
 
-const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', CC_SWITCH_LOCAL_PROVIDER_ID, 'google', 'openrouter'];
+const PREFERRED_PROVIDER_ORDER = [
+  'anthropic',
+  'openai',
+  ...LOCAL_GATEWAY_PROVIDER_REGISTRY.map((provider) => provider.providerId),
+  'google',
+  'openrouter',
+];
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
   if (target?.agentId?.trim()) return { type: 'category', category: 'agents' };
@@ -1485,14 +1498,16 @@ function buildProviderChoices(
       enabled: provider.enabled,
       hasCredential: providerHasCredential(provider, providerCatalog),
       detected: providerCatalog?.detected,
+      connectionStatus: providerCatalog?.connectionStatus,
+      connectionStatusMessage: providerCatalog?.connectionStatusMessage,
       defaultBaseUrl: providerCatalog?.defaultBaseUrl,
-      canRefreshModels: provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID && provider.enabled,
+      canRefreshModels: isRefreshableLocalGatewayProviderId(provider.providerId) && provider.enabled,
     });
   }
 
   for (const provider of settings.availableProviders) {
     if (choices.has(provider.providerId)) continue;
-    const quickEnable = provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID && Boolean(provider.detected && provider.defaultBaseUrl);
+    const quickEnable = isQuickEnableProviderId(provider.providerId) && Boolean(provider.detected && provider.defaultBaseUrl && provider.credentialed);
     choices.set(provider.providerId, {
       providerId: provider.providerId,
       configured: false,
@@ -1500,6 +1515,8 @@ function buildProviderChoices(
       enabled: !quickEnable,
       hasCredential: providerHasCredential(undefined, provider),
       detected: provider.detected,
+      connectionStatus: provider.connectionStatus,
+      connectionStatusMessage: provider.connectionStatusMessage,
       quickEnable,
       defaultBaseUrl: provider.defaultBaseUrl,
     });
@@ -1507,7 +1524,7 @@ function buildProviderChoices(
 
   if (draftProviderId && !choices.has(draftProviderId)) {
     const providerCatalog = catalog.get(draftProviderId);
-    const quickEnable = draftProviderId === CC_SWITCH_LOCAL_PROVIDER_ID && Boolean(providerCatalog?.detected && providerCatalog.defaultBaseUrl);
+    const quickEnable = isQuickEnableProviderId(draftProviderId) && Boolean(providerCatalog?.detected && providerCatalog.defaultBaseUrl && providerCatalog.credentialed);
     choices.set(draftProviderId, {
       providerId: draftProviderId,
       configured: false,
@@ -1515,6 +1532,8 @@ function buildProviderChoices(
       enabled: !quickEnable,
       hasCredential: providerHasCredential(undefined, providerCatalog),
       detected: providerCatalog?.detected,
+      connectionStatus: providerCatalog?.connectionStatus,
+      connectionStatusMessage: providerCatalog?.connectionStatusMessage,
       quickEnable,
       defaultBaseUrl: providerCatalog?.defaultBaseUrl,
     });
@@ -1578,10 +1597,13 @@ function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): nu
 // Module-level helper (can't call useT) — the component passes `t` in.
 function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
   const s = t.settings.providers.status;
+  if (provider.connectionStatus === 'proxy-required') return s.proxyRequired;
+  if (provider.connectionStatus === 'unsupported') return s.unsupported;
+  if (provider.connectionStatus === 'not-detected') return s.notDetected;
   if (!provider.configured && provider.detected) return s.detected;
   if (!provider.configured) return provider.hasCredential ? s.ready : s.addKey;
   if (!provider.enabled) return s.disabled;
-  if (provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID && !provider.hasCredential) return s.unavailable;
+  if (isLocalGatewayProviderId(provider.providerId) && !provider.hasCredential) return s.unavailable;
   if (!provider.hasCredential) return s.needsKey;
   return provider.active ? s.active : s.ready;
 }

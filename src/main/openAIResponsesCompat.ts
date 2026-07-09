@@ -1,7 +1,8 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 import type { SimpleStreamOptions } from '@earendil-works/pi-ai';
+import { parseCcSwitchModelOptionId } from './ccSwitchRegistry';
 
-type ResponsesCompatModel = Pick<Model<Api>, 'api' | 'baseUrl'>;
+type ResponsesCompatModel = Pick<Model<Api>, 'api' | 'baseUrl'> & Partial<Pick<Model<Api>, 'id'>>;
 
 export function isCustomOpenAIResponsesEndpoint(model?: ResponsesCompatModel | null): boolean {
   return model?.api === 'openai-responses'
@@ -21,13 +22,17 @@ export function applyCustomOpenAIResponsesPayloadProfile(
   payload: unknown,
   model: ResponsesCompatModel,
 ): unknown | undefined {
-  if (!isCustomOpenAIResponsesEndpoint(model)) return undefined;
-  if (!isRecord(payload) || !Array.isArray(payload.input)) return undefined;
+  if (!isRecord(payload)) return undefined;
+
+  const nextPayload: Record<string, unknown> = { ...payload };
+  let changed = applyCcSwitchModelAlias(nextPayload, model);
+
+  if (!isCustomOpenAIResponsesEndpoint(model)) return changed ? nextPayload : undefined;
+  if (!Array.isArray(payload.input)) return changed ? nextPayload : undefined;
 
   const input = [...payload.input];
   const instructions = extractLeadingInstructions(input);
-  let changed = instructions.changed;
-  const nextPayload: Record<string, unknown> = { ...payload };
+  changed = instructions.changed || changed;
 
   if (instructions.text) {
     nextPayload.input = instructions.input;
@@ -98,6 +103,14 @@ function combineInstructions(current: unknown, extracted: string): string {
 
 function hasLowVerbosity(value: unknown): boolean {
   return isRecord(value) && value.verbosity === 'low';
+}
+
+function applyCcSwitchModelAlias(payload: Record<string, unknown>, model: ResponsesCompatModel): boolean {
+  const modelId = typeof model.id === 'string' ? model.id : undefined;
+  const upstreamModel = modelId ? parseCcSwitchModelOptionId(modelId)?.modelId : undefined;
+  if (!upstreamModel || payload.model !== modelId) return false;
+  payload.model = upstreamModel;
+  return true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

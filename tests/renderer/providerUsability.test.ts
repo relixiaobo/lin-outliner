@@ -16,6 +16,7 @@ function settings(): AgentProviderSettingsView {
     ],
     availableProviders: [],
     agent: {} as AgentProviderSettingsView['agent'],
+    imageGeneration: {},
   };
 }
 
@@ -39,33 +40,35 @@ describe('provider usability', () => {
     expect(providerHasCredential(provider, undefined)).toBe(false);
   });
 
-  test('treats a detected keyless catalog gateway as credentialed before it is configured', () => {
+  test('treats a ready external catalog provider as credentialed before it is configured', () => {
     expect(providerHasCredential(undefined, {
       providerId: 'cc-switch',
       authKind: 'api-key',
       credentialed: true,
       detected: true,
+      connectionStatus: 'ready',
       hasEnvApiKey: false,
       envKeyNames: [],
-      defaultBaseUrl: 'http://127.0.0.1:15721/v1',
+      defaultBaseUrl: 'https://registry.example.com/v1',
       models: [],
     })).toBe(true);
   });
 
-  test('does not treat a detected but stopped catalog gateway as credentialed', () => {
+  test('does not treat a proxy-required catalog provider as credentialed', () => {
     expect(providerHasCredential(undefined, {
       providerId: 'cc-switch',
       authKind: 'api-key',
       credentialed: false,
       detected: true,
+      connectionStatus: 'proxy-required',
       hasEnvApiKey: false,
       envKeyNames: [],
-      defaultBaseUrl: 'http://127.0.0.1:15721/v1',
+      defaultBaseUrl: 'https://registry.example.com/v1',
       models: [],
     })).toBe(false);
   });
 
-  test('does not treat a configured but stopped CC Switch local gateway as usable', () => {
+  test('does not treat a configured proxy-required CC Switch provider as usable', () => {
     const view = settings();
     view.activeProviderId = 'cc-switch';
     view.providers = [{
@@ -80,9 +83,10 @@ describe('provider usability', () => {
       authKind: 'api-key',
       credentialed: false,
       detected: true,
+      connectionStatus: 'proxy-required',
       hasEnvApiKey: false,
       envKeyNames: [],
-      defaultBaseUrl: 'http://127.0.0.1:15721/v1',
+      defaultBaseUrl: 'https://registry.example.com/v1',
       models: [],
     }];
 

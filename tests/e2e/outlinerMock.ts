@@ -367,6 +367,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         providerCacheRetention: 'short',
         dreamSchedule: '2026-01-01T03:00 RRULE:FREQ=DAILY',
       },
+      imageGeneration: {},
       providers: [{
         providerId: 'openai',
         baseUrl: '',
@@ -420,15 +421,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       }, {
         providerId: 'cc-switch',
         authKind: 'api-key',
-        credentialed: false,
+        credentialed: true,
         detected: true,
+        connectionStatus: 'ready',
         hasEnvApiKey: false,
         envKeyNames: [],
-        defaultBaseUrl: 'http://127.0.0.1:15721/v1',
+        defaultBaseUrl: 'https://registry.example.com/v1',
         models: [
           {
-            id: 'gpt-5.4',
-            name: 'Current routed model',
+            id: 'cc-switch%3Acodex%3Aprovider-openai::gpt-5.4',
+            name: 'Codex / OpenAI / GPT 5.4',
             reasoning: true,
             supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
             contextWindow: 256_000,
@@ -1874,7 +1876,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             provider.models = [
               {
                 id: 'claude-fable-5',
-                name: 'Claude Fable 5',
+                name: 'Codex / OpenAI / Claude Fable 5',
                 reasoning: true,
                 supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
                 contextWindow: 200_000,
@@ -1882,7 +1884,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               },
               {
                 id: 'gpt-5.4',
-                name: 'GPT 5.4',
+                name: 'Codex / OpenAI / GPT 5.4',
                 reasoning: true,
                 supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
                 contextWindow: 256_000,

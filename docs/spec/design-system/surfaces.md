@@ -281,7 +281,7 @@ no in-renderer backdrop, and closes through Cancel / Save / Escape. One inset ca
 holds credential mode, key/base URL/provider id as needed, and async
 non-blocking validation. Model and effort belong to the agent profile, not the
 provider connection. Saved user-pasted keys stay masked until explicit show/copy;
-externally managed keys such as CC Switch's Codex key are never shown or copied.
+externally managed keys such as CC Switch registry keys are never shown or copied.
 Raw-key show/copy is available only inside the provider config child window, and
 main rejects the dedicated key-read IPC from all other windows. Before provider
 settings resolve, the window still paints the provider title/avatar, reserved

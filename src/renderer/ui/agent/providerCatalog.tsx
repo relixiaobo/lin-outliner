@@ -5,7 +5,10 @@ import type {
 } from '../../api/types';
 import type { Messages } from '../../../core/i18n';
 import { providerIconSvg } from './providerIcon';
-import { CC_SWITCH_LOCAL_PROVIDER_ID, CC_SWITCH_LOCAL_PROVIDER_NAME } from '../../../core/localGatewayProviders';
+import {
+  LOCAL_GATEWAY_PROVIDER_REGISTRY,
+  localGatewayProviderDefinition,
+} from '../../../core/localGatewayProviders';
 
 // Pure provider-catalog helpers shared by the settings list (AgentSettingsView)
 // and the standalone per-provider config window (ProviderConfigWindow): display
@@ -14,7 +17,7 @@ import { CC_SWITCH_LOCAL_PROVIDER_ID, CC_SWITCH_LOCAL_PROVIDER_NAME } from '../.
 // context from a fresh settings fetch without importing the whole settings view.
 
 export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  [CC_SWITCH_LOCAL_PROVIDER_ID]: CC_SWITCH_LOCAL_PROVIDER_NAME,
+  ...Object.fromEntries(LOCAL_GATEWAY_PROVIDER_REGISTRY.map((provider) => [provider.providerId, provider.name])),
   anthropic: 'Anthropic',
   openai: 'OpenAI',
   'openai-codex': 'OpenAI Codex',
@@ -166,7 +169,8 @@ export function ProviderAvatar({ providerId, large }: { providerId: string; larg
 }
 
 export function providerDescription(catalog: AgentProviderOption | undefined, t: Messages): string {
-  if (catalog?.providerId === CC_SWITCH_LOCAL_PROVIDER_ID) return t.providerCatalog.ccSwitchLocalGateway;
+  const localGatewayProvider = catalog ? localGatewayProviderDefinition(catalog.providerId) : undefined;
+  if (localGatewayProvider?.descriptionKey) return t.providerCatalog[localGatewayProvider.descriptionKey];
   if (!catalog || catalog.models.length === 0) return t.providerCatalog.openAiCompatible;
   const names = catalog.models.slice(0, 3).map((model) => model.name.replace(/\s*\(latest\)/i, ''));
   const hasMore = catalog.models.length > names.length;

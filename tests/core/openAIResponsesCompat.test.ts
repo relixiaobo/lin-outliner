@@ -49,6 +49,43 @@ describe('OpenAI Responses compatibility profile', () => {
     })).toBeUndefined();
   });
 
+  test('sends the upstream model id for CC Switch source-scoped model aliases', () => {
+    const payload = {
+      model: 'cc-switch%3Acodex%3Aprovider-openai::gpt-5.5',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'Ping' }] }],
+      stream: true,
+    };
+
+    expect(applyCustomOpenAIResponsesPayloadProfile(payload, {
+      api: 'openai-responses' as const,
+      baseUrl: 'https://registry.example.com/v1',
+      id: 'cc-switch%3Acodex%3Aprovider-openai::gpt-5.5',
+    })).toEqual({
+      model: 'gpt-5.5',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'Ping' }] }],
+      stream: true,
+      text: { verbosity: 'low' },
+    });
+  });
+
+  test('decodes CC Switch model aliases for non-Responses OpenAI-compatible payloads', () => {
+    const payload = {
+      model: 'cc-switch%3Acodex%3Aprovider-openai::gpt-5.5',
+      messages: [{ role: 'user', content: 'Ping' }],
+      stream: true,
+    };
+
+    expect(applyCustomOpenAIResponsesPayloadProfile(payload, {
+      api: 'openai-completions' as const,
+      baseUrl: 'https://registry.example.com/v1',
+      id: 'cc-switch%3Acodex%3Aprovider-openai::gpt-5.5',
+    })).toEqual({
+      model: 'gpt-5.5',
+      messages: [{ role: 'user', content: 'Ping' }],
+      stream: true,
+    });
+  });
+
   test('identifies only non-official OpenAI Responses endpoints', () => {
     expect(isCustomOpenAIResponsesEndpoint(customResponsesModel)).toBe(true);
     expect(isCustomOpenAIResponsesEndpoint({

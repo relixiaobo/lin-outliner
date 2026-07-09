@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { CC_SWITCH_LOCAL_PROVIDER_ID } from '../../src/core/localGatewayProviders';
 
 // Exercises the provider-config-cleanup Part A startup reconcile: a keyless "junk"
 // row (the shape the old main-pane save side effect produced) is pruned and an
@@ -204,6 +205,22 @@ describe('provider config startup reconcile (Part A)', () => {
       baseUrl: 'http://localhost:1234/v1',
       enabled: true,
     });
+  });
+
+  test('a CC Switch external-secret row survives startup reconcile', async () => {
+    await writeProviderFileRaw({
+      activeProviderId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      providers: [
+        { providerId: CC_SWITCH_LOCAL_PROVIDER_ID, enabled: true },
+      ],
+    });
+
+    await reconcileProviderConfig();
+
+    expect((await readProviderFileRaw()).providers).toEqual([
+      { providerId: CC_SWITCH_LOCAL_PROVIDER_ID, enabled: true },
+    ]);
+    expect((await readProviderFileRaw()).activeProviderId).toBe(CC_SWITCH_LOCAL_PROVIDER_ID);
   });
 
   test('a keyless row with a remote baseUrl survives reconcile but is not usable without auth', async () => {

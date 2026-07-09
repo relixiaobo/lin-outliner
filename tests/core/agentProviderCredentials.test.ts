@@ -7,7 +7,7 @@ import {
   type Credential,
   type OAuthCredential,
 } from '@earendil-works/pi-ai';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -19,9 +19,13 @@ import {
   piStreamSimple,
 } from '../../src/main/piModels';
 import {
-  CC_SWITCH_LOCAL_BASE_URL,
   CC_SWITCH_LOCAL_PROVIDER_ID,
 } from '../../src/core/localGatewayProviders';
+import {
+  buildCcSwitchRegistryFromRows,
+  parseCcSwitchModelOptionId,
+  setCcSwitchRegistryReaderForTests,
+} from '../../src/main/ccSwitchRegistry';
 
 type StoredOAuth = { refresh: string; access: string; expires: number };
 
@@ -67,6 +71,7 @@ const {
   getStoredProviderApiKey,
   providerStreamOptionsFromRuntimeSettings,
   persistOAuthCredential,
+  rankedModels,
   refreshProviderModels,
   testProviderConnection,
   upsertProviderConfig,
@@ -114,6 +119,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  setCcSwitchRegistryReaderForTests(null);
   piModels().deleteProvider(piCustomProviderId('openai'));
   piModels().deleteProvider(piCustomProviderId(CC_SWITCH_LOCAL_PROVIDER_ID));
   piModels().deleteProvider('env-api-key-test');
@@ -131,35 +137,49 @@ function mockFetchJson(body: unknown, options: { status?: number } = {}): () => 
   };
 }
 
-async function writeCcSwitchInstallMarker() {
-  await mkdir(path.join(currentUserData, '.cc-switch'), { recursive: true });
-}
-
-async function writeCodexMirrorConfig(options: {
-  baseUrl?: string;
-  model?: string;
-  wireApi?: string;
+function installCcSwitchRegistry(options: {
+  providerId?: string;
+  providerName?: string;
+  apiFormat?: string;
   apiKey?: string;
+  endpoint?: string | null;
+  model?: string;
   modelCatalog?: unknown;
+  isCurrent?: boolean;
 }) {
-  const codexDir = path.join(currentUserData, '.codex');
-  await mkdir(codexDir, { recursive: true });
-  const catalogLine = options.modelCatalog ? 'model_catalog_json = "cc-switch-model-catalog.json"\n' : '';
-  await writeFile(path.join(codexDir, 'config.toml'), `model_provider = "custom"
-model = "${options.model ?? 'gpt-5.5'}"
-${catalogLine}
-[model_providers.custom]
-name = "OpenAI"
-base_url = "${options.baseUrl ?? 'https://mirror.example.com/v1'}"
-wire_api = "${options.wireApi ?? 'responses'}"
-requires_openai_auth = true
-`);
-  if (options.apiKey !== undefined) {
-    await writeFile(path.join(codexDir, 'auth.json'), JSON.stringify({ OPENAI_API_KEY: options.apiKey }));
-  }
-  if (options.modelCatalog) {
-    await writeFile(path.join(codexDir, 'cc-switch-model-catalog.json'), JSON.stringify(options.modelCatalog));
-  }
+  const providerId = options.providerId ?? 'provider-openai';
+  const settingsConfig = {
+    auth: options.apiKey === undefined ? {} : { OPENAI_API_KEY: options.apiKey },
+    model: options.model ?? 'gpt-5.5',
+    modelCatalog: options.modelCatalog,
+  };
+  const snapshot = buildCcSwitchRegistryFromRows({
+    dbPath: path.join(currentUserData, '.cc-switch', 'cc-switch.db'),
+    providers: [{
+      id: providerId,
+      app_type: 'codex',
+      name: options.providerName ?? 'OpenAI',
+      settings_config: JSON.stringify(settingsConfig),
+      meta: JSON.stringify({ apiFormat: options.apiFormat ?? 'openai_responses' }),
+      is_current: options.isCurrent ?? true,
+      sort_index: 0,
+    }],
+    endpoints: options.endpoint === null ? [] : [{
+      provider_id: providerId,
+      app_type: 'codex',
+      url: options.endpoint ?? 'https://registry.example.com/v1',
+      added_at: '2026-07-08T00:00:00.000Z',
+    }],
+    proxyConfigs: [{
+      app_type: 'codex',
+      listen_address: '127.0.0.1',
+      listen_port: 15721,
+      enabled: 1,
+      proxy_enabled: 1,
+    }],
+  });
+  setCcSwitchRegistryReaderForTests(async () => snapshot);
+  return snapshot;
 }
 
 describe('provider credential resolver', () => {
@@ -172,54 +192,43 @@ describe('provider credential resolver', () => {
     expect(model?.thinkingLevelLabels).toEqual({ low: 'LOW', high: 'HIGH' });
   });
 
-  test('mirrors the CC Switch Codex config without requiring Local Proxy', async () => {
-    await writeCcSwitchInstallMarker();
-    await writeCodexMirrorConfig({ apiKey: 'codex-mirror-key' });
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith('/health')) return new Response('{}', { status: 503 });
-      if (url === 'https://mirror.example.com/v1/models') {
-        expect(new Headers(init?.headers).get('authorization')).toBe('Bearer codex-mirror-key');
-        return new Response(JSON.stringify({ data: [{ id: 'gpt-5.5' }, { id: 'claude-fable-5' }] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      return new Response('{}', { status: 404 });
-    }) as typeof fetch;
-    try {
-      const view = await getProviderSettings();
-      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
-      expect(provider).toMatchObject({
-        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
-        credentialed: true,
-        detected: true,
-        defaultBaseUrl: 'https://mirror.example.com/v1',
-      });
-      expect(provider?.models.map((model) => model.id)).toContain('gpt-5.5');
+  test('discovers a direct CC Switch registry provider without exposing its key', async () => {
+    installCcSwitchRegistry({ apiKey: 'registry-key' });
+    const view = await getProviderSettings();
+    const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    expect(provider).toMatchObject({
+      providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      credentialed: true,
+      detected: true,
+      connectionStatus: 'ready',
+      defaultBaseUrl: 'https://registry.example.com/v1',
+    });
+    expect(provider?.models[0]?.name).toBe('Codex / OpenAI / GPT 5.5');
 
-      await upsertProviderConfig({ providerId: CC_SWITCH_LOCAL_PROVIDER_ID, enabled: true });
-      expect(await getActiveProviderRuntimeConfig()).toMatchObject({
-        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
-        baseUrl: 'https://mirror.example.com/v1',
-        modelId: 'gpt-5.5',
-        api: 'openai-responses',
-      });
-      expect(await getProviderApiKey(CC_SWITCH_LOCAL_PROVIDER_ID)).toBe('codex-mirror-key');
-      expect(await getStoredProviderApiKey(CC_SWITCH_LOCAL_PROVIDER_ID)).toEqual({
-        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
-        apiKey: undefined,
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await upsertProviderConfig({ providerId: CC_SWITCH_LOCAL_PROVIDER_ID, enabled: true });
+    const runtime = await getActiveProviderRuntimeConfig();
+    expect(runtime).toMatchObject({
+      providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      api: 'openai-responses',
+    });
+    expect(runtime?.baseUrl).toBeUndefined();
+    expect(runtime?.modelId).toContain('cc-switch%3Acodex%3Aprovider-openai');
+    expect(await getProviderApiKey(CC_SWITCH_LOCAL_PROVIDER_ID)).toBeUndefined();
+    expect(await getStoredProviderApiKey(CC_SWITCH_LOCAL_PROVIDER_ID)).toEqual({
+      providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      apiKey: undefined,
+    });
+
+    const model = rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID)[0];
+    expect(model?.id).toBe(runtime?.modelId);
+    const resolved = model ? await piModels().getAuth(model) : undefined;
+    expect(resolved?.auth.apiKey).toBe('registry-key');
+    expect(resolved?.source).toBe('CC Switch registry');
   });
 
-  test('refreshes CC Switch Codex mirror models from the generated model catalog', async () => {
-    await writeCcSwitchInstallMarker();
-    await writeCodexMirrorConfig({
-      apiKey: 'codex-mirror-key',
+  test('refreshes CC Switch registry models from provider model catalog without probing /models', async () => {
+    installCcSwitchRegistry({
+      apiKey: 'registry-key',
       modelCatalog: {
         models: [
           { slug: 'deepseek-v4-flash', display_name: 'DeepSeek Flash', context_window: 1000000 },
@@ -227,155 +236,185 @@ describe('provider credential resolver', () => {
         ],
       },
     });
-    const restoreFetch = mockFetchJson({ status: 'stopped' }, { status: 503 });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => {
+      throw new Error('refresh must not probe /models for registry-backed CC Switch');
+    }) as typeof fetch;
     try {
       const view = await refreshProviderModels(CC_SWITCH_LOCAL_PROVIDER_ID);
       const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
-      expect(provider?.models.map((model) => model.id)).toEqual(['claude-fable-5', 'deepseek-v4-flash']);
-      expect(provider?.models.find((model) => model.id === 'deepseek-v4-flash')?.contextWindow).toBe(1000000);
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test('keeps a CC Switch Codex mirror without an API key visible but unusable', async () => {
-    await writeCcSwitchInstallMarker();
-    await writeCodexMirrorConfig({ apiKey: undefined });
-    const restoreFetch = mockFetchJson({ status: 'stopped' }, { status: 503 });
-    try {
-      const view = await upsertProviderConfig({
-        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
-        enabled: true,
-      });
-      const provider = view.providers.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
-      expect(provider?.auth.credentialed).toBe(false);
-      expect(await getActiveProviderRuntimeConfig()).toBeNull();
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test('detects the CC Switch local gateway as an available provider', async () => {
-    const restoreFetch = mockFetchJson({ status: 'healthy' });
-    try {
-      const view = await getProviderSettings();
-      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
-      expect(provider).toMatchObject({
-        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
-        credentialed: true,
-        detected: true,
-        defaultBaseUrl: CC_SWITCH_LOCAL_BASE_URL,
-      });
-      expect(provider?.models.map((model) => model.name)).toContain('Current routed model');
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test('shows installed CC Switch even when the local gateway is stopped', async () => {
-    await mkdir(path.join(currentUserData, '.cc-switch'));
-    const restoreFetch = mockFetchJson({ status: 'stopped' }, { status: 503 });
-    try {
-      const view = await getProviderSettings();
-      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
-      expect(provider).toMatchObject({
-        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
-        credentialed: false,
-        detected: true,
-        defaultBaseUrl: CC_SWITCH_LOCAL_BASE_URL,
-      });
-      expect(provider?.models.map((model) => model.name)).toContain('Current routed model');
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test('does not treat a configured but stopped CC Switch gateway as usable', async () => {
-    const restoreFetch = mockFetchJson({ status: 'stopped' }, { status: 503 });
-    try {
-      const view = await upsertProviderConfig({
-        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
-        baseUrl: CC_SWITCH_LOCAL_BASE_URL,
-        enabled: true,
-      });
-      const provider = view.providers.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
-      expect(provider?.auth.credentialed).toBe(false);
-      expect(await getActiveProviderRuntimeConfig()).toBeNull();
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test('lists CC Switch gateway models when the local /models endpoint responds', async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith('/health')) {
-        return new Response(JSON.stringify({ status: 'healthy' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (url.endsWith('/models')) {
-        return new Response(JSON.stringify({
-          data: [
-            { id: 'claude-fable-5' },
-            { id: 'gpt-5.4' },
-          ],
-        }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      return new Response('{}', { status: 404 });
-    }) as typeof fetch;
-    try {
-      const view = await getProviderSettings();
-      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
-      expect(provider?.models.map((model) => model.id)).toEqual(['gpt-5.4', 'claude-fable-5']);
+      expect(provider?.models.map((model) => model.name)).toEqual([
+        'Codex / OpenAI / Claude Fable 5',
+        'Codex / OpenAI / DeepSeek Flash',
+      ]);
+      expect(provider?.models.find((model) => model.name === 'Codex / OpenAI / DeepSeek Flash')?.contextWindow).toBe(1000000);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test('refreshes CC Switch models without sending the local-endpoint sentinel as Authorization', async () => {
-    const originalFetch = globalThis.fetch;
-    const modelRequestAuthorizations: Array<string | null> = [];
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith('/health')) {
-        return new Response(JSON.stringify({ status: 'healthy' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (url.endsWith('/models')) {
-        const headers = new Headers(init?.headers);
-        modelRequestAuthorizations.push(headers.get('authorization'));
-        return new Response(JSON.stringify({ data: [{ id: 'claude-fable-5' }] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      return new Response('{}', { status: 404 });
-    }) as typeof fetch;
-    try {
-      const view = await refreshProviderModels(CC_SWITCH_LOCAL_PROVIDER_ID);
-      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
-      expect(provider?.models.map((model) => model.name)).toContain('Claude Fable 5');
-      expect(modelRequestAuthorizations.every((value) => value === null)).toBe(true);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+  test('sorts CC Switch models by upstream model id instead of source-scoped alias numbers', async () => {
+    const snapshot = buildCcSwitchRegistryFromRows({
+      providers: [
+        {
+          id: '99999999-9999-4999-9999-999999999999',
+          app_type: 'codex',
+          name: 'High UUID',
+          settings_config: JSON.stringify({
+            auth: { OPENAI_API_KEY: 'registry-key-1' },
+            model: 'gpt-5.4',
+          }),
+          meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+          is_current: 0,
+          sort_index: 0,
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000000',
+          app_type: 'codex',
+          name: 'Low UUID',
+          settings_config: JSON.stringify({
+            auth: { OPENAI_API_KEY: 'registry-key-2' },
+            model: 'gpt-5.5',
+          }),
+          meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+          is_current: 0,
+          sort_index: 1,
+        },
+      ],
+      endpoints: [
+        {
+          provider_id: '99999999-9999-4999-9999-999999999999',
+          app_type: 'codex',
+          url: 'https://registry-one.example.com/v1',
+          added_at: '2026-07-08T00:00:00.000Z',
+        },
+        {
+          provider_id: '00000000-0000-4000-8000-000000000000',
+          app_type: 'codex',
+          url: 'https://registry-two.example.com/v1',
+          added_at: '2026-07-08T00:00:00.000Z',
+        },
+      ],
+      proxyConfigs: [],
+    });
+    setCcSwitchRegistryReaderForTests(async () => snapshot);
+
+    const view = await getProviderSettings();
+    const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    expect(provider?.models.map((model) => parseCcSwitchModelOptionId(model.id)?.modelId)).toEqual([
+      'gpt-5.5',
+      'gpt-5.4',
+    ]);
+    expect(parseCcSwitchModelOptionId(rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID)[0]!.id)?.modelId).toBe('gpt-5.5');
   });
 
-  test('reports a stopped CC Switch local proxy during model refresh', async () => {
-    const restoreFetch = mockFetchJson({ status: 'stopped' }, { status: 503 });
-    try {
-      await expect(refreshProviderModels(CC_SWITCH_LOCAL_PROVIDER_ID)).rejects.toThrow('Local Proxy is not reachable');
-    } finally {
-      restoreFetch();
-    }
+  test('keeps the current CC Switch source ahead of non-current sources', async () => {
+    const snapshot = buildCcSwitchRegistryFromRows({
+      providers: [
+        {
+          id: 'current-source',
+          app_type: 'codex',
+          name: 'Current Source',
+          settings_config: JSON.stringify({
+            auth: { OPENAI_API_KEY: 'registry-key-1' },
+            model: 'gpt-5.4',
+          }),
+          meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+          is_current: 1,
+          sort_index: 0,
+        },
+        {
+          id: 'newer-non-current-source',
+          app_type: 'codex',
+          name: 'Newer Non-current Source',
+          settings_config: JSON.stringify({
+            auth: { OPENAI_API_KEY: 'registry-key-2' },
+            model: 'gpt-5.5',
+          }),
+          meta: JSON.stringify({ apiFormat: 'openai_responses' }),
+          is_current: 0,
+          sort_index: 1,
+        },
+      ],
+      endpoints: [
+        {
+          provider_id: 'current-source',
+          app_type: 'codex',
+          url: 'https://current.example.com/v1',
+          added_at: '2026-07-08T00:00:00.000Z',
+        },
+        {
+          provider_id: 'newer-non-current-source',
+          app_type: 'codex',
+          url: 'https://newer.example.com/v1',
+          added_at: '2026-07-08T00:00:00.000Z',
+        },
+      ],
+      proxyConfigs: [],
+    });
+    setCcSwitchRegistryReaderForTests(async () => snapshot);
+
+    const view = await getProviderSettings();
+    const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    expect(provider?.models.map((model) => parseCcSwitchModelOptionId(model.id)?.modelId)).toEqual([
+      'gpt-5.4',
+      'gpt-5.5',
+    ]);
+    expect(parseCcSwitchModelOptionId(rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID)[0]!.id)?.modelId).toBe('gpt-5.4');
+  });
+
+  test('keeps a CC Switch registry source without an API key visible but unusable', async () => {
+    installCcSwitchRegistry({ apiKey: undefined });
+    const view = await upsertProviderConfig({
+      providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      enabled: true,
+    });
+    const provider = view.providers.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    const catalog = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    expect(provider?.auth.credentialed).toBe(false);
+    expect(catalog?.connectionStatus).toBe('unsupported');
+    expect(await getActiveProviderRuntimeConfig()).toBeNull();
+  });
+
+  test('does not expose a runnable CC Switch provider when the registry database is missing', async () => {
+    const view = await upsertProviderConfig({
+      providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      enabled: true,
+    });
+    const provider = view.providers.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    const catalog = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    expect(provider?.auth.credentialed).toBe(false);
+    expect(catalog).toMatchObject({
+      providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      credentialed: false,
+      detected: false,
+      connectionStatus: 'not-detected',
+    });
+    expect(await getActiveProviderRuntimeConfig()).toBeNull();
+  });
+
+  test('marks CC Switch Chat Completions providers as proxy-required', async () => {
+    installCcSwitchRegistry({ apiFormat: 'openai_chat', apiKey: 'registry-key' });
+    const view = await upsertProviderConfig({
+      providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      enabled: true,
+    });
+    const provider = view.providers.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    const catalog = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    expect(provider?.auth.credentialed).toBe(false);
+    expect(catalog).toMatchObject({
+      providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      credentialed: false,
+      detected: true,
+      connectionStatus: 'proxy-required',
+    });
+    expect(catalog?.connectionStatusMessage).toContain('Chat Completions');
+    expect(catalog?.models).toEqual([]);
+    expect(await getActiveProviderRuntimeConfig()).toBeNull();
+    const refreshed = await refreshProviderModels(CC_SWITCH_LOCAL_PROVIDER_ID);
+    expect(refreshed.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID)).toMatchObject({
+      connectionStatus: 'proxy-required',
+    });
   });
 
   test('stored api key resolves and reports as a stored key', async () => {
