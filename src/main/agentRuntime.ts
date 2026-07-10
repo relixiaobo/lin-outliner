@@ -8086,9 +8086,7 @@ function resolveAgentModel(
  * via `core/agentReasoning`; a non-reasoning model supporting only `off` stays `off`).
  */
 function defaultThinkingLevel(model: Model<Api>): AgentReasoningLevel {
-  const supported = getSupportedThinkingLevels(model).filter((item): item is AgentReasoningLevel => (
-    AGENT_REASONING_LEVELS.has(item as AgentReasoningLevel)
-  ));
+  const supported = getSupportedThinkingLevels(model);
   return defaultThinkingLevelFor(supported);
 }
 
@@ -8135,9 +8133,7 @@ function resolveSkillEffortOverride(
   const requested = effortInput.trim().toLowerCase();
   if (!AGENT_REASONING_LEVELS.has(requested as AgentReasoningLevel)) return currentThinkingLevel;
   const level = requested as AgentReasoningLevel;
-  const supported = getSupportedThinkingLevels(model).filter((item): item is AgentReasoningLevel => (
-    AGENT_REASONING_LEVELS.has(item as AgentReasoningLevel)
-  ));
+  const supported = getSupportedThinkingLevels(model);
   if (supported.includes(level)) return level;
   if (supported.includes('off')) return 'off';
   return supported[0] ?? currentThinkingLevel;

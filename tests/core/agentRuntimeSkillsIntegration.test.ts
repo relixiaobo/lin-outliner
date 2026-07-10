@@ -385,6 +385,7 @@ describe('agent runtime skill integration', () => {
     expect(seenModels[0]?.contextWindow).toBe(catalogModel?.contextWindow);
     expect(seenModels[0]?.maxTokens).toBe(catalogModel?.maxTokens);
     expect(seenModels[0]?.reasoning).toBe(catalogModel?.reasoning);
+    expect(seenModels[0]?.thinkingLevelMap).toEqual(catalogModel?.thinkingLevelMap);
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     const started = events.find((event) => event.type === 'assistant_message.started');
@@ -394,6 +395,126 @@ describe('agent runtime skill integration', () => {
       modelId,
       apiId: 'openai-responses',
     });
+  });
+
+  test('dispatches max as a distinct reasoning level after a skill override', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-max-effort-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-max-effort-data-'));
+    roots.push(localRoot, dataRoot);
+
+    await createSkill(localRoot, 'max-effort', [
+      '---',
+      'description: Use when the user asks for the maximum reasoning integration check.',
+      'effort: max',
+      '---',
+      'MAX_EFFORT_SKILL_BODY',
+    ].join('\n'));
+
+    const { setBuiltInAgentProfile } = await import('../../src/main/agentSettings');
+    await setBuiltInAgentProfile('built-in:tenon:assistant', { effort: 'xhigh' });
+    const reasoningLevels: Array<SimpleStreamOptions['reasoning']> = [];
+    const script = scriptedStream(
+      [
+        (_context, options) => {
+          reasoningLevels.push(options?.reasoning);
+          return fauxAssistantMessage([
+            fauxToolCall('skill', { skill: 'max-effort' }, { id: 'tool-skill-max-effort' }),
+          ], { stopReason: 'toolUse' });
+        },
+        (_context, options) => {
+          reasoningLevels.push(options?.reasoning);
+          return fauxAssistantMessage(fauxText('Maximum reasoning applied.'));
+        },
+      ],
+      () => undefined,
+    );
+
+    const reasoningModel: Model<'openai-responses'> = {
+      id: 'gpt-max-test',
+      name: 'GPT Max Test',
+      provider: 'openai',
+      api: 'openai-responses',
+      baseUrl: '',
+      reasoning: true,
+      thinkingLevelMap: { xhigh: 'xhigh', max: 'max' },
+      input: ['text'],
+      contextWindow: 128_000,
+      maxTokens: 8_192,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        providerModelResolver: () => reasoningModel,
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await acceptRuntimeSkill(runtime, created.conversationId, 'max-effort');
+    await runtime.sendMessage(created.conversationId, 'Run the maximum reasoning integration check.');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(script.pendingCount()).toBe(0);
+    expect(reasoningLevels).toEqual(['xhigh', 'max']);
+  });
+
+  test('does not execute tool calls from length-truncated assistant messages', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-truncated-tool-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-truncated-tool-data-'));
+    roots.push(localRoot, dataRoot);
+
+    let handleCalls = 0;
+    const core = Core.new();
+    const host: OutlinerToolHost = {
+      ...hostFor(core),
+      handle: async () => {
+        handleCalls += 1;
+        return {};
+      },
+    };
+    let returnedToolResult: { isError: boolean; content: Array<{ type: string; text?: string }> } | undefined;
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('node_create', { parent_id: 'node:root', outline: '- Must not exist' }, { id: 'tool-truncated-create' }),
+        ], { stopReason: 'length' }),
+        (context) => {
+          returnedToolResult = context.messages.find((message) => message.role === 'toolResult') as typeof returnedToolResult;
+          return fauxAssistantMessage(fauxText('Tool call reissued safely.'));
+        },
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      host,
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Create a node with a deliberately truncated call.');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(script.pendingCount()).toBe(0);
+    expect(handleCalls).toBe(0);
+    expect(returnedToolResult?.isError).toBe(true);
+    expect(returnedToolResult?.content.map((part) => part.text ?? '').join('\n')).toContain('output token limit');
   });
 
   test('resolves CC Switch colon-qualified skill model overrides as provider-qualified models', async () => {

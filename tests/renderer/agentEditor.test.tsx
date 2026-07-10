@@ -100,6 +100,25 @@ describe('AgentEditor', () => {
     expect((updated as unknown as { input: AgentAuthoringInput } | null)?.input.effort).toBeUndefined();
   });
 
+  test('max is a first-class effort value and survives a form save', async () => {
+    let updated: { agentId: string; input: AgentAuthoringInput } | null = null;
+    const rendered = renderComponent(
+      <AgentEditor
+        agent={{ ...builtIn(), effort: 'max' }}
+        availableSkills={[]}
+        providerSettings={null}
+        busy={false}
+        {...NOOP}
+        onUpdate={(agentId, input) => { updated = { agentId, input }; }}
+      />,
+    );
+    const effortSelect = rendered.document.querySelector('select[aria-label="Thinking Level"]') as HTMLSelectElement | null;
+    expect(effortSelect?.value).toBe('max');
+
+    await click(rendered, textButton(rendered, 'Save'));
+    expect((updated as unknown as { input: AgentAuthoringInput } | null)?.input.effort).toBe('max');
+  });
+
   test('tools default to all-on; unchecking one is reflected when switching to Raw', async () => {
     const rendered = renderComponent(
       <AgentEditor agent={builtIn()} availableSkills={[]} providerSettings={null} busy={false} {...NOOP} />,

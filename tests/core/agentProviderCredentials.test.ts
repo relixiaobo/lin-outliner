@@ -105,7 +105,7 @@ beforeEach(async () => {
       api: 'anthropic-messages',
       provider: 'anthropic',
       reasoning: true,
-      thinkingLevelMap: { off: null, minimal: null, low: 'LOW', medium: null, high: 'HIGH' },
+      thinkingLevelMap: { off: null, minimal: null, low: 'LOW', medium: null, high: 'HIGH', xhigh: 'XHIGH', max: 'MAX' },
       input: ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 200000,
@@ -188,8 +188,8 @@ describe('provider credential resolver', () => {
     const model = view.availableProviders
       .find((candidate) => candidate.providerId === 'anthropic')
       ?.models.find((candidate) => candidate.id === 'claude-test');
-    expect(model?.supportedThinkingLevels).toEqual(['low', 'high']);
-    expect(model?.thinkingLevelLabels).toEqual({ low: 'LOW', high: 'HIGH' });
+    expect(model?.supportedThinkingLevels).toEqual(['low', 'high', 'xhigh', 'max']);
+    expect(model?.thinkingLevelLabels).toEqual({ low: 'LOW', high: 'HIGH', xhigh: 'XHIGH', max: 'MAX' });
   });
 
   test('discovers a direct CC Switch registry provider without exposing its key', async () => {

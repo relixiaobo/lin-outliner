@@ -113,8 +113,8 @@ versions until Tenon has its own compatibility tests around the adapter.
 ```json
 {
   "dependencies": {
-    "@earendil-works/pi-ai": "0.80.3",
-    "@earendil-works/pi-agent-core": "0.80.3"
+    "@earendil-works/pi-ai": "0.80.6",
+    "@earendil-works/pi-agent-core": "0.80.6"
   }
 }
 ```
@@ -259,6 +259,11 @@ hidden context for the model to resolve that `ref`.
 Tenon should use `pi-ai` for known provider and model metadata, but Tenon should own
 the user's provider settings.
 
+The generated pi-ai catalog is the current model truth. Tenon does not mirror
+removed upstream model ids or ship a catalog migration layer while the product is
+pre-release; a development data wipe is preferred when a stale local selection
+needs cleanup.
+
 Multimodal user turns should use pi-ai's native `ImageContent` shape:
 `{ type: "image", data: base64, mimeType }`. Provider adapters then translate
 the same Tenon message to Anthropic base64 image blocks, OpenAI image URLs,
@@ -352,10 +357,11 @@ The Settings → Agent profile selector (`AgentModelEffortSelector`) is
 **capability-driven**: pick a provider, then a model; the
 effort options are derived from that model's `supportedThinkingLevels`. The
 model option also carries model-specific effort display labels derived from the
-provider adapter's thinking map for every canonical level, so a model that exposes
-only a small subset such as low/high, or a highest level called `XHigh` / `Max`,
-displays that model's levels without writing a provider-specific string into the
-agent profile. The
+provider adapter's thinking map for every canonical level. The ordered canonical
+ladder is `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `xhigh` and
+`max` are distinct persisted values. A model that exposes only a small subset such
+as low/high displays only that subset, while model-specific labels remain display
+copy and never replace the canonical value in the agent profile. The
 composer chip presents the same catalog as the Codex-style menu above instead, but
 writes the identical values. A provider is a model-selection capability only when
 its connection is both enabled and credentialed/reachable; disabled providers stay
@@ -414,7 +420,11 @@ bounded: short timeout, tiny output budget, cancellable UI.
    accounting policy for all providers: the threshold is 90% of the model context
    window, and Tenon prefers the latest provider-reported context usage plus any
    locally-added tail after that response; local message estimation is only the
-   fallback when no provider usage has been observed yet. If a custom Responses
+   fallback when no provider usage has been observed yet. pi-ai's `streamSimple()`
+   applies a final request-time output cap against the remaining model window. Its
+   usage estimate ignores assistant usage from before a newer compaction summary,
+   so a compacted transcript cannot inherit a stale pre-compaction output budget.
+   If a custom Responses
    stream terminates after a complete tool call has already arrived but before the
    final terminal response event, Tenon treats that narrow case as a `toolUse`
    completion and continues to execute the tool instead of discarding the complete
@@ -830,6 +840,11 @@ The bridge to pi-agent-core must remain native: tool `execute` returns
 `AgentToolResult` content/details only, while Tenon's shared `afterToolCall`
 adapter maps envelope errors (`details.ok === false`) to
 `ToolResultMessage.isError = true`.
+
+When an assistant message stops with `stopReason: "length"`, pi-agent-core treats
+every tool call in that message as potentially truncated. It emits failed tool
+results and continues the loop so the model can reissue complete calls; Tenon must
+never execute those calls or recreate partial-argument salvage locally.
 
 - Dedicated file tools should be preferred over shell commands.
 - `file_read` is the freshness prerequisite for `file_edit` and existing-file `file_write`.
