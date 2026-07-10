@@ -551,6 +551,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **pi-ai / pi-agent-core upgraded `0.80.3 -> 0.80.6` (PR #390, codex)** —
+  adopts the refreshed upstream model catalog and exposes `max` as a distinct
+  canonical reasoning level after `xhigh` across provider projection, agent
+  profiles, skills, Settings, the composer picker, persistence, and runtime
+  dispatch. Tool calls from `stopReason: "length"` assistant messages are now
+  rejected before execution and returned as failed tool results for safe retry.
+  The upgrade also brings request-level cost tiers plus upstream context-budget,
+  retry, OAuth, transport, reasoning-replay, and provider-normalization fixes.
+  **Gate (main):** code review found no reportable findings. Verified with
+  typecheck, production build, focused core/runtime/renderer suites, full
+  renderer tests, light/dark reasoning-menu E2E, docs check, and diff check.
+
 - **Model-specific reasoning effort labels (PR #379, codex-4)** — agent model
   options now carry optional display-only effort labels derived from each
   provider model's thinking map while keeping persisted profile effort values
