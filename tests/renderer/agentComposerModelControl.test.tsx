@@ -238,15 +238,16 @@ describe('AgentComposerModelControl', () => {
     expect(savedEffort).toBe('high');
   });
 
-  test('xhigh uses the selected model provider label instead of a fixed Max label', async () => {
+  test('xhigh and max render and dispatch as independent provider levels', async () => {
+    let savedEffort = '';
     const view = settings();
     view.availableProviders[0]!.models = [
       {
         id: 'gpt-codex',
         name: 'GPT Codex',
         reasoning: true,
-        supportedThinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh'],
-        thinkingLevelLabels: { xhigh: 'xhigh' },
+        supportedThinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+        thinkingLevelLabels: { xhigh: 'xhigh', max: 'max' },
         contextWindow: 0,
         maxTokens: 0,
       },
@@ -254,7 +255,7 @@ describe('AgentComposerModelControl', () => {
     const rendered = renderComponent(
       <AgentComposerModelControl
         settings={view} model="openai/gpt-codex" effort="xhigh" disabled={false}
-        onModelChange={NOOP} onEffortChange={NOOP}
+        onModelChange={NOOP} onEffortChange={(value) => { savedEffort = value; }}
       />,
     );
     expect(rendered.container.querySelector('.agent-composer-reasoning-chip')?.textContent).toBe('XHigh');
@@ -262,7 +263,9 @@ describe('AgentComposerModelControl', () => {
     expect(triggerRow(rendered, 'Reasoning').querySelector('.agent-composer-model-item-meta')?.textContent).toBe('XHigh');
     await click(rendered, triggerRow(rendered, 'Reasoning'));
     expect(modelItem(rendered, 'XHigh')).toBeTruthy();
-    expect(() => modelItem(rendered, 'Max')).toThrow();
+    expect(modelItem(rendered, 'Max')).toBeTruthy();
+    await click(rendered, modelItem(rendered, 'Max'));
+    expect(savedEffort).toBe('max');
   });
 
   test('the reasoning submenu only shows the selected model levels and labels each mapped level', async () => {

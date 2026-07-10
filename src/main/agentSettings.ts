@@ -4,6 +4,7 @@ import {
 } from '@earendil-works/pi-ai';
 import type { Api, Credential, Model, OAuthCredentials, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { join } from 'node:path';
+import { AGENT_REASONING_LADDER } from '../core/types';
 import type {
   AgentDelegationPermissionMode,
   AgentModelOption,
@@ -143,7 +144,7 @@ function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
   return piProviderAuthKind(providerId);
 }
 
-const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+const AGENT_REASONING_LEVELS = AGENT_REASONING_LADDER;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
 export const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
@@ -970,7 +971,7 @@ function normalizeProviderId(providerIdInput: string) {
 }
 
 function getSupportedReasoningLevelsForModel(model: Model<Api>): AgentReasoningLevel[] {
-  return getSupportedThinkingLevels(model).filter(isAgentReasoningLevel);
+  return getSupportedThinkingLevels(model);
 }
 
 function getReasoningLevelLabelsForModel(model: Model<Api>): AgentReasoningLevelLabels | undefined {

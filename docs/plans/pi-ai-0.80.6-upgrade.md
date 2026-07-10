@@ -110,6 +110,7 @@ Expected product and documentation surface:
 - `src/core/agentReasoning.ts`
 - `src/core/i18n/messages/en.ts`
 - `src/core/i18n/messages/zh-Hans.ts`
+- `src/main/agentRuntime.ts`
 - `src/main/agentSettings.ts`
 - `src/renderer/ui/agent/AgentEditor.tsx`
 - reasoning/provider/runtime unit and E2E tests as needed

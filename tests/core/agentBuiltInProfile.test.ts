@@ -45,10 +45,10 @@ describe('built-in agent profile overlay', () => {
   });
 
   test('round-trips a model + effort and persists them keyed by agentId', async () => {
-    await setBuiltInAgentProfile('assistant', { model: 'openai/gpt-5.4', effort: 'high' });
+    await setBuiltInAgentProfile('assistant', { model: 'openai/gpt-5.6-sol', effort: 'max' });
 
-    expect(await getBuiltInAgentProfile('assistant')).toEqual({ model: 'openai/gpt-5.4', effort: 'high' });
-    expect(await readBuiltInProfiles()).toEqual({ assistant: { model: 'openai/gpt-5.4', effort: 'high' } });
+    expect(await getBuiltInAgentProfile('assistant')).toEqual({ model: 'openai/gpt-5.6-sol', effort: 'max' });
+    expect(await readBuiltInProfiles()).toEqual({ assistant: { model: 'openai/gpt-5.6-sol', effort: 'max' } });
   });
 
   test('separate agentIds keep independent overlays', async () => {

@@ -9,6 +9,7 @@ import type {
 } from '../../api/types';
 import { parseAgentAuthoringInput, serializeAgentMarkdown } from '../../../core/agentMarkdown';
 import { TOOL_CATALOG } from '../../../core/agentToolCatalog';
+import { AGENT_REASONING_LADDER } from '../../../core/types';
 import { useT } from '../../i18n/I18nProvider';
 import { AgentModelEffortSelector } from './AgentModelEffortSelector';
 import { Button } from '../primitives/Button';
@@ -27,8 +28,6 @@ import { InsetGroup, InsetRow } from './SettingsInsetList';
 // fields, Raw→Form re-parses, so the two views are always the same data. Neva is
 // edited in place (her edits persist to the settings overlay, not a file). The
 // component owns its form state and is reset by the parent via `key`.
-
-const REASONING_OPTIONS: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
 type EditorMode = 'form' | 'raw';
 
@@ -285,7 +284,7 @@ function normalizeReasoningEffort(value: string | undefined): string {
 }
 
 function isReasoningOption(value: string): value is AgentReasoningLevel {
-  return (REASONING_OPTIONS as readonly string[]).includes(value);
+  return (AGENT_REASONING_LADDER as readonly string[]).includes(value);
 }
 
 function isCatalogToolName(value: string): value is (typeof TOOL_CATALOG)[number] {

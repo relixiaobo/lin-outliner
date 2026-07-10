@@ -765,14 +765,14 @@ export interface AgentConversationListMeta {
   unreadCount?: number;
 }
 
-export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-export type AgentReasoningLevelLabels = Partial<Record<AgentReasoningLevel, string>>;
 /**
  * The reasoning ladder, lowest → highest. The single ordered source for effort
  * option ordering (renderer) and nearest-supported-level coercion (runtime), so the
- * two sides never drift. `AgentReasoningLevel` is exactly the union of its members.
+ * two sides never drift.
  */
-export const AGENT_REASONING_LADDER: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+export const AGENT_REASONING_LADDER = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type AgentReasoningLevel = (typeof AGENT_REASONING_LADDER)[number];
+export type AgentReasoningLevelLabels = Partial<Record<AgentReasoningLevel, string>>;
 export type AgentPermissionMode = 'trusted' | 'restricted';
 export type AgentDelegationPermissionMode = 'restricted';
 export type AgentCacheRetention = 'none' | 'short' | 'long';

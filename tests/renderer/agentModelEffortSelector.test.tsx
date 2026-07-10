@@ -157,26 +157,31 @@ describe('AgentModelEffortSelector', () => {
     expect(savedEffort).toBe('high');
   });
 
-  test('the effort option label follows the selected model xhigh alias', () => {
+  test('xhigh and max remain distinct model effort values', async () => {
+    let savedEffort = '';
     const view = settings();
     view.availableProviders[0]!.models[0] = {
       id: 'gpt-max',
       name: 'GPT Max',
       reasoning: true,
-      supportedThinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh'],
-      thinkingLevelLabels: { xhigh: 'max' },
+      supportedThinkingLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+      thinkingLevelLabels: { xhigh: 'xhigh', max: 'max' },
       contextWindow: 0,
       maxTokens: 0,
     };
     const rendered = renderComponent(
       <AgentModelEffortSelector
         settings={view} model="openai/gpt-max" effort="xhigh" disabled={false}
-        {...LABELS} onModelChange={NOOP} onEffortChange={NOOP}
+        {...LABELS} onModelChange={NOOP} onEffortChange={(value) => { savedEffort = value; }}
       />,
     );
     const effort = select(rendered, 'Effort');
     expect(optionValues(effort)).toContain('xhigh');
-    expect(optionLabel(effort, 'xhigh')).toBe('Max');
+    expect(optionValues(effort)).toContain('max');
+    expect(optionLabel(effort, 'xhigh')).toBe('XHigh');
+    expect(optionLabel(effort, 'max')).toBe('Max');
+    await changeSelect(rendered, 'Effort', 'max');
+    expect(savedEffort).toBe('max');
   });
 
   test('the effort options omit unsupported model levels and label every mapped level', () => {
