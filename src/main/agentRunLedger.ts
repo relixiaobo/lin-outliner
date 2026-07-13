@@ -79,6 +79,9 @@ export interface AgentRunLedgerStartInput {
   criteria?: string[];
   objectiveRole?: AgentRunObjectiveRole;
   objectiveStatus?: AgentObjectiveStatus;
+  verificationRequired?: true;
+  verificationAttemptBase?: number;
+  verifierGapSignatures?: string[];
   purpose?: AgentRunPurpose;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
@@ -150,6 +153,9 @@ export class AgentRunLedgerWriter {
         criteria: input.criteria,
         objectiveRole: input.objectiveRole,
         objectiveStatus: input.objectiveStatus,
+        verificationRequired: input.verificationRequired,
+        verificationAttemptBase: input.verificationAttemptBase,
+        verifierGapSignatures: input.verifierGapSignatures,
         purpose: input.purpose,
         scope: input.scope,
         budget: input.budget,
@@ -280,11 +286,16 @@ export class AgentRunLedgerWriter {
       errorMessage?: string;
       agentId: AgentId;
       parentRunId?: string;
+      objective?: string;
+      criteria?: string[];
+      objectiveRole?: AgentRunObjectiveRole;
       objectiveStatus?: AgentObjectiveStatus;
+      verifierGapSignatures?: string[];
       budget?: AgentRunBudget;
       blockedReason?: string;
       latestVerifierGap?: string;
       latestSubmissionSeq?: number;
+      durableMessage?: AgentMessage;
     },
   ): Promise<void> {
     const run = this.requireRun(runId);
@@ -293,6 +304,9 @@ export class AgentRunLedgerWriter {
       if (options.objectiveStatus) {
         assertValidRunObjectiveStatusTransition(run.objectiveStatus, options.objectiveStatus, runId);
       }
+      const durableEvents = options.durableMessage
+        ? await this.messageEvents(run, runId, options.durableMessage, options.actor)
+        : [];
       const event = status === 'running'
         ? this.buildEvent(run, runId, {
             type: 'run.started',
@@ -301,7 +315,11 @@ export class AgentRunLedgerWriter {
             agentId: options.agentId,
             anchor: { type: 'conversation', agentId: options.agentId, conversationId: run.conversationId },
             disposition: 'detached',
+            objective: options.objective,
+            criteria: options.criteria,
+            objectiveRole: options.objectiveRole,
             objectiveStatus: options.objectiveStatus,
+            verifierGapSignatures: options.verifierGapSignatures,
             budget: options.budget,
             blockedReason: options.blockedReason,
             latestVerifierGap: options.latestVerifierGap,
@@ -313,13 +331,17 @@ export class AgentRunLedgerWriter {
             actor: options.actor,
             runId,
             errorMessage: options.errorMessage,
+            objective: options.objective,
+            criteria: options.criteria,
+            objectiveRole: options.objectiveRole,
             objectiveStatus: options.objectiveStatus,
+            verifierGapSignatures: options.verifierGapSignatures,
             budget: options.budget,
             blockedReason: options.blockedReason,
             latestVerifierGap: options.latestVerifierGap,
             latestSubmissionSeq: options.latestSubmissionSeq,
           });
-      await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
+      await this.options.store().appendRunStreamEvents(run.conversationId, runId, [...durableEvents, event]);
       run.executionStatus = status;
       if (options.objectiveStatus) run.objectiveStatus = options.objectiveStatus;
     });

@@ -2602,8 +2602,15 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.searchIssues(args as IssueSearchInput);
     case 'agent_issue_read':
       return agentRuntime.readIssue(args as unknown as IssueReadInput);
+    case 'agent_issue_complete_human_review':
+      return agentRuntime.completeHumanReview(
+        String(args.issueId ?? ''),
+        typeof args.expectedRevision === 'string' ? args.expectedRevision : undefined,
+      );
     case 'agent_session_read':
       return agentRuntime.readAgentSession(args as unknown as AgentSessionReadInput);
+    case 'agent_session_transcript':
+      return agentRuntime.agentSessionTranscript(String(args.agentSessionId ?? ''));
     case 'agent_list_dream_history':
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
     case 'agent_dream_readiness':

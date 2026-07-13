@@ -262,15 +262,19 @@ interface NodeScopeIssue {
   error?: string;
 }
 
-function scopedNodeRoots(options: NodeToolsOptions): string[] | null {
-  const nodeIds = options.runScope?.resources?.nodes
-    ?.map((nodeId) => nodeId.trim())
-    .filter(Boolean);
-  return nodeIds?.length ? unique(nodeIds) : null;
+type NodeScopeAccess = 'read' | 'write';
+
+function scopedNodeRoots(options: NodeToolsOptions, access: NodeScopeAccess = 'read'): string[] | null {
+  const resources = options.runScope?.resources;
+  const nodeIds = access === 'write'
+    ? resources?.writableNodes ?? resources?.nodes
+    : resources?.nodes;
+  if (nodeIds === undefined) return null;
+  return unique(nodeIds.map((nodeId) => nodeId.trim()).filter(Boolean));
 }
 
-function hasNodeResourceScope(options: NodeToolsOptions): boolean {
-  return scopedNodeRoots(options) !== null;
+function hasNodeResourceScope(options: NodeToolsOptions, access: NodeScopeAccess = 'read'): boolean {
+  return scopedNodeRoots(options, access) !== null;
 }
 
 function filterNodeResourceScope(options: NodeToolsOptions, index: ProjectionIndex, nodeIds: readonly string[]): string[] {
@@ -278,8 +282,13 @@ function filterNodeResourceScope(options: NodeToolsOptions, index: ProjectionInd
   return roots ? nodeIds.filter((nodeId) => nodeIsInsideResourceScope(index, nodeId, roots)) : [...nodeIds];
 }
 
-function validateNodeResourceScope(options: NodeToolsOptions, index: ProjectionIndex, nodeIds: readonly string[]): NodeScopeIssue | null {
-  const roots = scopedNodeRoots(options);
+function validateNodeResourceScope(
+  options: NodeToolsOptions,
+  index: ProjectionIndex,
+  nodeIds: readonly string[],
+  access: NodeScopeAccess = 'read',
+): NodeScopeIssue | null {
+  const roots = scopedNodeRoots(options, access);
   if (!roots) return null;
   const outside = nodeIds.find((nodeId) => !nodeIsInsideResourceScope(index, nodeId, roots));
   return outside ? { nodeId: outside } : null;
@@ -389,7 +398,7 @@ function createNodeDeleteTool(host: OutlinerToolHost, options: NodeToolsOptions)
         }));
       }
       const scopedNodeIds = requestedNodeIds.flatMap((nodeId) => [...descendantNodeIdSet(index, nodeId, true)]);
-      const scopeIssue = validateNodeResourceScope(options, index, scopedNodeIds);
+      const scopeIssue = validateNodeResourceScope(options, index, scopedNodeIds, 'write');
       if (scopeIssue) {
         return nodeScopeError<NodeDeleteData>('node_delete', scopeIssue, started);
       }
@@ -496,7 +505,7 @@ async function executeOutlineEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
-  const scopeIssue = validateNodeResourceScope(options, index, [params.nodeId]);
+  const scopeIssue = validateNodeResourceScope(options, index, [params.nodeId], 'write');
   if (scopeIssue) {
     return nodeScopeError<NodeEditData>('node_edit', scopeIssue, started);
   }
@@ -678,7 +687,7 @@ async function executeMoveEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
-  if (hasNodeResourceScope(options) && params.move.structuralAction) {
+  if (hasNodeResourceScope(options, 'write') && params.move.structuralAction) {
     return nodeScopeError<NodeEditData>('node_edit', {
       nodeId: params.move.structuralAction,
       error: 'Structural moves infer a destination outside the explicit request and are not available in a node-scoped run.',
@@ -690,7 +699,7 @@ async function executeMoveEdit(
     ...(params.move.parentId ? [params.move.parentId] : []),
     ...(typeof params.move.afterId === 'string' ? [params.move.afterId] : []),
   ]);
-  const scopeIssue = validateNodeResourceScope(options, index, requestedScopeNodeIds);
+  const scopeIssue = validateNodeResourceScope(options, index, requestedScopeNodeIds, 'write');
   if (scopeIssue) {
     return nodeScopeError<NodeEditData>('node_edit', scopeIssue, started);
   }
@@ -756,7 +765,7 @@ async function executeMergeEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
-  const initialScopeIssue = validateNodeResourceScope(options, index, nodeIds);
+  const initialScopeIssue = validateNodeResourceScope(options, index, nodeIds, 'write');
   if (initialScopeIssue) {
     return nodeScopeError<NodeEditData>('node_edit', initialScopeIssue, started);
   }
@@ -806,7 +815,7 @@ async function executeMergeEdit(
     },
     revisions: { [params.nodeId]: revisionOf(requiredNode(index, params.nodeId)) },
   };
-  const affectedScopeIssue = validateNodeResourceScope(options, index, data.affectedNodeIds);
+  const affectedScopeIssue = validateNodeResourceScope(options, index, data.affectedNodeIds, 'write');
   if (affectedScopeIssue) {
     return nodeScopeError<NodeEditData>('node_edit', affectedScopeIssue, started);
   }
@@ -858,9 +867,13 @@ async function executeReferenceReplaceEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
-  const scopeIssue = validateNodeResourceScope(options, index, [params.nodeId, params.replaceWithReferenceTo]);
-  if (scopeIssue) {
-    return nodeScopeError<NodeEditData>('node_edit', scopeIssue, started);
+  const writeScopeIssue = validateNodeResourceScope(options, index, [params.nodeId], 'write');
+  if (writeScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', writeScopeIssue, started);
+  }
+  const referenceScopeIssue = validateNodeResourceScope(options, index, [params.replaceWithReferenceTo]);
+  if (referenceScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', referenceScopeIssue, started);
   }
   if (params.nodeId === params.replaceWithReferenceTo) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_reference', 'A node cannot be replaced with a reference to itself.', {
@@ -1679,11 +1692,16 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
       const insertionScopeIssue = validateNodeResourceScope(options, initialIndex, [
         insertion.parentId,
         ...(typeof insertion.afterId === 'string' ? [insertion.afterId] : []),
+      ], 'write');
+      if (insertionScopeIssue) {
+        return nodeScopeError<NodeCreateData>('node_create', insertionScopeIssue, started);
+      }
+      const sourceScopeIssue = validateNodeResourceScope(options, initialIndex, [
         ...(params.targetId ? [params.targetId] : []),
         ...(params.duplicateId ? [...descendantNodeIdSet(initialIndex, params.duplicateId, false)] : []),
       ]);
-      if (insertionScopeIssue) {
-        return nodeScopeError<NodeCreateData>('node_create', insertionScopeIssue, started);
+      if (sourceScopeIssue) {
+        return nodeScopeError<NodeCreateData>('node_create', sourceScopeIssue, started);
       }
 
       if (params.targetId) {

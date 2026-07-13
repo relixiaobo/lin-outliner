@@ -21,28 +21,35 @@ export function resolveIssueInputScopeFromProjection(
   projection: DocumentProjection,
   now: number,
 ): ResolvedIssueInput {
-  const index = indexProjection(projection);
-  const resolved = (() => {
-    switch (scope.type) {
-      case 'none':
-        return { nodeIds: [] };
-      case 'selected-nodes':
-        return { nodeIds: unique(scope.nodeIds).filter((nodeId) => activeNodeExists(index, nodeId)) };
-      case 'node-children':
-        return { nodeIds: collectChildNodeIds(index, scope.nodeId, scope.depth) };
-      case 'tag-query':
-        return { nodeIds: collectTaggedNodeIds(index, scope.tag, scope.includeArchived === true) };
-      case 'saved-query':
-        return { nodeIds: [] };
-    }
-  })();
+  const nodeIds = resolveIssueInputNodeIdsFromProjection(scope, projection);
 
   return {
     scope,
     resolvedAt: now,
-    nodeIds: resolved.nodeIds,
-    preview: inputPreview(scope, issue, projection, resolved.nodeIds),
+    nodeIds,
+    preview: inputPreview(scope, issue, projection, nodeIds),
   };
+}
+
+export function resolveIssueInputNodeIdsFromProjection(
+  scope: IssueInputScope,
+  projection: DocumentProjection,
+): string[] {
+  const index = indexProjection(projection);
+  return (() => {
+    switch (scope.type) {
+      case 'none':
+        return [];
+      case 'selected-nodes':
+        return unique(scope.nodeIds).filter((nodeId) => activeNodeExists(index, nodeId));
+      case 'node-children':
+        return collectChildNodeIds(index, scope.nodeId, scope.depth);
+      case 'tag-query':
+        return collectTaggedNodeIds(index, scope.tag, scope.includeArchived === true);
+      case 'saved-query':
+        return [];
+    }
+  })();
 }
 
 function collectChildNodeIds(

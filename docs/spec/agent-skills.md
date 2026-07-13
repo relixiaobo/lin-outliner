@@ -27,14 +27,21 @@ this as a skill" or "update the import skill with this workflow" as direct
 about whether a skill exists or how skills work remain normal conversation.
 
 `issue-planning` is a model-invocable guidance workflow for turning a
-natural-language durable-work request into one or more flat verified Issues. It
-tells the model to choose Issue boundaries from independently user-visible
-outcomes, author the durable objective/scope/criteria/output/trigger/verification
-definition, leave internal sequencing and per-item work to the later Agent
-Session, use relations only between independently managed Issues, let when-ready,
-scheduled, and recurring triggers start through runtime eligibility, and rely on
-Issue criteria, Activity, and verifier evidence rather than one Session's own
-completion claim. There is no user-facing `/issue-planning` or `/goal` shortcut,
+natural-language durable-work request into one or more verified Issues. It tells
+the model to choose Issue boundaries from independently user-visible outcomes,
+author the durable objective/scope/criteria/output/trigger/verification
+definition, encode per-item coverage as criteria or description text, leave
+execution sequencing and short-lived subtasks to the later Agent Session, and
+create a child Issue only when a sub-outcome needs its own durable lifecycle or
+independent Agent Session. Runtime derives child parentage from the creating
+Session and routes child completion, cancellation, or Session error back one hop
+without exposing routing origins to the model. The workflow uses relations only
+between independently managed Issues and relies on Issue criteria, Activity, and
+verifier evidence rather than one Session's own completion claim.
+It also separates interaction mode: direct one-turn work should be answered
+directly, durable work should be handed off through runtime-triggered background
+execution, and `agent_session_read(wait)` is reserved for an explicit wait on an
+existing Session. There is no user-facing `/issue-planning` or `/goal` shortcut,
 and no composer goal button; ordinary prose is the entry point.
 
 `/research` is a user- and model-invocable `execution: isolated` workflow for

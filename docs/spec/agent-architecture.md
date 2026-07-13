@@ -117,10 +117,46 @@ user-facing goal mode, `/goal` shortcut, or composer goal button: users describe
 work in ordinary prose, and the agent creates or updates Issues with explicit
 criteria, bounded execution policy, and Agent Session triggers. The Issue
 definition carries the durable objective, scope, output shape, and verification
-criteria; the Agent Session owns the internal execution plan, per-item work,
-evidence, and final response for that Issue. Internal workers and verifiers
+criteria; the Agent Session owns the internal execution strategy, per-item work,
+evidence, and final response for that Issue through its Run transcript and
+Activity; there is no separate durable Session plan field. Internal workers and verifiers
 remain runtime implementation details, and verifier execution is runtime-pinned
-to minimal context with read-only tools.
+to minimal context with read-only tools. An Issue Session may run inside a hidden
+runtime conversation, but that container is not a user channel. Issue origin is
+either a visible conversation or the Agent Session that created a child Issue.
+Routable terminal state moves one hop: child completion or cancellation and
+child Session error resume only the direct parent Session; root completion or
+root Session error reaches the visible origin conversation through a hidden user
+turn and a new conversation-Agent Run. Its normal assistant response stays
+separate from the turn that originally created the Issue. Root Issue cancellation
+and explicit Session stop do not synthesize a root result.
+Verification requirements, a replacement Run's inherited attempt base, and its
+ordered verifier-gap signatures are durable Run metadata; concrete verifier Run
+ids remain derived from parent links. A restarted child-result continuation or
+replacement worker therefore cannot bypass agent review, retry limits, or the
+livelock guard. Conversation deletion is rejected while that conversation
+remains an Issue/Recurring Issue origin or an execution carrier required for
+pending one-hop routing. Conversation reset is likewise rejected while it would
+delete the Run ledger of an active Agent Session routing carrier.
+
+The Session-to-Run binding is durable before the first `run.started` event, and a
+Session-owned `controller` Run returns only through the Issue outbox, never through
+generic notifications or detached-child aggregation. Closing a conversation view
+with a live delegated execution frame retains that runtime headlessly; reopening
+reuses it. On cold startup, the Run ledger is reconciled into bound Session state
+before any residual execution is classified as stale. Run execution state and
+objective state remain orthogonal, so a verification-required
+`completed + active` or `completed + verifying` Run still represents an active
+Session. Objective/criteria amendments are ledger-durable and invalidate prior
+verification, while budget-only amendments preserve the current verdict.
+Restoring an already loaded conversation while its ordinary turn is active also
+reuses that runtime; restore is a read/open operation and never acts as an
+implicit stop. Only explicit stop, close, reset, or delete flows may cancel work
+under their documented guards.
+Issue node scope is split into readable `nodes` and output-only
+`writableNodes`; explicit empty arrays deny all. Attached note nodes are
+read-only context. Expired absolute deadlines stop new execution and surface the
+open Issue as attention-needed instead of silently removing it from Work.
 
 The parent-verifies-child rule is structural: a worker's terminal output is not
 self-declared completion. The parent spawns an independent verifier Run with a
@@ -129,7 +165,8 @@ tool trace, result, criteria, and run ids). A pass sets the worker
 `objectiveStatus` to `verified`; a verifier gap leaves that worker attempt
 completed but blocked and the parent starts a fresh replacement worker Run with a
 new `runId` when budget remains. Controllers/root goal runs keep their own
-`runId`; worker attempts are replaceable. Repeated identical gap signatures trip
+`runId` and re-plan that same binding; worker attempts are replaceable. Repeated
+identical gap signatures trip
 the local livelock guard and block instead of silently burning budget.
 
 Budgets are local to each edge. A child run is admitted only if its requested
@@ -217,7 +254,7 @@ the foreground `dream` tool are cut.
 "Memory & activity" panel (alongside memory inspect/correct/forget), fetched via
 `agent_list_dream_history`, and the actual run transcript lives in the protected
 Dream channel. The ordinary Work view keeps Dream out and lists Issue-backed work
-with Agent Sessions and Activity.
+through Issues whose Activity timeline includes execution records.
 
 ## The runtime/policy seam (trigger · mechanism · policy)
 
@@ -314,7 +351,7 @@ leftover; only the single-agent value is ever assigned.)
 | One editable agent — Neva | ✅ built | built-in `built-in:tenon:assistant` (handle `assistant`); user edits layer as a stored overlay (`builtInAgentProfiles` in `agent-providers.json`); directly editable in Settings → Agent (model/effort/persona/tools/skills); Save persists the overlay, Delete suppressed for the built-in |
 | Channels-only conversations (no DM) | ✅ built | every conversation is single-agent + inline-streaming + steerable; one conversation list (no two sections / two "+" buttons), no nav-lock, "General" and protected "Dream" default channels; `canonicalDmAgentId` / `lin-agent-dm-` prefix / DM-vs-Channel branching removed |
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
-| Delegation / sub-run runtime (#164) | ✅ built | helper runs spawned for a bounded objective (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; Issue-backed Work shows Agent Sessions and Activity, while Run ledgers remain internal execution detail |
+| Delegation / sub-run runtime (#164) | ✅ built | helper runs spawned for a bounded objective (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; Issue-backed Work shows execution records inside Activity, while Run ledgers remain internal execution detail |
 | Timeline memory nodes | ✅ built | durable memory lives in per-day generated-headline `#d-memory` plus optional `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
 | One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` Dream-channel runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; the Dream channel retains the newest 512 run transcripts and prunes older run ledgers/anchor markers/search entries; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
 | Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |

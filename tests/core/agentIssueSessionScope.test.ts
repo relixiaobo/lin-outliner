@@ -14,12 +14,29 @@ describe('agent issue session scope', () => {
     });
 
     expect(agentSessionRunScope(session)).toEqual({
-      resources: { nodes: ['node:input-a', 'node:input-b', 'node:output-parent'] },
+      resources: {
+        nodes: ['node:input-a', 'node:input-b', 'node:output-parent'],
+        writableNodes: ['node:output-parent'],
+      },
     });
   });
 
-  test('does not create a node resource scope for activity-only Issues without input nodes', () => {
-    expect(agentSessionRunScope(sessionWith())).toBeUndefined();
+  test('uses an explicit deny-all node scope when no nodes resolve', () => {
+    expect(agentSessionRunScope(sessionWith())).toEqual({
+      resources: { nodes: [], writableNodes: [] },
+    });
+  });
+
+  test('includes attached note nodes as read-only context', () => {
+    const session = sessionWith({
+      issueSnapshot: {
+        ...sessionWith().issueSnapshot,
+        noteNodeIds: ['node:note'],
+      },
+    });
+    expect(agentSessionRunScope(session)).toEqual({
+      resources: { nodes: ['node:note'], writableNodes: [] },
+    });
   });
 });
 
@@ -44,7 +61,6 @@ function sessionWith(overrides: Partial<AgentSession> = {}): AgentSession {
     state: 'pending',
     source: { type: 'manual', actor: { type: 'user', userId: 'user-1' } },
     issueSnapshot: issue,
-    plan: [],
     revision: 'session-rev-1',
     createdAt: now,
     updatedAt: now,

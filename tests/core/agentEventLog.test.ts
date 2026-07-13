@@ -968,12 +968,25 @@ describe('notification + attention projection', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Untitled' },
       notificationCreated(2, { source: { type: 'run', runId: 'run-x' } }),
-      notificationCreated(3),
+      notificationCreated(3, {
+        source: {
+          type: 'issue',
+          issueId: 'issue-1',
+          agentSessionId: 'agent-session-1',
+          state: 'complete',
+        },
+      }),
       notificationCreated(4, { kind: 'needs_input', source: { type: 'run', runId: 'run-y' } }),
     ]);
 
     expect(state.attentionByConversationId[conversationId]?.unreadCount).toBe(3);
     expect(state.notifications['notif-2']?.source).toEqual({ type: 'run', runId: 'run-x' });
+    expect(state.notifications['notif-3']?.source).toEqual({
+      type: 'issue',
+      issueId: 'issue-1',
+      agentSessionId: 'agent-session-1',
+      state: 'complete',
+    });
     expect(state.notifications['notif-4']?.kind).toBe('needs_input');
     expect(Object.values(state.notifications).every((record) => record.read === false)).toBe(true);
   });

@@ -84,6 +84,18 @@ function hiddenTurnBoundaryEntry(id: string, timestamp = 2, sourceSeq?: number):
   };
 }
 
+function issueNotificationEntry(id: string, timestamp = 2): AgentConversationEntry {
+  return {
+    id,
+    kind: 'issue-notification',
+    notificationId: id,
+    issueId: 'issue-1',
+    state: 'complete',
+    title: 'Compile the report',
+    timestamp,
+  };
+}
+
 describe('buildConversationRenderRows — isLastInTurn', () => {
   test('back-to-back Channel turns from different agents each end their own turn', () => {
     const rows = buildConversationRenderRows(
@@ -119,7 +131,7 @@ describe('buildConversationRenderRows — isLastInTurn', () => {
     expect(assistantRows[0]!.isLastInTurn).toBe(true);
   });
 
-  test('hidden system reminders split same-agent assistant turns without rendering a query row', () => {
+  test('hidden system reminders split same-agent assistant turns with an empty rhythm boundary', () => {
     const rows = buildConversationRenderRows(
       [
         userEntry('user-1', 0),
@@ -132,13 +144,39 @@ describe('buildConversationRenderRows — isLastInTurn', () => {
 
     const assistantRows = rows.filter((row) => row.entry.kind === 'message'
       && (row.entry as AgentMessageEntry).message.role === 'assistant');
-    expect(rows.map((row) => row.entry.kind)).toEqual(['message', 'message', 'message']);
+    expect(rows.map((row) => row.entry.kind)).toEqual([
+      'message',
+      'message',
+      'hidden-turn-boundary',
+      'message',
+    ]);
     expect(assistantRows).toHaveLength(2);
     expect(assistantRows.map((row) => row.key)).toEqual([
       'assistant-turn-run:run-1',
       'assistant-turn-run:run-2',
     ]);
     expect(assistantRows.every((row) => row.isLastInTurn)).toBe(true);
+  });
+
+  test('Issue notifications visibly split independent same-agent turns', () => {
+    const rows = buildConversationRenderRows(
+      [
+        userEntry('user-1', 0),
+        assistantEntry({ id: 'a1', agentId: 'alpha', runId: 'run-1', text: 'first response' }),
+        issueNotificationEntry('notification-1'),
+        assistantEntry({ id: 'a2', agentId: 'alpha', runId: 'run-2', text: 'Issue result' }),
+      ],
+      'idle',
+    );
+
+    expect(rows.map((row) => row.entry.kind)).toEqual([
+      'message',
+      'message',
+      'issue-notification',
+      'message',
+    ]);
+    expect(rows.filter((row) => row.entry.kind === 'message'
+      && (row.entry as AgentMessageEntry).message.role === 'assistant')).toHaveLength(2);
   });
 
   test('run-scoped hidden steering keeps assistant continuations in one turn', () => {

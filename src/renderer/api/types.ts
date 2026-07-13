@@ -84,12 +84,14 @@ export type {
   AgentSession,
   AgentSessionReadInput,
   AgentSessionReadResult,
+  AgentSessionTranscriptResult,
   IssueReadInput,
   IssueReadResult,
   IssueSearchInput,
   IssueSearchResult,
   IssueSearchRow,
   IssueTargetRef,
+  TenonAgentToolResult,
 } from '../../core/agentIssue';
 
 export type {

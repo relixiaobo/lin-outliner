@@ -81,7 +81,11 @@ type E2EWindow = Window & {
     emitDocumentEvent: (event: unknown) => void;
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
-    setAgentIssues: (rows: unknown[], details?: Record<string, unknown>) => void;
+    setAgentIssues: (
+      rows: unknown[],
+      details?: Record<string, unknown>,
+      sessionTranscripts?: Record<string, unknown>,
+    ) => void;
     setAgentRuns: (runs: unknown[]) => void;
     setAgentMessageContextMenuAction: (action: 'copy' | 'retry' | 'regenerate' | 'details' | null) => void;
   };
@@ -346,6 +350,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     let messageContextMenuAction: 'copy' | 'retry' | 'regenerate' | 'details' | null = null;
     let agentIssueRows: unknown[] = [];
     let agentIssueDetails: Record<string, unknown> = {};
+    let agentSessionTranscripts: Record<string, unknown> = {};
     let agentRuns: unknown[] = [];
     const providerApiKeys = new Map<string, string>([['openai', 'sk-openai-saved']]);
     // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
@@ -1656,9 +1661,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       emitDocumentEvent,
       emitOAuthEvent,
       resolveOAuthLogin,
-      setAgentIssues: (rows, details = {}) => {
+      setAgentIssues: (rows, details = {}, sessionTranscripts = {}) => {
         agentIssueRows = rows;
         agentIssueDetails = details;
+        agentSessionTranscripts = sessionTranscripts;
       },
       setAgentRuns: (runs) => { agentRuns = runs; },
       setAgentMessageContextMenuAction: (action) => { messageContextMenuAction = action; },
@@ -1894,6 +1900,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             if (targets && !targets.has(String(target.type))) return false;
             if (filter.hasActiveSession === true && record.hasActiveSession !== true) return false;
             if (filter.hasActiveSession === false && record.hasActiveSession === true) return false;
+            const hasParentIssue = typeof record.parentIssueId === 'string' && record.parentIssueId.length > 0;
+            if (filter.hasParentIssue === true && !hasParentIssue) return false;
+            if (filter.hasParentIssue === false && hasParentIssue) return false;
             if (filter.archived === false && record.archived === true) return false;
             if (statusCategories) {
               const buckets = [
@@ -1930,6 +1939,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             }
           }
           return clone(null) as T;
+        }
+        if (cmd === 'agent_session_transcript') {
+          const agentSessionId = String(args.agentSessionId ?? '');
+          return clone(agentSessionTranscripts[agentSessionId] ?? null) as T;
         }
         if (cmd === 'agent_rename_conversation') {
           const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
@@ -2222,7 +2235,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 ancestors: [],
                 subRuns: [],
                 verificationRuns: [],
-                transcriptMessageCount: childRunTranscriptMessages.length,
+                transcriptMessageCount: Array.isArray(runEntry?.transcriptMessages)
+                  ? runEntry.transcriptMessages.length
+                  : childRunTranscriptMessages.length,
               }
             : null) as T;
         }
@@ -2237,9 +2252,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           ));
           const fixtureConversationId = runId === 'child-run-1' ? ASSISTANT_DM_ID : generalChannelId;
           const conversationId = String(runEntry?.conversationId ?? fixtureConversationId);
-          return clone((runId === 'child-run-1' || runId === 'child-run-source-e2e')
-            && (!requestedConversationId || requestedConversationId === conversationId)
-            ? { messages: childRunTranscriptMessages }
+          const transcriptMessages = Array.isArray(runEntry?.transcriptMessages)
+            ? runEntry.transcriptMessages
+            : runId === 'child-run-1' || runId === 'child-run-source-e2e'
+              ? childRunTranscriptMessages
+              : null;
+          return clone(transcriptMessages && (!requestedConversationId || requestedConversationId === conversationId)
+            ? { messages: transcriptMessages }
             : null) as T;
         }
         if (cmd === 'agent_run_conversation_id') {
@@ -3465,6 +3484,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       stopReason: message.stopReason,
       usage: message.usage,
       errorMessage: message.errorMessage,
+      issueNotification: entry.issueNotification ?? message.issueNotification,
     };
   }
 

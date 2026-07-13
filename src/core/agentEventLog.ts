@@ -228,6 +228,7 @@ export interface AgentRunScope {
     docs?: string[];
     paths?: string[];
     nodes?: string[];
+    writableNodes?: string[];
   };
 }
 
@@ -269,6 +270,9 @@ export interface AgentRunObjectiveMeta {
   criteria: string[];
   role: AgentRunObjectiveRole;
   status: AgentObjectiveStatus;
+  verificationRequired?: true;
+  verificationAttemptBase?: number;
+  verifierGapSignatures?: string[];
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
   blockedReason?: string;
@@ -708,6 +712,8 @@ export interface UserMessageCreatedEvent extends AgentEventBase {
   parentMessageId: string | null;
   content: AgentPersistedContent[];
   attachments?: AgentPayloadRef[];
+  /** Optional durable notification represented by this hidden system-origin turn. */
+  notificationId?: string;
   replacesMessageId?: string;
 }
 
@@ -887,7 +893,7 @@ export interface FollowUpAppliedEvent extends AgentEventBase {
 }
 
 export type AgentNotificationKind =
-  // Off-floor run terminal states — the only kinds with an emitter today.
+  // Background Run terminals and Issue-routed outcomes.
   | 'task_completed'
   | 'task_failed'
   // Reserved (no emitter yet): a conversation's own *foreground* agent awaiting a
@@ -902,17 +908,19 @@ export type AgentNotificationKind =
   // not a ding). Carries the speaking run as its source.
   | 'channel_reply';
 
-/**
- * Provenance for a notification: the off-floor run whose terminal state (or
- * needs-input pause) produced it. Orthogonal to the delivery anchor
- * (`conversationId`) — a run anchored to conversation X still reports there.
- * One variant only: a delegated sub-run is a Run (run unification).
- */
-export type AgentRunNotificationSource = { type: 'run'; runId: string };
+/** Provenance for a durable conversation notification. */
+export type AgentNotificationSource =
+  | { type: 'run'; runId: string }
+  | {
+      type: 'issue';
+      issueId: string;
+      agentSessionId?: string;
+      state: 'complete' | 'error' | 'canceled';
+    };
 
 /**
  * Delivered to its origin conversation: the base `conversationId` IS the
- * delivery anchor (a background run always anchors to a delivery conversation —
+ * delivery anchor (a background outcome always anchors to a delivery conversation —
  * there are no conversation-less notifications).
  */
 export interface NotificationCreatedEvent extends AgentEventBase {
@@ -921,8 +929,8 @@ export interface NotificationCreatedEvent extends AgentEventBase {
   kind: AgentNotificationKind;
   title: string;
   body?: string;
-  /** The off-floor run that produced this notification, when any. */
-  source?: AgentRunNotificationSource;
+  /** The background Run or Issue transition that produced this notification. */
+  source?: AgentNotificationSource;
 }
 
 /**
@@ -965,6 +973,9 @@ export interface RunStartedEvent extends AgentEventBase {
   criteria?: string[];
   objectiveRole?: AgentRunObjectiveRole;
   objectiveStatus?: AgentObjectiveStatus;
+  verificationRequired?: true;
+  verificationAttemptBase?: number;
+  verifierGapSignatures?: string[];
   purpose?: AgentRunPurpose;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
@@ -980,7 +991,11 @@ export interface RunTerminalEvent extends AgentEventBase {
   type: 'run.completed' | 'run.failed' | 'run.cancelled';
   runId: string;
   errorMessage?: string;
+  objective?: string;
+  criteria?: string[];
+  objectiveRole?: AgentRunObjectiveRole;
   objectiveStatus?: AgentObjectiveStatus;
+  verifierGapSignatures?: string[];
   budget?: AgentRunBudget;
   blockedReason?: string;
   latestVerifierGap?: string;
@@ -1126,6 +1141,8 @@ export interface AgentEventMessageRecord {
   isError?: boolean;
   details?: unknown;
   outputSummary?: string;
+  /** Durable notification represented by this hidden system-origin message. */
+  notificationId?: string;
   /**
    * Model-context-only substitution for a slimmed tool result (budget offload or
    * time-based microcompact). When set, model-context derivation sends this in
@@ -1158,7 +1175,11 @@ export interface DelegationDetail {
   prompt: string;
   objective?: string;
   criteria?: string[];
+  objectiveRole?: AgentRunObjectiveRole;
   objectiveStatus?: AgentObjectiveStatus;
+  verify?: boolean;
+  verificationAttemptBase?: number;
+  verifierGapSignatures?: string[];
   purpose?: AgentRunPurpose;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
@@ -1246,7 +1267,7 @@ export interface AgentNotificationRecord {
   kind: AgentNotificationKind;
   title: string;
   body?: string;
-  source?: AgentRunNotificationSource;
+  source?: AgentNotificationSource;
   seq: number;
   createdAt: number;
   read: boolean;
@@ -1540,6 +1561,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         sourceSeqs: [event.seq],
         status: 'completed',
         attachments: event.attachments?.slice(),
+        notificationId: event.notificationId,
       });
       state.selectedLeafMessageId = event.messageId;
       return;

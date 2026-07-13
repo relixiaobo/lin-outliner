@@ -1,28 +1,34 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Activity,
   AgentIssue,
   AgentRecurringIssue,
   AgentSession,
+  AgentSessionTranscriptResult,
   IssueReadResult,
-  IssueSearchInput,
   IssueSearchRow,
   IssueTargetRef,
 } from '../../api/types';
+import type { DocumentIndex } from '../../state/document';
+import type { AgentMessage } from '../../../core/agentTypes';
+import { isActiveAgentSessionState } from '../../../core/agentIssue';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import {
   type AppIcon,
   BackIcon,
   CheckIcon,
+  AddChildIcon,
   CalendarIcon,
   ChevronRightIcon,
   ClockIcon,
   CloseIcon,
+  DescriptionIcon,
   ICON_SIZE,
   InboxIcon,
   LoaderIcon,
   RepeatIcon,
+  RunStatusToolIcon,
   ScheduledIcon,
   WarningIcon,
 } from '../icons';
@@ -32,25 +38,51 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentDetailDrawerResizeHandle, useAgentDetailDrawerHeight } from './AgentDetailDrawerResize';
 import { formatRunDuration } from './agentProcessTypes';
-
-export type IssueWorkPreset = 'inbox' | 'today' | 'upcoming' | 'logbook';
+import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
+import { AgentTranscriptMessageList } from './AgentTranscriptMessageList';
+import {
+  agentRunDetailToTranscriptRun,
+  agentRunSubRunsByParentToolCallId,
+  agentRunTranscriptHasActiveAssistantTurn,
+  buildAgentRunToolResultMap,
+  collectPendingAgentRunToolCallIds,
+  parseAgentRunTranscript,
+} from './agentRunTranscriptAdapter';
+import {
+  activityText,
+  compareIssueRowsForPreset,
+  dateTimeRelativeLabel,
+  displayRecurringTemplateTitle,
+  groupIssueRowsForPreset,
+  ISSUE_DETAIL_INCLUDE,
+  issueActivityTimelineItems,
+  issueDisplayTitleForRow,
+  issueRowMatchesWorkPreset,
+  issueRowSummaryForRow,
+  millisecondsUntilNextLocalMidnight,
+  relativeTimeLabel,
+  rowHasActiveSession,
+  rowIsTerminal,
+  rowNeedsAttention,
+  rowScheduledAt,
+  sessionProcessActivityEntriesForDisplay,
+  type IssueActivityTimelineItem,
+  type IssueWorkPreset,
+} from './agentIssueViewModel';
 
 const ISSUE_WORK_PRESETS: readonly IssueWorkPreset[] = ['inbox', 'today', 'upcoming', 'logbook'];
+const ISSUE_TIME_REFRESH_INTERVAL_MS = 60_000;
 const ISSUE_WORK_PRESET_ICONS = {
   inbox: InboxIcon,
   today: ClockIcon,
   upcoming: CalendarIcon,
   logbook: CheckIcon,
 } satisfies Record<IssueWorkPreset, AppIcon>;
-const ACTIVE_SESSION_STATES = new Set<AgentSession['state']>(['pending', 'active', 'awaitingInput']);
-const TERMINAL_STATUS_CATEGORIES = new Set(['completed', 'canceled']);
-const ISSUE_ROW_INCLUDE: NonNullable<IssueSearchInput['include']> = ['activity-summary', 'session-summary'];
-
 interface AgentIssuesPanelProps {
   activeSessionCount: number;
   error: string | null;
   loading: boolean;
-  onOpenIssue: (target: IssueTargetRef) => void;
+  onOpenIssue: (target: IssueTargetRef, title?: string) => void;
   onPresetChange: (preset: IssueWorkPreset) => void;
   onRefresh: () => void;
   preset: IssueWorkPreset;
@@ -59,9 +91,12 @@ interface AgentIssuesPanelProps {
 
 interface AgentIssueDetailsPanelProps {
   breadcrumbs?: readonly IssueDetailBreadcrumb[];
+  index: DocumentIndex;
   onBack?: () => void;
   onClose: () => void;
   onOpenIssue?: (target: IssueTargetRef, title?: string) => void;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
+  onOpenRunDetailsPanel?: (conversationId: string | null, runId: string | null) => boolean | void;
   onSelectBreadcrumb?: (index: number) => void;
   target: IssueTargetRef;
 }
@@ -71,115 +106,8 @@ export interface IssueDetailBreadcrumb {
   title?: string;
 }
 
-const ISSUE_DETAIL_INCLUDE = ['activity', 'sessions', 'generated-issues', 'criteria'] as const;
-
-export function issueSearchInputForWorkPreset(preset: IssueWorkPreset): IssueSearchInput {
-  return issueSearchInputsForWorkPreset(preset)[0]!;
-}
-
-export function issueSearchInputsForWorkPreset(preset: IssueWorkPreset, now = Date.now()): IssueSearchInput[] {
-  const start = startOfLocalDay(now);
-  const end = endOfLocalDay(now);
-  switch (preset) {
-    case 'inbox':
-      return [
-        { filter: { archived: false, needsAttention: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-      ];
-    case 'today':
-      return [
-        { targets: ['issue'], filter: { archived: false, hasActiveSession: true }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-        { targets: ['issue'], filter: { archived: false, triggerTypes: ['when-ready'], hasActiveSession: false }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-        { targets: ['issue'], filter: { archived: false, statusCategories: ['scheduled'] }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-        { targets: ['issue'], filter: { archived: false, dueDate: { to: end } }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-        { targets: ['recurring-issue'], filter: { archived: false, nextMaterializationAt: { to: end } }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-        { targets: ['issue'], filter: { statusCategories: ['completed', 'canceled'], updatedAt: { from: start, to: end } }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-      ];
-    case 'upcoming':
-      return [
-        { targets: ['recurring-issue'], filter: { archived: false }, include: ISSUE_ROW_INCLUDE, orderBy: [{ field: 'nextMaterializationAt', direction: 'asc' }], limit: 100 },
-        { targets: ['issue'], filter: { archived: false, statusCategories: ['scheduled'] }, include: ISSUE_ROW_INCLUDE, limit: 100 },
-        { targets: ['issue'], filter: { archived: false, dueDate: { from: end + 1 } }, include: ISSUE_ROW_INCLUDE, orderBy: [{ field: 'dueDate', direction: 'asc' }], limit: 100 },
-      ];
-    case 'logbook':
-      return [{
-        targets: ['issue'],
-        filter: { statusCategories: ['completed', 'canceled', 'archived'] },
-        include: ISSUE_ROW_INCLUDE,
-        limit: 100,
-      }];
-  }
-}
-
 function targetKey(target: IssueTargetRef): string {
   return `${target.type}:${target.id}`;
-}
-
-function relativeTimeLabel(timestamp: number, labels: ReturnType<typeof useT>['agent']['run'], now = Date.now()): string {
-  const deltaMs = Math.max(0, now - timestamp);
-  if (deltaMs < 60_000) return labels.relativeJustNow;
-  const minutes = Math.floor(deltaMs / 60_000);
-  if (minutes < 60) return labels.relativeMinutesAgo({ count: minutes });
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return labels.relativeHoursAgo({ count: hours });
-  return labels.relativeDaysAgo({ count: Math.floor(hours / 24) });
-}
-
-function startOfLocalDay(timestamp: number): number {
-  const date = new Date(timestamp);
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-function endOfLocalDay(timestamp: number): number {
-  return startOfLocalDay(timestamp) + 86_400_000 - 1;
-}
-
-function isWithinToday(timestamp: number | undefined, now: number): boolean {
-  return timestamp !== undefined && timestamp >= startOfLocalDay(now) && timestamp <= endOfLocalDay(now);
-}
-
-function isDueByToday(timestamp: number | undefined, now: number): boolean {
-  return timestamp !== undefined && timestamp <= endOfLocalDay(now);
-}
-
-function isAfterToday(timestamp: number | undefined, now: number): boolean {
-  return timestamp !== undefined && timestamp > endOfLocalDay(now);
-}
-
-function timeLabel(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
-}
-
-function dateTimeLabel(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
-}
-
-function dateSectionLabel(timestamp: number, now: number, labels: ReturnType<typeof useT>['agent']['issue']): string {
-  const start = startOfLocalDay(timestamp);
-  if (start === startOfLocalDay(now)) return labels.view.today;
-  if (start === startOfLocalDay(now) + 86_400_000) return labels.section.tomorrow;
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', weekday: 'long' }).format(new Date(timestamp));
-}
-
-function dateTimeRelativeLabel(timestamp: number, now: number, labels: ReturnType<typeof useT>['agent']['issue']): string {
-  const start = startOfLocalDay(timestamp);
-  if (start === startOfLocalDay(now)) return `${labels.summary.today}, ${timeLabel(timestamp)}`;
-  if (start === startOfLocalDay(now) + 86_400_000) return `${labels.section.tomorrow}, ${timeLabel(timestamp)}`;
-  return dateTimeLabel(timestamp);
-}
-
-function scheduleTimeForPreset(timestamp: number, preset: IssueWorkPreset, now: number, labels: ReturnType<typeof useT>['agent']['issue']): string {
-  if (preset === 'today' || preset === 'upcoming') return timeLabel(timestamp);
-  return dateTimeRelativeLabel(timestamp, now, labels);
-}
-
-function joinRowSummaryParts(parts: Array<string | undefined>): string {
-  return parts.filter(Boolean).join(' · ');
-}
-
-export function issueDisplayTitleForRow(row: IssueSearchRow): string {
-  return row.target.type === 'recurring-issue'
-    ? displayRecurringTemplateTitle(row.title)
-    : row.title;
 }
 
 function issueDisplayTitleForDetail(issue: AgentIssue | undefined, recurringIssue: AgentRecurringIssue | undefined, fallback: string): string {
@@ -188,40 +116,96 @@ function issueDisplayTitleForDetail(issue: AgentIssue | undefined, recurringIssu
   return fallback;
 }
 
-function displayRecurringTemplateTitle(titleTemplate: string): string {
-  const cleaned = titleTemplate
-    .replace(/\s*[-:|\/\u2013\u2014]\s*\{\{\s*date\s*\}\}\s*/gi, ' ')
-    .replace(/\s*\{\{\s*date\s*\}\}\s*[-:|\/\u2013\u2014]\s*/gi, ' ')
-    .replace(/\{\{\s*date\s*\}\}/gi, ' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-    .replace(/^[-:|\/\u2013\u2014]\s*/, '')
-    .replace(/\s*[-:|\/\u2013\u2014]$/, '')
-    .trim();
-  return cleaned || titleTemplate;
+function activityTimestampTitle(timestamp: number): string {
+  return new Date(timestamp).toLocaleString();
 }
 
-function activityText(activity: Activity): string {
+function activityActorLabel(actor: Activity['actor'], systemLabel: string): string {
+  switch (actor.type) {
+    case 'agent':
+      return actor.agentId;
+    case 'user':
+      return actor.userId;
+    case 'system':
+      return systemLabel;
+  }
+}
+
+function activityValueLabel(value: unknown, labels: { nullValue: string; unset: string }): string {
+  if (value === undefined) return labels.unset;
+  if (value === null) return labels.nullValue;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function activityEventIcon(activity: Activity): AppIcon {
   switch (activity.content.type) {
+    case 'created':
+    case 'updated':
+    case 'field-change':
+    case 'output-link':
+      return DescriptionIcon;
+    case 'status-change':
+      return activity.content.to.toLowerCase() === 'completed' ? CheckIcon : ClockIcon;
+    case 'agent-question':
+    case 'agent-error':
+    case 'deleted':
+      return WarningIcon;
+    case 'archived':
+      return InboxIcon;
+    case 'agent-action':
+      return RunStatusToolIcon;
+    case 'verification-result':
+      return activity.content.verdict === 'pass' ? CheckIcon : WarningIcon;
     case 'comment':
     case 'agent-progress':
-    case 'agent-question':
     case 'agent-response':
-    case 'agent-error':
-      return activity.content.body;
-    case 'field-change':
-      return `Changed ${activity.content.field}.`;
-    case 'status-change':
-      return `Status changed to ${activity.content.to}.`;
-    case 'agent-action':
-      return activity.content.result
-        ? `${activity.content.action}: ${activity.content.result}`
-        : activity.content.action;
-    case 'verification-result':
-      return `${activity.content.verdict}: ${activity.content.body}`;
-    case 'output-link':
-      return activity.content.label;
+      return DescriptionIcon;
   }
+}
+
+function activityEventClass(activity: Activity): string {
+  switch (activity.content.type) {
+    case 'status-change':
+      return activity.content.to.toLowerCase() === 'completed' ? 'is-complete' : '';
+    case 'verification-result':
+      return activity.content.verdict === 'pass' ? 'is-complete' : 'is-attention';
+    case 'agent-error':
+    case 'agent-question':
+    case 'deleted':
+      return 'is-attention';
+    case 'archived':
+      return 'is-muted';
+    case 'created':
+    case 'updated':
+    case 'comment':
+    case 'field-change':
+    case 'agent-progress':
+    case 'agent-action':
+    case 'agent-response':
+    case 'output-link':
+      return '';
+  }
+}
+
+function IssueDetailSectionHeading({
+  children,
+  icon: Icon,
+}: {
+  children: string;
+  icon: AppIcon;
+}) {
+  return (
+    <h4>
+      <Icon aria-hidden="true" size={ICON_SIZE.menu} />
+      <span>{children}</span>
+    </h4>
+  );
 }
 
 function sessionStateLabel(state: AgentSession['state'], labels: ReturnType<typeof useT>['agent']['issue']): string {
@@ -230,8 +214,6 @@ function sessionStateLabel(state: AgentSession['state'], labels: ReturnType<type
       return labels.sessionState.pending;
     case 'active':
       return labels.sessionState.active;
-    case 'awaitingInput':
-      return labels.sessionState.awaitingInput;
     case 'complete':
       return labels.sessionState.complete;
     case 'error':
@@ -342,6 +324,38 @@ function detailTargetForIssue(issue: AgentIssue): IssueTargetRef {
   return { type: 'issue', id: issue.id };
 }
 
+function IssueLinkedRows({
+  issues,
+  onOpenIssue,
+}: {
+  issues: readonly AgentIssue[];
+  onOpenIssue?: (target: IssueTargetRef, title?: string) => void;
+}) {
+  return (
+    <div className="agent-issue-detail-list">
+      {issues.map((linkedIssue) => (
+        <button
+          className="agent-issue-linked-row"
+          key={linkedIssue.id}
+          onClick={() => onOpenIssue?.(detailTargetForIssue(linkedIssue), linkedIssue.title)}
+          type="button"
+        >
+          <span className={`agent-issue-linked-status ${issueStatusClassForIssue(linkedIssue)}`}>
+            {linkedIssue.status.category === 'completed'
+              ? <CheckIcon aria-hidden="true" size={ICON_SIZE.menu} />
+              : <ClockIcon aria-hidden="true" size={ICON_SIZE.menu} />}
+          </span>
+          <span className="agent-issue-linked-main">
+            <span>{linkedIssue.title}</span>
+            <small>{linkedIssue.status.name}</small>
+          </span>
+          <ChevronRightIcon aria-hidden="true" size={ICON_SIZE.menu} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function issueDetailMarker(
   issue: AgentIssue | undefined,
   recurringIssue: AgentRecurringIssue | undefined,
@@ -349,7 +363,7 @@ function issueDetailMarker(
 ): { icon: AppIcon; className: string } {
   if (issue?.status.category === 'completed') return { icon: CheckIcon, className: 'is-complete' };
   if (issue?.status.category === 'canceled') return { icon: WarningIcon, className: 'is-attention' };
-  if (sessions.some((session) => ACTIVE_SESSION_STATES.has(session.state))) return { icon: LoaderIcon, className: 'is-active' };
+  if (sessions.some((session) => isActiveAgentSessionState(session.state))) return { icon: LoaderIcon, className: 'is-active' };
   if (recurringIssue) return { icon: RepeatIcon, className: recurringIssue.status === 'paused' ? 'is-muted' : '' };
   if (issue?.trigger.type === 'scheduled' || issue?.dueDate) return { icon: ScheduledIcon, className: 'is-scheduled' };
   return { icon: ClockIcon, className: '' };
@@ -362,22 +376,19 @@ function sessionStatusClass(session: AgentSession): string {
   return '';
 }
 
-function sessionSummary(session: AgentSession, labels: ReturnType<typeof useT>): string {
-  if (session.errorMessage) return session.errorMessage;
-  if (session.latestOutput) return session.latestOutput.replace(/\s+/g, ' ').trim();
-  if (session.plan.length > 0) {
-    const completed = session.plan.filter((item) => item.status === 'completed').length;
-    return `${completed}/${session.plan.length}`;
-  }
-  return relativeTimeLabel(session.updatedAt, labels.agent.run);
+function sessionStatusIcon(session: AgentSession): AppIcon {
+  if (session.state === 'complete') return CheckIcon;
+  if (session.state === 'error' || session.state === 'stale' || session.state === 'canceled') return WarningIcon;
+  if (isActiveAgentSessionState(session.state)) return LoaderIcon;
+  return ClockIcon;
 }
 
 function sessionIsLive(session: AgentSession): boolean {
-  return session.state === 'active' || session.state === 'pending' || session.state === 'awaitingInput';
+  return isActiveAgentSessionState(session.state);
 }
 
 function sessionWorkLabel(session: AgentSession, labels: ReturnType<typeof useT>, liveElapsedMs: number | null): string {
-  if (session.state === 'active' || session.state === 'pending' || session.state === 'awaitingInput') {
+  if (session.state === 'active' || session.state === 'pending') {
     if (liveElapsedMs !== null) {
       return labels.agent.process.workingFor({ duration: formatRunDuration(liveElapsedMs) });
     }
@@ -406,140 +417,15 @@ function useSessionElapsedMs(session: AgentSession): number | null {
   return Math.max(0, now - startedAt);
 }
 
-function rowScheduledAt(row: IssueSearchRow): number | undefined {
-  if (row.target.type === 'recurring-issue') return row.nextMaterializationAt;
-  if (row.trigger?.type === 'scheduled') return row.trigger.startAt;
-  return undefined;
-}
-
-function rowIsTerminal(row: IssueSearchRow): boolean {
-  return Boolean(row.statusCategory && TERMINAL_STATUS_CATEGORIES.has(row.statusCategory));
-}
-
-function rowHasActiveSession(row: IssueSearchRow): boolean {
-  return Boolean(
-    row.hasActiveSession
-    || (row.latestSessionState && ACTIVE_SESSION_STATES.has(row.latestSessionState)),
-  );
-}
-
-function rowNeedsAttention(row: IssueSearchRow): boolean {
-  return Boolean(row.needsAttention);
-}
-
-function rowLatestWorkAt(row: IssueSearchRow): number {
-  return Math.max(
-    row.updatedAt,
-    row.latestSessionUpdatedAt ?? 0,
-  );
-}
-
-export function issueRowMatchesWorkPreset(row: IssueSearchRow, preset: IssueWorkPreset, now = Date.now()): boolean {
-  const scheduledAt = rowScheduledAt(row);
-  switch (preset) {
-    case 'inbox':
-      return rowNeedsAttention(row)
-        || row.latestSessionState === 'awaitingInput'
-        || row.latestSessionState === 'error'
-        || row.latestSessionState === 'stale';
-    case 'today':
-      return rowHasActiveSession(row)
-        || (row.target.type === 'issue' && row.trigger?.type === 'when-ready' && !rowIsTerminal(row))
-        || isDueByToday(scheduledAt, now)
-        || isDueByToday(row.dueDate?.targetAt, now)
-        || isWithinToday(row.nextMaterializationAt, now)
-        || isWithinToday(row.latestSessionUpdatedAt, now)
-        || (rowIsTerminal(row) && isWithinToday(row.updatedAt, now));
-    case 'upcoming':
-      return row.target.type === 'recurring-issue'
-        ? row.status !== 'archived'
-        : !rowIsTerminal(row) && (isAfterToday(scheduledAt, now) || isAfterToday(row.dueDate?.targetAt, now));
-    case 'logbook':
-      return row.target.type === 'issue'
-        && (rowIsTerminal(row) || row.viewBuckets?.includes('archived') === true);
-  }
-}
-
-function issueWorkPresetRank(row: IssueSearchRow, preset: IssueWorkPreset, now: number): number {
-  if (preset === 'today') {
-    if (row.needsAttention) return 0;
-    if (rowHasActiveSession(row)) return 1;
-    if (row.target.type === 'issue' && row.trigger?.type === 'when-ready' && !rowIsTerminal(row)) return 2;
-    if (row.target.type === 'recurring-issue' && isDueByToday(row.nextMaterializationAt, now)) return 3;
-    if (isDueByToday(rowScheduledAt(row), now) || isDueByToday(row.dueDate?.targetAt, now)) return 4;
-    if (rowIsTerminal(row)) return 5;
-  }
-  if (preset === 'inbox') {
-    if (row.latestSessionState === 'awaitingInput') return 0;
-    if (row.latestSessionState === 'error' || row.latestSessionState === 'stale') return 1;
-  }
-  return 10;
-}
-
-function compareIssueRowsForPreset(left: IssueSearchRow, right: IssueSearchRow, preset: IssueWorkPreset, now: number): number {
-  const rank = issueWorkPresetRank(left, preset, now) - issueWorkPresetRank(right, preset, now);
-  if (rank !== 0) return rank;
-  if (preset === 'upcoming') {
-    const leftTime = rowScheduledAt(left) ?? left.dueDate?.targetAt ?? Number.MAX_SAFE_INTEGER;
-    const rightTime = rowScheduledAt(right) ?? right.dueDate?.targetAt ?? Number.MAX_SAFE_INTEGER;
-    if (leftTime !== rightTime) return leftTime - rightTime;
-  }
-  return rowLatestWorkAt(right) - rowLatestWorkAt(left) || left.title.localeCompare(right.title);
-}
-
-interface IssueRowSection {
-  key: string;
-  label?: string;
-  rows: IssueSearchRow[];
-}
-
-function sectionForTodayRow(row: IssueSearchRow, now: number, labels: ReturnType<typeof useT>['agent']['issue']): string {
-  if (rowNeedsAttention(row)) return labels.section.attention;
-  if (rowHasActiveSession(row)) return labels.section.running;
-  if (row.target.type === 'recurring-issue' && isDueByToday(row.nextMaterializationAt, now)) return labels.section.repeatingToday;
-  if (isDueByToday(rowScheduledAt(row), now) || isDueByToday(row.dueDate?.targetAt, now)) return labels.section.dueToday;
-  if (rowIsTerminal(row)) return labels.section.doneToday;
-  return labels.view.today;
-}
-
-function sectionForInboxRow(row: IssueSearchRow, labels: ReturnType<typeof useT>['agent']['issue']): string {
-  if (row.latestSessionState === 'awaitingInput') return labels.section.attention;
-  if (row.latestSessionState === 'error' || row.latestSessionState === 'stale' || rowNeedsAttention(row)) return labels.section.attention;
-  return labels.view.inbox;
-}
-
-function sectionForUpcomingRow(row: IssueSearchRow, now: number, labels: ReturnType<typeof useT>['agent']['issue']): string {
-  const timestamp = rowScheduledAt(row) ?? row.dueDate?.targetAt;
-  if (timestamp !== undefined) return dateSectionLabel(timestamp, now, labels);
-  if (row.target.type === 'recurring-issue') return labels.section.repeating;
-  return labels.view.upcoming;
-}
-
-function groupIssueRowsForPreset(
-  rows: readonly IssueSearchRow[],
-  preset: IssueWorkPreset,
-  now: number,
-  labels: ReturnType<typeof useT>['agent']['issue'],
-): IssueRowSection[] {
-  if (preset === 'logbook') return [{ key: preset, rows: [...rows] }];
-
-  const sections: IssueRowSection[] = [];
-  const byLabel = new Map<string, IssueRowSection>();
-  for (const row of rows) {
-    const label = preset === 'today'
-      ? sectionForTodayRow(row, now, labels)
-      : preset === 'inbox'
-        ? sectionForInboxRow(row, labels)
-        : sectionForUpcomingRow(row, now, labels);
-    let section = byLabel.get(label);
-    if (!section) {
-      section = { key: `${preset}:${label}`, label, rows: [] };
-      byLabel.set(label, section);
-      sections.push(section);
-    }
-    section.rows.push(row);
-  }
-  return sections;
+function transcriptHasProcessDetails(
+  messages: readonly AgentMessage[],
+  subRunsByParentToolCallId: Map<string, unknown> | undefined,
+): boolean {
+  if (subRunsByParentToolCallId && subRunsByParentToolCallId.size > 0) return true;
+  return messages.some((message) => (
+    message.role === 'assistant'
+    && message.content.some((block) => block.type === 'thinking' || block.type === 'toolCall')
+  ));
 }
 
 function IssueStatusMarker({ row }: { row: IssueSearchRow }) {
@@ -574,54 +460,6 @@ function IssueStatusMarker({ row }: { row: IssueSearchRow }) {
   );
 }
 
-export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPreset, labels: ReturnType<typeof useT>, now = Date.now()): string | null {
-  const issueLabels = labels.agent.issue;
-  const sessionState = row.latestSessionState ? sessionStateLabel(row.latestSessionState, issueLabels) : null;
-  const sessionNeedsAttention = row.latestSessionState === 'awaitingInput'
-    || row.latestSessionState === 'error'
-    || row.latestSessionState === 'stale'
-    || rowNeedsAttention(row);
-  if (sessionNeedsAttention && sessionState) {
-    return `${sessionState} · ${relativeTimeLabel(row.latestSessionUpdatedAt ?? row.updatedAt, labels.agent.run, now)}`;
-  }
-  if (rowHasActiveSession(row) && sessionState) {
-    return `${sessionState} · ${relativeTimeLabel(row.latestSessionUpdatedAt ?? row.updatedAt, labels.agent.run, now)}`;
-  }
-  if (row.target.type === 'recurring-issue') {
-    const next = row.nextMaterializationAt !== undefined
-      ? scheduleTimeForPreset(row.nextMaterializationAt, preset, now, issueLabels)
-      : issueLabels.summary.noNextRun;
-    return joinRowSummaryParts([
-      next,
-      cadenceLabelForRow(row, issueLabels),
-      row.status === 'paused' ? issueLabels.summary.paused : undefined,
-    ]);
-  }
-  if (rowIsTerminal(row)) {
-    const terminalLabel = row.statusCategory === 'canceled' ? issueLabels.summary.canceled : issueLabels.summary.done;
-    const recency = relativeTimeLabel(row.updatedAt, labels.agent.run, now);
-    if (preset === 'today') return recency;
-    return joinRowSummaryParts([terminalLabel, recency]);
-  }
-  const scheduledAt = rowScheduledAt(row);
-  if (scheduledAt !== undefined) {
-    return joinRowSummaryParts([
-      scheduleTimeForPreset(scheduledAt, preset, now, issueLabels),
-      issueLabels.summary.scheduled,
-    ]);
-  }
-  if (row.dueDate) {
-    return joinRowSummaryParts([
-      scheduleTimeForPreset(row.dueDate.targetAt, preset, now, issueLabels),
-      issueLabels.summary.due,
-    ]);
-  }
-  if (row.latestActivity) {
-    return `${activityText(row.latestActivity)} · ${relativeTimeLabel(row.latestActivity.createdAt, labels.agent.run, now)}`;
-  }
-  return `${row.status} · ${relativeTimeLabel(row.updatedAt, labels.agent.run, now)}`;
-}
-
 export function AgentIssuesPanel({
   activeSessionCount,
   error,
@@ -633,6 +471,35 @@ export function AgentIssuesPanel({
   rows,
 }: AgentIssuesPanelProps) {
   const t = useT();
+  const [, setLocalDayRevision] = useState(0);
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
+
+  useEffect(() => {
+    let active = true;
+    let timer: number | null = null;
+    const scheduleNextLocalDay = () => {
+      if (!active) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        setLocalDayRevision((revision) => revision + 1);
+        onRefreshRef.current();
+        scheduleNextLocalDay();
+      }, millisecondsUntilNextLocalMidnight(Date.now()));
+    };
+
+    scheduleNextLocalDay();
+    return () => {
+      active = false;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => onRefreshRef.current(), ISSUE_TIME_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const now = Date.now();
   const visibleRows = useMemo(() => rows
     .filter((row) => issueRowMatchesWorkPreset(row, preset, now))
@@ -682,7 +549,7 @@ export function AgentIssuesPanel({
                       aria-label={[issueDisplayTitleForRow(row), summary].filter(Boolean).join(', ')}
                       className="agent-run-row agent-issue-row is-clickable"
                       key={targetKey(row.target)}
-                      onClick={() => onOpenIssue(row.target)}
+                      onClick={() => onOpenIssue(row.target, issueDisplayTitleForRow(row))}
                       type="button"
                     >
                       <IssueStatusMarker row={row} />
@@ -728,110 +595,362 @@ export function AgentIssuesPanel({
   );
 }
 
-function sessionActivityEntries(activity: readonly Activity[], session: AgentSession): Activity[] {
-  return activity
-    .filter((entry) => (
-      (entry.target.type === 'agent-session' && entry.target.agentSessionId === session.id)
-      || (entry.relatedTargets?.some((target) => target.type === 'agent-session' && target.id === session.id) ?? false)
-    ))
-    .sort((left, right) => left.createdAt - right.createdAt);
-}
-
 function AgentSessionInlineCard({
   activity,
+  index,
+  onNodeReferenceOpen,
+  onOpenRunDetailsPanel,
   session,
 }: {
   activity: readonly Activity[];
+  index: DocumentIndex;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
+  onOpenRunDetailsPanel?: (conversationId: string | null, runId: string | null) => boolean | void;
   session: AgentSession;
 }) {
   const t = useT();
-  const processEntries = useMemo(() => sessionActivityEntries(activity, session), [activity, session]);
-  const hasProcessDetails = session.plan.length > 0 || processEntries.length > 0;
+  const [transcript, setTranscript] = useState<AgentSessionTranscriptResult | null>(null);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const transcriptRequestRef = useRef(0);
+  const processEntries = useMemo(() => sessionProcessActivityEntriesForDisplay(activity, session), [activity, session]);
+  const hasProcessDetails = processEntries.length > 0;
   const liveElapsedMs = useSessionElapsedMs(session);
   const workLabel = sessionWorkLabel(session, t, liveElapsedMs);
+  const active = isActiveAgentSessionState(session.state);
+  const [executionOpen, setExecutionOpen] = useState(active);
+  const loadTranscript = useCallback(async () => {
+    const requestId = transcriptRequestRef.current + 1;
+    transcriptRequestRef.current = requestId;
+    try {
+      const nextTranscript = await api.agentSessionTranscript(session.id);
+      if (requestId !== transcriptRequestRef.current) return;
+      setTranscript(nextTranscript);
+      setTranscriptError(null);
+    } catch (caught) {
+      if (requestId !== transcriptRequestRef.current) return;
+      setTranscriptError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }, [session.id]);
+
+  useEffect(() => {
+    void loadTranscript();
+  }, [loadTranscript, session.updatedAt]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const timer = window.setInterval(() => void loadTranscript(), 1_000);
+    return () => window.clearInterval(timer);
+  }, [active, loadTranscript]);
+
+  useEffect(() => {
+    if (active) setExecutionOpen(true);
+  }, [active]);
+
+  useEffect(() => () => {
+    transcriptRequestRef.current += 1;
+  }, []);
+
+  const transcriptMessages = useMemo(() => (
+    transcript ? parseAgentRunTranscript(transcript.transcript.messages) : []
+  ), [transcript]);
+  const transcriptProcessMessages = useMemo(() => (
+    transcriptMessages.filter((message) => message.role !== 'user')
+  ), [transcriptMessages]);
+  const transcriptToolResults = useMemo(
+    () => buildAgentRunToolResultMap(transcriptMessages),
+    [transcriptMessages],
+  );
+  const transcriptPendingToolCallIds = useMemo(
+    () => collectPendingAgentRunToolCallIds(transcriptMessages, transcript?.run.status === 'running'),
+    [transcriptMessages, transcript?.run.status],
+  );
+  const transcriptRun = useMemo(() => (
+    transcript ? agentRunDetailToTranscriptRun(transcript.run) : null
+  ), [transcript]);
+  const transcriptSubRunsByParentToolCallId = useMemo(() => (
+    transcript ? agentRunSubRunsByParentToolCallId(transcript.run) : undefined
+  ), [transcript]);
+  const transcriptActive = transcript
+    ? agentRunTranscriptHasActiveAssistantTurn(
+      transcriptMessages,
+      transcript.run.status === 'running',
+      transcriptPendingToolCallIds,
+    )
+    : false;
+
+  const openRunDetails = useCallback((runId: string) => {
+    onOpenRunDetailsPanel?.(transcript?.conversationId ?? null, runId);
+  }, [onOpenRunDetailsPanel, transcript?.conversationId]);
+
+  const transcriptProcessAvailable = transcriptProcessMessages.length > 0
+    && transcriptHasProcessDetails(transcriptProcessMessages, transcriptSubRunsByParentToolCallId);
+  const SessionIcon = sessionStatusIcon(session);
+  const resultText = session.latestOutput
+    ?? transcript?.run.result?.summary
+    ?? null;
+  const resultError = session.errorMessage
+    ?? (!resultText ? transcriptError : null);
+
+  const transcriptProcessBlock = transcript && transcriptRun && transcriptProcessAvailable ? (
+    <details className="agent-issue-session-process">
+      <summary>
+        <span>{t.agent.issueDetail.process}</span>
+        <ChevronRightIcon aria-hidden className="agent-issue-session-process-chevron" size={ICON_SIZE.tiny} />
+      </summary>
+      <div className="agent-issue-session-process-transcript">
+        <AgentTranscriptMessageList
+          active={transcriptActive}
+          className="agent-issue-session-transcript agent-run-detail-transcript-list"
+          conversationId={transcript.conversationId}
+          filePreviewPresentation="reader"
+          index={index}
+          isChannel={false}
+          messages={transcriptProcessMessages}
+          onNodeReferenceOpen={onNodeReferenceOpen}
+          onOpenRunTranscript={openRunDetails}
+          pendingToolCallIds={transcriptPendingToolCallIds}
+          run={transcriptRun}
+          showFinalMessages={false}
+          showProcessDetails
+          showProcessStatus={false}
+          subRunsByParentToolCallId={transcriptSubRunsByParentToolCallId}
+          toolResults={transcriptToolResults}
+        />
+      </div>
+    </details>
+  ) : null;
+
+  const fallbackProcessBlock = !transcriptProcessBlock && hasProcessDetails ? (
+    <details className="agent-issue-session-process">
+      <summary>
+        <span>{t.agent.issueDetail.process}</span>
+        <ChevronRightIcon aria-hidden className="agent-issue-session-process-chevron" size={ICON_SIZE.tiny} />
+      </summary>
+      {processEntries.length > 0 ? (
+        <ol className="agent-issue-session-process-list">
+          {processEntries.map((entry) => (
+            <li key={entry.id}>
+              <span>{activityText(entry, t.agent.issueDetail.activityEvent)}</span>
+              <small title={activityTimestampTitle(entry.createdAt)}>{relativeTimeLabel(entry.createdAt, t.agent.run)}</small>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </details>
+  ) : null;
+  const processBlock = transcriptProcessBlock ?? fallbackProcessBlock;
+  const hasExpandedContent = Boolean(
+    (transcriptRun && onOpenRunDetailsPanel)
+    || processBlock
+    || resultText
+    || resultError,
+  );
 
   return (
-    <article className={`agent-issue-session-card ${sessionStatusClass(session)}`}>
-      {hasProcessDetails ? (
-        <details className="agent-issue-session-process">
-          <summary>
-            <span>{workLabel}</span>
-            <ChevronRightIcon aria-hidden className="agent-issue-session-process-chevron" size={ICON_SIZE.tiny} />
-          </summary>
-          {session.plan.length > 0 ? (
-            <ol className="agent-issue-session-process-list">
-              {session.plan.map((item, index) => (
-                <li key={`${index}:${item.content}`}>
-                  <span>{item.content}</span>
-                  <small>{item.status}</small>
-                </li>
-              ))}
-            </ol>
-          ) : null}
-          {processEntries.length > 0 ? (
-            <ol className="agent-issue-session-process-list">
-              {processEntries.map((entry) => (
-                <li key={entry.id}>
-                  <span>{activityText(entry)}</span>
-                  <small>{relativeTimeLabel(entry.createdAt, t.agent.run)}</small>
-                </li>
-              ))}
-            </ol>
-          ) : null}
-        </details>
-      ) : (
-        <div className="agent-issue-session-process-static">{workLabel}</div>
-      )}
-      {session.latestOutput ? (
-        <div className="agent-issue-session-result">
-          <AgentMarkdown keyPrefix={`agent-session-result-${session.id}`} text={session.latestOutput} />
-        </div>
-      ) : session.errorMessage ? (
-        <div className="agent-issue-session-result is-error">
-          <AgentMarkdown keyPrefix={`agent-session-error-${session.id}`} text={session.errorMessage} />
-        </div>
-      ) : (
-        <p className="agent-issue-session-empty">{sessionSummary(session, t)}</p>
-      )}
-    </article>
+    <details
+      className={`agent-issue-activity-row agent-issue-session-card ${sessionStatusClass(session)}`}
+      onToggle={(event) => {
+        if (event.target !== event.currentTarget) return;
+        setExecutionOpen(event.currentTarget.open);
+      }}
+      open={executionOpen}
+    >
+      <summary className="agent-issue-activity-summary agent-issue-execution-summary">
+        <span className={`agent-issue-activity-status agent-issue-execution-status ${sessionStatusClass(session)}`}>
+          <SessionIcon aria-hidden="true" size={ICON_SIZE.menu} />
+        </span>
+        <span className="agent-issue-activity-heading agent-issue-execution-heading">
+          <span>{t.agent.issueDetail.execution}</span>
+          <small>{workLabel}</small>
+        </span>
+        <ChevronRightIcon aria-hidden className="agent-issue-activity-chevron agent-issue-execution-chevron" size={ICON_SIZE.menu} />
+      </summary>
+      <div className="agent-issue-activity-expanded agent-issue-session-expanded">
+        {transcriptRun && onOpenRunDetailsPanel ? (
+          <ButtonControl
+            className="agent-issue-execution-transcript"
+            onClick={() => openRunDetails(transcriptRun.id)}
+            type="button"
+          >
+            {t.agent.issueDetail.transcript}
+          </ButtonControl>
+        ) : null}
+        {processBlock}
+        {resultText ? (
+          <div className="agent-issue-session-result">
+            <AgentMarkdown keyPrefix={`agent-session-result-${session.id}`} text={resultText} />
+          </div>
+        ) : resultError ? (
+          <div className="agent-issue-session-result is-error">
+            <AgentMarkdown keyPrefix={`agent-session-error-${session.id}`} text={resultError} />
+          </div>
+        ) : null}
+        {!hasExpandedContent ? (
+          <div className="agent-issue-session-empty">{t.agent.issueDetail.noExecutionDetails}</div>
+        ) : null}
+      </div>
+    </details>
   );
+}
+
+function ActivityEventRow({ entry }: { entry: Activity }) {
+  const t = useT();
+  const metadataLabels = t.agent.issueDetail.activityMetadata;
+  const EventIcon = activityEventIcon(entry);
+  const eventClass = activityEventClass(entry);
+  return (
+    <details className={`agent-issue-activity-row agent-issue-activity-event-card ${eventClass}`.trim()}>
+      <summary className="agent-issue-activity-summary">
+        <span className={`agent-issue-activity-status ${eventClass}`.trim()}>
+          <EventIcon aria-hidden="true" size={ICON_SIZE.menu} />
+        </span>
+        <span className="agent-issue-activity-heading">
+          <span>{activityText(entry, t.agent.issueDetail.activityEvent)}</span>
+          <small>
+            <time dateTime={new Date(entry.createdAt).toISOString()} title={activityTimestampTitle(entry.createdAt)}>
+              {relativeTimeLabel(entry.createdAt, t.agent.run)}
+            </time>
+          </small>
+        </span>
+        <ChevronRightIcon aria-hidden className="agent-issue-activity-chevron" size={ICON_SIZE.menu} />
+      </summary>
+      <dl className="agent-issue-activity-expanded agent-issue-activity-details">
+        <div>
+          <dt>{metadataLabels.time}</dt>
+          <dd>
+            <time dateTime={new Date(entry.createdAt).toISOString()}>
+              {activityTimestampTitle(entry.createdAt)}
+            </time>
+          </dd>
+        </div>
+        <div>
+          <dt>{metadataLabels.actor}</dt>
+          <dd>{activityActorLabel(entry.actor, metadataLabels.system)}</dd>
+        </div>
+        {entry.content.type === 'field-change' && (entry.content.from !== undefined || entry.content.to !== undefined) ? (
+          <>
+            <div>
+              <dt>{metadataLabels.from}</dt>
+              <dd>{activityValueLabel(entry.content.from, metadataLabels)}</dd>
+            </div>
+            <div>
+              <dt>{metadataLabels.to}</dt>
+              <dd>{activityValueLabel(entry.content.to, metadataLabels)}</dd>
+            </div>
+          </>
+        ) : null}
+        {entry.content.type === 'updated' && entry.content.fields?.length ? (
+          <div>
+            <dt>{metadataLabels.fields}</dt>
+            <dd>{entry.content.fields.join(', ')}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </details>
+  );
+}
+
+function IssueActivityTimelineRow({
+  activity,
+  index,
+  item,
+  onNodeReferenceOpen,
+  onOpenRunDetailsPanel,
+}: {
+  activity: readonly Activity[];
+  index: DocumentIndex;
+  item: IssueActivityTimelineItem;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
+  onOpenRunDetailsPanel?: (conversationId: string | null, runId: string | null) => boolean | void;
+}) {
+  if (item.type === 'execution' && item.session) {
+    return (
+      <AgentSessionInlineCard
+        activity={activity}
+        index={index}
+        onNodeReferenceOpen={onNodeReferenceOpen}
+        onOpenRunDetailsPanel={onOpenRunDetailsPanel}
+        session={item.session}
+      />
+    );
+  }
+  if (item.activity) return <ActivityEventRow entry={item.activity} />;
+  return null;
 }
 
 export function AgentIssueDetailsPanel({
   breadcrumbs = [],
+  index,
   onBack,
   onClose,
   onOpenIssue,
+  onNodeReferenceOpen,
+  onOpenRunDetailsPanel,
   onSelectBreadcrumb,
   target,
 }: AgentIssueDetailsPanelProps) {
   const t = useT();
   const [loading, setLoading] = useState(false);
+  const [acceptingReview, setAcceptingReview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<IssueReadResult | null>(null);
+  const loadRequestRef = useRef(0);
+  const refreshTimerRef = useRef<number | null>(null);
   useAgentDetailDrawerHeight(true);
 
   const load = useCallback(async () => {
+    const requestId = loadRequestRef.current + 1;
+    loadRequestRef.current = requestId;
     setLoading(true);
     setError(null);
     try {
-      setDetail(await api.agentIssueRead({ target, include: [...ISSUE_DETAIL_INCLUDE] }));
+      const nextDetail = await api.agentIssueRead({ target, include: [...ISSUE_DETAIL_INCLUDE] });
+      if (requestId === loadRequestRef.current) setDetail(nextDetail);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (requestId === loadRequestRef.current) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
   }, [target]);
 
+  const scheduleLoad = useCallback(() => {
+    if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      void load();
+    }, 300);
+  }, [load]);
+
   useEffect(() => {
+    setDetail(null);
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
     void load();
+    return () => {
+      loadRequestRef.current += 1;
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
   }, [load]);
 
   const issue = detail?.issue;
   const recurringIssue = detail?.recurringIssue;
   const title = issueDisplayTitleForDetail(issue, recurringIssue, t.agent.issue.unknown);
-  const activity = useMemo(() => [...(detail?.activity ?? [])].sort((left, right) => right.createdAt - left.createdAt), [detail?.activity]);
+  const rawActivity = useMemo(() => [...(detail?.activity ?? [])].sort((left, right) => right.createdAt - left.createdAt), [detail?.activity]);
   const sessions = useMemo(() => [...(detail?.sessions ?? [])].sort((left, right) => right.updatedAt - left.updatedAt), [detail?.sessions]);
+  const activityTimeline = useMemo(() => issueActivityTimelineItems(rawActivity, sessions), [rawActivity, sessions]);
+  const hasActiveSessions = useMemo(() => sessions.some((session) => isActiveAgentSessionState(session.state)), [sessions]);
+  const canAcceptHumanReview = Boolean(
+    issue
+    && issue.status.category !== 'completed'
+    && issue.status.category !== 'canceled'
+    && issue.verificationPolicy?.mode === 'human-review'
+    && sessions.some((session) => session.purpose !== 'verify' && session.state === 'complete'),
+  );
   const detailMarker = issueDetailMarker(issue, recurringIssue, sessions);
   const DetailMarkerIcon = detailMarker.icon;
   const statusLabel = issueDetailStatusLabel(issue, recurringIssue);
@@ -839,6 +958,33 @@ export function AgentIssueDetailsPanel({
   const timingLine = issueDetailTimingLine(issue, recurringIssue, t);
   const breadcrumbEntries = breadcrumbs.length > 0 ? breadcrumbs : [{ target }];
   const lastBreadcrumbIndex = breadcrumbEntries.length - 1;
+
+  useEffect(() => {
+    if (!hasActiveSessions) return undefined;
+    const timer = window.setInterval(() => scheduleLoad(), 1_500);
+    return () => window.clearInterval(timer);
+  }, [hasActiveSessions, scheduleLoad]);
+
+  useEffect(() => window.lin?.onAgentEvent(() => {
+    scheduleLoad();
+  }), [scheduleLoad]);
+
+  const acceptHumanReview = useCallback(async () => {
+    if (!issue || acceptingReview) return;
+    setAcceptingReview(true);
+    setError(null);
+    try {
+      const result = await api.agentIssueCompleteHumanReview(issue.id, issue.revision);
+      if (result.status !== 'applied') {
+        throw new Error(result.validation?.[0]?.message ?? t.agent.issueDetail.reviewFailed);
+      }
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setAcceptingReview(false);
+    }
+  }, [acceptingReview, issue, load, t.agent.issueDetail.reviewFailed]);
 
   return (
     <section className="agent-run-detail-panel agent-issue-detail-panel" aria-label={t.agent.issueDetail.detailsAriaLabel}>
@@ -920,62 +1066,55 @@ export function AgentIssueDetailsPanel({
             </div>
             <div className="agent-run-detail-content-column">
               {timingLine ? <div className="agent-issue-detail-timing">{timingLine}</div> : null}
+              {canAcceptHumanReview ? (
+                <div className="agent-issue-review-action">
+                  <ButtonControl
+                    className="agent-issue-review-accept"
+                    disabled={acceptingReview}
+                    onClick={() => void acceptHumanReview()}
+                  >
+                    {acceptingReview
+                      ? <LoaderIcon className="agent-run-status-spinner" size={ICON_SIZE.menu} />
+                      : <CheckIcon aria-hidden="true" size={ICON_SIZE.menu} />}
+                    <span>{acceptingReview ? t.agent.issueDetail.acceptingReview : t.agent.issueDetail.acceptReview}</span>
+                  </ButtonControl>
+                </div>
+              ) : null}
               {issue?.description || recurringIssue?.descriptionTemplate ? (
                 <section className="agent-issue-detail-section">
-                  <h4>{t.agent.issueDetail.instructions}</h4>
+                  <IssueDetailSectionHeading icon={DescriptionIcon}>{t.agent.issueDetail.instructions}</IssueDetailSectionHeading>
                   <div className="agent-issue-detail-description">
                     {issue?.description ?? recurringIssue?.descriptionTemplate}
                   </div>
                 </section>
               ) : null}
-              {sessions.length > 0 ? (
+              {detail?.childIssues?.length ? (
                 <section className="agent-issue-detail-section">
-                  <h4>{t.agent.issueDetail.sessions}</h4>
-                  <div className="agent-issue-session-list">
-                    {sessions.map((session) => (
-                      <AgentSessionInlineCard
-                        activity={activity}
-                        key={session.id}
-                        session={session}
-                      />
-                    ))}
-                  </div>
+                  <IssueDetailSectionHeading icon={AddChildIcon}>{t.agent.issueDetail.childIssues}</IssueDetailSectionHeading>
+                  <IssueLinkedRows issues={detail.childIssues} onOpenIssue={onOpenIssue} />
                 </section>
               ) : null}
               {detail?.generatedIssues?.length ? (
                 <section className="agent-issue-detail-section">
-                  <h4>{t.agent.issueDetail.generatedIssues}</h4>
-                  <div className="agent-issue-detail-list">
-                    {detail.generatedIssues.map((generatedIssue) => (
-                      <button
-                        className="agent-issue-linked-row"
-                        key={generatedIssue.id}
-                        onClick={() => onOpenIssue?.(detailTargetForIssue(generatedIssue), generatedIssue.title)}
-                        type="button"
-                      >
-                        <span className={`agent-issue-linked-status ${issueStatusClassForIssue(generatedIssue)}`}>
-                          {generatedIssue.status.category === 'completed' ? <CheckIcon size={ICON_SIZE.menu} /> : <ClockIcon size={ICON_SIZE.menu} />}
-                        </span>
-                        <span className="agent-issue-linked-main">
-                          <span>{generatedIssue.title}</span>
-                          <small>{generatedIssue.status.name}</small>
-                        </span>
-                        <ChevronRightIcon aria-hidden="true" size={ICON_SIZE.menu} />
-                      </button>
-                    ))}
-                  </div>
+                  <IssueDetailSectionHeading icon={AddChildIcon}>{t.agent.issueDetail.generatedIssues}</IssueDetailSectionHeading>
+                  <IssueLinkedRows issues={detail.generatedIssues} onOpenIssue={onOpenIssue} />
                 </section>
               ) : null}
               <section className="agent-issue-detail-section">
-                <h4>{t.agent.issueDetail.activity}</h4>
-                {activity.length === 0 ? (
+                <IssueDetailSectionHeading icon={RunStatusToolIcon}>{t.agent.issueDetail.activity}</IssueDetailSectionHeading>
+                {activityTimeline.length === 0 ? (
                   <div className="agent-issue-activity-empty">{t.agent.issueDetail.noActivity}</div>
                 ) : (
                   <ol className="agent-issue-activity-list">
-                    {activity.map((entry) => (
-                      <li key={entry.id}>
-                        <span>{activityText(entry)}</span>
-                        <time>{relativeTimeLabel(entry.createdAt, t.agent.run)}</time>
+                    {activityTimeline.map((item) => (
+                      <li className="agent-issue-activity-item" key={`${item.type}:${item.id}`}>
+                        <IssueActivityTimelineRow
+                          activity={rawActivity}
+                          index={index}
+                          item={item}
+                          onNodeReferenceOpen={onNodeReferenceOpen}
+                          onOpenRunDetailsPanel={onOpenRunDetailsPanel}
+                        />
                       </li>
                     ))}
                   </ol>

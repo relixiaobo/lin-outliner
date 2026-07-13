@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { AGENT_ISSUE_RUN_PROFILES } from '../../src/core/agentIssue';
+import {
+  AGENT_ISSUE_RUN_PROFILES,
+  type AgentRecurringIssueOrigin,
+  type AgentSessionReadResult,
+  type AgentSessionTranscriptResult,
+} from '../../src/core/agentIssue';
 import { AGENT_ISSUE_TOOL_DEFINITIONS } from '../../src/main/agentIssueToolDefinitions';
 import { AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS } from '../../src/main/agentIssueToolSchemas';
 import { createAgentIssueTools, type AgentIssueToolRuntime } from '../../src/main/agentIssueTools';
@@ -36,8 +41,11 @@ describe('agent issue manager tool contracts', () => {
 
   test('describes Issue planning as durable definition authoring', () => {
     const createTool = AGENT_ISSUE_TOOL_DEFINITIONS.find((tool) => tool.name === 'issue_create');
-    expect(createTool?.promptGuidance(promptContext())).toContain('Author the durable objective, scope, acceptance criteria, output, trigger, and verification policy');
+    expect(createTool?.promptGuidance(promptContext())).toContain('Author the objective, scope, acceptance criteria, output, trigger, and verification policy');
     expect(createTool?.promptGuidance(promptContext())).toContain('the Agent Session owns internal planning and execution detail');
+    expect(createTool?.promptGuidance(promptContext())).toContain('Request-mode creation of a when-ready unattended Issue is a background handoff');
+    expect(createTool?.promptGuidance(promptContext())).toContain('delivers the terminal result to the immediate origin target');
+    expect(createTool?.promptGuidance(promptContext())).toContain('parent Agent Session for a child, visible conversation for a root');
 
     const relationSchema = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_create.properties.fields.properties.relations;
     expect(relationSchema.description).toContain('between independently managed Issues');
@@ -51,6 +59,63 @@ describe('agent issue manager tool contracts', () => {
 
     const triggerFilterSchema = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_search.properties.filter.properties.triggerTypes.items;
     expect(triggerFilterSchema.enum).toEqual(['when-ready', 'scheduled']);
+  });
+
+  test('keeps lifecycle fields out of create/patch and makes scheduled triggers structurally complete', () => {
+    const schemas = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS;
+    expect(schemas.issue_create.properties.fields.properties.status).toBeUndefined();
+    expect(schemas.issue_update.properties.change.properties.patch.properties.status).toBeUndefined();
+    expect(schemas.issue_create.properties.fields.properties.trigger.anyOf).toEqual(expect.arrayContaining([
+      expect.objectContaining({ required: ['type', 'startAt', 'timeZone'] }),
+    ]));
+    expect(schemas.issue_update.properties.change.properties.patch.properties.dueDate.anyOf)
+      .toContainEqual({ type: 'null' });
+    expect(schemas.issue_search.properties.include.items.enum).toEqual(['activity-summary', 'session-summary']);
+    expect(schemas.issue_read.properties.include.items.enum).toEqual([
+      'activity',
+      'sessions',
+      'child-issues',
+      'generated-issues',
+    ]);
+  });
+
+  test('uses discriminated input and output policy schemas with required variant fields', () => {
+    const fields = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_create.properties.fields.properties;
+    const inputVariants = fields.input.oneOf;
+    const outputVariants = fields.output.oneOf;
+
+    expect(inputVariants.map((variant) => variant.properties.type.enum[0])).toEqual([
+      'none',
+      'selected-nodes',
+      'node-children',
+      'tag-query',
+      'saved-query',
+    ]);
+    expect(inputVariants.find((variant) => variant.properties.type.enum[0] === 'selected-nodes')?.required)
+      .toEqual(['type', 'nodeIds']);
+    expect(inputVariants.find((variant) => variant.properties.type.enum[0] === 'node-children')?.required)
+      .toEqual(['type', 'nodeId']);
+    expect(inputVariants.find((variant) => variant.properties.type.enum[0] === 'tag-query')?.required)
+      .toEqual(['type', 'tag']);
+    expect(inputVariants.find((variant) => variant.properties.type.enum[0] === 'saved-query')?.required)
+      .toEqual(['type', 'queryId']);
+
+    expect(outputVariants.map((variant) => variant.properties.type.enum[0])).toEqual([
+      'activity-only',
+      'daily-note',
+      'append-to-node',
+      'create-child-under-node',
+      'per-input-child',
+      'replace-input',
+    ]);
+    expect(outputVariants.find((variant) => variant.properties.type.enum[0] === 'daily-note')?.required)
+      .toEqual(['type', 'datePolicy']);
+    expect(outputVariants.find((variant) => variant.properties.type.enum[0] === 'append-to-node')?.required)
+      .toEqual(['type', 'nodeId']);
+    expect(outputVariants.find((variant) => variant.properties.type.enum[0] === 'per-input-child')?.required)
+      .toEqual(['type', 'parentNodeId']);
+    expect(outputVariants.find((variant) => variant.properties.type.enum[0] === 'replace-input')?.properties.requiresConfirmation.enum)
+      .toEqual([true]);
   });
 
   test('classifies read, mutation, runtime-control, and destructive behavior', () => {
@@ -79,6 +144,38 @@ describe('agent issue manager tool contracts', () => {
     }
     expect(byName.get('agent_session_stop')?.isDestructive(request)).toBe(true);
     expect(byName.get('issue_update')?.isDestructive({ change: { type: 'archive' } })).toBe(true);
+  });
+
+  test('keeps Agent Session transcripts out of the model-facing read contract', () => {
+    const includeItems = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.agent_session_read.properties.include.items;
+    expect(includeItems.enum).toEqual(['activity-summary', 'latest-output']);
+    expect(includeItems.enum).not.toContain('transcript');
+    expect(AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.agent_session_read.properties.include.description)
+      .toContain('available only to the renderer');
+
+    type SessionReadExposesTranscript = 'transcript' extends keyof AgentSessionReadResult ? true : false;
+    const sessionReadExposesTranscript: SessionReadExposesTranscript = false;
+    expect(sessionReadExposesTranscript).toBe(false);
+
+    type RendererTranscriptResultHasTranscript = (
+      'transcript' extends keyof AgentSessionTranscriptResult ? true : false
+    );
+    const rendererTranscriptResultHasTranscript: RendererTranscriptResultHasTranscript = true;
+    expect(rendererTranscriptResultHasTranscript).toBe(true);
+  });
+
+  test('restricts Recurring Issue origins to visible conversations', () => {
+    const origin: AgentRecurringIssueOrigin = {
+      type: 'conversation',
+      conversationId: 'conversation:visible',
+    };
+    expect(origin.type).toBe('conversation');
+
+    type RecurringOriginAcceptsAgentSession = (
+      { type: 'agent-session'; agentSessionId: string } extends AgentRecurringIssueOrigin ? true : false
+    );
+    const recurringOriginAcceptsAgentSession: RecurringOriginAcceptsAgentSession = false;
+    expect(recurringOriginAcceptsAgentSession).toBe(false);
   });
 
   test('describes every visible schema parameter and omits model-facing authorization tokens', () => {
@@ -121,6 +218,67 @@ describe('agent issue manager tool contracts', () => {
       tool: 'agent_session_read',
       error: { code: 'agent_issue_tool_failed' },
     });
+  });
+
+  test('keeps routing origins and execution snapshots out of model-visible read results', async () => {
+    const issue = {
+      id: 'issue:1',
+      title: 'Private routing fixture',
+      status: { name: 'Started', category: 'started' },
+      relations: [],
+      trigger: { type: 'when-ready' },
+      permissionMode: 'unattended',
+      confirmation: { confirmedBy: { type: 'system' }, confirmedAt: 1 },
+      origin: { type: 'conversation', conversationId: 'conversation:private-origin' },
+      revision: 'rev:1',
+      createdAt: 1,
+      updatedAt: 2,
+    } as const;
+    const session = {
+      id: 'agent-session:1',
+      issueId: issue.id,
+      delegate: { type: 'default-agent' },
+      state: 'active',
+      source: { type: 'runtime-action', actor: { type: 'system' } },
+      issueSnapshot: issue,
+      inputSnapshot: { scope: { type: 'none' }, resolvedAt: 1 },
+      latestOutput: 'Visible only when requested.',
+      revision: 'rev:session',
+      createdAt: 1,
+      updatedAt: 2,
+    } as const;
+    const runtime: AgentIssueToolRuntime = {
+      search: () => ({ rows: [] }),
+      read: () => ({
+        target: { type: 'issue', id: issue.id },
+        issue: issue as never,
+        sessions: [session as never],
+      }),
+      create: () => ({ status: 'applied', targets: [] }),
+      update: () => ({ status: 'applied', targets: [] }),
+      startSession: () => ({ status: 'applied', targets: [] }),
+      readSession: () => ({ agentSession: session as never }),
+      sendSessionMessage: () => ({ status: 'applied', targets: [] }),
+      stopSession: () => ({ status: 'applied', targets: [] }),
+    };
+    const tools = createAgentIssueTools(runtime);
+
+    const issueRead = await (tools.find((tool) => tool.name === 'issue_read')!.execute as any)(
+      'tool-call-read',
+      { target: { type: 'issue', id: issue.id }, include: ['sessions'] },
+    );
+    const issueVisible = JSON.parse(issueRead.content[0].text).data as string;
+    expect(issueVisible).not.toContain('conversation:private-origin');
+    expect(issueVisible).not.toContain('issueSnapshot');
+
+    const sessionRead = await (tools.find((tool) => tool.name === 'agent_session_read')!.execute as any)(
+      'tool-call-session-read',
+      { agentSessionId: session.id },
+    );
+    const sessionVisible = JSON.parse(sessionRead.content[0].text).data as string;
+    expect(sessionVisible).not.toContain('conversation:private-origin');
+    expect(sessionVisible).not.toContain('issueSnapshot');
+    expect(sessionVisible).not.toContain('Visible only when requested.');
   });
 });
 

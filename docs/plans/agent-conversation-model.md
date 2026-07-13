@@ -599,6 +599,15 @@ you address an agent in a conversation
 
 ### Background tasks — the off-floor plane
 
+This section remains the design authority for detached-Run notification mechanics
+and the deferred foreground `needs-input` tail. Durable user-visible work uses
+Issue / Agent Session routing from [[agent-issue-manager]] instead: a root routes
+to its visible conversation, while a child routes first to its direct parent
+Agent Session. The Run-centered task language below does not flatten that Issue
+origin chain. In particular, Session-owned `controller` Runs do not use the
+generic notification queue or `<detached-sub-run-results>` aggregation; their
+only parent wake-up is the Issue terminal-delivery outbox marker.
+
 An agent can launch a **background task** (long work) without going silent: it hands
 the floor back immediately ("working on X in the background, ask me anything") and
 the foreground conversation stays live. A turn and a task run on **two planes**:
@@ -705,7 +714,7 @@ only when the user is actually looking at that task's conversation (window focus
 **and** it is the renderer-reported *viewed conversation* — dock open showing it),
 truncates its body, and routes a banner click to the originating conversation. The
 existing idle-gated `pendingSubagentNotifications` model-injection stays as the
-live-session composed-turn layer.
+live-session composed-turn layer for ordinary non-Session detached Runs only.
 
 **DECIDED (PM, 2026-06-08): subagents never ask the user mid-execution.** A
 subagent is invoked *only* when its information and goal are clear enough to run to

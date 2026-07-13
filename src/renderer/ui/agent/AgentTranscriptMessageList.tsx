@@ -27,6 +27,7 @@ interface AgentTranscriptMessageListProps {
   onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   showFinalMessages?: boolean;
+  showProcessDetails?: boolean;
   showProcessStatus?: boolean;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }
@@ -76,6 +77,7 @@ export function AgentTranscriptMessageList({
   onOpenRunTranscript,
   pendingToolCallIds,
   showFinalMessages = true,
+  showProcessDetails = true,
   showProcessStatus = true,
   toolResults,
 }: AgentTranscriptMessageListProps) {
@@ -106,6 +108,7 @@ export function AgentTranscriptMessageList({
             onOpenRunTranscript={onOpenRunTranscript}
             pendingToolCallIds={pendingToolCallIds}
             showFinalMessages={showFinalMessages}
+            showProcessDetails={showProcessDetails}
             showProcessStatus={showProcessStatus}
             streaming={row.streaming}
             subRunsByParentToolCallId={subRunsByParentToolCallId}

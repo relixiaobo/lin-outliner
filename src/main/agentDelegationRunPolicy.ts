@@ -20,13 +20,18 @@ export interface BudgetedRunState {
 export function normalizeRunScope(value: unknown): AgentRunScope | undefined {
   if (!isPlainRecord(value)) return undefined;
   const capabilities = normalizeAgentToolActionKinds(coerceStringArray(value.capabilities));
-  const resources = isPlainRecord(value.resources) ? {
-    docs: coerceStringArray(value.resources.docs),
-    paths: coerceStringArray(value.resources.paths),
-    nodes: coerceStringArray(value.resources.nodes),
-  } : undefined;
-  const compactResources = resources && (resources.docs?.length || resources.paths?.length || resources.nodes?.length)
-    ? resources
+  const resourcesValue = isPlainRecord(value.resources) ? value.resources : undefined;
+  const docs = resourcesValue ? coerceResourceArray(resourcesValue, 'docs') : undefined;
+  const paths = resourcesValue ? coerceResourceArray(resourcesValue, 'paths') : undefined;
+  const nodes = resourcesValue ? coerceResourceArray(resourcesValue, 'nodes') : undefined;
+  const writableNodes = resourcesValue ? coerceResourceArray(resourcesValue, 'writableNodes') : undefined;
+  const compactResources = docs !== undefined || paths !== undefined || nodes !== undefined || writableNodes !== undefined
+    ? {
+        ...(docs !== undefined ? { docs } : {}),
+        ...(paths !== undefined ? { paths } : {}),
+        ...(nodes !== undefined ? { nodes } : {}),
+        ...(writableNodes !== undefined ? { writableNodes } : {}),
+      }
     : undefined;
   return capabilities?.length || compactResources
     ? { capabilities, resources: compactResources }
@@ -37,7 +42,8 @@ export function normalizeRunBudgetInput(value: unknown): AgentRunBudget | undefi
   if (!isPlainRecord(value)) return undefined;
   const tokens = parsePositiveInteger(value.tokens);
   const wallClockMinutes = parsePositiveInteger(value.wallClockMinutes);
-  return tokens || wallClockMinutes ? { tokens, wallClockMinutes } : undefined;
+  const deadlineAt = parsePositiveInteger(value.deadlineAt);
+  return tokens || wallClockMinutes || deadlineAt ? { tokens, wallClockMinutes, deadlineAt } : undefined;
 }
 
 export function normalizeRunBudget(
@@ -52,12 +58,46 @@ export function normalizeRunBudget(
   const budget: AgentRunBudget = { ...existing };
   if (next?.tokens !== undefined) budget.tokens = next.tokens;
   if (next?.wallClockMinutes !== undefined) budget.wallClockMinutes = next.wallClockMinutes;
-  if (!budget.tokens && !budget.wallClockMinutes && !budget.reservedTokens && !budget.spentTokens) return undefined;
+  if (next?.deadlineAt !== undefined) budget.deadlineAt = next.deadlineAt;
+  if (!budget.tokens && !budget.wallClockMinutes && !budget.deadlineAt && !budget.reservedTokens && !budget.spentTokens) return undefined;
   budget.startedAt ??= now;
   if (budget.wallClockMinutes) {
-    budget.deadlineAt = budget.startedAt + budget.wallClockMinutes * 60_000;
+    const wallClockDeadlineAt = budget.startedAt + budget.wallClockMinutes * 60_000;
+    budget.deadlineAt = next?.deadlineAt !== undefined
+      ? Math.min(next.deadlineAt, wallClockDeadlineAt)
+      : wallClockDeadlineAt;
   }
   return budget;
+}
+
+export function prepareRunBudgetAmendment(
+  next: AgentRunBudget,
+  existing: AgentRunBudget | undefined,
+  parent: AgentRunBudget | undefined,
+  budgetSettled: boolean,
+  now: number,
+): { budget: AgentRunBudget | undefined; parentReservedTokens?: number } {
+  const budget = normalizeRunBudget(next, existing, now);
+  if (parent?.deadlineAt && budget) {
+    if (budget.deadlineAt !== undefined && budget.deadlineAt > parent.deadlineAt) {
+      throw new Error('Amended run budget exceeds parent remaining wall-clock budget.');
+    }
+    budget.deadlineAt ??= parent.deadlineAt;
+  }
+
+  if (!parent?.tokens || budgetSettled) return { budget };
+  const previousTokens = existing?.tokens ?? 0;
+  const nextTokens = budget?.tokens ?? 0;
+  const delta = nextTokens - previousTokens;
+  const reservedTokens = parent.reservedTokens ?? 0;
+  if (delta > 0) {
+    const headroom = Math.max(0, parent.tokens - reservedTokens - (parent.spentTokens ?? 0));
+    if (delta > headroom) throw new Error('Amended run budget exceeds parent remaining token budget.');
+  }
+  return {
+    budget,
+    parentReservedTokens: Math.max(0, reservedTokens + delta),
+  };
 }
 
 export function admitRunBudget(
@@ -81,9 +121,13 @@ export function admitRunBudget(
     ?? (detached ? { wallClockMinutes: DEFAULT_CHILD_WALL_CLOCK_MINUTES } : undefined);
   const budget = normalizeRunBudget(fallback, undefined, now);
   if (!budget) return undefined;
-  if (parent?.deadlineAt && budget.deadlineAt && budget.deadlineAt > parent.deadlineAt) {
-    budget.deadlineAt = parent.deadlineAt;
-    if (parentRemainingWallClockMinutes !== undefined) budget.wallClockMinutes = parentRemainingWallClockMinutes;
+  if (parent?.deadlineAt) {
+    if (!budget.deadlineAt || budget.deadlineAt > parent.deadlineAt) {
+      budget.deadlineAt = parent.deadlineAt;
+      if (budget.wallClockMinutes && parentRemainingWallClockMinutes !== undefined) {
+        budget.wallClockMinutes = Math.min(budget.wallClockMinutes, parentRemainingWallClockMinutes);
+      }
+    }
   }
   if (parent?.tokens && budget.tokens) {
     const parentHeadroom = Math.max(0, parent.tokens - (parent.reservedTokens ?? 0) - (parent.spentTokens ?? 0));
@@ -146,7 +190,7 @@ export function narrowRunScope(parent: AgentRunScope | undefined, requested: Age
     ? (requestedCapabilities?.length ? assertScopeSubset(requestedCapabilities, parentCapabilities, 'capabilities') : parentCapabilities)
     : requestedCapabilities;
   const resources = narrowRunResources(parent?.resources, requested?.resources);
-  return capabilities?.length || resources
+  return capabilities?.length || resources !== undefined
     ? { capabilities, resources }
     : undefined;
 }
@@ -168,7 +212,8 @@ export function retryBudgetSlice(budget: AgentRunBudget | undefined): AgentRunBu
   const next: AgentRunBudget = {};
   if (budget.tokens) next.tokens = budget.tokens;
   if (budget.wallClockMinutes) next.wallClockMinutes = budget.wallClockMinutes;
-  return next.tokens || next.wallClockMinutes ? next : undefined;
+  if (budget.deadlineAt) next.deadlineAt = budget.deadlineAt;
+  return next.tokens || next.wallClockMinutes || next.deadlineAt ? next : undefined;
 }
 
 export function formatRunBudgetForPrompt(budget: AgentRunBudget | undefined): string | null {
@@ -176,6 +221,7 @@ export function formatRunBudgetForPrompt(budget: AgentRunBudget | undefined): st
   const lines: string[] = [];
   if (budget.tokens) lines.push(`- token budget: ${budget.tokens}`);
   if (budget.wallClockMinutes) lines.push(`- wall-clock budget: ${budget.wallClockMinutes} minutes`);
+  if (budget.deadlineAt) lines.push(`- deadline: ${new Date(budget.deadlineAt).toISOString()}`);
   return lines.length ? lines.join('\n') : null;
 }
 
@@ -183,9 +229,10 @@ export function formatRunScopeForPrompt(scope: AgentRunScope | undefined): strin
   if (!scope) return null;
   const lines: string[] = [];
   if (scope.capabilities?.length) lines.push(`- capabilities: ${scope.capabilities.join(', ')}`);
-  if (scope.resources?.docs?.length) lines.push(`- docs: ${scope.resources.docs.join(', ')}`);
-  if (scope.resources?.paths?.length) lines.push(`- paths: ${scope.resources.paths.join(', ')}`);
-  if (scope.resources?.nodes?.length) lines.push(`- nodes: ${scope.resources.nodes.join(', ')}`);
+  if (scope.resources?.docs !== undefined) lines.push(`- docs: ${scope.resources.docs.join(', ') || 'none (deny all)'}`);
+  if (scope.resources?.paths !== undefined) lines.push(`- paths: ${scope.resources.paths.join(', ') || 'none (deny all)'}`);
+  if (scope.resources?.nodes !== undefined) lines.push(`- nodes: ${scope.resources.nodes.join(', ') || 'none (deny all)'}`);
+  if (scope.resources?.writableNodes !== undefined) lines.push(`- writable nodes: ${scope.resources.writableNodes.join(', ') || 'none (deny all)'}`);
   return lines.length ? lines.join('\n') : null;
 }
 
@@ -207,16 +254,52 @@ function assertScopeSubset(values: readonly string[], parentValues: readonly str
 }
 
 function narrowRunResources(parent: AgentRunScope['resources'] | undefined, requested: AgentRunScope['resources'] | undefined): AgentRunScope['resources'] | undefined {
-  const docs = parent?.docs?.length
-    ? (requested?.docs?.length ? assertScopeSubset(requested.docs, parent.docs, 'docs') : parent.docs)
-    : requested?.docs;
-  const paths = parent?.paths?.length
-    ? (requested?.paths?.length ? assertScopeSubset(requested.paths, parent.paths, 'paths') : parent.paths)
-    : requested?.paths;
-  const nodes = parent?.nodes?.length
-    ? (requested?.nodes?.length ? assertScopeSubset(requested.nodes, parent.nodes, 'nodes') : parent.nodes)
-    : requested?.nodes;
-  return docs?.length || paths?.length || nodes?.length ? { docs, paths, nodes } : undefined;
+  const docs = narrowResourceArray(parent?.docs, requested?.docs, 'docs');
+  const paths = narrowResourceArray(parent?.paths, requested?.paths, 'paths');
+  const nodes = narrowResourceArray(parent?.nodes, requested?.nodes, 'nodes');
+  const writableNodes = narrowWritableNodeResources(parent, requested, nodes);
+  return docs !== undefined || paths !== undefined || nodes !== undefined || writableNodes !== undefined
+    ? {
+        ...(docs !== undefined ? { docs } : {}),
+        ...(paths !== undefined ? { paths } : {}),
+        ...(nodes !== undefined ? { nodes } : {}),
+        ...(writableNodes !== undefined ? { writableNodes } : {}),
+      }
+    : undefined;
+}
+
+function narrowWritableNodeResources(
+  parent: AgentRunScope['resources'] | undefined,
+  requested: AgentRunScope['resources'] | undefined,
+  narrowedReadableNodes: readonly string[] | undefined,
+): string[] | undefined {
+  let writableNodes: string[] | undefined;
+  if (parent?.writableNodes !== undefined) {
+    writableNodes = requested?.writableNodes !== undefined
+      ? assertScopeSubset(requested.writableNodes, parent.writableNodes, 'writableNodes')
+      : [...parent.writableNodes];
+  } else if (parent?.nodes !== undefined && requested?.writableNodes !== undefined) {
+    writableNodes = assertScopeSubset(requested.writableNodes, parent.nodes, 'writableNodes');
+  } else if (requested?.writableNodes !== undefined) {
+    writableNodes = [...requested.writableNodes];
+  }
+  if (writableNodes !== undefined && narrowedReadableNodes !== undefined) {
+    return assertScopeSubset(writableNodes, narrowedReadableNodes, 'writableNodes');
+  }
+  return writableNodes;
+}
+
+function narrowResourceArray(
+  parentValues: readonly string[] | undefined,
+  requestedValues: readonly string[] | undefined,
+  label: string,
+): string[] | undefined {
+  if (parentValues !== undefined) {
+    return requestedValues !== undefined
+      ? assertScopeSubset(requestedValues, parentValues, label)
+      : [...parentValues];
+  }
+  return requestedValues ? [...requestedValues] : undefined;
 }
 
 function coerceStringArray(value: unknown): string[] | undefined {
@@ -225,6 +308,12 @@ function coerceStringArray(value: unknown): string[] | undefined {
     .filter((item): item is string => typeof item === 'string')
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function coerceResourceArray(value: Record<string, unknown>, key: string): string[] | undefined {
+  return Object.prototype.hasOwnProperty.call(value, key)
+    ? coerceStringArray(value[key])
+    : undefined;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

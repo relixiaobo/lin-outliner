@@ -17,8 +17,10 @@ import type {
   IssueReadResult,
   IssueSearchInput,
   IssueSearchResult,
+  TenonAgentToolResult,
   AgentSessionReadInput,
   AgentSessionReadResult,
+  AgentSessionTranscriptResult,
   AgentPickScopeFolderResult,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
@@ -323,8 +325,12 @@ export const api = {
     command<IssueSearchResult>('agent_issue_search', input as Record<string, unknown>),
   agentIssueRead: (input: IssueReadInput) =>
     command<IssueReadResult>('agent_issue_read', input as unknown as Record<string, unknown>),
+  agentIssueCompleteHumanReview: (issueId: string, expectedRevision: string) =>
+    command<TenonAgentToolResult>('agent_issue_complete_human_review', { issueId, expectedRevision }),
   agentSessionRead: (input: AgentSessionReadInput) =>
     command<AgentSessionReadResult | null>('agent_session_read', input as unknown as Record<string, unknown>),
+  agentSessionTranscript: (agentSessionId: string) =>
+    command<AgentSessionTranscriptResult | null>('agent_session_transcript', { agentSessionId }),
   agentListDreamHistory: (options: { limit?: number } = {}) =>
     command<AgentRenderDreamRunEntity[]>('agent_list_dream_history', options),
   agentDreamReadiness: () =>

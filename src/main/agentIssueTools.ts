@@ -1,5 +1,8 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type {
+  AgentIssue,
+  AgentRecurringIssue,
+  AgentSession,
   AgentSessionReadInput,
   AgentSessionReadResult,
   AgentSessionSendMessageInput,
@@ -52,7 +55,10 @@ export function createAgentIssueTools(runtime: AgentIssueToolRuntime): AgentTool
     execute: async (_toolCallId, rawParams: unknown) => {
       try {
         const data = await executeAgentIssueTool(runtime, definition.name, rawParams);
-        return agentToolResult(successEnvelope(definition.name, data), modelVisibleData(data));
+        return agentToolResult(
+          successEnvelope(definition.name, data),
+          modelVisibleData(definition.name, data, rawParams),
+        );
       } catch (error) {
         return agentToolResult(errorEnvelope(definition.name, 'agent_issue_tool_failed', errorMessage(error)));
       }
@@ -97,8 +103,78 @@ function labelForTool(name: string): string {
     .join(' ');
 }
 
-function modelVisibleData(data: AgentIssueToolData): string {
+function modelVisibleData(name: string, data: AgentIssueToolData, rawParams: unknown): string {
+  if (name === 'issue_read') {
+    return JSON.stringify(modelVisibleIssueRead(data as IssueReadResult));
+  }
+  if (name === 'agent_session_read') {
+    return JSON.stringify(modelVisibleSessionRead(
+      data as AgentSessionReadResult,
+      rawParams as AgentSessionReadInput,
+    ));
+  }
   return JSON.stringify(data);
+}
+
+function modelVisibleIssueRead(result: IssueReadResult): unknown {
+  return {
+    target: result.target,
+    ...(result.issue ? { issue: modelVisibleIssue(result.issue) } : {}),
+    ...(result.recurringIssue ? { recurringIssue: modelVisibleRecurringIssue(result.recurringIssue) } : {}),
+    ...(result.activity ? { activity: result.activity } : {}),
+    ...(result.sessions ? { sessions: result.sessions.map(modelVisibleSessionSummary) } : {}),
+    ...(result.childIssues ? { childIssues: result.childIssues.map(modelVisibleIssue) } : {}),
+    ...(result.generatedIssues ? { generatedIssues: result.generatedIssues.map(modelVisibleIssue) } : {}),
+  };
+}
+
+function modelVisibleIssue(issue: AgentIssue): Omit<AgentIssue, 'origin'> {
+  const { origin: _origin, ...visible } = issue;
+  return visible;
+}
+
+function modelVisibleRecurringIssue(
+  recurringIssue: AgentRecurringIssue,
+): Omit<AgentRecurringIssue, 'origin'> {
+  const { origin: _origin, ...visible } = recurringIssue;
+  return visible;
+}
+
+function modelVisibleSessionRead(
+  result: AgentSessionReadResult,
+  input: AgentSessionReadInput,
+): unknown {
+  const activity = result.activity ?? [];
+  return {
+    agentSession: {
+      ...modelVisibleSessionSummary(result.agentSession),
+      ...(input.include?.includes('latest-output') && result.agentSession.latestOutput !== undefined
+        ? { latestOutput: result.agentSession.latestOutput }
+        : {}),
+    },
+    ...(input.include?.includes('activity-summary')
+      ? { activity: activity.slice(-20) }
+      : {}),
+  };
+}
+
+function modelVisibleSessionSummary(session: AgentSession): Record<string, unknown> {
+  return {
+    id: session.id,
+    issueId: session.issueId,
+    delegate: session.delegate,
+    ...(session.purpose ? { purpose: session.purpose } : {}),
+    state: session.state,
+    ...(session.continuationOfAgentSessionId
+      ? { continuationOfAgentSessionId: session.continuationOfAgentSessionId }
+      : {}),
+    ...(session.errorMessage ? { errorMessage: session.errorMessage } : {}),
+    ...(session.startedAt !== undefined ? { startedAt: session.startedAt } : {}),
+    ...(session.completedAt !== undefined ? { completedAt: session.completedAt } : {}),
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    revision: session.revision,
+  };
 }
 
 function errorMessage(error: unknown): string {

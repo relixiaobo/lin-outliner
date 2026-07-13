@@ -339,6 +339,54 @@ describe('agent node tools', () => {
     expect(blockedMerge.error?.code).toBe('outside_scope');
   });
 
+  test('treats an explicit empty node resource scope as deny-all', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const nodeId = mustFocus(core.createNode(today, null, 'Outside empty scope'));
+    const options = { runScope: { resources: { nodes: [] as string[] } } };
+
+    const read = await executeTool(core, 'node_read', { node_id: nodeId }, options);
+    expect(read.ok).toBe(false);
+    expect(read.error?.code).toBe('outside_scope');
+
+    const search = await executeTool<{ total: number }>(core, 'node_search', {
+      outline: '- %%search%% Outside\n  - STRING_MATCH\n    - value:: Outside',
+      limit: 10,
+    }, options);
+    expect(search.ok).toBe(true);
+    expect(search.data?.total).toBe(0);
+  });
+
+  test('keeps Session input nodes read-only while allowing confirmed output writes', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const inputNode = mustFocus(core.createNode(today, null, 'Read-only input'));
+    const outputNode = mustFocus(core.createNode(today, null, 'Writable output'));
+    const options = {
+      runScope: {
+        resources: {
+          nodes: [inputNode, outputNode],
+          writableNodes: [outputNode],
+        },
+      },
+    };
+
+    expect((await executeTool(core, 'node_read', { node_id: inputNode }, options)).ok).toBe(true);
+
+    const blockedInputWrite = await executeTool(core, 'node_create', {
+      parent_id: inputNode,
+      outline: '- Must stay blocked',
+    }, options);
+    expect(blockedInputWrite.ok).toBe(false);
+    expect(blockedInputWrite.error?.code).toBe('outside_scope');
+
+    const allowedOutputWrite = await executeTool(core, 'node_create', {
+      parent_id: outputNode,
+      outline: '- Confirmed output child',
+    }, options);
+    expect(allowedOutputWrite.ok).toBe(true);
+  });
+
   test('node_create creates outline trees with tags fields descriptions and completion', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

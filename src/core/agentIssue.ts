@@ -1,3 +1,5 @@
+import type { AgentRunDetailPayload, AgentRunTranscriptPayload } from './agentTypes';
+
 export type AgentIssueId = string;
 export type AgentRecurringIssueId = string;
 export type AgentSessionId = string;
@@ -104,14 +106,24 @@ export type IssueOutputPolicy =
 
 export interface AgentExecutionPolicy {
   deadlineAt: number;
-  retryPolicy: 'none' | 'manual' | 'bounded';
-  maxAutomaticRetries?: number;
 }
 
 export type IssuePermissionMode = 'attended' | 'unattended';
 
+export type AgentVisibleConversationOrigin = {
+  type: 'conversation';
+  conversationId: string;
+};
+
+export type AgentIssueOrigin =
+  | AgentVisibleConversationOrigin
+  | { type: 'agent-session'; agentSessionId: AgentSessionId };
+
+export type AgentRecurringIssueOrigin = AgentVisibleConversationOrigin;
+
 export interface AgentIssue {
   id: AgentIssueId;
+  parentIssueId?: AgentIssueId;
   title: string;
   description?: string;
   status: IssueStatus;
@@ -129,9 +141,11 @@ export interface AgentIssue {
   permissionMode: IssuePermissionMode;
   executionPolicy?: AgentExecutionPolicy;
   confirmation: IssueConfirmation;
+  origin?: AgentIssueOrigin;
   revision: ObjectRevisionValue;
   createdAt: number;
   updatedAt: number;
+  terminalAt?: number;
   archivedAt?: number;
 }
 
@@ -155,11 +169,11 @@ export interface RecurringIssueTemplate {
   input?: IssueInputScope;
   output?: IssueOutputPolicy;
   permissionMode: IssuePermissionMode;
-  executionPolicy?: AgentExecutionPolicy;
 }
 
 export interface AgentRecurringIssue {
   id: AgentRecurringIssueId;
+  origin?: AgentRecurringIssueOrigin;
   titleTemplate: string;
   descriptionTemplate?: string;
   status: 'active' | 'paused' | 'archived';
@@ -180,10 +194,13 @@ export type AgentSessionState =
   | 'pending'
   | 'active'
   | 'error'
-  | 'awaitingInput'
   | 'complete'
   | 'stale'
   | 'canceled';
+
+export function isActiveAgentSessionState(state: AgentSessionState): boolean {
+  return state === 'pending' || state === 'active';
+}
 
 export type AgentSessionPurpose = 'execute' | 'verify';
 
@@ -201,11 +218,6 @@ export interface ResolvedIssueInput {
   preview?: string;
 }
 
-export interface AgentSessionPlanItem {
-  content: string;
-  status: 'pending' | 'inProgress' | 'completed' | 'canceled';
-}
-
 export interface AgentSession {
   id: AgentSessionId;
   issueId: AgentIssueId;
@@ -218,7 +230,6 @@ export interface AgentSession {
   outputSnapshot?: IssueOutputPolicy;
   executionPolicy?: AgentExecutionPolicy;
   continuationOfAgentSessionId?: AgentSessionId;
-  plan: AgentSessionPlanItem[];
   latestOutput?: string;
   errorMessage?: string;
   startedAt?: number;
@@ -234,6 +245,10 @@ export type ActivityTarget =
   | { type: 'agent-session'; agentSessionId: AgentSessionId };
 
 export type ActivityContent =
+  | { type: 'created' }
+  | { type: 'updated'; fields?: string[] }
+  | { type: 'archived' }
+  | { type: 'deleted' }
   | { type: 'comment'; body: string }
   | { type: 'field-change'; field: string; from?: unknown; to?: unknown }
   | { type: 'status-change'; from?: string; to: string }
@@ -269,6 +284,58 @@ export interface Activity {
   signals?: ActivitySignal[];
   relatedTargets?: RelatedTargetRef[];
   createdAt: number;
+}
+
+const GENERIC_AGENT_SESSION_PROGRESS_BODIES = new Set([
+  'Agent Session created and waiting for runtime execution.',
+  'Agent Session execution started.',
+  'Agent Session is active.',
+  'Agent Session is pending.',
+  'Agent Session completed.',
+]);
+
+export function isUserVisibleIssueActivity(activity: Pick<Activity, 'content'>): boolean {
+  switch (activity.content.type) {
+    case 'created':
+    case 'updated':
+    case 'archived':
+    case 'deleted':
+    case 'comment':
+    case 'agent-action':
+    case 'agent-question':
+    case 'agent-error':
+    case 'verification-result':
+    case 'output-link':
+    case 'status-change':
+      return true;
+    case 'agent-progress':
+      return !GENERIC_AGENT_SESSION_PROGRESS_BODIES.has(activity.content.body);
+    case 'agent-response':
+    case 'field-change':
+      return false;
+  }
+}
+
+export function isUserVisibleSessionProcessActivity(activity: Pick<Activity, 'content'>): boolean {
+  switch (activity.content.type) {
+    case 'agent-progress':
+      return !GENERIC_AGENT_SESSION_PROGRESS_BODIES.has(activity.content.body);
+    case 'agent-question':
+    case 'verification-result':
+    case 'agent-error':
+      return true;
+    case 'comment':
+    case 'created':
+    case 'updated':
+    case 'archived':
+    case 'deleted':
+    case 'agent-action':
+    case 'agent-response':
+    case 'field-change':
+    case 'output-link':
+    case 'status-change':
+      return false;
+  }
 }
 
 export interface ValidationMessage {
@@ -364,11 +431,7 @@ export interface IssueSearchOrder {
 
 export type IssueSearchInclude =
   | 'activity-summary'
-  | 'session-summary'
-  | 'criteria-summary'
-  | 'input-preview'
-  | 'output-preview'
-  | 'next-generated-issue';
+  | 'session-summary';
 
 export interface IssueSearchFilter {
   ids?: string[];
@@ -376,6 +439,8 @@ export interface IssueSearchFilter {
   delegateIds?: string[];
   issueIds?: AgentIssueId[];
   recurringIssueIds?: AgentRecurringIssueId[];
+  parentIssueIds?: AgentIssueId[];
+  hasParentIssue?: boolean;
   triggerTypes?: IssueTrigger['type'][];
   dueDate?: TimeRangeFilter;
   cadence?: RecurringCadenceType[];
@@ -394,6 +459,7 @@ export interface IssueSearchFilter {
   activityTarget?: ActivityTarget;
   createdAt?: TimeRangeFilter;
   updatedAt?: TimeRangeFilter;
+  terminalAt?: TimeRangeFilter;
 }
 
 export interface IssueSearchInput {
@@ -411,16 +477,10 @@ export type IssueTargetRef =
   | { type: 'recurring-issue'; id: AgentRecurringIssueId };
 
 export type IssueReadInclude =
-  | 'definition'
   | 'activity'
   | 'sessions'
-  | 'criteria'
-  | 'progress'
-  | 'generated-issues'
-  | 'linked-notes'
-  | 'input-preview'
-  | 'output-preview'
-  | 'session-plan';
+  | 'child-issues'
+  | 'generated-issues';
 
 export interface IssueReadInput {
   target: IssueTargetRef;
@@ -456,7 +516,6 @@ export interface RecurringIssueDraftFields {
 export interface IssuePatchFields {
   title?: string;
   description?: string;
-  status?: IssueStatus;
   delegate?: AgentRef;
   relations?: IssueRelation[];
   trigger?: IssueTrigger;
@@ -474,7 +533,6 @@ export interface IssuePatchFields {
 export interface RecurringIssuePatchFields {
   titleTemplate?: string;
   descriptionTemplate?: string;
-  status?: AgentRecurringIssue['status'];
   cadence?: RecurringIssueCadence;
   timeZone?: string;
   missedPolicy?: RecurringIssueMissedPolicy;
@@ -532,8 +590,6 @@ export interface AgentSessionContinuationRequest {
 
 export interface AgentSessionExecutionPolicyOverride {
   deadlineAt?: number;
-  retryPolicy?: 'none' | 'manual' | 'bounded';
-  maxAutomaticRetries?: number;
 }
 
 export interface AgentSessionStartInput {
@@ -549,8 +605,7 @@ export interface AgentSessionStartInput {
 
 export type AgentSessionReadInclude =
   | 'activity-summary'
-  | 'latest-output'
-  | 'blocking-question';
+  | 'latest-output';
 
 export interface AgentSessionReadInput {
   agentSessionId: AgentSessionId;
@@ -562,7 +617,6 @@ export interface AgentSessionReadInput {
 export interface AgentSessionSendMessageInput {
   agentSessionId: AgentSessionId;
   message: string;
-  kind?: 'guidance' | 'answer';
   request: ChangeRequest;
   reason: string;
 }
@@ -575,6 +629,7 @@ export interface AgentSessionStopInput {
 
 export interface IssueSearchRow {
   target: IssueTargetRef;
+  parentIssueId?: AgentIssueId;
   title: string;
   status: string;
   statusCategory?: IssueStatusCategory;
@@ -589,6 +644,7 @@ export interface IssueSearchRow {
   latestSessionUpdatedAt?: number;
   revision: ObjectRevisionValue;
   updatedAt: number;
+  terminalAt?: number;
   latestActivity?: Activity;
   activityCount?: number;
 }
@@ -604,10 +660,19 @@ export interface IssueReadResult {
   recurringIssue?: AgentRecurringIssue;
   activity?: Activity[];
   sessions?: AgentSession[];
+  childIssues?: AgentIssue[];
   generatedIssues?: AgentIssue[];
 }
 
 export interface AgentSessionReadResult {
   agentSession: AgentSession;
   activity?: Activity[];
+}
+
+export interface AgentSessionTranscriptResult {
+  agentSessionId: AgentSessionId;
+  conversationId: string;
+  runId: string;
+  run: AgentRunDetailPayload;
+  transcript: AgentRunTranscriptPayload;
 }

@@ -79,7 +79,7 @@ import {
   type AgentEventReplayState,
   type AgentIdentityRecord,
   type AgentNotificationKind,
-  type AgentRunNotificationSource,
+  type AgentNotificationSource,
   type AgentRunSubmissionProjection,
   type AgentPayloadRef,
   type AgentPersistedContent,
@@ -90,6 +90,7 @@ import {
   type AgentRunMeta,
   type AgentRunProfileId,
   type AgentRunPurpose,
+  type RunTerminalEvent,
   type AgentRunScope,
   type AgentUserQuestionAnswer,
   type AgentUserQuestionAttachment,
@@ -115,12 +116,15 @@ import {
 } from '../core/referenceMarkup';
 import { normalizeConversationTitle, sanitizeConversationTitle } from '../core/agentConversationTitle';
 import { TOOL_CATALOG } from '../core/agentToolCatalog';
+import { isActiveAgentSessionState } from '../core/agentIssue';
 import type {
+  AgentIssueOrigin,
   AgentIssueRunProfile,
   AgentIssue,
   AgentSession,
   AgentSessionReadInput,
   AgentSessionReadResult,
+  AgentSessionTranscriptResult,
   AgentSessionStartInput,
   IssueCompletionCriterion,
   IssueReadInput,
@@ -128,6 +132,7 @@ import type {
   IssueSearchResult,
   IssueOutputPolicy,
   IssueReadResult,
+  TenonAgentToolResult,
 } from '../core/agentIssue';
 import { isSystemReminderBlock, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
@@ -166,8 +171,15 @@ import {
   type AgentConversationIndexEntry,
   type AgentRunMetaProjection,
 } from './agentEventStore';
-import { AgentIssueStore, type AgentSessionExecutionBinding, type AgentSessionExecutionSyncInput } from './agentIssueStore';
+import {
+  AgentIssueStore,
+  TERMINAL_DELIVERY_CLAIM_LEASE_MS,
+  type AgentIssueTerminalDelivery,
+  type AgentSessionExecutionBinding,
+  type AgentSessionExecutionSyncInput,
+} from './agentIssueStore';
 import { resolveIssueInputScopeFromProjection } from './agentIssueInputResolver';
+import { validateChildIssueNodeScope } from './agentIssueScopeAuthorization';
 import { agentSessionRunScope } from './agentIssueSessionScope';
 import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
@@ -233,7 +245,11 @@ import {
   type SkillListingReservation,
   type SkillTurnEffect,
 } from './agentSkills';
-import { createAgentIssueToolRuntime, type AgentSessionExecutor } from './agentIssueRuntime';
+import {
+  createAgentIssueToolRuntime,
+  runAgentSessionControlOperation,
+  type AgentSessionExecutor,
+} from './agentIssueRuntime';
 import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import {
   INTERNAL_DELEGATION_ACTOR_TOOL_NAME,
@@ -241,6 +257,7 @@ import {
   createTenonAssistantAgentDefinition,
   recordNodeToolChanges,
   type AgentChildAgentCreateInput,
+  type AgentDelegateToolData,
   type AgentRunSnapshot,
 } from './agentDelegation';
 import {
@@ -304,6 +321,7 @@ import { defaultThinkingLevelFor } from '../core/agentReasoning';
 import { AGENT_REASONING_LADDER } from '../core/types';
 import type {
   AgentDefinition,
+  AgentConversation,
   AgentPermissionMode,
   AgentReasoningLevel,
   AgentRuntimeSettings,
@@ -344,7 +362,7 @@ import {
   offsetIsoLocalDate,
   startOfLocalDay,
 } from '../core/localDate';
-import type { AgentPermissionGrant } from '../core/agentPermissionModel';
+import { readOnlyAgentToolNames, type AgentPermissionGrant } from '../core/agentPermissionModel';
 
 const CLEAR_COMMAND_PATTERN = /^\/clear\s*$/;
 
@@ -396,6 +414,8 @@ const DREAM_MIN_VOLUME_CHARS = 1_000;
 const DREAM_CHANNEL_RETAINED_RUNS = 512;
 const MEMORY_DREAM_SKILL_NAME = 'memory-dream';
 const LEGACY_MEMORY_DREAM_CONVERSATION_ID = 'lin-agent-memory-dream';
+const ISSUE_AGENT_CONVERSATION_PREFIX = 'lin-agent-issue-';
+const ROOT_ISSUE_DELIVERY_RUN_PREFIX = 'issue-delivery-run-';
 const MEMORY_DREAM_ALLOWED_TOOLS = [
   'past_chats',
   'node_search',
@@ -423,6 +443,7 @@ interface DebugConversationContext {
 }
 const DREAM_SCHEDULER_INTERVAL_MS = 60_000;
 const ISSUE_SCHEDULER_INTERVAL_MS = 60_000;
+const ISSUE_DELIVERY_RETRY_DELAY_MS = 1_000;
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -623,6 +644,7 @@ interface AgentConversationState {
   runNotificationFlushInProgress: boolean;
   runNotificationFlushRetryCount: number;
   runNotificationFlushRetryTimer: ReturnType<typeof setTimeout> | null;
+  promptInProgress: boolean;
   runtimeSettings: AgentRuntimeSettings;
   skillRuntime: AgentSkillRuntime;
   delegationRuntime: AgentDelegationRuntime;
@@ -717,6 +739,8 @@ type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
 
 export class AgentRuntime {
   private conversations = new Map<string, AgentConversationState>();
+  private readonly delegatedExecutionFrames = new Map<string, Map<string, number>>();
+  private readonly deferredConversationCloseIds = new Set<string>();
   private generalChannelEnsureInFlight: Promise<AgentEventReplayState> | null = null;
   private dreamChannelEnsureInFlight: Promise<AgentEventReplayState> | null = null;
   private osNotifier?: OsNotifier;
@@ -743,6 +767,14 @@ export class AgentRuntime {
   private debugRunCache = new Map<string, { latestSeq: number; contextSeq: number; parentToolCallId: string | null; run: AgentDebugRun }>();
   private eventStore: AgentEventStore | null = null;
   private issueStore: AgentIssueStore | null = null;
+  private readonly issueDeliveryOwnerId = `issue-delivery-owner:${randomUUID()}`;
+  private readonly issueDeliveriesInFlight = new Set<string>();
+  private readonly issueDeliveryRetryNotBefore = new Map<string, number>();
+  private issueDeliveryRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private issueDeliveryRetryTimerAt: number | null = null;
+  private issueDeliveryRetryScheduleGeneration = 0;
+  private issueDeliveryRetryScheduleTail: Promise<void> = Promise.resolve();
+  private shutdownStarted = false;
   private pastChatsService: AgentPastChatsService | null = null;
   private pendingApprovals = new Map<string, AgentPendingApproval>();
   private pendingUserQuestions = new Map<string, AgentPendingUserQuestion>();
@@ -760,7 +792,9 @@ export class AgentRuntime {
   private readonly dreamFailureBackoff = new Map<string, { consecutiveFailures: number; nextAttemptAt: number }>();
   private dreamSchedulerTimer: ReturnType<typeof setInterval> | null = null;
   private issueSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+  private issueStartupRecoveryQueued = false;
   private readonly firingIssueIds = new Set<string>();
+  private readonly firingIssueStarts = new Set<Promise<void>>();
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentConversationState>;
   // Mutable: the primary agent (Neva) is user-customizable, so her display name and
@@ -844,8 +878,13 @@ export class AgentRuntime {
       startReactiveRetryRun: async (conversationId, conversation) => {
         // The retry continues the SAME turn: same executing member — never the
         // coordinator's identity by default.
-        await this.startRun(conversationId, conversation, conversation.lastRun?.lastSubmittedUserPrompt ?? null, null, {
-          executingAgentId: conversation.lastRun?.executingAgentId,
+        const previousRun = conversation.lastRun;
+        const runId = previousRun?.id.startsWith(ROOT_ISSUE_DELIVERY_RUN_PREFIX)
+          ? `${previousRun.id}-reactive`
+          : undefined;
+        await this.startRun(conversationId, conversation, previousRun?.lastSubmittedUserPrompt ?? null, null, {
+          runId,
+          executingAgentId: previousRun?.executingAgentId,
         });
       },
       completeSimpleFn: this.options.completeSimpleFn,
@@ -863,7 +902,10 @@ export class AgentRuntime {
     void this.ensureDefaultChannelEventStates()
       .catch((error) => this.reportWarn('agent-runtime', 'Failed to ensure default channels.', error));
     this.queueScheduledDream(new Date());
-    this.queueIssueRecovery(new Date());
+    if (!this.issueStartupRecoveryQueued) {
+      this.issueStartupRecoveryQueued = true;
+      this.queueIssueRecovery(new Date());
+    }
     this.queueIssueSweep(new Date());
   }
 
@@ -885,11 +927,11 @@ export class AgentRuntime {
   appendNotificationForTest(conversationId: string, notificationId: string): Promise<void> {
     const conversation = this.conversations.get(conversationId);
     if (!conversation) throw new Error(`Agent conversation not live: ${conversationId}`);
-    return this.emitRunNotification(conversationId, conversation, {
+    return this.emitConversationNotification(conversationId, conversation, {
       notificationId,
       kind: 'task_completed',
       title: 'Test notification',
-    });
+    }).then(() => undefined);
   }
 
   async restoreLatestConversation() {
@@ -1022,7 +1064,7 @@ export class AgentRuntime {
     const liveConversation = this.conversations.get(config.id);
     const eventState = liveConversation?.eventState ?? await this.loadEventState(config.id);
     const inputs = this.protectedDefaultChannelInvariantInputs(config, eventState, desiredMembers, {
-      removeUnavailablePeers: !liveConversation || !this.hasActiveRuns(liveConversation),
+      removeUnavailablePeers: !liveConversation || !this.isConversationBusy(liveConversation),
     });
     if (inputs.length === 0) return eventState;
 
@@ -1278,11 +1320,112 @@ export class AgentRuntime {
   }
 
   async readIssue(input: IssueReadInput): Promise<IssueReadResult> {
+    await this.syncIssueSessionsForRead(input).catch(() => undefined);
     return this.getIssueStore().read(input);
   }
 
+  async completeHumanReview(issueId: string, expectedRevision?: string): Promise<TenonAgentToolResult> {
+    const result = await this.getIssueStore().update({
+      target: {
+        type: 'issue',
+        id: issueId,
+        ...(expectedRevision ? { expectedRevision } : {}),
+      },
+      change: { type: 'transition', status: { name: 'Completed', category: 'completed' } },
+      request: { mode: 'request' },
+      reason: 'The local user accepted the human-reviewed result in Work.',
+    }, { type: 'user', userId: LOCAL_USER_ID }, Date.now(), {
+      allowHumanReviewTransition: true,
+    });
+    if (result.status === 'applied') this.queueIssueDeliveryDrain();
+    return result;
+  }
+
   async readAgentSession(input: AgentSessionReadInput): Promise<AgentSessionReadResult | null> {
+    await this.syncAgentSessionExecutionForRead(input).catch(() => undefined);
     return this.getIssueStore().readSession(input);
+  }
+
+  async agentSessionTranscript(agentSessionId: string): Promise<AgentSessionTranscriptResult | null> {
+    if (!agentSessionId) return null;
+    await this.syncAgentSessionExecutionForRead({
+      agentSessionId,
+      include: ['latest-output'],
+    }).catch(() => undefined);
+    const binding = await this.getIssueStore().executionForSession(agentSessionId);
+    if (!binding || binding.engine !== 'delegation') return null;
+    const [run, transcript] = await Promise.all([
+      this.agentRunDetail(binding.executionId, binding.conversationId),
+      this.agentRunTranscript(binding.conversationId, binding.executionId),
+    ]);
+    if (!run || !transcript) return null;
+    return {
+      agentSessionId,
+      conversationId: binding.conversationId,
+      runId: binding.executionId,
+      run,
+      transcript,
+    };
+  }
+
+  private async readConversationProjection(conversationId: string): Promise<AgentConversation | null> {
+    const liveConversation = this.conversations.get(conversationId);
+    if (liveConversation) return this.conversationResponse(conversationId, liveConversation);
+
+    const store = this.getEventStore();
+    const [eventState, runMetas, conversationMeta] = await Promise.all([
+      this.loadEventState(conversationId),
+      store.listConversationRunMetaProjections(conversationId),
+      store.readConversationMetaProjection(conversationId),
+    ]);
+    if (!eventState.conversation) return null;
+
+    const renderProjection = buildAgentRenderProjection(eventState, {
+      revision: conversationMeta?.latestSeq ?? eventState.latestSeq,
+      activeRunId: null,
+      activeRuns: [],
+      activeCompaction: null,
+      activeDream: null,
+      runActive: false,
+      model: {},
+      thinkingLevel: 'off',
+      pendingToolCallIds: [],
+      errorMessage: null,
+      memberDisplayNames: { [this.agentIdentity.agentId]: this.agentIdentity.displayName },
+      coordinatorAgentId: this.agentIdentity.agentId,
+      runs: runMetas,
+      runProfileLabels: runProfileLabelsForRender(runMetas),
+      runTitles: runTitlesForRender(runMetas),
+    });
+
+    return {
+      conversationId,
+      renderProjection: {
+        ...renderProjection,
+        conversationTitle: sanitizeConversationTitle(renderProjection.conversationTitle),
+      },
+      pendingUserQuestion: null,
+    };
+  }
+
+  private async syncIssueSessionsForRead(input: IssueReadInput): Promise<void> {
+    if (!input.include?.includes('sessions')) return;
+    const detail = await this.getIssueStore().read({ target: input.target, include: ['sessions'] });
+    const sessions = (detail.sessions ?? []).filter((session) => isActiveAgentSessionState(session.state));
+    await Promise.allSettled(sessions.map((session) => this.syncAgentSessionExecutionForRead({
+      agentSessionId: session.id,
+      include: ['latest-output'],
+    })));
+  }
+
+  private async syncAgentSessionExecutionForRead(input: AgentSessionReadInput): Promise<void> {
+    const binding = await this.getIssueStore().executionForSession(input.agentSessionId);
+    if (!binding || binding.engine !== 'delegation') return;
+    const data = await this.runStatus(binding.conversationId, binding.executionId, {
+      wait: input.wait === true,
+      timeoutMs: input.timeoutMs,
+    });
+    await this.syncIssueSessionFromDelegationData(data);
   }
 
   async listSlashCommands(conversationId: string): Promise<AgentSlashCommandView[]> {
@@ -1616,7 +1759,12 @@ export class AgentRuntime {
     }
     const events = await this.getEventStore().readRunStreamEvents(runId);
     if (events.length === 0) return null;
-    const latestSubmission = latestRunSubmissionFromEvents(events, meta.objective?.latestSubmissionSeq);
+    const latestSubmission = latestRunResultFromEvents(
+      events,
+      runId,
+      meta.objective?.latestSubmissionSeq,
+      meta.execution.status !== 'running',
+    );
     let state: AgentEventReplayState | null = null;
     let messages: AgentMessage[] = [];
     try {
@@ -1675,8 +1823,77 @@ export class AgentRuntime {
 
   async runStop(conversationId: string, runId: string) {
     const conversation = await this.ensureConversationWithId(conversationId);
-    return conversation.delegationRuntime.stop({
-      runId,
+    const store = this.getIssueStore();
+    const issueSession = await store.sessionForExecution({
+      engine: 'delegation',
+      executionId: runId,
+    });
+    if (!issueSession) return conversation.delegationRuntime.stop({ runId });
+
+    return runAgentSessionControlOperation(store, issueSession.id, async () => {
+      const stopInput = {
+        agentSessionId: issueSession.id,
+        request: { mode: 'request' },
+        reason: 'Stop requested from the Run detail surface.',
+      } as const;
+      const issueStopReservation = await store.reserveSessionStop(stopInput);
+      if (issueStopReservation.result.status !== 'applied' || !issueStopReservation.token) {
+        if (issueStopReservation.result.status === 'applied') {
+          return conversation.delegationRuntime.status({ runId });
+        }
+        throw new Error(issueStopReservation.result.validation?.[0]?.message ?? 'This Issue execution cannot be stopped.');
+      }
+      try {
+        const result = await conversation.delegationRuntime.stop({ runId });
+        await this.syncIssueSessionFromDelegationData(result);
+        if (delegationDataConfirmsCancellation(result)) {
+          const committed = await store.commitReservedSessionStop(
+            stopInput,
+            issueStopReservation.token,
+            { type: 'system' },
+            Date.now(),
+          );
+          if (committed.status !== 'applied') {
+            throw new Error(committed.validation?.[0]?.message ?? 'Issue Session stop could not be committed.');
+          }
+          return result;
+        }
+        await store.releaseSessionStop(issueSession.id, issueStopReservation.token);
+        return result;
+      } catch (error) {
+        try {
+          const status = await conversation.delegationRuntime.status({ runId });
+          await this.syncIssueSessionFromDelegationData(status);
+          if (delegationDataConfirmsCancellation(status)) {
+            const committed = await store.commitReservedSessionStop(
+              stopInput,
+              issueStopReservation.token,
+              { type: 'system' },
+              Date.now(),
+            );
+            if (committed.status === 'applied') return status;
+          } else {
+            await store.releaseSessionStop(issueSession.id, issueStopReservation.token);
+          }
+        } catch {
+          const afterFailure = await store.readSession({ agentSessionId: issueSession.id });
+          if (afterFailure?.agentSession.state === 'canceled') {
+            const committed = await store.commitReservedSessionStop(
+              stopInput,
+              issueStopReservation.token,
+              { type: 'system' },
+              Date.now(),
+            );
+            if (committed.status === 'applied') {
+              return conversation.delegationRuntime.status({ runId });
+            }
+          } else if (afterFailure && !isActiveAgentSessionState(afterFailure.agentSession.state)) {
+            await store.releaseSessionStop(issueSession.id, issueStopReservation.token);
+          }
+          // Preserve the durable reservation until restart when execution state is unknown.
+        }
+        throw error;
+      }
     });
   }
 
@@ -1959,6 +2176,18 @@ export class AgentRuntime {
     const protectedDefault = protectedDefaultChannelConfig(conversationId);
     if (protectedDefault) throw new Error(`#${protectedDefault.title} cannot be deleted.`);
     const conversation = this.conversations.get(conversationId);
+    if (conversation && this.isConversationBusy(conversation)) {
+      throw new Error('A Channel with active agent work cannot be deleted. Stop the active work first.');
+    }
+    const routingReferences = await this.getIssueStore().conversationRoutingReferences(conversationId);
+    if (
+      routingReferences.issueIds.length > 0
+      || routingReferences.recurringIssueIds.length > 0
+      || routingReferences.agentSessionIds.length > 0
+      || routingReferences.deliveryIds.length > 0
+    ) {
+      throw new Error('A Channel used by active Issue routing cannot be deleted. Complete, cancel, archive, or deliver the referenced work first.');
+    }
     if (conversation) {
       await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_deleted');
       for (const run of this.activeRunList(conversation)) run.agent.abort();
@@ -1992,10 +2221,10 @@ export class AgentRuntime {
       const messageText = rewriteFileReferenceMarkerPaths(message, materialized.pathMap);
       if (!messageText.trim() && attachments.length === 0) return;
       const clearCommand = attachments.length === 0 && parseClearSlashCommand(messageText);
-      if (clearCommand && this.hasActiveRuns(conversation)) {
+      if (clearCommand && this.isConversationBusy(conversation)) {
         throw new Error('Cannot clear context while a Channel run is active.');
       }
-      if (this.hasActiveRuns(conversation)) {
+      if (this.isConversationBusy(conversation)) {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
         }
@@ -2084,9 +2313,10 @@ export class AgentRuntime {
         userViewContextReminder.commit();
         startedRunId = await this.startRun(conversationId, conversation, prompt);
       }
-      await conversation.agent.prompt(prompt);
-      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
-      await this.persistAndEmitIdle(conversationId, conversation);
+      await this.promptConversationAgent(conversation, prompt, async () => {
+        await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+        await this.persistAndEmitIdle(conversationId, conversation);
+      });
     } catch (error) {
       // Scoped to the run THIS call started: a startRun rejected by the
       // already-active guard must never clear the healthy run that owns the slot.
@@ -2097,7 +2327,7 @@ export class AgentRuntime {
 
   /** Edit/regenerate/retry/switch act on a settled transcript — any in-flight run means it is not settled. */
   private assertNoActiveChannelRound(conversation: AgentConversationState) {
-    if (this.hasActiveRuns(conversation)) throw new Error('Cannot modify the transcript while a Channel run is active.');
+    if (this.isConversationBusy(conversation)) throw new Error('Cannot modify the transcript while a Channel run is active.');
   }
 
   async editMessage(conversationId: string, nodeId: string, message: string) {
@@ -2304,45 +2534,51 @@ export class AgentRuntime {
     return { stopped: true };
   }
 
-  resetConversation(conversationId: string) {
+  async resetConversation(conversationId: string): Promise<void> {
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
+    if (this.hasLiveDelegatedExecutionFrames(conversationId)) {
+      throw new Error('A Channel carrying active Agent Session execution cannot be reset. Stop or finish that work first.');
+    }
+    const routingReferences = await this.getIssueStore().conversationRoutingReferences(conversationId);
+    if (routingReferences.agentSessionIds.length > 0) {
+      throw new Error('A Channel used by active Agent Session routing cannot be reset. Complete, cancel, or deliver the referenced work first.');
+    }
+    if (this.conversations.get(conversationId) !== conversation) return;
     for (const run of this.activeRunList(conversation)) run.agent.abort();
     conversation.agent.reset();
     this.cleanupProviderConversationResources(conversationId);
     this.userViewContextReminderTracker.reset(conversationId);
-    void (async () => {
-      await this.clearPendingApprovalsForConversation(conversationId, conversation);
-      await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_reset');
-      const previousConversation = conversation.eventState.conversation;
-      await this.getEventStore().deleteConversation(conversationId);
-      const eventState = createEmptyAgentEventReplayState();
-      const events = this.buildEvents(eventState, conversationId, [{
-        type: 'conversation.created',
-        actor: systemActor(),
-        title: previousConversation?.title ?? 'Untitled',
-        members: previousConversation?.members.slice() ?? this.defaultConversationMembers(),
-        goal: previousConversation?.goal,
-      }]);
-      await this.getEventStore().appendEvents(conversationId, events);
-      for (const event of events) appendAgentEventToReplayState(eventState, event);
-      this.publishPersistedEvents(conversationId, events);
-      conversation.eventState = eventState;
-      conversation.agent.state.messages = [];
-      conversation.autoCompactConsecutiveFailures = 0;
-      conversation.activeRuns.clear();
-      conversation.activeRun = null;
-      conversation.lastRun = null;
-      conversation.pendingChildRunNotifications.length = 0;
-      this.clearRunNotificationFlushRetry(conversation);
-      conversation.queuedFollowUpSkillListingReservation = null;
-      conversation.reactiveCompactRequested = false;
-      conversation.localWorkspace.readFileState.clear();
-      conversation.toolResultBudgetState = createToolResultBudgetState();
-      await this.refreshRuntimeSettings(conversation);
-      conversation.skillRuntime.resetConversationState();
-      this.emitProjection(conversationId, 'conversation_reset');
-    })().catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+    await this.clearPendingApprovalsForConversation(conversationId, conversation);
+    await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_reset');
+    const previousConversation = conversation.eventState.conversation;
+    await this.getEventStore().deleteConversation(conversationId);
+    const eventState = createEmptyAgentEventReplayState();
+    const events = this.buildEvents(eventState, conversationId, [{
+      type: 'conversation.created',
+      actor: systemActor(),
+      title: previousConversation?.title ?? 'Untitled',
+      members: previousConversation?.members.slice() ?? this.defaultConversationMembers(),
+      goal: previousConversation?.goal,
+    }]);
+    await this.getEventStore().appendEvents(conversationId, events);
+    for (const event of events) appendAgentEventToReplayState(eventState, event);
+    this.publishPersistedEvents(conversationId, events);
+    conversation.eventState = eventState;
+    conversation.agent.state.messages = [];
+    conversation.autoCompactConsecutiveFailures = 0;
+    conversation.activeRuns.clear();
+    conversation.activeRun = null;
+    conversation.lastRun = null;
+    conversation.pendingChildRunNotifications.length = 0;
+    this.clearRunNotificationFlushRetry(conversation);
+    conversation.queuedFollowUpSkillListingReservation = null;
+    conversation.reactiveCompactRequested = false;
+    conversation.localWorkspace.readFileState.clear();
+    conversation.toolResultBudgetState = createToolResultBudgetState();
+    await this.refreshRuntimeSettings(conversation);
+    conversation.skillRuntime.resetConversationState();
+    this.emitProjection(conversationId, 'conversation_reset');
   }
 
   closeConversation(conversationId: string) {
@@ -2354,13 +2590,53 @@ export class AgentRuntime {
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
     for (const run of this.activeRunList(conversation)) run.agent.abort();
     conversation.agent.abort();
+    if (this.hasLiveDelegatedExecutionFrames(conversationId)) {
+      this.deferredConversationCloseIds.add(conversationId);
+      clearPendingProjection(conversation);
+      this.userViewContextReminderTracker.reset(conversationId);
+      this.emitConversationRuntimeEvent(conversationId, { type: 'closed' });
+      return;
+    }
+    this.destroyConversationRuntime(conversationId, conversation, true);
+  }
+
+  private destroyConversationRuntime(
+    conversationId: string,
+    conversation: AgentConversationState,
+    emitClosed: boolean,
+  ): void {
     conversation.unsubscribe?.();
     clearPendingProjection(conversation);
     this.clearRunNotificationFlushRetry(conversation);
-    this.conversations.delete(conversationId);
+    if (this.conversations.get(conversationId) === conversation) this.conversations.delete(conversationId);
+    this.deferredConversationCloseIds.delete(conversationId);
+    this.delegatedExecutionFrames.delete(conversationId);
     this.userViewContextReminderTracker.reset(conversationId);
     this.cleanupProviderConversationResources(conversationId);
-    this.emitConversationRuntimeEvent(conversationId, { type: 'closed' });
+    if (emitClosed) this.emitConversationRuntimeEvent(conversationId, { type: 'closed' });
+  }
+
+  private retainDelegatedExecutionFrame(conversationId: string, runId: string): void {
+    const counts = this.delegatedExecutionFrames.get(conversationId) ?? new Map<string, number>();
+    counts.set(runId, (counts.get(runId) ?? 0) + 1);
+    this.delegatedExecutionFrames.set(conversationId, counts);
+  }
+
+  private releaseDelegatedExecutionFrame(conversationId: string, runId: string): void {
+    const counts = this.delegatedExecutionFrames.get(conversationId);
+    if (!counts) return;
+    const next = Math.max(0, (counts.get(runId) ?? 0) - 1);
+    if (next === 0) counts.delete(runId);
+    else counts.set(runId, next);
+    if (counts.size > 0) return;
+    this.delegatedExecutionFrames.delete(conversationId);
+    if (!this.deferredConversationCloseIds.has(conversationId)) return;
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) this.destroyConversationRuntime(conversationId, conversation, false);
+  }
+
+  private hasLiveDelegatedExecutionFrames(conversationId: string): boolean {
+    return (this.delegatedExecutionFrames.get(conversationId)?.size ?? 0) > 0;
   }
 
   private async clearPendingApprovalsForConversation(conversationId: string, conversation: AgentConversationState) {
@@ -2447,6 +2723,12 @@ export class AgentRuntime {
     const conversationId = eventState.conversation.id;
     this.reserveConversationId(conversationId);
     const existing = this.conversations.get(conversationId);
+    if (existing && (this.isConversationBusy(existing) || this.hasLiveDelegatedExecutionFrames(conversationId))) {
+      if (this.hasLiveDelegatedExecutionFrames(conversationId)) {
+        this.deferredConversationCloseIds.delete(conversationId);
+      }
+      return existing;
+    }
     if (existing) {
       for (const run of this.activeRunList(existing)) run.agent.abort();
     }
@@ -2556,10 +2838,24 @@ export class AgentRuntime {
           this.runLedger.submitResult(snapshot.id, { ...input, actor: this.delegatedRunActor(snapshot) })
         ),
         readLatestRunSubmission: (runId) => this.readLatestRunSubmission(runId),
-        runStatusChanged: (snapshot) => {
+        runStatusChanged: (snapshot, durableMessage) => {
           const current = this.currentRuntimeConversation(conversationRef.current);
           if (!current) return Promise.resolve();
-          return this.runStatusChanged(conversationId, current, snapshot);
+          return this.runStatusChanged(conversationId, current, snapshot, durableMessage);
+        },
+        runExecutionStarted: (snapshot) => {
+          this.retainDelegatedExecutionFrame(conversationId, snapshot.id);
+        },
+        runExecutionSettled: async (snapshot) => {
+          try {
+            const session = await this.getIssueStore().sessionForExecution({
+              engine: 'delegation',
+              executionId: snapshot.id,
+            });
+            if (session) this.queueIssueDeliveryDrain();
+          } finally {
+            this.releaseDelegatedExecutionFrame(conversationId, snapshot.id);
+          }
         },
         notifyRun: (snapshot) => {
           const current = this.currentRuntimeConversation(conversationRef.current);
@@ -2629,10 +2925,14 @@ export class AgentRuntime {
           runtimeSettingsLoader: () => this.getRuntimeSettings(),
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
-          issueRuntime: this.createIssueToolRuntime(defaultAgentId, this.createIssueSessionExecutor(
-            () => this.currentRuntimeConversation(conversationRef.current)?.delegationRuntime ?? null,
-            () => conversationId,
-          )),
+          issueRuntime: this.createIssueToolRuntime(
+            defaultAgentId,
+            this.createIssueSessionExecutor(
+              () => this.currentRuntimeConversation(conversationRef.current)?.delegationRuntime ?? null,
+              () => conversationId,
+            ),
+            () => ({ conversationId }),
+          ),
           chatSourceValidator: this.createChatSourceValidator(),
           pastChats: this.createPastChatsToolRuntime(() => conversationId),
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
@@ -2702,6 +3002,7 @@ export class AgentRuntime {
       runNotificationFlushInProgress: false,
       runNotificationFlushRetryCount: 0,
       runNotificationFlushRetryTimer: null,
+      promptInProgress: false,
       runtimeSettings,
       skillRuntime,
       delegationRuntime,
@@ -2817,10 +3118,14 @@ export class AgentRuntime {
       localWorkspace: conversation.localWorkspace,
       skillRuntime: conversation.skillRuntime,
       skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
-      issueRuntime: this.createIssueToolRuntime(conversation.defaultAgentId, this.createIssueSessionExecutor(
-        () => conversation.delegationRuntime,
-        () => conversation.eventState.conversation?.id ?? 'unknown',
-      )),
+      issueRuntime: this.createIssueToolRuntime(
+        conversation.defaultAgentId,
+        this.createIssueSessionExecutor(
+          () => conversation.delegationRuntime,
+          () => conversation.eventState.conversation?.id ?? 'unknown',
+        ),
+        () => ({ conversationId: conversation.eventState.conversation?.id }),
+      ),
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => conversation.eventState.conversation?.id ?? 'unknown'),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
@@ -2856,10 +3161,14 @@ export class AgentRuntime {
       runtimeSettingsLoader: () => this.getRuntimeSettings(),
       skillToolEnabled: true,
       skillRuntime: input.skillRuntime,
-      issueRuntime: this.createIssueToolRuntime(input.executingAgentId, this.createIssueSessionExecutor(
-        () => input.delegationRuntime,
-        () => parentConversationId,
-      )),
+      issueRuntime: this.createIssueToolRuntime(
+        input.executingAgentId,
+        this.createIssueSessionExecutor(
+          () => input.delegationRuntime,
+          () => parentConversationId,
+        ),
+        () => ({ conversationId: parentConversationId, executionId: input.runId }),
+      ),
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => input.conversationId),
       streamFn: this.options.streamFn,
@@ -2918,7 +3227,6 @@ export class AgentRuntime {
       .filter((run) => deriveAgentRunKind(run) === 'delegation' && run.execution.status === 'running')
       .map(delegationRunRecordFromMeta)
       .filter((run): run is DelegationRunRecord => run !== null);
-    if (runningRuns.length === 0) return;
 
     const interruptedError = 'The delegated run was interrupted before conversation restore.';
     const completedAt = Date.now();
@@ -2943,12 +3251,55 @@ export class AgentRuntime {
       }
     }
 
+    const interruptedVerificationParentIds = new Set(conversation.runMetas
+      .filter((run) => (
+        deriveAgentRunKind(run) === 'delegation'
+        && run.execution.status === 'completed'
+        && run.objective?.status === 'verifying'
+      ))
+      .map((run) => run.id));
+    for (const parentRunId of interruptedVerificationParentIds) {
+      try {
+        const parentMeta = await this.getEventStore().readRunMetaProjection(parentRunId);
+        if (
+          !parentMeta
+          || parentMeta.execution.status !== 'completed'
+          || parentMeta.objective?.status !== 'verifying'
+        ) continue;
+        const parentEvents = await this.getEventStore().readRunStreamEvents(parentRunId);
+        const tail = parentEvents.at(-1);
+        if (!tail) continue;
+        const blockedAt = Math.max(completedAt, tail.createdAt + 1);
+        await this.getEventStore().appendRunStreamEvents(conversationId, parentRunId, [{
+          v: AGENT_EVENT_VERSION,
+          eventId: `run-verification-interrupted-${randomUUID()}`,
+          seq: tail.seq + 1,
+          conversationId,
+          type: 'run.completed',
+          createdAt: blockedAt,
+          actor: systemActor(),
+          runId: parentRunId,
+          objectiveStatus: 'blocked',
+          blockedReason: 'Verification was interrupted before conversation restore.',
+        }]);
+      } catch (error) {
+        this.reportWarn(
+          'persistence',
+          `Could not block interrupted verification for parent Run ${parentRunId}: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          { conversationId, runId: parentRunId, operation: 'markInterruptedVerification' },
+          'run-verification-interruption-ledger-failed',
+        );
+      }
+    }
+
     // "Don't go silent": a background run that died while the app was closed
     // must still raise a durable badge (and OS banner) on restore.
     // Durable delivery only here (no live model-injection): the conversation is being
     // restored, not running a turn, and recovery is re-spawn, not resume.
     for (const run of runningRuns) {
-      await this.emitRunNotification(conversationId, conversation, {
+      if (await this.isIssueSessionExecution(run.id, conversationId)) continue;
+      await this.emitConversationNotification(conversationId, conversation, {
         notificationId: `notification-${run.id}-${completedAt}`,
         kind: 'task_failed',
         title: `Agent run "${run.description}" was interrupted.`,
@@ -2993,6 +3344,9 @@ export class AgentRuntime {
       criteria: snapshot.criteria,
       objectiveRole: objectiveRoleForRun(snapshot, snapshot.parentRunId),
       objectiveStatus: snapshot.objectiveStatus,
+      verificationRequired: snapshot.verify === true ? true : undefined,
+      verificationAttemptBase: snapshot.verificationAttemptBase,
+      verifierGapSignatures: snapshot.verifierGapSignatures,
       purpose: snapshot.purpose,
       scope: snapshot.scope,
       budget: snapshot.budget,
@@ -3009,32 +3363,49 @@ export class AgentRuntime {
     conversationId: string,
     conversation: AgentConversationState,
     snapshot: AgentRunSnapshot,
+    durableMessage?: AgentMessage,
   ): Promise<void> {
     await this.runLedger.statusChanged(snapshot.id, snapshot.status, {
       actor: this.delegatedRunActor(snapshot),
       errorMessage: snapshot.error,
       agentId: snapshot.executingAgentId as AgentId,
       parentRunId: snapshot.parentRunId,
+      objective: snapshot.objective,
+      criteria: snapshot.criteria,
+      objectiveRole: snapshot.objectiveRole,
       objectiveStatus: snapshot.objectiveStatus,
+      verifierGapSignatures: snapshot.verifierGapSignatures,
       budget: snapshot.budget,
       blockedReason: snapshot.blockedReason,
       latestVerifierGap: snapshot.latestVerifierGap,
+      durableMessage,
     });
-    await this.syncIssueSessionFromDelegationSnapshot(snapshot);
+    const acknowledgedTerminalDeliveryIds = snapshot.status === 'completed'
+      ? await this.processedIssueDeliveryIdsForRun(snapshot.id)
+      : [];
+    await this.syncIssueSessionFromDelegationSnapshot(snapshot, acknowledgedTerminalDeliveryIds);
     await this.refreshConversationRunMetas(conversationId, conversation);
-    this.emitProjection(conversationId, snapshot.status === 'running' ? 'run.started' : `run.${snapshot.status}`, 'coalesce');
+    if (!this.deferredConversationCloseIds.has(conversationId)) {
+      this.emitProjection(conversationId, snapshot.status === 'running' ? 'run.started' : `run.${snapshot.status}`, 'coalesce');
+    }
   }
 
-  private async syncIssueSessionFromDelegationSnapshot(snapshot: AgentRunSnapshot): Promise<void> {
-    await this.getIssueStore().syncSessionExecution({
+  private async syncIssueSessionFromDelegationSnapshot(
+    snapshot: AgentRunSnapshot,
+    acknowledgedTerminalDeliveryIds: readonly string[] = [],
+  ): Promise<void> {
+    const synced = await this.getIssueStore().syncSessionExecution({
       engine: 'delegation',
       executionId: snapshot.id,
-      state: issueSessionExecutionStateFromRunStatus(snapshot.status, snapshot.objectiveStatus),
+      state: issueSessionExecutionStateFromRunStatus(snapshot.status, snapshot.objectiveStatus, snapshot.verify === true),
       objectiveStatus: snapshot.objectiveStatus,
       latestOutput: snapshot.result,
       errorMessage: snapshot.error ?? snapshot.blockedReason ?? snapshot.latestVerifierGap,
       completedAt: snapshot.completedAt,
+      acknowledgedTerminalDeliveryIds,
     }, { type: 'agent', agentId: snapshot.executingAgentId }, snapshot.updatedAt);
+    this.clearAcknowledgedIssueDeliveries(synced?.acknowledgedTerminalDeliveryIds ?? []);
+    if (synced && (synced.issueBecameCompleted || synced.becameTerminal)) this.queueIssueDeliveryDrain();
   }
 
   private async syncIssueSessionFromDelegationData(data: {
@@ -3047,16 +3418,414 @@ export class AgentRuntime {
     latest_verifier_gap?: string;
     updated_at?: number;
     completed_at?: number;
-  }): Promise<void> {
-    await this.getIssueStore().syncSessionExecution({
+    verification_required?: boolean;
+  }, acknowledgedTerminalDeliveryIds: readonly string[] = []): Promise<void> {
+    const store = this.getIssueStore();
+    const boundSession = await store.sessionForExecution({ engine: 'delegation', executionId: data.runId });
+    const verificationRequired = data.verification_required === true || (
+      boundSession?.purpose !== 'verify'
+      && boundSession?.issueSnapshot.verificationPolicy?.mode === 'agent-review'
+    );
+    const synced = await store.syncSessionExecution({
       engine: 'delegation',
       executionId: data.runId,
-      state: issueSessionExecutionStateFromRunStatus(data.status, data.objective_status),
+      state: issueSessionExecutionStateFromRunStatus(data.status, data.objective_status, verificationRequired),
       objectiveStatus: data.objective_status,
       latestOutput: data.result,
       errorMessage: data.error ?? data.blocked_reason ?? data.latest_verifier_gap,
       completedAt: data.completed_at,
+      acknowledgedTerminalDeliveryIds,
     }, { type: 'system' }, data.updated_at ?? Date.now());
+    this.clearAcknowledgedIssueDeliveries(synced?.acknowledgedTerminalDeliveryIds ?? []);
+    if (synced && (synced.issueBecameCompleted || synced.becameTerminal)) this.queueIssueDeliveryDrain();
+  }
+
+  private async isIssueSessionExecution(executionId: string, conversationId: string): Promise<boolean> {
+    try {
+      return Boolean(await this.issueSessionForExecutionChain(executionId));
+    } catch (error) {
+      this.reportWarn(
+        'persistence',
+        `Could not resolve Agent Session ownership for Run ${executionId}: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        { conversationId, runId: executionId, operation: 'sessionForExecution' },
+        'issue-session-binding-read-failed',
+      );
+      // Fail closed: a damaged Issue store must not leak a Session-owned result
+      // through the generic Run notification path.
+      return true;
+    }
+  }
+
+  private clearAcknowledgedIssueDeliveries(deliveryIds: readonly string[]): void {
+    for (const deliveryId of deliveryIds) {
+      this.issueDeliveriesInFlight.delete(deliveryId);
+      this.issueDeliveryRetryNotBefore.delete(deliveryId);
+    }
+    this.scheduleIssueDeliveryRetryDrain();
+  }
+
+  private deferIssueDeliveryRetry(deliveryId: string, retryAt: number): void {
+    this.issueDeliveryRetryNotBefore.set(deliveryId, retryAt);
+    this.scheduleIssueDeliveryRetryDrain();
+  }
+
+  private clearIssueDeliveryRetry(deliveryId: string): void {
+    this.issueDeliveryRetryNotBefore.delete(deliveryId);
+    this.scheduleIssueDeliveryRetryDrain();
+  }
+
+  private scheduleIssueDeliveryRetryDrain(): void {
+    if (this.shutdownStarted) return;
+    const generation = ++this.issueDeliveryRetryScheduleGeneration;
+    this.issueDeliveryRetryScheduleTail = this.issueDeliveryRetryScheduleTail
+      .catch(() => undefined)
+      .then(() => this.refreshIssueDeliveryRetryTimer(generation))
+      .catch((error) => {
+        this.reportWarn(
+          'agent-runtime',
+          `Issue delivery retry scheduling failed: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          { operation: 'refreshIssueDeliveryRetryTimer' },
+          'issue-delivery-retry-schedule-failed',
+        );
+      });
+  }
+
+  private async refreshIssueDeliveryRetryTimer(generation: number): Promise<void> {
+    if (this.shutdownStarted || generation !== this.issueDeliveryRetryScheduleGeneration) return;
+    const now = Date.now();
+    const state = await this.getIssueStore().state();
+    if (this.shutdownStarted || generation !== this.issueDeliveryRetryScheduleGeneration) return;
+    const retryAt = Math.min(...Object.values(state.terminalDeliveries)
+      .filter((delivery) => delivery.status !== 'delivered')
+      .map((delivery) => Math.max(
+        delivery.status === 'pending'
+          ? now
+          : delivery.updatedAt + TERMINAL_DELIVERY_CLAIM_LEASE_MS,
+        this.issueDeliveryRetryNotBefore.get(delivery.id) ?? 0,
+      )));
+    if (!Number.isFinite(retryAt)) {
+      if (this.issueDeliveryRetryTimer) clearTimeout(this.issueDeliveryRetryTimer);
+      this.issueDeliveryRetryTimer = null;
+      this.issueDeliveryRetryTimerAt = null;
+      return;
+    }
+    if (this.issueDeliveryRetryTimer && this.issueDeliveryRetryTimerAt === retryAt) return;
+    if (this.issueDeliveryRetryTimer) clearTimeout(this.issueDeliveryRetryTimer);
+    this.issueDeliveryRetryTimerAt = retryAt;
+    this.issueDeliveryRetryTimer = setTimeout(() => {
+      this.issueDeliveryRetryTimer = null;
+      this.issueDeliveryRetryTimerAt = null;
+      if (this.shutdownStarted) return;
+      const now = Date.now();
+      for (const [deliveryId, notBefore] of this.issueDeliveryRetryNotBefore) {
+        if (notBefore <= now) this.issueDeliveryRetryNotBefore.delete(deliveryId);
+      }
+      this.queueIssueDeliveryDrain();
+    }, Math.max(0, retryAt - Date.now()));
+    (this.issueDeliveryRetryTimer as { unref?: () => void }).unref?.();
+  }
+
+  private async processedIssueDeliveryIdsForRun(runId: string): Promise<string[]> {
+    const store = this.getIssueStore();
+    const session = await store.sessionForExecution({ engine: 'delegation', executionId: runId });
+    if (!session) return [];
+    const candidates = Object.values((await store.state()).terminalDeliveries).filter((delivery) => (
+      delivery.status !== 'delivered'
+      && delivery.origin.type === 'agent-session'
+      && delivery.origin.agentSessionId === session.id
+    ));
+    const processed: string[] = [];
+    for (const delivery of candidates) {
+      if (await this.runLedgerIssueDeliveryState(
+        runId,
+        issueDeliveryMarker(delivery.id),
+        session.issueSnapshot.verificationPolicy?.mode === 'agent-review',
+      ) === 'processed') {
+        processed.push(delivery.id);
+      }
+    }
+    return processed;
+  }
+
+  private async reconcileProcessedIssueDelivery(
+    binding: AgentSessionExecutionBinding,
+    deliveryId: string,
+    completion: RunTerminalEvent & { type: 'run.completed' },
+    result: string | undefined,
+  ): Promise<void> {
+    await this.syncIssueSessionFromDelegationData({
+      status: 'completed',
+      runId: binding.executionId,
+      objective_status: completion.objectiveStatus,
+      result,
+      updated_at: Math.max(Date.now(), binding.updatedAt + 1),
+      completed_at: completion.createdAt,
+    }, [deliveryId]);
+    const delivery = (await this.getIssueStore().state()).terminalDeliveries[deliveryId];
+    if (delivery?.status !== 'delivered') {
+      throw new Error(`Processed Issue delivery ${deliveryId} could not be acknowledged atomically.`);
+    }
+  }
+
+  private async deliverTerminalIssueDelivery(
+    delivery: AgentIssueTerminalDelivery,
+  ): Promise<'delivered' | 'deferred'> {
+    const retryNotBefore = this.issueDeliveryRetryNotBefore.get(delivery.id);
+    if (retryNotBefore !== undefined) {
+      if (Date.now() < retryNotBefore) return 'deferred';
+      this.clearIssueDeliveryRetry(delivery.id);
+    }
+    if (delivery.origin.type === 'conversation') {
+      if (isInternalAgentConversationId(delivery.origin.conversationId)) {
+        throw new Error(`Issue delivery ${delivery.id} has an invalid internal-conversation origin.`);
+      }
+      const [conversation, issueDetail] = await Promise.all([
+        this.ensureConversationWithId(delivery.origin.conversationId),
+        this.getIssueStore().read({ target: { type: 'issue', id: delivery.issueId } }),
+      ]);
+      await this.emitConversationNotification(delivery.origin.conversationId, conversation, {
+        notificationId: `notification-${delivery.id}`,
+        kind: delivery.state === 'error' ? 'task_failed' : 'task_completed',
+        title: issueDetail.issue?.title ?? delivery.title,
+        osTitle: delivery.title,
+        body: delivery.body,
+        source: {
+          type: 'issue',
+          issueId: delivery.issueId,
+          agentSessionId: delivery.agentSessionId,
+          state: delivery.state,
+        },
+        actor: systemActor(),
+      });
+      if (this.isConversationBusy(conversation)) {
+        this.deferIssueDeliveryRetry(delivery.id, Date.now() + ISSUE_DELIVERY_RETRY_DELAY_MS);
+        return 'deferred';
+      }
+      return this.deliverRootIssueToConversation(delivery.origin.conversationId, conversation, delivery);
+    }
+
+    return this.notifyParentAgentSessionForIssueDelivery(delivery.origin.agentSessionId, delivery);
+  }
+
+  private async notifyParentAgentSessionForIssueDelivery(
+    parentAgentSessionId: string,
+    delivery: AgentIssueTerminalDelivery,
+  ): Promise<'delivered' | 'deferred'> {
+    const store = this.getIssueStore();
+    const parentSession = await store.readSession({ agentSessionId: parentAgentSessionId });
+    if (!parentSession) {
+      throw new Error(`Parent Agent Session ${parentAgentSessionId} was not found for ${delivery.id}.`);
+    }
+    const binding = await store.executionForSession(parentAgentSessionId);
+    if (!binding) {
+      throw new Error(`Parent Agent Session ${parentAgentSessionId} has no execution binding for ${delivery.id}.`);
+    }
+    const marker = issueDeliveryMarker(delivery.id);
+    const childExecutionId = delivery.agentSessionId
+      ? (await store.executionForSession(delivery.agentSessionId))?.executionId
+      : undefined;
+    const conversation = await this.ensureConversationWithId(binding.conversationId);
+    const ledgerResult = await this.runLedgerIssueDeliveryResult(
+      binding.executionId,
+      marker,
+      parentSession.agentSession.issueSnapshot.verificationPolicy?.mode === 'agent-review',
+    );
+    if (ledgerResult.state === 'processed') {
+      await this.reconcileProcessedIssueDelivery(
+        binding,
+        delivery.id,
+        ledgerResult.completion,
+        ledgerResult.result,
+      );
+      this.issueDeliveriesInFlight.delete(delivery.id);
+      this.clearIssueDeliveryRetry(delivery.id);
+      return 'delivered';
+    }
+    if (parentSession.agentSession.state === 'canceled') {
+      this.issueDeliveriesInFlight.delete(delivery.id);
+      this.clearIssueDeliveryRetry(delivery.id);
+      throw new Error(
+        `Parent Agent Session ${parentAgentSessionId} was canceled before ${delivery.id} could be delivered.`,
+      );
+    }
+
+    const deliveryRuntime = await conversation.delegationRuntime.controllingRuntimeForRun(binding.executionId)
+      ?? conversation.delegationRuntime;
+    const hasLiveRun = deliveryRuntime.hasLiveRun(binding.executionId);
+    if (this.issueDeliveriesInFlight.has(delivery.id)) {
+      if (hasLiveRun) {
+        this.deferIssueDeliveryRetry(delivery.id, Date.now() + ISSUE_DELIVERY_RETRY_DELAY_MS);
+        return 'deferred';
+      }
+      this.issueDeliveriesInFlight.delete(delivery.id);
+      this.deferIssueDeliveryRetry(delivery.id, Date.now() + ISSUE_DELIVERY_RETRY_DELAY_MS);
+      return 'deferred';
+    }
+    if (ledgerResult.state === 'queued' && hasLiveRun) {
+      this.deferIssueDeliveryRetry(delivery.id, Date.now() + ISSUE_DELIVERY_RETRY_DELAY_MS);
+      return 'deferred';
+    }
+
+    this.issueDeliveriesInFlight.add(delivery.id);
+    let data: AgentDelegateToolData;
+    try {
+      const durableFollowUpMarkers = Object.values((await store.state()).terminalDeliveries)
+        .filter((candidate) => (
+          candidate.status !== 'delivered'
+          && candidate.origin.type === 'agent-session'
+          && candidate.origin.agentSessionId === parentAgentSessionId
+        ))
+        .map((candidate) => issueDeliveryMarker(candidate.id));
+      data = ledgerResult.state === 'queued'
+        ? await deliveryRuntime.resumePersistedFollowUp({
+            runId: binding.executionId,
+            durableFollowUpMarkers,
+          })
+        : await deliveryRuntime.enqueuePersistedFollowUp({
+            runId: binding.executionId,
+            message: formatChildIssueDeliveryNotification(delivery, marker, childExecutionId),
+          });
+    } catch (error) {
+      this.issueDeliveriesInFlight.delete(delivery.id);
+      this.deferIssueDeliveryRetry(delivery.id, Date.now() + ISSUE_DELIVERY_RETRY_DELAY_MS);
+      throw error;
+    }
+    await this.syncIssueSessionFromDelegationData(data);
+    this.deferIssueDeliveryRetry(delivery.id, Date.now() + ISSUE_DELIVERY_RETRY_DELAY_MS);
+    return 'deferred';
+  }
+
+  private async runLedgerIssueDeliveryState(
+    runId: string,
+    marker: string,
+    verificationRequired = false,
+  ): Promise<'absent' | 'queued' | 'processed'> {
+    return (await this.runLedgerIssueDeliveryResult(runId, marker, verificationRequired)).state;
+  }
+
+  private async runLedgerIssueDeliveryResult(
+    runId: string,
+    marker: string,
+    verificationRequired = false,
+  ): Promise<
+    | { state: 'absent' | 'queued' }
+    | {
+        state: 'processed';
+        completion: RunTerminalEvent & { type: 'run.completed' };
+        result?: string;
+      }
+  > {
+    const events = await this.getEventStore().readRunStreamEvents(runId);
+    const activePath = getAgentEventActivePath(replayAgentEvents(events));
+    const activeMessageIds = new Set(activePath.map((message) => message.id));
+    const parentMessageIds = new Map<string, string | null>();
+    for (const event of events) {
+      if (
+        event.type === 'user_message.created'
+        || event.type === 'assistant_message.started'
+        || event.type === 'tool_result.created'
+      ) {
+        parentMessageIds.set(event.messageId, event.parentMessageId);
+      }
+    }
+
+    const sourcePath = (fromMessageId: string, throughMessageId: string): string[] | null => {
+      const path: string[] = [];
+      const visited = new Set<string>();
+      let current: string | null = throughMessageId;
+      while (current && !visited.has(current)) {
+        path.push(current);
+        if (current === fromMessageId) return path;
+        visited.add(current);
+        current = parentMessageIds.get(current) ?? null;
+      }
+      return null;
+    };
+
+    const markerEvents = events
+      .filter((event): event is Extract<AgentEvent, { type: 'user_message.created' }> => (
+        event.type === 'user_message.created'
+        && event.content.some((part) => part.type === 'text' && part.text.includes(marker))
+      ))
+      .sort((left, right) => right.seq - left.seq);
+    for (const markerEvent of markerEvents) {
+      let carrierMessageId = markerEvent.messageId;
+      const carriedMessageIds = new Set<string>([carrierMessageId]);
+      for (const event of events) {
+        if (event.seq <= markerEvent.seq || event.type !== 'compaction.completed') continue;
+        const compactedPath = sourcePath(event.source.fromMessageId, event.source.throughMessageId);
+        if (!compactedPath?.includes(carrierMessageId)) continue;
+        for (const messageId of compactedPath) carriedMessageIds.add(messageId);
+        carrierMessageId = event.messageId;
+        carriedMessageIds.add(carrierMessageId);
+      }
+      if (!activeMessageIds.has(carrierMessageId)) continue;
+
+      let insideCarrierPath = false;
+      for (const message of activePath) {
+        if (message.id === carrierMessageId) insideCarrierPath = true;
+        if (insideCarrierPath) carriedMessageIds.add(message.id);
+      }
+      const responseMessageIds = new Set(events
+        .filter((event) => (
+          event.seq > markerEvent.seq
+          && event.type === 'assistant_message.started'
+          && carriedMessageIds.has(event.messageId)
+        ))
+        .map((event) => event.messageId));
+      let processedResult: string | undefined;
+      const processedCompletion = events.find((event): event is RunTerminalEvent & { type: 'run.completed' } => {
+        if (
+          event.seq <= markerEvent.seq
+          || event.type !== 'run.completed'
+          || (verificationRequired
+            ? event.objectiveStatus !== 'verified'
+            : event.objectiveStatus === 'verifying'
+              || event.objectiveStatus === 'blocked'
+              || event.objectiveStatus === 'budget_exhausted'
+              || event.objectiveStatus === 'stopped')
+        ) return false;
+        const executionStartedAt = events.reduce((latestSeq, candidate) => (
+          candidate.seq < event.seq && candidate.type === 'run.started'
+            ? Math.max(latestSeq, candidate.seq)
+            : latestSeq
+        ), 0);
+        const finalAssistant = events
+          .filter((candidate): candidate is Extract<AgentEvent, { type: 'assistant_message.completed' }> => (
+            candidate.type === 'assistant_message.completed'
+            && candidate.seq > Math.max(markerEvent.seq, executionStartedAt)
+            && candidate.seq < event.seq
+            && responseMessageIds.has(candidate.messageId)
+          ))
+          .sort((left, right) => right.seq - left.seq)[0];
+        if (
+          finalAssistant?.stopReason !== 'stop'
+          || finalAssistant.content.some((part) => part.type === 'toolCall')
+        ) return false;
+        const currentSpanFloor = Math.max(markerEvent.seq, executionStartedAt);
+        const submitted = events
+          .filter((candidate): candidate is Extract<AgentEvent, { type: 'run.result.submitted' }> => (
+            candidate.type === 'run.result.submitted'
+            && candidate.seq > currentSpanFloor
+            && candidate.seq < event.seq
+          ))
+          .sort((left, right) => right.seq - left.seq)[0];
+        processedResult = submitted?.summary.trim()
+          || assistantCompletedText(finalAssistant.content)
+          || undefined;
+        return true;
+      });
+      return processedCompletion
+        ? {
+            state: 'processed',
+            completion: processedCompletion,
+            ...(processedResult ? { result: processedResult } : {}),
+          }
+        : { state: 'queued' };
+    }
+    return { state: 'absent' };
   }
 
   private async notifyRun(
@@ -3065,6 +3834,7 @@ export class AgentRuntime {
     snapshot: AgentRunSnapshot,
   ): Promise<void> {
     if (snapshot.status === 'running') return;
+    if (await this.isIssueSessionExecution(snapshot.id, conversationId)) return;
     if (!await this.shouldNotifyConversationForTerminalRun(snapshot, conversation)) return;
     let latestSubmission: AgentRunSubmissionProjection | undefined;
     // A user-initiated stop (cancelled) is the user's own action — it raises no
@@ -3091,7 +3861,7 @@ export class AgentRuntime {
       // The id keys on the completion instant so a *resumed* detached run that
       // finishes again gets a fresh notification (idempotent across replay, distinct
       // across re-completions — see agentDelegation `send`).
-      await this.emitRunNotification(conversationId, conversation, {
+      await this.emitConversationNotification(conversationId, conversation, {
         notificationId: `notification-${snapshot.id}-${snapshot.completedAt ?? 0}`,
         kind: runNotificationKind(snapshot.status),
         title: runNotificationTitle(snapshot),
@@ -3123,7 +3893,12 @@ export class AgentRuntime {
       this.getEventStore().readRunMetaProjection(runId),
       this.getEventStore().readRunStreamEvents(runId),
     ]);
-    return latestRunSubmissionFromEvents(events, meta?.objective?.latestSubmissionSeq);
+    return latestRunResultFromEvents(
+      events,
+      runId,
+      meta?.objective?.latestSubmissionSeq,
+      meta?.execution.status !== 'running',
+    );
   }
 
   private async readRunDetailResult(
@@ -3131,8 +3906,12 @@ export class AgentRuntime {
     meta: AgentRunMetaProjection,
   ): Promise<AgentRunSubmissionProjection | undefined> {
     const events = await this.getEventStore().readRunStreamEvents(runId);
-    return latestRunSubmissionFromEvents(events, meta.objective?.latestSubmissionSeq)
-      ?? (meta.execution.status === 'running' ? undefined : latestAssistantMessageSubmissionFromEvents(events, runId));
+    return latestRunResultFromEvents(
+      events,
+      runId,
+      meta.objective?.latestSubmissionSeq,
+      meta.execution.status !== 'running',
+    );
   }
 
   private async runTranscriptMessageCount(runId: string): Promise<number> {
@@ -3147,40 +3926,49 @@ export class AgentRuntime {
 
   /**
    * Append a durable notification.created event anchored to the origin
-   * conversation, then surface it (projection + opt-in OS notification). Idempotent
-   * on notificationId so a re-emitted terminal snapshot does not double-count.
+   * conversation, then surface it (projection + opt-in OS notification). Returns
+   * false when the notificationId was already delivered, so callers can avoid a
+   * duplicate in-conversation follow-up.
    */
-  private async emitRunNotification(
+  private async emitConversationNotification(
     conversationId: string,
     conversation: AgentConversationState,
     input: {
       notificationId: string;
       kind: AgentNotificationKind;
       title: string;
+      osTitle?: string;
       body?: string;
-      source?: AgentRunNotificationSource;
+      source?: AgentNotificationSource;
       actor?: AgentActor;
       /** Badge-only when false: fold unread but skip the OS notification (default true). */
       deliverOs?: boolean;
     },
-  ): Promise<void> {
-    if (conversation.eventState.notifications[input.notificationId]) return;
+  ): Promise<boolean> {
     const body = input.body ? truncateNotificationBody(input.body) : undefined;
-    // The base conversationId (stamped at append) is the delivery anchor.
-    await this.appendConversationEvents(conversationId, conversation, [{
-      type: 'notification.created',
-      actor: input.actor ?? systemActor(),
-      notificationId: input.notificationId,
-      kind: input.kind,
-      title: input.title,
-      body,
-      source: input.source,
-    }]);
-    // No emitProjection here: the render projection never reads notifications or
-    // attention (the badge rides the dedicated conversation_attention event), so a
-    // rebuild would produce byte-identical content. Attention is the only signal.
+    let appended = false;
+    await this.appendConversationEvents(conversationId, conversation, (state) => {
+      if (state.notifications[input.notificationId]) return [];
+      appended = true;
+      // The base conversationId (stamped at append) is the delivery anchor.
+      return [{
+        type: 'notification.created',
+        actor: input.actor ?? systemActor(),
+        notificationId: input.notificationId,
+        kind: input.kind,
+        title: input.title,
+        body,
+        source: input.source,
+      }];
+    });
+    if (!appended) return false;
+    // The notification alone does not add a transcript row. A linked hidden user
+    // message projects the Issue status later; attention remains the immediate signal.
     this.emitConversationAttention(conversationId, conversation);
-    if (input.deliverOs !== false) this.deliverOsNotification({ title: input.title, body, conversationId });
+    if (input.deliverOs !== false) {
+      this.deliverOsNotification({ title: input.osTitle ?? input.title, body, conversationId });
+    }
+    return true;
   }
 
   private async flushChildRunNotifications(conversationId: string, conversation: AgentConversationState): Promise<void> {
@@ -3188,13 +3976,13 @@ export class AgentRuntime {
     if (conversation.pendingChildRunNotifications.length === 0) return;
     // A notification-delivery run is the agent's own turn (its sub-runs);
     // never interleave it into an active run.
-    if (this.hasActiveRuns(conversation)) return;
+    if (this.isConversationBusy(conversation)) return;
 
     conversation.runNotificationFlushInProgress = true;
     let startedRunId: string | null = null;
     try {
       while (conversation.pendingChildRunNotifications.length > 0) {
-        if (this.hasActiveRuns(conversation)) break;
+        if (this.isConversationBusy(conversation)) break;
         const notification = conversation.pendingChildRunNotifications[0];
         if (!notification) break;
         const prompt: UserMessage = {
@@ -3205,9 +3993,10 @@ export class AgentRuntime {
         conversation.skillRuntime.resetRunPermissionRules();
         await this.appendSystemPromptEvent(conversationId, conversation, prompt);
         startedRunId = await this.startRun(conversationId, conversation, prompt);
-        await conversation.agent.prompt(prompt);
-        await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
-        await this.persistAndEmitIdle(conversationId, conversation, { flushChildRunNotifications: false });
+        await this.promptConversationAgent(conversation, prompt, async () => {
+          await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+          await this.persistAndEmitIdle(conversationId, conversation, { flushChildRunNotifications: false });
+        });
         if (conversation.eventState.runs[startedRunId]?.status !== 'completed') {
           this.scheduleChildRunNotificationFlushRetry(conversationId, conversation);
           break;
@@ -3224,6 +4013,135 @@ export class AgentRuntime {
     } finally {
       conversation.runNotificationFlushInProgress = false;
     }
+  }
+
+  private async deliverRootIssueToConversation(
+    conversationId: string,
+    conversation: AgentConversationState,
+    delivery: AgentIssueTerminalDelivery,
+  ): Promise<'delivered' | 'deferred'> {
+    const deliveryKey = createHash('sha256').update(delivery.id).digest('hex').slice(0, 24);
+    const runPrefix = `${ROOT_ISSUE_DELIVERY_RUN_PREFIX}${deliveryKey}-`;
+    if (await this.finalizeRootIssueDeliveryRunIfReady(conversationId, conversation, runPrefix)) {
+      return 'delivered';
+    }
+
+    if (this.isConversationBusy(conversation)) return 'deferred';
+
+    const attempt = Math.max(1, delivery.attemptCount);
+    const runId = `${runPrefix}${attempt}`;
+    const messageId = `user-issue-delivery-${deliveryKey}-${attempt}`;
+    const prompt: UserMessage = {
+      role: 'user',
+      timestamp: Date.now(),
+      content: [{
+        type: 'text',
+        text: systemReminder(formatRootIssueDeliveryNotification(
+          delivery,
+          issueDeliveryMarker(delivery.id),
+        )),
+      }],
+    };
+    let startedRunId: string | null = null;
+    try {
+      conversation.skillRuntime.resetRunPermissionRules();
+      await this.appendSystemPromptEvent(conversationId, conversation, prompt, {
+        messageId,
+        notificationId: `notification-${delivery.id}`,
+      });
+      conversation.agent.state.messages = await this.deriveRuntimePiMessages(
+        conversationId,
+        conversation.eventState,
+      ) as never;
+      startedRunId = await this.startRun(
+        conversationId,
+        conversation,
+        prompt,
+        { type: 'message', messageId },
+        { runId },
+      );
+      const deliveryRun = conversation.activeRuns.get(runId);
+      if (!deliveryRun) throw new Error(`Issue notification Run ${runId} did not enter the active set.`);
+      await this.continueConversationAgent(conversation, async () => {
+        await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
+        await this.persistAndEmitIdle(conversationId, conversation, { flushChildRunNotifications: false });
+      });
+      await deliveryRun.settled;
+    } catch (error) {
+      await this.recoverFromRunError(conversationId, startedRunId, { force: true });
+      throw error;
+    }
+
+    if (await this.finalizeRootIssueDeliveryRunIfReady(conversationId, conversation, runPrefix)) {
+      return 'delivered';
+    }
+    if (conversation.eventState.runs[runId]?.status === 'running') return 'deferred';
+    throw new Error(`Issue notification Run ${runId} did not complete successfully.`);
+  }
+
+  private async finalizeRootIssueDeliveryRunIfReady(
+    conversationId: string,
+    conversation: AgentConversationState,
+    runPrefix: string,
+  ): Promise<boolean> {
+    if (Object.values(conversation.eventState.runs).some((run) => (
+      run.id.startsWith(runPrefix)
+      && run.status === 'completed'
+      && isProcessedRootIssueDeliveryRun(conversation.eventState, run.id)
+    ))) {
+      return true;
+    }
+
+    // A process can die after the final assistant stop is durable but before
+    // run.completed lands. Seal that processed notification instead of asking the
+    // agent to handle the same Issue again after restart. Visible text is optional.
+    const recoverableAssistant = Object.values(conversation.eventState.messages)
+      .filter((message) => (
+        message.role === 'assistant'
+        && message.runId?.startsWith(runPrefix)
+        && isProcessedRootIssueDeliveryMessage(message)
+        && conversation.eventState.runs[message.runId]?.status === 'running'
+      ))
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+    if (!recoverableAssistant?.runId) return false;
+
+    const runId = recoverableAssistant.runId;
+    const appended = await this.appendConversationEvents(conversationId, conversation, (state) => {
+      if (state.runs[runId]?.status === 'completed') return [];
+      if (state.runs[runId]?.status !== 'running') return [];
+      const result = persistedTextContent(recoverableAssistant.content);
+      return [
+        ...(result ? [{
+          type: 'run.result.submitted' as const,
+          actor: { type: 'agent' as const, agentId: conversation.defaultAgentId as AgentId },
+          runId,
+          summary: result,
+          source: 'final_assistant_message' as const,
+        }] : []),
+        {
+          type: 'run.completed' as const,
+          actor: systemActor(),
+          runId,
+          usage: sumRunUsage(state, runId),
+        },
+      ];
+    });
+    if (appended.length > 0) {
+      const activeRun = conversation.activeRuns.get(runId);
+      if (activeRun) {
+        conversation.lastRun = activeRun;
+        conversation.activeRuns.delete(runId);
+        if (conversation.activeRun?.id === runId) conversation.activeRun = null;
+        activeRun.resolveSettled();
+        conversation.skillRuntime.resetRunPermissionRules(runId);
+      }
+      conversation.agent.state.messages = await this.deriveRuntimePiMessages(
+        conversationId,
+        conversation.eventState,
+      ) as never;
+      this.emitProjection(conversationId, 'run.completed');
+    }
+    return conversation.eventState.runs[runId]?.status === 'completed';
   }
 
   private scheduleChildRunNotificationFlushRetry(conversationId: string, conversation: AgentConversationState): void {
@@ -3365,6 +4283,10 @@ export class AgentRuntime {
     options: { flushChildRunNotifications?: boolean; emitGuard?: () => boolean } = {},
   ) {
     conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
+    if (this.deferredConversationCloseIds.has(conversationId)) {
+      this.queueIssueDeliveryDrain();
+      return;
+    }
     // The detached idle watcher passes a guard: a teardown (reset/close/delete)
     // landing during the awaits above must abort the emit, or an `agent_idle`
     // projection races/duplicates the `conversation_reset` emit (or fires on a
@@ -3374,10 +4296,11 @@ export class AgentRuntime {
     if (options.flushChildRunNotifications !== false) {
       await this.flushChildRunNotifications(conversationId, conversation);
     }
+    this.queueIssueDeliveryDrain();
   }
 
   private startDreamScheduler() {
-    if (!this.dreamMemoryExtractionEnabled() || this.dreamSchedulerTimer) return;
+    if (this.shutdownStarted || !this.dreamMemoryExtractionEnabled() || this.dreamSchedulerTimer) return;
     this.dreamSchedulerTimer = setInterval(() => {
       this.queueScheduledDream(new Date());
     }, DREAM_SCHEDULER_INTERVAL_MS);
@@ -3385,7 +4308,7 @@ export class AgentRuntime {
   }
 
   private startIssueScheduler() {
-    if (this.issueSchedulerTimer) return;
+    if (this.shutdownStarted || this.issueSchedulerTimer) return;
     this.issueSchedulerTimer = setInterval(() => {
       this.queueIssueSweep(new Date());
     }, ISSUE_SCHEDULER_INTERVAL_MS);
@@ -3398,23 +4321,51 @@ export class AgentRuntime {
     this.issueSchedulerTimer = null;
   }
 
+  private stopDreamScheduler() {
+    if (!this.dreamSchedulerTimer) return;
+    clearInterval(this.dreamSchedulerTimer);
+    this.dreamSchedulerTimer = null;
+  }
+
   /**
    * Settle in-flight best-effort writes so a force-exit on quit (see main.ts's
    * before-quit, which `app.exit`s after this) doesn't truncate them mid-write:
    * each conversation's event-log append (the integrity-critical fast local write),
-   * plus the dream-extraction and issue-sweep tails. The latter two are
-   * crash-safe — their watermarks only advance on success, so a cut dream/sweep
+   * plus the dream-extraction and issue-sweep tails. Both schedulers are stopped
+   * first so they cannot append new work behind the tails being drained. The
+   * latter two are crash-safe — their watermarks only advance on success, so a cut dream/sweep
    * simply re-fires next launch — so the CALLER SHOULD bound this with a timeout;
    * a slow in-flight dream (an LLM call) must not block ⌘Q.
    */
   async drainPendingWrites(): Promise<void> {
-    const pending: Promise<unknown>[] = [this.dreamMemoryExtractionTail, this.issueSweepTail];
+    this.shutdownStarted = true;
+    this.stopDreamScheduler();
+    this.stopIssueScheduler();
+    this.issueDeliveryRetryScheduleGeneration += 1;
+    if (this.issueDeliveryRetryTimer) clearTimeout(this.issueDeliveryRetryTimer);
+    this.issueDeliveryRetryTimer = null;
+    this.issueDeliveryRetryTimerAt = null;
+    this.issueSweepTail = this.issueSweepTail
+      .catch(() => undefined)
+      .then(() => this.drainTerminalIssueDeliveries());
+    await Promise.allSettled([this.dreamMemoryExtractionTail, this.issueSweepTail]);
+    await Promise.allSettled([...this.firingIssueStarts]);
+    // A scheduler-started Session may fail after the sweep's first delivery
+    // drain and enqueue a root/session error. Drain once more after every
+    // scheduler start settles, before capturing the writes produced by delivery.
+    await this.drainTerminalIssueDeliveries().catch(() => undefined);
+    const pending: Promise<unknown>[] = [];
     for (const conversation of this.conversations.values()) pending.push(conversation.pendingEventAppend);
     // Delegated-run ledgers append on their own per-run queues — settle them
     // too, or a quit can keep the conversation's terminal marker while losing
     // the ledger's own run.completed (the run stream then self-reports running).
     pending.push(...this.runLedger.pendingWrites());
     await Promise.allSettled(pending);
+    await this.issueDeliveryRetryScheduleTail.catch(() => undefined);
+    this.issueDeliveryRetryScheduleGeneration += 1;
+    if (this.issueDeliveryRetryTimer) clearTimeout(this.issueDeliveryRetryTimer);
+    this.issueDeliveryRetryTimer = null;
+    this.issueDeliveryRetryTimerAt = null;
   }
 
   runIssueCatchUp() {
@@ -3422,12 +4373,22 @@ export class AgentRuntime {
   }
 
   private queueIssueRecovery(now: Date) {
+    if (this.shutdownStarted) return;
     this.issueSweepTail = this.issueSweepTail
       .catch(() => undefined)
       .then(() => this.recoverInterruptedIssueSessions(now));
   }
 
+  private queueIssueDeliveryDrain() {
+    if (this.shutdownStarted) return;
+    this.issueSweepTail = this.issueSweepTail
+      .catch(() => undefined)
+      .then(() => this.drainTerminalIssueDeliveries())
+      .finally(() => this.scheduleIssueDeliveryRetryDrain());
+  }
+
   private queueIssueSweep(now: Date) {
+    if (this.shutdownStarted) return;
     this.issueSweepTail = this.issueSweepTail
       .catch(() => undefined)
       .then(() => this.sweepIssueSchedules(now));
@@ -3435,7 +4396,37 @@ export class AgentRuntime {
 
   private async recoverInterruptedIssueSessions(now: Date) {
     try {
-      await this.getIssueStore().markInterruptedSessionsStale({ type: 'system' }, now.getTime());
+      const store = this.getIssueStore();
+      const state = await store.state();
+      for (const [agentSessionId, binding] of Object.entries(state.sessionExecutions)) {
+        const session = state.sessions[agentSessionId];
+        if (!session || !isActiveAgentSessionState(session.state)) continue;
+        const meta = await this.getEventStore().readRunMetaProjection(binding.executionId);
+        if (!meta || meta.execution.status === 'running') continue;
+        // A completed work frame whose verifier never reached a terminal verdict
+        // is genuinely interrupted; the normal stale path below owns it.
+        if (meta.execution.status === 'completed' && meta.objective?.status === 'verifying') continue;
+        const latestOutput = await this.readLatestRunSubmission(binding.executionId)
+          .then((submission) => submission?.summary)
+          .catch(() => undefined);
+        await this.syncIssueSessionFromDelegationData({
+          status: meta.execution.status,
+          runId: binding.executionId,
+          objective_status: meta.objective?.status,
+          result: latestOutput,
+          error: meta.execution.error,
+          blocked_reason: meta.objective?.blockedReason,
+          latest_verifier_gap: meta.objective?.latestVerifierGap,
+          updated_at: Math.max(now.getTime(), meta.updatedAt, binding.updatedAt + 1),
+          completed_at: meta.execution.completedAt,
+          verification_required: meta.objective?.verificationRequired === true,
+        });
+      }
+      const staleSessions = await store.markInterruptedSessionsStale(
+        { type: 'system' },
+        now.getTime(),
+      );
+      if (staleSessions.length > 0) await this.drainTerminalIssueDeliveries();
     } catch (error) {
       this.reportWarn(
         'agent-runtime',
@@ -3450,13 +4441,14 @@ export class AgentRuntime {
   private async sweepIssueSchedules(now: Date) {
     try {
       const store = this.getIssueStore();
+      await this.drainTerminalIssueDeliveries();
       await store.materializeDueRecurringIssues(now.getTime(), { type: 'system' });
       const readyIssues = await store.listReadyIssuesForExecution(now.getTime());
       for (const issue of readyIssues) {
         if (issue.permissionMode !== 'unattended') continue;
         if (this.firingIssueIds.has(issue.id)) continue;
         this.firingIssueIds.add(issue.id);
-        void this.startTriggeredIssueSession(issue, now)
+        const start = this.startTriggeredIssueSession(issue, now)
           .catch((error) => {
             this.reportWarn(
               'agent-runtime',
@@ -3468,8 +4460,12 @@ export class AgentRuntime {
           })
           .finally(() => {
             this.firingIssueIds.delete(issue.id);
+            this.firingIssueStarts.delete(start);
           });
+        this.firingIssueStarts.add(start);
+        void start;
       }
+      await this.drainTerminalIssueDeliveries();
     } catch (error) {
       this.reportWarn(
         'agent-runtime',
@@ -3478,6 +4474,32 @@ export class AgentRuntime {
         { operation: 'sweepIssueSchedules' },
         'issue-schedule-sweep-failed',
       );
+    }
+  }
+
+  private async drainTerminalIssueDeliveries(): Promise<void> {
+    const store = this.getIssueStore();
+    const deliveries = await store.claimTerminalDeliveries(this.issueDeliveryOwnerId, 100);
+    for (const delivery of deliveries) {
+      try {
+        const result = await this.deliverTerminalIssueDelivery(delivery);
+        if (result === 'deferred') {
+          await store.releaseTerminalDelivery(delivery.id, this.issueDeliveryOwnerId);
+          continue;
+        }
+        await store.completeTerminalDelivery(delivery.id, this.issueDeliveryOwnerId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.deferIssueDeliveryRetry(delivery.id, Date.now() + ISSUE_DELIVERY_RETRY_DELAY_MS);
+        await store.releaseTerminalDelivery(delivery.id, this.issueDeliveryOwnerId, message);
+        this.reportWarn(
+          'agent-runtime',
+          `Issue terminal delivery ${delivery.id} failed: ${message}`,
+          error,
+          { operation: 'drainTerminalIssueDeliveries', issueId: delivery.issueId },
+          'issue-terminal-delivery-failed',
+        );
+      }
     }
   }
 
@@ -3493,7 +4515,14 @@ export class AgentRuntime {
         () => conversation.delegationRuntime,
         () => conversationId,
       ),
+      resolveInputScope: (scope, currentIssue, resolvedAt) => (
+        resolveIssueInputScopeFromProjection(scope, currentIssue, this.outlinerToolHost.getProjection(), resolvedAt)
+      ),
+      authorizeChildScope: (parentSession, definition) => (
+        validateChildIssueNodeScope(parentSession, definition, this.outlinerToolHost.getProjection())
+      ),
       onIssueCreated: () => this.queueIssueSweep(new Date()),
+      onIssueDeliveryQueued: () => this.queueIssueDeliveryDrain(),
       startSource: () => issue.recurrence
         ? { type: 'recurring-issue', recurringIssueId: issue.recurrence.recurringIssueId, dueAt: issue.recurrence.windowStartAt }
         : { type: 'runtime-action', actor },
@@ -3510,11 +4539,11 @@ export class AgentRuntime {
   }
 
   private issueConversationId(issueId: string): string {
-    return `lin-agent-issue-${hashJson({ agentId: this.agentIdentity.agentId, issueId }).slice(0, 16)}`;
+    return `${ISSUE_AGENT_CONVERSATION_PREFIX}${hashJson({ agentId: this.agentIdentity.agentId, issueId }).slice(0, 16)}`;
   }
 
   private queueScheduledDream(now: Date) {
-    if (!this.dreamMemoryExtractionEnabled()) return;
+    if (this.shutdownStarted || !this.dreamMemoryExtractionEnabled()) return;
     this.dreamMemoryExtractionTail = this.dreamMemoryExtractionTail
       .catch(() => undefined)
       .then(() => this.fireDream('schedule', now));
@@ -4119,6 +5148,7 @@ export class AgentRuntime {
   }
 
   async runDreamNow(options: AgentDreamRunOptions = {}): Promise<AgentDreamRunResult | null> {
+    if (this.shutdownStarted) throw new Error('Agent runtime is shutting down.');
     if (!this.dreamMemoryExtractionEnabled()) throw new Error('Memory Dream is disabled.');
     if (!await this.getActiveProviderConfig()) throw new Error('No enabled agent provider is configured.');
     return this.fireDreamForPrincipal(this.agentPrincipal(), 'manual', new Date(), options);
@@ -4208,7 +5238,53 @@ export class AgentRuntime {
   }
 
   private hasActiveRuns(conversation: AgentConversationState): boolean {
-    return conversation.activeRuns.size > 0 || conversation.agent.state.isStreaming;
+    return conversation.activeRuns.size > 0
+      || conversation.agent.state.isStreaming;
+  }
+
+  private isConversationBusy(conversation: AgentConversationState): boolean {
+    return this.hasActiveRuns(conversation) || conversation.promptInProgress;
+  }
+
+  private async promptConversationAgent(
+    conversation: AgentConversationState,
+    prompt: UserMessage,
+    afterPrompt: () => Promise<void>,
+  ): Promise<void> {
+    return this.runConversationAgentTurn(
+      conversation,
+      () => conversation.agent.prompt(prompt),
+      afterPrompt,
+    );
+  }
+
+  private async continueConversationAgent(
+    conversation: AgentConversationState,
+    afterPrompt: () => Promise<void>,
+  ): Promise<void> {
+    return this.runConversationAgentTurn(
+      conversation,
+      () => conversation.agent.continue(),
+      afterPrompt,
+    );
+  }
+
+  private async runConversationAgentTurn(
+    conversation: AgentConversationState,
+    invoke: () => Promise<void>,
+    afterPrompt: () => Promise<void>,
+  ): Promise<void> {
+    if (conversation.promptInProgress) {
+      throw new Error('An agent prompt is already in progress for this conversation.');
+    }
+    conversation.promptInProgress = true;
+    try {
+      await invoke();
+      await conversation.agent.waitForIdle();
+      await afterPrompt();
+    } finally {
+      conversation.promptInProgress = false;
+    }
   }
 
   private scopedConversation(
@@ -4693,16 +5769,70 @@ export class AgentRuntime {
   private createIssueToolRuntime(
     agentId: string,
     executor?: AgentSessionExecutor,
+    originContext?: () => {
+      conversationId?: string | null;
+      executionId?: string | null;
+    },
   ): AgentToolsOptions['issueRuntime'] {
     return createAgentIssueToolRuntime({
       store: this.getIssueStore(),
       actor: { type: 'agent', agentId },
       executor,
+      origin: () => this.resolveIssueOrigin(originContext?.()),
       resolveInputScope: (scope, issue, now) => (
         resolveIssueInputScopeFromProjection(scope, issue, this.outlinerToolHost.getProjection(), now)
       ),
+      authorizeChildScope: (parentSession, definition) => (
+        validateChildIssueNodeScope(parentSession, definition, this.outlinerToolHost.getProjection())
+      ),
       onIssueCreated: () => this.queueIssueSweep(new Date()),
+      onIssueDeliveryQueued: () => this.queueIssueDeliveryDrain(),
     });
+  }
+
+  private async resolveIssueOrigin(context?: {
+    conversationId?: string | null;
+    executionId?: string | null;
+  }): Promise<AgentIssueOrigin | undefined> {
+    const conversationId = context?.conversationId;
+    if (!conversationId) return undefined;
+
+    if (context.executionId) {
+      const parentSession = await this.issueSessionForExecutionChain(context.executionId);
+      if (parentSession) return { type: 'agent-session', agentSessionId: parentSession.id };
+    }
+
+    if (isInternalAgentConversationId(conversationId)) {
+      const parentSession = await this.getIssueStore().sessionForExecutionConversation(conversationId);
+      if (!parentSession) {
+        throw new Error(`Internal Agent conversation ${conversationId} has no Agent Session execution binding.`);
+      }
+      return { type: 'agent-session', agentSessionId: parentSession.id };
+    }
+    return { type: 'conversation', conversationId };
+  }
+
+  private async issueSessionForExecutionChain(executionId: string): Promise<AgentSession | null> {
+    let currentExecutionId: string | undefined = executionId;
+    const visited = new Set<string>();
+    while (currentExecutionId) {
+      if (visited.has(currentExecutionId)) {
+        throw new Error(`Agent Run ownership chain contains a cycle at ${currentExecutionId}.`);
+      }
+      visited.add(currentExecutionId);
+      const session = await this.getIssueStore().sessionForExecution({
+        engine: 'delegation',
+        executionId: currentExecutionId,
+      });
+      if (session) return session;
+      const meta: AgentRunMetaProjection | null = await this.getEventStore()
+        .readRunMetaProjection(currentExecutionId);
+      if (!meta) {
+        throw new Error(`Agent Run ${currentExecutionId} has no ownership metadata.`);
+      }
+      currentExecutionId = meta?.parentRunId;
+    }
+    return null;
   }
 
   private createIssueSessionExecutor(
@@ -4711,39 +5841,64 @@ export class AgentRuntime {
   ): AgentSessionExecutor {
     const runtimeForBinding = async (binding: AgentSessionExecutionBinding): Promise<AgentDelegationRuntime | null> => {
       const live = this.conversations.get(binding.conversationId)?.delegationRuntime;
-      if (live) return live;
+      const liveOwner = await live?.controllingRuntimeForRun(binding.executionId);
+      if (liveOwner) return liveOwner;
       const fallback = getConversationId();
-      if (binding.conversationId === fallback) return getDelegationRuntime();
+      if (binding.conversationId === fallback) {
+        const fallbackRuntime = getDelegationRuntime();
+        return await fallbackRuntime?.controllingRuntimeForRun(binding.executionId) ?? fallbackRuntime;
+      }
       const conversation = await this.ensureConversationWithId(binding.conversationId);
-      return conversation.delegationRuntime;
+      return await conversation.delegationRuntime.controllingRuntimeForRun(binding.executionId)
+        ?? conversation.delegationRuntime;
     };
     return {
-      start: async ({ session, startInput, now }) => {
+      start: async ({ session, startInput, now, bindExecution }) => {
         const delegationRuntime = getDelegationRuntime();
         if (!delegationRuntime) throw new Error('No live agent execution runtime is available for this Agent Session.');
-        const data = await delegationRuntime.invokeAgent(agentSessionDelegationInput(session, startInput), undefined);
+        const conversationId = getConversationId();
+        const continuationContext = await this.agentSessionContinuationContext(startInput);
+        const data = await delegationRuntime.invokeAgent(
+          agentSessionDelegationInput(session, startInput, continuationContext),
+          undefined,
+          undefined,
+          async (snapshot) => {
+            const bound = await bindExecution({
+              engine: 'delegation',
+              conversationId,
+              executionId: snapshot.id,
+              startedAt: snapshot.startedAt ?? now,
+            });
+            if (bound.status !== 'applied') {
+              throw new Error(bound.validation?.[0]?.message ?? `Agent Session execution binding failed: ${bound.status}`);
+            }
+          },
+          session.purpose === 'verify' ? 'verifier' : 'controller',
+          true,
+        );
         await this.syncIssueSessionFromDelegationData(data);
         return {
           engine: 'delegation',
-          conversationId: getConversationId(),
+          conversationId,
           executionId: data.runId,
           startedAt: data.started_at ?? now,
         };
       },
       read: async (binding, input) => {
         const delegationRuntime = await runtimeForBinding(binding);
-        if (!delegationRuntime) return;
+        if (!delegationRuntime) return 'unavailable';
         const data = await delegationRuntime.status({
           runId: binding.executionId,
           wait: input.wait === true,
           timeout_ms: input.timeoutMs,
         });
         await this.syncIssueSessionFromDelegationData(data);
+        return 'synced';
       },
       sendMessage: async (binding, message) => {
         const delegationRuntime = await runtimeForBinding(binding);
         if (!delegationRuntime) throw new Error('No live agent execution runtime is available for this Agent Session.');
-        const data = await delegationRuntime.send({ runId: binding.executionId, message });
+        const data = await delegationRuntime.sendLive({ runId: binding.executionId, message });
         await this.syncIssueSessionFromDelegationData(data);
       },
       stop: async (binding) => {
@@ -4751,8 +5906,40 @@ export class AgentRuntime {
         if (!delegationRuntime) throw new Error('No live agent execution runtime is available for this Agent Session.');
         const data = await delegationRuntime.stop({ runId: binding.executionId });
         await this.syncIssueSessionFromDelegationData(data);
+        return delegationDataConfirmsCancellation(data) ? 'canceled' : 'not-canceled';
       },
     };
+  }
+
+  private async agentSessionContinuationContext(
+    startInput: AgentSessionStartInput,
+  ): Promise<string | undefined> {
+    const continuation = startInput.continuation;
+    if (!continuation || continuation.context === 'none') return undefined;
+    const previous = await this.getIssueStore().readSession({
+      agentSessionId: continuation.previousAgentSessionId,
+      include: ['latest-output'],
+    });
+    if (!previous) return undefined;
+    const summary = previous.agentSession.latestOutput?.trim()
+      || previous.agentSession.errorMessage?.trim()
+      || 'The previous Agent Session ended without a textual result.';
+    if ((continuation.context ?? 'summary') === 'summary') {
+      return `Previous Agent Session summary:\n${summary.slice(0, 24_000)}`;
+    }
+
+    const binding = await this.getIssueStore().executionForSession(continuation.previousAgentSessionId);
+    if (!binding) return `Previous Agent Session transcript unavailable.\n\nSummary:\n${summary.slice(0, 24_000)}`;
+    try {
+      const replay = await this.getEventStore().replayRunStream(binding.executionId);
+      const messages = await this.deriveRuntimePiMessages(binding.conversationId, replay);
+      const transcript = formatAgentSessionContinuationTranscript(messages, 24_000);
+      return transcript
+        ? `Previous Agent Session transcript:\n${transcript}`
+        : `Previous Agent Session transcript was empty.\n\nSummary:\n${summary.slice(0, 24_000)}`;
+    } catch {
+      return `Previous Agent Session transcript unavailable.\n\nSummary:\n${summary.slice(0, 24_000)}`;
+    }
   }
 
   private createChatSourceValidator(): AgentToolsOptions['chatSourceValidator'] {
@@ -5415,33 +6602,45 @@ export class AgentRuntime {
     return messageId;
   }
 
-  private async appendSystemPromptEvent(conversationId: string, conversation: AgentConversationState, prompt: UserMessage) {
-    const messageId = this.createMessageId('user');
+  private async appendSystemPromptEvent(
+    conversationId: string,
+    conversation: AgentConversationState,
+    prompt: UserMessage,
+    options: {
+      messageId?: string;
+      notificationId?: string;
+    } = {},
+  ) {
+    const messageId = options.messageId ?? this.createMessageId('user');
     const persisted = await this.persistPiUserContent(conversationId, prompt.content, {
       imageSummary: 'System notification attachment',
     });
     const actor = systemActor();
-    await this.appendConversationEvents(conversationId, conversation, [
-      ...persisted.payloads.map((payload): AgentEventInput => ({
-        type: 'payload.created',
-        actor,
-        payload,
-      })),
-      {
-        type: 'user_message.created',
-        actor,
-        createdAt: prompt.timestamp,
-        messageId,
-        parentMessageId: conversation.eventState.selectedLeafMessageId,
-        content: persisted.content,
-        attachments: persisted.payloads.length > 0 ? persisted.payloads : undefined,
-      },
-      {
-        type: 'branch.selected',
-        actor,
-        leafMessageId: messageId,
-      },
-    ]);
+    await this.appendConversationEvents(conversationId, conversation, (state) => {
+      if (state.messages[messageId]) return [];
+      return [
+        ...persisted.payloads.map((payload): AgentEventInput => ({
+          type: 'payload.created',
+          actor,
+          payload,
+        })),
+        {
+          type: 'user_message.created',
+          actor,
+          createdAt: prompt.timestamp,
+          messageId,
+          parentMessageId: state.selectedLeafMessageId,
+          content: persisted.content,
+          attachments: persisted.payloads.length > 0 ? persisted.payloads : undefined,
+          notificationId: options.notificationId,
+        },
+        {
+          type: 'branch.selected',
+          actor,
+          leafMessageId: messageId,
+        },
+      ];
+    });
   }
 
   private async appendCompactionRootEvent(
@@ -7467,6 +8666,20 @@ function latestAssistantRecordForRun(eventState: AgentEventReplayState, runId: s
     .sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id))[0] ?? null;
 }
 
+function isProcessedRootIssueDeliveryRun(eventState: AgentEventReplayState, runId: string): boolean {
+  const message = latestAssistantRecordForRun(eventState, runId);
+  return message?.role === 'assistant' && isProcessedRootIssueDeliveryMessage(message);
+}
+
+function isProcessedRootIssueDeliveryMessage(
+  message: AgentEventMessageRecord,
+): boolean {
+  return message.role === 'assistant'
+    && message.status === 'completed'
+    && message.stopReason === 'stop'
+    && !message.content.some((part) => part.type === 'toolCall');
+}
+
 function persistedTextContent(content: readonly AgentPersistedContent[]): string {
   return content
     .filter((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text')
@@ -8227,10 +9440,14 @@ function isCompletedRunMeta(meta: AgentRunMetaProjection): boolean {
 function latestRunSubmissionFromEvents(
   events: readonly AgentEvent[],
   latestSubmissionSeq?: number,
+  minSeqExclusive = 0,
 ): AgentRunSubmissionProjection | undefined {
-  const event = typeof latestSubmissionSeq === 'number'
+  const pointed = typeof latestSubmissionSeq === 'number' && latestSubmissionSeq > minSeqExclusive
     ? events.find((candidate) => candidate.type === 'run.result.submitted' && candidate.seq === latestSubmissionSeq)
-    : [...events].reverse().find((candidate) => candidate.type === 'run.result.submitted');
+    : undefined;
+  const event = pointed ?? [...events].reverse().find((candidate) => (
+    candidate.type === 'run.result.submitted' && candidate.seq > minSeqExclusive
+  ));
   if (!event || event.type !== 'run.result.submitted') return undefined;
   const summary = event.summary.trim();
   if (!summary) return undefined;
@@ -8247,10 +9464,16 @@ function latestRunSubmissionFromEvents(
 function latestAssistantMessageSubmissionFromEvents(
   events: readonly AgentEvent[],
   runId: string,
+  minSeqExclusive = 0,
 ): AgentRunSubmissionProjection | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]!;
-    if (event.type !== 'assistant_message.completed') continue;
+    if (
+      event.type !== 'assistant_message.completed'
+      || event.seq <= minSeqExclusive
+      || event.stopReason !== 'stop'
+      || event.content.some((part) => part.type === 'toolCall')
+    ) continue;
     const summary = assistantCompletedText(event.content);
     if (!summary) continue;
     return {
@@ -8262,6 +9485,23 @@ function latestAssistantMessageSubmissionFromEvents(
     };
   }
   return undefined;
+}
+
+function latestRunResultFromEvents(
+  events: readonly AgentEvent[],
+  runId: string,
+  latestSubmissionSeq: number | undefined,
+  includeAssistantFallback: boolean,
+): AgentRunSubmissionProjection | undefined {
+  const currentSpanStartSeq = events.reduce((latest, event) => (
+    event.type === 'run.started' ? Math.max(latest, event.seq) : latest
+  ), 0);
+  const submitted = latestRunSubmissionFromEvents(events, latestSubmissionSeq, currentSpanStartSeq);
+  if (!includeAssistantFallback) return submitted;
+  const assistant = latestAssistantMessageSubmissionFromEvents(events, runId, currentSpanStartSeq);
+  if (!submitted) return assistant;
+  if (!assistant) return submitted;
+  return assistant.seq > submitted.seq ? assistant : submitted;
 }
 
 function assistantCompletedText(content: readonly AgentPersistedContent[]): string {
@@ -8313,6 +9553,60 @@ function formatRunNotification(snapshot: AgentRunSnapshot, latestSubmission?: Ag
     'If the result is too long for the chat surface, provide the useful summary first and mention that the full result is available in Work details.',
     '</delivery_instructions>',
     '</agent-run-notification>',
+  ].filter((line): line is string => line !== null).join('\n');
+}
+
+function issueDeliveryMarker(deliveryId: string): string {
+  return `tenon-issue-delivery:${deliveryId}`;
+}
+
+function formatChildIssueDeliveryNotification(
+  delivery: AgentIssueTerminalDelivery,
+  marker: string,
+  childExecutionId?: string,
+): string {
+  return [
+    `<child-issue-delivery id="${escapeXml(marker)}">`,
+    `<issueId>${escapeXml(delivery.issueId)}</issueId>`,
+    delivery.agentSessionId ? `<agentSessionId>${escapeXml(delivery.agentSessionId)}</agentSessionId>` : null,
+    childExecutionId ? `<executionId>${escapeXml(childExecutionId)}</executionId>` : null,
+    `<status>${escapeXml(delivery.state)}</status>`,
+    `<summary>${escapeXml(delivery.title)}</summary>`,
+    delivery.state === 'complete' && delivery.body ? `<result>${escapeXml(delivery.body)}</result>` : null,
+    delivery.state === 'error' && delivery.body ? `<error>${escapeXml(delivery.body)}</error>` : null,
+    delivery.state === 'canceled' ? '<cancellation>The child Issue was canceled without a result.</cancellation>' : null,
+    '<delivery_instructions>',
+    delivery.state === 'error'
+      ? 'A child Agent Session failed. The child Issue remains open and may need retry, revision, or explicit cancellation.'
+      : 'A child Issue owned by this Agent Session reached a terminal state.',
+    'Continue the parent Issue now: inspect and integrate this outcome, resolve remaining child work, and return the parent result only when the parent Issue is complete.',
+    'Do not deliver this child result directly to the visible user conversation; runtime routes the completed parent Issue to its own origin.',
+    '</delivery_instructions>',
+    '</child-issue-delivery>',
+  ].filter((line): line is string => line !== null).join('\n');
+}
+
+function formatRootIssueDeliveryNotification(
+  delivery: AgentIssueTerminalDelivery,
+  marker: string,
+): string {
+  return [
+    `<root-issue-delivery id="${escapeXml(marker)}">`,
+    `<issueId>${escapeXml(delivery.issueId)}</issueId>`,
+    delivery.agentSessionId ? `<agentSessionId>${escapeXml(delivery.agentSessionId)}</agentSessionId>` : null,
+    `<status>${escapeXml(delivery.state)}</status>`,
+    `<summary>${escapeXml(delivery.title)}</summary>`,
+    delivery.state === 'complete' && delivery.body ? `<result>${escapeXml(delivery.body)}</result>` : null,
+    delivery.state === 'error' && delivery.body ? `<error>${escapeXml(delivery.body)}</error>` : null,
+    '<delivery_instructions>',
+    delivery.state === 'error'
+      ? 'A root Agent Session failed. Decide whether the user needs an explanation or a useful next action now.'
+      : 'A root Issue completed. Decide how this outcome should affect the conversation.',
+    'This notification starts a new Agent turn, but it does not require a visible reply.',
+    'You may respond now, use tools before deciding, or end this turn without visible text when waiting for other Issue outcomes or when no user-facing update is needed.',
+    'If you respond, make the reply self-contained and useful. Do not append raw execution output to the previous assistant turn or merely say the result was stored in Work, an Issue, an Agent Session, or a Run.',
+    '</delivery_instructions>',
+    '</root-issue-delivery>',
   ].filter((line): line is string => line !== null).join('\n');
 }
 
@@ -8663,7 +9957,11 @@ function delegationRunRecordFromMeta(run: AgentRunMetaProjection): DelegationRun
     prompt: objective,
     objective,
     criteria: run.objective?.criteria,
+    objectiveRole: run.objective?.role,
     objectiveStatus: run.objective?.status,
+    ...(run.objective?.verificationRequired ? { verify: true } : {}),
+    verificationAttemptBase: run.objective?.verificationAttemptBase,
+    verifierGapSignatures: run.objective?.verifierGapSignatures?.slice(),
     purpose: runPurposeFromMeta(run),
     scope: run.objective?.scope,
     budget: run.objective?.budget,
@@ -8778,7 +10076,8 @@ class DreamChannelRunError extends Error {
 }
 
 function isInternalAgentConversationId(conversationId: string): boolean {
-  return conversationId === LEGACY_MEMORY_DREAM_CONVERSATION_ID;
+  return conversationId === LEGACY_MEMORY_DREAM_CONVERSATION_ID
+    || conversationId.startsWith(ISSUE_AGENT_CONVERSATION_PREFIX);
 }
 
 function skippedDreamRunResult(
@@ -8853,29 +10152,47 @@ function shortExecutionTitle(text: string): string {
 function issueSessionExecutionStateFromRunStatus(
   status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'cancelled',
   objectiveStatus?: AgentRunSnapshot['objectiveStatus'],
+  verificationRequired = false,
 ): AgentSessionExecutionSyncInput['state'] {
+  if (objectiveStatus === 'stopped') return 'cancelled';
   if (status === 'async_launched' || status === 'queued' || status === 'running') return 'running';
   if (status === 'cancelled') return 'cancelled';
   if (status === 'failed') return 'failed';
+  if (objectiveStatus === 'verifying' || (verificationRequired && objectiveStatus === 'active')) return 'running';
   return objectiveStatus === 'blocked' || objectiveStatus === 'budget_exhausted'
     ? 'failed'
     : 'completed';
 }
 
+function delegationDataConfirmsCancellation(data: {
+  status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'cancelled';
+  objective_status?: AgentRunSnapshot['objectiveStatus'];
+}): boolean {
+  return data.status === 'cancelled' || data.objective_status === 'stopped';
+}
+
 function agentSessionDelegationInput(
   session: AgentSession,
   startInput: AgentSessionStartInput,
+  continuationContext?: string,
 ): Record<string, unknown> {
-  const criteria = agentSessionCriteria(session.issueSnapshot.completionCriteria);
+  const verifierSession = session.purpose === 'verify';
+  const criteria = agentSessionCriteria(
+    session.issueSnapshot.completionCriteria,
+    session.issueSnapshot.verificationPolicy?.mode === 'agent-review'
+      ? session.issueSnapshot.verificationPolicy.requiredEvidence
+      : undefined,
+  );
   const scope = agentSessionRunScope(session);
   return {
     description: shortExecutionTitle(session.issueSnapshot.title),
-    objective: agentSessionObjective(session, startInput),
+    objective: agentSessionObjective(session, startInput, continuationContext),
     criteria,
-    verify: session.purpose !== 'verify' && session.issueSnapshot.verificationPolicy?.mode === 'agent-review',
-    purpose: session.purpose === 'verify' ? 'verify' : 'work',
+    verify: !verifierSession && session.issueSnapshot.verificationPolicy?.mode === 'agent-review',
+    purpose: verifierSession ? 'verify' : 'work',
     scope,
-    context: 'brief',
+    context: verifierSession ? 'none' : 'brief',
+    ...(verifierSession ? { allowedTools: readOnlyAgentToolNames() } : {}),
     detach: startInput.detach ?? true,
     unattended: session.issueSnapshot.permissionMode === 'unattended',
     runProfile: runProfileForAgentSession(session.delegate.runProfile),
@@ -8883,7 +10200,11 @@ function agentSessionDelegationInput(
   };
 }
 
-function agentSessionObjective(session: AgentSession, startInput: AgentSessionStartInput): string {
+function agentSessionObjective(
+  session: AgentSession,
+  startInput: AgentSessionStartInput,
+  continuationContext?: string,
+): string {
   const issue = session.issueSnapshot;
   return [
     'You are executing one Agent Session for a Tenon Issue.',
@@ -8893,11 +10214,16 @@ function agentSessionObjective(session: AgentSession, startInput: AgentSessionSt
     `Issue id: ${issue.id}`,
     `Issue title: ${issue.title}`,
     issue.description ? `Issue description:\n${issue.description}` : '',
+    issue.noteNodeIds?.length ? `Attached note node ids: ${issue.noteNodeIds.join(', ')}` : '',
     issue.recurrence ? `Recurring Issue id: ${issue.recurrence.recurringIssueId}` : '',
     session.inputSnapshot ? `Input snapshot:\n${formatIssueInputSnapshot(session.inputSnapshot)}` : 'Input snapshot: none',
     issue.output ? `Output policy:\n${formatIssueOutputPolicy(issue.output)}` : 'Output policy: activity only',
     formatIssueCriteria(issue.completionCriteria),
+    issue.verificationPolicy?.requiredEvidence?.length
+      ? `Required evidence:\n${issue.verificationPolicy.requiredEvidence.map((item) => `- ${item}`).join('\n')}`
+      : '',
     formatIssueContinuation(startInput),
+    continuationContext ? `<previous-agent-session-context>\n${continuationContext}\n</previous-agent-session-context>` : '',
     '',
     ...(session.purpose === 'verify' ? verifierSessionRules() : executionSessionRules()),
   ].filter(Boolean).join('\n');
@@ -8907,11 +10233,12 @@ function executionSessionRules(): string[] {
   return [
     'Execution rules:',
     '1. Work only within this Issue snapshot and its input scope.',
-    '2. Build the execution plan inside this Agent Session. Use the Issue description and criteria for coverage, sequencing, evidence, and output requirements.',
+    '2. Treat per-item coverage such as districts, files, nodes, or sources as execution-local strategy. Use the Issue description and criteria for coverage, sequencing, evidence, and output requirements.',
     '3. Use Issue relations only when another independently managed Issue is a true external blocker, duplicate, or related outcome.',
-    '4. Create a separate flat Issue only when you discover a new independently user-visible outcome that should be managed outside this Issue.',
-    '5. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
-    '6. If your final response satisfies the Issue criteria and no human review is required, runtime may complete the Issue from this Agent Session.',
+    '4. Create a child Issue only when a sub-outcome needs its own durable lifecycle or independent Agent Session. Runtime derives its parent and routes its terminal result back to this Session.',
+    '5. Do not finish this parent Session while child results remain unresolved; integrate each routed child result before returning the parent result.',
+    '6. Record important findings and blockers in your final response so runtime can attach them to this Agent Session.',
+    '7. If your final response satisfies the Issue criteria and no human review is required, runtime may complete the Issue from this Agent Session.',
   ];
 }
 
@@ -8921,16 +10248,24 @@ function verifierSessionRules(): string[] {
     '1. Review the Issue snapshot, completion criteria, evidence, linked Agent Sessions, and available output.',
     '2. Do not perform the work again unless a narrow read is needed to verify evidence.',
     '3. Start the final response with exactly one verdict line: "Verdict: pass", "Verdict: partial", or "Verdict: fail".',
-    '4. Then summarize the evidence and any blockers. Runtime records that verdict as Issue Activity and may complete the Issue on a pass verdict.',
+    '4. Then summarize the evidence and any blockers, explicitly naming every required-evidence item you assessed. Runtime records that verdict as Issue Activity and completes only when the configured verdict and evidence requirements are satisfied.',
   ];
 }
 
-function agentSessionCriteria(criteria: readonly IssueCompletionCriterion[] | undefined): string[] | undefined {
+function agentSessionCriteria(
+  criteria: readonly IssueCompletionCriterion[] | undefined,
+  requiredEvidence: readonly string[] | undefined = undefined,
+): string[] | undefined {
   const open = (criteria ?? [])
     .filter((criterion) => criterion.state !== 'waived')
     .map((criterion) => criterion.text.trim())
     .filter((text) => text.length > 0);
-  return open.length > 0 ? open : undefined;
+  const evidence = (requiredEvidence ?? [])
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => `Required evidence: ${item}`);
+  const combined = [...open, ...evidence];
+  return combined.length > 0 ? combined : undefined;
 }
 
 function formatIssueCriteria(criteria: readonly IssueCompletionCriterion[] | undefined): string {
@@ -8948,6 +10283,32 @@ function formatIssueContinuation(startInput: AgentSessionStartInput): string {
     continuation.guidance ? `Continuation guidance:\n${continuation.guidance}` : '',
     `Continuation context: ${continuation.context ?? 'summary'}`,
   ].filter(Boolean).join('\n');
+}
+
+function formatAgentSessionContinuationTranscript(
+  messages: readonly AgentMessage[],
+  maxChars: number,
+): string {
+  const entries = messages.map((message) => {
+    const content = (message as { content?: unknown }).content;
+    const parts = typeof content === 'string'
+      ? [content]
+      : Array.isArray(content)
+        ? content.flatMap((part) => {
+            if (!part || typeof part !== 'object') return [];
+            const record = part as Record<string, unknown>;
+            if (record.type === 'text' && typeof record.text === 'string') return [record.text];
+            if (record.type === 'toolCall' && typeof record.name === 'string') return [`[tool call: ${record.name}]`];
+            return [];
+          })
+        : [];
+    const text = parts.map((part) => part.trim()).filter(Boolean).join('\n');
+    if (!text) return '';
+    const role = message.role === 'toolResult' ? 'Tool result' : message.role === 'assistant' ? 'Assistant' : 'User';
+    return `${role}: ${text}`;
+  }).filter(Boolean).join('\n\n');
+  if (entries.length <= maxChars) return entries;
+  return `[Earlier transcript omitted]\n\n${entries.slice(-maxChars)}`;
 }
 
 function formatIssueInputSnapshot(input: AgentSession['inputSnapshot']): string {
@@ -8969,12 +10330,10 @@ function runProfileForAgentSession(profile: AgentIssueRunProfile | undefined): A
   return undefined;
 }
 
-function agentSessionBudget(session: AgentSession): { wallClockMinutes: number } | undefined {
+function agentSessionBudget(session: AgentSession): { deadlineAt: number } | undefined {
   const deadlineAt = session.executionPolicy?.deadlineAt;
   if (!deadlineAt) return undefined;
-  const remainingMs = deadlineAt - Date.now();
-  if (remainingMs <= 0) return { wallClockMinutes: 1 };
-  return { wallClockMinutes: Math.max(1, Math.ceil(remainingMs / 60_000)) };
+  return { deadlineAt };
 }
 
 function uniqueStrings(values: readonly string[] | undefined): string[] {

@@ -72,6 +72,43 @@ describe('agent render projection', () => {
     });
   });
 
+  test('projects a structured Issue notification onto its hidden Agent turn', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Issue notification' },
+      {
+        ...base(2, 'notification.created'),
+        notificationId: 'notification-issue-1',
+        kind: 'task_completed',
+        title: 'Compile the report',
+        source: {
+          type: 'issue',
+          issueId: 'issue-1',
+          agentSessionId: 'agent-session-1',
+          state: 'complete',
+        },
+      },
+      {
+        ...base(3, 'user_message.created'),
+        messageId: 'issue-notification-turn-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: systemReminder('<root-issue-delivery />') }],
+        notificationId: 'notification-issue-1',
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    expect(projection.entities.messages['issue-notification-turn-1']?.issueNotification).toEqual({
+      notificationId: 'notification-issue-1',
+      issueId: 'issue-1',
+      agentSessionId: 'agent-session-1',
+      state: 'complete',
+      kind: 'task_completed',
+      title: 'Compile the report',
+      createdAt: 1_700_000_000_002,
+    });
+  });
+
   test('projects render runs from Run metadata input', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Run metadata projection' },

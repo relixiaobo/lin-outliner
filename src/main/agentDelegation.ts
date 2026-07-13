@@ -20,6 +20,7 @@ import type {
   AgentRunContextMode,
   AgentObjectiveStatus,
   AgentRunBudget,
+  AgentRunObjectiveRole,
   AgentRunProfileId,
   AgentRunPurpose,
   AgentRunSubmissionProjection,
@@ -50,6 +51,7 @@ import {
 import { agentMessagesAutoCompactTokens, autoCompactThreshold } from './agentRuntimeContext';
 import { NEVA_AGENT_PERSONA } from './agentSystemPrompt';
 import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
+import { chainAbortSignals } from './agentStreamAbort';
 import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
@@ -66,9 +68,9 @@ import {
   formatRunBudgetForPrompt,
   formatRunScopeForPrompt,
   narrowRunScope,
-  normalizeRunBudget,
   normalizeRunBudgetInput,
   normalizeRunScope,
+  prepareRunBudgetAmendment,
   releaseAdmittedRunBudget,
   remainingBudgetMs,
   retryBudgetSlice,
@@ -125,6 +127,7 @@ const MAX_SETTIMEOUT_DELAY_MS = 2_147_483_647;
 export type AgentDelegateToolData = AgentRunActionResult;
 
 export interface AgentChildAgentCreateInput {
+  runId: string;
   conversationId: string;
   messages: AgentMessage[];
   systemPrompt: string;
@@ -149,6 +152,7 @@ export interface AgentChildAgentCreateInput {
   allowedTools?: string[];
   disallowedTools?: string[];
   preapprovedToolRules?: string[];
+  scopePreauthorized?: boolean;
   l0CacheBreakpointEnabled?: boolean;
   /**
    * Run with no interactive approval channel. A tool needing approval is denied
@@ -199,7 +203,11 @@ export interface AgentDelegationRuntimeHost {
   ): Promise<AgentRunSubmissionProjection | null>;
   readLatestRunSubmission?(runId: string): Promise<AgentRunSubmissionProjection | undefined>;
   /** Status transition: Run metadata + run lifecycle event in the run ledger. */
-  runStatusChanged(snapshot: AgentRunSnapshot): Promise<void>;
+  runStatusChanged(snapshot: AgentRunSnapshot, durableMessage?: AgentMessage): Promise<void>;
+  /** A live execution frame started; forwarded through nested runtimes. */
+  runExecutionStarted?(snapshot: AgentRunSnapshot): void;
+  /** The current execution frame finished after its terminal persistence settled. */
+  runExecutionSettled?(snapshot: AgentRunSnapshot): Promise<void> | void;
   notifyRun(snapshot: AgentRunSnapshot): Promise<void>;
   reportError?(report: ErrorReport): void;
   /**
@@ -259,6 +267,14 @@ interface DelegationRunState extends DelegationDetail {
    * (which it does; the old snapshot path double-recorded them).
    */
   ledgerSeededMessages: WeakSet<AgentMessage>;
+  /** System follow-ups whose message_end listener must durably append before the loop may continue. */
+  durableFollowUpMessages: WeakSet<AgentMessage>;
+  /** Exact durable follow-up payloads that compaction must carry until a completed terminal is persisted. */
+  activeDurableFollowUpTexts: Set<string>;
+  /** A continuation is rebuilding/announcing before its agent loop starts. */
+  startupInFlight: boolean;
+  /** Number of runChildAgent frames that have not settled their terminal persistence yet. */
+  executionInFlightCount: number;
   /**
    * Index into `agent.state.messages` marking where the CURRENT live span
    * begins — reset on resume (the restored history seed) and on compaction (the
@@ -273,12 +289,15 @@ interface DelegationRunState extends DelegationDetail {
   terminalNotificationSent: boolean;
   turnCount: number;
   verify: boolean;
+  verificationAttemptBase: number;
   verificationAttempts: number;
   verifierRunIds: string[];
   hasWorkChildren?: boolean;
   latestVerifierGap?: string;
   parentBudgetRef?: AgentRunBudget;
   budgetSettled?: boolean;
+  /** Re-arms the live execution frame's wall-clock deadline after a budget amendment. */
+  budgetTimerRefresh?: () => void;
   /** Set when a 'completed' run was actually cut off (maxTurns / unresolved overflow). */
   incomplete?: boolean;
   preapprovedToolRules?: string[];
@@ -287,13 +306,18 @@ interface DelegationRunState extends DelegationDetail {
   fileChanges: AgentRunFileChanges;
   toolTrace: AgentRunToolTraceEntry[];
   verifierGapSignatures: string[];
+  verificationAbortController?: AbortController;
+  /** Invalidates async verifier/re-plan frames when stop, resume, or a contract amendment wins. */
+  lifecycleEpoch: number;
   latestSubmission?: AgentRunSubmissionProjection;
   submittedResult?: string;
   summarizedDetachedChildRunKey?: string;
+  processedControllerDeliveryCount: number;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
   skillRuntime?: AgentSkillRuntime;
   localWorkspace?: AgentLocalWorkspaceContext;
+  subRunRuntime?: AgentDelegationRuntime;
   observedOnly?: boolean;
 }
 
@@ -306,6 +330,10 @@ type RunningSlotReservation = () => void;
  */
 export type AgentRunSnapshot = DelegationDetail;
 
+export type AgentRunAcceptedCallback = (
+  snapshot: AgentRunSnapshot,
+) => Promise<void> | void;
+
 interface AgentToolParams {
   objective: string;
   criteria?: string[];
@@ -313,6 +341,7 @@ interface AgentToolParams {
   description: string;
   runPrompt: string;
   purpose: AgentRunPurpose;
+  objectiveRole?: AgentRunObjectiveRole;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
   context: AgentRunContextMode;
@@ -325,6 +354,7 @@ interface AgentToolParams {
   preapprovedToolRules?: string[];
   parentRunId?: string;
   parentBudget?: AgentRunBudget;
+  scopePreauthorized?: boolean;
   inheritedVerificationAttempts?: number;
   inheritedVerifierGapSignatures?: string[];
   inheritedVerifierRunIds?: string[];
@@ -471,19 +501,26 @@ export class AgentDelegationRuntime {
         depth: this.depth + 1,
         messages: [],
         ledgerSeededMessages: new WeakSet(),
+        durableFollowUpMessages: new WeakSet(),
+        activeDurableFollowUpTexts: new Set(),
+        startupInFlight: false,
+        executionInFlightCount: 0,
         detached: false,
         terminalNotificationSent: true,
         turnCount: 0,
-        verify: false,
-        verificationAttempts: 0,
+        verify: record.verify === true,
+        verificationAttemptBase: record.verificationAttemptBase ?? 0,
+        verificationAttempts: record.verificationAttemptBase ?? 0,
         verifierRunIds: [],
         hasWorkChildren: false,
         latestVerifierGap: record.latestVerifierGap,
+        processedControllerDeliveryCount: 0,
         toolResultBudgetState: createToolResultBudgetState(),
         nodeChanges: {},
         fileChanges: {},
         toolTrace: [],
-        verifierGapSignatures: [],
+        verifierGapSignatures: [...(record.verifierGapSignatures ?? [])],
+        lifecycleEpoch: 0,
         autoCompactConsecutiveFailures: 0,
         autoCompactInProgress: false,
       };
@@ -491,17 +528,68 @@ export class AgentDelegationRuntime {
       if (run.name) this.names.set(run.name, run.id);
     }
     for (const record of records) {
-      if (!record.parentRunId || record.purpose === 'verify') continue;
+      if (!record.parentRunId) continue;
       const parent = this.runs.get(record.parentRunId);
-      if (parent) parent.hasWorkChildren = true;
+      if (!parent) continue;
+      if (record.purpose === 'verify') {
+        parent.verifierRunIds.push(record.id);
+        parent.verificationAttempts = parent.verificationAttemptBase + parent.verifierRunIds.length;
+      } else {
+        parent.hasWorkChildren = true;
+      }
     }
   }
 
-  async invokeAgent(rawParams: unknown, signal?: AbortSignal, parentToolCallId?: string): Promise<AgentDelegateToolData> {
+  async controllingRuntimeForRun(runId: string): Promise<AgentDelegationRuntime | null> {
+    return this.findControllingRuntimeForRun(runId, new Set());
+  }
+
+  private async findControllingRuntimeForRun(
+    runId: string,
+    visited: Set<string>,
+  ): Promise<AgentDelegationRuntime | null> {
+    const visitKey = `${this.conversationId}\u0000${runId}`;
+    if (visited.has(visitKey)) return null;
+    visited.add(visitKey);
+
+    const local = this.runs.get(runId);
+    if (local && !local.observedOnly) return this;
+    if (local?.parentRunId) {
+      const parentRuntime = await this.findControllingRuntimeForRun(local.parentRunId, visited);
+      const parentRun = parentRuntime?.runs.get(local.parentRunId);
+      if (parentRuntime && parentRun) {
+        await parentRuntime.ensureLiveAgent(parentRun);
+        const nested = parentRun.subRunRuntime;
+        if (nested) {
+          if (!nested.runs.has(runId)) nested.restorePersistedRuns([snapshotRun(local)]);
+          return nested.findControllingRuntimeForRun(runId, visited);
+        }
+      }
+    }
+
+    for (const run of this.runs.values()) {
+      const nested = run.subRunRuntime;
+      if (!nested) continue;
+      const owner = await nested.findControllingRuntimeForRun(runId, visited);
+      if (owner) return owner;
+    }
+    return null;
+  }
+
+  async invokeAgent(
+    rawParams: unknown,
+    signal?: AbortSignal,
+    parentToolCallId?: string,
+    onAccepted?: AgentRunAcceptedCallback,
+    objectiveRole?: AgentRunObjectiveRole,
+    scopePreauthorized = false,
+  ): Promise<AgentDelegateToolData> {
     const params = normalizeAgentToolParams(rawParams);
+    params.objectiveRole = objectiveRole;
+    params.scopePreauthorized = scopePreauthorized;
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
-      return await this.startAgent(params, releaseStartupSlot, signal, parentToolCallId);
+      return await this.startAgent(params, releaseStartupSlot, signal, parentToolCallId, onAccepted);
     } catch (error) {
       releaseStartupSlot();
       throw error;
@@ -542,7 +630,12 @@ export class AgentDelegationRuntime {
       await waitWithTimeout(run.completion ?? Promise.resolve(), params.timeout_ms ?? 30000);
     }
     await this.hydrateLatestSubmission(run);
-    return runToToolData(run, this.directChildrenOf(run));
+    return runToToolData(run, this.directChildrenOf(run), liveRunPartialResult(run));
+  }
+
+  hasLiveRun(runId: string): boolean {
+    const run = this.runs.get(runId);
+    return Boolean(run && (run.startupInFlight || run.executionInFlightCount > 0));
   }
 
   async send(rawParams: unknown): Promise<AgentDelegateToolData> {
@@ -550,8 +643,8 @@ export class AgentDelegationRuntime {
     const run = this.resolveRun(params);
     this.assertRunControllable(run, 'steer');
     const message = createUserMessage(params.message);
-    if (run.status === 'running') {
-      if (!run.agent) throw new Error(`Agent ${run.id} is not live in this process. Start a continuation instead.`);
+    if (run.status === 'running' && run.agent) {
+      this.markDurableFollowUp(run, message);
       run.agent.followUp(message);
       run.updatedAt = Date.now();
       // The follow-up reaches the ledger through the message_end subscription
@@ -559,10 +652,90 @@ export class AgentDelegationRuntime {
       return { ...runToToolData(run), status: 'queued', instructions: 'Message queued for the running background agent.' };
     }
 
+    return this.startContinuation(run, [message], 'Agent continuation started in the background.');
+  }
+
+  /** Queue guidance only when the execution is currently live; never revive a terminal Run. */
+  async sendLive(rawParams: unknown): Promise<AgentDelegateToolData> {
+    const params = normalizeSendParams(rawParams);
+    const run = this.resolveRun(params);
+    this.assertRunControllable(run, 'steer');
+    if (run.status !== 'running' || !run.agent || !this.hasLiveRun(run.id)) {
+      throw new Error(`Agent ${run.id} is no longer running and cannot receive live Session guidance.`);
+    }
+    const message = createUserMessage(params.message);
+    this.markDurableFollowUp(run, message);
+    run.agent.followUp(message);
+    run.updatedAt = Date.now();
+    return {
+      ...runToToolData(run),
+      status: 'queued',
+      instructions: 'Message queued for the running background agent.',
+    };
+  }
+
+  /** Persist a system follow-up before exposing it to the model. */
+  async enqueuePersistedFollowUp(rawParams: unknown): Promise<AgentDelegateToolData> {
+    const params = normalizeSendParams(rawParams);
+    const run = this.resolveRun(params);
+    this.assertRunControllable(run, 'steer');
+    const message = createHiddenUserMessage(params.message);
+    if (run.status === 'running' && run.agent) {
+      this.markDurableFollowUp(run, message);
+      run.agent.followUp(message);
+      run.updatedAt = Date.now();
+      return { ...runToToolData(run), status: 'queued', instructions: 'Message queued for the running background agent.' };
+    }
+
+    return this.startContinuation(
+      run,
+      null,
+      'Agent continuation started from the persisted follow-up.',
+      message,
+    );
+  }
+
+  /** Resume a persisted tail message without appending it a second time. */
+  async resumePersistedFollowUp(rawParams: unknown): Promise<AgentDelegateToolData> {
+    const params = normalizeRunSelector(rawParams);
+    const durableFollowUpMarkers = isPlainRecord(rawParams)
+      ? coerceStringArray(rawParams.durableFollowUpMarkers)
+      : undefined;
+    const run = this.resolveRun(params);
+    this.assertRunControllable(run, 'steer');
+    if (run.status === 'running' && run.agent) {
+      return { ...runToToolData(run), status: 'queued', instructions: 'Persisted message is already assigned to the running background agent.' };
+    }
+
+    return this.startContinuation(
+      run,
+      [createHiddenUserMessage(
+        'Resume processing the pending durable follow-up already present in this Agent Session transcript.',
+      )],
+      'Agent continuation resumed from the existing persisted tail.',
+      undefined,
+      durableFollowUpMarkers,
+    );
+  }
+
+  private async startContinuation(
+    run: DelegationRunState,
+    messages: AgentMessage[] | null,
+    instructions: string,
+    persistedMessage?: AgentMessage,
+    restoredDurableFollowUpMarkers?: readonly string[],
+  ): Promise<AgentDelegateToolData> {
     const releaseStartupSlot = this.reserveRunningSlot();
+    const previousUpdatedAt = run.updatedAt;
+    run.startupInFlight = true;
     try {
-      const wasStopped = run.status === 'cancelled';
-      if (wasStopped) run.agent = undefined;
+      this.invalidateVerificationFrame(run, `Run ${run.id} verification was invalidated by continuation.`);
+      await this.stopLiveVerifierChildren(run);
+      // A terminal Run can still have its previous execution frame unwinding.
+      // Always rebuild from the ledger so the old frame loses the agent-identity
+      // guard and cannot persist over the new continuation.
+      run.agent?.abort();
+      run.agent = undefined;
       // No live agent (restart restore, or a stopped run): rebuild the
       // continuation context from the run's OWN ledger and re-register its
       // writer — restore-on-open is records-only, so this is where the
@@ -572,11 +745,37 @@ export class AgentDelegationRuntime {
         const restored = await this.host.restoreRunLedger(run.id);
         run.messages = (restored ?? []).map(cloneAgentMessage);
         run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(run.messages);
+        run.activeDurableFollowUpTexts.clear();
+        const markerSet = new Set(restoredDurableFollowUpMarkers ?? []);
+        for (const message of run.messages) {
+          if (message.role !== 'user') continue;
+          const texts = messageTextParts(message);
+          const carriesPendingDelivery = markerSet.size > 0
+            ? texts.some((text) => [...markerSet].some((marker) => text.includes(marker)))
+            : texts.some((text) => text.includes('tenon-issue-delivery:'));
+          if (!carriesPendingDelivery) continue;
+          for (const text of texts) run.activeDurableFollowUpTexts.add(text);
+        }
       }
+      if (persistedMessage) await this.persistFollowUp(run, persistedMessage);
       // Rebuild the live agent BEFORE mutating run state: if the harness build
       // throws, the run keeps its prior terminal (result + status) instead of
       // being stranded as `running` with no agent and its result wiped.
       await this.ensureLiveAgent(run);
+      const liveAgent = run.agent as Agent | undefined;
+      if (!liveAgent) throw new Error(`Agent ${run.id} could not be restored for continuation.`);
+      const updatedAt = Math.max(Date.now(), previousUpdatedAt + 1);
+      const runningSnapshot: AgentRunSnapshot = {
+        ...snapshotRun(run),
+        status: 'running',
+        objectiveStatus: 'active',
+        error: undefined,
+        blockedReason: undefined,
+        result: undefined,
+        completedAt: undefined,
+        updatedAt,
+      };
+      await this.host.runStatusChanged(runningSnapshot);
       run.status = 'running';
       run.objectiveStatus = 'active';
       run.error = undefined;
@@ -587,61 +786,131 @@ export class AgentDelegationRuntime {
       run.latestSubmission = undefined;
       run.submittedResult = undefined;
       run.completedAt = undefined;
+      run.incomplete = undefined;
       run.detached = true;
       run.terminalNotificationSent = false;
-      run.updatedAt = Date.now();
+      run.updatedAt = updatedAt;
       // The restored history is the continuation seed, not this run's output:
       // salvage on a later `stop` starts after it (the new prompt + response
       // appended by `runChildAgent` below come after this floor).
-      run.salvageFromIndex = run.agent ? run.agent.state.messages.length : 0;
-      await this.host.runStatusChanged(snapshotRun(run));
+      run.salvageFromIndex = liveAgent.state.messages.length;
+      for (const message of messages ?? []) this.markDurableFollowUp(run, message);
+      // The continuation call itself processes every delivery marker already on
+      // the restored active path. Only markers that arrive after it starts need
+      // an extra `agent.continue()` from the detached-child waiter.
+      run.processedControllerDeliveryCount = this.activeIssueDeliveryCount(run);
       releaseStartupSlot();
-      run.completion = this.runChildAgent(run, [message], undefined, true);
-      return { ...runToToolData(run), status: 'queued', instructions: 'Agent continuation started in the background.' };
+      run.startupInFlight = false;
+      run.completion = this.runChildAgent(run, messages, undefined, true);
+      return { ...runToToolData(run), status: 'queued', instructions };
     } catch (error) {
+      run.startupInFlight = false;
+      run.agent?.abort();
+      run.agent = undefined;
       releaseStartupSlot();
       throw error;
     }
+  }
+
+  private async persistFollowUp(run: DelegationRunState, message: AgentMessage): Promise<void> {
+    await this.host.runMessage(snapshotRun(run), message);
+    run.messages.push(cloneAgentMessage(message));
+    run.ledgerSeededMessages.add(message);
+    for (const text of messageTextParts(message)) run.activeDurableFollowUpTexts.add(text);
+  }
+
+  private markDurableFollowUp(run: DelegationRunState, message: AgentMessage): void {
+    run.durableFollowUpMessages.add(message);
+    for (const text of messageTextParts(message)) run.activeDurableFollowUpTexts.add(text);
+  }
+
+  private invalidateVerificationFrame(run: DelegationRunState, reason: string): AbortController | undefined {
+    run.lifecycleEpoch += 1;
+    const controller = run.verificationAbortController;
+    run.verificationAbortController = undefined;
+    controller?.abort(new Error(reason));
+    return controller;
+  }
+
+  private async stopLiveVerifierChildren(run: DelegationRunState): Promise<void> {
+    const liveVerifierChildren = this.directChildrenOf(run).filter((child) => (
+      child.purpose === 'verify'
+      && (child.status === 'running' || child.startupInFlight || child.executionInFlightCount > 0)
+    ));
+    await Promise.all(liveVerifierChildren.map((child) => this.stopRun(child)));
+  }
+
+  private activeIssueDeliveryCount(run: DelegationRunState): number {
+    return [...run.activeDurableFollowUpTexts]
+      .filter((text) => text.includes('tenon-issue-delivery:'))
+      .length;
   }
 
   async amend(rawParams: unknown): Promise<AgentDelegateToolData> {
     const params = normalizeAmendParams(rawParams);
     const run = this.resolveRun({ runId: params.runId });
     this.assertRunControllable(run, 'amend');
+    const contractChanged = params.changes.objective !== undefined || params.changes.criteria !== undefined;
+    const budgetAmendment = params.changes.budget !== undefined
+      ? prepareRunBudgetAmendment(
+          params.changes.budget,
+          run.budget,
+          run.parentBudgetRef,
+          run.budgetSettled === true,
+          Date.now(),
+        )
+      : undefined;
+    const verificationAbortController = contractChanged
+      ? this.invalidateVerificationFrame(run, `Run ${run.id} verification was invalidated by amendment.`)
+      : undefined;
+    if (contractChanged && verificationAbortController && run.status === 'running') {
+      run.agent?.abort();
+      run.agent = undefined;
+      run.status = 'completed';
+      run.result = undefined;
+      run.completedAt = Math.max(Date.now(), run.updatedAt + 1);
+      run.updatedAt = run.completedAt;
+      settleRunBudget(run);
+    }
+    if (contractChanged) await this.stopLiveVerifierChildren(run);
     if (params.changes.objective !== undefined) {
       run.objective = params.changes.objective;
-      run.prompt = buildObjectivePrompt(run.objective, run.criteria);
       run.description = compactInlineText(run.objective).slice(0, 200) || run.description;
     }
     if (params.changes.criteria !== undefined) run.criteria = params.changes.criteria;
-    if (params.changes.budget !== undefined) {
-      const nextBudget = normalizeRunBudget(params.changes.budget, run.budget, Date.now());
-      // Keep the parent's token ledger in sync: a direct reassignment would leave
-      // the original reservation in place while settleRunBudget later releases the
-      // amended amount, corrupting the parent's headroom. Reconcile the delta
-      // against the live reservation (with a headroom check on increases) unless
-      // the run already settled.
-      const parent = run.parentBudgetRef;
-      if (parent?.tokens && !run.budgetSettled) {
-        const previousTokens = run.budget?.tokens ?? 0;
-        const nextTokens = nextBudget?.tokens ?? 0;
-        const delta = nextTokens - previousTokens;
-        if (delta > 0) {
-          const headroom = Math.max(0, parent.tokens - (parent.reservedTokens ?? 0) - (parent.spentTokens ?? 0));
-          if (delta > headroom) throw new Error('Amended run budget exceeds parent remaining token budget.');
-        }
-        if (delta !== 0) parent.reservedTokens = Math.max(0, (parent.reservedTokens ?? 0) + delta);
+    if (contractChanged && run.objective) run.prompt = buildObjectivePrompt(run.objective, run.criteria);
+    if (budgetAmendment) {
+      if (budgetAmendment.parentReservedTokens !== undefined && run.parentBudgetRef) {
+        run.parentBudgetRef.reservedTokens = budgetAmendment.parentReservedTokens;
       }
-      run.budget = nextBudget;
+      run.budget = budgetAmendment.budget;
     }
-    run.objectiveStatus = 'active';
-    run.blockedReason = undefined;
-    run.latestVerifierGap = undefined;
+    if (contractChanged) {
+      run.objectiveStatus = 'active';
+      run.blockedReason = undefined;
+      run.latestVerifierGap = undefined;
+      run.verifierGapSignatures = [];
+    }
+    if (budgetAmendment) run.budgetTimerRefresh?.();
     run.updatedAt = Date.now();
-    await this.host.runStatusChanged(snapshotRun(run));
+    const amendmentMessage = createHiddenUserMessage(buildRunAmendmentPrompt(run, params.changes));
+    // Persist the amended metadata and model-facing reminder in one ledger
+    // append so recovery can never observe a new contract with old context.
+    await this.host.runStatusChanged(snapshotRun(run), amendmentMessage);
+    run.messages.push(cloneAgentMessage(amendmentMessage));
+    run.ledgerSeededMessages.add(amendmentMessage);
+    for (const text of messageTextParts(amendmentMessage)) run.activeDurableFollowUpTexts.add(text);
+    if (run.status === 'running' && run.agent) {
+      run.agent.followUp(amendmentMessage);
+    } else if (contractChanged) {
+      run.agent?.abort();
+      run.agent = undefined;
+    }
     return {
       ...runToToolData(run),
-      instructions: 'Execution objective metadata was amended. Existing verifier conclusions are invalidated; use Agent Session messaging for execution guidance if needed.',
+      instructions: contractChanged
+        ? 'Execution contract was amended durably. Existing verifier conclusions were invalidated; use Agent Session messaging for execution guidance if needed.'
+        : 'Execution budget was amended durably without invalidating the current verifier conclusion.',
     };
   }
 
@@ -649,34 +918,48 @@ export class AgentDelegationRuntime {
     const params = normalizeRunSelector(rawParams);
     const run = this.resolveRun(params);
     this.assertRunControllable(run, 'stop');
-    if (run.status === 'running') {
-      run.status = 'cancelled';
-      run.objectiveStatus = 'stopped';
-      run.completedAt = Date.now();
-      run.updatedAt = run.completedAt;
-      // Salvage whatever the CURRENT live span produced before we abort, so the
-      // synchronous tool result and the terminal notification carry the partial
-      // work instead of an empty result. Scan only from `salvageFromIndex` (the
-      // resume/compaction floor) so a resumed run stopped before it produces new
-      // output reports nothing stale — the prior round's text sits below the
-      // floor. Overwrite unconditionally when there IS a new partial, like the
-      // completion path.
-      if (run.agent) {
-        const since = run.salvageFromIndex ?? 0;
-        const liveSpan = (run.agent.state.messages as AgentMessage[]).slice(since);
-        const partial = extractPartialAssistantText(liveSpan);
-        if (partial !== undefined) run.result = partial;
-      }
-      run.agent?.abort();
-      run.agent = undefined;
-      // Settle here: nulling `run.agent` makes runChildAgent's finally guard
-      // (`run.agent === agent`) fail, so its settleRunBudget never runs and the
-      // parent's token reservation would otherwise leak permanently.
-      settleRunBudget(run);
-      await this.host.runStatusChanged(snapshotRun(run));
-      if (run.detached) void this.notifyTerminalRun(run).catch(() => undefined);
-    }
+    await this.stopRun(run);
     return runToToolData(run);
+  }
+
+  private async stopRun(run: DelegationRunState): Promise<void> {
+    const verifying = run.status === 'completed' && run.objectiveStatus === 'verifying';
+    if (run.status !== 'running' && !verifying) return;
+
+    const wasDetached = run.detached;
+    if (run.status === 'running') run.status = 'cancelled';
+    run.objectiveStatus = 'stopped';
+    run.completedAt = Math.max(Date.now(), run.updatedAt + 1);
+    run.updatedAt = run.completedAt;
+    // Salvage whatever the CURRENT live span produced before we abort, so the
+    // synchronous tool result and the terminal notification carry the partial
+    // work instead of an empty result. Scan only from `salvageFromIndex` (the
+    // resume/compaction floor) so a resumed run stopped before it produces new
+    // output reports nothing stale — the prior round's text sits below the
+    // floor. Completion uses the same span boundary and adds its explicit
+    // no-text fallback; stop keeps the raw partial semantics.
+    if (run.status === 'cancelled' && run.agent) {
+      const since = run.salvageFromIndex ?? 0;
+      const liveSpan = (run.agent.state.messages as AgentMessage[]).slice(since);
+      const partial = extractPartialAssistantText(liveSpan);
+      if (partial !== undefined) run.result = partial;
+    }
+    run.agent?.abort();
+    run.agent = undefined;
+    this.invalidateVerificationFrame(run, `Run ${run.id} verification was stopped.`);
+    // Mark the controller stopped before aborting its verifier so the awaiting
+    // verification frame cannot overwrite the stop with a late verdict.
+    await this.stopLiveVerifierChildren(run);
+    run.objectiveStatus = 'stopped';
+    run.updatedAt = Math.max(Date.now(), run.updatedAt);
+    run.completedAt = Math.max(run.completedAt ?? 0, run.updatedAt);
+    // Nulling `run.agent` makes runChildAgent's finally guard fail, so settle the
+    // parent reservation here instead of waiting for that frame.
+    settleRunBudget(run);
+    await this.host.runStatusChanged(snapshotRun(run));
+    if (run.status === 'cancelled' && wasDetached) {
+      void this.notifyTerminalRun(run).catch(() => undefined);
+    }
   }
 
   private async startAgent(
@@ -684,9 +967,13 @@ export class AgentDelegationRuntime {
     releaseStartupSlot: RunningSlotReservation,
     signal?: AbortSignal,
     parentToolCallId?: string,
+    onAccepted?: AgentRunAcceptedCallback,
   ): Promise<AgentDelegateToolData> {
+    throwIfAborted(signal);
     const contextMode = params.context;
-    const scope = narrowRunScope(this.inheritedScope, params.scope);
+    const scope = params.scopePreauthorized
+      ? params.scope
+      : narrowRunScope(this.inheritedScope, params.scope);
     const effectiveParams = { ...params, scope };
     const scopedAllowedTools = scopedAllowedToolNames(params.allowedTools, scope);
     const definition = restrictAgentDefinitionTools(createForkAgentDefinition(), scopedAllowedTools);
@@ -730,13 +1017,15 @@ export class AgentDelegationRuntime {
           run ? this.afterRunToolResult(run, toolCallId, toolName, result, isError) : undefined
         ),
       });
+      throwIfAborted(signal);
     } catch (error) {
+      childAgentHarness?.childAgent.abort();
       // The run object never formed, so runChildAgent's finally can never settle
       // the parent reservation admitRunBudget made above — release it here.
       releaseAdmittedRunBudget(parentBudget, budget);
       throw error;
     }
-    const { skillRuntime, localWorkspace, childAgent } = childAgentHarness;
+    const { skillRuntime, localWorkspace, childAgent, subRunRuntime } = childAgentHarness;
     // The ledger seed split ([[agent-run-unification]]): the inherited fork-context
     // prefix lands BEFORE `run.started` and is excluded from Dream evidence; the
     // fork directive lands after it — the boundary `dreamEvidenceStartMessageIndex`
@@ -754,6 +1043,7 @@ export class AgentDelegationRuntime {
       prompt: params.runPrompt,
       objective: params.objective,
       criteria: params.criteria,
+      objectiveRole: params.objectiveRole,
       objectiveStatus: params.verify ? 'active' : undefined,
       purpose: params.purpose,
       scope,
@@ -775,15 +1065,21 @@ export class AgentDelegationRuntime {
       agent: childAgent,
       messages: [...promptMessages],
       ledgerSeededMessages,
+      durableFollowUpMessages: new WeakSet(),
+      activeDurableFollowUpTexts: new Set(),
+      startupInFlight: false,
+      executionInFlightCount: 0,
       completion: Promise.resolve(),
       detached: background,
       terminalNotificationSent: false,
       turnCount: 0,
       verify: params.verify,
+      verificationAttemptBase: params.inheritedVerificationAttempts ?? 0,
       verificationAttempts: params.inheritedVerificationAttempts ?? 0,
       verifierRunIds: [...(params.inheritedVerifierRunIds ?? [])],
       hasWorkChildren: false,
       latestVerifierGap: undefined,
+      processedControllerDeliveryCount: 0,
       parentBudgetRef: parentBudget,
       budgetSettled: false,
       parentToolCallId,
@@ -794,22 +1090,42 @@ export class AgentDelegationRuntime {
       fileChanges: {},
       toolTrace: [],
       verifierGapSignatures: [...(params.inheritedVerifierGapSignatures ?? [])],
+      lifecycleEpoch: 0,
       autoCompactConsecutiveFailures: 0,
       autoCompactInProgress: false,
       skillRuntime,
       localWorkspace,
+      subRunRuntime,
     };
     this.runs.set(runId, run);
     if (name) this.names.set(name, runId);
     releaseStartupSlot();
     this.subscribeToChild(run);
     this.installRunContextTransform(run);
+    let startAnnounced = false;
     try {
+      throwIfAborted(signal);
+      await onAccepted?.(snapshotRun(run));
+      throwIfAborted(signal);
       await this.host.runStarted(snapshotRun(run), { contextMessages, evidenceMessages });
+      startAnnounced = true;
     } catch (error) {
       // runChildAgent has not been wired yet, so settle here to avoid leaking the
-      // parent reservation if the start announcement throws.
+      // parent reservation if the start announcement or acceptance hook throws.
       settleRunBudget(run);
+      run.agent?.abort();
+      run.agent = undefined;
+      if (runWasStopped(run)) throw error;
+      if (startAnnounced) {
+        run.status = 'failed';
+        run.error = error instanceof Error ? error.message : String(error);
+        run.completedAt = Math.max(Date.now(), run.updatedAt + 1);
+        run.updatedAt = run.completedAt;
+        await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
+      } else {
+        this.runs.delete(run.id);
+        if (name && this.names.get(name) === run.id) this.names.delete(name);
+      }
       throw error;
     }
 
@@ -854,6 +1170,7 @@ export class AgentDelegationRuntime {
     skillRuntime: AgentSkillRuntime;
     localWorkspace: AgentLocalWorkspaceContext;
     childAgent: Agent;
+    subRunRuntime: AgentDelegationRuntime;
   }> {
     const childConversationId = `${this.hostConversationPrefix()}-${input.runId}`;
     const runtimeSettings = await this.host.getRuntimeSettings();
@@ -906,6 +1223,7 @@ export class AgentDelegationRuntime {
     subRunRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     const systemPrompt = this.host.getParentSystemPrompt();
     childAgent = this.host.createChildAgent({
+      runId: input.runId,
       conversationId: childConversationId,
       messages: input.initialMessages,
       systemPrompt,
@@ -929,7 +1247,7 @@ export class AgentDelegationRuntime {
       unattended: input.unattended,
       afterToolResult: input.afterToolResult,
     });
-    return { skillRuntime, localWorkspace, childAgent };
+    return { skillRuntime, localWorkspace, childAgent, subRunRuntime };
   }
 
   private async preloadAgentSkills(definition: AgentDefinition, skillRuntime: AgentSkillRuntime): Promise<UserMessage[]> {
@@ -944,7 +1262,7 @@ export class AgentDelegationRuntime {
   private subscribeToChild(run: DelegationRunState): void {
     if (!run.agent) return;
     const subscribedAgent = run.agent;
-    subscribedAgent.subscribe((event: AgentEvent) => {
+    subscribedAgent.subscribe(async (event: AgentEvent) => {
       if (run.agent !== subscribedAgent) return;
       if (event.type === 'turn_end') {
         run.turnCount += 1;
@@ -966,12 +1284,11 @@ export class AgentDelegationRuntime {
         // spawn, so neither records them twice.
         if (run.ledgerSeededMessages.has(event.message as AgentMessage)) return;
         if (isRecordableAgentMessage(event.message)) {
-          run.messages.push(cloneAgentMessage(event.message));
+          const message = event.message as AgentMessage;
+          run.messages.push(cloneAgentMessage(message));
           run.updatedAt = Date.now();
-          // Best-effort (a ledger write must not abort the live run), but never
-          // silent: a persistently failing append means the drill-in transcript
-          // and Dream evidence silently fall behind the live run.
-          void this.host.runMessage(snapshotRun(run), event.message as AgentMessage).catch((error) => {
+          const durableBeforeContinue = run.durableFollowUpMessages.has(message);
+          const persist = this.host.runMessage(snapshotRun(run), message).catch((error) => {
             const message = `Failed to append a Run message to the ${run.id} ledger: ${error instanceof Error ? error.message : String(error)}`;
             if (this.host.reportError) {
               this.host.reportError({
@@ -985,7 +1302,17 @@ export class AgentDelegationRuntime {
             } else {
               console.warn(message);
             }
+            throw error;
           });
+          if (durableBeforeContinue) {
+            await persist;
+            run.durableFollowUpMessages.delete(message);
+          } else {
+            // Ordinary transcript persistence remains best-effort. A durable
+            // Issue-delivery marker is the exception above: the loop cannot
+            // expose it to the model until its append has settled.
+            void persist.catch(() => undefined);
+          }
         }
       }
     });
@@ -993,14 +1320,48 @@ export class AgentDelegationRuntime {
 
   private async runChildAgent(
     run: DelegationRunState,
-    messages: AgentMessage[],
+    messages: AgentMessage[] | null,
     signal: AbortSignal | undefined,
     detached: boolean,
   ): Promise<AgentDelegateToolData | void> {
     if (!run.agent) throw new Error(`Agent ${run.id} is not live in this process.`);
     const agent = run.agent;
+    run.executionInFlightCount += 1;
+    this.host.runExecutionStarted?.(snapshotRun(run));
     const abort = () => agent.abort();
     let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+    const exhaustWallClockBudget = (message: string) => {
+      if (run.agent !== agent || run.status !== 'running') return;
+      run.status = 'failed';
+      run.objectiveStatus = 'budget_exhausted';
+      run.error = message;
+      run.blockedReason = run.error;
+      run.completedAt = Math.max(Date.now(), run.updatedAt + 1);
+      run.updatedAt = run.completedAt;
+      agent.abort();
+    };
+    const refreshBudgetTimer = () => {
+      if (budgetTimer) clearTimeout(budgetTimer);
+      budgetTimer = undefined;
+      if (run.agent !== agent || run.status !== 'running') return;
+      const remaining = remainingBudgetMs(run);
+      if (remaining === null) return;
+      if (remaining <= 0) {
+        exhaustWallClockBudget('Run wall-clock budget exhausted.');
+        return;
+      }
+      budgetTimer = setTimeout(() => {
+        budgetTimer = undefined;
+        if (run.agent !== agent || run.status !== 'running') return;
+        const nextRemaining = remainingBudgetMs(run);
+        if (nextRemaining !== null && nextRemaining > 0) {
+          refreshBudgetTimer();
+          return;
+        }
+        exhaustWallClockBudget('Run wall-clock budget exhausted.');
+      }, Math.min(remaining, MAX_SETTIMEOUT_DELAY_MS));
+    };
+    run.budgetTimerRefresh = refreshBudgetTimer;
     const budgetDelayMs = remainingBudgetMs(run);
     if (signal && !detached) {
       if (signal.aborted) abort();
@@ -1008,56 +1369,45 @@ export class AgentDelegationRuntime {
     }
     if (budgetDelayMs !== null) {
       if (budgetDelayMs <= 0) {
-        run.status = 'failed';
-        run.objectiveStatus = 'budget_exhausted';
-        run.error = 'Run budget exhausted before execution could start.';
-        run.blockedReason = run.error;
-        run.completedAt = Date.now();
-        run.updatedAt = run.completedAt;
-        agent.abort();
+        exhaustWallClockBudget('Run budget exhausted before execution could start.');
       } else {
-        // Re-arm in 32-bit-safe hops so a far-future deadline (large wall-clock
-        // budget) is honored at the real time instead of overflowing setTimeout
-        // and killing the run on the next tick.
-        const armBudgetTimer = (delayMs: number) => {
-          budgetTimer = setTimeout(() => {
-            if (run.agent !== agent || run.status !== 'running') return;
-            const remaining = remainingBudgetMs(run);
-            if (remaining !== null && remaining > 0) {
-              armBudgetTimer(remaining);
-              return;
-            }
-            run.status = 'failed';
-            run.objectiveStatus = 'budget_exhausted';
-            run.error = 'Run wall-clock budget exhausted.';
-            run.blockedReason = run.error;
-            run.completedAt = Date.now();
-            run.updatedAt = run.completedAt;
-            agent.abort();
-          }, Math.min(delayMs, MAX_SETTIMEOUT_DELAY_MS));
-        };
-        armBudgetTimer(budgetDelayMs);
+        // Re-arm in 32-bit-safe hops so a far-future deadline is honored at the
+        // real time instead of overflowing setTimeout and killing the run early.
+        refreshBudgetTimer();
       }
     }
     const workingSetSnapshot = run.verify && run.purpose !== 'verify'
       ? await captureWorkingSetSnapshot(this.localRoot, run.scope).catch(() => undefined)
       : undefined;
+    const controllerRunIdsAtFrameStart = new Set(
+      this.directChildrenOf(run)
+        .filter((child) => child.objectiveRole === 'controller')
+        .map((child) => child.id),
+    );
     try {
       let nextMessages = messages;
       while (run.status === 'running') {
-        await agent.prompt(nextMessages);
+        throwIfAborted(signal);
+        if (nextMessages === null) await agent.continue();
+        else await agent.prompt(nextMessages);
         if (run.agent !== agent) return;
         const terminalAssistant = lastAssistantMessage(agent.state.messages as AgentMessage[]);
         if (terminalAssistant && isContextOverflow(terminalAssistant, agent.state.model.contextWindow)) {
           const compacted = await this.compactRunMessages(run, agent.state.messages as AgentMessage[], 'reactive', signal);
           if (compacted) {
+            throwIfAborted(signal);
             await agent.continue();
             if (run.agent !== agent) return;
           }
         }
-        const detachedChildSummary = await this.completedDetachedChildRunContinuation(run, agent, signal);
-        if (!detachedChildSummary) break;
-        nextMessages = detachedChildSummary;
+        const detachedChildContinuation = await this.completedDetachedChildRunContinuation(
+          run,
+          agent,
+          signal,
+          controllerRunIdsAtFrameStart,
+        );
+        if (!detachedChildContinuation) break;
+        nextMessages = detachedChildContinuation === 'continue' ? null : detachedChildContinuation;
       }
       if (run.agent !== agent) return;
       if (run.status === 'running') {
@@ -1067,7 +1417,8 @@ export class AgentDelegationRuntime {
           run.error = errorMessage;
         } else {
           run.status = 'completed';
-          run.result = extractFinalAssistantText(agent.state.messages as AgentMessage[]);
+          const since = run.salvageFromIndex ?? 0;
+          run.result = extractFinalAssistantText((agent.state.messages as AgentMessage[]).slice(since));
           await this.submitCompletedRunResult(run);
           // A run can reach 'completed' without the model deciding it was done.
           // The maxTurns abort already flags run.incomplete inline (:814). The
@@ -1081,7 +1432,7 @@ export class AgentDelegationRuntime {
             run.incomplete = true;
           }
         }
-        run.completedAt = Date.now();
+        run.completedAt = Math.max(Date.now(), run.updatedAt + 1);
         run.updatedAt = run.completedAt;
       }
       if (run.agent === agent && workingSetSnapshot) {
@@ -1095,16 +1446,32 @@ export class AgentDelegationRuntime {
       if (run.status === 'running') {
         run.status = 'failed';
         run.error = error instanceof Error ? error.message : String(error);
-        run.completedAt = Date.now();
+        run.completedAt = Math.max(Date.now(), run.updatedAt + 1);
         run.updatedAt = run.completedAt;
       }
     } finally {
       if (budgetTimer) clearTimeout(budgetTimer);
+      if (run.budgetTimerRefresh === refreshBudgetTimer) run.budgetTimerRefresh = undefined;
       if (signal && !detached) signal.removeEventListener('abort', abort);
       if (run.agent === agent) {
         if (run.status !== 'running') settleRunBudget(run);
-        await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
+        let terminalPersisted = false;
+        try {
+          await this.host.runStatusChanged(snapshotRun(run));
+          terminalPersisted = true;
+        } catch {
+          // The durable ledger/store remains authoritative. A failed terminal
+          // write leaves follow-up payloads retained for a later retry.
+        }
+        if (terminalPersisted && run.status === 'completed') run.activeDurableFollowUpTexts.clear();
         if (detached) void this.notifyTerminalRun(run).catch(() => undefined);
+      }
+      run.executionInFlightCount = Math.max(0, run.executionInFlightCount - 1);
+      try {
+        await this.host.runExecutionSettled?.(snapshotRun(run));
+      } catch {
+        // Terminal persistence is already authoritative. A settlement hook is
+        // best-effort coordination for follow-up work such as outbox retries.
       }
     }
   }
@@ -1139,23 +1506,53 @@ export class AgentDelegationRuntime {
     run: DelegationRunState,
     agent: Agent,
     signal: AbortSignal | undefined,
-  ): Promise<AgentMessage[] | null> {
-    const detachedChildren = () => this.directChildrenOf(run).filter((child) => (
-      child.purpose !== 'verify' && child.disposition === 'detached'
+    controllerRunIdsAtFrameStart: ReadonlySet<string>,
+  ): Promise<AgentMessage[] | 'continue' | null> {
+    const genericChildren = () => this.directChildrenOf(run).filter((child) => (
+      child.purpose !== 'verify'
+      && child.objectiveRole !== 'controller'
+      && child.disposition === 'detached'
     ));
-    let children = detachedChildren();
-    if (children.length === 0) return null;
+    const controllerChildren = () => this.directChildrenOf(run).filter((child) => (
+      child.objectiveRole === 'controller'
+      && child.disposition === 'detached'
+      && !controllerRunIdsAtFrameStart.has(child.id)
+    ));
+    const issueDeliveryCount = () => this.activeIssueDeliveryCount(run);
+    const deliveredControllerRunIds = () => issueDeliveryExecutionIds([
+      ...run.messages,
+      ...(run.agent?.state.messages as AgentMessage[] | undefined ?? []),
+    ]);
+    let children = genericChildren();
+    let controllers = controllerChildren();
+    const availableDeliveries = issueDeliveryCount();
+    if (run.processedControllerDeliveryCount < availableDeliveries) {
+      run.processedControllerDeliveryCount += 1;
+      return 'continue';
+    }
+    if (children.length === 0 && controllers.length === 0) return null;
 
     while (
       run.agent === agent
       && run.status === 'running'
-      && children.some((child) => !isDetachedChildReadyForParentSummary(child))
+      && (
+        children.some((child) => !isDetachedChildReadyForParentSummary(child))
+        || controllers.some((child) => !isDetachedChildReadyForParentSummary(child))
+        || controllers.some((child) => !deliveredControllerRunIds().has(child.id))
+      )
     ) {
       throwIfAborted(signal);
       await delay(50);
-      children = detachedChildren();
+      children = genericChildren();
+      controllers = controllerChildren();
     }
     if (run.agent !== agent || run.status !== 'running') return null;
+
+    const availableControllerDeliveries = issueDeliveryCount();
+    if (run.processedControllerDeliveryCount < availableControllerDeliveries) {
+      run.processedControllerDeliveryCount += 1;
+      return 'continue';
+    }
 
     const summaryChildren = children.filter((child) => !isSupersededDetachedChildAttempt(child));
     if (summaryChildren.length === 0) return null;
@@ -1186,97 +1583,118 @@ export class AgentDelegationRuntime {
       return;
     }
     if (run.objectiveStatus === 'verified') return;
-    run.objectiveStatus = 'verifying';
-    run.updatedAt = Date.now();
-    await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
-
-    run.verificationAttempts += 1;
-    // The verifier runs AFTER the work completed, so the work run's wall-clock
-    // deadline has been counting down the whole time: requesting the original
-    // budget would exceed the parent's *remaining* time and be rejected at
-    // admission. Request only what is left (capped at the default), so a budgeted
-    // run can actually be verified instead of being marked blocked. A read-only
-    // verifier must also stay within the controller's own capability scope, or
-    // narrowing rejects the full read-only set as widening.
-    let verifier: AgentDelegateToolData;
-    let releaseStartupSlot: RunningSlotReservation | undefined;
-    // Serializes nodeChanges/fileChanges + up to 40 tool-trace entries — build it
-    // once and reuse it for both the objective and the prompt.
-    const verifierObjective = buildVerifierObjective(run);
+    const lifecycleEpoch = run.lifecycleEpoch;
+    const verificationAbortController = new AbortController();
+    run.verificationAbortController = verificationAbortController;
+    const verificationSignal = chainAbortSignals(signal, verificationAbortController);
+    const verificationIsCurrent = () => (
+      run.verificationAbortController === verificationAbortController
+      && run.lifecycleEpoch === lifecycleEpoch
+      && !verificationSignal?.aborted
+      && !runWasStopped(run)
+    );
     try {
-      releaseStartupSlot = this.reserveRunningSlot();
-      verifier = await this.startAgent({
-        objective: verifierObjective,
-        criteria: ['Return a JSON verdict that independently checks every acceptance criterion.'],
-        verify: false,
-        description: `verify ${run.description}`,
-        runPrompt: verifierObjective,
-        purpose: 'verify',
-        context: 'none',
-        runProfile: 'verify',
-        scope: verifierRunScope(this.inheritedScope),
-        budget: verifierBudgetForRun(run),
-        allowedTools: readOnlyAgentToolNames(),
-        parentRunId: run.id,
-        parentBudget: run.budget,
-        unattended: true,
-      }, releaseStartupSlot, signal);
-    } catch (error) {
-      releaseStartupSlot?.();
-      run.objectiveStatus = 'blocked';
-      run.blockedReason = `Verifier failed to start: ${errorMessage(error)}`;
+      run.objectiveStatus = 'verifying';
       run.updatedAt = Date.now();
       await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
-      return;
-    }
+      if (!verificationIsCurrent()) return;
 
-    run.verifierRunIds.push(verifier.runId);
-    // A verifier that did not itself complete (model error, context overflow,
-    // abort) produced no verdict. Treat that as inconclusive — block for triage
-    // — never as a `fail` verdict, which would fabricate a phantom gap and burn
-    // budget replanning/replacing against it.
-    if (verifier.status !== 'completed' || !verifier.result?.trim()) {
-      run.objectiveStatus = 'blocked';
-      run.blockedReason = `Verification could not complete: ${verifier.error?.trim() || 'verifier returned no verdict'}.`;
-      run.updatedAt = Date.now();
-      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
-      return;
-    }
-    const verdict = parseVerifierVerdict(verifier.result);
-    if (verdict.verdict === 'pass') {
-      run.objectiveStatus = 'verified';
-      run.blockedReason = undefined;
-      run.latestVerifierGap = undefined;
-      run.verifierGapSignatures = [];
-      run.updatedAt = Date.now();
-      return;
-    }
-
-    run.latestVerifierGap = verdict.gap || 'Verifier rejected the run result.';
-    const gapSignature = verifierGapSignature(verdict.gap);
-    run.verifierGapSignatures.push(gapSignature);
-    if (sameTailCount(run.verifierGapSignatures, gapSignature) >= DEFAULT_VERIFIER_LIVELOCK_REPEAT_LIMIT) {
-      run.objectiveStatus = 'blocked';
-      run.blockedReason = `Verifier repeated the same gap: ${verdict.gap || 'unspecified gap'}`;
-      run.updatedAt = Date.now();
-      return;
-    }
-
-    if (run.verificationAttempts <= DEFAULT_VERIFIER_RETRY_LIMIT && run.status === 'completed' && remainingBudgetMs(run) !== 0) {
-      if (this.isControllerRun(run)) {
-        return await this.replanControllerInPlace(run, verdict.gap, signal, detached);
+      run.verificationAttempts += 1;
+      // The verifier runs AFTER the work completed, so the work run's wall-clock
+      // deadline has been counting down the whole time: requesting the original
+      // budget would exceed the parent's *remaining* time and be rejected at
+      // admission. Request only what is left (capped at the default), so a budgeted
+      // run can actually be verified instead of being marked blocked. A read-only
+      // verifier must also stay within the controller's own capability scope, or
+      // narrowing rejects the full read-only set as widening.
+      let verifier: AgentDelegateToolData;
+      let releaseStartupSlot: RunningSlotReservation | undefined;
+      // Serializes nodeChanges/fileChanges + up to 40 tool-trace entries — build it
+      // once and reuse it for both the objective and the prompt.
+      const verifierObjective = buildVerifierObjective(run);
+      try {
+        releaseStartupSlot = this.reserveRunningSlot();
+        verifier = await this.startAgent({
+          objective: verifierObjective,
+          criteria: ['Return a JSON verdict that independently checks every acceptance criterion.'],
+          verify: false,
+          description: `verify ${run.description}`,
+          runPrompt: verifierObjective,
+          purpose: 'verify',
+          objectiveRole: 'verifier',
+          context: 'none',
+          runProfile: 'verify',
+          scope: verifierRunScope(this.inheritedScope),
+          budget: verifierBudgetForRun(run),
+          allowedTools: readOnlyAgentToolNames(),
+          parentRunId: run.id,
+          parentBudget: run.budget,
+          unattended: true,
+        }, releaseStartupSlot, verificationSignal);
+      } catch (error) {
+        releaseStartupSlot?.();
+        if (!verificationIsCurrent()) return;
+        run.objectiveStatus = 'blocked';
+        run.blockedReason = `Verifier failed to start: ${errorMessage(error)}`;
+        run.updatedAt = Date.now();
+        await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
+        return;
       }
-      return await this.replaceFailedWorkerRun(run, verdict.gap, signal, detached);
-    }
 
-    run.objectiveStatus = remainingBudgetMs(run) === 0 ? 'budget_exhausted' : 'blocked';
-    run.blockedReason = verdict.gap || 'Verifier rejected the run result.';
-    run.updatedAt = Date.now();
+      run.verifierRunIds.push(verifier.runId);
+      if (!verificationIsCurrent()) return;
+      // A verifier that did not itself complete (model error, context overflow,
+      // abort) produced no verdict. Treat that as inconclusive — block for triage
+      // — never as a `fail` verdict, which would fabricate a phantom gap and burn
+      // budget replanning/replacing against it.
+      if (verifier.status !== 'completed' || !verifier.result?.trim()) {
+        run.objectiveStatus = 'blocked';
+        run.blockedReason = `Verification could not complete: ${verifier.error?.trim() || 'verifier returned no verdict'}.`;
+        run.updatedAt = Date.now();
+        await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
+        return;
+      }
+      const verdict = parseVerifierVerdict(verifier.result);
+      if (verdict.verdict === 'pass') {
+        run.objectiveStatus = 'verified';
+        run.blockedReason = undefined;
+        run.latestVerifierGap = undefined;
+        run.verifierGapSignatures = [];
+        run.updatedAt = Date.now();
+        return;
+      }
+
+      run.latestVerifierGap = verdict.gap || 'Verifier rejected the run result.';
+      const gapSignature = verifierGapSignature(verdict.gap);
+      run.verifierGapSignatures.push(gapSignature);
+      if (sameTailCount(run.verifierGapSignatures, gapSignature) >= DEFAULT_VERIFIER_LIVELOCK_REPEAT_LIMIT) {
+        run.objectiveStatus = 'blocked';
+        run.blockedReason = `Verifier repeated the same gap: ${verdict.gap || 'unspecified gap'}`;
+        run.updatedAt = Date.now();
+        return;
+      }
+
+      if (run.verificationAttempts <= DEFAULT_VERIFIER_RETRY_LIMIT && run.status === 'completed' && remainingBudgetMs(run) !== 0) {
+        if (this.isControllerRun(run)) {
+          return await this.replanControllerInPlace(run, verdict.gap, verificationSignal, detached);
+        }
+        return await this.replaceFailedWorkerRun(run, verdict.gap, verificationSignal, detached);
+      }
+
+      run.objectiveStatus = remainingBudgetMs(run) === 0 ? 'budget_exhausted' : 'blocked';
+      run.blockedReason = verdict.gap || 'Verifier rejected the run result.';
+      run.updatedAt = Date.now();
+    } finally {
+      if (run.verificationAbortController === verificationAbortController) {
+        run.verificationAbortController = undefined;
+      }
+    }
   }
 
   private isControllerRun(run: DelegationRunState): boolean {
-    if (run.objectiveStatus && !run.parentRunId) return true;
-    return run.hasWorkChildren === true;
+    if (run.objectiveRole === 'controller' || run.hasWorkChildren === true) return true;
+    if (run.objectiveRole === 'worker' || run.objectiveRole === 'verifier') return false;
+    return Boolean(run.objectiveStatus && !run.parentRunId);
   }
 
   private async replanControllerInPlace(
@@ -1287,12 +1705,15 @@ export class AgentDelegationRuntime {
   ): Promise<AgentDelegateToolData | void> {
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
+      throwIfAborted(signal);
       if (!run.agent) {
         const restored = await this.host.restoreRunLedger(run.id);
         run.messages = (restored ?? []).map(cloneAgentMessage);
         run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(run.messages);
       }
       await this.ensureLiveAgent(run);
+      throwIfAborted(signal);
+      if (runWasStopped(run)) return;
       run.status = 'running';
       run.objectiveStatus = 'active';
       run.error = undefined;
@@ -1306,6 +1727,8 @@ export class AgentDelegationRuntime {
       run.updatedAt = Date.now();
       run.salvageFromIndex = run.agent ? run.agent.state.messages.length : 0;
       await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
+      throwIfAborted(signal);
+      if (runWasStopped(run)) return;
       releaseStartupSlot();
       run.completion = this.runChildAgent(
         run,
@@ -1316,6 +1739,7 @@ export class AgentDelegationRuntime {
       return await run.completion;
     } catch (error) {
       releaseStartupSlot();
+      if (signal?.aborted || runWasStopped(run)) return;
       run.objectiveStatus = 'blocked';
       run.blockedReason = `Verifier rejected this controller, and re-plan failed to start: ${errorMessage(error)}`;
       run.updatedAt = Date.now();
@@ -1344,6 +1768,7 @@ export class AgentDelegationRuntime {
         description: run.description,
         runPrompt: buildObjectivePrompt(retryObjective, run.criteria),
         purpose: 'work',
+        objectiveRole: run.objectiveRole,
         scope: run.scope,
         budget: retryBudgetSlice(run.budget),
         context: 'none',
@@ -1359,6 +1784,11 @@ export class AgentDelegationRuntime {
         inheritedVerifierRunIds: run.verifierRunIds,
         unattended: run.unattended,
       }, releaseStartupSlot, signal, run.parentToolCallId);
+      if (signal?.aborted || runWasStopped(run)) {
+        const replacementRun = this.runs.get(replacement.runId);
+        if (replacementRun) await this.stopRun(replacementRun);
+        return;
+      }
       run.objectiveStatus = 'blocked';
       run.blockedReason = `${blockedReason}; replacement run ${replacement.runId} started.`;
       // The replacement carries the objective forward and will fire its own
@@ -1370,6 +1800,7 @@ export class AgentDelegationRuntime {
       return replacement;
     } catch (error) {
       releaseStartupSlot();
+      if (signal?.aborted || runWasStopped(run)) return;
       run.objectiveStatus = 'blocked';
       run.blockedReason = `Verifier rejected this worker attempt, and replacement failed to start: ${errorMessage(error)}`;
       run.updatedAt = Date.now();
@@ -1533,6 +1964,18 @@ export class AgentDelegationRuntime {
         null,
         createPostCompactRestoredFilesReminder(restoredFiles),
       );
+      if (run.activeDurableFollowUpTexts.size > 0 && Array.isArray(postCompactMessage.content)) {
+        postCompactMessage.content = [
+          ...postCompactMessage.content,
+          {
+            type: 'text',
+            text: systemReminder([
+              'Durable follow-ups still owned by this continuation:',
+              ...run.activeDurableFollowUpTexts,
+            ].join('\n\n')),
+          },
+        ];
+      }
       const compactedMessages = [postCompactMessage];
       run.messages = compactedMessages.map(cloneAgentMessage);
       if (run.agent) run.agent.state.messages = compactedMessages as never;
@@ -1565,7 +2008,7 @@ export class AgentDelegationRuntime {
   private async ensureLiveAgent(run: DelegationRunState): Promise<void> {
     if (run.agent) return;
     const definition = await this.resolveDefinitionForRun(run);
-    const { skillRuntime, localWorkspace, childAgent } = await this.buildChildAgentHarness({
+    const { skillRuntime, localWorkspace, childAgent, subRunRuntime } = await this.buildChildAgentHarness({
       runId: run.id,
       definition,
       executingAgentId: run.executingAgentId,
@@ -1583,12 +2026,15 @@ export class AgentDelegationRuntime {
     });
     run.definition = definition;
     run.agent = childAgent;
+    for (const message of childAgent.state.messages as AgentMessage[]) {
+      run.ledgerSeededMessages.add(message);
+    }
     run.skillRuntime = skillRuntime;
     run.localWorkspace = localWorkspace;
+    run.subRunRuntime = subRunRuntime;
     run.nodeChanges = {};
     run.fileChanges = {};
     run.toolTrace = [];
-    run.verifierGapSignatures = [];
     this.subscribeToChild(run);
     this.installRunContextTransform(run);
   }
@@ -1623,10 +2069,12 @@ export class AgentDelegationRuntime {
       runCompacted: (snapshot, input) => this.host.runCompacted(snapshot, input),
       runResultSubmitted: (snapshot, input) => this.host.runResultSubmitted(snapshot, input),
       readLatestRunSubmission: (runId) => this.host.readLatestRunSubmission?.(runId) ?? Promise.resolve(undefined),
-      runStatusChanged: (snapshot) => {
+      runStatusChanged: (snapshot, durableMessage) => {
         this.upsertObservedRun(snapshot);
-        return this.host.runStatusChanged(snapshot);
+        return this.host.runStatusChanged(snapshot, durableMessage);
       },
+      runExecutionStarted: (snapshot) => this.host.runExecutionStarted?.(snapshot),
+      runExecutionSettled: (snapshot) => this.host.runExecutionSettled?.(snapshot),
       notifyRun: (snapshot) => this.host.notifyRun(snapshot),
       reportError: (report) => this.host.reportError?.(report),
       restoreRunLedger: (runId) => this.host.restoreRunLedger(runId),
@@ -1703,19 +2151,26 @@ export class AgentDelegationRuntime {
         depth: this.depth + 1,
         messages: [],
         ledgerSeededMessages: new WeakSet(),
+        durableFollowUpMessages: new WeakSet(),
+        activeDurableFollowUpTexts: new Set(),
+        startupInFlight: false,
+        executionInFlightCount: 0,
         detached: false,
         terminalNotificationSent: true,
         turnCount: 0,
-        verify: snapshot.purpose !== 'verify' && (snapshot.criteria?.length ?? 0) > 0,
-        verificationAttempts: 0,
+        verify: snapshot.verify === true,
+        verificationAttemptBase: snapshot.verificationAttemptBase ?? 0,
+        verificationAttempts: snapshot.verificationAttemptBase ?? 0,
         verifierRunIds: [],
         hasWorkChildren: false,
         latestVerifierGap: snapshot.latestVerifierGap,
+        processedControllerDeliveryCount: 0,
         toolResultBudgetState: createToolResultBudgetState(),
         nodeChanges: {},
         fileChanges: {},
         toolTrace: [],
-        verifierGapSignatures: [],
+        verifierGapSignatures: [...(snapshot.verifierGapSignatures ?? [])],
+        lifecycleEpoch: 0,
         autoCompactConsecutiveFailures: 0,
         autoCompactInProgress: false,
         observedOnly: true,
@@ -1740,6 +2195,18 @@ export class AgentDelegationRuntime {
   private hostConversationPrefix(): string {
     return this.conversationId;
   }
+}
+
+function issueDeliveryExecutionIds(messages: readonly AgentMessage[]): Set<string> {
+  const executionIds = new Set<string>();
+  for (const message of messages) {
+    for (const text of messageTextParts(message)) {
+      for (const match of text.matchAll(/<executionId>([^<]+)<\/executionId>/gu)) {
+        if (match[1]) executionIds.add(match[1]);
+      }
+    }
+  }
+  return executionIds;
 }
 
 /**
@@ -1869,11 +2336,11 @@ function buildRunDirective(params: AgentToolParams): string {
     `<${FORK_BOILERPLATE_TAG}>`,
     'STOP. READ THIS FIRST.',
     '',
-    'You are a Tenon Agent Session worker. Decompose complex work inside your plan, evidence, and final report; Issues are flat durable work items.',
+    'You are a Tenon Agent Session worker. Decompose short-lived steps inside your plan, evidence, and final report; use child Issues only for durable independently executed sub-outcomes.',
     '',
     'Controller rules:',
     '1. Stay strictly within the objective and acceptance criteria.',
-    '2. Build internal decomposition in this Session plan, evidence, Activity, and final report. Create another flat Issue only for an independent user-visible outcome outside this objective.',
+    '2. Build ordinary internal decomposition in this Session plan, evidence, Activity, and final report. Create a child Issue only when a sub-outcome needs its own durable lifecycle or independent Agent Session; runtime derives its parent and routes the result back here.',
     '3. Use Issue relations only when another independently managed Issue is a true external blocker, duplicate, or related outcome.',
     '4. Verify sub-run results before accepting them as done; redo rejected work inside the Session plan when budget remains.',
     '5. Do not ask the user questions from this child Run; block with a concise reason if owner input is genuinely required.',
@@ -1897,6 +2364,35 @@ function buildObjectivePrompt(objective: string, criteria?: readonly string[]): 
     '',
     'Acceptance criteria:',
     ...criteria.map((criterion, index) => `${index + 1}. ${criterion}`),
+  ].join('\n');
+}
+
+function buildRunAmendmentPrompt(
+  run: Pick<DelegationRunState, 'objective' | 'criteria' | 'budget'>,
+  changes: { objective?: string; criteria?: string[]; budget?: AgentRunBudget },
+): string {
+  const changedFields = [
+    changes.objective !== undefined ? 'objective' : '',
+    changes.criteria !== undefined ? 'acceptance criteria' : '',
+    changes.budget !== undefined ? 'budget' : '',
+  ].filter(Boolean).join(', ');
+  const criteria = run.criteria?.length
+    ? run.criteria.map((criterion, index) => `${index + 1}. ${criterion}`).join('\n')
+    : 'No acceptance criteria are currently configured.';
+  const budget = formatRunBudgetForPrompt(run.budget) || 'No explicit budget is currently configured.';
+  return [
+    'Run amendment (durable; supersedes earlier values for the changed fields).',
+    `Changed fields: ${changedFields}.`,
+    '',
+    `Current objective:\n${run.objective ?? 'No objective is currently configured.'}`,
+    '',
+    `Current acceptance criteria:\n${criteria}`,
+    '',
+    `Current budget:\n${budget}`,
+    '',
+    changes.objective !== undefined || changes.criteria !== undefined
+      ? 'Use this amended contract for all subsequent work and verification.'
+      : 'The objective and acceptance criteria are unchanged; this budget-only amendment does not invalidate verification.',
   ].join('\n');
 }
 
@@ -1925,10 +2421,14 @@ function lastAssistantMessage(messages: readonly AgentMessage[]): AssistantMessa
   return null;
 }
 
-function runToToolData(run: DelegationRunState, children: readonly DelegationRunState[] = []): AgentDelegateToolData {
+function runToToolData(
+  run: DelegationRunState,
+  children: readonly DelegationRunState[] = [],
+  resultOverride?: string,
+): AgentDelegateToolData {
   const nodeChanges = compactNodeChanges(run.nodeChanges);
   const fileChanges = compactFileChanges(run.fileChanges);
-  const result = latestRunSubmissionSummary(run) ?? run.result;
+  const result = resultOverride ?? latestRunSubmissionSummary(run) ?? run.result;
   return {
     status: run.status,
     runId: run.id,
@@ -1957,6 +2457,12 @@ function runToToolData(run: DelegationRunState, children: readonly DelegationRun
   };
 }
 
+function liveRunPartialResult(run: DelegationRunState): string | undefined {
+  if (run.status !== 'running' || !run.agent) return undefined;
+  const since = run.salvageFromIndex ?? 0;
+  return extractPartialAssistantText((run.agent.state.messages as AgentMessage[]).slice(since));
+}
+
 function runToChildStatus(run: DelegationRunState): AgentSubRunStatus {
   return {
     runId: run.id,
@@ -1971,8 +2477,12 @@ function runToChildStatus(run: DelegationRunState): AgentSubRunStatus {
 
 function derivedRunRole(run: DelegationRunState): AgentSubRunStatus['role'] {
   if (run.purpose === 'verify') return 'verifier';
-  if (run.hasWorkChildren) return 'controller';
-  return 'worker';
+  if (run.objectiveRole === 'controller' || run.hasWorkChildren) return 'controller';
+  return run.objectiveRole ?? 'worker';
+}
+
+function runWasStopped(run: Pick<DelegationRunState, 'status' | 'objectiveStatus'>): boolean {
+  return run.status === 'cancelled' || run.objectiveStatus === 'stopped';
 }
 
 function snapshotRun(run: DelegationRunState): AgentRunSnapshot {
@@ -1983,7 +2493,11 @@ function snapshotRun(run: DelegationRunState): AgentRunSnapshot {
     prompt: run.prompt,
     objective: run.objective,
     criteria: run.criteria,
+    objectiveRole: run.objectiveRole,
     objectiveStatus: run.objectiveStatus,
+    ...(run.verify ? { verify: true } : {}),
+    verificationAttemptBase: run.verificationAttemptBase,
+    verifierGapSignatures: [...run.verifierGapSignatures],
     purpose: run.purpose,
     scope: run.scope,
     budget: run.budget,

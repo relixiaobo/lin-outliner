@@ -733,8 +733,8 @@ describe('agent skills', () => {
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
     expect(invocation.renderedContent).toContain('Use PPTX when the user explicitly asks for PowerPoint');
-    expect(invocation.renderedContent).toContain('first prefer a real PPTX generation/editing library');
-    expect(invocation.renderedContent).toContain('try to install or enable it in the local task environment');
+    expect(invocation.renderedContent).toContain('For new PPTX creation, prefer the Python-first route');
+    expect(invocation.renderedContent).toContain('installing/enabling the minimum local dependency when appropriate');
     expect(invocation.renderedContent).toContain('Do not silently downgrade an explicit PPTX request');
     expect(invocation.renderedContent).toContain('do not hand-author OOXML ZIP packages as a substitute');
   });
@@ -1158,7 +1158,7 @@ describe('agent skills', () => {
     expect(invocation.isolated?.status).toBe('completed');
   });
 
-  test('ships issue-planning as a built-in flat Issue guidance skill', async () => {
+  test('ships issue-planning as a built-in durable Issue guidance skill', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const automaticListing = await runtime.buildSkillListingReminderText(200_000);
     const skill = await runtime.getSkill('issue-planning');
@@ -1175,14 +1175,19 @@ describe('agent skills', () => {
       argumentNames: ['objective'],
     });
     expect(skill?.body).toContain('Use `issue_create` with a concrete objective, explicit acceptance criteria');
-    expect(skill?.body).toContain('district-level queries are internal execution plan items inside those Issues');
-    expect(skill?.body).toContain('A good Issue definition gives the later Agent Session enough scope, coverage, output, and verification guidance');
+    expect(skill?.body).toContain('district-level queries are coverage requirements and execution-local steps inside those Issues');
+    expect(skill?.body).toContain('A good Issue definition gives the Agent Session enough scope, coverage, output, and verification guidance');
     expect(skill?.body).toContain('Represent per-city, per-district, per-file, or per-node coverage as a clear coverage list');
+    expect(skill?.body).toContain('create a child Issue only when a sub-outcome needs its own durable lifecycle or independent Agent Session');
+    expect(skill?.body).toContain('Runtime derives the parent from the creating Session');
     expect(skill?.body).toContain('owned outcome, boundaries/non-goals, required coverage, expected final response or artifact');
     expect(skill?.body).toContain('Use `relations` only after both sides are independently user-visible Issues');
     expect(skill?.body).toContain('Use the default when-ready trigger for ordinary durable work');
-    expect(skill?.body).toContain('Newly created when-ready, scheduled, and recurring Issues rely on runtime eligibility');
-    expect(skill?.body).toContain('Use `agent_session_start` for explicit retries, continuations, verification attempts');
+    expect(skill?.body).toContain('Background handoff: for durable work, create a when-ready, scheduled, or recurring Issue and let runtime start eligible work');
+    expect(skill?.body).toContain('A terminal result is delivered to the immediate origin target');
+    expect(skill?.body).toContain('parent Agent Session for a child Issue, visible conversation for a root Issue');
+    expect(skill?.body).toContain('Explicit wait: only when the user asks to wait here');
+    expect(skill?.body).toContain('Use `agent_session_start` for existing eligible Issues that need a retry, continuation, verification attempt');
     expect(skill?.body).toContain('Claim completion only from Issue status, criteria, Activity, and verifier evidence');
   });
 

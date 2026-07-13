@@ -85,7 +85,7 @@ const ISSUE_RELATION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['type', 'issueId'],
-  description: 'Visible relationship between independently user-visible flat Issues, such as a true external blocker, duplicate, or related outcome.',
+  description: 'Visible relationship between independently user-visible Issues, such as a true external blocker, duplicate, or related outcome. Internal execution steps belong in the Agent Session plan, not in relations.',
   properties: {
     type: {
       type: 'string',
@@ -100,6 +100,16 @@ const ISSUE_TRIGGER_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['type'],
+  anyOf: [
+    {
+      required: ['type'],
+      properties: { type: { type: 'string', enum: ['when-ready'] } },
+    },
+    {
+      required: ['type', 'startAt', 'timeZone'],
+      properties: { type: { type: 'string', enum: ['scheduled'] } },
+    },
+  ],
   description: 'Execution trigger for a concrete Issue. Due dates are deadlines, not triggers.',
   properties: {
     type: {
@@ -155,7 +165,7 @@ const COMPLETION_CRITERION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['id', 'text', 'state'],
-  description: 'Observable completion criterion for a large or parent Issue.',
+  description: 'Observable completion criterion for an Issue.',
   properties: {
     id: { type: 'string', minLength: 1, description: 'Stable criterion id.' },
     text: { type: 'string', minLength: 1, description: 'Observable condition that can be met, waived, or left open.' },
@@ -176,7 +186,7 @@ const VERIFICATION_POLICY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['mode'],
-  description: 'Completion gate for the Issue. Verification uses normal Agent Sessions and Activity, not a separate tool family.',
+  description: 'Completion gate for the Issue. Verification reviews normal Issue evidence and execution records, not a separate tool family.',
   properties: {
     mode: {
       type: 'string',
@@ -202,110 +212,146 @@ const VERIFICATION_POLICY_SCHEMA = {
 
 const INPUT_SCOPE_SCHEMA = {
   type: 'object',
-  additionalProperties: false,
-  required: ['type'],
   description: 'Confirmed source-material scope available to Agent Sessions for this Issue.',
-  properties: {
-    type: {
-      type: 'string',
-      enum: ['none', 'selected-nodes', 'node-children', 'tag-query', 'saved-query'],
-      description: 'Input source selection mode.',
+  oneOf: [
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type'],
+      properties: {
+        type: { type: 'string', enum: ['none'], description: 'No source nodes.' },
+      },
     },
-    nodeIds: {
-      type: 'array',
-      items: { type: 'string', minLength: 1 },
-      description: 'Node ids to process when type is selected-nodes.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'nodeIds'],
+      properties: {
+        type: { type: 'string', enum: ['selected-nodes'], description: 'A fixed non-empty set of source nodes.' },
+        nodeIds: {
+          type: 'array',
+          minItems: 1,
+          uniqueItems: true,
+          items: { type: 'string', minLength: 1 },
+          description: 'Node ids to process.',
+        },
+      },
     },
-    nodeId: {
-      type: 'string',
-      minLength: 1,
-      description: 'Root node id when type is node-children.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'nodeId'],
+      properties: {
+        type: { type: 'string', enum: ['node-children'], description: 'Children below one source node.' },
+        nodeId: { type: 'string', minLength: 1, description: 'Root node id.' },
+        depth: { type: 'integer', minimum: 0, description: 'Descendant depth to include.' },
+      },
     },
-    depth: {
-      type: 'integer',
-      minimum: 0,
-      description: 'Descendant depth to include for node-children input.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'tag'],
+      properties: {
+        type: { type: 'string', enum: ['tag-query'], description: 'Nodes matching a tag.' },
+        tag: { type: 'string', minLength: 1, description: 'Tag name or id to match.' },
+        includeArchived: { type: 'boolean', description: 'Whether archived content can be included. Default false.' },
+      },
     },
-    tag: {
-      type: 'string',
-      minLength: 1,
-      description: 'Tag name or id to match when type is tag-query.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'queryId'],
+      properties: {
+        type: { type: 'string', enum: ['saved-query'], description: 'A saved query definition.' },
+        queryId: { type: 'string', minLength: 1, description: 'Saved query id.' },
+      },
     },
-    includeArchived: {
-      type: 'boolean',
-      description: 'Whether archived content can be included in a tag-query input scope. Default false.',
-    },
-    queryId: {
-      type: 'string',
-      minLength: 1,
-      description: 'Saved query id when type is saved-query.',
-    },
-  },
+  ],
 } as const;
 
 const OUTPUT_POLICY_SCHEMA = {
   type: 'object',
-  additionalProperties: false,
-  required: ['type'],
   description: 'Confirmed output destination and write scope for Agent Sessions on this Issue.',
-  properties: {
-    type: {
-      type: 'string',
-      enum: ['activity-only', 'daily-note', 'append-to-node', 'create-child-under-node', 'per-input-child', 'replace-input'],
-      description: 'Output destination mode. Defaults should be activity-only unless the user or Issue scope clearly names a write target.',
+  oneOf: [
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type'],
+      properties: {
+        type: { type: 'string', enum: ['activity-only'], description: 'Record output only in Issue Activity.' },
+      },
     },
-    datePolicy: {
-      type: 'string',
-      enum: ['session-date', 'due-date'],
-      description: 'Daily note date policy when type is daily-note.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'datePolicy'],
+      properties: {
+        type: { type: 'string', enum: ['daily-note'], description: 'Write to a daily note.' },
+        datePolicy: { type: 'string', enum: ['session-date', 'due-date'], description: 'Daily note date policy.' },
+      },
     },
-    nodeId: {
-      type: 'string',
-      minLength: 1,
-      description: 'Output node id for append-to-node or create-child-under-node.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'nodeId'],
+      properties: {
+        type: { type: 'string', enum: ['append-to-node'], description: 'Append beneath one existing node.' },
+        nodeId: { type: 'string', minLength: 1, description: 'Output node id.' },
+      },
     },
-    parentNodeId: {
-      type: 'string',
-      minLength: 1,
-      description: 'Parent node id for per-input-child output.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'nodeId'],
+      properties: {
+        type: { type: 'string', enum: ['create-child-under-node'], description: 'Create a child beneath one existing node.' },
+        nodeId: { type: 'string', minLength: 1, description: 'Parent output node id.' },
+      },
     },
-    requiresConfirmation: {
-      type: 'boolean',
-      description: 'Must be true for replace-input output because it can overwrite source material.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'parentNodeId'],
+      properties: {
+        type: { type: 'string', enum: ['per-input-child'], description: 'Create one child per input beneath a fixed parent.' },
+        parentNodeId: { type: 'string', minLength: 1, description: 'Parent output node id.' },
+      },
     },
-  },
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'requiresConfirmation'],
+      properties: {
+        type: { type: 'string', enum: ['replace-input'], description: 'Replace confirmed input content.' },
+        requiresConfirmation: {
+          type: 'boolean',
+          enum: [true],
+          description: 'Must be true because replace-input can overwrite source material.',
+        },
+      },
+    },
+  ],
 } as const;
 
 const EXECUTION_POLICY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['deadlineAt', 'retryPolicy'],
-  description: 'Execution limits and retry behavior for Agent Sessions created from this Issue.',
+  required: ['deadlineAt'],
+  description: 'Execution deadline for Agent Sessions created from this Issue.',
   properties: {
     deadlineAt: { type: 'number', description: 'Execution deadline in milliseconds since epoch.' },
-    retryPolicy: {
-      type: 'string',
-      enum: ['none', 'manual', 'bounded'],
-      description: 'Retry policy for failed Sessions.',
-    },
-    maxAutomaticRetries: {
-      type: 'integer',
-      minimum: 0,
-      description: 'Maximum automatic retries when retryPolicy is bounded.',
-    },
   },
 } as const;
 
 const ISSUE_FIELDS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  description: 'Durable fields for a concrete Issue. Required on create: title. Other fields default to when-ready unattended work and unstarted-like lifecycle.',
+  description: 'Durable fields for a concrete Issue. Required on create: title. Other fields default to a when-ready unattended background handoff and unstarted-like lifecycle.',
   properties: {
     title: { type: 'string', minLength: 1, description: 'Specific human-readable Issue name.' },
-    description: { type: 'string', description: 'Stable goal, context, constraints, and acceptance guidance.' },
-    status: ISSUE_STATUS_SCHEMA,
+    description: { type: 'string', description: 'Stable goal, context, constraints, coverage requirements, expected output, and acceptance guidance. Put internal per-item work here instead of creating separate Issues for implementation steps.' },
     delegate: AGENT_REF_SCHEMA,
-    relations: { type: 'array', items: ISSUE_RELATION_SCHEMA, description: 'Visible dependency and relationship links between independently managed Issues.' },
+    relations: { type: 'array', items: ISSUE_RELATION_SCHEMA, description: 'Visible dependency and relationship links between independently managed Issues. Use only for work the user should see and manage as separate rows.' },
     trigger: ISSUE_TRIGGER_SCHEMA,
     dueDate: DUE_DATE_SCHEMA,
     completionCriteria: { type: 'array', items: COMPLETION_CRITERION_SCHEMA, description: 'Observable completion criteria.' },
@@ -326,7 +372,7 @@ const ISSUE_FIELDS_SCHEMA = {
 const CADENCE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['type'],
+  required: ['type', 'time'],
   description: 'Calendar cadence for a Recurring Issue. V1 supports daily, weekly, and monthly schedules.',
   properties: {
     type: {
@@ -385,7 +431,6 @@ const RECURRING_TEMPLATE_SCHEMA = {
       enum: ['attended', 'unattended'],
       description: 'Execution permission mode copied to generated Issues.',
     },
-    executionPolicy: EXECUTION_POLICY_SCHEMA,
   },
 } as const;
 
@@ -396,11 +441,6 @@ const RECURRING_FIELDS_SCHEMA = {
   properties: {
     titleTemplate: { type: 'string', minLength: 1, description: 'Template for generated concrete Issue titles.' },
     descriptionTemplate: { type: 'string', description: 'Template for generated Issue descriptions.' },
-    status: {
-      type: 'string',
-      enum: ['active', 'paused', 'archived'],
-      description: 'Recurring Issue lifecycle. Confirmation provenance is stored separately from this status.',
-    },
     cadence: CADENCE_SCHEMA,
     timeZone: { type: 'string', minLength: 1, description: 'IANA time zone used to interpret cadence times.' },
     missedPolicy: MISSED_POLICY_SCHEMA,
@@ -436,6 +476,8 @@ export const ISSUE_SEARCH_PARAMETERS = {
         delegateIds: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Delegates or agent profile ids to match.' },
         issueIds: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Exact concrete Issue ids.' },
         recurringIssueIds: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Exact Recurring Issue ids.' },
+        parentIssueIds: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Concrete parent Issue ids. Use this to inspect direct child Issues.' },
+        hasParentIssue: { type: 'boolean', description: 'Whether the Issue is a runtime-linked child of another Issue.' },
         triggerTypes: { type: 'array', items: { type: 'string', enum: ['when-ready', 'scheduled'] }, description: 'Issue trigger types to match.' },
         dueDate: TIME_RANGE_SCHEMA,
         cadence: { type: 'array', items: { type: 'string', enum: ['daily', 'weekly', 'monthly'] }, description: 'Recurring Issue cadence types to match.' },
@@ -456,12 +498,12 @@ export const ISSUE_SEARCH_PARAMETERS = {
         inputTags: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Input tag queries to match.' },
         sessionState: {
           type: 'array',
-          items: { type: 'string', enum: ['pending', 'active', 'error', 'awaitingInput', 'complete', 'stale', 'canceled'] },
+          items: { type: 'string', enum: ['pending', 'active', 'error', 'complete', 'stale', 'canceled'] },
           description: 'Agent Session states projected onto Issues.',
         },
         activityTypes: {
           type: 'array',
-          items: { type: 'string', enum: ['comment', 'field-change', 'status-change', 'agent-progress', 'agent-question', 'agent-action', 'agent-response', 'agent-error', 'verification-result', 'output-link'] },
+          items: { type: 'string', enum: ['created', 'updated', 'archived', 'deleted', 'comment', 'field-change', 'status-change', 'agent-progress', 'agent-question', 'agent-action', 'agent-response', 'agent-error', 'verification-result', 'output-link'] },
           description: 'Activity content types to match.',
         },
         activityTarget: {
@@ -477,11 +519,12 @@ export const ISSUE_SEARCH_PARAMETERS = {
         },
         createdAt: TIME_RANGE_SCHEMA,
         updatedAt: TIME_RANGE_SCHEMA,
+        terminalAt: TIME_RANGE_SCHEMA,
       },
     },
     include: {
       type: 'array',
-      items: { type: 'string', enum: ['activity-summary', 'session-summary', 'criteria-summary', 'input-preview', 'output-preview', 'next-generated-issue'] },
+      items: { type: 'string', enum: ['activity-summary', 'session-summary'] },
       description: 'Optional summary slices to return with each row. Prefer summaries before full reads.',
     },
     orderBy: {
@@ -509,7 +552,7 @@ export const ISSUE_READ_PARAMETERS = {
     target: TARGET_REF_SCHEMA,
     include: {
       type: 'array',
-      items: { type: 'string', enum: ['definition', 'activity', 'sessions', 'criteria', 'progress', 'generated-issues', 'linked-notes', 'input-preview', 'output-preview', 'session-plan'] },
+      items: { type: 'string', enum: ['activity', 'sessions', 'child-issues', 'generated-issues'] },
       description: 'Context slices to load. Omit for lightweight definition; include heavier slices only when needed.',
     },
   },
@@ -523,12 +566,16 @@ export const ISSUE_CREATE_PARAMETERS = {
     issueType: {
       type: 'string',
       enum: ['issue', 'recurring-issue'],
-      description: 'Use issue for one concrete unit of work and recurring-issue for a reusable cadence/template.',
+      description: 'Use issue for one independently user-visible outcome and recurring-issue for a reusable cadence/template.',
     },
     fields: {
       type: 'object',
       additionalProperties: false,
-      description: 'Durable definition fields. Required fields depend on issueType.',
+      description: 'Durable definition fields. Required fields depend on issueType. For concrete Issues, define the work contract; the later Agent Session owns internal planning and per-item execution.',
+      anyOf: [
+        { required: ['title'] },
+        { required: ['titleTemplate', 'cadence', 'timeZone', 'issueTemplate'] },
+      ],
       properties: {
         ...ISSUE_FIELDS_SCHEMA.properties,
         ...RECURRING_FIELDS_SCHEMA.properties,
@@ -554,6 +601,11 @@ export const ISSUE_UPDATE_PARAMETERS = {
       additionalProperties: false,
       required: ['type'],
       description: 'One explicit Issue-family change: patch, transition, pause/resume, skip-next, archive, or delete.',
+      anyOf: [
+        { required: ['type', 'patch'], properties: { type: { type: 'string', enum: ['patch'] } } },
+        { required: ['type', 'status'], properties: { type: { type: 'string', enum: ['transition'] } } },
+        { required: ['type'], properties: { type: { type: 'string', enum: ['archive', 'delete', 'pause', 'resume', 'skip-next'] } } },
+      ],
       properties: {
         type: {
           type: 'string',
@@ -563,9 +615,14 @@ export const ISSUE_UPDATE_PARAMETERS = {
         patch: {
           type: 'object',
           additionalProperties: false,
+          minProperties: 1,
           description: 'Durable field patch for a concrete Issue or Recurring Issue.',
           properties: {
             ...ISSUE_FIELDS_SCHEMA.properties,
+            dueDate: {
+              anyOf: [DUE_DATE_SCHEMA, { type: 'null' }],
+              description: 'Set a deadline or use null to clear the existing due date.',
+            },
             ...RECURRING_FIELDS_SCHEMA.properties,
           },
         },
@@ -589,7 +646,7 @@ export const AGENT_SESSION_START_PARAMETERS = {
     issueId: {
       type: 'string',
       minLength: 1,
-      description: 'Existing concrete Issue to execute or orchestrate. Do not pass Recurring Issue ids.',
+      description: 'Existing concrete Issue to execute, retry, continue, or verify. Do not pass Recurring Issue ids. Newly created when-ready unattended Issues normally start through runtime eligibility instead of this tool.',
     },
     purpose: {
       type: 'string',
@@ -614,16 +671,14 @@ export const AGENT_SESSION_START_PARAMETERS = {
     },
     detach: {
       type: 'boolean',
-      description: 'Whether the caller wants the Session to continue in the background while the current conversation proceeds.',
+      description: 'Whether the Session should continue in the background while the current conversation proceeds. Default true. Set false only for an explicit wait on an existing Issue.',
     },
     executionPolicyOverride: {
       type: 'object',
       additionalProperties: false,
-      description: 'Narrow execution-only override. It must not broaden the Issue durable permissions.',
+      description: 'Narrow execution-only deadline override. It must not extend the Issue deadline.',
       properties: {
         deadlineAt: { type: 'number', description: 'Execution-only deadline for this Session.' },
-        retryPolicy: { type: 'string', enum: ['none', 'manual', 'bounded'], description: 'Execution-only retry behavior.' },
-        maxAutomaticRetries: { type: 'integer', minimum: 0, description: 'Automatic retry cap when retryPolicy is bounded.' },
       },
     },
     request: REQUEST_SCHEMA,
@@ -637,12 +692,12 @@ export const AGENT_SESSION_READ_PARAMETERS = {
   required: ['agentSessionId'],
   properties: {
     agentSessionId: { type: 'string', minLength: 1, description: 'Agent Session to inspect.' },
-    wait: { type: 'boolean', description: 'Whether runtime may briefly wait for a state change or blocking question.' },
+    wait: { type: 'boolean', description: 'Whether runtime may briefly wait for a state change or blocking question. Use only when the current caller explicitly needs to wait; background Issue completion is delivered to the immediate origin target by runtime.' },
     timeoutMs: { type: 'integer', minimum: 1, maximum: 120000, description: 'Maximum wait time when wait is true. Runtime enforces this cap.' },
     include: {
       type: 'array',
-      items: { type: 'string', enum: ['activity-summary', 'latest-output', 'blocking-question'] },
-      description: 'Optional bounded detail slices to return.',
+      items: { type: 'string', enum: ['activity-summary', 'latest-output'] },
+      description: 'Optional bounded detail slices to return. Execution transcripts are available only to the renderer and are never returned by this model-facing tool.',
     },
   },
 } as const;
@@ -652,16 +707,11 @@ export const AGENT_SESSION_SEND_MESSAGE_PARAMETERS = {
   additionalProperties: false,
   required: ['agentSessionId', 'message', 'request', 'reason'],
   properties: {
-    agentSessionId: { type: 'string', minLength: 1, description: 'Active or waiting Agent Session to receive the message.' },
+    agentSessionId: { type: 'string', minLength: 1, description: 'Pending or active Agent Session to receive the message.' },
     message: {
       type: 'string',
       minLength: 1,
       description: 'Guidance, clarification, or answer within the existing Issue definition.',
-    },
-    kind: {
-      type: 'string',
-      enum: ['guidance', 'answer'],
-      description: 'Use answer for awaited input; use guidance for steering within the existing Issue definition.',
     },
     request: REQUEST_SCHEMA,
     reason: { type: 'string', minLength: 1, description: 'Short audit summary explaining why this message is being sent.' },

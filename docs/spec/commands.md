@@ -179,7 +179,8 @@ falls back to `#General`.
 optional, blank creation stores the untitled display sentinel, and creation does
 not accept an opening message. `agent_rename_conversation` accepts a blank title
 and restores the untitled display sentinel. Ordinary Channels can be renamed and
-deleted; protected default Channels cannot.
+deleted when they have no active Run and are not referenced by active Issue
+routing; protected default Channels cannot be deleted.
 
 ### Agent — messaging
 `agent_send_message`, `agent_edit_message`, `agent_regenerate_message`,
@@ -195,6 +196,28 @@ emits the final idle projection on drain). `agent_edit_message`/`agent_regenerat
 `agent_retry_message` follow the same DM-vs-Channel contract. `agent_steer_conversation`
 is DM-only; Channels have no steer (a send while runs work dispatches a new addressed
 turn). See `agent-architecture.md` (Channel runtime).
+
+### Agent — Issue work
+`agent_issue_search`, `agent_issue_read`, `agent_issue_complete_human_review`,
+`agent_session_read`, `agent_session_transcript`.
+
+These renderer IPC commands back the Issue-first Work surface.
+`agent_issue_search` returns lightweight Issue and Recurring Issue rows;
+`agent_issue_read` loads one durable work object and explicitly requested detail
+slices; and `agent_session_read` returns bounded Agent Session state and
+Activity. The renderer requests those commands through the ordinary preload
+bridge and does not read the Issue store directly.
+
+`agent_issue_complete_human_review` is the narrow renderer-to-main mutation for
+the Work detail `Accept and complete` action. It accepts an Issue id plus expected
+revision, records the local user actor, and succeeds only for a human-review Issue
+with a completed execution Session. It is not a model-facing agent tool.
+
+`agent_session_transcript` is a renderer-only drill-in command. It accepts an
+Agent Session id, resolves the internal execution binding in the main process,
+and returns the bound Run detail and transcript needed by the existing
+conversation turn renderer. It is not an agent tool. The model-facing
+`agent_session_read` tool cannot request or receive a transcript or Run id.
 
 ### Agent — delegated runs
 `agent_run_detail`, `agent_run_transcript`, `agent_run_status`,
