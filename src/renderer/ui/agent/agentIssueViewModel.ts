@@ -2,8 +2,10 @@ import type {
   Activity,
   AgentSession,
   IssueSearchInput,
+  IssueSearchResult,
   IssueSearchRow,
 } from '../../api/types';
+import type { AgentRuntimeEvent } from '../../../core/agentTypes';
 import {
   isActiveAgentSessionState,
   isUserVisibleIssueActivity,
@@ -15,8 +17,33 @@ export type IssueWorkPreset = 'inbox' | 'today' | 'upcoming' | 'logbook';
 
 const ISSUE_ROW_INCLUDE: NonNullable<IssueSearchInput['include']> = ['activity-summary', 'session-summary'];
 const TERMINAL_STATUS_CATEGORIES = new Set(['completed', 'canceled']);
+const ISSUE_SEARCH_PAGE_LIMIT = 100;
 
 export const ISSUE_DETAIL_INCLUDE = ['activity', 'sessions', 'child-issues', 'generated-issues'] as const;
+
+export async function loadAllIssueSearchRows(
+  input: IssueSearchInput,
+  search: (page: IssueSearchInput) => Promise<IssueSearchResult>,
+): Promise<IssueSearchRow[]> {
+  const rows: IssueSearchRow[] = [];
+  const seenCursors = new Set<string>();
+  let cursor = input.cursor;
+  if (cursor) seenCursors.add(cursor);
+  while (true) {
+    const result = await search({ ...input, limit: ISSUE_SEARCH_PAGE_LIMIT, ...(cursor ? { cursor } : {}) });
+    rows.push(...result.rows);
+    if (!result.nextCursor || seenCursors.has(result.nextCursor)) return rows;
+    seenCursors.add(result.nextCursor);
+    cursor = result.nextCursor;
+  }
+}
+
+export function shouldRefreshIssueWorkForAgentEvent(event: AgentRuntimeEvent): boolean {
+  return !(
+    (event.type === 'projection' || event.type === 'projection_patch')
+    && event.lastEventType === 'message_update'
+  );
+}
 
 export function issueSearchInputForWorkPreset(preset: IssueWorkPreset): IssueSearchInput {
   return issueSearchInputsForWorkPreset(preset)[0]!;
@@ -85,31 +112,31 @@ function isAfterToday(timestamp: number | undefined, now: number): boolean {
   return timestamp !== undefined && timestamp > endOfLocalDay(now);
 }
 
-function timeLabel(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
+function timeLabel(timestamp: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
 }
 
-function dateTimeLabel(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
+function dateTimeLabel(timestamp: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
 }
 
-export function dateSectionLabel(timestamp: number, now: number, labels: Messages['agent']['issue']): string {
+export function dateSectionLabel(timestamp: number, now: number, labels: Messages['agent']['issue'], locale: string): string {
   const start = startOfLocalDay(timestamp);
   if (start === startOfLocalDay(now)) return labels.view.today;
   if (start === startOfNextLocalDay(now)) return labels.section.tomorrow;
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', weekday: 'long' }).format(new Date(timestamp));
+  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', weekday: 'long' }).format(new Date(timestamp));
 }
 
-export function dateTimeRelativeLabel(timestamp: number, now: number, labels: Messages['agent']['issue']): string {
+export function dateTimeRelativeLabel(timestamp: number, now: number, labels: Messages['agent']['issue'], locale: string): string {
   const start = startOfLocalDay(timestamp);
-  if (start === startOfLocalDay(now)) return `${labels.summary.today}, ${timeLabel(timestamp)}`;
-  if (start === startOfNextLocalDay(now)) return `${labels.section.tomorrow}, ${timeLabel(timestamp)}`;
-  return dateTimeLabel(timestamp);
+  if (start === startOfLocalDay(now)) return `${labels.summary.today}, ${timeLabel(timestamp, locale)}`;
+  if (start === startOfNextLocalDay(now)) return `${labels.section.tomorrow}, ${timeLabel(timestamp, locale)}`;
+  return dateTimeLabel(timestamp, locale);
 }
 
-function scheduleTimeForPreset(timestamp: number, preset: IssueWorkPreset, now: number, labels: Messages['agent']['issue']): string {
-  if (preset === 'today' || preset === 'upcoming') return timeLabel(timestamp);
-  return dateTimeRelativeLabel(timestamp, now, labels);
+function scheduleTimeForPreset(timestamp: number, preset: IssueWorkPreset, now: number, labels: Messages['agent']['issue'], locale: string): string {
+  if (preset === 'today' || preset === 'upcoming') return timeLabel(timestamp, locale);
+  return dateTimeRelativeLabel(timestamp, now, labels, locale);
 }
 
 function joinRowSummaryParts(parts: Array<string | undefined>): string {
@@ -287,9 +314,9 @@ function sectionForInboxRow(row: IssueSearchRow, labels: Messages['agent']['issu
   return labels.view.inbox;
 }
 
-function sectionForUpcomingRow(row: IssueSearchRow, now: number, labels: Messages['agent']['issue']): string {
+function sectionForUpcomingRow(row: IssueSearchRow, now: number, labels: Messages['agent']['issue'], locale: string): string {
   const timestamp = rowScheduledAt(row) ?? row.dueDate?.targetAt;
-  if (timestamp !== undefined) return dateSectionLabel(timestamp, now, labels);
+  if (timestamp !== undefined) return dateSectionLabel(timestamp, now, labels, locale);
   if (row.target.type === 'recurring-issue') return labels.section.repeating;
   return labels.view.upcoming;
 }
@@ -299,6 +326,7 @@ export function groupIssueRowsForPreset(
   preset: IssueWorkPreset,
   now: number,
   labels: Messages['agent']['issue'],
+  locale: string,
 ): IssueRowSection[] {
   if (preset === 'logbook') return [{ key: preset, rows: [...rows] }];
 
@@ -309,7 +337,7 @@ export function groupIssueRowsForPreset(
       ? sectionForTodayRow(row, now, labels)
       : preset === 'inbox'
         ? sectionForInboxRow(row, labels)
-        : sectionForUpcomingRow(row, now, labels);
+        : sectionForUpcomingRow(row, now, labels, locale);
     let section = byLabel.get(label);
     if (!section) {
       section = { key: `${preset}:${label}`, label, rows: [] };
@@ -361,7 +389,7 @@ function sessionStateLabel(state: AgentSession['state'], labels: Messages['agent
   }
 }
 
-export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPreset, labels: Messages, now = Date.now()): string | null {
+export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPreset, labels: Messages, locale: string, now = Date.now()): string | null {
   const issueLabels = labels.agent.issue;
   const sessionState = row.latestSessionState ? sessionStateLabel(row.latestSessionState, issueLabels) : null;
   const sessionNeedsAttention = row.latestSessionState === 'error'
@@ -375,7 +403,7 @@ export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPres
   }
   if (row.target.type === 'recurring-issue') {
     const next = row.nextMaterializationAt !== undefined
-      ? scheduleTimeForPreset(row.nextMaterializationAt, preset, now, issueLabels)
+      ? scheduleTimeForPreset(row.nextMaterializationAt, preset, now, issueLabels, locale)
       : issueLabels.summary.noNextRun;
     return joinRowSummaryParts([
       next,
@@ -392,13 +420,13 @@ export function issueRowSummaryForRow(row: IssueSearchRow, preset: IssueWorkPres
   const scheduledAt = rowScheduledAt(row);
   if (scheduledAt !== undefined) {
     return joinRowSummaryParts([
-      scheduleTimeForPreset(scheduledAt, preset, now, issueLabels),
+      scheduleTimeForPreset(scheduledAt, preset, now, issueLabels, locale),
       issueLabels.summary.scheduled,
     ]);
   }
   if (row.dueDate) {
     return joinRowSummaryParts([
-      scheduleTimeForPreset(row.dueDate.targetAt, preset, now, issueLabels),
+      scheduleTimeForPreset(row.dueDate.targetAt, preset, now, issueLabels, locale),
       issueLabels.summary.due,
     ]);
   }

@@ -244,6 +244,11 @@ Verification remains an execution policy, not a separate model-facing tool.
 
 - A verified worker must have explicit criteria.
 - Runtime may start verifier workers using the configured verifier profile.
+- A verifier derives its resources from the concrete work Run, not the broader
+  runtime inheritance scope. It preserves `docs`, `paths`, and readable `nodes`,
+  removes write authority, and receives only tools admitted by the Run's
+  effective allow-list and read-only capabilities. A write-only Run therefore
+  gives its verifier no tools.
 - Whether a delegated Run requires verification is persisted in Run metadata.
   Replacement Runs also persist their inherited attempt base and ordered gap
   signatures; direct verifier ids are rebuilt from Run parent links. Execution

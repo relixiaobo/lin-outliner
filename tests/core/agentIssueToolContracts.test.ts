@@ -79,6 +79,11 @@ describe('agent issue manager tool contracts', () => {
     ]);
   });
 
+  test('requires a complete continuation identity and intent', () => {
+    expect(AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.agent_session_start.properties.continuation.required)
+      .toEqual(['previousAgentSessionId', 'intent']);
+  });
+
   test('uses discriminated input and output policy schemas with required variant fields', () => {
     const fields = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_create.properties.fields.properties;
     const inputVariants = fields.input.oneOf;

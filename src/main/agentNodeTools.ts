@@ -153,14 +153,15 @@ export type ChatSourceValidationResult =
 
 export function createNodeTools(host: OutlinerToolHost, options: NodeToolsOptions = {}): AgentTool<any>[] {
   const agentHost = asAgentToolHost(host);
-  return [
+  const tools = [
     createNodeSearchTool(agentHost, options),
     createNodeReadTool(agentHost, options),
     createNodeCreateTool(agentHost, options),
     createNodeEditTool(agentHost, options),
     createNodeDeleteTool(agentHost, options),
-    createOutlineUndoStackTool(agentHost),
-  ].map((tool) => tool.name === 'outline_undo_stack' ? tool : withAgentToolTransaction(tool, agentHost));
+    ...(options.runScope ? [] : [createOutlineUndoStackTool(agentHost)]),
+  ];
+  return tools.map((tool) => tool.name === 'outline_undo_stack' ? tool : withAgentToolTransaction(tool, agentHost));
 }
 
 function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {

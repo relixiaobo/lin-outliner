@@ -182,7 +182,7 @@ describe('summarizeToolActivity', () => {
   test('summarizes Issue and Agent Session tools as first-class activity', () => {
     const summary = summarizeToolActivity(
       [
-        member('issue_create', 'done', { title: 'Write daily report' }, 'a'),
+        member('issue_create', 'done', { issueType: 'issue', fields: { title: 'Write daily report' } }, 'a'),
         member('agent_session_start', 'pending', { issueId: 'issue-1' }, 'b'),
       ],
       process,

@@ -111,6 +111,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
 
+function nestedSubject(args: Record<string, unknown>, objectKey: string, ...subjectKeys: string[]): string | null {
+  const nested = args[objectKey];
+  return isRecord(nested) ? pickSubject(nested, ...subjectKeys) : null;
+}
+
 type ToolCallLabels = Messages['agent']['toolCall'];
 type ToolVerbForms = { base: string; pending: string; done: string };
 
@@ -160,16 +165,16 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   const verbs = labels.verbs;
   const args = toolCall.arguments;
   if (toolCall.name === 'issue_search') {
-    return withSubject(verbByStatus(verbs.searchIssues, status, labels), pickSubject(args, 'query', 'status'), labels);
+    return withSubject(verbByStatus(verbs.searchIssues, status, labels), pickSubject(args, 'text'), labels);
   }
   if (toolCall.name === 'issue_read') {
-    return withSubject(verbByStatus(verbs.readIssue, status, labels), pickSubject(args, 'issueId', 'recurringIssueId', 'targetId'), labels);
+    return withSubject(verbByStatus(verbs.readIssue, status, labels), nestedSubject(args, 'target', 'id'), labels);
   }
   if (toolCall.name === 'issue_create') {
-    return withSubject(verbByStatus(verbs.createIssue, status, labels), pickSubject(args, 'title', 'objective'), labels);
+    return withSubject(verbByStatus(verbs.createIssue, status, labels), nestedSubject(args, 'fields', 'title', 'titleTemplate'), labels);
   }
   if (toolCall.name === 'issue_update') {
-    return withSubject(verbByStatus(verbs.updateIssue, status, labels), pickSubject(args, 'issueId', 'recurringIssueId', 'targetId'), labels);
+    return withSubject(verbByStatus(verbs.updateIssue, status, labels), nestedSubject(args, 'target', 'id'), labels);
   }
   if (toolCall.name === 'agent_session_start') {
     return withSubject(verbByStatus(verbs.startAgentSession, status, labels), pickSubject(args, 'issueId', 'agentSessionId', 'sessionId'), labels);

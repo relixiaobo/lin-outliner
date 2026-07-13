@@ -161,6 +161,20 @@ test.describe('agent composer controls', () => {
     });
   });
 
+  test('keeps Send to composer pending while Work hides the editor', async ({ page }) => {
+    await page.getByRole('button', { name: /^Open Work/ }).click();
+    await expect(page.getByRole('region', { name: 'Agent work' })).toBeVisible();
+    await expect(page.locator('.agent-composer-region')).toHaveCount(0);
+
+    await row(page, ids.alpha).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Send to composer' }).click();
+    await expect(page.getByRole('region', { name: 'Agent work' })).toBeVisible();
+
+    await page.locator('.agent-dock-header').getByRole('button', { name: 'Back to chat' }).click();
+    await expect(page.locator('[data-agent-node-ref="node-alpha"]')).toBeVisible();
+    await expect(page.getByLabel('Agent message')).toContainText('Alpha');
+  });
+
   test('scrolls to a newly sent user message without letting streaming retake the viewport', async ({ page }) => {
     const conversation = Array.from({ length: 44 }, (_, index) => {
       const isUser = index % 2 === 0;
@@ -3665,6 +3679,15 @@ test.describe('agent composer controls', () => {
       });
     });
 
+    await emitAgentEvent(page, {
+      type: 'tool_result',
+      conversationId: DEFAULT_DM_CONVERSATION_ID,
+      toolCallId: 'tool-refresh-active-issue-count',
+      timestamp: Date.now(),
+    });
+    const activeWorkButton = page.getByRole('button', { name: '1 Agent Session active' });
+    await expect(activeWorkButton).toBeVisible();
+
     // A DM main-agent child run stays anchored to its Agent Session start
     // tool-call row, NOT a free-floating conversation-level boundary. So there
     // is no boundary region, and the run remains a process row in the bubble.
@@ -3680,7 +3703,7 @@ test.describe('agent composer controls', () => {
     });
     expect(savedChatScrollTop).toBeGreaterThan(100);
 
-    await page.getByRole('button', { name: /^Open Work/ }).click();
+    await activeWorkButton.click();
     const work = page.getByRole('region', { name: 'Agent work' });
     await expect(work).toBeVisible();
     await expect(work).toHaveCSS('position', 'static');
@@ -3753,6 +3776,7 @@ test.describe('agent composer controls', () => {
 
     await details.getByRole('button', { name: /Inspect nested UI/ }).click();
     await expect(details.getByRole('heading', { name: 'Inspect nested UI', level: 3 })).toBeVisible();
+    await expect(detailDialog).toBeFocused();
     await expect(details.getByRole('button', { name: 'Inspect Run UI' })).toBeVisible();
     await expect(details.locator('.agent-issue-session-empty')).toHaveText('No execution details yet.');
 

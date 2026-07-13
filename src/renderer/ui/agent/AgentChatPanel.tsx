@@ -76,6 +76,8 @@ import {
 } from './AgentIssuesPanel';
 import {
   issueSearchInputsForWorkPreset,
+  loadAllIssueSearchRows,
+  shouldRefreshIssueWorkForAgentEvent,
   type IssueWorkPreset,
 } from './agentIssueViewModel';
 import { AgentRunDetailsPanel } from './AgentRunDetailsPanel';
@@ -503,7 +505,10 @@ export function AgentChatPanel({
   const slashCommandsRequestRef = useRef(0);
   const agentDefinitionsRequestRef = useRef(0);
   const issueIndexRequestRef = useRef(0);
+  const activeIssueSessionCountRequestRef = useRef(0);
   const issueIndexRefreshTimerRef = useRef<number | null>(null);
+  const issueIndexPresetRef = useRef(issueIndexPreset);
+  const workPanelOpenRef = useRef(workPanelOpen);
   const scrollFrameRef = useRef<number | null>(null);
   const bottomScrollFrameRef = useRef<number | null>(null);
   const chatScrollSnapshotsRef = useRef(new Map<string, ChatScrollSnapshot>());
@@ -796,26 +801,25 @@ export function AgentChatPanel({
     }
   }, []);
 
-  const loadIssueIndex = useCallback(async (preset: IssueWorkPreset = issueIndexPreset) => {
+  issueIndexPresetRef.current = issueIndexPreset;
+  workPanelOpenRef.current = workPanelOpen;
+
+  const loadIssueIndex = useCallback(async (preset: IssueWorkPreset) => {
     const requestId = issueIndexRequestRef.current + 1;
     issueIndexRequestRef.current = requestId;
     setIssueIndexLoading(true);
     try {
       const queries = issueSearchInputsForWorkPreset(preset);
-      const [results, active] = await Promise.all([
-        Promise.all(queries.map((query) => api.agentIssueSearch(query))),
-        api.agentIssueSearch({ targets: ['issue'], filter: { hasActiveSession: true, archived: false }, limit: 100 }),
-      ]);
+      const results = await Promise.all(queries.map((query) => loadAllIssueSearchRows(query, api.agentIssueSearch)));
       if (!mountedRef.current || requestId !== issueIndexRequestRef.current) return null;
       const deduped = new Map<string, IssueSearchRow>();
-      for (const result of results) {
-        for (const row of result.rows) {
+      for (const resultRows of results) {
+        for (const row of resultRows) {
           deduped.set(`${row.target.type}:${row.target.id}`, row);
         }
       }
       const rows = [...deduped.values()];
       setIssueIndex(rows);
-      setActiveIssueSessionCount(active.rows.length);
       setIssueIndexError(null);
       return rows;
     } catch (caught) {
@@ -828,17 +832,31 @@ export function AgentChatPanel({
         setIssueIndexLoading(false);
       }
     }
-  }, [issueIndexPreset]);
+  }, []);
+
+  const loadActiveIssueSessionCount = useCallback(async () => {
+    const requestId = activeIssueSessionCountRequestRef.current + 1;
+    activeIssueSessionCountRequestRef.current = requestId;
+    try {
+      const rows = await loadAllIssueSearchRows({
+        targets: ['issue'],
+        filter: { hasActiveSession: true, archived: false },
+      }, api.agentIssueSearch);
+      if (!mountedRef.current || requestId !== activeIssueSessionCountRequestRef.current) return;
+      setActiveIssueSessionCount(rows.length);
+    } catch {
+      // Keep the last known badge count; Work loading reports its own errors.
+    }
+  }, []);
 
   const scheduleIssueIndexRefresh = useCallback(() => {
-    if (issueIndexRefreshTimerRef.current !== null) {
-      window.clearTimeout(issueIndexRefreshTimerRef.current);
-    }
+    if (issueIndexRefreshTimerRef.current !== null) return;
     issueIndexRefreshTimerRef.current = window.setTimeout(() => {
       issueIndexRefreshTimerRef.current = null;
-      void loadIssueIndex();
+      void loadActiveIssueSessionCount();
+      if (workPanelOpenRef.current) void loadIssueIndex(issueIndexPresetRef.current);
     }, 250);
-  }, [loadIssueIndex]);
+  }, [loadActiveIssueSessionCount, loadIssueIndex]);
 
   const loadSlashCommands = useCallback(async () => {
     const requestId = slashCommandsRequestRef.current + 1;
@@ -1120,6 +1138,7 @@ export function AgentChatPanel({
   useEffect(() => {
     mountedRef.current = true;
     void loadProviderSettings();
+    void loadActiveIssueSessionCount();
     return () => {
       mountedRef.current = false;
       providerSettingsRequestRef.current += 1;
@@ -1127,23 +1146,24 @@ export function AgentChatPanel({
       issueIndexRequestRef.current += 1;
       slashCommandsRequestRef.current += 1;
       agentDefinitionsRequestRef.current += 1;
+      activeIssueSessionCountRequestRef.current += 1;
       if (issueIndexRefreshTimerRef.current !== null) {
         window.clearTimeout(issueIndexRefreshTimerRef.current);
         issueIndexRefreshTimerRef.current = null;
       }
     };
-  }, [loadProviderSettings]);
+  }, [loadActiveIssueSessionCount, loadProviderSettings]);
 
   useEffect(() => {
-    if (!workPanelOpen) return undefined;
-    return window.lin?.onAgentEvent(() => {
+    return window.lin?.onAgentEvent((event) => {
+      if (!shouldRefreshIssueWorkForAgentEvent(event)) return;
       scheduleIssueIndexRefresh();
     });
-  }, [scheduleIssueIndexRefresh, workPanelOpen]);
+  }, [scheduleIssueIndexRefresh]);
 
   useEffect(() => {
-    if (workPanelOpen) void loadIssueIndex();
-  }, [loadIssueIndex, workPanelOpen]);
+    if (workPanelOpen) void loadIssueIndex(issueIndexPreset);
+  }, [issueIndexPreset, loadIssueIndex, workPanelOpen]);
 
   useEffect(() => {
     void loadSlashCommands();
@@ -1243,8 +1263,17 @@ export function AgentChatPanel({
   }, [conversationId, selectedRunTarget?.conversationId]);
 
   const setIssueWorkPreset = useCallback((preset: IssueWorkPreset) => {
+    if (issueIndexRefreshTimerRef.current !== null) {
+      window.clearTimeout(issueIndexRefreshTimerRef.current);
+      issueIndexRefreshTimerRef.current = null;
+    }
+    if (issueIndexPresetRef.current === preset) {
+      void loadIssueIndex(preset);
+      return;
+    }
+    issueIndexPresetRef.current = preset;
+    issueIndexRequestRef.current += 1;
     setIssueIndexPreset(preset);
-    void loadIssueIndex(preset);
   }, [loadIssueIndex]);
 
   useEffect(() => {
@@ -1290,7 +1319,7 @@ export function AgentChatPanel({
       loadAgentDefinitions(),
       reloadConversation(),
     ];
-    if (workPanelOpen) refreshes.push(loadIssueIndex());
+    if (workPanelOpen) refreshes.push(loadIssueIndex(issueIndexPreset));
     await Promise.all(refreshes);
   }
 
@@ -1826,7 +1855,7 @@ export function AgentChatPanel({
             loading={issueIndexLoading}
             onOpenIssue={openIssueFromWorkPanel}
             onPresetChange={setIssueWorkPreset}
-            onRefresh={() => void loadIssueIndex()}
+            onRefresh={() => void loadIssueIndex(issueIndexPreset)}
             preset={issueIndexPreset}
             rows={issueIndex}
           />
@@ -1967,6 +1996,7 @@ export function AgentChatPanel({
       ) : selectedIssueTarget ? (
         <Dialog
           backdropClassName="agent-run-detail-drawer-backdrop"
+          focusKey={`${selectedIssueTarget.type}:${selectedIssueTarget.id}`}
           label={t.agent.issueDetail.detailsAriaLabel}
           onBackdropMouseDown={closeIssueDetailDrawer}
           onEscapeKeyDown={closeIssueDetailDrawer}

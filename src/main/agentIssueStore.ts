@@ -317,6 +317,10 @@ export class AgentIssueStore {
     const validation = validateIssueCreateInput(input);
     if (validation.length > 0) return { status: 'blocked', targets: [], validation };
     if (input.request.mode === 'preview') {
+      const preflight = preflightIssueCreate(await this.state(), input, options);
+      if (preflight.validation.length > 0) {
+        return { status: 'blocked', targets: [], validation: preflight.validation };
+      }
       const target: RelatedTargetRef = { type: input.issueType, id: `preview:${randomUUID()}` } as RelatedTargetRef;
       return { status: 'preview', targets: [target] };
     }
@@ -325,53 +329,13 @@ export class AgentIssueStore {
     let createdActivityId: string | null = null;
     let creationFailure: TenonAgentToolResult | null = null;
     return updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+      const preflight = preflightIssueCreate(state, input, options);
+      if (preflight.validation.length > 0) {
+        creationFailure = { status: 'blocked', targets: [], validation: preflight.validation };
+        return state;
+      }
       if (input.issueType === 'issue') {
-        const parentSession = options.origin?.type === 'agent-session'
-          ? state.sessions[options.origin.agentSessionId]
-          : undefined;
-        if (options.origin?.type === 'agent-session' && (
-          !parentSession
-          || !state.issues[parentSession.issueId]
-          || parentSession.state !== 'active'
-          || !state.sessionExecutions[parentSession.id]
-          || state.sessionStopIntents[parentSession.id] !== undefined
-        )) {
-          creationFailure = {
-            status: 'blocked',
-            targets: [],
-            validation: [{
-              path: 'origin',
-              code: 'invalid_origin',
-              message: 'An Agent Session origin must resolve to an active, execution-bound parent Session and Issue.',
-            }],
-          };
-          return state;
-        }
-        if (parentSession) {
-          const scopeValidation = validateChildIssueScope(
-            parentSession,
-            {
-              input: input.fields.input,
-              output: input.fields.output,
-              noteNodeIds: input.fields.noteNodeIds,
-            },
-            options.authorizeChildScope,
-          );
-          if (scopeValidation.length > 0) {
-            creationFailure = { status: 'blocked', targets: [], validation: scopeValidation };
-            return state;
-          }
-        }
-        const relationValidation = validateStoredRelations(
-          state,
-          input.fields.relations ?? [],
-          undefined,
-          'fields.relations',
-        );
-        if (relationValidation.length > 0) {
-          creationFailure = { status: 'blocked', targets: [], validation: relationValidation };
-          return state;
-        }
+        const parentSession = preflight.parentSession;
         const issue = buildIssue(input.fields, actor, now, options.origin, parentSession?.issueId);
         state.issues[issue.id] = issue;
         const activity = appendActivity(state, {
@@ -395,28 +359,6 @@ export class AgentIssueStore {
       }
 
       const recurringOrigin = options.origin?.type === 'conversation' ? options.origin : undefined;
-      if (options.origin && options.origin.type !== 'conversation') {
-        creationFailure = {
-          status: 'blocked',
-          targets: [],
-          validation: [{
-            path: 'origin',
-            code: 'invalid_origin',
-            message: 'Recurring Issues can be created only from a visible conversation, not from an Agent Session.',
-          }],
-        };
-        return state;
-      }
-      const relationValidation = validateStoredRelations(
-        state,
-        input.fields.issueTemplate.relations ?? [],
-        undefined,
-        'fields.issueTemplate.relations',
-      );
-      if (relationValidation.length > 0) {
-        creationFailure = { status: 'blocked', targets: [], validation: relationValidation };
-        return state;
-      }
       const recurringIssue = buildRecurringIssue(
         input.fields,
         actor,
@@ -461,233 +403,17 @@ export class AgentIssueStore {
       const target = safeTargetFromUpdateInput(input);
       return { status: 'blocked', targets: target ? [target] : [], validation };
     }
+    const target = targetFromUpdateInput(input);
     if (input.request.mode === 'preview') {
-      return { status: 'preview', targets: [targetFromUpdateInput(input)] };
+      const preflight = applyIssueUpdateToState(structuredClone(await this.state()), input, actor, now, options);
+      return preflight.status === 'applied'
+        ? { status: 'preview', targets: preflight.targets }
+        : preflight;
     }
 
-    const target = targetFromUpdateInput(input);
     let outcome: TenonAgentToolResult | null = null;
     await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
-      const currentRevision = revisionForTarget(state, target);
-      if (!currentRevision) {
-        outcome = {
-          status: 'blocked',
-          targets: [target],
-          validation: [{ code: 'not_found', message: 'Target object was not found.' }],
-        };
-        return state;
-      }
-      if (input.target.expectedRevision && input.target.expectedRevision !== currentRevision) {
-        outcome = {
-          status: 'conflict',
-          targets: [target],
-          validation: [{ code: 'revision_mismatch', message: 'Target object changed since it was read.' }],
-          revisions: [{ target, revision: currentRevision }],
-        };
-        return state;
-      }
-
-      if (input.target.type === 'issue') {
-        const issue = state.issues[input.target.id];
-        if (!issue) return state;
-        const issueChange = input.change as IssueUpdateChange;
-        if (
-          issueChange.type === 'patch'
-          && issueChange.patch.verificationPolicy !== undefined
-          && reviewPolicyWasWeakened(issue.verificationPolicy, issueChange.patch.verificationPolicy)
-          && actor.type !== 'user'
-        ) {
-          outcome = {
-            status: 'blocked',
-            targets: [target],
-            validation: [{
-              path: 'change.patch.verificationPolicy',
-              code: 'review_policy_downgrade_requires_user',
-              message: 'Only a trusted user action can weaken an Issue review policy.',
-            }],
-            revisions: [{ target, revision: issue.revision }],
-          };
-          return state;
-        }
-        if (
-          issueChange.type === 'patch'
-          && issueChange.patch.completionCriteria !== undefined
-          && completionCriteriaWereWeakened(issue.completionCriteria, issueChange.patch.completionCriteria)
-          && actor.type !== 'user'
-        ) {
-          outcome = {
-            status: 'blocked',
-            targets: [target],
-            validation: [{
-              path: 'change.patch.completionCriteria',
-              code: 'completion_criteria_downgrade_requires_user',
-              message: 'Only a trusted user action can remove or waive an existing Issue completion criterion.',
-            }],
-            revisions: [{ target, revision: issue.revision }],
-          };
-          return state;
-        }
-        if (issueChange.type === 'patch' && issueChange.patch.relations !== undefined) {
-          const relationValidation = validateStoredRelations(
-            state,
-            issueChange.patch.relations,
-            issue.id,
-            'change.patch.relations',
-          );
-          if (relationValidation.length > 0) {
-            outcome = {
-              status: 'blocked',
-              targets: [target],
-              validation: relationValidation,
-              revisions: [{ target, revision: issue.revision }],
-            };
-            return state;
-          }
-        }
-        if (
-          issueChange.type === 'patch'
-          && issue.origin?.type === 'agent-session'
-          && (
-            issueChange.patch.input !== undefined
-            || issueChange.patch.output !== undefined
-            || issueChange.patch.noteNodeIds !== undefined
-          )
-        ) {
-          const parentSession = state.sessions[issue.origin.agentSessionId];
-          const parentAvailable = parentSession
-            && parentSessionCanRouteChild(parentSession)
-            && state.sessionExecutions[parentSession.id]
-            && state.sessionStopIntents[parentSession.id] === undefined;
-          const scopeValidation = parentAvailable
-            ? validateChildIssueScope(parentSession, {
-                input: issueChange.patch.input ?? issue.input,
-                output: issueChange.patch.output ?? issue.output,
-                noteNodeIds: issueChange.patch.noteNodeIds ?? issue.noteNodeIds,
-              }, options.authorizeChildScope)
-            : [{
-                path: 'origin',
-                code: 'invalid_origin',
-                message: 'Child Issue scope cannot change after its parent Agent Session is unavailable.',
-              }];
-          if (scopeValidation.length > 0) {
-            outcome = {
-              status: 'blocked',
-              targets: [target],
-              validation: scopeValidation,
-              revisions: [{ target, revision: issue.revision }],
-            };
-            return state;
-          }
-        }
-        const validation = applyIssueChange(
-          state,
-          issue,
-          issueChange,
-          actor,
-          now,
-          options.allowHumanReviewTransition === true,
-        );
-        if (validation.length > 0) {
-          outcome = {
-            status: 'blocked',
-            targets: [target],
-            validation,
-            revisions: [{ target, revision: issue.revision }],
-          };
-          return state;
-        }
-        const nextRevision = state.issues[input.target.id]?.revision;
-        outcome = nextRevision
-          ? { status: 'applied', targets: [target], revisions: [{ target, revision: nextRevision }] }
-          : { status: 'applied', targets: [target] };
-        return state;
-      }
-
-      const recurringIssue = state.recurringIssues[input.target.id];
-      if (!recurringIssue) return state;
-      const recurringChange = input.change as RecurringIssueUpdateChange;
-      if (
-        recurringChange.type === 'patch'
-        && recurringChange.patch.issueTemplate !== undefined
-        && reviewPolicyWasWeakened(
-          recurringIssue.issueTemplate.verificationPolicy,
-          recurringChange.patch.issueTemplate.verificationPolicy,
-        )
-        && actor.type !== 'user'
-      ) {
-        outcome = {
-          status: 'blocked',
-          targets: [target],
-          validation: [{
-            path: 'change.patch.issueTemplate.verificationPolicy',
-            code: 'review_policy_downgrade_requires_user',
-            message: 'Only a trusted user action can weaken a Recurring Issue review policy.',
-          }],
-          revisions: [{ target, revision: recurringIssue.revision }],
-        };
-        return state;
-      }
-      if (
-        recurringChange.type === 'patch'
-        && recurringChange.patch.issueTemplate !== undefined
-        && completionCriteriaWereWeakened(
-          recurringIssue.issueTemplate.completionCriteria,
-          recurringChange.patch.issueTemplate.completionCriteria,
-        )
-        && actor.type !== 'user'
-      ) {
-        outcome = {
-          status: 'blocked',
-          targets: [target],
-          validation: [{
-            path: 'change.patch.issueTemplate.completionCriteria',
-            code: 'completion_criteria_downgrade_requires_user',
-            message: 'Only a trusted user action can remove or waive an existing recurring Issue completion criterion.',
-          }],
-          revisions: [{ target, revision: recurringIssue.revision }],
-        };
-        return state;
-      }
-      if (
-        recurringChange.type === 'patch'
-        && recurringChange.patch.issueTemplate?.relations !== undefined
-      ) {
-        const relationValidation = validateStoredRelations(
-          state,
-          recurringChange.patch.issueTemplate.relations,
-          undefined,
-          'change.patch.issueTemplate.relations',
-        );
-        if (relationValidation.length > 0) {
-          outcome = {
-            status: 'blocked',
-            targets: [target],
-            validation: relationValidation,
-            revisions: [{ target, revision: recurringIssue.revision }],
-          };
-          return state;
-        }
-      }
-      const validation = applyRecurringIssueChange(
-        state,
-        recurringIssue,
-        recurringChange,
-        actor,
-        now,
-      );
-      if (validation.length > 0) {
-        outcome = {
-          status: 'blocked',
-          targets: [target],
-          validation,
-          revisions: [{ target, revision: recurringIssue.revision }],
-        };
-        return state;
-      }
-      const nextRevision = state.recurringIssues[input.target.id]?.revision;
-      outcome = nextRevision
-        ? { status: 'applied', targets: [target], revisions: [{ target, revision: nextRevision }] }
-        : { status: 'applied', targets: [target] };
+      outcome = applyIssueUpdateToState(state, input, actor, now, options);
       return state;
     }, PRIVATE_JSON_FILE_OPTIONS);
     return outcome ?? {
@@ -1130,53 +856,13 @@ export class AgentIssueStore {
   async preflightSessionMessage(
     input: AgentSessionSendMessageInput,
   ): Promise<TenonAgentToolResult> {
-    const state = await this.state();
-    const target: RelatedTargetRef = { type: 'agent-session', id: input.agentSessionId };
-    const session = state.sessions[input.agentSessionId];
-    if (!session) {
-      return { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
-    }
-    if (!canMessageSession(session.state)) {
-      return {
-        status: 'blocked',
-        targets: [target],
-        validation: [{ code: 'invalid_state', message: 'Agent Session cannot receive messages in its current state.' }],
-        revisions: [{ target, revision: session.revision }],
-      };
-    }
-    if (state.sessionStopIntents[session.id]) {
-      return {
-        status: 'blocked',
-        targets: [target],
-        validation: [{ code: 'stop_in_progress', message: 'Agent Session cannot receive messages while stop is in progress.' }],
-        revisions: [{ target, revision: session.revision }],
-      };
-    }
-    return { status: 'applied', targets: [target], revisions: [{ target, revision: session.revision }] };
+    return preflightSessionMessageFromState(await this.state(), input);
   }
 
   async preflightSessionStop(
     input: AgentSessionStopInput,
   ): Promise<TenonAgentToolResult> {
-    const state = await this.state();
-    const target: RelatedTargetRef = { type: 'agent-session', id: input.agentSessionId };
-    const session = state.sessions[input.agentSessionId];
-    if (!session) {
-      return { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
-    }
-    if (session.state === 'canceled') {
-      return { status: 'applied', targets: [target], revisions: [{ target, revision: session.revision }] };
-    }
-    const validation = sessionStopValidation(state, session);
-    if (validation.length > 0) {
-      return {
-        status: 'blocked',
-        targets: [target],
-        validation,
-        revisions: [{ target, revision: session.revision }],
-      };
-    }
-    return { status: 'applied', targets: [target], revisions: [{ target, revision: session.revision }] };
+    return preflightSessionStopFromState(await this.state(), input);
   }
 
   async reserveSessionStop(
@@ -1303,28 +989,21 @@ export class AgentIssueStore {
 
   async sendSessionMessage(input: AgentSessionSendMessageInput, actor: ActorRef = DEFAULT_ACTOR, now = Date.now()): Promise<TenonAgentToolResult> {
     const target: RelatedTargetRef = { type: 'agent-session', id: input.agentSessionId };
-    if (input.request.mode === 'preview') return { status: 'preview', targets: [target] };
+    if (input.request.mode === 'preview') {
+      const preflight = await this.preflightSessionMessage(input);
+      return preflight.status === 'applied'
+        ? { status: 'preview', targets: preflight.targets, revisions: preflight.revisions }
+        : preflight;
+    }
 
     let outcome: TenonAgentToolResult | null = null;
     await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
-      const session = state.sessions[input.agentSessionId];
-      if (!session) {
-        outcome = { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
+      const preflight = preflightSessionMessageFromState(state, input);
+      if (preflight.status !== 'applied') {
+        outcome = preflight;
         return state;
       }
-      if (!canMessageSession(session.state)) {
-        outcome = { status: 'blocked', targets: [target], validation: [{ code: 'invalid_state', message: 'Agent Session cannot receive messages in its current state.' }] };
-        return state;
-      }
-      if (state.sessionStopIntents[session.id]) {
-        outcome = {
-          status: 'blocked',
-          targets: [target],
-          validation: [{ code: 'stop_in_progress', message: 'Agent Session cannot receive messages while stop is in progress.' }],
-          revisions: [{ target, revision: session.revision }],
-        };
-        return state;
-      }
+      const session = state.sessions[input.agentSessionId]!;
       appendActivity(state, {
         target: { type: 'agent-session', agentSessionId: session.id },
         actor,
@@ -1346,16 +1025,22 @@ export class AgentIssueStore {
 
   async stopSession(input: AgentSessionStopInput, actor: ActorRef = DEFAULT_ACTOR, now = Date.now()): Promise<TenonAgentToolResult> {
     const target: RelatedTargetRef = { type: 'agent-session', id: input.agentSessionId };
-    if (input.request.mode === 'preview') return { status: 'preview', targets: [target] };
+    if (input.request.mode === 'preview') {
+      const preflight = await this.preflightSessionStop(input);
+      return preflight.status === 'applied'
+        ? { status: 'preview', targets: preflight.targets, revisions: preflight.revisions }
+        : preflight;
+    }
 
     let outcome: TenonAgentToolResult | null = null;
     await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
       const session = state.sessions[input.agentSessionId];
-      if (!session) {
-        outcome = { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
+      const preflight = preflightSessionStopFromState(state, input);
+      if (preflight.status !== 'applied') {
+        outcome = preflight;
         return state;
       }
-      if (session.state === 'canceled') {
+      if (session?.state === 'canceled') {
         outcome = {
           status: 'applied',
           targets: [target],
@@ -1363,30 +1048,11 @@ export class AgentIssueStore {
         };
         return state;
       }
-      if (state.sessionStopIntents[session.id]) {
-        outcome = {
-          status: 'blocked',
-          targets: [target],
-          validation: [{ code: 'stop_in_progress', message: 'Agent Session stop is already in progress.' }],
-          revisions: [{ target, revision: session.revision }],
-        };
-        return state;
-      }
-      const validation = sessionStopValidation(state, session);
-      if (validation.length > 0) {
-        outcome = {
-          status: 'blocked',
-          targets: [target],
-          validation,
-          revisions: [{ target, revision: session.revision }],
-        };
-        return state;
-      }
-      cancelSession(state, session, actor, now);
+      cancelSession(state, session!, actor, now);
       outcome = {
         status: 'applied',
         targets: [target],
-        revisions: [{ target, revision: session.revision }],
+        revisions: [{ target, revision: session!.revision }],
       };
       return state;
     }, PRIVATE_JSON_FILE_OPTIONS);
@@ -1562,11 +1228,18 @@ export class AgentIssueStore {
       .sort((left, right) => triggerSortTime(left) - triggerSortTime(right) || left.createdAt - right.createdAt);
   }
 
-  async markInterruptedSessionsStale(actor: ActorRef = DEFAULT_ACTOR, now = Date.now()): Promise<AgentSession[]> {
+  async markInterruptedSessionsStale(
+    actor: ActorRef = DEFAULT_ACTOR,
+    now = Date.now(),
+    sessionIds?: ReadonlySet<string>,
+  ): Promise<AgentSession[]> {
     const staleSessions: AgentSession[] = [];
     await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
-      state.sessionStopIntents = {};
-      for (const session of Object.values(state.sessions)) {
+      const candidateIds = sessionIds ? [...sessionIds] : Object.keys(state.sessions);
+      for (const sessionId of candidateIds) {
+        delete state.sessionStopIntents[sessionId];
+        const session = state.sessions[sessionId];
+        if (!session) continue;
         if (!isRecoverableLiveSession(session.state)) continue;
         session.state = 'stale';
         session.errorMessage = 'Agent Session was interrupted before runtime restore.';
@@ -1751,6 +1424,75 @@ function buildSession(
   };
 }
 
+function preflightIssueCreate(
+  state: AgentIssueStoreState,
+  input: IssueCreateInput,
+  options: {
+    origin?: AgentIssueOrigin;
+    authorizeChildScope?: ChildIssueScopeAuthorizer;
+  },
+): { validation: ValidationMessage[]; parentSession?: AgentSession } {
+  if (input.issueType === 'issue') {
+    const parentSession = options.origin?.type === 'agent-session'
+      ? state.sessions[options.origin.agentSessionId]
+      : undefined;
+    if (options.origin?.type === 'agent-session' && (
+      !parentSession
+      || !state.issues[parentSession.issueId]
+      || parentSession.state !== 'active'
+      || !state.sessionExecutions[parentSession.id]
+      || state.sessionStopIntents[parentSession.id] !== undefined
+    )) {
+      return {
+        validation: [{
+          path: 'origin',
+          code: 'invalid_origin',
+          message: 'An Agent Session origin must resolve to an active, execution-bound parent Session and Issue.',
+        }],
+      };
+    }
+    if (parentSession) {
+      const scopeValidation = validateChildIssueScope(
+        parentSession,
+        {
+          input: input.fields.input,
+          output: input.fields.output,
+          noteNodeIds: input.fields.noteNodeIds,
+        },
+        options.authorizeChildScope,
+      );
+      if (scopeValidation.length > 0) return { validation: scopeValidation };
+    }
+    return {
+      validation: validateStoredRelations(
+        state,
+        input.fields.relations ?? [],
+        undefined,
+        'fields.relations',
+      ),
+      ...(parentSession ? { parentSession } : {}),
+    };
+  }
+
+  if (options.origin && options.origin.type !== 'conversation') {
+    return {
+      validation: [{
+        path: 'origin',
+        code: 'invalid_origin',
+        message: 'Recurring Issues can be created only from a visible conversation, not from an Agent Session.',
+      }],
+    };
+  }
+  return {
+    validation: validateStoredRelations(
+      state,
+      input.fields.issueTemplate.relations ?? [],
+      undefined,
+      'fields.issueTemplate.relations',
+    ),
+  };
+}
+
 function validateChildSessionScope(
   state: AgentIssueStoreState,
   issue: AgentIssue,
@@ -1841,6 +1583,221 @@ function inputScopeAnchorNodeIds(input: IssueInputScope | undefined): string[] {
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function applyIssueUpdateToState(
+  state: AgentIssueStoreState,
+  input: IssueUpdateInput,
+  actor: ActorRef,
+  now: number,
+  options: {
+    authorizeChildScope?: ChildIssueScopeAuthorizer;
+    allowHumanReviewTransition?: boolean;
+  },
+): TenonAgentToolResult {
+  const target = targetFromUpdateInput(input);
+  const currentRevision = revisionForTarget(state, target);
+  if (!currentRevision) {
+    return {
+      status: 'blocked',
+      targets: [target],
+      validation: [{ code: 'not_found', message: 'Target object was not found.' }],
+    };
+  }
+  if (input.target.expectedRevision && input.target.expectedRevision !== currentRevision) {
+    return {
+      status: 'conflict',
+      targets: [target],
+      validation: [{ code: 'revision_mismatch', message: 'Target object changed since it was read.' }],
+      revisions: [{ target, revision: currentRevision }],
+    };
+  }
+
+  if (input.target.type === 'issue') {
+    const issue = state.issues[input.target.id]!;
+    const issueChange = input.change as IssueUpdateChange;
+    if (
+      issueChange.type === 'patch'
+      && issueChange.patch.verificationPolicy !== undefined
+      && reviewPolicyWasWeakened(issue.verificationPolicy, issueChange.patch.verificationPolicy)
+      && actor.type !== 'user'
+    ) {
+      return {
+        status: 'blocked',
+        targets: [target],
+        validation: [{
+          path: 'change.patch.verificationPolicy',
+          code: 'review_policy_downgrade_requires_user',
+          message: 'Only a trusted user action can weaken an Issue review policy.',
+        }],
+        revisions: [{ target, revision: issue.revision }],
+      };
+    }
+    if (
+      issueChange.type === 'patch'
+      && issueChange.patch.completionCriteria !== undefined
+      && completionCriteriaWereWeakened(issue.completionCriteria, issueChange.patch.completionCriteria)
+      && actor.type !== 'user'
+    ) {
+      return {
+        status: 'blocked',
+        targets: [target],
+        validation: [{
+          path: 'change.patch.completionCriteria',
+          code: 'completion_criteria_downgrade_requires_user',
+          message: 'Only a trusted user action can remove or waive an existing Issue completion criterion.',
+        }],
+        revisions: [{ target, revision: issue.revision }],
+      };
+    }
+    if (issueChange.type === 'patch' && issueChange.patch.relations !== undefined) {
+      const relationValidation = validateStoredRelations(
+        state,
+        issueChange.patch.relations,
+        issue.id,
+        'change.patch.relations',
+      );
+      if (relationValidation.length > 0) {
+        return {
+          status: 'blocked',
+          targets: [target],
+          validation: relationValidation,
+          revisions: [{ target, revision: issue.revision }],
+        };
+      }
+    }
+    if (
+      issueChange.type === 'patch'
+      && issue.origin?.type === 'agent-session'
+      && (
+        issueChange.patch.input !== undefined
+        || issueChange.patch.output !== undefined
+        || issueChange.patch.noteNodeIds !== undefined
+      )
+    ) {
+      const parentSession = state.sessions[issue.origin.agentSessionId];
+      const parentAvailable = parentSession
+        && parentSessionCanRouteChild(parentSession)
+        && state.sessionExecutions[parentSession.id]
+        && state.sessionStopIntents[parentSession.id] === undefined;
+      const scopeValidation = parentAvailable
+        ? validateChildIssueScope(parentSession, {
+            input: issueChange.patch.input ?? issue.input,
+            output: issueChange.patch.output ?? issue.output,
+            noteNodeIds: issueChange.patch.noteNodeIds ?? issue.noteNodeIds,
+          }, options.authorizeChildScope)
+        : [{
+            path: 'origin',
+            code: 'invalid_origin',
+            message: 'Child Issue scope cannot change after its parent Agent Session is unavailable.',
+          }];
+      if (scopeValidation.length > 0) {
+        return {
+          status: 'blocked',
+          targets: [target],
+          validation: scopeValidation,
+          revisions: [{ target, revision: issue.revision }],
+        };
+      }
+    }
+    const validation = applyIssueChange(
+      state,
+      issue,
+      issueChange,
+      actor,
+      now,
+      options.allowHumanReviewTransition === true,
+    );
+    return validation.length > 0
+      ? {
+          status: 'blocked',
+          targets: [target],
+          validation,
+          revisions: [{ target, revision: issue.revision }],
+        }
+      : state.issues[input.target.id]?.revision
+        ? { status: 'applied', targets: [target], revisions: [{ target, revision: state.issues[input.target.id]!.revision }] }
+        : { status: 'applied', targets: [target] };
+  }
+
+  const recurringIssue = state.recurringIssues[input.target.id]!;
+  const recurringChange = input.change as RecurringIssueUpdateChange;
+  if (
+    recurringChange.type === 'patch'
+    && recurringChange.patch.issueTemplate !== undefined
+    && reviewPolicyWasWeakened(
+      recurringIssue.issueTemplate.verificationPolicy,
+      recurringChange.patch.issueTemplate.verificationPolicy,
+    )
+    && actor.type !== 'user'
+  ) {
+    return {
+      status: 'blocked',
+      targets: [target],
+      validation: [{
+        path: 'change.patch.issueTemplate.verificationPolicy',
+        code: 'review_policy_downgrade_requires_user',
+        message: 'Only a trusted user action can weaken a Recurring Issue review policy.',
+      }],
+      revisions: [{ target, revision: recurringIssue.revision }],
+    };
+  }
+  if (
+    recurringChange.type === 'patch'
+    && recurringChange.patch.issueTemplate !== undefined
+    && completionCriteriaWereWeakened(
+      recurringIssue.issueTemplate.completionCriteria,
+      recurringChange.patch.issueTemplate.completionCriteria,
+    )
+    && actor.type !== 'user'
+  ) {
+    return {
+      status: 'blocked',
+      targets: [target],
+      validation: [{
+        path: 'change.patch.issueTemplate.completionCriteria',
+        code: 'completion_criteria_downgrade_requires_user',
+        message: 'Only a trusted user action can remove or waive an existing recurring Issue completion criterion.',
+      }],
+      revisions: [{ target, revision: recurringIssue.revision }],
+    };
+  }
+  if (
+    recurringChange.type === 'patch'
+    && recurringChange.patch.issueTemplate?.relations !== undefined
+  ) {
+    const relationValidation = validateStoredRelations(
+      state,
+      recurringChange.patch.issueTemplate.relations,
+      undefined,
+      'change.patch.issueTemplate.relations',
+    );
+    if (relationValidation.length > 0) {
+      return {
+        status: 'blocked',
+        targets: [target],
+        validation: relationValidation,
+        revisions: [{ target, revision: recurringIssue.revision }],
+      };
+    }
+  }
+  const validation = applyRecurringIssueChange(
+    state,
+    recurringIssue,
+    recurringChange,
+    actor,
+    now,
+  );
+  return validation.length > 0
+    ? {
+        status: 'blocked',
+        targets: [target],
+        validation,
+        revisions: [{ target, revision: recurringIssue.revision }],
+      }
+    : state.recurringIssues[input.target.id]?.revision
+      ? { status: 'applied', targets: [target], revisions: [{ target, revision: state.recurringIssues[input.target.id]!.revision }] }
+      : { status: 'applied', targets: [target] };
 }
 
 function applyIssueChange(
@@ -2295,6 +2252,21 @@ function validateSessionStart(
   messages.push(...issueOutstandingChildValidation(issue, state));
   const continuation = input.continuation;
   if (continuation) {
+    if (typeof continuation.previousAgentSessionId !== 'string' || !continuation.previousAgentSessionId.trim()) {
+      messages.push({
+        path: 'continuation.previousAgentSessionId',
+        code: 'required_field',
+        message: 'Continuation previousAgentSessionId is required.',
+      });
+    }
+    if (!['continue', 'retry', 'revise'].includes(continuation.intent)) {
+      messages.push({
+        path: 'continuation.intent',
+        code: 'required_field',
+        message: 'Continuation intent must be continue, retry, or revise.',
+      });
+    }
+    if (messages.some((entry) => entry.path?.startsWith('continuation.'))) return messages;
     const previous = state.sessions[continuation.previousAgentSessionId];
     if (!previous) {
       messages.push({ code: 'previous_session_not_found', message: 'Previous Agent Session was not found for continuation.' });
@@ -3136,8 +3108,68 @@ function canMessageSession(state: AgentSession['state']): boolean {
   return isActiveAgentSessionState(state);
 }
 
+function preflightSessionMessageFromState(
+  state: AgentIssueStoreState,
+  input: AgentSessionSendMessageInput,
+): TenonAgentToolResult {
+  const target: RelatedTargetRef = { type: 'agent-session', id: input.agentSessionId };
+  const session = state.sessions[input.agentSessionId];
+  if (!session) {
+    return { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
+  }
+  if (!canMessageSession(session.state)) {
+    return {
+      status: 'blocked',
+      targets: [target],
+      validation: [{ code: 'invalid_state', message: 'Agent Session cannot receive messages in its current state.' }],
+      revisions: [{ target, revision: session.revision }],
+    };
+  }
+  if (state.sessionStopIntents[session.id]) {
+    return {
+      status: 'blocked',
+      targets: [target],
+      validation: [{ code: 'stop_in_progress', message: 'Agent Session cannot receive messages while stop is in progress.' }],
+      revisions: [{ target, revision: session.revision }],
+    };
+  }
+  return { status: 'applied', targets: [target], revisions: [{ target, revision: session.revision }] };
+}
+
 function canStopSession(state: AgentSession['state']): boolean {
   return isActiveAgentSessionState(state);
+}
+
+function preflightSessionStopFromState(
+  state: AgentIssueStoreState,
+  input: AgentSessionStopInput,
+): TenonAgentToolResult {
+  const target: RelatedTargetRef = { type: 'agent-session', id: input.agentSessionId };
+  const session = state.sessions[input.agentSessionId];
+  if (!session) {
+    return { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
+  }
+  if (session.state === 'canceled') {
+    return { status: 'applied', targets: [target], revisions: [{ target, revision: session.revision }] };
+  }
+  if (state.sessionStopIntents[session.id]) {
+    return {
+      status: 'blocked',
+      targets: [target],
+      validation: [{ code: 'stop_in_progress', message: 'Agent Session stop is already in progress.' }],
+      revisions: [{ target, revision: session.revision }],
+    };
+  }
+  const validation = sessionStopValidation(state, session);
+  if (validation.length > 0) {
+    return {
+      status: 'blocked',
+      targets: [target],
+      validation,
+      revisions: [{ target, revision: session.revision }],
+    };
+  }
+  return { status: 'applied', targets: [target], revisions: [{ target, revision: session.revision }] };
 }
 
 function cancelSession(

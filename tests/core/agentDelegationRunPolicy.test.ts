@@ -15,6 +15,7 @@ import {
   retryBudgetSlice,
   scopedAllowedToolNames,
   settleRunBudget,
+  verifierAllowedToolNames,
   verifierBudgetForRun,
   verifierRunScope,
 } from '../../src/main/agentDelegationRunPolicy';
@@ -200,9 +201,30 @@ describe('agent delegation run policy', () => {
 
     expect(verifierRunScope({
       capabilities: ['file.read.allowed_file_area', 'outline.edit', 'web.search'],
+      resources: {
+        docs: ['spec'],
+        paths: ['src'],
+        nodes: ['node:a'],
+        writableNodes: ['node:a'],
+      },
     })).toEqual({
       capabilities: ['file.read.allowed_file_area', 'web.search'],
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
     });
+    expect(verifierRunScope({ resources: { writableNodes: ['node:writable'] } })).toMatchObject({
+      resources: { nodes: ['node:writable'] },
+    });
+    expect(verifierAllowedToolNames({ capabilities: ['outline.edit'] })).toEqual([]);
+    expect(verifierAllowedToolNames({ capabilities: ['outline.read', 'web.search'] })).toEqual([
+      'web_search',
+      'node_search',
+      'node_read',
+    ]);
+    expect(verifierAllowedToolNames(undefined, ['node_read', 'node_edit'])).toEqual(['node_read']);
+    expect(verifierAllowedToolNames(
+      { capabilities: ['outline.read', 'web.search'] },
+      ['node_read'],
+    )).toEqual(['node_read']);
   });
 
   test('formats and slices budgets for prompts, retries, and timers', () => {

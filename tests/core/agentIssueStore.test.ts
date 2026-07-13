@@ -939,6 +939,101 @@ describe('agent issue store', () => {
     });
   });
 
+  test('previews run the same stateful validation as requests without mutating', async () => {
+    await withStore(async (store) => {
+      const created = await store.create({
+        issueType: 'issue',
+        fields: { title: 'Preview validation target' },
+        request: { mode: 'request' },
+        reason: 'Create a concrete validation target.',
+      }, actor, 10);
+      const issueTarget = created.targets.find((target) => target.type === 'issue')!;
+      const issue = (await store.read({ target: issueTarget })).issue!;
+
+      const invalidCreateRelation = await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Invalid related preview',
+          relations: [{ type: 'related', issueId: 'issue:missing' }],
+        },
+        request: { mode: 'preview' },
+        reason: 'Validate a relation before creation.',
+      }, actor, 20);
+      expect(invalidCreateRelation.status).toBe('blocked');
+      expect(invalidCreateRelation.validation?.map((entry) => entry.code)).toContain('relation_target_not_found');
+
+      const missingUpdate = await store.update({
+        target: { type: 'issue', id: 'issue:missing' },
+        change: { type: 'patch', patch: { title: 'Still missing' } },
+        request: { mode: 'preview' },
+        reason: 'Validate a missing target.',
+      }, actor, 30);
+      expect(missingUpdate.status).toBe('blocked');
+      expect(missingUpdate.validation?.map((entry) => entry.code)).toContain('not_found');
+
+      const staleUpdate = await store.update({
+        target: { type: 'issue', id: issue.id, expectedRevision: 'rev:stale' },
+        change: { type: 'patch', patch: { title: 'Stale preview' } },
+        request: { mode: 'preview' },
+        reason: 'Validate optimistic concurrency.',
+      }, actor, 40);
+      expect(staleUpdate.status).toBe('conflict');
+      expect(staleUpdate.validation?.map((entry) => entry.code)).toContain('revision_mismatch');
+
+      const invalidUpdateRelation = await store.update({
+        target: { type: 'issue', id: issue.id, expectedRevision: issue.revision },
+        change: { type: 'patch', patch: { relations: [{ type: 'blocks', issueId: 'issue:missing' }] } },
+        request: { mode: 'preview' },
+        reason: 'Validate a relation update.',
+      }, actor, 50);
+      expect(invalidUpdateRelation.status).toBe('blocked');
+      expect(invalidUpdateRelation.validation?.map((entry) => entry.code)).toContain('relation_target_not_found');
+
+      const source: AgentSessionSource = { type: 'runtime-action', actor };
+      const started = await store.startSession({
+        issueId: issue.id,
+        expectedIssueRevision: issue.revision,
+        request: { mode: 'request' },
+        reason: 'Start a Session for lifecycle preview validation.',
+      }, source, actor, 60);
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+
+      const invalidCompletion = await store.update({
+        target: { type: 'issue', id: issue.id },
+        change: { type: 'transition', status: { name: 'Completed', category: 'completed' } },
+        request: { mode: 'preview' },
+        reason: 'Validate completion while work remains active.',
+      }, actor, 70);
+      expect(invalidCompletion.status).toBe('blocked');
+      expect(invalidCompletion.validation?.map((entry) => entry.code)).toContain('active_session_exists');
+
+      const missingMessage = await store.sendSessionMessage({
+        agentSessionId: 'agent-session:missing',
+        message: 'No recipient.',
+        request: { mode: 'preview' },
+        reason: 'Validate a missing Session.',
+      }, actor, 80);
+      expect(missingMessage.status).toBe('blocked');
+      expect(missingMessage.validation?.map((entry) => entry.code)).toContain('not_found');
+
+      await store.stopSession({
+        agentSessionId: sessionId,
+        request: { mode: 'request' },
+        reason: 'Cancel the Session.',
+      }, actor, 90);
+      const terminalMessage = await store.sendSessionMessage({
+        agentSessionId: sessionId,
+        message: 'Too late.',
+        request: { mode: 'preview' },
+        reason: 'Validate terminal Session messaging.',
+      }, actor, 100);
+      expect(terminalMessage.status).toBe('blocked');
+      expect(terminalMessage.validation?.map((entry) => entry.code)).toContain('invalid_state');
+      expect((await store.read({ target: issueTarget })).issue?.title).toBe('Preview validation target');
+      expect((await store.search({ targets: ['issue'] })).rows).toHaveLength(1);
+    });
+  });
+
   test('defaults new Issues to when-ready unattended execution', async () => {
     await withStore(async (store) => {
       await store.create({
@@ -1268,6 +1363,19 @@ describe('agent issue store', () => {
       const nextSessionId = continuation.targets.find((entry) => entry.type === 'agent-session')!.id;
       const read = await store.readSession({ agentSessionId: nextSessionId });
       expect(read?.agentSession.continuationOfAgentSessionId).toBe(previousSessionId);
+
+      const missingIntent = await store.startSession({
+        issueId: target.target.id,
+        expectedIssueRevision: target.revision,
+        continuation: { previousAgentSessionId: previousSessionId },
+        request: { mode: 'preview' },
+        reason: 'Reject an incomplete continuation.',
+      } as never, source, actor, 65);
+      expect(missingIntent.status).toBe('blocked');
+      expect(missingIntent.validation).toContainEqual(expect.objectContaining({
+        path: 'continuation.intent',
+        code: 'required_field',
+      }));
 
       const activeContinuation = await store.startSession({
         issueId: target.target.id,
@@ -2683,6 +2791,14 @@ describe('agent issue store', () => {
         reason: 'Create scoped child work.',
       }, actor, now, { origin: { type: 'agent-session', agentSessionId: parentSessionId } });
 
+      const outsidePreview = await store.create({
+        issueType: 'issue',
+        fields: { title: 'Outside preview child', noteNodeIds: ['node:outside'] },
+        request: { mode: 'preview' },
+        reason: 'Preview scoped child work.',
+      }, actor, 39, { origin: { type: 'agent-session', agentSessionId: parentSessionId } });
+      expect(outsidePreview.validation).toContainEqual(expect.objectContaining({ code: 'child_scope_broadened' }));
+
       expect((await createChild('Outside note child', { noteNodeIds: ['node:outside'] }, 40)).validation)
         .toContainEqual(expect.objectContaining({ code: 'child_scope_broadened' }));
       expect((await createChild('Read escalation child', {
@@ -2695,6 +2811,13 @@ describe('agent issue store', () => {
       expect(allowed.status).toBe('applied');
       const childId = allowed.targets.find((target) => target.type === 'issue')!.id;
       const child = (await store.read({ target: { type: 'issue', id: childId } })).issue!;
+      const widenedPreview = await store.update({
+        target: { type: 'issue', id: childId, expectedRevision: child.revision },
+        change: { type: 'patch', patch: { noteNodeIds: ['node:outside'] } },
+        request: { mode: 'preview' },
+        reason: 'Preview widening the persisted child.',
+      }, actor, 49);
+      expect(widenedPreview.validation).toContainEqual(expect.objectContaining({ code: 'child_scope_broadened' }));
       const widenedPatch = await store.update({
         target: { type: 'issue', id: childId, expectedRevision: child.revision },
         change: { type: 'patch', patch: { noteNodeIds: ['node:outside'] } },

@@ -208,6 +208,53 @@ describe('agent runtime conversations', () => {
     expect(recoveryCount).toBe(1);
   });
 
+  test('startup recovery only stales Sessions from the constructor snapshot', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-recovery-snapshot-'));
+    roots.push(dataRoot);
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const createPendingSession = async (title: string, now: number) => {
+      const created = await store.create({
+        issueType: 'issue',
+        fields: { title },
+        request: { mode: 'request' },
+        reason: `Create ${title}.`,
+      }, ISSUE_ACTOR, now);
+      const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+      const issue = (await store.read({ target: { type: 'issue', id: issueId } })).issue!;
+      const started = await store.startSession({
+        issueId,
+        expectedIssueRevision: issue.revision,
+        request: { mode: 'request' },
+        reason: `Start ${title}.`,
+      }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, now + 1);
+      return started.targets.find((target) => target.type === 'agent-session')!.id;
+    };
+
+    const interruptedSessionId = await createPendingSession('Interrupted before startup', 10);
+    const { runtime } = await createRuntime(dataRoot);
+    const internals = runtime as unknown as {
+      issueStartupSessionIds: Promise<ReadonlySet<string>>;
+      issueSweepTail: Promise<void>;
+    };
+    await internals.issueStartupSessionIds;
+
+    const newSessionId = await createPendingSession('Created after startup snapshot', 30);
+    const stopReservation = await store.reserveSessionStop({
+      agentSessionId: newSessionId,
+      request: { mode: 'request' },
+      reason: 'Keep a new Session stop reservation intact.',
+    }, 40);
+    expect(stopReservation.token).toBeDefined();
+
+    runtime.ready();
+    await internals.issueSweepTail;
+
+    const state = await store.state();
+    expect(state.sessions[interruptedSessionId]?.state).toBe('stale');
+    expect(state.sessions[newSessionId]?.state).toBe('pending');
+    expect(state.sessionStopIntents[newSessionId]?.token).toBe(stopReservation.token);
+  });
+
   test('reconciles a terminal Run ledger before startup marks active Sessions stale', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-terminal-ledger-recovery-'));
     roots.push(dataRoot);
@@ -1124,7 +1171,7 @@ describe('agent runtime conversations', () => {
 
     const { runtime } = await createRuntime(dataRoot);
     const internals = runtime as unknown as IssueDeliveryRuntimeInternals;
-    internals.scheduleIssueDeliveryRetryDrain();
+    runtime.ready();
     await waitFor(() => internals.issueDeliveryRetryTimerAt !== null);
     expect(internals.issueDeliveryRetryTimerAt).toBe(claimNow + TERMINAL_DELIVERY_CLAIM_LEASE_MS);
     await runtime.drainPendingWrites();

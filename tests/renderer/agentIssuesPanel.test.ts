@@ -8,14 +8,18 @@ import { AgentIssuesPanel } from '../../src/renderer/ui/agent/AgentIssuesPanel';
 import {
   activityEntriesForDisplay,
   activityText,
+  dateSectionLabel,
+  dateTimeRelativeLabel,
   ISSUE_DETAIL_INCLUDE,
   issueActivityTimelineItems,
   issueDisplayTitleForRow,
+  loadAllIssueSearchRows,
   issueRowMatchesWorkPreset,
   issueRowSummaryForRow,
   issueSearchInputForWorkPreset,
   issueSearchInputsForWorkPreset,
   sessionProcessActivityEntriesForDisplay,
+  shouldRefreshIssueWorkForAgentEvent,
 } from '../../src/renderer/ui/agent/agentIssueViewModel';
 import type { Activity, AgentSession } from '../../src/core/agentIssue';
 
@@ -23,6 +27,7 @@ const TODAY = new Date(2026, 6, 8, 12, 0).getTime();
 const TODAY_18 = new Date(2026, 6, 8, 18, 0).getTime();
 const TOMORROW_09 = new Date(2026, 6, 9, 9, 0).getTime();
 const agentIssuesPanelSource = await Bun.file('src/renderer/ui/agent/AgentIssuesPanel.tsx').text();
+const agentChatPanelSource = await Bun.file('src/renderer/ui/agent/AgentChatPanel.tsx').text();
 const runDetailCss = await Bun.file('src/renderer/styles/agent-run-detail.css').text();
 
 function row(patch: Partial<IssueSearchRow>): IssueSearchRow {
@@ -58,6 +63,55 @@ describe('AgentIssuesPanel smart views', () => {
       targets: ['issue'],
       filter: { statusCategories: ['completed', 'canceled', 'archived'], hasParentIssue: false },
     });
+  });
+
+  test('loads every search page instead of truncating Work at 100 rows', async () => {
+    const calls: Array<string | undefined> = [];
+    const rows = await loadAllIssueSearchRows({ targets: ['issue'] }, async (input) => {
+      calls.push(input.cursor);
+      expect(input.limit).toBe(100);
+      const offset = input.cursor ? Number(input.cursor) : 0;
+      const count = offset < 200 ? 100 : 5;
+      return {
+        rows: Array.from({ length: count }, (_, index) => row({
+          target: { type: 'issue', id: `issue-${offset + index}` },
+        })),
+        ...(offset + count < 205 ? { nextCursor: String(offset + count) } : {}),
+      };
+    });
+
+    expect(rows).toHaveLength(205);
+    expect(calls).toEqual([undefined, '100', '200']);
+  });
+
+  test('does not reload Issue data for pure streaming text patches', () => {
+    expect(shouldRefreshIssueWorkForAgentEvent({
+      type: 'projection_patch',
+      conversationId: 'conversation:streaming',
+      lastEventType: 'message_update',
+      revision: 1,
+      patch: {},
+      timestamp: TODAY,
+    })).toBe(false);
+    expect(shouldRefreshIssueWorkForAgentEvent({
+      type: 'tool_result',
+      conversationId: 'conversation:streaming',
+      toolCallId: 'tool:issue-update',
+      timestamp: TODAY,
+    })).toBe(true);
+  });
+
+  test('formats Work calendar labels with the application locale', () => {
+    const timestamp = new Date(2026, 9, 12, 9, 30).getTime();
+    const zhHans = getMessages('zh-Hans');
+    expect(dateSectionLabel(timestamp, TODAY, zhHans.agent.issue, 'zh-Hans')).toBe(
+      new Intl.DateTimeFormat('zh-Hans', { month: 'short', day: 'numeric', weekday: 'long' })
+        .format(new Date(timestamp)),
+    );
+    expect(dateTimeRelativeLabel(timestamp, TODAY, zhHans.agent.issue, 'zh-Hans')).toBe(
+      new Intl.DateTimeFormat('zh-Hans', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        .format(new Date(timestamp)),
+    );
   });
 
   test('queries and projects only root Issues in first-level Work views', () => {
@@ -125,15 +179,32 @@ describe('AgentIssuesPanel smart views', () => {
   });
 
   test('keeps an open Issue detail subscribed after its Session becomes temporarily terminal', () => {
-    expect(agentIssuesPanelSource).toContain("window.lin?.onAgentEvent(() => {");
+    expect(agentIssuesPanelSource).toContain('window.lin?.onAgentEvent((event) => {');
+    expect(agentIssuesPanelSource).toContain('shouldRefreshIssueWorkForAgentEvent(event)');
     expect(agentIssuesPanelSource).toContain('scheduleLoad();');
   });
 
   test('offers an explicit trusted-user completion action only for review-ready human-review Issues', () => {
     expect(agentIssuesPanelSource).toContain("issue.verificationPolicy?.mode === 'human-review'");
+    expect(agentIssuesPanelSource).toContain('&& !hasActiveSessions');
     expect(agentIssuesPanelSource).toContain("session.purpose !== 'verify' && session.state === 'complete'");
     expect(agentIssuesPanelSource).toContain('api.agentIssueCompleteHumanReview(issue.id, issue.revision)');
     expect(agentIssuesPanelSource).toContain('t.agent.issueDetail.acceptReview');
+  });
+
+  test('maintains the active Session badge outside the Work page lifecycle', () => {
+    expect(agentChatPanelSource).toContain('void loadActiveIssueSessionCount();');
+    expect(agentChatPanelSource).toContain('return window.lin?.onAgentEvent((event) => {');
+    expect(agentChatPanelSource).toContain('shouldRefreshIssueWorkForAgentEvent(event)');
+    expect(agentChatPanelSource).toContain('if (workPanelOpenRef.current) void loadIssueIndex(issueIndexPresetRef.current);');
+    expect(agentChatPanelSource).not.toContain('if (!workPanelOpen) return undefined;');
+  });
+
+  test('invalidates delayed Work refreshes when the preset changes', () => {
+    expect(agentChatPanelSource).toContain('window.clearTimeout(issueIndexRefreshTimerRef.current);');
+    expect(agentChatPanelSource).toContain('if (issueIndexPresetRef.current === preset)');
+    expect(agentChatPanelSource).toContain('issueIndexPresetRef.current = preset;');
+    expect(agentChatPanelSource).toContain('issueIndexRequestRef.current += 1;');
   });
 
   test('uses calendar-day boundaries across daylight-saving transitions', () => {
@@ -188,10 +259,10 @@ describe('AgentIssuesPanel smart views', () => {
             midnightIsUpcoming: issueRowMatchesWorkPreset(row({
               trigger: { type: 'scheduled', startAt: next, timeZone: 'America/Los_Angeles' },
             }), 'upcoming', now),
-            todayLabel: dateSectionLabel(beforeMidnight, now, labels),
-            tomorrowLabel: dateSectionLabel(next, now, labels),
-            todayRelative: dateTimeRelativeLabel(beforeMidnight, now, labels),
-            tomorrowRelative: dateTimeRelativeLabel(next, now, labels),
+            todayLabel: dateSectionLabel(beforeMidnight, now, labels, 'en'),
+            tomorrowLabel: dateSectionLabel(next, now, labels, 'en'),
+            todayRelative: dateTimeRelativeLabel(beforeMidnight, now, labels, 'en'),
+            tomorrowRelative: dateTimeRelativeLabel(next, now, labels, 'en'),
             todayDueTo: todayQueries.find((query) => query.filter?.dueDate)?.filter?.dueDate?.to,
             upcomingDueFrom: upcomingQueries.find((query) => query.filter?.dueDate)?.filter?.dueDate?.from,
           };
@@ -360,7 +431,7 @@ describe('AgentIssuesPanel smart views', () => {
       cadence: { type: 'daily', timeOfDay: '09:00', timeZone: 'UTC' },
       nextMaterializationAt: TOMORROW_09,
     });
-    const recurringSummary = issueRowSummaryForRow(recurringTomorrow, 'upcoming', en, TODAY);
+    const recurringSummary = issueRowSummaryForRow(recurringTomorrow, 'upcoming', en, 'en', TODAY);
     expect(recurringSummary).toContain(en.agent.issue.cadenceDaily);
     expect(recurringSummary).not.toContain(en.agent.issue.section.tomorrow);
     expect(recurringSummary.startsWith(en.agent.issue.cadenceDaily)).toBe(false);
@@ -368,7 +439,7 @@ describe('AgentIssuesPanel smart views', () => {
     const scheduledToday = row({
       trigger: { type: 'scheduled', startAt: TODAY_18, timeZone: 'UTC' },
     });
-    const scheduledSummary = issueRowSummaryForRow(scheduledToday, 'today', en, TODAY);
+    const scheduledSummary = issueRowSummaryForRow(scheduledToday, 'today', en, 'en', TODAY);
     expect(scheduledSummary).toContain(en.agent.issue.summary.scheduled);
     expect(scheduledSummary).not.toContain(en.agent.issue.summary.today);
     expect(scheduledSummary.startsWith(en.agent.issue.summary.scheduled)).toBe(false);
@@ -379,7 +450,7 @@ describe('AgentIssuesPanel smart views', () => {
       terminalAt: TODAY - 3 * 60 * 60 * 1000,
       updatedAt: TODAY,
     });
-    expect(issueRowSummaryForRow(completedToday, 'today', en, TODAY)).not.toContain(en.agent.issue.summary.done);
+    expect(issueRowSummaryForRow(completedToday, 'today', en, 'en', TODAY)).not.toContain(en.agent.issue.summary.done);
   });
 
   test('derives Logbook from durable terminal fields', () => {

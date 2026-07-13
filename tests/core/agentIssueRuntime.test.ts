@@ -19,17 +19,19 @@ async function withStore<T>(fn: (store: AgentIssueStore) => Promise<T>): Promise
 }
 
 describe('agent issue tool runtime execution', () => {
-  test('blocks request-mode creation when runtime cannot resolve a routing origin', async () => {
+  test('blocks creation previews and requests when runtime cannot resolve a routing origin', async () => {
     await withStore(async (store) => {
       const runtime = createAgentIssueToolRuntime({ store, actor, now: () => 100 });
-      const result = await runtime.create({
-        issueType: 'issue',
-        fields: { title: 'Originless runtime Issue' },
-        request: { mode: 'request' },
-        reason: 'Reject originless work.',
-      });
-      expect(result.status).toBe('blocked');
-      expect(result.validation?.map((entry) => entry.code)).toContain('invalid_origin');
+      for (const mode of ['preview', 'request'] as const) {
+        const result = await runtime.create({
+          issueType: 'issue',
+          fields: { title: 'Originless runtime Issue' },
+          request: { mode },
+          reason: 'Reject originless work.',
+        });
+        expect(result.status).toBe('blocked');
+        expect(result.validation?.map((entry) => entry.code)).toContain('invalid_origin');
+      }
       expect((await store.search({})).rows).toEqual([]);
     });
   });
@@ -689,6 +691,19 @@ describe('agent issue tool runtime execution', () => {
       });
       const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
 
+      expect((await runtime.sendSessionMessage({
+        agentSessionId: sessionId,
+        message: 'Preview guidance only.',
+        request: { mode: 'preview' },
+        reason: 'Preview guidance without delivery.',
+      })).status).toBe('preview');
+      expect((await runtime.stopSession({
+        agentSessionId: sessionId,
+        request: { mode: 'preview' },
+        reason: 'Preview stopping without executor mutation.',
+      })).status).toBe('preview');
+      expect(stopAttempted).toBe(false);
+
       const sent = await runtime.sendSessionMessage({
         agentSessionId: sessionId,
         message: 'Must not be audited as delivered.',
@@ -1221,7 +1236,8 @@ describe('agent issue tool runtime execution', () => {
         request: { mode: 'preview' },
         reason: 'Preview a stop.',
       });
-      expect(preview.status).toBe('preview');
+      expect(preview.status).toBe('blocked');
+      expect(preview.validation?.map((entry) => entry.code)).toContain('incomplete_child_issues');
       expect(stopCalls).toBe(0);
 
       const blocked = await runtime.stopSession({

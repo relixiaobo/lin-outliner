@@ -23,9 +23,12 @@ export interface AgentComposerNodeReferenceRequest {
   title: string;
 }
 type ComposerNodeReferenceListener = (request: AgentComposerNodeReferenceRequest) => void;
+type ComposerRevealListener = () => void;
 
 const listeners = new Set<RevealListener>();
 const composerNodeReferenceListeners = new Set<ComposerNodeReferenceListener>();
+const composerRevealListeners = new Set<ComposerRevealListener>();
+const pendingComposerNodeReferenceRequests: AgentComposerNodeReferenceRequest[] = [];
 
 /** Select `conversationId` in the agent runtime and ask any listener (App opens
  *  the rail; the chat panel may open Work) to surface it. Returns the
@@ -64,11 +67,27 @@ export function onAgentRevealRequest(listener: RevealListener): () => void {
 }
 
 export function requestSendNodeReferenceToComposer(request: AgentComposerNodeReferenceRequest): void {
+  pendingComposerNodeReferenceRequests.push(request);
+  for (const listener of composerRevealListeners) listener();
   for (const listener of composerNodeReferenceListeners) listener(request);
+}
+
+export function acknowledgeAgentComposerNodeReferenceRequest(request: AgentComposerNodeReferenceRequest): void {
+  const index = pendingComposerNodeReferenceRequests.indexOf(request);
+  if (index >= 0) pendingComposerNodeReferenceRequests.splice(index, 1);
+}
+
+export function onAgentComposerRevealRequest(listener: ComposerRevealListener): () => void {
+  composerRevealListeners.add(listener);
+  if (pendingComposerNodeReferenceRequests.length > 0) listener();
+  return () => {
+    composerRevealListeners.delete(listener);
+  };
 }
 
 export function onAgentComposerNodeReferenceRequest(listener: ComposerNodeReferenceListener): () => void {
   composerNodeReferenceListeners.add(listener);
+  for (const request of [...pendingComposerNodeReferenceRequests]) listener(request);
   return () => {
     composerNodeReferenceListeners.delete(listener);
   };

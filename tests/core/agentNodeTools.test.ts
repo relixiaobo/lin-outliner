@@ -217,6 +217,15 @@ function parseVisibleToolResult<TData>(contentText: string): TData {
 }
 
 describe('agent node tools', () => {
+  test('omits the global undo stack from scoped Runs', () => {
+    const scopedTools = createNodeTools(hostFor(Core.new()), {
+      runScope: { resources: { nodes: [] } },
+    });
+
+    expect(scopedTools.some((tool) => tool.name === 'outline_undo_stack')).toBe(false);
+    expect(createNodeTools(hostFor(Core.new())).some((tool) => tool.name === 'outline_undo_stack')).toBe(true);
+  });
+
   test('node tool schemas use operational descriptions for agent guidance', () => {
     const tools = createNodeTools(hostFor(Core.new()));
     const nodeRead = tools.find((tool) => tool.name === 'node_read')!;

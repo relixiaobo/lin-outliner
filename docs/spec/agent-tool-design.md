@@ -106,6 +106,14 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   request-mode `agent_session_start` creates the Agent Session first, then
   immediately hands it to the configured executor. If no executor is available,
   the Session is marked `error` instead of remaining indefinitely `pending`;
+- preview and request modes share the same state-level Store apply/preflight
+  functions. Update preview runs mutation semantics against an isolated state
+  clone; creation and Session controls reuse their request preflight. Object
+  existence, revision, relation, lifecycle, child-scope, and Session-state
+  failures therefore match the real request without persisting Activity or state. A
+  continuation is structurally complete only with both
+  `previousAgentSessionId` and `intent`; the Store repeats that validation at its
+  trust boundary before building a Session objective;
 - Local Issue lifecycle and Agent Session control tools do not have a separate
   Issue-specific authorization classifier in V1; the ordinary tool permission
   layer still blocks destructive or platform-risky downstream tools. The
@@ -128,7 +136,9 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   `node_create`/`node_edit`/`node_delete` reject requested targets,
   destinations, references, duplicate sources, or affected subtrees outside the
   scoped node set. This makes unattended Issue Sessions fail closed in code
-  instead of relying on prompt instructions.
+  instead of relying on prompt instructions. `outline_undo_stack` is omitted
+  entirely from every scoped Run because its global journal and undo/redo cursor
+  cannot be narrowed to one node-resource set safely.
 - `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
   Sessions, and Activity in `issue-manager.json`, including request-mode
   creation, origin-derived parent/child Issue relationships, Issue relations,
@@ -243,8 +253,11 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   confirmed cancellation commits; a confirmed live execution or a concurrently
   observed non-canceled terminal state releases the reservation; only an
   unconfirmed state that remains live retains it until recovery. Cold-start
-  recovery runs once per AgentRuntime process instance and first reconciles every
-  active bound Session from ledger-repaired Run metadata. A terminal Run is
+  recovery runs once per AgentRuntime process instance over the Session-id set
+  captured when the runtime is constructed. Sessions created after renderer
+  readiness are outside that startup set, and their stop reservations are never
+  cleared by recovery. Recovery first reconciles each captured active bound
+  Session from ledger-repaired Run metadata. A terminal Run is
   synchronized through the normal execution-state path, using the current span's
   latest submission or final assistant fallback; it is not converted into an
   interrupted-startup error. Only a still-running, missing, or otherwise
@@ -325,6 +338,14 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   Work refreshes time-derived buckets once per minute, and separately re-arms at
   each local midnight for DST-safe day grouping, so a newly expired deadline or
   changed Today boundary does not require another agent event.
+  Each smart-view query follows `nextCursor` until exhaustion, and the active
+  Session badge uses a separate fully paginated query that loads and subscribes
+  even while Work is closed. Preset changes invalidate in-flight and delayed
+  refreshes from the previous preset. Nested Issue navigation stays in the same
+  detail dialog and re-establishes focus inside the dialog after content swaps.
+  Human-review acceptance is offered only when a completed execution exists and
+  no Session is currently pending or active. Work dates use the application
+  locale, not the OS locale.
   Issues are durable work contracts for independently user-visible outcomes:
   each row represents an outcome with its own definition, status, criteria,
   evidence, and Activity. When work needs per-item coverage or internal
@@ -475,9 +496,16 @@ Issue verification uses the same Agent Session mechanism. `agent_session_start`
 accepts `purpose: "verify"` only when the Issue has
 `verificationPolicy.mode === "agent-review"`. The Session uses the configured
 verifier AgentRef, defaulting to Neva's `verifier` run profile. An explicit
-verifier starts with `context: "none"` and the runtime's read-only tool allow-list,
-so it receives the Issue verification directive rather than inherited worker
-conversation context and cannot mutate work while reviewing it. Its response
+verifier starts with `context: "none"` and the runtime's read-only tool allow-list.
+Its scope is derived from the concrete work Run: `docs`, `paths`, and readable
+`nodes` are preserved, while `writableNodes` is removed (or used only as the
+readable node ceiling when no readable-node list exists). It therefore receives
+the Issue verification directive rather than inherited worker conversation
+context. Its concrete tool allow-list is also intersected with the work Run's
+effective tool allow-list and read capabilities; a work Run with no read
+capability gives its verifier no tools.
+The verifier cannot read beyond the work Run or mutate work while reviewing it.
+Its response
 must begin with `Verdict: pass`, `Verdict: partial`, or `Verdict: fail`; runtime
 records the parsed result as `verification-result` Activity and links the
 verifier Agent Session as Issue evidence. `requiredVerdict` defaults to `pass`,

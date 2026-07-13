@@ -19,7 +19,11 @@ import {
 } from '../../../core/agentAttachmentLimits';
 import { sanitizeFileReferenceRef } from '../../../core/referenceMarkup';
 import { agentMentionToken } from '../../../core/agentChannel';
-import { onAgentComposerNodeReferenceRequest } from '../../agent/agentReveal';
+import {
+  acknowledgeAgentComposerNodeReferenceRequest,
+  onAgentComposerNodeReferenceRequest,
+  type AgentComposerNodeReferenceRequest,
+} from '../../agent/agentReveal';
 import type {
   AgentProviderSettingsView,
   AgentSlashCommandView,
@@ -204,6 +208,7 @@ export function AgentComposer({
   const dragDepthRef = useRef(0);
   const handledFocusTokenRef = useRef(0);
   const sendingRef = useRef(false);
+  const [pendingNodeReferenceRequests, setPendingNodeReferenceRequests] = useState<AgentComposerNodeReferenceRequest[]>([]);
   const {
     attachments,
     attachmentsRef,
@@ -235,14 +240,26 @@ export function AgentComposer({
     return () => window.cancelAnimationFrame(frame);
   }, [focusToken, pendingApproval, pendingUserQuestion]);
   useEffect(() => onAgentComposerNodeReferenceRequest((request) => {
-    if (!index.byId.has(request.nodeId)) return;
-    window.requestAnimationFrame(() => {
-      editorRef.current?.insertNodeReference({
-        nodeId: request.nodeId,
-        title: request.title,
-      });
+    setPendingNodeReferenceRequests((current) => (
+      current.includes(request) ? current : [...current, request]
+    ));
+  }), []);
+  useEffect(() => {
+    if (pendingApproval || pendingUserQuestion || pendingNodeReferenceRequests.length === 0) return undefined;
+    const requests = pendingNodeReferenceRequests;
+    const frame = window.requestAnimationFrame(() => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      for (const request of requests) {
+        if (index.byId.has(request.nodeId)) {
+          editor.insertNodeReference({ nodeId: request.nodeId, title: request.title });
+        }
+        acknowledgeAgentComposerNodeReferenceRequest(request);
+      }
+      setPendingNodeReferenceRequests((current) => current.filter((request) => !requests.includes(request)));
     });
-  }), [index.byId]);
+    return () => window.cancelAnimationFrame(frame);
+  }, [index.byId, pendingApproval, pendingNodeReferenceRequests, pendingUserQuestion]);
   const hasAttachments = attachments.length > 0;
   const activeProvider = settings ? resolveUsableActiveProvider(settings) ?? null : null;
   // No usable provider once settings have LOADED → block send and explain why.

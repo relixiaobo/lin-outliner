@@ -795,6 +795,7 @@ export class AgentRuntime {
   private issueStartupRecoveryQueued = false;
   private readonly firingIssueIds = new Set<string>();
   private readonly firingIssueStarts = new Set<Promise<void>>();
+  private readonly issueStartupSessionIds: Promise<ReadonlySet<string>>;
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentConversationState>;
   // Mutable: the primary agent (Neva) is user-customizable, so her display name and
@@ -835,6 +836,18 @@ export class AgentRuntime {
     private readonly options: AgentRuntimeOptions = {},
   ) {
     this.agentIdentity = options.agentIdentity ?? createDefaultAgentIdentity();
+    this.issueStartupSessionIds = this.getIssueStore().state()
+      .then((state) => new Set(Object.keys(state.sessions)))
+      .catch((error) => {
+        this.reportWarn(
+          'agent-runtime',
+          `Issue startup snapshot failed: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          { operation: 'captureIssueStartupSessions' },
+          'issue-startup-snapshot-failed',
+        );
+        return new Set<string>();
+      });
     this.domainEvents = options.domainEvents ?? new AgentDomainEventBus();
     this.domainEvents.subscribeLane('renderer-projection', (event) => {
       this.emit(rendererProjectionEventFromDomain(event));
@@ -4376,7 +4389,8 @@ export class AgentRuntime {
     if (this.shutdownStarted) return;
     this.issueSweepTail = this.issueSweepTail
       .catch(() => undefined)
-      .then(() => this.recoverInterruptedIssueSessions(now));
+      .then(() => this.recoverInterruptedIssueSessions(now))
+      .finally(() => this.scheduleIssueDeliveryRetryDrain());
   }
 
   private queueIssueDeliveryDrain() {
@@ -4391,14 +4405,17 @@ export class AgentRuntime {
     if (this.shutdownStarted) return;
     this.issueSweepTail = this.issueSweepTail
       .catch(() => undefined)
-      .then(() => this.sweepIssueSchedules(now));
+      .then(() => this.sweepIssueSchedules(now))
+      .finally(() => this.scheduleIssueDeliveryRetryDrain());
   }
 
   private async recoverInterruptedIssueSessions(now: Date) {
     try {
       const store = this.getIssueStore();
+      const startupSessionIds = await this.issueStartupSessionIds;
       const state = await store.state();
       for (const [agentSessionId, binding] of Object.entries(state.sessionExecutions)) {
+        if (!startupSessionIds.has(agentSessionId)) continue;
         const session = state.sessions[agentSessionId];
         if (!session || !isActiveAgentSessionState(session.state)) continue;
         const meta = await this.getEventStore().readRunMetaProjection(binding.executionId);
@@ -4425,6 +4442,7 @@ export class AgentRuntime {
       const staleSessions = await store.markInterruptedSessionsStale(
         { type: 'system' },
         now.getTime(),
+        startupSessionIds,
       );
       if (staleSessions.length > 0) await this.drainTerminalIssueDeliveries();
     } catch (error) {

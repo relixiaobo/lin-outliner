@@ -135,6 +135,10 @@ The old mutable chat snapshot store is no longer part of the runtime.
   diagnostic or configuration-relevant: the Details popover, the run/debug panel,
   ledger metadata, and the agent profile editor. See `agent-delegation-runtime.md`
   for how a profile owns model + effort.
+- A node's **Send to composer** action is a durable renderer request, not a
+  fire-and-forget event. App opens the agent rail, while the request remains
+  pending across Work, Dream, approval/question, and component-unmount states
+  until a mounted editor inserts the reference and explicitly acknowledges it.
 
 ## Reference Analysis
 

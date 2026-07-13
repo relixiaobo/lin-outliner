@@ -189,8 +189,8 @@ async function createIssue(
   input: IssueCreateInput,
   now: number,
 ): Promise<TenonAgentToolResult> {
-  const origin = input.request.mode === 'preview' ? undefined : await options.origin?.();
-  if (input.request.mode !== 'preview' && !origin) {
+  const origin = await options.origin?.();
+  if (!origin) {
     return {
       status: 'blocked',
       targets: [],
@@ -421,7 +421,18 @@ async function sendSessionMessage(
     }
   }
   if (input.request.mode === 'preview') {
-    return options.store.sendSessionMessage(input, options.actor, now);
+    const preview = await options.store.sendSessionMessage(input, options.actor, now);
+    if (preview.status !== 'preview') return preview;
+    const binding = await options.store.executionForSession(input.agentSessionId);
+    if (!binding || !options.executor?.sendMessage) {
+      return blockedSessionRuntimeResult(
+        input.agentSessionId,
+        'execution_unavailable',
+        'Agent Session has no live execution binding that can receive this message.',
+        preview,
+      );
+    }
+    return preview;
   }
   const preflight = await options.store.preflightSessionMessage(input);
   if (preflight.status !== 'applied') return preflight;
@@ -465,7 +476,29 @@ async function stopSession(
     }
   }
   if (input.request.mode === 'preview') {
-    return options.store.stopSession(input, options.actor, now);
+    const preview = await options.store.stopSession(input, options.actor, now);
+    if (preview.status !== 'preview') return preview;
+    const current = await options.store.readSession({ agentSessionId: input.agentSessionId });
+    if (current?.agentSession.state === 'canceled') return preview;
+    const binding = await options.store.executionForSession(input.agentSessionId);
+    if (!binding) {
+      if (current?.agentSession.state === 'pending') return preview;
+      return blockedSessionRuntimeResult(
+        input.agentSessionId,
+        'execution_unavailable',
+        'Agent Session has no execution binding that can be stopped.',
+        preview,
+      );
+    }
+    if (!options.executor?.stop) {
+      return blockedSessionRuntimeResult(
+        input.agentSessionId,
+        'execution_unavailable',
+        'No Agent Session executor is configured to stop this execution.',
+        preview,
+      );
+    }
+    return preview;
   }
   const reservation = await options.store.reserveSessionStop(input, now);
   const preflight = reservation.result;

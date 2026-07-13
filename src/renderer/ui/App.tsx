@@ -29,7 +29,7 @@ import { buildAgentUserViewContext, insertionTargetFor } from './agent/userViewC
 import { createAssetNode } from './interactions/attachmentIngest';
 import { onInsertFileIntoOutlinerRequest } from '../agent/agentFileInsert';
 import { ingestPreviewTargetToAsset, onAddPreviewTargetToOutlineRequest } from './preview/previewIngest';
-import { onAgentComposerNodeReferenceRequest, onAgentRevealRequest } from '../agent/agentReveal';
+import { onAgentComposerRevealRequest, onAgentRevealRequest } from '../agent/agentReveal';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { useResizableLayout } from './useResizableLayout';
 import { useSelectionDismissal } from './useSelectionDismissal';
@@ -224,7 +224,7 @@ export function App() {
   // App-local rail state. Reveals are layout no-ops while the rail is already
   // open; only the collapsed -> open transition preflows rail width.
   useEffect(() => onAgentRevealRequest(() => openAgentRail()), [openAgentRail]);
-  useEffect(() => onAgentComposerNodeReferenceRequest(() => openAgentRail()), [openAgentRail]);
+  useEffect(() => onAgentComposerRevealRequest(() => openAgentRail()), [openAgentRail]);
 
   useDragSelection({ rootId, index, ui, setUi });
 

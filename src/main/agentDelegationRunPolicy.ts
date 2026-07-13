@@ -159,12 +159,38 @@ export function settleRunBudget(run: BudgetedRunState): void {
 // A verifier reads to confirm the work; its capabilities are the read-only
 // subset of the controller's own scope (or all read-only kinds when the
 // controller is unrestricted), so narrowing never rejects it as widening.
-export function verifierRunScope(inheritedScope: AgentRunScope | undefined): AgentRunScope {
-  const parentCapabilities = normalizeAgentToolActionKinds(inheritedScope?.capabilities);
+export function verifierRunScope(runScope: AgentRunScope | undefined): AgentRunScope {
+  const parentCapabilities = normalizeAgentToolActionKinds(runScope?.capabilities);
   const capabilities = parentCapabilities?.length
     ? parentCapabilities.filter((kind) => isReadOnlyActionKind(kind))
     : normalizeAgentToolActionKinds(readOnlyAgentToolNames());
-  return { capabilities: capabilities ?? [] };
+  const resources = runScope?.resources;
+  const nodes = resources?.nodes ?? resources?.writableNodes;
+  const readResources = resources
+    ? {
+        ...(resources.docs !== undefined ? { docs: [...resources.docs] } : {}),
+        ...(resources.paths !== undefined ? { paths: [...resources.paths] } : {}),
+        ...(nodes !== undefined ? { nodes: [...nodes] } : {}),
+      }
+    : undefined;
+  return {
+    capabilities: capabilities ?? [],
+    ...(readResources ? { resources: readResources } : {}),
+  };
+}
+
+export function verifierAllowedToolNames(
+  runScope: AgentRunScope | undefined,
+  runAllowedTools?: readonly string[],
+): string[] {
+  const readOnlyTools = !runAllowedTools || runAllowedTools.includes('*')
+    ? readOnlyAgentToolNames()
+    : readOnlyAgentToolNames(runAllowedTools);
+  const capabilities = normalizeAgentToolActionKinds(runScope?.capabilities);
+  if (!capabilities?.length) return readOnlyTools;
+  const readCapabilities = capabilities.filter((kind) => isReadOnlyActionKind(kind));
+  if (readCapabilities.length === 0) return [];
+  return agentToolNamesForActionKindScope(readCapabilities, readOnlyTools) ?? [];
 }
 
 // The verifier's wall-clock request must fit the parent run's remaining time

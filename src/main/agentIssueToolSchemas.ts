@@ -661,6 +661,7 @@ export const AGENT_SESSION_START_PARAMETERS = {
     continuation: {
       type: 'object',
       additionalProperties: false,
+      required: ['previousAgentSessionId', 'intent'],
       description: 'Link to a previous terminal or stale Agent Session for continue, retry, or revise intent.',
       properties: {
         previousAgentSessionId: { type: 'string', minLength: 1, description: 'Prior Agent Session id to continue from.' },

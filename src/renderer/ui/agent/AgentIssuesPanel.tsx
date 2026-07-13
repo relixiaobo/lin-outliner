@@ -13,7 +13,7 @@ import type { DocumentIndex } from '../../state/document';
 import type { AgentMessage } from '../../../core/agentTypes';
 import { isActiveAgentSessionState } from '../../../core/agentIssue';
 import { api } from '../../api/client';
-import { useT } from '../../i18n/I18nProvider';
+import { useI18n } from '../../i18n/I18nProvider';
 import {
   type AppIcon,
   BackIcon,
@@ -66,12 +66,14 @@ import {
   rowNeedsAttention,
   rowScheduledAt,
   sessionProcessActivityEntriesForDisplay,
+  shouldRefreshIssueWorkForAgentEvent,
   type IssueActivityTimelineItem,
   type IssueWorkPreset,
 } from './agentIssueViewModel';
 
 const ISSUE_WORK_PRESETS: readonly IssueWorkPreset[] = ['inbox', 'today', 'upcoming', 'logbook'];
 const ISSUE_TIME_REFRESH_INTERVAL_MS = 60_000;
+type I18nMessages = ReturnType<typeof useI18n>['t'];
 const ISSUE_WORK_PRESET_ICONS = {
   inbox: InboxIcon,
   today: ClockIcon,
@@ -116,8 +118,8 @@ function issueDisplayTitleForDetail(issue: AgentIssue | undefined, recurringIssu
   return fallback;
 }
 
-function activityTimestampTitle(timestamp: number): string {
-  return new Date(timestamp).toLocaleString();
+function activityTimestampTitle(timestamp: number, locale: string): string {
+  return new Date(timestamp).toLocaleString(locale);
 }
 
 function activityActorLabel(actor: Activity['actor'], systemLabel: string): string {
@@ -208,7 +210,7 @@ function IssueDetailSectionHeading({
   );
 }
 
-function sessionStateLabel(state: AgentSession['state'], labels: ReturnType<typeof useT>['agent']['issue']): string {
+function sessionStateLabel(state: AgentSession['state'], labels: I18nMessages['agent']['issue']): string {
   switch (state) {
     case 'pending':
       return labels.sessionState.pending;
@@ -225,12 +227,12 @@ function sessionStateLabel(state: AgentSession['state'], labels: ReturnType<type
   }
 }
 
-function issueTriggerLabel(issue: AgentIssue, labels: ReturnType<typeof useT>['agent']['issue']): string {
+function issueTriggerLabel(issue: AgentIssue, labels: I18nMessages['agent']['issue']): string {
   if (issue.trigger.type === 'when-ready') return labels.triggerWhenReady;
   return labels.triggerScheduled;
 }
 
-function cadenceLabel(recurringIssue: AgentRecurringIssue, labels: ReturnType<typeof useT>['agent']['issue']): string {
+function cadenceLabel(recurringIssue: AgentRecurringIssue, labels: I18nMessages['agent']['issue']): string {
   switch (recurringIssue.cadence.type) {
     case 'daily':
       return labels.cadenceDaily;
@@ -241,7 +243,7 @@ function cadenceLabel(recurringIssue: AgentRecurringIssue, labels: ReturnType<ty
   }
 }
 
-function cadenceLabelForRow(row: IssueSearchRow, labels: ReturnType<typeof useT>['agent']['issue']): string {
+function cadenceLabelForRow(row: IssueSearchRow, labels: I18nMessages['agent']['issue']): string {
   switch (row.cadence?.type) {
     case 'daily':
       return labels.cadenceDaily;
@@ -279,27 +281,28 @@ function issueDetailStatusClass(issue: AgentIssue | undefined, recurringIssue: A
 function issueDetailTimingLine(
   issue: AgentIssue | undefined,
   recurringIssue: AgentRecurringIssue | undefined,
-  labels: ReturnType<typeof useT>,
+  labels: I18nMessages,
+  locale: string,
   now = Date.now(),
 ): string | null {
   if (recurringIssue) {
     const next = recurringIssue.nextMaterializationAt !== undefined
-      ? dateTimeRelativeLabel(recurringIssue.nextMaterializationAt, now, labels.agent.issue)
+      ? dateTimeRelativeLabel(recurringIssue.nextMaterializationAt, now, labels.agent.issue, locale)
       : labels.agent.issue.summary.noNextRun;
     return `${labels.agent.issueDetail.nextRun} ${next} · ${cadenceLabel(recurringIssue, labels.agent.issue)}`;
   }
   if (!issue) return null;
   if (issue.trigger.type === 'scheduled') {
-    return `${labels.agent.issueDetail.starts} ${dateTimeRelativeLabel(issue.trigger.startAt, now, labels.agent.issue)}`;
+    return `${labels.agent.issueDetail.starts} ${dateTimeRelativeLabel(issue.trigger.startAt, now, labels.agent.issue, locale)}`;
   }
   if (issue.dueDate) {
-    return `${labels.agent.issue.summary.due} ${dateTimeRelativeLabel(issue.dueDate.targetAt, now, labels.agent.issue)}`;
+    return `${labels.agent.issue.summary.due} ${dateTimeRelativeLabel(issue.dueDate.targetAt, now, labels.agent.issue, locale)}`;
   }
   if (issue.status.category === 'completed' || issue.status.category === 'canceled') return null;
   return issueTriggerLabel(issue, labels.agent.issue);
 }
 
-function issueTargetFallbackLabel(target: IssueTargetRef, labels: ReturnType<typeof useT>['agent']['issue']): string {
+function issueTargetFallbackLabel(target: IssueTargetRef, labels: I18nMessages['agent']['issue']): string {
   return target.type === 'recurring-issue' ? labels.recurringIssue : labels.issue;
 }
 
@@ -308,7 +311,7 @@ function issueBreadcrumbLabel(
   currentTitle: string,
   index: number,
   lastIndex: number,
-  labels: ReturnType<typeof useT>['agent']['issue'],
+  labels: I18nMessages['agent']['issue'],
 ): string {
   if (index === lastIndex) return currentTitle;
   return entry.title ?? issueTargetFallbackLabel(entry.target, labels);
@@ -387,7 +390,7 @@ function sessionIsLive(session: AgentSession): boolean {
   return isActiveAgentSessionState(session.state);
 }
 
-function sessionWorkLabel(session: AgentSession, labels: ReturnType<typeof useT>, liveElapsedMs: number | null): string {
+function sessionWorkLabel(session: AgentSession, labels: I18nMessages, liveElapsedMs: number | null): string {
   if (session.state === 'active' || session.state === 'pending') {
     if (liveElapsedMs !== null) {
       return labels.agent.process.workingFor({ duration: formatRunDuration(liveElapsedMs) });
@@ -470,7 +473,7 @@ export function AgentIssuesPanel({
   preset,
   rows,
 }: AgentIssuesPanelProps) {
-  const t = useT();
+  const { locale, t } = useI18n();
   const [, setLocalDayRevision] = useState(0);
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
@@ -504,7 +507,7 @@ export function AgentIssuesPanel({
   const visibleRows = useMemo(() => rows
     .filter((row) => issueRowMatchesWorkPreset(row, preset, now))
     .sort((left, right) => compareIssueRowsForPreset(left, right, preset, now)), [now, preset, rows]);
-  const sections = useMemo(() => groupIssueRowsForPreset(visibleRows, preset, now, t.agent.issue), [now, preset, t.agent.issue, visibleRows]);
+  const sections = useMemo(() => groupIssueRowsForPreset(visibleRows, preset, now, t.agent.issue, locale), [locale, now, preset, t.agent.issue, visibleRows]);
   const viewTitle = t.agent.issue.view[preset];
 
   return (
@@ -543,7 +546,7 @@ export function AgentIssuesPanel({
               <section className="agent-issue-list-section" key={section.key}>
                 {section.label ? <h3 className="agent-issue-section-title">{section.label}</h3> : null}
                 {section.rows.map((row) => {
-                  const summary = issueRowSummaryForRow(row, preset, t, now);
+                  const summary = issueRowSummaryForRow(row, preset, t, locale, now);
                   return (
                     <button
                       aria-label={[issueDisplayTitleForRow(row), summary].filter(Boolean).join(', ')}
@@ -608,7 +611,7 @@ function AgentSessionInlineCard({
   onOpenRunDetailsPanel?: (conversationId: string | null, runId: string | null) => boolean | void;
   session: AgentSession;
 }) {
-  const t = useT();
+  const { locale, t } = useI18n();
   const [transcript, setTranscript] = useState<AgentSessionTranscriptResult | null>(null);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const transcriptRequestRef = useRef(0);
@@ -731,7 +734,7 @@ function AgentSessionInlineCard({
           {processEntries.map((entry) => (
             <li key={entry.id}>
               <span>{activityText(entry, t.agent.issueDetail.activityEvent)}</span>
-              <small title={activityTimestampTitle(entry.createdAt)}>{relativeTimeLabel(entry.createdAt, t.agent.run)}</small>
+              <small title={activityTimestampTitle(entry.createdAt, locale)}>{relativeTimeLabel(entry.createdAt, t.agent.run)}</small>
             </li>
           ))}
         </ol>
@@ -794,7 +797,7 @@ function AgentSessionInlineCard({
 }
 
 function ActivityEventRow({ entry }: { entry: Activity }) {
-  const t = useT();
+  const { locale, t } = useI18n();
   const metadataLabels = t.agent.issueDetail.activityMetadata;
   const EventIcon = activityEventIcon(entry);
   const eventClass = activityEventClass(entry);
@@ -807,7 +810,7 @@ function ActivityEventRow({ entry }: { entry: Activity }) {
         <span className="agent-issue-activity-heading">
           <span>{activityText(entry, t.agent.issueDetail.activityEvent)}</span>
           <small>
-            <time dateTime={new Date(entry.createdAt).toISOString()} title={activityTimestampTitle(entry.createdAt)}>
+            <time dateTime={new Date(entry.createdAt).toISOString()} title={activityTimestampTitle(entry.createdAt, locale)}>
               {relativeTimeLabel(entry.createdAt, t.agent.run)}
             </time>
           </small>
@@ -819,7 +822,7 @@ function ActivityEventRow({ entry }: { entry: Activity }) {
           <dt>{metadataLabels.time}</dt>
           <dd>
             <time dateTime={new Date(entry.createdAt).toISOString()}>
-              {activityTimestampTitle(entry.createdAt)}
+              {activityTimestampTitle(entry.createdAt, locale)}
             </time>
           </dd>
         </div>
@@ -889,7 +892,7 @@ export function AgentIssueDetailsPanel({
   onSelectBreadcrumb,
   target,
 }: AgentIssueDetailsPanelProps) {
-  const t = useT();
+  const { locale, t } = useI18n();
   const [loading, setLoading] = useState(false);
   const [acceptingReview, setAcceptingReview] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -949,13 +952,14 @@ export function AgentIssueDetailsPanel({
     && issue.status.category !== 'completed'
     && issue.status.category !== 'canceled'
     && issue.verificationPolicy?.mode === 'human-review'
+    && !hasActiveSessions
     && sessions.some((session) => session.purpose !== 'verify' && session.state === 'complete'),
   );
   const detailMarker = issueDetailMarker(issue, recurringIssue, sessions);
   const DetailMarkerIcon = detailMarker.icon;
   const statusLabel = issueDetailStatusLabel(issue, recurringIssue);
   const statusClass = issueDetailStatusClass(issue, recurringIssue);
-  const timingLine = issueDetailTimingLine(issue, recurringIssue, t);
+  const timingLine = issueDetailTimingLine(issue, recurringIssue, t, locale);
   const breadcrumbEntries = breadcrumbs.length > 0 ? breadcrumbs : [{ target }];
   const lastBreadcrumbIndex = breadcrumbEntries.length - 1;
 
@@ -965,7 +969,8 @@ export function AgentIssueDetailsPanel({
     return () => window.clearInterval(timer);
   }, [hasActiveSessions, scheduleLoad]);
 
-  useEffect(() => window.lin?.onAgentEvent(() => {
+  useEffect(() => window.lin?.onAgentEvent((event) => {
+    if (!shouldRefreshIssueWorkForAgentEvent(event)) return;
     scheduleLoad();
   }), [scheduleLoad]);
 
