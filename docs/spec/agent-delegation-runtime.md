@@ -236,7 +236,10 @@ active-path Run transcript and explicitly falls back to summary when its binding
 or ledger is unavailable. None injects no prior Session content. The Session
 persists the previous Session link; intent, guidance, and context mode are consumed
 when the new execution objective is built rather than stored as a second durable
-transcript.
+transcript. Restoring a persisted Run rebuilds its live harness with the Run's
+durable `scope` and `budget` before any continuation or re-plan starts. The
+restored agent tool catalog and every nested runtime therefore retain the same
+resource and budget ceilings as the original execution.
 
 ## Verification
 

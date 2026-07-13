@@ -507,6 +507,7 @@ export function AgentChatPanel({
   const issueIndexRequestRef = useRef(0);
   const activeIssueSessionCountRequestRef = useRef(0);
   const issueIndexRefreshTimerRef = useRef<number | null>(null);
+  const activeIssueSessionCountRefreshTimerRef = useRef<number | null>(null);
   const issueIndexPresetRef = useRef(issueIndexPreset);
   const workPanelOpenRef = useRef(workPanelOpen);
   const scrollFrameRef = useRef<number | null>(null);
@@ -849,14 +850,22 @@ export function AgentChatPanel({
     }
   }, []);
 
+  const scheduleActiveIssueSessionCountRefresh = useCallback(() => {
+    if (activeIssueSessionCountRefreshTimerRef.current !== null) return;
+    activeIssueSessionCountRefreshTimerRef.current = window.setTimeout(() => {
+      activeIssueSessionCountRefreshTimerRef.current = null;
+      void loadActiveIssueSessionCount();
+    }, 250);
+  }, [loadActiveIssueSessionCount]);
+
   const scheduleIssueIndexRefresh = useCallback(() => {
+    if (!workPanelOpenRef.current) return;
     if (issueIndexRefreshTimerRef.current !== null) return;
     issueIndexRefreshTimerRef.current = window.setTimeout(() => {
       issueIndexRefreshTimerRef.current = null;
-      void loadActiveIssueSessionCount();
       if (workPanelOpenRef.current) void loadIssueIndex(issueIndexPresetRef.current);
     }, 250);
-  }, [loadActiveIssueSessionCount, loadIssueIndex]);
+  }, [loadIssueIndex]);
 
   const loadSlashCommands = useCallback(async () => {
     const requestId = slashCommandsRequestRef.current + 1;
@@ -1151,15 +1160,20 @@ export function AgentChatPanel({
         window.clearTimeout(issueIndexRefreshTimerRef.current);
         issueIndexRefreshTimerRef.current = null;
       }
+      if (activeIssueSessionCountRefreshTimerRef.current !== null) {
+        window.clearTimeout(activeIssueSessionCountRefreshTimerRef.current);
+        activeIssueSessionCountRefreshTimerRef.current = null;
+      }
     };
   }, [loadActiveIssueSessionCount, loadProviderSettings]);
 
   useEffect(() => {
     return window.lin?.onAgentEvent((event) => {
       if (!shouldRefreshIssueWorkForAgentEvent(event)) return;
+      scheduleActiveIssueSessionCountRefresh();
       scheduleIssueIndexRefresh();
     });
-  }, [scheduleIssueIndexRefresh]);
+  }, [scheduleActiveIssueSessionCountRefresh, scheduleIssueIndexRefresh]);
 
   useEffect(() => {
     if (workPanelOpen) void loadIssueIndex(issueIndexPreset);

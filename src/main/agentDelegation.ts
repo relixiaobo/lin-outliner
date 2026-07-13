@@ -2012,6 +2012,8 @@ export class AgentDelegationRuntime {
     const { skillRuntime, localWorkspace, childAgent, subRunRuntime } = await this.buildChildAgentHarness({
       runId: run.id,
       definition,
+      scope: run.scope,
+      budget: run.budget,
       executingAgentId: run.executingAgentId,
       parentAgentId: run.parentAgentId,
       memoryOwnerAgentId: run.memoryOwnerAgentId,

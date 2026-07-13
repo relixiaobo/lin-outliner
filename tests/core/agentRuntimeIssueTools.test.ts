@@ -17,11 +17,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
+import type { AgentRunBudget, AgentRunScope } from '../../src/core/agentEventLog';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import type { ActorRef } from '../../src/core/agentIssue';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { AgentIssueStore } from '../../src/main/agentIssueStore';
-import type { AgentDelegationRuntime } from '../../src/main/agentDelegation';
+import type { AgentChildAgentCreateInput, AgentDelegationRuntime } from '../../src/main/agentDelegation';
 import type { AgentSessionExecutor } from '../../src/main/agentIssueRuntime';
 import type { AgentIssueToolRuntime } from '../../src/main/agentIssueTools';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
@@ -1385,7 +1386,7 @@ describe('agent runtime Issue tools', () => {
     ]);
   });
 
-  test('invalidates an in-flight verifier before applying Run amendments', async () => {
+  test('invalidates an in-flight verifier and restores scoped continuation limits', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-verifier-amend-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-verifier-amend-data-'));
     roots.push(localRoot, dataRoot);
@@ -1480,6 +1481,7 @@ describe('agent runtime Issue tools', () => {
       issueType: 'issue',
       fields: {
         title: 'Verifier amendment fixture',
+        noteNodeIds: ['node:restored-scope'],
         completionCriteria: [{ id: 'initial-output', text: 'Return the initial output.', state: 'open' }],
         verificationPolicy: { mode: 'agent-review', requiredVerdict: 'pass' },
         permissionMode: 'attended',
@@ -1515,6 +1517,11 @@ describe('agent runtime Issue tools', () => {
     const store = AgentIssueStore.forAgentDataRoot(dataRoot);
     expect((await store.readSession({ agentSessionId: sessionId }))?.agentSession.state).toBe('active');
     await waitFor(() => !conversationState.delegationRuntime.hasLiveRun(binding!.executionId));
+    const persistedRun = await new AgentEventStore(dataRoot).readRunMetaProjection(binding!.executionId);
+    expect(persistedRun?.objective?.scope).toEqual({
+      resources: { nodes: ['node:restored-scope'], writableNodes: [] },
+    });
+    expect(persistedRun?.objective?.budget).toBeDefined();
 
     const resumedWorkContexts: string[] = [];
     const resumedStreamFn = dynamicStream((context) => {
@@ -1540,6 +1547,29 @@ describe('agent runtime Issue tools', () => {
       },
     );
     drainableRuntimes.push(resumedRuntime);
+    const resumedRuntimeInternals = resumedRuntime as unknown as {
+      createChildPiAgent: (...args: unknown[]) => { state: { tools: Array<{ name: string }> } };
+    };
+    const originalCreateChildPiAgent = resumedRuntimeInternals.createChildPiAgent.bind(resumedRuntime);
+    let restoredScope: AgentRunScope | undefined;
+    let restoredNestedScope: AgentRunScope | undefined;
+    let restoredNestedBudget: AgentRunBudget | undefined;
+    let restoredToolNames: string[] = [];
+    resumedRuntimeInternals.createChildPiAgent = (...args) => {
+      const input = args[3] as AgentChildAgentCreateInput;
+      const childAgent = originalCreateChildPiAgent(...args);
+      if (input.runId === binding!.executionId) {
+        const nestedRuntime = input.delegationRuntime as unknown as {
+          inheritedScope?: AgentRunScope;
+          inheritedBudget?: AgentRunBudget;
+        };
+        restoredScope = structuredClone(input.scope);
+        restoredNestedScope = structuredClone(nestedRuntime.inheritedScope);
+        restoredNestedBudget = structuredClone(nestedRuntime.inheritedBudget);
+        restoredToolNames = childAgent.state.tools.map((tool) => tool.name);
+      }
+      return childAgent;
+    };
     await resumedRuntime.restoreConversation(conversation.conversationId);
     await resumedRuntime.runSteer(
       conversation.conversationId,
@@ -1554,6 +1584,11 @@ describe('agent runtime Issue tools', () => {
       context.includes('Run amendment (durable; supersedes earlier values for the changed fields).')
       && context.includes('Return the amended output.')
     ))).toBe(true);
+    expect(restoredScope).toEqual(persistedRun?.objective?.scope);
+    expect(restoredNestedScope).toEqual(persistedRun?.objective?.scope);
+    expect(restoredNestedBudget).toEqual(persistedRun?.objective?.budget);
+    expect(restoredToolNames).toContain('node_read');
+    expect(restoredToolNames).not.toContain('outline_undo_stack');
     expect((await store.readSession({ agentSessionId: sessionId }))?.agentSession.latestOutput)
       .toBe('Result produced under the amended contract.');
     expect((await new AgentEventStore(dataRoot).readRunMetaProjection(binding!.executionId))?.objective).toMatchObject({

@@ -196,15 +196,20 @@ describe('AgentIssuesPanel smart views', () => {
     expect(agentChatPanelSource).toContain('void loadActiveIssueSessionCount();');
     expect(agentChatPanelSource).toContain('return window.lin?.onAgentEvent((event) => {');
     expect(agentChatPanelSource).toContain('shouldRefreshIssueWorkForAgentEvent(event)');
-    expect(agentChatPanelSource).toContain('if (workPanelOpenRef.current) void loadIssueIndex(issueIndexPresetRef.current);');
+    expect(agentChatPanelSource).toContain('scheduleActiveIssueSessionCountRefresh();');
+    expect(agentChatPanelSource).toContain('activeIssueSessionCountRefreshTimerRef');
     expect(agentChatPanelSource).not.toContain('if (!workPanelOpen) return undefined;');
   });
 
   test('invalidates delayed Work refreshes when the preset changes', () => {
-    expect(agentChatPanelSource).toContain('window.clearTimeout(issueIndexRefreshTimerRef.current);');
-    expect(agentChatPanelSource).toContain('if (issueIndexPresetRef.current === preset)');
-    expect(agentChatPanelSource).toContain('issueIndexPresetRef.current = preset;');
-    expect(agentChatPanelSource).toContain('issueIndexRequestRef.current += 1;');
+    const handlerStart = agentChatPanelSource.indexOf('const setIssueWorkPreset');
+    const handlerEnd = agentChatPanelSource.indexOf('\n\n  useEffect', handlerStart);
+    const handlerSource = agentChatPanelSource.slice(handlerStart, handlerEnd);
+    expect(handlerSource).toContain('window.clearTimeout(issueIndexRefreshTimerRef.current);');
+    expect(handlerSource).not.toContain('activeIssueSessionCountRefreshTimerRef');
+    expect(handlerSource).toContain('if (issueIndexPresetRef.current === preset)');
+    expect(handlerSource).toContain('issueIndexPresetRef.current = preset;');
+    expect(handlerSource).toContain('issueIndexRequestRef.current += 1;');
   });
 
   test('uses calendar-day boundaries across daylight-saving transitions', () => {

@@ -340,9 +340,12 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   changed Today boundary does not require another agent event.
   Each smart-view query follows `nextCursor` until exhaustion, and the active
   Session badge uses a separate fully paginated query that loads and subscribes
-  even while Work is closed. Preset changes invalidate in-flight and delayed
-  refreshes from the previous preset. Nested Issue navigation stays in the same
-  detail dialog and re-establishes focus inside the dialog after content swaps.
+  even while Work is closed. Badge refresh and Work-index refresh use independent
+  debounce timers, so changing a preset can invalidate the old index request
+  without canceling a pending Session-count update. Preset changes invalidate
+  in-flight and delayed refreshes from the previous preset. Nested Issue navigation
+  stays in the same detail dialog and re-establishes focus inside the dialog after
+  content swaps.
   Human-review acceptance is offered only when a completed execution exists and
   no Session is currently pending or active. Work dates use the application
   locale, not the OS locale.

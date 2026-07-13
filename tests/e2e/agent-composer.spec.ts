@@ -175,6 +175,61 @@ test.describe('agent composer controls', () => {
     await expect(page.getByLabel('Agent message')).toContainText('Alpha');
   });
 
+  test('keeps the active Session badge refresh independent from Work preset changes', async ({ page }) => {
+    const now = Date.now();
+    await page.evaluate(({ now }) => {
+      const win = window as unknown as {
+        __LIN_E2E__?: { setAgentIssues: (rows: unknown[]) => void };
+      };
+      win.__LIN_E2E__?.setAgentIssues([{
+        target: { type: 'issue', id: 'issue-active-badge-race' },
+        title: 'Active badge race',
+        status: 'Started',
+        statusCategory: 'started',
+        revision: 'rev-active-badge-race',
+        updatedAt: now,
+        hasActiveSession: true,
+        latestSessionState: 'active',
+        latestSessionUpdatedAt: now,
+      }]);
+    }, { now });
+    await emitAgentEvent(page, {
+      type: 'tool_result',
+      conversationId: DEFAULT_CONVERSATION_ID,
+      toolCallId: 'tool-active-badge-seed',
+      timestamp: now,
+    });
+
+    const activeWorkButton = page.getByRole('button', { name: '1 Agent Session active' });
+    await expect(activeWorkButton).toBeVisible();
+    await activeWorkButton.click();
+    const work = page.getByRole('region', { name: 'Agent work' });
+    await expect(work.getByText('1 Agent Session active')).toBeVisible();
+
+    await page.evaluate(({ conversationId, now }) => {
+      const win = window as unknown as {
+        __LIN_E2E__?: {
+          emitAgentEvent: (event: unknown) => void;
+          setAgentIssues: (rows: unknown[]) => void;
+        };
+      };
+      win.__LIN_E2E__?.setAgentIssues([]);
+      win.__LIN_E2E__?.emitAgentEvent({
+        type: 'tool_result',
+        conversationId,
+        toolCallId: 'tool-active-badge-finished',
+        timestamp: now + 1,
+      });
+      const upcoming = [...document.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.trim() === 'Upcoming');
+      if (!upcoming) throw new Error('Upcoming Work preset button was not found.');
+      upcoming.click();
+    }, { conversationId: DEFAULT_CONVERSATION_ID, now });
+
+    await expect(work.getByRole('heading', { name: 'Upcoming' })).toBeVisible();
+    await expect(work.getByText('1 Agent Session active')).toHaveCount(0);
+  });
+
   test('scrolls to a newly sent user message without letting streaming retake the viewport', async ({ page }) => {
     const conversation = Array.from({ length: 44 }, (_, index) => {
       const isUser = index % 2 === 0;
