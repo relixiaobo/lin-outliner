@@ -396,6 +396,117 @@ describe('agent node tools', () => {
     expect(allowedOutputWrite.ok).toBe(true);
   });
 
+  test('keeps readable definition resources immutable when writable scope is empty', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const targetOwner = mustFocus(core.createNode(today, null, 'Target definition owner'));
+    const sourceOwner = mustFocus(core.createNode(today, null, 'Source definition owner'));
+    const draftOwner = mustFocus(core.createNode(today, null, 'Draft definition owner'));
+    const targetEntryId = mustFocus(core.createInlineField(targetOwner, null, 'Canonical field', 'plain'));
+    const sourceEntryId = mustFocus(core.createInlineField(sourceOwner, null, 'Duplicate field', 'plain'));
+    const draftEntryId = mustFocus(core.createInlineField(draftOwner, null, 'Draft field', 'plain'));
+    const targetDefId = core.state().nodes[targetEntryId]!.fieldDefId!;
+    const sourceDefId = core.state().nodes[sourceEntryId]!.fieldDefId!;
+    const draftDefId = core.state().nodes[draftEntryId]!.fieldDefId!;
+    const options = {
+      runScope: {
+        resources: {
+          nodes: [SCHEMA_ID, targetOwner, sourceOwner, draftOwner],
+          writableNodes: [] as string[],
+        },
+      },
+    };
+
+    expect((await executeTool(core, 'node_read', { node_id: targetDefId, depth: 0 }, options)).ok).toBe(true);
+    const revisionBefore = core.projection().revision;
+
+    const blockedConfig = await executeTool(core, 'node_edit', {
+      operation: 'configure_definition',
+      node_id: targetDefId,
+      definition_patch: { field_type: 'url' },
+    }, options);
+    expect(blockedConfig.ok).toBe(false);
+    expect(blockedConfig.error?.code).toBe('outside_scope');
+    expect(fieldTypeOf(core, targetEntryId)).toBe('plain');
+
+    const blockedReuse = await executeTool(core, 'node_edit', {
+      operation: 'reuse_field_definition',
+      node_id: draftEntryId,
+      target_definition_id: targetDefId,
+    }, options);
+    expect(blockedReuse.ok).toBe(false);
+    expect(blockedReuse.error?.code).toBe('outside_scope');
+    expect(core.state().nodes[draftEntryId]!.fieldDefId).toBe(draftDefId);
+
+    const blockedMerge = await executeTool(core, 'node_edit', {
+      operation: 'merge_definition',
+      node_id: targetDefId,
+      merge_from_node_ids: [sourceDefId],
+    }, options);
+    expect(blockedMerge.ok).toBe(false);
+    expect(blockedMerge.error?.code).toBe('outside_scope');
+    expect(core.state().nodes[sourceDefId]).toBeDefined();
+    expect(core.state().nodes[sourceEntryId]!.fieldDefId).toBe(sourceDefId);
+
+    const definitionName = 'Must not be created';
+    const blockedCreate = await executeTool(core, 'node_create', {
+      definition: { kind: 'field', name: definitionName },
+    }, options);
+    expect(blockedCreate.ok).toBe(false);
+    expect(blockedCreate.error?.code).toBe('outside_scope');
+    expect(Object.values(core.state().nodes).some((node) => (
+      node.type === 'fieldDef' && node.content.text === definitionName
+    ))).toBe(false);
+    expect(core.projection().revision).toBe(revisionBefore);
+  });
+
+  test('keeps definition reference targets read-only while mutations use writable scope', async () => {
+    const core = Core.new();
+    const fieldDefId = mustFocus(core.createFieldDefinition('Linked field', 'plain'));
+    const sourceTagId = mustFocus(core.createTag('Allowed source tag'));
+    const configure = await executeTool(core, 'node_edit', {
+      operation: 'configure_definition',
+      node_id: fieldDefId,
+      definition_patch: {
+        field_type: 'options_from_supertag',
+        source_supertag: sourceTagId,
+      },
+    }, {
+      runScope: {
+        resources: {
+          nodes: [fieldDefId, sourceTagId],
+          writableNodes: [fieldDefId],
+        },
+      },
+    });
+    expect(configure.ok).toBe(true);
+    const configured = projectFieldConfig(
+      new Map(Object.values(core.state().nodes).map((node) => [node.id, node])),
+      core.state().nodes[fieldDefId]!,
+    );
+    expect(configured).toMatchObject({ fieldType: 'options_from_supertag', sourceSupertag: sourceTagId });
+
+    const today = core.projection().todayId;
+    const owner = mustFocus(core.createNode(today, null, 'Scoped reuse owner'));
+    const draftEntryId = mustFocus(core.createInlineField(owner, null, 'Draft reusable field', 'plain'));
+    const previousDefId = core.state().nodes[draftEntryId]!.fieldDefId!;
+    const targetDefId = mustFocus(core.createFieldDefinition('Canonical reusable field', 'plain'));
+    const reuse = await executeTool(core, 'node_edit', {
+      operation: 'reuse_field_definition',
+      node_id: draftEntryId,
+      target_definition_id: targetDefId,
+    }, {
+      runScope: {
+        resources: {
+          nodes: [draftEntryId, previousDefId, targetDefId],
+          writableNodes: [draftEntryId, previousDefId],
+        },
+      },
+    });
+    expect(reuse.ok).toBe(true);
+    expect(core.state().nodes[draftEntryId]!.fieldDefId).toBe(targetDefId);
+  });
+
   test('node_create creates outline trees with tags fields descriptions and completion', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

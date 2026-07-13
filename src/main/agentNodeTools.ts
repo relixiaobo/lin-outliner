@@ -939,12 +939,13 @@ async function executeDefinitionConfigEdit(
   options: NodeToolsOptions,
 ) {
   const index = indexProjection(host.getProjection());
-  const requestedScopeIssue = validateNodeResourceScope(options, index, [
-    params.nodeId,
-    ...definitionPatchNodeIds(params.definitionPatch),
-  ]);
-  if (requestedScopeIssue) {
-    return nodeScopeError<NodeEditData>('node_edit', requestedScopeIssue, started);
+  const targetScopeIssue = validateNodeResourceScope(options, index, [params.nodeId], 'write');
+  if (targetScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', targetScopeIssue, started);
+  }
+  const referenceScopeIssue = validateNodeResourceScope(options, index, definitionPatchNodeIds(params.definitionPatch));
+  if (referenceScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', referenceScopeIssue, started);
   }
   const validation = validateMutableNodeIds(index, [params.nodeId]);
   if (validation) {
@@ -965,6 +966,7 @@ async function executeDefinitionConfigEdit(
     options,
     index,
     definitionConfigAffectedNodeIds(index, node),
+    'write',
   );
   if (affectedScopeIssue) {
     return nodeScopeError<NodeEditData>('node_edit', affectedScopeIssue, started);
@@ -1072,12 +1074,15 @@ async function executeReuseFieldDefinitionEdit(
   options: NodeToolsOptions,
 ) {
   const index = indexProjection(host.getProjection());
-  const requestedScopeIssue = validateNodeResourceScope(options, index, [
-    params.nodeId,
+  const entryScopeIssue = validateNodeResourceScope(options, index, [params.nodeId], 'write');
+  if (entryScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', entryScopeIssue, started);
+  }
+  const targetScopeIssue = validateNodeResourceScope(options, index, [
     ...(!isSystemFieldId(params.targetDefinitionId) ? [params.targetDefinitionId] : []),
   ]);
-  if (requestedScopeIssue) {
-    return nodeScopeError<NodeEditData>('node_edit', requestedScopeIssue, started);
+  if (targetScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', targetScopeIssue, started);
   }
   const validation = validateMutableNodeIds(index, [params.nodeId]);
   if (validation) {
@@ -1111,7 +1116,7 @@ async function executeReuseFieldDefinitionEdit(
   const previousDefinitionId = entry.fieldDefId;
   const previousScopeIssue = validateNodeResourceScope(options, index, [
     ...(previousDefinitionId && !isSystemFieldId(previousDefinitionId) ? [previousDefinitionId] : []),
-  ]);
+  ], 'write');
   if (previousScopeIssue) {
     return nodeScopeError<NodeEditData>('node_edit', previousScopeIssue, started);
   }
@@ -1177,7 +1182,7 @@ async function executeDefinitionMergeEdit(
   options: NodeToolsOptions,
 ) {
   const index = indexProjection(host.getProjection());
-  const requestedScopeIssue = validateNodeResourceScope(options, index, [params.nodeId, ...params.mergeFromNodeIds]);
+  const requestedScopeIssue = validateNodeResourceScope(options, index, [params.nodeId, ...params.mergeFromNodeIds], 'write');
   if (requestedScopeIssue) {
     return nodeScopeError<NodeEditData>('node_edit', requestedScopeIssue, started);
   }
@@ -1195,7 +1200,7 @@ async function executeDefinitionMergeEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
-  const affectedScopeIssue = validateNodeResourceScope(options, index, preview.affectedNodeIds);
+  const affectedScopeIssue = validateNodeResourceScope(options, index, preview.affectedNodeIds, 'write');
   if (affectedScopeIssue) {
     return nodeScopeError<NodeEditData>('node_edit', affectedScopeIssue, started);
   }
@@ -1240,11 +1245,10 @@ async function executeDefinitionCreate(
   options: NodeToolsOptions,
 ): Promise<AgentToolResult<ToolEnvelope<NodeCreateData>>> {
   const initialIndex = indexProjection(host.getProjection());
-  const scopeIssue = validateNodeResourceScope(options, initialIndex, [
-    SCHEMA_ID,
-    ...definitionPatchNodeIds(definition.config ?? {}),
-  ]);
-  if (scopeIssue) return nodeScopeError<NodeCreateData>('node_create', scopeIssue, started);
+  const schemaScopeIssue = validateNodeResourceScope(options, initialIndex, [SCHEMA_ID], 'write');
+  if (schemaScopeIssue) return nodeScopeError<NodeCreateData>('node_create', schemaScopeIssue, started);
+  const referenceScopeIssue = validateNodeResourceScope(options, initialIndex, definitionPatchNodeIds(definition.config ?? {}));
+  if (referenceScopeIssue) return nodeScopeError<NodeCreateData>('node_create', referenceScopeIssue, started);
   const existing = findDefinitionByName(initialIndex, definition.kind, definition.name);
   const beforeConfig = existing ? projectDefinitionConfig(initialIndex, existing) : undefined;
   const projectedDefault = beforeConfig ?? defaultDefinitionConfig(definition.kind, definition.config);

@@ -135,8 +135,14 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   or backlinks, and
   `node_create`/`node_edit`/`node_delete` reject requested targets,
   destinations, references, duplicate sources, or affected subtrees outside the
-  scoped node set. This makes unattended Issue Sessions fail closed in code
-  instead of relying on prompt instructions. `outline_undo_stack` is omitted
+  scoped node set. Definition mutations preserve the read/write split:
+  definition creation requires writable access to `SCHEMA_ID`; configuration
+  targets and their implicit affected nodes are writable while config references
+  are only readable; definition reuse writes the field entry and its old
+  definition while only reading the target definition; definition merge requires
+  every target, source, and affected node to be writable. This makes unattended
+  Issue Sessions fail closed in code instead of relying on prompt instructions.
+  `outline_undo_stack` is omitted
   entirely from every scoped Run because its global journal and undo/redo cursor
   cannot be narrowed to one node-resource set safely.
 - `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
