@@ -21,19 +21,21 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391**) |
+| Codex | `lin-outliner-codex/` | `codex/provider-transient-retry` | Draft PR #395 — provider transient request retries |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped agent-image-generation-tool #383, node-tool-context-compression #392) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382, feed-processing-built-in #387, definition-node-edit-parity #388, cc-switch-provider-registry #389**) |
-| Codex 4 | `lin-outliner-codex-4/` | `codex-4/remove-reference-field-type` | Draft PR #393 — remove reference field type plan; rebase onto merged #392 pending |
+| Codex 3 | `lin-outliner-codex-3/` | `codex-3/field-value-node-children` | PR #394 — field value nodes support ordinary children |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped agent-issue-manager #386, remove-reference-field-type #393) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-14).** Open PR queue: Draft #393
-(`codex-4/remove-reference-field-type`; plan claim, rebase onto merged #392
-pending). Recently merged: #392 (`codex-2/node-tool-context-compression`) merged
+**In flight (2026-07-14).** Open PR queue: #394
+(`codex-3/field-value-node-children`; ready for main review) and Draft #395
+(`codex/provider-transient-retry`). Recently merged: #393
+(`codex-4/remove-reference-field-type`) merged 2026-07-14 after main review; see
+*Recently completed*. #392 (`codex-2/node-tool-context-compression`) merged
 2026-07-14 after main review; see *Recently completed*. #391
 (`codex/queued-steer-consumption`) merged 2026-07-14
 after main review; see *Recently completed*. #386
@@ -493,6 +495,20 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **remove-reference-field-type** (`codex-4/remove-reference-field-type`, PR
+  #393, codex-4, merged 2026-07-14, plan-track) — removes the Tenon-only
+  `reference` field type and dedicated picker/command while retaining references
+  as ordinary value nodes. Plain fields now support text, inline references, and
+  whole-row reference children through the generic reference path; options,
+  backlinks, reference counts, search, and computed system reference rows keep
+  their existing semantics. Agent field inference and schemas now use `plain`
+  for reference-valued and mixed fields. **Gate (main):** ultra code review found
+  no reportable issues. Verified on the exact final PR head with typecheck,
+  affected Core suites, 742 renderer tests, 55 focused Playwright tests,
+  `docs:check`, and `git diff --check`. Full Core reached 1417 pass / 5 fail;
+  all five failures come from external Presentation skill resource drift. Plan
+  archived `done`: `docs/plans/archive/remove-reference-field-type.md`.
 
 - **node-tool-context-compression** (`codex-2/node-tool-context-compression`, PR
   #392, codex-2, merged 2026-07-14, plan-track) — makes annotated outlines the

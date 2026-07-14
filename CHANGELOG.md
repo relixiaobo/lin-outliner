@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **References as field values (PR #393, codex-4)** — removed the Tenon-only
+  `reference` field type and its dedicated picker/command. Plain fields now store
+  text, inline references, and whole-row reference children through the generic
+  reference path, while options constraints, backlinks, reference counts,
+  search, and computed system reference rows remain intact. Agent field
+  inference and definition schemas now use `plain` for reference-valued and
+  mixed fields. **Gate (main):** ultra review found no reportable issues.
+  Verified with typecheck, affected Core suites, 742 renderer tests, 55 focused
+  Playwright tests, docs check, and diff check; the full Core suite's five
+  failures come from external Presentation skill resource drift.
 - **Queued steer consumption (PR #391, codex)** — the Agent composer now removes
   its editable queued-steer preview as soon as the runtime persists that steer as
   the next visible user message, even while the same Run continues. Conversation
