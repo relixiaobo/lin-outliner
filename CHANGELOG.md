@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Provider transient request retries (PR #395, codex)** — OpenAI and Azure
+  Responses requests now retry pre-stream `5xx` and bounded transport failures
+  four times with abortable jittered backoff, while retaining the independent
+  one-time replay for prematurely terminated streams before material output.
+  Retry progress is runtime-only, concurrent Runs preserve independent status,
+  and exhausted provider errors render after generated content and before reply
+  actions. **Gate (main):** ultra review found one concurrent-Run status-loss
+  issue; codex fixed it before merge. Verified with typecheck, 23 focused Core
+  tests, 751 renderer tests, focused Playwright coverage, light/dark visual QA,
+  docs check, and diff check; the full Core suite's five failures reproduce on
+  `main` and come from external Presentation skill resource drift.
 - **References as field values (PR #393, codex-4)** — removed the Tenon-only
   `reference` field type and its dedicated picker/command. Plain fields now store
   text, inline references, and whole-row reference children through the generic

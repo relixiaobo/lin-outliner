@@ -21,10 +21,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | `codex/provider-transient-retry` | Draft PR #395 — provider transient request retries |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped agent-image-generation-tool #383, node-tool-context-compression #392) |
 | Codex 3 | `lin-outliner-codex-3/` | `codex-3/field-value-node-children` | PR #394 — field value nodes support ordinary children |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped agent-issue-manager #386, remove-reference-field-type #393) |
+| Codex 4 | `lin-outliner-codex-4/` | `codex-4/url-preview-bilingual-translation` | Draft PR #396 — URL preview bilingual translation |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
@@ -32,8 +32,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-14).** Open PR queue: #394
-(`codex-3/field-value-node-children`; ready for main review) and Draft #395
-(`codex/provider-transient-retry`). Recently merged: #393
+(`codex-3/field-value-node-children`; ready for main review) and Draft #396
+(`codex-4/url-preview-bilingual-translation`). Recently merged: #395
+(`codex/provider-transient-retry`) merged 2026-07-14 after main review; see
+*Recently completed*. #393
 (`codex-4/remove-reference-field-type`) merged 2026-07-14 after main review; see
 *Recently completed*. #392 (`codex-2/node-tool-context-compression`) merged
 2026-07-14 after main review; see *Recently completed*. #391
@@ -495,6 +497,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **provider-transient-request-retry** (`codex/provider-transient-retry`, PR
+  #395, codex, merged 2026-07-14, plan-track) — retries pre-stream OpenAI and
+  Azure Responses `5xx` and bounded transport failures up to four times with
+  abortable jittered backoff, independently of the existing one-time
+  premature-stream replay. Retry progress stays runtime-only in one transcript
+  tail row, concurrent Runs retain independent status, and exhausted errors
+  render after generated content and before response actions. **Gate (main):**
+  ultra code review found one concurrent-Run status-loss issue; codex fixed it
+  before merge. Verified on the exact final PR head with typecheck, 23 focused
+  Core tests, 751 renderer tests, focused Playwright coverage, light/dark visual
+  QA, `docs:check`, and `git diff --check`. Full Core's five failures reproduce
+  on `main` and come from external Presentation skill resource drift. Plan
+  archived `done`:
+  `docs/plans/archive/provider-transient-request-retry.md`.
 
 - **remove-reference-field-type** (`codex-4/remove-reference-field-type`, PR
   #393, codex-4, merged 2026-07-14, plan-track) — removes the Tenon-only
