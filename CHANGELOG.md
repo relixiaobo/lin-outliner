@@ -40,6 +40,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent Issue Manager (PR #386, codex-4)** — replaced scheduled command-node
+  and Run-centered work with durable Issues, Recurring Issues, Agent Sessions,
+  and Activity. The implementation adds recurring materialization, scoped
+  input/output snapshots, verification Sessions, crash-safe hierarchical result
+  delivery, eight model-facing Issue/Session tools, Issue-first Work views, and
+  linked terminal status rows in chat; direct Run tools and command-node
+  scheduling are retired. **Gate (main):** deep review found and codex-4 fixed
+  17 authorization, recovery, validation, continuation, UI race, accessibility,
+  transcript, and rebase-integration issues before merge, including writable
+  scope enforcement for definition mutations. Verified with typecheck, full
+  renderer tests, targeted Core and Playwright suites, light/dark visual QA,
+  docs check, diff check, and a clean merge-tree.
 - **CC Switch provider registry (PR #389, codex-3)** — replaced the CC Switch
   Codex-file mirror with read-only discovery from `~/.cc-switch/cc-switch.db`.
   Tenon now exposes direct-runnable Codex Responses sources as source-scoped

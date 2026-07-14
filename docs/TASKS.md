@@ -24,16 +24,17 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369, agent-image-generation-tool #383; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382, feed-processing-built-in #387, definition-node-edit-parity #388, cc-switch-provider-registry #389**) |
-| Codex 4 | `lin-outliner-codex-4/` | `codex-4/agent-issue-manager` | ready PR #386 (agent issue manager implementation) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped agent-issue-manager #386) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-10).** Open PR queue: #386
-(`codex-4/agent-issue-manager`). Recently merged: #390
-(`codex/pi-ai-0.80.6-upgrade`) merged 2026-07-10 after main review; see
+**In flight (2026-07-14).** Open PR queue: none. Recently merged: #386
+(`codex-4/agent-issue-manager`) merged 2026-07-14 after main review; see
+*Recently completed*. #390 (`codex/pi-ai-0.80.6-upgrade`) merged 2026-07-10
+after main review; see
 *Recently completed*. #389 (`codex-3/cc-switch-provider-registry`) merged
 2026-07-09 after main review; see *Recently completed*. #388
 (`codex-3/definition-node-edit-parity`) and
@@ -278,15 +279,6 @@ before any directional/security-sensitive build.
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-issue-manager** (P1, plan merged #384, implementation pending) —
-  replaces scheduled command / Run-centered work with a clean Issue-based agent
-  work model: Issues and sub-issues for durable work, Recurring Issues for
-  cadence, Agent Sessions for execution, and Activity for progress/audit. Shape
-  is one complete implementation PR by PM decision, with no migration or
-  back-compat reader because the product is pre-release. Implementation must
-  checkpoint the shared protocol, tool, permission, and schema contracts inside
-  that PR before runtime, renderer, Dream, or scheduler layers build on them.
-  See `docs/plans/agent-issue-manager.md`.
 - **agent-browser-control** (P1, plan merged #361, implementation pending) —
   Tenon-native browser-use tool family covering the useful `browser-pilot`
   surface: CDP-backed logged-in browser sessions, Pilot tabs, observe/read,
@@ -497,6 +489,24 @@ anything.
 
 ## Recently completed
 
+- **agent-issue-manager** (`codex-4/agent-issue-manager`, PR #386, codex-4,
+  merged 2026-07-14, plan-track) — replaces scheduled command-node and
+  Run-centered work with durable Issues, Recurring Issues, Agent Sessions, and
+  Activity. It adds recurring materialization, scoped input/output snapshots,
+  verification Sessions, crash-safe hierarchical result delivery, eight
+  model-facing Issue/Session tools, Issue-first Work views, and linked terminal
+  status rows in chat; direct Run tools and command-node scheduling are retired.
+  **Gate (main):** deep review found 17 issues across authorization, restore and
+  outbox recovery, preview validation, continuation contracts, event refresh
+  races, nested dialog focus, pagination, transcript semantics, and rebase
+  integration. Codex-4 fixed all findings, including writable-node enforcement
+  for definition mutations, before merge. Verified on the final PR head with
+  typecheck, full renderer tests, targeted Core and Playwright suites,
+  light/dark visual QA, `docs:check`, `git diff --check`, and a clean merge-tree.
+  The full Core suite retained only the existing external Presentation-skill
+  baseline failures. Plan archived `done`:
+  `docs/plans/archive/agent-issue-manager.md`.
+
 - **pi-ai-0.80.6-upgrade** (`codex/pi-ai-0.80.6-upgrade`, PR #390,
   codex, merged 2026-07-10, plan-track) — upgrades
   `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` from `0.80.3`
@@ -612,8 +622,9 @@ anything.
   found PR-shape, authorization, Dream-boundary, AgentRef, recurring
   materialization, and tool-naming risks; codex-4 revised the plan and the PM
   explicitly kept the one-PR / no-compat requirement. Verified on the merge with
-  `bun run docs:check` and `git diff --check`. Shape (a), active plan file:
-  `docs/plans/agent-issue-manager.md`.
+  `bun run docs:check` and `git diff --check`. Shape (a), later shipped by PR
+  #386; plan archived `done`:
+  `docs/plans/archive/agent-issue-manager.md`.
 
 - **channel-create-inline-rename** (`codex-3/channel-create-inline-rename`,
   PR #382, codex-3, merged 2026-07-06, plan-track) — makes Channel creation a
