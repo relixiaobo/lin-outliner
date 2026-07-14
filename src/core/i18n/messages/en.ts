@@ -860,6 +860,8 @@ commandPalette: {
       // connect-a-provider onboarding (gated on loaded provider settings).
       onboardingText: 'Connect an AI provider to start.',
       onboardingCta: 'Open Settings › Providers',
+      reconnecting: ({ attempt, maxRetries }: { attempt: number; maxRetries: number }) =>
+        `Reconnecting ${attempt}/${maxRetries}`,
       showConversations: 'Show conversations',
       newConversation: 'New Channel',
       createChannel: 'Create Channel',

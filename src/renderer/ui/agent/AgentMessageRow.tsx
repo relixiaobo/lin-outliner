@@ -801,8 +801,8 @@ function AgentMessageRowComponent({
         </div>
       ) : null}
       <AgentAssistantContent highlighted={highlighted}>
-        {hasError ? <AgentMessageError message={displayError} /> : null}
         {assistantBlocks}
+        {hasError ? <AgentMessageError message={displayError} /> : null}
         {stopped && !turnActive && assistantBlocks.length === 0 ? (
           <div className="agent-message-stopped">
             <StopIcon size={ICON_SIZE.menu} aria-hidden />

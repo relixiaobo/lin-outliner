@@ -794,6 +794,7 @@ commandPalette: {
     chat: {
       onboardingText: '连接一个 AI 服务商即可开始。',
       onboardingCta: '打开设置 › 服务商',
+      reconnecting: ({ attempt, maxRetries }) => `正在重新连接 ${attempt}/${maxRetries}`,
       showConversations: '显示对话',
       newConversation: '新建频道',
       createChannel: '创建频道',

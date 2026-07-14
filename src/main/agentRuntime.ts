@@ -38,6 +38,7 @@ import {
   type AgentDebugRun,
   type AgentDebugRunSummary,
   type AgentMessage,
+  type AgentProviderRetryEvent,
   type AgentRunNodeChanges,
   type AgentRunDetailPayload,
   type AgentRunListEntry,
@@ -350,7 +351,10 @@ import {
   type AgentRenderDreamRunEntity,
   type AgentRenderRunStatus,
 } from '../core/agentRenderProjection';
-import { createAbortSettledStreamFn } from './agentStreamAbort';
+import {
+  createAbortSettledStreamFn,
+  type ProviderRetryLifecycleEvent,
+} from './agentStreamAbort';
 import { awaitWithAbort, throwIfAborted } from './agentAwaitWithAbort';
 import { shouldFireDateSchedule } from '../core/dateSchedule';
 import {
@@ -2956,6 +2960,12 @@ export class AgentRuntime {
             const current = conversationRef.current;
             return current ? this.activeRunId(current) : null;
           },
+          providerRetryContextProvider: () => {
+            const current = conversationRef.current;
+            const runId = current ? this.activeRunId(current) : null;
+            return runId ? { conversationId, runId } : null;
+          },
+          providerRetryEventHandler: (event) => this.emitProviderRetry(event),
           streamFn: this.options.streamFn,
           completeSimpleFn: this.options.completeSimpleFn,
           providerApiKeyLoader: this.options.providerApiKeyLoader,
@@ -3198,6 +3208,11 @@ export class AgentRuntime {
       disallowedTools: input.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
       permissionScopeIdProvider: () => input.conversationId,
+      providerRetryContextProvider: () => ({
+        conversationId: parentConversationId,
+        runId: input.runId,
+      }),
+      providerRetryEventHandler: (event) => this.emitProviderRetry(event),
       // Runtime-owned unattended executions have NO interactive approval channel:
       // leaving it undefined makes an 'ask' decision resolve to a denial that is
       // surfaced in the conversation, rather than hanging on a human who will
@@ -5013,6 +5028,11 @@ export class AgentRuntime {
         pastChats: this.createPastChatsToolRuntime(() => DEFAULT_DREAM_CHANNEL_ID),
         allowedTools: [...allowedTools],
         preapprovedToolRules: [...allowedTools],
+        providerRetryContextProvider: () => ({
+          conversationId: DEFAULT_DREAM_CHANNEL_ID,
+          runId: task.runId,
+        }),
+        providerRetryEventHandler: (event) => this.emitProviderRetry(event),
         streamFn: this.options.streamFn,
         completeSimpleFn: this.options.completeSimpleFn,
         providerApiKeyLoader: this.options.providerApiKeyLoader,
@@ -5619,6 +5639,14 @@ export class AgentRuntime {
       type: 'conversation_attention',
       conversationId,
       unreadCount: attention?.unreadCount ?? 0,
+      timestamp: Date.now(),
+    });
+  }
+
+  private emitProviderRetry(input: Omit<AgentProviderRetryEvent, 'type' | 'timestamp'>) {
+    this.emit({
+      type: 'provider_retry',
+      ...input,
       timestamp: Date.now(),
     });
   }
@@ -8725,6 +8753,7 @@ function canContinueFromMessage(message: AgentMessage | undefined): boolean {
 function createProviderConfiguredStreamFn(
   sourceFn: StreamFn,
   runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>,
+  onProviderRetry?: (event: ProviderRetryLifecycleEvent) => void,
 ): StreamFn {
   return createAbortSettledStreamFn(async (model, context, options = {}) => {
     const runtimeSettings = await loadRuntimeSettingsForStream(runtimeSettingsLoader);
@@ -8738,7 +8767,7 @@ function createProviderConfiguredStreamFn(
         return callbackPayload ?? profiledPayload;
       },
     } satisfies SimpleStreamOptions);
-  });
+  }, { onProviderRetry });
 }
 
 async function loadRuntimeSettingsForStream(
@@ -8826,6 +8855,8 @@ function createConfiguredAgent(
     preapprovedToolRules?: string[];
     l0CacheBreakpointEnabled?: boolean;
     permissionScopeIdProvider?: () => string | null;
+    providerRetryContextProvider?: () => Pick<AgentProviderRetryEvent, 'conversationId' | 'runId'> | null;
+    providerRetryEventHandler?: (event: Omit<AgentProviderRetryEvent, 'type' | 'timestamp'>) => void;
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
     streamFn?: StreamFn;
     completeSimpleFn?: CompleteSimpleFn;
@@ -8845,6 +8876,7 @@ function createConfiguredAgent(
   let syncedLocalPermissionRootSignature = '';
   let runScopedPermissionScopeId: string | null = null;
   let runScopedPermissionGrants: AgentPermissionGrant[] = [];
+  let activeProviderRetryContext: Pick<AgentProviderRetryEvent, 'conversationId' | 'runId'> | null = null;
   const currentRunScopedPermissionGrants = () => {
     const scopeId = options.permissionScopeIdProvider?.() ?? conversationId;
     if (runScopedPermissionScopeId !== scopeId) {
@@ -8854,6 +8886,17 @@ function createConfiguredAgent(
     return runScopedPermissionGrants;
   };
   const systemPrompt = options.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT;
+  const onProviderRetry = options.providerRetryEventHandler
+    ? (event: ProviderRetryLifecycleEvent) => {
+        if (event.phase === 'retrying' && !activeProviderRetryContext) {
+          activeProviderRetryContext = options.providerRetryContextProvider?.() ?? null;
+        }
+        if (activeProviderRetryContext) {
+          options.providerRetryEventHandler?.({ ...activeProviderRetryContext, ...event });
+        }
+        if (event.phase === 'cleared') activeProviderRetryContext = null;
+      }
+    : undefined;
   let activeLoopModel = model;
   let activeThinkingLevel = options.thinkingLevel ?? defaultThinkingLevel(model);
   const buildTools = () => createAgentTools(outlinerToolHost, {
@@ -8879,7 +8922,11 @@ function createConfiguredAgent(
       tools: buildTools(),
       messages,
     },
-    streamFn: createProviderConfiguredStreamFn(options.streamFn ?? piStreamSimple as StreamFn, options.runtimeSettingsLoader),
+    streamFn: createProviderConfiguredStreamFn(
+      options.streamFn ?? piStreamSimple as StreamFn,
+      options.runtimeSettingsLoader,
+      onProviderRetry,
+    ),
     onPayload: async (payload, payloadModel) => {
       const payloadWithBreakpoints = applyAgentPromptCacheBreakpoints(payload, payloadModel, {
         enabled: options.l0CacheBreakpointEnabled ?? false,

@@ -510,6 +510,18 @@ export interface AgentClosedEvent {
   timestamp: number;
 }
 
+/** Runtime-only provider retry state. Never persisted in the agent event log. */
+export interface AgentProviderRetryEvent {
+  type: 'provider_retry';
+  conversationId: string;
+  runId: string;
+  phase: 'retrying' | 'cleared';
+  kind: 'request' | 'stream';
+  attempt: number;
+  maxRetries: number;
+  timestamp: number;
+}
+
 export interface AgentToolCallEvent {
   type: 'tool_call';
   conversationId: string;
@@ -624,6 +636,7 @@ export type AgentRuntimeEvent =
   | AgentReadyEvent
   | AgentErrorEvent
   | AgentClosedEvent
+  | AgentProviderRetryEvent
   | AgentToolCallEvent
   | AgentToolResultEvent
   | AgentApprovalRequestEvent

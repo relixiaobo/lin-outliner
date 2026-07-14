@@ -62,6 +62,7 @@ import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentIssueNotificationRow } from './AgentIssueNotificationRow';
 import { AgentMessageRow } from './AgentMessageRow';
+import { AgentProviderRetryStatus } from './AgentProviderRetryStatus';
 import {
   buildConversationRenderRows,
   getEntryRole,
@@ -490,6 +491,7 @@ export function AgentChatPanel({
   const {
     entries,
     error,
+    providerRetry,
     runActive,
     modelApi,
     modelId,
@@ -522,6 +524,7 @@ export function AgentChatPanel({
   // A run in flight gates transcript rewrites (edit/regenerate/retry/branch),
   // which stay blocked while the log moves.
   const anyRunActive = runActive;
+  const providerRetryVisible = providerRetry !== null;
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [queuedSteer, setQueuedSteer] = useState<QueuedSteerState | null>(null);
@@ -1003,7 +1006,7 @@ export function AgentChatPanel({
     const element = scrollRef.current;
     if (!element || !stickToBottomRef.current) return;
     scheduleScrollToBottom();
-  }, [conversationRows.length, runActive, scheduleScrollToBottom, virtualLayout.totalHeight]);
+  }, [conversationRows.length, providerRetryVisible, runActive, scheduleScrollToBottom, virtualLayout.totalHeight]);
 
   useLayoutEffect(() => {
     const pendingScroll = pendingUserMessageScrollRef.current;
@@ -2017,6 +2020,7 @@ export function AgentChatPanel({
                 })}
               </div>
             )}
+            {providerRetry ? <AgentProviderRetryStatus status={providerRetry} /> : null}
           </div>
 
           <div className="agent-composer-region">

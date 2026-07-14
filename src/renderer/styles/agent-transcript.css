@@ -31,6 +31,25 @@
   gap: 0;
 }
 
+.agent-provider-retry-status {
+  display: flex;
+  min-width: 0;
+  min-height: var(--control-size-sm);
+  flex: 0 0 var(--control-size-sm);
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  margin-top: var(--space-6);
+  user-select: none;
+}
+
+.agent-provider-retry-spinner {
+  flex: 0 0 auto;
+  animation: agent-spin var(--motion-spin-cycle) linear infinite;
+}
+
 .agent-chat-flow-row {
   min-width: 0;
   border-radius: var(--radius-md);

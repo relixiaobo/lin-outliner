@@ -8,6 +8,7 @@ import type {
   AgentApprovalResolutionScope,
   AgentMessageAttachmentInput,
   AgentMessageBranchState,
+  AgentProviderRetryEvent,
   AgentRuntimeEvent,
   AgentToolResultWithPayloads,
   AgentUserQuestionPendingView,
@@ -146,6 +147,11 @@ export type AgentConversationEntry =
   | AgentDreamEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
+
+export type AgentProviderRetryStatus = Omit<
+  AgentProviderRetryEvent,
+  'type' | 'conversationId' | 'phase'
+>;
 
 const EMPTY_PROJECTION: AgentRenderProjection = {
   conversationId: '',
@@ -722,6 +728,7 @@ export interface AgentRuntimeClient {
 export interface LinAgentRuntimeView {
   entries: AgentConversationEntry[];
   error: string | null;
+  providerRetry: AgentProviderRetryStatus | null;
   /** Composer run state: drives the composer's stop/steer affordance. */
   runActive: boolean;
   modelApi: string | null;
@@ -840,6 +847,7 @@ export class AgentRuntimeStore {
   private projection: AgentRenderProjection = EMPTY_PROJECTION;
   private conversationId: string | null = null;
   private error: string | null = null;
+  private readonly providerRetries = new Map<string, AgentProviderRetryStatus>();
   private readonly pendingApprovals = new Map<string, AgentApprovalRequestView>();
   private pendingApprovalOrder: string[] = [];
   private readonly pendingUserQuestions = new Map<string, AgentUserQuestionPendingView>();
@@ -894,6 +902,7 @@ export class AgentRuntimeStore {
     this.conversationId = targetConversationId;
     this.projection = EMPTY_PROJECTION;
     this.error = null;
+    this.providerRetries.clear();
     this.clearPendingApprovalState();
     this.publish();
     try {
@@ -916,6 +925,7 @@ export class AgentRuntimeStore {
     this.conversationId = null;
     this.projection = EMPTY_PROJECTION;
     this.error = null;
+    this.providerRetries.clear();
     this.clearPendingApprovalState();
     this.publish();
     try {
@@ -935,6 +945,7 @@ export class AgentRuntimeStore {
     this.conversationId = null;
     this.projection = EMPTY_PROJECTION;
     this.error = null;
+    this.providerRetries.clear();
     this.restorePromise = null;
     this.clearPendingApprovalState();
     this.publish();
@@ -1239,6 +1250,7 @@ export class AgentRuntimeStore {
     this.conversationId = conversation.conversationId;
     this.projection = conversation.renderProjection;
     this.error = conversation.renderProjection.errorMessage;
+    this.providerRetries.clear();
     this.clearPendingApprovalState();
     if (conversation.pendingUserQuestion) this.addPendingUserQuestion(conversation.pendingUserQuestion);
     this.conversationPreferenceStore?.writeLastConversationId(conversation.conversationId);
@@ -1255,8 +1267,24 @@ export class AgentRuntimeStore {
         this.restorePromise = null;
         this.projection = EMPTY_PROJECTION;
         this.error = null;
+        this.providerRetries.clear();
         this.clearPendingApprovalState();
         this.conversationPreferenceStore?.writeLastConversationId(null);
+        this.publish();
+      }
+      return;
+    }
+
+    if (payload.type === 'provider_retry') {
+      if (payload.conversationId !== this.conversationId) return;
+      if (payload.phase === 'retrying') {
+        const { runId, kind, attempt, maxRetries, timestamp } = payload;
+        // Map insertion order is the display priority. Reinsert updates so the
+        // most recently changed concurrent Run owns the single transient row.
+        this.providerRetries.delete(runId);
+        this.providerRetries.set(runId, { runId, kind, attempt, maxRetries, timestamp });
+        this.publish();
+      } else if (this.providerRetries.delete(payload.runId)) {
         this.publish();
       }
       return;
@@ -1452,6 +1480,7 @@ export class AgentRuntimeStore {
     return {
       entries,
       error: this.error,
+      providerRetry: this.currentProviderRetry(),
       runActive: this.projection.runActive,
       modelApi: projectionModelValue(this.projection, 'api'),
       modelId: projectionModelValue(this.projection, 'id'),
@@ -1495,6 +1524,12 @@ export class AgentRuntimeStore {
       reloadConversation: this.reloadConversation,
       seedUserMessage: this.seedUserMessage,
     };
+  }
+
+  private currentProviderRetry(): AgentProviderRetryStatus | null {
+    let current: AgentProviderRetryStatus | null = null;
+    for (const retry of this.providerRetries.values()) current = retry;
+    return current;
   }
 
   private addPendingApproval(request: AgentApprovalRequestView) {

@@ -236,4 +236,81 @@ describe('agent runtime stop', () => {
     expect(replayed.messages[message.id]?.status).toBe('failed');
     expect(persistedText(replayed.messages[message.id]?.content)).toBe(partialText);
   });
+
+  test('emits runtime-only retry status around a recovered provider request', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-retry-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-retry-data-'));
+    roots.push(localRoot, dataRoot);
+
+    let attempts = 0;
+    const streamFn = ((model: Model<Api>) => {
+      attempts += 1;
+      const stream = createAssistantMessageEventStream();
+      const message: AssistantMessage = {
+        ...fauxAssistantMessage(
+          attempts === 1 ? [] : fauxText('Recovered response.'),
+          attempts === 1
+            ? { stopReason: 'error', errorMessage: 'OpenAI API error (524): upstream timeout' }
+            : { stopReason: 'stop' },
+        ),
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+      };
+      queueMicrotask(() => {
+        if (attempts === 1) {
+          stream.push({ type: 'error', reason: 'error', error: message });
+        } else {
+          stream.push({ type: 'start', partial: message });
+          stream.push({ type: 'text_start', contentIndex: 0, partial: message });
+          stream.push({ type: 'text_delta', contentIndex: 0, delta: 'Recovered response.', partial: message });
+          stream.push({ type: 'text_end', contentIndex: 0, content: 'Recovered response.', partial: message });
+          stream.push({ type: 'done', reason: 'stop', message });
+        }
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'gpt-5.4',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Recover this request.');
+
+    const retryEvents = sink.events.filter((event): event is Extract<AgentRuntimeEvent, { type: 'provider_retry' }> => (
+      event.type === 'provider_retry'
+    ));
+    expect(attempts).toBe(2);
+    expect(retryEvents.map(({ phase, kind, attempt, maxRetries }) => ({ phase, kind, attempt, maxRetries }))).toEqual([
+      { phase: 'retrying', kind: 'request', attempt: 1, maxRetries: 4 },
+      { phase: 'cleared', kind: 'request', attempt: 1, maxRetries: 4 },
+    ]);
+    expect(retryEvents[0]?.conversationId).toBe(created.conversationId);
+    expect(retryEvents[0]?.runId).toBeTruthy();
+    expect(retryEvents[1]?.runId).toBe(retryEvents[0]?.runId);
+
+    const projection = latestProjection(sink.events);
+    const lastRow = projection.rows.at(-1);
+    if (!lastRow) throw new Error('No response row emitted.');
+    expect(persistedText(projection.entities.messages[lastRow.messageId]?.content)).toBe('Recovered response.');
+
+    const persisted = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
+    expect(persisted.some((event) => (event as { type: string }).type === 'provider_retry')).toBe(false);
+  });
 });

@@ -10,6 +10,17 @@ import type { StreamFn } from '@earendil-works/pi-agent-core';
 import { isCustomOpenAIResponsesEndpoint } from './openAIResponsesCompat';
 
 type AssistantToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>;
+type RetryOutcome = 'settled' | 'retry-request' | 'retry-stream';
+type RequestRetryDelayMs = (retryCount: number) => number;
+
+export interface ProviderRetryLifecycleEvent {
+  phase: 'retrying' | 'cleared';
+  kind: 'request' | 'stream';
+  attempt: number;
+  maxRetries: number;
+}
+
+type ProviderRetryLifecycleHandler = (event: ProviderRetryLifecycleEvent) => void;
 
 const EMPTY_USAGE = {
   input: 0,
@@ -26,9 +37,20 @@ const EMPTY_USAGE = {
   },
 };
 
+const MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES = 4;
 const MAX_RETRYABLE_RESPONSES_TERMINATIONS = 1;
+const RESPONSES_REQUEST_RETRY_INITIAL_DELAY_MS = 200;
+const RESPONSES_REQUEST_RETRY_JITTER = 0.1;
+const RESPONSES_API_STATUS_RE = /\b(?:Azure )?OpenAI API error \((\d{3})\):/i;
+const RETRYABLE_RESPONSES_TRANSPORT_RE = /\b(?:connection error|request timed out|failed to fetch|fetch failed|network error|socket hang up|socket connection (?:was )?closed|connection reset|econnreset|etimedout|econnaborted|epipe|und_err_socket|err_connection_reset|err_network_changed)\b/i;
 
-export function createAbortSettledStreamFn(sourceFn: StreamFn): StreamFn {
+export function createAbortSettledStreamFn(
+  sourceFn: StreamFn,
+  retryOptions: {
+    requestRetryDelayMs?: RequestRetryDelayMs;
+    onProviderRetry?: ProviderRetryLifecycleHandler;
+  } = {},
+): StreamFn {
   return ((model, context, options = {}) => {
     const abortCtrl = new AbortController();
     const signal = chainAbortSignals(options.signal, abortCtrl);
@@ -42,7 +64,13 @@ export function createAbortSettledStreamFn(sourceFn: StreamFn): StreamFn {
         return Promise.reject(error);
       }
     };
-    return wrapStreamWithAbortSettling(startSource(), { abortCtrl, model, retrySource: startSource });
+    return wrapStreamWithAbortSettling(startSource(), {
+      abortCtrl,
+      model,
+      retrySource: startSource,
+      requestRetryDelayMs: retryOptions.requestRetryDelayMs,
+      onProviderRetry: retryOptions.onProviderRetry,
+    });
   }) as StreamFn;
 }
 
@@ -50,20 +78,52 @@ type AbortSettlingOptions = {
   abortCtrl: AbortController;
   model: Model<Api>;
   retrySource?: () => Promise<AssistantMessageEventStream>;
+  requestRetryDelayMs?: RequestRetryDelayMs;
+  onProviderRetry?: ProviderRetryLifecycleHandler;
 };
 
 export function wrapStreamWithAbortSettling(
   sourceInput: AssistantMessageEventStream | Promise<AssistantMessageEventStream>,
-  { abortCtrl, model, retrySource }: AbortSettlingOptions,
+  {
+    abortCtrl,
+    model,
+    retrySource,
+    requestRetryDelayMs = responsesRequestRetryDelayMs,
+    onProviderRetry,
+  }: AbortSettlingOptions,
 ): AssistantMessageEventStream {
   const out = createAssistantMessageEventStream();
   let latestPartial: AssistantMessage | null = null;
   const completedToolCallIds = new Set<string>();
   let settled = false;
-  const maxRetries = retrySource && isOpenAIResponsesModel(model) ? MAX_RETRYABLE_RESPONSES_TERMINATIONS : 0;
+  const canRetryResponses = Boolean(retrySource) && isOpenAIResponsesModel(model);
+  const maxRequestRetries = canRetryResponses ? MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES : 0;
+  const maxStreamRetries = canRetryResponses ? MAX_RETRYABLE_RESPONSES_TERMINATIONS : 0;
+  let activeRetryStatus: Omit<ProviderRetryLifecycleEvent, 'phase'> | null = null;
+
+  const emitProviderRetry = (event: ProviderRetryLifecycleEvent) => {
+    try {
+      onProviderRetry?.(event);
+    } catch {
+      // Observability must never change provider stream behavior.
+    }
+  };
+
+  const showProviderRetry = (kind: ProviderRetryLifecycleEvent['kind'], attempt: number, maxRetries: number) => {
+    activeRetryStatus = { kind, attempt, maxRetries };
+    emitProviderRetry({ phase: 'retrying', ...activeRetryStatus });
+  };
+
+  const clearProviderRetry = () => {
+    if (!activeRetryStatus) return;
+    const status = activeRetryStatus;
+    activeRetryStatus = null;
+    emitProviderRetry({ phase: 'cleared', ...status });
+  };
 
   const settleWithTerminalMessage = (message: AssistantMessage, reason: 'aborted' | 'error') => {
     if (settled) return;
+    clearProviderRetry();
     const salvage = salvageTerminatedCustomResponsesToolUse(message, model, reason, completedToolCallIds);
     if (salvage) {
       settled = true;
@@ -94,13 +154,35 @@ export function wrapStreamWithAbortSettling(
 
   void (async () => {
     let source = Promise.resolve(sourceInput);
-    let retryCount = 0;
+    let requestRetryCount = 0;
+    let streamRetryCount = 0;
     try {
       while (!settled) {
-        const outcome = await consumeSourceAttempt(source, retryCount);
-        if (outcome !== 'retry') break;
-        retryCount += 1;
+        const outcome = await consumeSourceAttempt(source, requestRetryCount, streamRetryCount);
+        if (outcome === 'settled') break;
+        if (outcome === 'retry-request') {
+          requestRetryCount += 1;
+          showProviderRetry('request', requestRetryCount, maxRequestRetries);
+          await waitForAbortableDelay(requestRetryDelayMs(requestRetryCount), abortCtrl.signal);
+          if (settled || abortCtrl.signal.aborted) break;
+        } else {
+          streamRetryCount += 1;
+          showProviderRetry('stream', streamRetryCount, maxStreamRetries);
+        }
         source = retrySource?.() ?? source;
+      }
+    } catch (error) {
+      if (!settled) {
+        const reason = abortCtrl.signal.aborted ? 'aborted' : 'error';
+        const errorMessage = reason === 'aborted'
+          ? abortMessage(abortCtrl.signal.reason)
+          : thrownErrorMessage(error);
+        settleWithTerminalMessage(buildTerminalAssistantMessage(
+          model,
+          errorMessage,
+          reason,
+          latestPartial,
+        ), reason);
       }
     } finally {
       abortCtrl.signal.removeEventListener('abort', handleAbort);
@@ -109,10 +191,12 @@ export function wrapStreamWithAbortSettling(
 
   async function consumeSourceAttempt(
     sourceInputAttempt: AssistantMessageEventStream | Promise<AssistantMessageEventStream>,
-    retryCount: number,
-  ): Promise<'settled' | 'retry'> {
+    requestRetryCount: number,
+    streamRetryCount: number,
+  ): Promise<RetryOutcome> {
     let bufferedEvents: AssistantMessageEvent[] = [];
     let flushed = false;
+    let sawStreamEvent = false;
     let sawMaterialOutput = false;
 
     const flushBufferedEvents = () => {
@@ -123,7 +207,9 @@ export function wrapStreamWithAbortSettling(
     };
 
     const pushNonTerminalEvent = (event: AssistantMessageEvent) => {
-      if (shouldBufferBeforeRetryDecision(event, retryCount, maxRetries, flushed, sawMaterialOutput)) {
+      clearProviderRetry();
+      sawStreamEvent = true;
+      if (shouldBufferBeforeRetryDecision(event, streamRetryCount, maxStreamRetries, flushed, sawMaterialOutput)) {
         bufferedEvents.push(event);
         return;
       }
@@ -146,18 +232,32 @@ export function wrapStreamWithAbortSettling(
         if (event.type === 'error') {
           const salvage = salvageTerminatedCustomResponsesToolUse(event.error, model, event.reason, completedToolCallIds);
           if (salvage) {
+            clearProviderRetry();
             flushBufferedEvents();
             settled = true;
             out.push({ type: 'done', reason: 'toolUse', message: salvage });
             out.end(salvage);
             break;
           }
-          if (canRetryTerminatedResponsesStream(event.error, event.reason, retryCount, maxRetries, sawMaterialOutput, completedToolCallIds)) {
-            return 'retry';
+          const retry = retryOutcomeForResponsesError(
+            event.error,
+            event.reason,
+            requestRetryCount,
+            maxRequestRetries,
+            streamRetryCount,
+            maxStreamRetries,
+            sawStreamEvent,
+            sawMaterialOutput,
+            completedToolCallIds,
+          );
+          if (retry) {
+            return retry;
           }
+          clearProviderRetry();
           flushBufferedEvents();
           settled = true;
         } else if (event.type === 'done') {
+          clearProviderRetry();
           flushBufferedEvents();
           settled = true;
         }
@@ -169,16 +269,21 @@ export function wrapStreamWithAbortSettling(
       }
       if (!settled) {
         const result = await source.result();
-        if (canRetryTerminatedResponsesStream(
+        const retry = retryOutcomeForResponsesError(
           result,
           result.stopReason === 'aborted' ? 'aborted' : 'error',
-          retryCount,
-          maxRetries,
+          requestRetryCount,
+          maxRequestRetries,
+          streamRetryCount,
+          maxStreamRetries,
+          sawStreamEvent,
           sawMaterialOutput,
           completedToolCallIds,
-        )) {
-          return 'retry';
+        );
+        if (retry) {
+          return retry;
         }
+        clearProviderRetry();
         flushBufferedEvents();
         settled = true;
         out.end(result);
@@ -187,19 +292,23 @@ export function wrapStreamWithAbortSettling(
       if (settled) return 'settled';
       const message = buildTerminalAssistantMessage(
         model,
-        error instanceof Error ? error.message : String(error),
+        thrownErrorMessage(error),
         abortCtrl.signal.aborted ? 'aborted' : 'error',
         latestPartial,
       );
-      if (canRetryTerminatedResponsesStream(
+      const retry = retryOutcomeForResponsesError(
         message,
         message.stopReason === 'aborted' ? 'aborted' : 'error',
-        retryCount,
-        maxRetries,
+        requestRetryCount,
+        maxRequestRetries,
+        streamRetryCount,
+        maxStreamRetries,
+        sawStreamEvent,
         sawMaterialOutput,
         completedToolCallIds,
-      )) {
-        return 'retry';
+      );
+      if (retry) {
+        return retry;
       }
       flushBufferedEvents();
       settleWithTerminalMessage(message, message.stopReason === 'aborted' ? 'aborted' : 'error');
@@ -232,19 +341,61 @@ function isMaterialStreamEvent(event: AssistantMessageEvent): boolean {
     || event.type === 'toolcall_end';
 }
 
-function canRetryTerminatedResponsesStream(
+function retryOutcomeForResponsesError(
   message: AssistantMessage,
   reason: 'aborted' | 'error',
-  retryCount: number,
-  maxRetries: number,
+  requestRetryCount: number,
+  maxRequestRetries: number,
+  streamRetryCount: number,
+  maxStreamRetries: number,
+  sawStreamEvent: boolean,
   sawMaterialOutput: boolean,
   completedToolCallIds: ReadonlySet<string>,
-): boolean {
-  return retryCount < maxRetries
-    && reason === 'error'
-    && !sawMaterialOutput
-    && completedToolCallIds.size === 0
-    && isTerminatedResponsesStreamError(message.errorMessage);
+): Exclude<RetryOutcome, 'settled'> | null {
+  if (reason !== 'error' || sawMaterialOutput || completedToolCallIds.size > 0) return null;
+  if (!sawStreamEvent
+    && requestRetryCount < maxRequestRetries
+    && isRetryableResponsesRequestError(message.errorMessage)) {
+    return 'retry-request';
+  }
+  if (streamRetryCount < maxStreamRetries && isTerminatedResponsesStreamError(message.errorMessage)) {
+    return 'retry-stream';
+  }
+  return null;
+}
+
+export function isRetryableResponsesRequestError(errorMessage: string | undefined): boolean {
+  if (!errorMessage) return false;
+  const statusMatch = RESPONSES_API_STATUS_RE.exec(errorMessage);
+  if (statusMatch) {
+    const status = Number(statusMatch[1]);
+    return status >= 500 && status <= 599;
+  }
+  return RETRYABLE_RESPONSES_TRANSPORT_RE.test(errorMessage);
+}
+
+export function responsesRequestRetryDelayMs(
+  retryCount: number,
+  random: () => number = Math.random,
+): number {
+  const exponent = Math.max(0, Math.floor(retryCount) - 1);
+  const baseDelay = RESPONSES_REQUEST_RETRY_INITIAL_DELAY_MS * (2 ** exponent);
+  const jitter = 1 - RESPONSES_REQUEST_RETRY_JITTER + random() * RESPONSES_REQUEST_RETRY_JITTER * 2;
+  return Math.round(baseDelay * jitter);
+}
+
+async function waitForAbortableDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted || delayMs <= 0) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, delayMs);
+    function finish() {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    }
+    signal.addEventListener('abort', finish, { once: true });
+    if (signal.aborted) finish();
+  });
 }
 
 export function chainAbortSignals(upstream: AbortSignal | undefined, local: AbortController): AbortSignal {
@@ -283,6 +434,10 @@ function abortMessage(reason: unknown): string {
   if (reason instanceof Error && reason.message) return reason.message;
   if (typeof reason === 'string' && reason) return reason;
   return 'Aborted';
+}
+
+function thrownErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function salvageTerminatedCustomResponsesToolUse(
