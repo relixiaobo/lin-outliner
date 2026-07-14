@@ -12,6 +12,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Queued steer consumption (PR #391, codex)** — the Agent composer now removes
+  its editable queued-steer preview as soon as the runtime persists that steer as
+  the next visible user message, even while the same Run continues. Conversation
+  identity plus the prior visible-user-message baseline prevent an older matching
+  message from clearing a new queue item; append, edit, cancel, rejection, Run
+  settlement, and conversation-switch cleanup remain intact.
 - **Structured field resolution (PR #385, codex)** — semantic `Field:: value`
   writes now reuse an existing owner field or unique field definition before
   creating a new definition, preserve existing typed field configs, infer new
