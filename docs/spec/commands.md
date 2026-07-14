@@ -84,7 +84,8 @@ here because they use the image-node commands.
 `create_tag`, `apply_tag`, `remove_tag`, `set_tag_config`, `set_field_config`,
 `create_field_def`, `create_inline_field`, `create_inline_field_after_node`,
 `reuse_field_definition`, `register_collected_option`,
-`create_collected_field_option`, `select_field_option`, `clear_field_value`.
+`create_collected_field_option`, `select_field_option`,
+`set_field_free_text_value`, `clear_field_value`, `remove_field_value`.
 
 User tag and field definitions are reusable only while they are active: the
 definition node must exist, have the expected `tagDef` / `fieldDef` type, and not
@@ -107,6 +108,10 @@ toggles the owner node's done state.
 `replace_node_with_reference`, `replace_node_with_reference_conversion`,
 `replace_node_with_inline_reference`, `convert_reference_to_inline_node`,
 `restore_inline_reference_node_to_reference`.
+
+The generic reference commands also operate under a plain field entry. A
+whole-row field value is therefore a normal `reference` child, not a separate
+field type or command surface.
 
 ### Document — search and dates
 `search_nodes`, `backlinks`, `ensure_date_node`, `ensure_tag_search`,

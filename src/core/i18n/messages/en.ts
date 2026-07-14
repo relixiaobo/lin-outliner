@@ -671,7 +671,6 @@ commandPalette: {
       selectOption: 'Select option',
       empty: 'Empty',
       datePlaceholder: 'Press Space to pick a date…',
-      referencePlaceholder: 'Search for a node to reference…',
       fieldValueAriaLabel: 'Field value',
       // Boolean (checkbox) whole-field control.
       booleanYes: 'Yes',

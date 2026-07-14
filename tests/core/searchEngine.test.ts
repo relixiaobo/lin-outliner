@@ -155,8 +155,8 @@ describe('core search engine', () => {
       ...plainText('Inline target'),
       inlineRefs: [{ offset: 7, target: nodeReferenceTarget(target), displayName: 'Target' }],
     }));
-    const fieldEntry = mustFocus(core.createInlineField(fieldSource, null, 'Related', 'reference'));
-    core.addFieldReference(fieldEntry, target);
+    const fieldEntry = mustFocus(core.createInlineField(fieldSource, null, 'Related', 'plain'));
+    core.addReference(fieldEntry, target, null);
     core.addReference(trashedSource, target, null);
     core.trashNode(trashedSource);
 
@@ -285,8 +285,8 @@ describe('core search engine', () => {
       inlineRefs: [{ offset: 0, target: nodeReferenceTarget(target), displayName: 'Target' }],
     }));
     const fieldSource = mustFocus(core.createNode(today, null, 'Field source'));
-    const fieldEntry = mustFocus(core.createInlineField(fieldSource, null, 'Related', 'reference'));
-    core.addFieldReference(fieldEntry, target);
+    const fieldEntry = mustFocus(core.createInlineField(fieldSource, null, 'Related', 'plain'));
+    core.addReference(fieldEntry, target, null);
 
     const competitorSourceA = mustFocus(core.createNode(today, null, 'Competitor source A'));
     const competitorSourceB = mustFocus(core.createNode(today, null, 'Competitor source B'));

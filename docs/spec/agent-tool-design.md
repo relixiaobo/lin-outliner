@@ -1287,17 +1287,18 @@ Rules:
   user field definition with that normalized display name; otherwise a new user
   field definition. Matching trims outer whitespace, collapses internal
   whitespace, case-folds, and ignores trashed entries/definitions.
-- Existing field types win. Reused `url`, `date`, `number`, `email`,
-  `checkbox`, `reference`, `options`, and `options_from_supertag` definitions
-  keep their stored type/config, and values are validated against that type
-  before mutation.
+- Existing field types win. Reused `plain`, `url`, `date`, `number`, `email`,
+  `checkbox`, `options`, and `options_from_supertag` definitions keep their
+  stored type/config, and values are validated against that type before
+  mutation. Plain fields accept text, inline references, whole-row reference
+  values, or a mixture.
 - Reused `options` fields use option semantics: text values select an existing
   option by name when present and otherwise collect a local option value; node
   reference values select that exact option node. Reused `options_from_supertag`
   fields require node reference values and core validates that the target node
   belongs to the configured source supertag.
-- New field definitions use conservative inference only: all node references
-  become `reference`; canonical date values become `date`; finite numbers become
+- New field definitions use conservative inference only: node-reference values
+  remain values under `plain`; canonical date values become `date`; finite numbers become
   `number`; URL-shaped text becomes `url`; email-shaped text becomes `email`;
   `true` / `false` become `checkbox`; everything else becomes `plain`. Outline
   parsing never infers `options` or `options_from_supertag`.
@@ -1313,8 +1314,8 @@ Rules:
   `docs/spec/date-field-values.md`: `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or
   `start/end` with `/`, for example `2026-05-20/2026-05-24`. Tool prompts and
   search query operands must not teach `..` or other date range syntax.
-- Whole-line `[[node:Display^...]]` creates a reference node or reference field
-  value.
+- Whole-line `[[node:Display^...]]` creates a reference node, including a
+  reference-valued child when the line is under a plain field.
 - Inline `[[node:Display^...]]` creates an inline reference inside node text or a
   field value.
 - A line whose title is a Markdown code fence, for example `- \`\`\`ts`,

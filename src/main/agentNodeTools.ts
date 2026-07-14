@@ -2151,7 +2151,6 @@ const FIELD_TYPES: readonly FieldType[] = [
   'url',
   'email',
   'checkbox',
-  'reference',
 ];
 
 const HIDE_FIELD_MODES: readonly HideFieldMode[] = ['never', 'empty', 'not_empty', 'value_is_default', 'always'];
@@ -3763,11 +3762,6 @@ async function appendFieldValue(
   fieldType: FieldType,
 ): Promise<string[]> {
   const before = new Set(activeChildIds(indexProjection(host.getProjection()), fieldEntryId));
-  if (fieldType === 'reference') {
-    if (!value.targetId) throw new Error('Reference field values must use [[node:Display^id]].');
-    await host.handle('add_field_reference', { fieldEntryId, targetNodeId: value.targetId });
-    return appendedChildIds(host, fieldEntryId, before);
-  }
   if (fieldType === 'options') {
     if (value.targetId) {
       await host.handle('select_field_option', { fieldEntryId, optionNodeId: value.targetId });
@@ -3780,6 +3774,10 @@ async function appendFieldValue(
     if (!value.targetId) throw new Error('Options-from-supertag field values must use [[node:Display^id]].');
     await host.handle('select_field_option', { fieldEntryId, optionNodeId: value.targetId });
     return appendedChildIds(host, fieldEntryId, before);
+  }
+  if (value.targetId) {
+    if (fieldType !== 'plain') throw new Error(`${fieldType} field values cannot store node references.`);
+    return [await addReference(host, fieldEntryId, value.targetId, null)];
   }
   return [await createPlainNode(host, fieldEntryId, null, value.text)];
 }

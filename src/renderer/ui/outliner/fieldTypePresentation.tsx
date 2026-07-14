@@ -8,7 +8,6 @@ import {
   ICON_SIZE,
   OptionsIcon,
   PlainTextIcon,
-  ReferenceIcon,
   UrlIcon,
 } from '../icons';
 import { fieldTypeLabel as registryFieldTypeLabel } from '../fields/fieldTypeRegistry';
@@ -29,11 +28,10 @@ const FIELD_TYPE_ICONS = {
   url: UrlIcon,
   email: EmailIcon,
   checkbox: CheckboxIcon,
-  reference: ReferenceIcon,
 } satisfies Record<FieldType, FieldIconComponent>;
 
 export function FieldTypeIcon({ fieldType, size = ICON_SIZE.rowGlyph }: FieldTypeIconProps) {
-  const Icon = FIELD_TYPE_ICONS[fieldType ?? 'plain'] ?? PlainTextIcon;
+  const Icon = FIELD_TYPE_ICONS[fieldType ?? 'plain'];
   return <Icon size={size} />;
 }
 

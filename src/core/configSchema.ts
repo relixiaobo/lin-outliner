@@ -118,7 +118,6 @@ const EXPOSED_FIELD_TYPES: readonly FieldType[] = [
   'url',
   'email',
   'checkbox',
-  'reference',
 ];
 
 const AUTO_INIT_STRATEGIES: readonly AutoInitStrategy[] = [

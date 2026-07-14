@@ -49,10 +49,10 @@ async function createReferencesFixture(page: Page): Promise<string> {
       text: 'Beta child',
       id: 'reference-source-child',
     });
-    await win.lin?.invoke('add_field_reference', {
-      fieldEntryId: fixtureIds.referencesEntry,
-      targetNodeId: fixtureIds.alpha,
-      id: 'reference-value-alpha',
+    await win.lin?.invoke('add_reference', {
+      parentId: fixtureIds.referencesEntry,
+      targetId: fixtureIds.alpha,
+      index: null,
     });
     return referenceResult?.focus?.nodeId ?? '';
   }, { ...ids, longUnlinkedText: LONG_UNLINKED_TEXT, sourceDescription: SOURCE_DESCRIPTION });
@@ -62,7 +62,7 @@ async function createReferencesFixture(page: Page): Promise<string> {
 }
 
 test('NodePanel references footer shows linked and unlinked sources, and Link converts a mention', async ({ page }) => {
-  await openMockedApp(page, { referenceField: true });
+  await openMockedApp(page, { relatedField: true });
   await createReferencesFixture(page);
 
   await expect(page.locator('.row-reference-counter')).toHaveCount(0);
@@ -178,7 +178,7 @@ test('NodePanel references footer shows linked and unlinked sources, and Link co
 });
 
 test('opening a reference row renders the target node page, not the reference shell', async ({ page }) => {
-  await openMockedApp(page, { referenceField: true });
+  await openMockedApp(page, { relatedField: true });
   const referenceId = await createReferencesFixture(page);
 
   await row(page, referenceId).getByRole('button', { name: 'Open' }).click();

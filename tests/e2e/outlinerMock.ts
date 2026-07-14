@@ -33,7 +33,7 @@ export const ids = {
 interface MockFixtureOptions {
   dateField?: boolean;
   optionsField?: boolean;
-  referenceField?: boolean;
+  relatedField?: boolean;
   /** Adds an OAuth sign-in provider (GitHub Copilot) to the catalog for the OAuth specs. */
   oauthProvider?: boolean;
   /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
@@ -1230,26 +1230,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(fieldEntryId, valueId);
       return outcome({ nodeId: fieldEntryId, selectAll: false });
     };
-    // Append a reference to an arbitrary document node (the reference field picker).
-    // Unlike selectOption the target is any node, not a pool option, but the append
-    // is identical: a deduped `reference` value child. Mirrors core.addFieldReference.
-    const addFieldReference = (fieldEntryId: string, targetNodeId: string, id?: string) => {
-      const fieldEntry = nodes.get(fieldEntryId);
-      const target = nodes.get(targetNodeId);
-      if (!fieldEntry || !target) return outcome();
-      const targetId = optionTargetId(target);
-      if (fieldEntry.children.some((childId) => childId === targetId || nodes.get(childId)?.targetId === targetId)) {
-        return outcome({ nodeId: fieldEntryId, selectAll: false });
-      }
-      const valueId = id ?? `reference-value-${++sequence}`;
-      makeNode(valueId, nodes.get(targetId)?.content.text ?? target.content.text, {
-        type: 'reference',
-        parentId: fieldEntryId,
-        targetId,
-      });
-      appendChild(fieldEntryId, valueId);
-      return outcome({ nodeId: fieldEntryId, selectAll: false });
-    };
     const createCollectedOption = (fieldEntryId: string, name: string, id?: string) => {
       const fieldEntry = nodes.get(fieldEntryId);
       const normalized = name.trim();
@@ -1536,18 +1516,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         fieldType: 'date',
       });
     }
-    if (options.referenceField) {
+    if (options.relatedField) {
       makeNode(ids.referencesField, 'Related', {
         type: 'fieldDef',
         parentId: ids.schema,
-        fieldType: 'reference',
+        fieldType: 'plain',
         nullable: true,
       });
       makeNode(ids.referencesEntry, 'Related', {
         type: 'fieldEntry',
         parentId: ids.today,
         fieldDefId: ids.referencesField,
-        fieldType: 'reference',
+        fieldType: 'plain',
       });
     }
     // Daily-note date pages are locked in core (`freshId('date')` + `locked: true`):
@@ -1576,11 +1556,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(ids.priorityField, ids.priorityLow);
     }
     if (options.dateField) appendChild(ids.schema, ids.dueField);
-    if (options.referenceField) appendChild(ids.schema, ids.referencesField);
+    if (options.relatedField) appendChild(ids.schema, ids.referencesField);
     appendChild(ids.daily, ids.today);
     if (options.optionsField) appendChild(ids.today, ids.priorityEntry);
     if (options.dateField) appendChild(ids.today, ids.dueEntry);
-    if (options.referenceField) appendChild(ids.today, ids.referencesEntry);
+    if (options.relatedField) appendChild(ids.today, ids.referencesEntry);
     for (const childId of [ids.alpha, ids.beta, ids.gamma]) appendChild(ids.today, childId);
 
     Object.defineProperty(navigator, 'clipboard', {
@@ -2883,13 +2863,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(selectOption(
             String(args.fieldEntryId),
             String(args.optionNodeId),
-            typeof args.id === 'string' ? args.id : undefined,
-          ));
-        }
-        if (cmd === 'add_field_reference') {
-          return clone(addFieldReference(
-            String(args.fieldEntryId),
-            String(args.targetNodeId),
             typeof args.id === 'string' ? args.id : undefined,
           ));
         }

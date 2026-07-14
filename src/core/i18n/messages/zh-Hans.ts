@@ -617,7 +617,6 @@ commandPalette: {
       selectOption: '选择选项',
       empty: '空',
       datePlaceholder: '按空格键选择日期…',
-      referencePlaceholder: '搜索要引用的节点…',
       fieldValueAriaLabel: '字段值',
       // 布尔（复选框）整字段控件。
       booleanYes: '是',

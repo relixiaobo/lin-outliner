@@ -115,7 +115,6 @@ export function fieldTypeForFieldEntry(
 export function inferFieldTypeFromValues(values: readonly FieldResolutionValue[]): FieldType {
   const nonEmpty = values.filter((value) => value.targetId || value.text.trim().length > 0);
   if (nonEmpty.length === 0) return 'plain';
-  if (nonEmpty.every((value) => Boolean(value.targetId))) return 'reference';
   if (nonEmpty.some((value) => value.targetId)) return 'plain';
 
   const texts = nonEmpty.map((value) => value.text.trim());
@@ -136,14 +135,6 @@ export function validateFieldValuesForType(
   if (nonEmpty.length === 0) return { ok: true };
   const label = fieldName.trim() || 'Field';
 
-  if (fieldType === 'reference') {
-    if (nonEmpty.every((value) => Boolean(value.targetId))) return { ok: true };
-    return {
-      ok: false,
-      error: `Field "${label}" is a reference field and requires node reference values.`,
-      instructions: 'Use [[node:Display^id]] field values, or choose a plain field for free text.',
-    };
-  }
   if (fieldType === 'options_from_supertag') {
     if (nonEmpty.every((value) => Boolean(value.targetId))) return { ok: true };
     return {
@@ -152,11 +143,11 @@ export function validateFieldValuesForType(
       instructions: 'Use [[node:Display^id]] values that point to nodes carrying the configured source supertag.',
     };
   }
-  if (fieldType !== 'options' && nonEmpty.some((value) => value.targetId)) {
+  if (fieldType !== 'plain' && fieldType !== 'options' && nonEmpty.some((value) => value.targetId)) {
     return {
       ok: false,
       error: `Field "${label}" is a ${fieldType} field and cannot store node reference values.`,
-      instructions: 'Use a reference field for node references, or use text values that match this field type.',
+      instructions: 'Use a plain field for arbitrary node references, or use values that match this field type.',
     };
   }
 

@@ -1715,26 +1715,24 @@ test.describe('outliner options field inline value', () => {
   });
 });
 
-test.describe('outliner reference field inline value', () => {
+test.describe('outliner plain field reference values', () => {
   test.beforeEach(async ({ page }) => {
-    await openMockedApp(page, { referenceField: true });
+    await openMockedApp(page, { relatedField: true });
   });
 
-  test('reference field value references an existing node picked from the inline node search', async ({ page }) => {
-    // The reference field's trailing draft is a node-search box: focusing it opens
-    // the picker over the whole document, typing filters it.
+  test('plain field creates a whole-row reference through the normal @ trigger', async ({ page }) => {
     await trailingEditor(page, ids.referencesEntry).click();
+    await page.keyboard.type('@Alpha');
     const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
     await expect(listbox).toBeVisible();
-
-    await page.keyboard.type('Alpha');
-    await expect(listbox.getByRole('option', { name: 'Alpha' })).toBeVisible();
+    await expect(listbox.getByRole('option', { name: 'Alpha', exact: true })).toBeVisible();
     await page.keyboard.press('Enter');
-
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toHaveCount(0);
 
-    // The picked node renders as a reference row in the value cell (the shared
-    // reference presentation), and the value is a real reference targeting it.
+    // Leaving the untouched conversion row restores the structural reference
+    // value under the plain field entry.
+    await rowEditor(page, ids.beta).click();
+
     const valueCell = row(page, ids.referencesEntry).locator('.field-value-cell');
     await expect(valueCell.locator('.row.reference-row')).toHaveCount(1);
     await expect(valueCell).toContainText('Alpha');
@@ -1752,39 +1750,32 @@ test.describe('outliner reference field inline value', () => {
 
     const calls = await commandCalls(page);
     expect(calls.some((call) => (
-      call.cmd === 'add_field_reference'
-      && call.args.fieldEntryId === ids.referencesEntry
-      && call.args.targetNodeId === ids.alpha
+      call.cmd === 'add_reference_conversion'
+      && call.args.parentId === ids.referencesEntry
+      && call.args.targetId === ids.alpha
     ))).toBe(true);
+    expect(calls.some((call) => call.cmd === 'restore_inline_reference_node_to_reference')).toBe(true);
   });
 
-  test('reference field value references a node clicked in the listbox', async ({ page }) => {
+  test('plain field stores an inline reference inside text', async ({ page }) => {
     await trailingEditor(page, ids.referencesEntry).click();
+    await page.keyboard.type('See @Beta');
     const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
     await expect(listbox).toBeVisible();
-
-    await page.keyboard.type('Beta');
-    await listbox.getByRole('option', { name: 'Beta' }).click();
+    await listbox.getByRole('option', { name: 'Beta', exact: true }).click();
 
     const valueCell = row(page, ids.referencesEntry).locator('.field-value-cell');
-    await expect(valueCell.locator('.row.reference-row')).toHaveCount(1);
-    await expect(valueCell).toContainText('Beta');
-  });
-
-  test('a query with no node match never materializes a free-text value', async ({ page }) => {
-    await trailingEditor(page, ids.referencesEntry).click();
-    const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
-    await expect(listbox).toBeVisible();
-
-    await page.keyboard.type('zzz-no-such-node');
-    await expect(listbox.getByRole('option')).toHaveCount(0);
-    // The open picker owns Enter and swallows it; a reference value only comes from
-    // a picked node, so the typed query must not become a value.
-    await page.keyboard.press('Enter');
+    await expect(valueCell.locator('.inline-ref')).toHaveCount(1);
+    await expect(valueCell).toContainText('See Beta');
 
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.find((node) => node.id === ids.referencesEntry)?.children.length;
-    }).toBe(0);
+      const valueNode = projection.nodes.find((node) => node.parentId === ids.referencesEntry);
+      return {
+        type: valueNode?.type ?? 'content',
+        text: valueNode?.content.text,
+        targetId: valueNode?.content.inlineRefs[0] ? e2eInlineRefNodeId(valueNode.content.inlineRefs[0]) : undefined,
+      };
+    }).toEqual({ type: 'content', text: 'See  ', targetId: ids.beta });
   });
 });
