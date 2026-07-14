@@ -1375,10 +1375,13 @@ Rules:
 - Automatic provider retry progress is runtime-only UI, not a transcript entity.
   A `provider_retry` event shows one neutral `Reconnecting n/m` status row after
   the selected transcript and before the composer; later attempts update it in
-  place. The row clears on the replacement attempt's first valid provider event,
-  terminal success/failure, abort, conversation hydrate/switch, or close, so it
-  never enters event replay or leaves a historical row. On exhaustion it clears
-  before the terminal assistant failure above becomes visible.
+  place. Concurrent Runs retain independent runtime state by `runId`; the most
+  recently updated retry owns the single row, and clearing it reveals any earlier
+  Run that is still retrying. The row clears completely on the replacement
+  attempts' first valid provider events, terminal success/failure, abort,
+  conversation hydrate/switch, or close, so it never enters event replay or
+  leaves a historical row. On exhaustion it clears before the terminal assistant
+  failure above becomes visible.
 
 ### Debug projection (run-grounded — [[agent-debug-run-grounded]])
 

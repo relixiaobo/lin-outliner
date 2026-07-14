@@ -118,6 +118,9 @@ than an agent event-log record:
 - request retries expose attempts `1/4` through `4/4`, while the existing stream
   replay exposes `1/1`;
 - repeated retries update the same status in place;
+- concurrent Runs are tracked independently by `runId`; the most recently
+  updated retry owns the single visible row, and clearing it falls back to any
+  earlier Run that is still retrying;
 - `cleared` is emitted when the replacement attempt produces its first valid
   provider event, reaches a terminal outcome, or is aborted;
 - switching, hydrating, or closing the selected conversation also clears the

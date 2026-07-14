@@ -391,6 +391,35 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('falls back to another active provider retry when concurrent Run events interleave', async () => {
+    const fake = createFakeClient({ latestConversation: conversation('saved', projection([])) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    const emitRetry = (runId: string, phase: 'retrying' | 'cleared', timestamp: number) => fake.emit({
+      type: 'provider_retry',
+      conversationId: 'saved',
+      runId,
+      phase,
+      kind: 'request',
+      attempt: 1,
+      maxRetries: 4,
+      timestamp,
+    });
+
+    emitRetry('run-a', 'retrying', 100);
+    emitRetry('run-b', 'retrying', 101);
+    expect(store.getSnapshot().providerRetry?.runId).toBe('run-b');
+
+    emitRetry('run-b', 'cleared', 102);
+    expect(store.getSnapshot().providerRetry?.runId).toBe('run-a');
+
+    emitRetry('run-a', 'cleared', 103);
+    expect(store.getSnapshot().providerRetry).toBeNull();
+    unsubscribe();
+  });
+
   test('clears transient provider retry status when the conversation changes or closes', async () => {
     const fake = createFakeClient({ latestConversation: conversation('saved', projection([])) });
     const store = createAgentRuntimeStore(fake.client);
