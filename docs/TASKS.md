@@ -22,18 +22,20 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391**) |
-| Codex 2 | `lin-outliner-codex-2/` | `codex-2/node-tool-context-compression` | Draft PR #392 — node tool context compression plan awaiting PM ratification |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped agent-image-generation-tool #383, node-tool-context-compression #392) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382, feed-processing-built-in #387, definition-node-edit-parity #388, cc-switch-provider-registry #389**) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped agent-issue-manager #386) |
+| Codex 4 | `lin-outliner-codex-4/` | `codex-4/remove-reference-field-type` | Draft PR #393 — remove reference field type plan; rebase onto merged #392 pending |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-14).** Open PR queue: Draft #392
-(`codex-2/node-tool-context-compression`; plan awaiting PM ratification).
-Recently merged: #391 (`codex/queued-steer-consumption`) merged 2026-07-14
+**In flight (2026-07-14).** Open PR queue: Draft #393
+(`codex-4/remove-reference-field-type`; plan claim, rebase onto merged #392
+pending). Recently merged: #392 (`codex-2/node-tool-context-compression`) merged
+2026-07-14 after main review; see *Recently completed*. #391
+(`codex/queued-steer-consumption`) merged 2026-07-14
 after main review; see *Recently completed*. #386
 (`codex-4/agent-issue-manager`) merged 2026-07-14 after main review; see
 *Recently completed*. #390 (`codex/pi-ai-0.80.6-upgrade`) merged 2026-07-10
@@ -491,6 +493,24 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **node-tool-context-compression** (`codex-2/node-tool-context-compression`, PR
+  #392, codex-2, merged 2026-07-14, plan-track) — makes annotated outlines the
+  sole model-visible id/title projection for node reads and searches, removes
+  static success guidance and redundant envelope fields, and preserves the full
+  runtime envelope in `details`. `node_search` now accepts 1-20 named count
+  queries with an optional shared `common_query`, semantically validates the
+  whole batch before acquiring execution hooks, applies the existing run-scope
+  filter, and returns one compact count map. **Gate (main):** code review found
+  three issues: pagination continuation guidance had been dropped from runtime
+  details, strict `allowedTools` catalogs could omit required `node_create`
+  output guidance, and batch preflight missed semantic operand errors. Codex-2
+  fixed all three before merge. Verified on the exact final PR head with
+  typecheck, 154 focused tests, 746 renderer tests, `docs:check`, and
+  `git diff --check`. Full Core reached 1417 pass / 3 fail; all three failures
+  reproduce on the pre-PR `main` baseline and come from external Presentation
+  skill resource drift. Plan archived `done`:
+  `docs/plans/archive/node-tool-context-compression.md`.
 
 - **queued-steer-consumption** (`codex/queued-steer-consumption`, PR #391,
   codex, merged 2026-07-14, plan-track) — removes the Agent composer's editable

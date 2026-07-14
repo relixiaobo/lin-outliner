@@ -46,6 +46,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Node tool context compression (PR #392, codex-2)** — successful
+  model-visible `node_*` projections now omit redundant input echoes, static
+  instructions, and uninformative envelope fields while retaining the complete
+  runtime result in `details`; reads and searches use annotated outlines as the
+  single id/title projection instead of parallel references. `node_search` also
+  supports 1-20 named count queries with an optional shared condition, validates
+  every query's grammar and
+  semantic operands before acquiring execution hooks, applies run-scope
+  filtering, and returns one compact count map. **Gate (main):** review found
+  and codex-2 fixed three issues covering runtime pagination guidance,
+  self-contained `node_create` output guidance under strict `allowedTools`, and
+  semantic batch preflight. Verified with typecheck, 154 focused tests, 746
+  renderer tests, docs check, and diff check; the full Core suite's three
+  failures reproduce on the pre-PR baseline and come from external Presentation
+  skill resource drift.
 - **Agent Issue Manager (PR #386, codex-4)** — replaced scheduled command-node
   and Run-centered work with durable Issues, Recurring Issues, Agent Sessions,
   and Activity. The implementation adds recurring materialization, scoped
