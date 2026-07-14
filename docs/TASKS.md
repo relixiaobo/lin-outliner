@@ -21,8 +21,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369, agent-image-generation-tool #383; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391**) |
+| Codex 2 | `lin-outliner-codex-2/` | `codex-2/node-tool-context-compression` | Draft PR #392 — node tool context compression plan awaiting PM ratification |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372, performance-hotspots #380, agent-tool-clarity-names #381, channel-create-inline-rename #382, feed-processing-built-in #387, definition-node-edit-parity #388, cc-switch-provider-registry #389**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped agent-issue-manager #386) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -31,7 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-14).** Open PR queue: none. Recently merged: #386
+**In flight (2026-07-14).** Open PR queue: Draft #392
+(`codex-2/node-tool-context-compression`; plan awaiting PM ratification).
+Recently merged: #391 (`codex/queued-steer-consumption`) merged 2026-07-14
+after main review; see *Recently completed*. #386
 (`codex-4/agent-issue-manager`) merged 2026-07-14 after main review; see
 *Recently completed*. #390 (`codex/pi-ai-0.80.6-upgrade`) merged 2026-07-10
 after main review; see
@@ -488,6 +491,19 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **queued-steer-consumption** (`codex/queued-steer-consumption`, PR #391,
+  codex, merged 2026-07-14, plan-track) — removes the Agent composer's editable
+  queued-steer preview as soon as a later matching visible user message proves
+  that pi-agent-core consumed it, without waiting for the active Run to settle.
+  Renderer-local state now carries the conversation plus the prior visible user
+  message id/source sequence, so older identical transcript text cannot clear a
+  newly queued steer; append, edit, cancel, rejection, Run-settle, and
+  conversation-switch cleanup remain intact. **Gate (main):** code review found
+  no reportable findings. Verified on the exact final PR head with typecheck,
+  745 renderer tests, the focused composer E2E, the runtime steer integration
+  test, `git diff --check`, and light/dark queued/consumed visual QA. Plan
+  archived `done`: `docs/plans/archive/queued-steer-consumption.md`.
 
 - **agent-issue-manager** (`codex-4/agent-issue-manager`, PR #386, codex-4,
   merged 2026-07-14, plan-track) — replaces scheduled command-node and
