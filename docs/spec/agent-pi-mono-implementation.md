@@ -429,6 +429,22 @@ bounded: short timeout, tiny output budget, cancellable UI.
    final terminal response event, Tenon treats that narrow case as a `toolUse`
    completion and continues to execute the tool instead of discarding the complete
    tool call as a provider failure.
+   Responses request recovery uses two independent budgets. Before the provider
+   stream emits any event, a formatted OpenAI/Azure OpenAI `5xx` response or an
+   explicit transport timeout/network failure receives up to four retries (five
+   total request attempts). This outer budget does not retry `429` or other `4xx`
+   responses. At the default `providerMaxRetries: null`, pi-ai performs zero inner
+   Responses SDK retries; an explicit non-null provider setting remains a separate
+   operator override with the SDK's existing retry semantics. The outer retry waits
+   are abortable and use 200, 400, 800, and 1600 ms exponential delays with
+   `0.9..1.1` jitter. Once any provider stream event arrives, that request budget no
+   longer applies. A separate existing recovery path may replay a prematurely
+   terminated Responses stream once when the attempt contains only buffered
+   start/thinking events and no completed tool call. Text or any tool-call event
+   makes the attempt non-replayable, preventing duplicate visible output or tool
+   execution. Failed pre-stream attempts and discarded start/thinking-only attempts
+   do not enter the event projection; only the successful attempt or the final
+   exhausted error is exposed.
    The custom endpoint's request-auth resolver prefers, in order: an explicit
    request key → a deliberately-stored `api_key` → (local endpoints only) an
    inert client key → the external provider's ambient auth. A keyless localhost
