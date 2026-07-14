@@ -443,8 +443,12 @@ bounded: short timeout, tiny output budget, cancellable UI.
    start/thinking events and no completed tool call. Text or any tool-call event
    makes the attempt non-replayable, preventing duplicate visible output or tool
    execution. Failed pre-stream attempts and discarded start/thinking-only attempts
-   do not enter the event projection; only the successful attempt or the final
-   exhausted error is exposed.
+   do not enter the event log or canonical render projection. Retry decisions are
+   exposed only through a runtime-only `provider_retry` lifecycle event scoped to
+   the owning conversation and Run: `retrying` carries the retry kind and current
+   attempt/budget, while `cleared` removes it when the replacement attempt produces
+   its first valid provider event, settles, or aborts. The successful attempt or
+   final exhausted assistant error remains the only persisted outcome.
    The custom endpoint's request-auth resolver prefers, in order: an explicit
    request key → a deliberately-stored `api_key` → (local endpoints only) an
    inert client key → the external provider's ambient auth. A keyless localhost

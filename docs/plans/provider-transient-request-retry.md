@@ -13,8 +13,9 @@ stream-replay boundary after text or tool calls begin.
   transport timeouts and connection failures.
 - Use an abortable exponential backoff starting at 200 ms with a factor of two
   and bounded jitter.
-- Keep intermediate failed attempts out of the event log and render projection;
-  only the successful attempt or final exhausted error becomes visible.
+- Keep intermediate failed attempts out of the event log and canonical render
+  projection, while showing the current retry as one runtime-only transcript-tail
+  status row.
 - Limit request-layer retries to failures that happen before the provider stream
   emits any event. Keep the existing one-time replay for a started stream that
   terminates before material text or tool output.
@@ -34,8 +35,7 @@ stream-replay boundary after text or tool calls begin.
 - No Codex-style history-aware replay of partially completed sampling requests.
   Tenon's current event adapter does not yet reconstruct a retry prompt from
   accepted output items and tool results.
-- No new renderer retry counter, protocol event, provider settings UI, or shared
-  core type.
+- No persisted retry counter, historical retry rows, or provider settings UI.
 - No attempt to fix the upstream proxy's Cloudflare timeout or SSE heartbeat
   behavior.
 
@@ -108,6 +108,40 @@ Earlier completed model rounds and their tool mutations remain canonical in the
 Run. The retry only replaces the current provider attempt after the latest tool
 results.
 
+### Runtime retry status
+
+The stream wrapper reports a runtime-only retry lifecycle to the owning
+conversation and Run. This uses a main-to-renderer `provider_retry` event rather
+than an agent event-log record:
+
+- `retrying` is emitted when a request or premature-stream retry is selected;
+- request retries expose attempts `1/4` through `4/4`, while the existing stream
+  replay exposes `1/1`;
+- repeated retries update the same status in place;
+- `cleared` is emitted when the replacement attempt produces its first valid
+  provider event, reaches a terminal outcome, or is aborted;
+- switching, hydrating, or closing the selected conversation also clears the
+  renderer's transient state.
+
+The renderer places one neutral, polite live-region row after the transcript and
+before the composer. It reads `Reconnecting n/m` (localized), remains outside the
+virtualized transcript projection, and disappears without leaving history once
+the retry clears.
+
+### Exhausted failure placement
+
+When all retries are exhausted, clear the transient retry row before exposing the
+terminal assistant failure. The failed assistant turn renders in logical order:
+
+1. thinking and tool process;
+2. any generated response content;
+3. the final provider error;
+4. the action toolbar, with `Retry response` first.
+
+Run failures never use the panel's top-level operational error banner. The
+terminal error remains attached to the assistant message so the retry action is
+adjacent to the failure at the end of the response.
+
 ### Specification
 
 Update `docs/spec/agent-pi-mono-implementation.md` with the effective runtime
@@ -119,6 +153,8 @@ contract:
 - no `429` retry in the new outer budget;
 - no automatic retry after material output;
 - abortable exponential backoff.
+- runtime-only retry lifecycle and transcript-tail status placement;
+- terminal failure ordering after generated content and before reply actions.
 
 ## Open questions
 
@@ -128,12 +164,21 @@ attempts, while history-aware partial-stream replay remains out of scope.
 ## Files
 
 - `src/main/agentStreamAbort.ts`
+- `src/core/agentTypes.ts`
+- `src/main/agentRuntime.ts`
+- `src/renderer/agent/runtime.ts`
+- `src/renderer/ui/agent/AgentChatPanel.tsx`
+- `src/renderer/ui/agent/AgentMessageRow.tsx`
+- `src/renderer/ui/agent/AgentProviderRetryStatus.tsx`
+- agent transcript styles and English/Simplified Chinese messages
 - `tests/core/agentStreamAbort.test.ts`
+- focused runtime and renderer tests
+- `docs/spec/agent-event-log-rendering.md`
 - `docs/spec/agent-pi-mono-implementation.md`
 - this plan
 
-No dependency, renderer, shared protocol, `docs/TASKS.md`, or `CHANGELOG.md`
-change is required.
+No dependency, persisted agent-event protocol, provider settings,
+`docs/TASKS.md`, or `CHANGELOG.md` change is required.
 
 ## Risks
 
@@ -146,13 +191,17 @@ change is required.
   classifier must stay narrow and covered by exact positive and negative tests.
 - Retrying after material output would risk duplicate text or tool execution;
   guard tests must pin the no-retry boundary.
+- A missing terminal clear could leave stale transient UI. Stream lifecycle,
+  abort, renderer hydration, conversation switching, and close paths all clear
+  the status and are covered by focused tests.
 
 ## Collision check
 
-- Open PRs #393 and #394 claim field-type and field-value-child work. Neither
-  claims `agentStreamAbort.ts`, its core test, or the pi-mono implementation
-  spec; #393 currently changes only its own plan file.
-- The change touches no infrastructure-ownership file and no shared protocol.
+- Open PR #394 claims field-value-child renderer, spec, and test work. It does
+  not overlap the agent runtime, chat UI, i18n, or specs in this change.
+- The runtime-only shared event union in `src/core/agentTypes.ts` is the only
+  infrastructure-ownership surface; its shape is part of this ratified plan and
+  does not alter the persisted agent-event protocol.
 - Result: no overlap.
 
 ## Checklist
@@ -163,7 +212,11 @@ change is required.
 - [ ] Add abortable 200 ms exponential backoff with bounded jitter.
 - [ ] Preserve the pre-stream request boundary plus the no-material-output and
   no-complete-tool-call stream gates.
+- [ ] Emit and clear runtime-only retry lifecycle events without persisting them.
+- [ ] Render one localized transcript-tail status row and update it in place.
+- [ ] Render exhausted failures after response content and before reply actions.
 - [ ] Cover success after retries, exhausted budget, negative status classes,
-  material output, completed tool calls, and cancellation.
-- [ ] Update the pi-mono implementation spec.
+  material output, completed tool calls, cancellation, runtime state, and UI
+  ordering.
+- [ ] Update the pi-mono implementation and event-log rendering specs.
 - [ ] Run typecheck, focused core tests, the full core suite, and docs check.

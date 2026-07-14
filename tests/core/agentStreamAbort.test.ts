@@ -141,6 +141,12 @@ describe('agent stream abort settling', () => {
   test('retries custom OpenAI Responses 524 failures four times and succeeds on the fifth attempt', async () => {
     let attempts = 0;
     const retryCounts: number[] = [];
+    const retryEvents: Array<{
+      phase: 'retrying' | 'cleared';
+      kind: 'request' | 'stream';
+      attempt: number;
+      maxRetries: number;
+    }> = [];
     const streamFn = createAbortSettledStreamFn((() => {
       attempts += 1;
       return attempts <= 4
@@ -151,6 +157,7 @@ describe('agent stream abort settling', () => {
         retryCounts.push(retryCount);
         return 0;
       },
+      onProviderRetry: (event) => retryEvents.push(event),
     });
 
     const stream = streamFn(CUSTOM_RESPONSES_MODEL, { messages: [], tools: [] });
@@ -159,6 +166,13 @@ describe('agent stream abort settling', () => {
 
     expect(attempts).toBe(5);
     expect(retryCounts).toEqual([1, 2, 3, 4]);
+    expect(retryEvents).toEqual([
+      { phase: 'retrying', kind: 'request', attempt: 1, maxRetries: 4 },
+      { phase: 'retrying', kind: 'request', attempt: 2, maxRetries: 4 },
+      { phase: 'retrying', kind: 'request', attempt: 3, maxRetries: 4 },
+      { phase: 'retrying', kind: 'request', attempt: 4, maxRetries: 4 },
+      { phase: 'cleared', kind: 'request', attempt: 4, maxRetries: 4 },
+    ]);
     expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'text_end', 'done']);
     expect(JSON.stringify(events)).not.toContain('524 status code');
     await expect(stream.result()).resolves.toMatchObject({ stopReason: 'stop' });
@@ -166,16 +180,21 @@ describe('agent stream abort settling', () => {
 
   test('surfaces only the final 524 after the request retry budget is exhausted', async () => {
     let attempts = 0;
+    const retryPhases: string[] = [];
     const streamFn = createAbortSettledStreamFn((() => {
       attempts += 1;
       return errorStream('OpenAI API error (524): 524 status code (no body)');
-    }) as StreamFn, { requestRetryDelayMs: () => 0 });
+    }) as StreamFn, {
+      requestRetryDelayMs: () => 0,
+      onProviderRetry: (event) => retryPhases.push(`${event.phase}:${event.attempt}`),
+    });
 
     const stream = streamFn(OPENAI_RESPONSES_MODEL, { messages: [], tools: [] });
     const events = [];
     for await (const event of stream) events.push(event);
 
     expect(attempts).toBe(5);
+    expect(retryPhases).toEqual(['retrying:1', 'retrying:2', 'retrying:3', 'retrying:4', 'cleared:4']);
     expect(events.map((event) => event.type)).toEqual(['error']);
     if (events[0]?.type !== 'error') throw new Error('Expected final error event.');
     expect(events[0].error.errorMessage).toBe('OpenAI API error (524): 524 status code (no body)');
@@ -321,6 +340,7 @@ describe('agent stream abort settling', () => {
 
   test('aborts during request retry backoff without starting another attempt', async () => {
     let attempts = 0;
+    const retryPhases: string[] = [];
     let retryDelayStartedResolve: (() => void) | undefined;
     const retryDelayStarted = new Promise<void>((resolve) => {
       retryDelayStartedResolve = resolve;
@@ -333,6 +353,7 @@ describe('agent stream abort settling', () => {
         retryDelayStartedResolve?.();
         return 60_000;
       },
+      onProviderRetry: (event) => retryPhases.push(event.phase),
     });
     const upstreamAbort = new AbortController();
     const stream = streamFn(OPENAI_RESPONSES_MODEL, { messages: [], tools: [] }, { signal: upstreamAbort.signal });
@@ -344,6 +365,7 @@ describe('agent stream abort settling', () => {
     const event = await next;
 
     expect(attempts).toBe(1);
+    expect(retryPhases).toEqual(['retrying', 'cleared']);
     expect(event.value.type).toBe('error');
     if (event.value.type !== 'error') throw new Error('Expected abort error event.');
     expect(event.value.reason).toBe('aborted');
@@ -389,6 +411,7 @@ describe('agent stream abort settling', () => {
 
   test('retries thinking-only OpenAI Responses stream termination once', async () => {
     let attempts = 0;
+    const retryEvents: string[] = [];
     const streamFn = createAbortSettledStreamFn((() => {
       attempts += 1;
       const source = createAssistantMessageEventStream();
@@ -419,13 +442,16 @@ describe('agent stream abort settling', () => {
         source.end(message);
       });
       return source;
-    }) as StreamFn);
+    }) as StreamFn, {
+      onProviderRetry: (event) => retryEvents.push(`${event.phase}:${event.kind}:${event.attempt}/${event.maxRetries}`),
+    });
 
     const stream = streamFn(OPENAI_RESPONSES_MODEL, { messages: [], tools: [] });
     const events = [];
     for await (const event of stream) events.push(event);
 
     expect(attempts).toBe(2);
+    expect(retryEvents).toEqual(['retrying:stream:1/1', 'cleared:stream:1/1']);
     expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'text_end', 'done']);
     expect(JSON.stringify(events)).not.toContain('partial thinking');
     await expect(stream.result()).resolves.toMatchObject({ stopReason: 'stop' });

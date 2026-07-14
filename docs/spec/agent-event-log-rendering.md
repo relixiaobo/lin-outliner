@@ -1368,6 +1368,17 @@ Rules:
   operational errors delivered out-of-band via the runtime `error` event (e.g.
   attachment/queueing failures), never run failures. Context-overflow failures
   are left unmarked because reactive compaction recovers them automatically.
+  Within that terminal assistant turn, the visible order is process (thinking and
+  tools), generated response content, final error, then the action toolbar. The
+  error therefore sits at the end of the reply rather than above partial output,
+  and `Retry response` is the first action immediately after it.
+- Automatic provider retry progress is runtime-only UI, not a transcript entity.
+  A `provider_retry` event shows one neutral `Reconnecting n/m` status row after
+  the selected transcript and before the composer; later attempts update it in
+  place. The row clears on the replacement attempt's first valid provider event,
+  terminal success/failure, abort, conversation hydrate/switch, or close, so it
+  never enters event replay or leaves a historical row. On exhaustion it clears
+  before the terminal assistant failure above becomes visible.
 
 ### Debug projection (run-grounded — [[agent-debug-run-grounded]])
 

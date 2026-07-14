@@ -319,6 +319,105 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('keeps provider retry status runtime-only and scoped to the selected conversation and run', async () => {
+    const fake = createFakeClient({ latestConversation: conversation('saved', projection([])) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    fake.emit({
+      type: 'provider_retry',
+      conversationId: 'saved',
+      runId: 'run-1',
+      phase: 'retrying',
+      kind: 'request',
+      attempt: 1,
+      maxRetries: 4,
+      timestamp: 100,
+    });
+    expect(store.getSnapshot().providerRetry).toEqual({
+      runId: 'run-1',
+      kind: 'request',
+      attempt: 1,
+      maxRetries: 4,
+      timestamp: 100,
+    });
+
+    fake.emit({
+      type: 'provider_retry',
+      conversationId: 'other',
+      runId: 'run-other',
+      phase: 'retrying',
+      kind: 'stream',
+      attempt: 1,
+      maxRetries: 1,
+      timestamp: 101,
+    });
+    fake.emit({
+      type: 'provider_retry',
+      conversationId: 'saved',
+      runId: 'stale-run',
+      phase: 'cleared',
+      kind: 'request',
+      attempt: 1,
+      maxRetries: 4,
+      timestamp: 102,
+    });
+    expect(store.getSnapshot().providerRetry?.runId).toBe('run-1');
+
+    fake.emit({
+      type: 'provider_retry',
+      conversationId: 'saved',
+      runId: 'run-1',
+      phase: 'retrying',
+      kind: 'request',
+      attempt: 2,
+      maxRetries: 4,
+      timestamp: 103,
+    });
+    expect(store.getSnapshot().providerRetry?.attempt).toBe(2);
+
+    fake.emit({
+      type: 'provider_retry',
+      conversationId: 'saved',
+      runId: 'run-1',
+      phase: 'cleared',
+      kind: 'request',
+      attempt: 2,
+      maxRetries: 4,
+      timestamp: 104,
+    });
+    expect(store.getSnapshot().providerRetry).toBeNull();
+    unsubscribe();
+  });
+
+  test('clears transient provider retry status when the conversation changes or closes', async () => {
+    const fake = createFakeClient({ latestConversation: conversation('saved', projection([])) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    const showRetry = (conversationId: string, runId: string) => fake.emit({
+      type: 'provider_retry',
+      conversationId,
+      runId,
+      phase: 'retrying',
+      kind: 'request',
+      attempt: 1,
+      maxRetries: 4,
+      timestamp: 100,
+    });
+
+    showRetry('saved', 'run-1');
+    await store.getSnapshot().selectConversation('other');
+    expect(store.getSnapshot().providerRetry).toBeNull();
+
+    showRetry('other', 'run-2');
+    fake.emit({ type: 'closed', conversationId: 'other', timestamp: 101 });
+    expect(store.getSnapshot().providerRetry).toBeNull();
+    unsubscribe();
+  });
+
   test('restores the remembered conversation before falling back to #General', async () => {
     const preferenceStore = memoryConversationPreferenceStore('remembered-channel');
     const fake = createFakeClient({ latestConversation: conversation(DEFAULT_GENERAL_CHANNEL_ID, projection([])) });

@@ -47,6 +47,34 @@ describe('AgentMessageRow actions', () => {
     expect(actions?.querySelector('[aria-label="Details"]')).not.toBeNull();
     expect(actions?.querySelector('[aria-label="Regenerate response"]')).toBeNull();
   });
+
+  test('renders a terminal error after response content and before retry actions', () => {
+    const entry = messageEntry({ nodeId: 'assistant-1' });
+    if (entry.message.role !== 'assistant') throw new Error('Expected assistant message.');
+    entry.message.stopReason = 'error';
+    entry.message.errorMessage = 'Provider unavailable.';
+    const rendered = render(
+      <AgentMessageRow
+        entry={entry}
+        index={0}
+        isLastInTurn
+        onRetry={() => {}}
+        pendingToolCallIds={new Set()}
+        toolResults={new Map()}
+      />,
+    );
+
+    const content = rendered.document.querySelector('.agent-assistant-content');
+    const markdown = content?.querySelector('.agent-markdown');
+    const error = content?.querySelector('.agent-message-error');
+    const actions = content?.querySelector('.agent-message-actions.is-assistant');
+    if (!content || !markdown || !error || !actions) throw new Error('Missing assistant turn content.');
+    const children = Array.from(content.children);
+
+    expect(children.indexOf(markdown)).toBeLessThan(children.indexOf(error));
+    expect(children.indexOf(error)).toBeLessThan(children.indexOf(actions));
+    expect(actions.firstElementChild?.getAttribute('aria-label')).toBe('Retry response');
+  });
 });
 
 function assistantMessage(text: string): AssistantMessage {
