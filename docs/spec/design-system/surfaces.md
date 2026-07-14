@@ -142,8 +142,10 @@ Inline node/file/directory/image mentions are owned by
 ### Fields And Definition Configuration
 
 Field entries are ordinary outliner rows in document order. Field row layout uses
-`FieldEntryGrid` for name/value/description slots. Field row separators reveal on
-hover or focus instead of staying permanently heavy.
+`FieldEntryGrid` for name/value/description slots. Every active field row reveals
+both its top and bottom separators on hover or focus, including rows in the middle
+of a contiguous field group; the separators otherwise stay hidden. Pointer hover
+takes precedence over focus on a different field so a shared edge is painted once.
 
 Field type glyphs use normal row icon sizing. Checkbox field type glyphs do not
 use `CheckboxMark`; checkbox field values do. Boolean field values use

@@ -61,8 +61,9 @@ keyboard or pointer change should be checked against this matrix.
 - The root scope always renders a trailing input so typing can continue at the
   end of the page.
 - Field entries are ordinary outline rows with field-specific value rendering.
-  Their separators stay hidden until the row is hovered or focus is inside its
-  field name/value area.
+  Each entry's top and bottom separators stay hidden until that row is hovered or
+  focus is inside its field name/value area, including entries in the middle of a
+  contiguous field group.
 
 ## Row State Model
 

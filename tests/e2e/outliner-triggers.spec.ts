@@ -1313,7 +1313,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(() => fieldSeparatorOpacity(page, fieldId, '::after')).toBe('1');
   });
 
-  test('adjacent field rows do not double-draw their shared separator', async ({ page }) => {
+  test('each adjacent field row reveals both separators on hover or focus', async ({ page }) => {
     await trailingEditor(page).click();
     await page.keyboard.type('>');
     const firstFieldId = await lastTodayChildId(page);
@@ -1324,11 +1324,23 @@ test.describe('outliner trigger parity', () => {
     const secondFieldId = await lastTodayChildId(page);
     if (!secondFieldId || secondFieldId === firstFieldId) throw new Error('missing second field');
 
+    await expect.poll(() => fieldSeparatorContent(page, firstFieldId, '::after')).toBe('""');
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::before')).toBe('0');
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::after')).toBe('0');
+
     await row(page, firstFieldId).hover();
     await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::before')).toBe('1');
-    await expect.poll(() => fieldSeparatorContent(page, firstFieldId, '::after')).toBe('none');
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::after')).toBe('1');
+    await expect.poll(() => fieldSeparatorOpacity(page, secondFieldId, '::before')).toBe('0');
+    await expect.poll(() => fieldSeparatorOpacity(page, secondFieldId, '::after')).toBe('0');
+
+    await row(page, firstFieldId).locator('.field-name-input').focus();
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::before')).toBe('1');
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::after')).toBe('1');
 
     await row(page, secondFieldId).hover();
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::before')).toBe('0');
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::after')).toBe('0');
     await expect.poll(() => fieldSeparatorOpacity(page, secondFieldId, '::before')).toBe('1');
     await expect.poll(() => fieldSeparatorOpacity(page, secondFieldId, '::after')).toBe('1');
   });

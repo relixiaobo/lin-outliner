@@ -1297,7 +1297,7 @@
 }
 
 .row.field-row-inline > .outliner-field-grid::before,
-.row.field-row-inline.field-group-end > .outliner-field-grid::after {
+.row.field-row-inline > .outliner-field-grid::after {
   position: absolute;
   right: 0;
   left: calc(-1 * (var(--row-leading-width) - var(--row-chevron-width) - var(--row-chevron-gap)));
@@ -1313,15 +1313,24 @@
   top: calc(-1 * var(--field-row-padding-block));
 }
 
-.row.field-row-inline.field-group-end > .outliner-field-grid::after {
+.row.field-row-inline > .outliner-field-grid::after {
   bottom: calc(-1 * var(--field-row-padding-block));
 }
 
 .row.field-row-inline:hover:not(:has(.field-value-outliner .row.field-row-inline:hover)) > .outliner-field-grid::before,
-.row.field-row-inline.field-group-end:hover:not(:has(.field-value-outliner .row.field-row-inline:hover)) > .outliner-field-grid::after,
+.row.field-row-inline:hover:not(:has(.field-value-outliner .row.field-row-inline:hover)) > .outliner-field-grid::after,
 .row.field-row-inline:focus-within:not(:has(.field-value-outliner .row.field-row-inline:focus-within)) > .outliner-field-grid::before,
-.row.field-row-inline.field-group-end:focus-within:not(:has(.field-value-outliner .row.field-row-inline:focus-within)) > .outliner-field-grid::after {
+.row.field-row-inline:focus-within:not(:has(.field-value-outliner .row.field-row-inline:focus-within)) > .outliner-field-grid::after {
   opacity: 1;
+}
+
+.outliner:has(.row.field-row-inline:hover)
+  .row.field-row-inline:focus-within:not(:hover)
+  > .outliner-field-grid::before,
+.outliner:has(.row.field-row-inline:hover)
+  .row.field-row-inline:focus-within:not(:hover)
+  > .outliner-field-grid::after {
+  opacity: 0;
 }
 
 .row.field-row-inline.drop-before > .outliner-field-grid::before,
