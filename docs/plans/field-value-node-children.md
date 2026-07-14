@@ -67,7 +67,11 @@ uses the same disclosure behavior as an ordinary row:
   preserve the existing cycle guard.
 - An empty checkbox field keeps its standalone toggle because no value node exists
   yet. Once toggled, the stored boolean renders through the same expandable value
-  row as other types, with the checkbox control replacing editable text.
+  row as other types, with the checkbox control replacing editable text while
+  preserving the row's structural navigation and selection keys.
+- Arrow navigation uses the panel's visible selectable-row order, so it crosses
+  field boundaries. It never mounts an auto-hidden field-value draft; only an
+  already visible expanded-child draft or panel trailing draft participates.
 
 The value column keeps its dense field layout, but it must reserve a real,
 stable disclosure slot. Nested field-entry rows continue to hide their own

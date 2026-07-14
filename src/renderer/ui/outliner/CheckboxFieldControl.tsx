@@ -4,6 +4,7 @@ import type { NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
 import type { FocusRequest, FocusTarget } from '../../state/document';
 import { focusTargetMatches } from '../focus/focusModel';
+import { resolveNodeLineKeyAction } from '../interactions/nodeLineKeymap';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import type { CommandRunner } from '../shared';
@@ -18,12 +19,15 @@ interface CheckboxFieldControlProps {
   onFocus?: () => void;
   onFocusRequestConsumed?: (request: FocusRequest) => void;
   onTab?: (shiftKey: boolean) => void;
+  onArrowUpAtStart?: () => void;
+  onArrowDownAtEnd?: () => void;
+  onShiftArrow?: (direction: 'up' | 'down') => void;
+  onEscape?: () => void;
 }
 
-// The lone whole-field value control: a boolean toggle stored as a plain node
-// ('true' / 'false'). Every other field type edits as a node row; a boolean has
-// no editable text, so it stays a single control. The value is still a node, so
-// the toggle creates or replaces it through the generic node commands.
+// A boolean toggle stored as a plain node ('true' / 'false'). Before a value
+// exists this is the field's empty-state control; afterward it replaces only the
+// editable text surface inside a standard outliner row.
 export function CheckboxFieldControl(props: CheckboxFieldControlProps) {
   const t = useT();
   const buttonRef = useRef<HTMLButtonElement | null>(null);
@@ -48,9 +52,50 @@ export function CheckboxFieldControl(props: CheckboxFieldControlProps) {
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key !== 'Tab' || !props.onTab) return;
-    event.preventDefault();
-    props.onTab(event.shiftKey);
+    const structural = resolveNodeLineKeyAction(event, {
+      from: 0,
+      to: 0,
+      textLength: 0,
+      hasShiftArrow: Boolean(props.onShiftArrow),
+    });
+    if (!structural) return;
+    const consume = () => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    switch (structural.type) {
+      case 'indent':
+        if (!props.onTab) return;
+        consume();
+        props.onTab(structural.shiftKey);
+        return;
+      case 'shiftArrow':
+        if (!props.onShiftArrow) return;
+        consume();
+        props.onShiftArrow(structural.direction);
+        return;
+      case 'navigateUpAtStart':
+        if (!props.onArrowUpAtStart) return;
+        consume();
+        props.onArrowUpAtStart();
+        return;
+      case 'navigateDownAtEnd':
+        if (!props.onArrowDownAtEnd) return;
+        consume();
+        props.onArrowDownAtEnd();
+        return;
+      case 'escape':
+        if (!props.onEscape) return;
+        consume();
+        props.onEscape();
+        return;
+      case 'split':
+      case 'backspaceAtStart':
+        // Enter/Space remain native checkbox activation keys. A stored boolean
+        // has no text caret, so Backspace is not a text-merge gesture here.
+        return;
+    }
   };
 
   return (

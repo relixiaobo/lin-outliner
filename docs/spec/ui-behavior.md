@@ -141,7 +141,7 @@ instead of reusing the trashed one.
 | `Mod+A` in field name/value | First press selects the text in that control/editor. A second consecutive `Mod+A` while the editor text is fully selected leaves edit mode and selects every visible row in the panel selection scope. Empty controls have no text-selection step, so `Mod+A` can select visible rows immediately. |
 | `>` in field value content/trailing input | Create a nested field entry inside the field value scope. |
 | `Tab` / `Shift+Tab` | Stored values use normal structural indentation within the field boundary. Tab may move a direct value under its previous direct sibling; Shift+Tab may promote an ordinary descendant into a direct value. A direct value cannot Shift+Tab out of its owning field entry. |
-| `ArrowUp` / `ArrowDown` | Move through visible outline rows. |
+| `ArrowUp` / `ArrowDown` | Move through visible outline rows across field boundaries. Auto-hidden field-value drafts are skipped rather than revealed by navigation; already-visible expanded-child drafts and the panel trailing draft remain navigation targets. |
 | `Escape` | Close the reuse popover if open, else leave edit mode and select the field row. |
 
 A reused **system field** (Created, Last edited, Done, Done time, Tags,
@@ -197,7 +197,9 @@ empty ordinary child draft. A direct value keeps field-aware add/remove cleanup;
 deeper descendants use ordinary node creation and deletion. An empty checkbox
 field shows its standalone toggle before a value node exists; after the toggle
 creates a stored boolean, that value uses the same expandable row with the
-checkbox as its primary control.
+checkbox as its primary control. The control replaces only the text editor:
+Escape, Arrow navigation, Shift+Arrow selection, and Tab structure keys retain
+the ordinary row behavior.
 
 A typed field value that fails its type's format check shows a trailing warning
 icon; the message is revealed on hover, never as always-on inline text.

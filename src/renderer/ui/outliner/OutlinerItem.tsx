@@ -1925,6 +1925,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         props.setUi((prev) => clearFocusRequestState(prev, request));
       }}
       onTab={(shiftKey) => void handleTab(shiftKey, 0)}
+      onArrowUpAtStart={() => row.moveFocus(-1)}
+      onArrowDownAtEnd={() => row.moveFocus(1)}
+      onShiftArrow={() => selectRow(props.nodeId, 'global')}
+      onEscape={() => selectRow(props.nodeId, 'global')}
     />
   ) : isCodeBlock ? (
     <CodeBlockRow

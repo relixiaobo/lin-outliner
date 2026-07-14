@@ -1480,7 +1480,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(async () => (await nodeById(page, valueId))?.parentId).toBe(fieldId);
   });
 
-  test('checkbox field values use the shared checkbox mark', async ({ page }) => {
+  test('checkbox field values use the shared mark and row keyboard contract', async ({ page }) => {
     await invokeMockCommand(page, 'create_inline_field', {
       parentId: ids.today,
       index: null,
@@ -1529,6 +1529,42 @@ test.describe('outliner trigger parity', () => {
     const storedCheckbox = valueRow.getByRole('checkbox');
     await expect(storedCheckbox).toBeFocused();
     await expect(valueRow.locator(':scope > .row-leading')).toHaveCount(1);
+
+    await page.keyboard.press('Escape');
+    await expect(valueRow).toHaveClass(/selected/);
+    await expect(storedCheckbox).not.toBeFocused();
+
+    await storedCheckbox.focus();
+    await page.keyboard.press('Shift+ArrowDown');
+    await expect(valueRow).toHaveClass(/selected/);
+
+    const childrenBeforeNextField = await todayChildren(page);
+    await invokeMockCommand(page, 'create_inline_field', {
+      parentId: ids.today,
+      index: null,
+      name: 'Next field',
+      fieldType: 'plain',
+    });
+    let nextFieldId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const nextField = projection.nodes.find((node) => (
+        node.parentId === ids.today
+        && node.type === 'fieldEntry'
+        && !childrenBeforeNextField.includes(node.id)
+      ));
+      nextFieldId = nextField?.id ?? '';
+      return nextFieldId;
+    }).not.toBe('');
+
+    await storedCheckbox.focus();
+    await page.keyboard.press('ArrowUp');
+    await expect(row(page, fieldId).locator('.field-name-input')).toBeFocused();
+
+    await storedCheckbox.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(row(page, nextFieldId).locator('.field-name-input')).toBeFocused();
+    await expect(trailingEditor(page, fieldId)).toHaveCount(0);
 
     await valueRow.hover();
     await valueRow.locator(':scope > .row-leading > .row-chevron-button').click();
