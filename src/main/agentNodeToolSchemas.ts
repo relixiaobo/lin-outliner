@@ -309,12 +309,12 @@ function definitionConfigPatchProperties() {
   return {
     field_type: {
       type: 'string',
-      enum: ['plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox', 'reference'],
+      enum: ['plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox'],
       description: 'Field definition type.',
     },
     fieldType: {
       type: 'string',
-      enum: ['plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox', 'reference'],
+      enum: ['plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox'],
       description: 'Alias for field_type.',
     },
     source_supertag: {

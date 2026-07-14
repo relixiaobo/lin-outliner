@@ -46,7 +46,6 @@ function hostFor(core: Core, overrides: Partial<OutlinerToolHost> = {}): Outline
       if (command === 'merge_definitions') return core.mergeDefinitions(String(args.targetId), arrayArg(args.sourceIds));
       if (command === 'create_collected_field_option') return core.createCollectedFieldOption(String(args.fieldEntryId), String(args.name));
       if (command === 'select_field_option') return core.selectFieldOption(String(args.fieldEntryId), String(args.optionNodeId));
-      if (command === 'add_field_reference') return core.addFieldReference(String(args.fieldEntryId), String(args.targetNodeId));
       if (command === 'add_reference') return core.addReference(String(args.parentId), String(args.targetId), nullableNumber(args.index));
       if (command === 'set_reference_target') return core.setReferenceTarget(String(args.referenceId), String(args.targetId));
       if (command === 'trash_node') return core.trashNode(String(args.nodeId));
@@ -87,7 +86,7 @@ function arrayArg(value: unknown): string[] {
 }
 
 function fieldTypeArg(value: unknown) {
-  if (['plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox', 'reference'].includes(String(value))) {
+  if (['plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox'].includes(String(value))) {
     return String(value) as any;
   }
   return 'plain';
@@ -236,6 +235,7 @@ describe('agent node tools', () => {
     const nodeCreateOutlineDescription = (nodeCreate.parameters as any).properties.outline.description as string;
     const nodeSearchParameters = JSON.stringify(nodeSearch.parameters);
     const nodeEditParameters = JSON.stringify(nodeEdit.parameters);
+    const expectedFieldTypes = ['plain', 'options', 'options_from_supertag', 'date', 'number', 'url', 'email', 'checkbox'];
 
     expect(nodeRead.description).toContain('Use node_read before node_edit');
     expect(nodeCreate.description).toContain('Usage:');
@@ -270,6 +270,8 @@ describe('agent node tools', () => {
     expect(nodeEditParameters).toContain('leading %%node:id%% marker may be omitted');
     expect(nodeEditParameters).toContain('Include enough surrounding lines');
     expect(`${nodeEdit.description}${nodeEditParameters}`.split('Do not edit child structure through node_edit outline fragments').length - 1).toBe(1);
+    expect((nodeCreate.parameters as any).properties.definition.properties.config.properties.field_type.enum).toEqual(expectedFieldTypes);
+    expect((nodeEdit.parameters as any).properties.definition_patch.properties.field_type.enum).toEqual(expectedFieldTypes);
     expect(history.description).toContain('Use action "list" first');
   });
 
@@ -633,7 +635,11 @@ describe('agent node tools', () => {
     expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Contact'))).toBe('email');
     expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Published'))).toBe('date');
     expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Score'))).toBe('number');
-    expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Related'))).toBe('reference');
+    const relatedEntry = fieldEntryByName(core, root, 'Related');
+    expect(fieldTypeOf(core, relatedEntry)).toBe('plain');
+    const relatedValue = core.state().nodes[core.state().nodes[relatedEntry]!.children[0]!]!;
+    expect(relatedValue.type).toBe('reference');
+    expect(relatedValue.targetId).toBe(target);
     expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Flag'))).toBe('checkbox');
     expect(fieldTypeOf(core, fieldEntryByName(core, root, 'Notes'))).toBe('plain');
   });

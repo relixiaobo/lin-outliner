@@ -67,8 +67,4 @@ export interface FieldValueContext {
   materializeValue: (id: NodeId, text: string) => Promise<unknown>;
   // Append a reference to an existing pool option (the additive options overlay).
   onSelectOption: (optionId: NodeId) => Promise<unknown>;
-  // Append a reference to an arbitrary existing node (the reference-field picker).
-  // Unlike onSelectOption the target is any document node, not a pool option, so
-  // it routes through add_field_reference rather than select_field_option.
-  onAddReference: (targetId: NodeId) => Promise<unknown>;
 }

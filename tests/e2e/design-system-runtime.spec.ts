@@ -216,12 +216,12 @@ async function showOptionsFieldValuePopover(page: Page) {
   await expect(listbox.getByRole('option', { name: 'High' })).toBeVisible();
 }
 
-async function showReferenceFieldValuePopover(page: Page) {
+async function showPlainFieldReferencePopover(page: Page) {
   await trailingEditor(page, ids.referencesEntry).click();
+  await page.keyboard.type('@Alpha');
   const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
   await listbox.waitFor({ state: 'visible' });
-  await page.keyboard.type('Alpha');
-  await expect(listbox.getByRole('option', { name: 'Alpha' })).toBeVisible();
+  await expect(listbox.getByRole('option', { name: 'Alpha', exact: true })).toBeVisible();
 }
 
 async function showSelectedFieldOptionsPopover(page: Page) {
@@ -1053,11 +1053,11 @@ const surfaces: SurfaceCase[] = [
     beforeProbe: showOptionsFieldValuePopover,
   },
   {
-    name: 'reference field value popover',
+    name: 'plain field reference suggestions overlay',
     path: '/',
     waitFor: `[data-node-id="${ids.referencesEntry}"]`,
-    options: { referenceField: true },
-    beforeProbe: showReferenceFieldValuePopover,
+    options: { relatedField: true },
+    beforeProbe: showPlainFieldReferencePopover,
   },
   {
     name: 'selected field options popover',

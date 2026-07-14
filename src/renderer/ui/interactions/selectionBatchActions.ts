@@ -208,6 +208,6 @@ function canDuplicateSelectableRow(
   if (fieldEntry?.type !== 'fieldEntry') return false;
   const fieldDef = fieldEntry.fieldDefId ? byId.get(fieldEntry.fieldDefId) : undefined;
   const fieldType = fieldDef ? projectFieldConfig(byId, fieldDef).fieldType : undefined;
-  if (isOptionsFieldType(fieldType) || fieldType === 'reference' || fieldType === 'checkbox') return false;
+  if (isOptionsFieldType(fieldType) || fieldType === 'checkbox') return false;
   return true;
 }

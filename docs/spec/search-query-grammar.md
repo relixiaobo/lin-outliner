@@ -78,7 +78,7 @@ phrases, all-term matches, and lower-ranked loose term matches. Tags and field
 values are searchable, but they do not outrank exact primary text. Default
 relevance also applies a conservative, capped reference-authority boost from the
 document's distinct linked inbound source nodes (tree references, inline node
-references, and reference field values; trashed/internal metadata references do
+references, and reference-valued field children; trashed/internal metadata references do
 not count). Search nodes and their query internals also stay out of this graph:
 search result references, search titles, and query operand references are
 executable/view state, not authority signals. Because this signal is derived from document state, it is safe for

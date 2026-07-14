@@ -49,14 +49,10 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     max: optionFieldConfig?.maxValue,
   };
   // A date value reads as a plain text row, but its picker is summoned with
-  // Space — surface that affordance through the placeholder, mirroring the
-  // reference date interaction the design follows. A reference field's draft is a
-  // node-search box, so its placeholder names that intent.
+  // Space, so surface that affordance through the placeholder.
   const valuePlaceholder = descriptor.interaction === 'datePicker'
     ? tf.datePlaceholder
-    : descriptor.interaction === 'referencePicker'
-      ? tf.referencePlaceholder
-      : props.placeholder;
+    : props.placeholder;
 
   // Materialize the trailing draft as a field value, carrying the renderer's
   // draft row id so the row keeps its React identity (and IME) through the
@@ -104,9 +100,6 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
       materializeValue,
       onSelectOption: (optionId) => (
         props.run(() => api.selectFieldOption(props.entryId, optionId), { applyFocus: false })
-      ),
-      onAddReference: (targetId) => (
-        props.run(() => api.addFieldReference(props.entryId, targetId), { applyFocus: false })
       ),
     }
     : undefined;

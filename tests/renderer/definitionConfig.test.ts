@@ -4,6 +4,7 @@ import {
   definitionConfigItems,
   definitionKind,
   definitionOutlinerLabel,
+  FIELD_TYPE_CONFIG_OPTIONS,
 } from '../../src/renderer/ui/definition/definitionConfig';
 import {
   buildDefinitionTagOptions,
@@ -35,6 +36,19 @@ describe('definition config registry', () => {
     expect(definitionKind(makeNode({ type: 'tagDef' }))).toBe('tag');
     expect(definitionKind(makeNode({ type: 'fieldDef' }))).toBe('field');
     expect(definitionKind(makeNode({}))).toBeNull();
+  });
+
+  test('exposes only the supported Tana-aligned field type subset', () => {
+    expect(FIELD_TYPE_CONFIG_OPTIONS).toEqual([
+      'plain',
+      'options',
+      'options_from_supertag',
+      'date',
+      'number',
+      'url',
+      'email',
+      'checkbox',
+    ]);
   });
 
   test('shows tag done mapping only after checkbox is enabled', () => {

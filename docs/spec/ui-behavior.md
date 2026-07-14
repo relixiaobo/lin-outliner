@@ -165,7 +165,7 @@ as bare text:
 - **Tags** — the owner's applied tags as read-only colored badges (the same
   nodex-style badges shown inline after node text), each navigable to its tag.
 - **References** — linked backlink source nodes (tree references, inline node
-  references, and reference field values that point at the owner) as read-only
+  references, and reference-valued field children that point at the owner) as read-only
   **reference rows**, not a bare count. The raw `sys:refCount` sort/filter value
   counts every linked reference edge; the rendered value dedupes by source node.
 - **Owner** — the owner's parent node, as a read-only reference row.
@@ -195,18 +195,14 @@ not expandable.)
 A typed field value that fails its type's format check shows a trailing warning
 icon; the message is revealed on hover, never as always-on inline text.
 
-A **`reference` field type** holds references to other nodes (vs an `options`
-field, whose values come from a per-field option pool). Its value draft is a
-node-search box: focusing it opens `TrailingReferencePopover` over the whole
-document (the same in-memory search that powers an `@` reference), typing filters,
-and picking a node appends a `reference` value via `add_field_reference`, then
-advances to the next trailing draft. Each value renders as a reference row
-(double-click edits the target; expandable). Picks reference **existing** nodes
-only — there is no create-from-query affordance, and the typed text is never
-persisted as a free-text value (it is purely the search query). This is the
-editable peer of the read-only References / Owner / Day system fields above: same
-reference-row presentation, but the value set is user-managed rather than
-computed.
+A **plain field** uses the normal outliner value editor and may contain ordinary
+text nodes, inline node references, or whole-row reference nodes. Typing `@` in
+the value draft opens the standard document reference suggestions. Picking a
+reference as the whole value creates the normal reference-conversion row and,
+when left unchanged, restores it as a structural `reference` child of the field
+entry. Picking inside surrounding text creates an inline reference in a plain
+value node. References are value shapes rather than a field type, and there is
+no field-only reference picker.
 
 For `options_from_supertag` fields, the source supertag must be an active tag
 definition. If the source tag is moved to Trash, the field's value picker no
@@ -341,7 +337,7 @@ outliner row shell, indentation, chevron slot, bullet/reference marker, title
 text, description text, and trailing action slot. Source breadcrumbs align with
 group labels; source row markers and titles align with normal node body rows.
 Source breadcrumbs are navigable.
-Reference field-value sources use the reference marker; ordinary linked and
+Reference-valued field sources use the reference marker; ordinary linked and
 unlinked source rows use the normal content bullet.
 Each source row renders a reference frame behind its bullet, wrapped title,
 description, and trailing action slot; the frame uses the same left and right
@@ -360,7 +356,7 @@ Linked references include:
 - tree reference rows whose `targetId` is the panel root and whose `refRole`
   counts as a backlink;
 - inline node references in rich text;
-- reference field values, attributed to the owning content node and grouped under
+- reference-valued field children, attributed to the owning content node and grouped under
   the field name.
 
 Search nodes do not count as reference sources. A saved search is a view/query,
@@ -410,7 +406,7 @@ implicit previous/next body rows for text editing commands.
 | `Shift+ArrowUp/Down` | Extend visible row selection. |
 | `Mod+A` | Select every selectable row in the current panel scope, including stored field value rows. |
 | `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection mode, selected rows, and selection anchor. Tab applies only to contiguous selected runs whose first row has an unselected previous sibling; a selected run at the start of its parent is a no-op, so later selected rows never become children of earlier selected rows. Shift+Tab never moves rows above the current panel root; panel-root rows are a no-op. Shift+Tab collapses any previous parent emptied by the move so the moved rows stay adjacent to their old parent. Visible rows that change position during the structural move use a short transform-only movement animation; `prefers-reduced-motion: reduce` disables it. Field value rows are excluded from structural indent/outdent because they may not leave their owning field entry. |
-| `Backspace` / `Delete` | Remove selected root rows by selectable-row policy: ordinary rows trash normally, stored field value rows route through `remove_field_value`, and synthetic `sysref:*` rows no-op. A single ref-clicked ordinary reference deletes the reference row itself; a ref-clicked reference field value still routes through field-value removal. |
+| `Backspace` / `Delete` | Remove selected root rows by selectable-row policy: ordinary rows trash normally, stored field value rows route through `remove_field_value`, and synthetic `sysref:*` rows no-op. A single ref-clicked ordinary reference deletes the reference row itself; a ref-clicked reference-valued field child still routes through field-value removal. |
 
 ## Paste And Clipboard Conversion Matrix
 
@@ -513,9 +509,9 @@ in that sibling uniqueness rule.
 | Click a reference row | Select the reference link row; do not enter text edit mode. | `outliner-selection-keyboard.spec.ts` |
 | Double-click a reference row or press ArrowRight on a selected reference row | Convert the reference row to an inline-reference conversion row. If unchanged and valid on blur, restore to a reference row. If text is added, keep it as inline text. | `outliner-selection-keyboard.spec.ts` |
 | Backspace/Delete a selected reference row | Delete/trash the reference link itself. The target node remains. Mixed normal-node/reference selections use normal batch block deletion. | `outliner-selection-keyboard.spec.ts` |
-| Selected option-reference field value | ArrowUp/Down moves through field options, Enter selects, and Escape closes the options list before clearing the selected reference row. | `outliner-triggers.spec.ts` |
-| Type in a `reference` field value draft | Open the node-search popover over the whole document; ArrowUp/Down/Enter pick a candidate, Escape closes. Picking appends a `reference` value (`add_field_reference`) and advances to the next draft. A non-matching query never materializes a free-text value. | `trailingReferencePopover.test.tsx`, `outliner-triggers.spec.ts` |
-| `LINKS_TO` query rule | Match linked references only: tree references, inline node references, and reference field values whose target is the query target. Do not match unlinked textual mentions. | `searchEngine` |
+| Selected options reference value | ArrowUp/Down moves through field options, Enter selects, and Escape closes the options list before clearing the selected reference row. | `outliner-triggers.spec.ts` |
+| Type `@` in a plain field value draft | Open the standard reference suggestions. A whole-value pick becomes a structural reference child when left unchanged; a pick inside surrounding text becomes an inline reference in the plain value node. | `outliner-triggers.spec.ts` |
+| `LINKS_TO` query rule | Match linked references only: tree references, inline node references, and reference-valued field children whose target is the query target. Do not match unlinked textual mentions. | `searchEngine` |
 | Toggle checkbox/done on a reference row | Apply the done state to the target node, because the reference displays the target. | `outliner-parity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | Permanently delete a target node | Remove tree references and inline references to that target. Undo restores both. | `core.test.ts` |
 | Trash a target node | Keep references restorable; the reference still points at the trashed target until restore or permanent delete. | `core.test.ts` |

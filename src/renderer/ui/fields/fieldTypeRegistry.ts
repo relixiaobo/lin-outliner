@@ -3,7 +3,6 @@ import type { FieldType } from '../../api/types';
 export type FieldValueInteraction =
   | 'outliner'
   | 'optionPicker'
-  | 'referencePicker'
   | 'datePicker'
   | 'numberInput'
   | 'urlLink'
@@ -66,21 +65,13 @@ export const FIELD_TYPE_REGISTRY = {
     interaction: 'checkbox',
     exposedInConfig: true,
   },
-  reference: {
-    id: 'reference',
-    label: 'reference',
-    interaction: 'referencePicker',
-    exposedInConfig: true,
-  },
 } satisfies Record<FieldType, FieldTypeMetadata>;
 
 export const FIELD_TYPE_CONFIG_OPTIONS = (Object.keys(FIELD_TYPE_REGISTRY) as FieldType[])
   .filter((fieldType) => FIELD_TYPE_REGISTRY[fieldType].exposedInConfig);
 
 export function fieldTypeMetadata(fieldType: FieldType | undefined): FieldTypeMetadata {
-  // Fall back to plain for unknown/retired types (e.g. legacy dev data that
-  // still carries a since-removed field type).
-  return FIELD_TYPE_REGISTRY[fieldType ?? 'plain'] ?? FIELD_TYPE_REGISTRY.plain;
+  return FIELD_TYPE_REGISTRY[fieldType ?? 'plain'];
 }
 
 export function fieldTypeLabel(fieldType: FieldType | undefined): string {

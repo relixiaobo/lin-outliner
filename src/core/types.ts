@@ -66,8 +66,7 @@ export type FieldType =
   | 'number'
   | 'url'
   | 'email'
-  | 'checkbox'
-  | 'reference';
+  | 'checkbox';
 
 export type AutoInitStrategy =
   | 'current_date'

@@ -2036,27 +2036,6 @@ export class Core {
   }
 
   /**
-   * Append a reference value on a `reference` field. Everything is a node: the
-   * value is a `reference` child of the entry pointing at any existing node
-   * (deduped against an already-present reference), reusing the same append path
-   * as option selection — only the target is unconstrained (any node, not a pool
-   * option). Picking a node twice is a no-op.
-   */
-  addFieldReference(fieldEntryId: string, targetNodeId: string, id?: string): CommandOutcome {
-    return this.mutate(() => {
-      const state = this.snapshot();
-      const fieldEntry = requiredNode(state, fieldEntryId);
-      if (fieldEntry.type !== 'fieldEntry') throw CoreError.invalidOperation('references can only be set on field entries');
-      const fieldDefId = fieldEntry.fieldDefId;
-      if (!fieldDefId) throw CoreError.invalidOperation('field entry has no field definition');
-      ensureReferenceFieldDef(state, fieldDefId);
-      requiredNode(state, targetNodeId);
-      this.selectFieldOptionDirect(fieldEntryId, fieldDefId, targetNodeId, id);
-      return focus(fieldEntryId);
-    });
-  }
-
-  /**
    * Set a free-text value on an options field without collecting it as a
    * reusable option (decoupled from autocollect). Everything is a node: the
    * value appends as a plain content child (never a reference into the option
@@ -4765,15 +4744,6 @@ function ensureOptionsFieldDef(state: DocumentState, fieldDefId: string) {
   const fieldType = fieldTypeOf(state, fieldDefId);
   if (fieldType !== 'options' && fieldType !== 'options_from_supertag') {
     throw CoreError.invalidOperation('field definition is not an options field');
-  }
-  return fieldDef;
-}
-
-function ensureReferenceFieldDef(state: DocumentState, fieldDefId: string) {
-  ensureFieldDefinition(state, fieldDefId);
-  const fieldDef = requiredNode(state, fieldDefId);
-  if (fieldTypeOf(state, fieldDefId) !== 'reference') {
-    throw CoreError.invalidOperation('field definition is not a reference field');
   }
   return fieldDef;
 }

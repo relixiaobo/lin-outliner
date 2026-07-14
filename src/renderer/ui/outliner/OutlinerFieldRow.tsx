@@ -586,8 +586,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     systemFieldId && isNodeReferenceSystemField(systemFieldId) ? (
       // References / Owner / Day are read-only node references: render them as the
       // same reference rows used everywhere (double-click edits the target,
-      // expandable), with the value set computed and immutable. See
-      // docs/plans/archive/reference-field-type.md.
+      // expandable), with the value set computed and immutable. See the system
+      // field section in docs/spec/ui-behavior.md.
       <SystemReferenceValues
         panelId={props.panelId}
         entryId={props.entryId}
