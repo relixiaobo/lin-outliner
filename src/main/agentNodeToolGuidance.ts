@@ -100,6 +100,7 @@ export const NODE_CREATE_DESCRIPTION = [
   '- Use duplicate_id only to duplicate an existing subtree with new ids.',
   '- Insertion: after_id omitted appends, after_id null inserts first, after_id string inserts after that sibling.',
   '- Use preview_only to parse and validate before mutating the document.',
+  `- Successful creation results include fresh %%node:id%% edit handles as protocol metadata. ${FINAL_ANSWER_NODE_REFERENCE_GUIDANCE}`,
 ].join('\n');
 
 export const NODE_CREATE_OUTLINE_PARAMETER_DESCRIPTION = [

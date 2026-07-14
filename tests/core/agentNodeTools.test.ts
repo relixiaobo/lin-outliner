@@ -273,6 +273,15 @@ describe('agent node tools', () => {
     expect(history.description).toContain('Use action "list" first');
   });
 
+  test('node_create catalog independently explains edit handles and final-answer references', () => {
+    const nodeCreate = createNodeTools(hostFor(Core.new())).find((tool) => tool.name === 'node_create')!;
+    const catalog = `${nodeCreate.description}\n${JSON.stringify(nodeCreate.parameters)}`;
+
+    expect(catalog).toContain('Successful creation results include fresh %%node:id%% edit handles');
+    expect(catalog).toContain('never show %%node:id%% edit handles');
+    expect(catalog).toContain('[[node:^exact-id]]');
+  });
+
   test('node tools enforce run-scoped node resources for Issue Sessions', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -2981,6 +2990,47 @@ describe('agent node tools', () => {
     expect(searchExecutions).toBe(0);
   });
 
+  test('node_search batch counts reject semantic errors before reading search execution hooks', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    mustFocus(core.createNode(today, null, 'Alpha note'));
+    let searchIndexReads = 0;
+    let transientOptionReads = 0;
+    let personalRankingReads = 0;
+
+    const result = await executeRawTool(core, 'node_search', {
+      count: true,
+      queries: [
+        { name: 'valid', query: '- STRING_MATCH\n  - value:: Alpha' },
+        { name: 'invalid_regexp', query: '- REGEXP_MATCH\n  - value:: [' },
+      ],
+    }, undefined, {
+      getTextSearchIndex: () => {
+        searchIndexReads += 1;
+        return buildTextSearchIndex(core.projection());
+      },
+      getTransientSearchOptions: () => {
+        transientOptionReads += 1;
+        return {
+          personalAccessRanking: {
+            getNodeAccessStats: () => {
+              personalRankingReads += 1;
+              return undefined;
+            },
+          },
+        };
+      },
+    });
+
+    expect(result.details.ok).toBe(false);
+    expect(result.details.error?.code).toBe('invalid_search_condition');
+    expect(result.details.error?.message).toContain('Query "invalid_regexp"');
+    expect(result.details.error?.message).toContain('valid regular expression');
+    expect(searchIndexReads).toBe(0);
+    expect(transientOptionReads).toBe(0);
+    expect(personalRankingReads).toBe(0);
+  });
+
   test('node_search batch count rejects mixed modes, missing count, and duplicate names', async () => {
     const core = Core.new();
     const query = '- STRING_MATCH\n  - value:: Alpha';
@@ -3074,6 +3124,7 @@ describe('agent node tools', () => {
     expect(visible.data).toMatchObject({ total: 2, next_offset: 1 });
     expect(visible.data).not.toHaveProperty('page');
     expect(visible.instructions).toBeUndefined();
+    expect(result.details.instructions).toBe('Call node_search with offset 1 to continue.');
   });
 
   test('node_search resolves tag conditions from temporary search outlines', async () => {

@@ -932,6 +932,8 @@ should be written as operational guidance, not as implementation notes:
   them, such as `%%node:id%%` markers, `operation_id` guards, or `nextOffset`.
 - State each grammar rule once across a tool description and its parameter
   descriptions. Do not embed the same operator guide or outline manual in both.
+- Keep each tool's required output-handle and final-answer guidance self-contained;
+  strict `allowedTools` can expose one tool without neighboring tool descriptions.
 - Do not promise capabilities that are not implemented.
 
 ## Tool Result Layers
@@ -1033,7 +1035,10 @@ show the model a slim projection, pass it; to echo `envelope.data` in full, pass
 it explicitly.
 
 All tools — `node_*` included — project through one shared
-`modelVisibleEnvelope`, keeping `details` untouched. The model-visible shape is:
+`modelVisibleEnvelope`, keeping `details` untouched. A tool-specific projection
+may omit a runtime instruction that is already represented structurally in the
+visible data; the original instruction remains in `details`. The model-visible
+shape is:
 
 ```ts
 interface ModelVisibleToolEnvelope {
@@ -1108,7 +1113,9 @@ Rules:
   `[[node:^exact-id]]`; the renderer resolves the current title.
 - Single search results carry `total` once and `next_offset` only when another
   page exists. Count-only results carry only `total`; they do not echo offset,
-  limit, or a nested page object.
+  limit, or a nested page object. Runtime `details.instructions` retains the
+  existing continuation message for compatibility and debugging; the visible
+  result omits that prose because `next_offset` carries the same action.
 - Mutating tools return a fresh annotated `outline` when that is useful for
   follow-up edits. When a fresh outline is present, model-visible `changes` may
   be omitted because the ids are already visible in the outline; the full
@@ -1129,8 +1136,9 @@ Use `instructions` for unknown tags, unresolved fields, permission denials,
 dynamic recovery, and ambiguous targets. Successful node results do not repeat
 static rules about edit markers, final-answer references, previews, count mode,
 pagination parameters, or Trash semantics; those rules live in the tool schema.
-No-op mutations use the informative visible `status: "unchanged"` instead of a
-prose restatement.
+Runtime-only compatibility guidance may remain in `details` when the visible
+projection already expresses the action structurally. No-op mutations use the
+informative visible `status: "unchanged"` instead of a prose restatement.
 
 `ToolPreview` and `ValidationReport` are defined in the TypeScript parser section
 because they are produced by the mutation planner, but they belong in the common
@@ -1565,11 +1573,14 @@ Result behavior:
   without a `%%search%%` or `%%view:*%%` wrapper. The runtime parses them through
   the same query-expression resolver used by full search outlines and combines
   each item as `AND(common_query, item.query)` when a common query exists.
-- The complete batch is parsed and validated before any query executes. An
-  invalid common fragment, item fragment, operand reference, duplicate name, or
-  mixed single/batch parameter set fails the whole call; batch results are never
-  partial. Each query's matches pass through the same run-scope result filter as
-  single searches before its total is counted.
+- The complete batch is parsed, resolved, and semantically validated before the
+  runtime reads the host text index, obtains personal-access ranking options, or
+  executes any query. The shared core validator applies the same regular
+  expression, date, scalar, and context-dependent operand rules as execution. An
+  invalid common fragment, item fragment, operand reference, semantic operand,
+  duplicate name, or mixed single/batch parameter set fails the whole call;
+  batch results are never partial. Each query's matches pass through the same
+  run-scope result filter as single searches before its total is counted.
 - The root title is returned as `title` and may be used for temporary UI display.
 - `%%view:table%%`, `%%view:list%%`, `%%view:cards%%`, and similar directives are
   returned as `view` and drive temporary result presentation.
@@ -1831,6 +1842,10 @@ Result behavior:
   only emitted by read/search results and accepted by edit replacements.
 - After apply, model-visible data returns a fresh annotated `outline` for the
   created roots.
+- The `node_create` tool description independently identifies those
+  `%%node:id%%` markers as edit handles and tells the model to use
+  `[[node:^exact-id]]` in final answers. This guidance cannot depend on
+  `node_read`, `node_search`, or `node_edit` also being present in the tool catalog.
 - Reference targets must exist and must not be in Trash.
 - `preview_only: true` returns preview and validation without applying.
 

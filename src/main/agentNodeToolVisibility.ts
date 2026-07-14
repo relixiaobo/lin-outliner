@@ -28,11 +28,19 @@ export interface NodeVisiblePayload {
   visible: NodeVisibleResult;
 }
 
+interface NodeToolResultOptions {
+  omitInstructions?: boolean;
+}
+
 export function nodeToolResult<TData>(
   envelope: ToolEnvelope<TData>,
   payload: NodeVisiblePayload,
+  options: NodeToolResultOptions = {},
 ): AgentToolResult<ToolEnvelope<TData>> {
-  const visibleEnvelope = modelVisibleEnvelope(envelope, payload.visible);
+  const visibleSource = options.omitInstructions
+    ? { ...envelope, instructions: undefined }
+    : envelope;
+  const visibleEnvelope = modelVisibleEnvelope(visibleSource, payload.visible);
   return {
     content: [{ type: 'text', text: JSON.stringify(visibleEnvelope, null, 2) }],
     details: envelope,

@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { AgentRunScope } from '../core/agentEventLog';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
 import { projectFieldConfig, projectTagConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
+import { validateSearchQueries } from '../core/searchEngine';
 import {
   SCHEMA_ID,
   plainText,
@@ -2011,13 +2012,14 @@ function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions)
       const visible = visibleSearchResult(index, data, params.count);
 
       return nodeToolResult(successEnvelope('node_search', data, {
+        instructions: offset + limit < total ? `Call node_search with offset ${offset + limit} to continue.` : undefined,
         warnings: search.warnings.length ? search.warnings : undefined,
         metrics: {
           durationMs: elapsed(started),
           truncated: offset + limit < total,
           outputBytes: jsonByteLength(data),
         },
-      }), visible);
+      }), visible, { omitInstructions: true });
     },
   };
 }
@@ -2054,6 +2056,20 @@ function executeNodeSearchBatchCount(
       name: item.name,
       query: combineSearchQueryFragments(commonQuery, resolved),
     });
+  }
+
+  const validationTargets: Array<{ name?: string; query: SearchQueryExpr }> = [
+    ...(commonQuery ? [{ query: commonQuery }] : []),
+    ...queries,
+  ];
+  const validation = validateSearchQueries(index.projection, validationTargets.map((item) => item.query));
+  if (!validation.ok) {
+    const item = validationTargets[validation.queryIndex];
+    const label = item?.name ? `Query "${item.name}"` : 'common_query';
+    return nodeErrorResult(errorEnvelope<NodeSearchResultData>('node_search', validation.issue.code, `${label}: ${validation.issue.message}`, {
+      instructions: 'Fix the canonical search query tree and retry.',
+      metrics: { durationMs: elapsed(started) },
+    }));
   }
 
   const results: NodeSearchBatchCountData['results'] = [];

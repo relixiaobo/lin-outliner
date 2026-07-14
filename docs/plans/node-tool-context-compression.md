@@ -74,12 +74,16 @@ repeat instructions that merely restate:
 Keep result `instructions` only when the result contains non-derivable recovery or
 next-action information. Errors retain actionable recovery guidance. Warnings and
 informative envelope status (`partial`, `unchanged`, `denied`) remain visible.
-Pagination is represented by `next_offset`, so it needs no prose instruction.
+Pagination is represented visibly by `next_offset`, so it needs no model-facing
+prose instruction. Preserve the existing continuation instruction in runtime
+`details` for debug and compatibility consumers.
 
 Deduplicate the node tool schema text at the same time: operational use guidance
 belongs in the tool description, while detailed input grammar belongs in the
 relevant parameter description. Do not embed the same operator guide or outline
-manual in both places.
+manual in both places. Every tool must still carry its own output-handle and
+final-answer reference rules because strict `allowedTools` can expose one node
+tool without the others.
 
 ### 3. Shared-condition batch counts
 
@@ -115,9 +119,12 @@ Rules:
 - `queries` has 1-20 items and names must be non-empty and unique.
 - Batch mode requires `count: true` and cannot be combined with `outline`,
   `search_node_id`, `limit`, or `offset`.
-- Parse, resolve, and validate every query before executing any of them. Apply
-  the existing run-scope result filter before counting each query. One invalid
-  query fails the whole call; no partial count map is returned.
+- Parse, resolve, and semantically validate every query before acquiring the text
+  index, personal-access options, or executing any query. Semantic validation
+  uses the core search engine's operand rules for regular expressions, dates,
+  scalars, and context-dependent operators. Apply the existing run-scope result
+  filter before counting each query. One invalid query fails the whole call; no
+  partial count map is returned.
 - Count mode records no personal-access signal, matching existing single-count
   behavior.
 - Results preserve caller names in one compact map:
@@ -151,10 +158,16 @@ Add focused tests that lock:
 - search/read results contain no `references` array;
 - id-only node references render current titles through the existing renderer path;
 - search results expose only `total` and optional `next_offset` metadata;
+- pagination continuation guidance remains in runtime `details` while the visible
+  result omits it;
 - batch counts combine a shared condition with each parsed query;
 - duplicate names, invalid fragments, and mixed single/batch parameters fail
   before execution; scoped batches count only readable results;
+- a semantic error in the final batch item invokes no text-index or
+  personal-ranking execution hook;
 - batch counts do not record agent recall;
+- a catalog containing only `node_create` still explains edit handles and
+  final-answer node references;
 - node tool descriptions and parameter descriptions no longer duplicate the full
   search/edit grammar;
 - the representative six-count fixture achieves at least 60% compact JSON byte
@@ -164,6 +177,7 @@ Add focused tests that lock:
 
 - `src/main/agentNodeToolSchemas.ts`
 - `src/main/agentNodeToolGuidance.ts`
+- `src/core/searchEngine.ts`
 - `src/main/agentToolEnvelope.ts`
 - `src/main/agentNodeToolSearch.ts`
 - `src/main/agentNodeTools.ts`
@@ -171,6 +185,7 @@ Add focused tests that lock:
 - `src/main/agentNodeToolTypes.ts`
 - `docs/spec/agent-tool-design.md`
 - `tests/core/agentNodeTools.test.ts`
+- `tests/core/searchEngine.test.ts`
 - Focused renderer/reference tests only if existing id-only title resolution lacks
   direct coverage.
 

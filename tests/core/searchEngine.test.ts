@@ -8,6 +8,7 @@ import {
   SEARCH_EXECUTABLE_QUERY_OPS,
   SEARCH_UNSUPPORTED_QUERY_OPS,
   searchNodeToQueryExpr,
+  validateSearchQueries,
 } from '../../src/core/searchEngine';
 import type { TextSearchIndex } from '../../src/core/textSearchIndex';
 import {
@@ -18,6 +19,7 @@ import {
   type EmbedNode,
   type ImageNode,
   type QueryOp,
+  type SearchQueryExpr,
 } from '../../src/core/types';
 import { REF_COUNT_FIELD } from '../../src/core/systemFields';
 
@@ -95,6 +97,47 @@ describe('core search engine', () => {
     const anyTagged = runSearchNode(state, searchId);
     expect(anyTagged.ok ? anyTagged.hits.map((hit) => hit.nodeId) : []).toContain(tagged);
     expect(anyTagged.ok ? anyTagged.hits.map((hit) => hit.nodeId) : []).not.toContain(other);
+  });
+
+  test('validates every query expression before candidate evaluation', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    mustFocus(core.createNode(today, null, 'Alpha note'));
+    const tagId = mustFocus(core.createTag('validation'));
+    const numberEntryId = mustFocus(core.createFieldDef(tagId, 'Estimate', 'number'));
+    const numberFieldDefId = core.state().nodes[numberEntryId]!.fieldDefId!;
+    const dateEntryId = mustFocus(core.createFieldDef(tagId, 'Due', 'date'));
+    const dateFieldDefId = core.state().nodes[dateEntryId]!.fieldDefId!;
+    const invalidRegexp = { kind: 'rule', op: 'REGEXP_MATCH', text: '[' } as const;
+    const invalidQueries: SearchQueryExpr[] = [
+      invalidRegexp,
+      { kind: 'rule', op: 'GT', fieldDefId: numberFieldDefId, text: 'not-a-number' },
+      { kind: 'rule', op: 'DATE_OVERLAPS', fieldDefId: dateFieldDefId, text: '2026/05/14' },
+      { kind: 'rule', op: 'DONE_LAST_DAYS', text: 'later' },
+    ];
+
+    for (const invalidQuery of invalidQueries) {
+      const validation = validateSearchQueries(core.projection(), [
+        { kind: 'rule', op: 'STRING_MATCH', text: 'Alpha' },
+        invalidQuery,
+      ]);
+      expect(validation.ok).toBe(false);
+      if (!validation.ok) {
+        expect(validation.queryIndex).toBe(1);
+        expect(validation.issue.code).toBe('invalid_search_condition');
+      }
+    }
+    const run = runSearchExpr(core.projection(), {
+      kind: 'group',
+      logic: 'AND',
+      children: [
+        { kind: 'rule', op: 'STRING_MATCH', text: 'Never matches' },
+        invalidRegexp,
+      ],
+    });
+
+    expect(run.ok).toBe(false);
+    if (!run.ok) expect(run.issue.message).toContain('valid regular expression');
   });
 
   test('LINKS_TO uses canonical linked reference sources', () => {

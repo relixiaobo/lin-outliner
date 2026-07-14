@@ -185,6 +185,10 @@ export type SearchRunResult =
   | { ok: true; hits: SearchHit[] }
   | { ok: false; issue: SearchConditionIssue };
 
+export type SearchQueryValidationResult =
+  | { ok: true }
+  | { ok: false; queryIndex: number; issue: SearchConditionIssue };
+
 export interface SearchPersonalAccessRanking {
   getNodeAccessStats(nodeId: NodeId): NodeAccessStats | undefined;
   now?: number;
@@ -259,6 +263,32 @@ export function runTransientSearchExpr(
   return runSearchExprInternal(document, query, baseOptions, personalAccessRanking);
 }
 
+export function validateSearchQueries(
+  document: SearchDocument,
+  queries: readonly SearchQueryExpr[],
+  options: Pick<SearchRunOptions, 'searchNodeId'> = {},
+): SearchQueryValidationResult {
+  const baseIndex = indexSearchDocument(document);
+  const searchNode = options.searchNodeId
+    ? baseIndex.nodes.get(options.searchNodeId)
+    : undefined;
+  if (options.searchNodeId && !searchNode) {
+    return { ok: false, queryIndex: 0, issue: invalidSearchNode(options.searchNodeId) };
+  }
+
+  const contextSearchNode = searchNode ?? virtualSearchNode();
+  const references = referenceSummaryForSearchIndex(baseIndex);
+  for (const [queryIndex, query] of queries.entries()) {
+    const prepared = prepareSearchQueryEvaluation(baseIndex, query, contextSearchNode);
+    const issue = validateConditionTree(prepared.evalIndex, prepared.root, {
+      searchNode: contextSearchNode,
+      references,
+    });
+    if (issue) return { ok: false, queryIndex, issue };
+  }
+  return { ok: true };
+}
+
 function runSearchExprInternal(
   document: SearchDocument,
   query: SearchQueryExpr,
@@ -273,35 +303,53 @@ function runSearchExprInternal(
 
   const contextSearchNode = searchNode ?? virtualSearchNode();
   const references = referenceSummaryForSearchIndex(baseIndex);
+  const prepared = prepareSearchQueryEvaluation(baseIndex, query, contextSearchNode);
+  const validationContext: SearchContext = {
+    searchNode: contextSearchNode,
+    references,
+  };
+  const issue = validateConditionTree(prepared.evalIndex, prepared.root, validationContext);
+  if (issue) return { ok: false, issue };
+  const context: SearchContext = {
+    ...validationContext,
+    textIndex: options.textIndex,
+    textAnalysisByQuery: options.textIndex ? new Map<string, TextSearchQueryAnalysis>() : undefined,
+  };
+
+  const candidateIds = candidateIdsForQuery(query, options.textIndex);
+  const candidateNodes = candidateIds
+    ? [...candidateIds].map((nodeId) => prepared.evalIndex.nodes.get(nodeId)).filter((node): node is SearchNode => Boolean(node))
+    : prepared.evalIndex.allNodes;
+
+  const scored: SearchHit[] = [];
+  for (const node of candidateNodes) {
+    if ((searchNode && node.id === searchNode.id) || !isSearchCandidate(prepared.evalIndex, node.id)) continue;
+    const evaluation = evaluateCondition(prepared.evalIndex, node, prepared.root, context);
+    if (!evaluation.ok) return evaluation;
+    if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
+  }
+
+  const sorted = sortSearchHits(scored, prepared.evalIndex, contextSearchNode, references, personalAccessRanking);
+  return { ok: true, hits: typeof options.limit === 'number' ? sorted.slice(0, options.limit) : sorted };
+}
+
+function prepareSearchQueryEvaluation(
+  baseIndex: SearchIndex,
+  query: SearchQueryExpr,
+  searchNode: SearchNode,
+): { evalIndex: SearchIndex; root: QueryBearingNode } {
   const evalIndex: SearchIndex = {
     ...baseIndex,
     nodes: new Map(baseIndex.nodes),
   };
   let virtualCounter = 0;
-  const virtualTree = virtualConditionTreeFromQueryExpr(query, contextSearchNode.id, () => `virtual:query:${virtualCounter++}`);
+  const virtualTree = virtualConditionTreeFromQueryExpr(
+    query,
+    searchNode.id,
+    () => `virtual:query:${virtualCounter++}`,
+  );
   for (const node of virtualTree.nodes) evalIndex.nodes.set(node.id, node);
-
-  const candidateIds = candidateIdsForQuery(query, options.textIndex);
-  const candidateNodes = candidateIds
-    ? [...candidateIds].map((nodeId) => evalIndex.nodes.get(nodeId)).filter((node): node is SearchNode => Boolean(node))
-    : evalIndex.allNodes;
-
-  const scored: SearchHit[] = [];
-  const textAnalysisByQuery = options.textIndex ? new Map<string, TextSearchQueryAnalysis>() : undefined;
-  for (const node of candidateNodes) {
-    if ((searchNode && node.id === searchNode.id) || !isSearchCandidate(evalIndex, node.id)) continue;
-    const evaluation = evaluateCondition(evalIndex, node, virtualTree.root, {
-      searchNode: contextSearchNode,
-      references,
-      textIndex: options.textIndex,
-      textAnalysisByQuery,
-    });
-    if (!evaluation.ok) return evaluation;
-    if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
-  }
-
-  const sorted = sortSearchHits(scored, evalIndex, contextSearchNode, references, personalAccessRanking);
-  return { ok: true, hits: typeof options.limit === 'number' ? sorted.slice(0, options.limit) : sorted };
+  return { evalIndex, root: virtualTree.root };
 }
 
 function sortSearchHits(
@@ -695,8 +743,11 @@ function evaluateSearchNode(index: SearchIndex, candidate: SearchNode, searchNod
   return { ok: true, match: false, score: 0 };
 }
 
-function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionNode: QueryBearingNode, context: SearchContext): SearchEvaluation {
-  if (conditionNode.queryOp) return evaluateLeafNode(index, candidate, conditionNode, context);
+type SearchConditionGroupResolution =
+  | { ok: true; logic: QueryLogic; children: QueryBearingNode[] }
+  | { ok: false; issue: SearchConditionIssue };
+
+function resolveConditionGroup(index: SearchIndex, conditionNode: QueryBearingNode): SearchConditionGroupResolution {
   if (!conditionNode.queryLogic) {
     return {
       ok: false,
@@ -723,19 +774,47 @@ function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionN
     };
   }
 
-  if (conditionNode.queryLogic === 'AND') return evaluateAnd(index, candidate, childConditions, context);
-  if (conditionNode.queryLogic === 'OR') return evaluateOr(index, candidate, childConditions, context);
-  if (conditionNode.queryLogic === 'NOT') return evaluateNot(index, candidate, childConditions, context);
+  if (conditionNode.queryLogic !== 'AND' && conditionNode.queryLogic !== 'OR' && conditionNode.queryLogic !== 'NOT') {
+    return {
+      ok: false,
+      issue: {
+        code: 'unsupported_search_logic',
+        message: `Search logic "${conditionNode.queryLogic}" is not supported yet.`,
+        nodeId: conditionNode.id,
+        queryLogic: conditionNode.queryLogic,
+      },
+    };
+  }
 
-  return {
-    ok: false,
-    issue: {
-      code: 'unsupported_search_logic',
-      message: `Search logic "${conditionNode.queryLogic}" is not supported yet.`,
-      nodeId: conditionNode.id,
-      queryLogic: conditionNode.queryLogic,
-    },
-  };
+  return { ok: true, logic: conditionNode.queryLogic, children: childConditions };
+}
+
+function validateConditionTree(
+  index: SearchIndex,
+  conditionNode: QueryBearingNode,
+  context: SearchContext,
+): SearchConditionIssue | null {
+  if (conditionNode.queryOp) {
+    const evaluation = evaluateLeafNode(index, context.searchNode, conditionNode, context);
+    return evaluation.ok ? null : evaluation.issue;
+  }
+
+  const group = resolveConditionGroup(index, conditionNode);
+  if (!group.ok) return group.issue;
+  for (const child of group.children) {
+    const issue = validateConditionTree(index, child, context);
+    if (issue) return issue;
+  }
+  return null;
+}
+
+function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionNode: QueryBearingNode, context: SearchContext): SearchEvaluation {
+  if (conditionNode.queryOp) return evaluateLeafNode(index, candidate, conditionNode, context);
+  const group = resolveConditionGroup(index, conditionNode);
+  if (!group.ok) return group;
+  if (group.logic === 'AND') return evaluateAnd(index, candidate, group.children, context);
+  if (group.logic === 'OR') return evaluateOr(index, candidate, group.children, context);
+  return evaluateNot(index, candidate, group.children, context);
 }
 
 function evaluateAnd(index: SearchIndex, candidate: SearchNode, conditions: QueryBearingNode[], context: SearchContext): SearchEvaluation {
