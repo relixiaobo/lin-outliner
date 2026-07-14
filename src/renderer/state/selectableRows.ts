@@ -42,6 +42,12 @@ export interface SelectableRowsOptions {
   expandedHiddenFields?: Set<string>;
 }
 
+interface SelectableRowVisitor {
+  onRow: (row: SelectableRow) => void;
+  afterRow?: (parentId: NodeId, rowId: NodeId) => void;
+  afterScope?: (parentId: NodeId) => void;
+}
+
 const DISABLED_POLICY: SelectableRowActionPolicy = {
   delete: 'disabled',
   move: 'disabled',
@@ -72,6 +78,57 @@ export function buildSelectableRows(
   options: SelectableRowsOptions,
 ): SelectableRow[] {
   const result: SelectableRow[] = [];
+  visitSelectableRows(panelRootId, byId, options, {
+    onRow: (row) => result.push(row),
+  });
+  return result;
+}
+
+// A renderer-only draft is absent from the selectable model. Mirror its rendered
+// insertion point during the same depth-first walk, then return the first row
+// visited after it; afterRow runs after descendants, matching the visual tree.
+export function selectableRowAfterDraft(
+  panelRootId: NodeId,
+  byId: Map<NodeId, NodeProjection>,
+  options: SelectableRowsOptions,
+  placement: { parentId: NodeId; afterId: NodeId | null },
+): SelectableRow | null {
+  let passedDraft = false;
+  let nextRow: SelectableRow | null = null;
+
+  visitSelectableRows(panelRootId, byId, options, {
+    onRow: (row) => {
+      if (passedDraft && nextRow === null) nextRow = row;
+    },
+    afterRow: (parentId, rowId) => {
+      if (
+        !passedDraft
+        && placement.afterId === rowId
+        && placement.parentId === parentId
+      ) {
+        passedDraft = true;
+      }
+    },
+    afterScope: (parentId) => {
+      if (
+        !passedDraft
+        && placement.afterId === null
+        && placement.parentId === parentId
+      ) {
+        passedDraft = true;
+      }
+    },
+  });
+
+  return nextRow;
+}
+
+function visitSelectableRows(
+  panelRootId: NodeId,
+  byId: Map<NodeId, NodeProjection>,
+  options: SelectableRowsOptions,
+  visitor: SelectableRowVisitor,
+): void {
   const expandedHiddenFields = options.expandedHiddenFields ?? new Set<string>();
 
   const visit = (parentId: NodeId, referencePath: NodeId[]) => {
@@ -85,7 +142,7 @@ export function buildSelectableRows(
           continue;
         }
         if (row.type !== 'field' && row.type !== 'content') continue;
-        result.push(selectableRowFor({
+        visitor.onRow(selectableRowFor({
           id: row.id,
           parentId,
           panelRootId,
@@ -96,7 +153,7 @@ export function buildSelectableRows(
           const existingChildren = new Set(fieldEntry?.children ?? []);
           for (const syntheticId of systemReferenceValueIds(fieldEntry, byId)) {
             if (existingChildren.has(syntheticId)) continue;
-            result.push(selectableRowFor({
+            visitor.onRow(selectableRowFor({
               id: syntheticId,
               parentId: row.id,
               panelRootId,
@@ -107,16 +164,18 @@ export function buildSelectableRows(
         const shouldDescend = row.type === 'field' || options.expanded.has(row.id);
         if (shouldDescend) {
           const childParentId = selectableChildParentId(row.id, byId);
-          if (!childParentId || referencePath.includes(childParentId)) continue;
-          visit(childParentId, [...referencePath, childParentId]);
+          if (childParentId && !referencePath.includes(childParentId)) {
+            visit(childParentId, [...referencePath, childParentId]);
+          }
         }
+        visitor.afterRow?.(parentId, row.id);
       }
     };
     visitRows(rows);
+    visitor.afterScope?.(parentId);
   };
 
   visit(panelRootId, [panelRootId]);
-  return result;
 }
 
 export function selectableRowForId(

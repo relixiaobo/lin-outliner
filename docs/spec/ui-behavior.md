@@ -116,7 +116,7 @@ keyboard or pointer change should be checked against this matrix.
 | Empty `Backspace` when parent has no children | Collapse the parent and focus it. |
 | Empty `Backspace` when parent has children | Focus the last visible child. |
 | `ArrowUp` | Focus the last visible child above the trailing row. |
-| `ArrowDown` at panel boundary | Navigate out only if the parent view supplies that callback. |
+| `ArrowDown` | Focus the next visible row after the draft's structural position. At the panel boundary, navigate out only if the parent view supplies that callback. |
 | `#`, `@`, `/`, `>` | Create the matching trigger/field row and open its menu. |
 
 The live `#` tag trigger stays active only while the query after `#` contains

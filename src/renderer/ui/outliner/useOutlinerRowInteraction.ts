@@ -14,7 +14,7 @@ import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { OUTLINER_NODE_DRAG_MIME, resolveOutlinerDropBatchMove } from '../interactions/dragDrop';
 import { flattenVisibleRows, isRowExpanded } from '../../state/document';
-import { buildSelectableRows } from '../../state/selectableRows';
+import { buildSelectableRows, selectableRowAfterDraft } from '../../state/selectableRows';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
 import {
   resolveRowPointerSelectAction,
@@ -189,7 +189,15 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       expandedHiddenFields: liveUi.expandedHiddenFields,
     });
     const at = rows.findIndex((candidate) => candidate.id === rowId);
-    const nextRow = at >= 0 ? rows[at + direction] : undefined;
+    const nextRow = draft && direction === 1
+      ? selectableRowAfterDraft(selectionRootId, byId, {
+        expanded: liveUi.expanded,
+        expandedHiddenFields: liveUi.expandedHiddenFields,
+      }, {
+        parentId,
+        afterId: draftAfterId ?? null,
+      }) ?? undefined
+      : at >= 0 ? rows[at + direction] : undefined;
     if (!nextRow) {
       const panelRoot = byId.get(selectionRootId);
       if (direction === 1 && panelRoot && panelRoot.type !== 'search') {
@@ -213,7 +221,10 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   }, [
     byId,
     childParentId,
+    draft,
+    draftAfterId,
     panelId,
+    parentId,
     rowId,
     selectionRootId,
     setUi,

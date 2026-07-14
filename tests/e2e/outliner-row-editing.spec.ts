@@ -346,6 +346,34 @@ test.describe('outliner row editing parity', () => {
     await expect(row(page, childId)).toBeVisible();
   });
 
+  test('ArrowDown from an empty field-value child draft focuses the next field', async ({ page }) => {
+    const { secondValueId } = await createFieldValueChildrenFixture(page);
+    const followingEntryId = await page.evaluate(async (ids) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      const field = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_inline_field', {
+        parentId: ids.today,
+        index: 2,
+        name: 'Following field',
+        fieldType: 'plain',
+      });
+      return field?.focus?.nodeId ?? '';
+    }, ids);
+    await emitCurrentProjection(page);
+
+    const valueRow = rowBody(page, secondValueId);
+    await valueRow.hover();
+    await valueRow.locator(':scope > .row-leading > .row-chevron-button').click();
+
+    const childDraft = trailingEditor(page, secondValueId);
+    await expect(childDraft).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+
+    await expect(row(page, followingEntryId).locator('.field-name-input')).toBeFocused();
+    await expect(trailingEditor(page)).not.toBeFocused();
+  });
+
   test('field value Tab indents under the previous value and Shift+Tab promotes it back', async ({ page }) => {
     const { entryId, firstValueId, secondValueId } = await createFieldValueChildrenFixture(page);
 

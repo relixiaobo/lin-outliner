@@ -6,6 +6,7 @@ import {
   buildSelectableRows,
   resolveSelectableReferenceTargetId,
   selectableChildParentId,
+  selectableRowAfterDraft,
 } from '../../src/renderer/state/selectableRows';
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
@@ -161,6 +162,36 @@ describe('buildSelectableRows', () => {
       kind: 'content',
       parentId: 'child',
     });
+  });
+
+  test('resumes after an empty field-value child draft at the next field', () => {
+    const byId = byIdOf([
+      node('root', { children: ['entry-a', 'entry-b'] }),
+      node('entry-a', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
+      node('value', { parentId: 'entry-a' }),
+      node('entry-b', { parentId: 'root', type: 'fieldEntry' }),
+    ]);
+    const options = { expanded: new Set<NodeId>(['value']) };
+
+    expect(selectableRowAfterDraft('root', byId, options, {
+      parentId: 'value',
+      afterId: null,
+    })?.id).toBe('entry-b');
+  });
+
+  test('resumes after the visible subtree of a relocated draft anchor', () => {
+    const byId = byIdOf([
+      node('root', { children: ['first', 'second'] }),
+      node('first', { parentId: 'root', children: ['child'] }),
+      node('child', { parentId: 'first' }),
+      node('second', { parentId: 'root' }),
+    ]);
+    const options = { expanded: new Set<NodeId>(['first']) };
+
+    expect(selectableRowAfterDraft('root', byId, options, {
+      parentId: 'root',
+      afterId: 'first',
+    })?.id).toBe('second');
   });
 
   test('marks synthetic system reference values as read-only presentation rows', () => {

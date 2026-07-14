@@ -72,6 +72,8 @@ uses the same disclosure behavior as an ordinary row:
 - Arrow navigation uses the panel's visible selectable-row order, so it crosses
   field boundaries. It never mounts an auto-hidden field-value draft; only an
   already visible expanded-child draft or panel trailing draft participates.
+  ArrowDown from an expanded-child draft resumes at the first visible row after
+  that draft's structural position instead of falling through to the panel end.
 
 The value column keeps its dense field layout, but it must reserve a real,
 stable disclosure slot. Nested field-entry rows continue to hide their own
@@ -139,6 +141,8 @@ Playwright coverage verifies:
 - Shift+Tab on a direct value is a no-op;
 - field-entry chevrons and computed system values remain unchanged;
 - reference values can expand while reference cycles remain bounded.
+- ArrowDown from an empty value-child draft focuses the following visible field
+  rather than the panel trailing draft.
 
 Light and dark screenshots verify value-column alignment, disclosure geometry,
 indent guides, wrapping, focus, and hover without overlap or layout shift.
