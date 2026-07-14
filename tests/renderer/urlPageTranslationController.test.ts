@@ -179,7 +179,7 @@ describe('UrlPageTranslationController', () => {
     dispatch(controller, 'dom-ready');
     await waitFor(() => guest.enabledCalls.length > 0);
 
-    const navigation = new Event('did-start-navigation');
+    const navigation = new window.Event('did-start-navigation');
     Object.defineProperties(navigation, {
       isInPlace: { value: false },
       isMainFrame: { value: true },
@@ -224,12 +224,12 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
 }
 
 function fakeWebview(): Electron.WebviewTag {
-  return new EventTarget() as Electron.WebviewTag;
+  return new window.EventTarget() as Electron.WebviewTag;
 }
 
 function dispatch(controller: UrlPageTranslationController, type: string): void {
   const webview = (controller as unknown as { webview: Electron.WebviewTag }).webview;
-  webview.dispatchEvent(new Event(type));
+  webview.dispatchEvent(new window.Event(type));
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
