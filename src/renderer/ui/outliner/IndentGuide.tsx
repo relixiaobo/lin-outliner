@@ -4,6 +4,7 @@ import { useT } from '../../i18n/I18nProvider';
 
 interface IndentGuideProps {
   guideFor?: string;
+  reference?: boolean;
   flatMetrics?: {
     left: number;
     top: number;
@@ -15,6 +16,7 @@ interface IndentGuideProps {
 export function IndentGuide({
   flatMetrics,
   guideFor,
+  reference = false,
   onToggleChildren,
 }: IndentGuideProps) {
   const t = useT();
@@ -30,6 +32,7 @@ export function IndentGuide({
       className={[
         'indent-guide',
         flatMetrics ? 'indent-guide--flat' : '',
+        reference ? 'indent-guide--reference' : '',
       ].filter(Boolean).join(' ')}
       data-guide-node-id={guideFor}
       style={flatStyle}

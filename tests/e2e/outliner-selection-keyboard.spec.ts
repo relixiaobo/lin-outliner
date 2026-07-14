@@ -263,6 +263,23 @@ test.describe('outliner selection keyboard parity', () => {
     await expect(rowBody(page, ids.gamma)).toHaveClass(/selected/);
   });
 
+  test('selected field values can indent but cannot outdent past their field entry', async ({ page }) => {
+    const { entryId, firstValueId, secondValueId } = await createFieldValueFixture(page);
+
+    await multiSelect(page, [secondValueId]);
+    await page.keyboard.press('Tab');
+
+    await expect.poll(async () => (await nodeById(page, secondValueId))?.parentId).toBe(firstValueId);
+    await expect(rowBody(page, secondValueId)).toHaveClass(/selected/);
+
+    await page.keyboard.press('Shift+Tab');
+    await expect.poll(async () => (await nodeById(page, secondValueId))?.parentId).toBe(entryId);
+    await expect(rowBody(page, secondValueId)).toHaveClass(/selected/);
+
+    await page.keyboard.press('Shift+Tab');
+    await expect.poll(async () => (await nodeById(page, secondValueId))?.parentId).toBe(entryId);
+  });
+
   test('Cmd+A escalates from a field name to visible row selection', async ({ page }) => {
     const { entryId, firstValueId, secondValueId } = await createFieldValueFixture(page);
     const nameInput = row(page, entryId).locator('.field-name-input');
@@ -547,10 +564,16 @@ test.describe('outliner selection keyboard parity', () => {
     await expect(row(page, childId)).toBeVisible();
     await expect(row(page, childId)).toContainText('Alpha child');
 
-    const guideBackground = await row(page, referenceId).locator('> .indent-guide .indent-guide-line').evaluate((element) =>
-      getComputedStyle(element).backgroundImage,
-    );
-    expect(guideBackground).toContain('repeating-linear-gradient');
+    const guideLine = page.locator([
+      `.indent-guide[data-guide-node-id="${referenceId}"] .indent-guide-line`,
+      `[data-node-id="${referenceId}"] > .indent-guide .indent-guide-line`,
+    ].join(', ')).first();
+    const guideStyle = await guideLine.evaluate((element) => ({
+      backgroundImage: getComputedStyle(element).backgroundImage,
+      className: element.parentElement?.className ?? '',
+    }));
+    expect(guideStyle.className).toContain('indent-guide--reference');
+    expect(guideStyle.backgroundImage).toContain('repeating-linear-gradient');
   });
 
   test('ArrowRight converts a selected reference row to an unchanged inline reference and blur restores it', async ({ page }) => {

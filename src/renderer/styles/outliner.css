@@ -988,7 +988,7 @@
   bottom: 0;
 }
 
-.row.reference-row + .indent-guide > .indent-guide-line {
+.indent-guide--reference > .indent-guide-line {
   background: repeating-linear-gradient(
     to bottom,
     color-mix(in srgb, var(--text-primary) 18%, transparent) 0 3px,
@@ -996,7 +996,7 @@
   );
 }
 
-.row.reference-row + .indent-guide:hover > .indent-guide-line {
+.indent-guide--reference:hover > .indent-guide-line {
   background: repeating-linear-gradient(
     to bottom,
     color-mix(in srgb, var(--text-primary) 24%, transparent) 0 3px,
@@ -1433,7 +1433,7 @@
 
 .field-value-outliner > .row-wrap > .row {
   min-height: var(--field-value-row-min-height);
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: var(--row-leading-width) minmax(0, 1fr) auto;
   padding: var(--space-hairline) 0;
 }
 
@@ -1447,16 +1447,6 @@
   padding-bottom: var(--field-row-padding-block);
 }
 
-.field-value-outliner .row-leading {
-  width: 24px;
-  grid-template-columns: 0 0 var(--row-bullet-width) 9px;
-}
-
-.field-value-outliner .row-chevron-button,
-.field-value-outliner .row-chevron-spacer {
-  display: none;
-}
-
 /* A field entry is never expandable: its children ARE its value(s), rendered in
    the value column — there is no separate child scope to reveal. Hide the
    leaf-expand chevron entirely. The bullet keeps its explicit `grid-column: 3`,
@@ -1464,12 +1454,6 @@
 .row.field-row-inline > .row-leading > .row-chevron-button {
   display: none;
 }
-
-.field-value-outliner .row-bullet-button {
-  grid-column: 3;
-}
-
-
 
 .field-value-node-preview.empty {
   color: color-mix(in srgb, var(--text-primary) 28%, transparent);

@@ -60,7 +60,7 @@ field row but still appear in the selectable-row order.
 | Shift+ArrowUp / Shift+ArrowDown | Extend selection from anchor. | `extend_up/down`. | `outlinerParity.test.ts` |
 | Cmd/Ctrl+A | Select all selectable rows in the current selection root, even when no row is currently selected. Field value rows inherit the panel selection root rather than their nested render root. | `select_all`. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | Backspace / Delete | Delete selected root rows by selectable-row policy. Ordinary rows trash; stored field value rows use field-value removal; synthetic rows are disabled. | `batch_delete`. | `outlinerParity.test.ts` |
-| Tab / Shift+Tab | Batch indent/outdent selected root rows that are allowed to move structurally. Field value rows are excluded because they may not leave their owning field entry. | `batch_indent/outdent`. | `outlinerParity.test.ts` |
+| Tab / Shift+Tab | Batch indent/outdent selected root rows that are allowed to move structurally. A direct field value may indent under its previous direct sibling, but cannot outdent above its owning field entry. Descendants below a value are ordinary structural rows. | `batch_indent/outdent`. | `outlinerParity.test.ts`, `selectionBatchActions.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | Cmd/Ctrl+Shift+D | Batch duplicate selected root rows. | `batch_duplicate`. | `outlinerParity.test.ts` |
 | Cmd/Ctrl+Enter | Cycle selected target nodes through no checkbox, undone checkbox, and done checkbox. | `batch_checkbox`. | `outlinerParity.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | # | Open batch tag selector. | `batch_apply_tag`. | `outlinerParity.test.ts`, `outliner-selection.spec.ts` |
@@ -108,7 +108,7 @@ field row but still appear in the selectable-row order.
 | Nested selected rows | Parent selection suppresses child duplicate/trash/move. | `selectedRootIds`. | `outlinerParity.test.ts` |
 | Duplicate references to same target | Target operations are deduped. | `targetIdsForRows`. | `outlinerParity.test.ts` |
 | Batch duplicate | Duplicate all selected rows after sources. | `batch_duplicate_nodes`. | `outliner-selection-keyboard.spec.ts` |
-| Batch indent/outdent | Move selected structural rows and preserve focus/expanded target. Field value rows are filtered out. | `batch_indent_nodes`, `batch_outdent_nodes`, `selectionBatchActions`. | `outliner-selection-keyboard.spec.ts` |
+| Batch indent/outdent | Move selected structural rows and preserve focus/expanded target. Direct field values are eligible for indent, excluded from outdent at the field boundary, and still excluded from arbitrary move-to; ordinary descendants follow the normal policy. | `batch_indent_nodes`, `batch_outdent_nodes`, `selectionBatchActions`. | `selectionBatchActions.test.ts`, `outliner-selection-keyboard.spec.ts` |
 | Batch copy/cut | Clipboard text uses selectable selected row order. A copied field entry includes an inline value summary only when its value children are not separately selected; cut removes selected roots through selectable-row delete policy. | `serializeSelectedRows`, `selectionBatchActions`. | `outliner-selection-keyboard.spec.ts` |
 
 ## Trigger Inputs

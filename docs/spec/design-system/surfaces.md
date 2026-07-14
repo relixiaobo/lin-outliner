@@ -116,7 +116,10 @@ and [patterns.md → File Preview Flow](./patterns.md#file-preview-flow).
 **Fields in the outliner.** `>` in an empty row converts that row into a field row
 in place. Trailing field creation appends a field row at the trailing position.
 Field name `Enter` creates a sibling node; it does not jump into the value child.
-Field values may contain nested field rows like normal outliner children.
+The field entry itself is not expandable because its direct children are the
+values rendered in its value column. Each stored value is an ordinary expandable
+node: it uses the shared leading disclosure grid, may contain ordinary child rows
+or nested field rows, and keeps those descendants inside the value column.
 
 ### References
 

@@ -8,6 +8,7 @@ import {
   idsAllowedForDuplicate,
   idsAllowedForMoveTo,
   idsAllowedForStructuralBatch,
+  idsAllowedForStructuralIndentBatch,
   idsAllowedForStructuralOutdentBatch,
   idsEnabledForSelectionAction,
   planSelectionDelete,
@@ -35,7 +36,7 @@ function byIdOf(nodes: NodeProjection[]): Map<NodeId, NodeProjection> {
 }
 
 describe('selection batch action policy', () => {
-  test('keeps field value reorder enabled but blocks structural movement', () => {
+  test('allows field value indentation but keeps external structural movement blocked', () => {
     const byId = byIdOf([
       node('root', { children: ['body', 'entry'] }),
       node('body', { parentId: 'root' }),
@@ -58,6 +59,12 @@ describe('selection batch action policy', () => {
       byId,
       rowMap: rowsById,
     })).toEqual(['body']);
+    expect(idsAllowedForStructuralIndentBatch({
+      ids,
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual(['body', 'value']);
     expect(idsAllowedForMoveTo({
       ids,
       panelRootId: 'root',
@@ -72,24 +79,31 @@ describe('selection batch action policy', () => {
       node('top', { parentId: 'root', children: ['child'] }),
       node('child', { parentId: 'top' }),
       node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
-      node('value', { parentId: 'entry' }),
+      node('value', { parentId: 'entry', children: ['nested'] }),
+      node('nested', { parentId: 'value' }),
     ]);
     const rowsById = selectableRowMap(buildSelectableRows('root', byId, {
-      expanded: new Set(['top']),
+      expanded: new Set(['top', 'value']),
     }));
 
     expect(idsAllowedForStructuralBatch({
-      ids: ['top', 'child', 'value'],
+      ids: ['top', 'child', 'value', 'nested'],
       panelRootId: 'root',
       byId,
       rowMap: rowsById,
-    })).toEqual(['top', 'child']);
+    })).toEqual(['top', 'child', 'nested']);
+    expect(idsAllowedForStructuralIndentBatch({
+      ids: ['top', 'child', 'value', 'nested'],
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual(['top', 'child', 'value', 'nested']);
     expect(idsAllowedForStructuralOutdentBatch({
-      ids: ['top', 'child', 'value'],
+      ids: ['top', 'child', 'value', 'nested'],
       panelRootId: 'root',
       byId,
       rowMap: rowsById,
-    })).toEqual(['child']);
+    })).toEqual(['child', 'nested']);
   });
 
   test('allows only clone-safe field values for duplicate commands', () => {

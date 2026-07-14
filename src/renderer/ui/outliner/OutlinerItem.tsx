@@ -36,7 +36,7 @@ import {
   replaceRichTextRangeWithText,
   richTextEquals,
 } from '../editor/richTextCodec';
-import { expandIndentTargets, indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
+import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
 import { selectVisibleRowsState } from '../interactions/selectionActions';
 import { ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
@@ -1561,10 +1561,23 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
 
   const handleTab = async (shiftKey: boolean, cursorOffset: number) => {
-    // Field values are a flat list: a field's children ARE its values, so a value
-    // can never be indented under another value (that would make a grandchild of
-    // the field). Tab is inert in the field-value context.
-    if (props.fieldValue) return;
+    const indentUnder = async (targetParentId: NodeId) => {
+      await props.run(() => api.indentNode(props.nodeId), {
+        applyFocus: false,
+        beforeApply: () => {
+          animateOutlinerRowMovementAfterNextCommit();
+          props.setUi((prev) => {
+            const expanded = new Set(prev.expanded);
+            expanded.add(targetParentId);
+            return requestFocusState(
+              { ...prev, expanded },
+              rowFocusTarget(props.nodeId, null, props.panelId),
+              cursorAtOffset(cursorOffset),
+            );
+          });
+        },
+      });
+    };
     if (props.draft && !realNode) {
       // Structural keys RELOCATE the empty trailing draft instead of materializing
       // a node: it stays a draft and nothing is created until the user types
@@ -1582,6 +1595,18 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         );
         const indentTarget = previousDraftSiblingId(siblingRows, props.draftAfterId ?? null);
         if (!indentTarget) return; // no previous sibling to nest under
+        const buffered = draftContentRef.current;
+        const hasBufferedValue = Boolean(props.fieldValue)
+          && (buffered.text.trim().length > 0 || buffered.inlineRefs.length > 0);
+        if (hasBufferedValue) {
+          // Field-value drafts buffer text until commit. Materialize the value
+          // before indenting so Tab never discards the buffered text when the
+          // direct-value draft is replaced by the target's ordinary child draft.
+          materializeDraft();
+          await pendingTextPatchRef.current;
+          await indentUnder(indentTarget);
+          return;
+        }
         props.setUi((prev) => {
           const expanded = new Set(prev.expanded);
           expanded.add(indentTarget);
@@ -1614,20 +1639,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!shiftKey) {
       const targetParentId = indentTargetParentId(props.nodeId, props.index.byId);
       if (!targetParentId) return;
-      await props.run(() => api.indentNode(props.nodeId), {
-        applyFocus: false,
-        beforeApply: () => {
-          animateOutlinerRowMovementAfterNextCommit();
-          props.setUi((prev) => {
-            const expanded = expandIndentTargets(prev.expanded, [props.nodeId], props.index.byId);
-            return requestFocusState(
-              { ...prev, expanded },
-              rowFocusTarget(props.nodeId, null, props.panelId),
-              cursorAtOffset(cursorOffset),
-            );
-          });
-        },
-      });
+      await indentUnder(targetParentId);
       return;
     }
     if (props.parentId === props.rootId) return;
@@ -2376,7 +2388,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     >
 
       {!props.flat && row.expanded && (
-        <IndentGuide onToggleChildren={row.toggleDirectChildrenExpansion} />
+        <IndentGuide
+          reference={referenceLikeRow}
+          onToggleChildren={row.toggleDirectChildrenExpansion}
+        />
       )}
 
       {nonImageFileRow && row.expanded && (
@@ -2461,7 +2476,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         />
       )}
 
-      {!props.flat && row.expanded && !props.fieldValue && (
+      {!props.flat && row.expanded && (
         // role="group" owns the nested treeitems under this row, completing the
         // ARIA tree nesting (treeitem → group → treeitems). A non-image file row's
         // expansion also opens its inline preview above this group, but its children

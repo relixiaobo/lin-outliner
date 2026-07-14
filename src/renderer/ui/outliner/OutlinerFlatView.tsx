@@ -587,6 +587,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         <IndentGuide
           key={`guide>${guide.key}`}
           guideFor={guide.nodeId}
+          reference={byId.get(guide.nodeId)?.type === 'reference'}
           flatMetrics={guide}
           onToggleChildren={(anchorElement) => toggleDirectChildrenExpansion(guide.nodeId, anchorElement)}
         />

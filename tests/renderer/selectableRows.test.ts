@@ -102,6 +102,39 @@ describe('buildSelectableRows', () => {
     });
   });
 
+  test('treats expanded field value descendants as ordinary content rows', () => {
+    const byId = byIdOf([
+      node('root', { children: ['entry'] }),
+      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
+      node('value', { parentId: 'entry', children: ['child'] }),
+      node('child', { parentId: 'value', children: ['grandchild'] }),
+      node('grandchild', { parentId: 'child' }),
+    ]);
+
+    const rows = buildSelectableRows('root', byId, {
+      expanded: new Set(['value', 'child']),
+    });
+
+    expect(rowIds(rows)).toEqual(['entry', 'value', 'child', 'grandchild']);
+    expect(rows[1]).toMatchObject({
+      id: 'value',
+      kind: 'fieldValue',
+      parentId: 'entry',
+      actionPolicy: { delete: 'field-value-remove' },
+    });
+    expect(rows[2]).toMatchObject({
+      id: 'child',
+      kind: 'content',
+      parentId: 'value',
+      actionPolicy: { delete: 'node-trash' },
+    });
+    expect(rows[3]).toMatchObject({
+      id: 'grandchild',
+      kind: 'content',
+      parentId: 'child',
+    });
+  });
+
   test('marks synthetic system reference values as read-only presentation rows', () => {
     const sysrefId = 'sysref:entry:target';
     const byId = byIdOf([

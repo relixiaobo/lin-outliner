@@ -10,7 +10,7 @@ import { isImeComposingEvent } from './interactions/imeKeyboard';
 import { batchIndentNodeIds, expandIndentTargets } from './interactions/outlinerStructure';
 import { armReferenceTypeAhead } from './interactions/referenceTypeAhead';
 import {
-  idsAllowedForStructuralBatch,
+  idsAllowedForStructuralIndentBatch,
   idsAllowedForStructuralOutdentBatch,
   idsEnabledForSelectionAction,
   runSelectionDelete,
@@ -524,7 +524,7 @@ export function useWorkspaceKeyboard({
               byId: currentIndex.byId,
               rowMap: rowsById,
             })
-            : idsAllowedForStructuralBatch({
+            : idsAllowedForStructuralIndentBatch({
               ids: batchIds,
               panelRootId: selectionRootId,
               byId: currentIndex.byId,
