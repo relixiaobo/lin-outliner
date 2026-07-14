@@ -5,7 +5,7 @@ export const NODE_REFERENCE_GUIDANCE =
   'Node references use [[node:Display^...]] markers, or [[node:^...]] when only the id is known. Exact node ids are also accepted in tool parameters.';
 
 export const FINAL_ANSWER_NODE_REFERENCE_GUIDANCE =
-  'For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[node:Display^...]], or [[node:^...]] when only the id is known.';
+  'For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[node:^exact-id]]; the renderer resolves the current title. Use [[node:Display^...]] only when an explicit display label is needed.';
 
 export const LIN_OUTLINE_CREATE_GUIDANCE = [
   'Outline format uses "- Title" lines with exactly 2 spaces per child level.',
@@ -66,12 +66,14 @@ export const NODE_SEARCH_DESCRIPTION = [
   '',
   'Usage:',
   '- Use outline for one-off searches; use search_node_id only when executing an existing saved search node.',
+  '- For several counts that share a condition, set count true, put the shared rule/group fragment in common_query, and put 1-20 uniquely named rule/group fragments in queries. Batch fragments omit the %%search%% wrapper.',
   '- Use node_search for temporary lookup. Create a saved search node with node_create only when the user explicitly asks to save a search/view.',
   `- ${SEARCH_QUERY_SHAPE_GUIDANCE}`,
   '- Match system checkbox/completion state with TODO, DONE, NOT_DONE, or DONE_LAST_DAYS. These are not field queries.',
   '- Use DATE_OVERLAPS only for values stored in a date field; field:: must reference the date field definition node.',
   '- Use FIELD_IS and related field operators only for user fields; find the field definition id with node_read/node_search when needed.',
   '- Returned outlines include %%node:id%% markers so you can call node_read or node_edit on exact matches.',
+  `- ${FINAL_ANSWER_NODE_REFERENCE_GUIDANCE}`,
   '',
   SEARCH_OPERATOR_REFERENCE,
   '',
@@ -79,17 +81,15 @@ export const NODE_SEARCH_DESCRIPTION = [
 ].join('\n');
 
 export const NODE_SEARCH_OUTLINE_PARAMETER_DESCRIPTION = [
-  'Temporary search outline. This does not create a saved search node.',
-  SEARCH_QUERY_SHAPE_GUIDANCE,
-  SEARCH_OPERATOR_REFERENCE,
-  SEARCH_QUERY_EXAMPLES,
-].join('\n');
+  'Temporary search outline with one %%search%% root and one query rule/group child. This does not create a saved search node.',
+  'Use the query grammar and operator guide in the node_search tool description.',
+].join(' ');
 
 export const NODE_CREATE_DESCRIPTION = [
   'Creates outliner content under a parent. Omit parent_id to create under today, not the current UI selection.',
   '',
   'Usage:',
-  `- Use outline for normal nodes, fields, tags, references, saved search nodes, and nested children. ${LIN_OUTLINE_CREATE_GUIDANCE}`,
+  '- Use outline for normal nodes, fields, tags, references, saved search nodes, and nested children. The outline parameter contains the complete creation grammar.',
   '- Use definition to create a tag or field definition node under Schema. Existing same-name definitions are returned unchanged; use node_edit configure_definition to change config.',
   '- Prefer nested child lines over node descriptions for normal user-authored content.',
   '- Prefer ordinary child nodes over Field:: lines unless the user clearly wants structured data.',
@@ -119,8 +119,7 @@ export const NODE_EDIT_DESCRIPTION = [
   '- For operation "merge_definition", target the surviving tagDef/fieldDef node_id and pass duplicate definitions in merge_from_node_ids. Do not use ordinary merge for definitions.',
   '- For operation "merge", target ordinary duplicate content nodes only. Do not merge field entries, references, searches, views, definitions, config nodes, or other structural nodes.',
   '- Use old_string "*" only to replace the target node\'s whole editable outline; include expected_revision unless preview_only is true.',
-  `- ${ANNOTATED_OUTLINE_EDIT_GUIDANCE}`,
-  `- ${DATE_FIELD_VALUE_GUIDANCE}`,
+  '- For replace_outline, preserve existing %%node:id%% markers and follow the exact annotated-outline rules in the new_string parameter.',
   '- operation "move" supports user-like move operations; operation "merge" merges source nodes into one surviving target; operation "replace_with_reference" replaces a node with a reference.',
   '- Use preview_only when the edit is large or ambiguous and you want validation before mutating the document.',
 ].join('\n');

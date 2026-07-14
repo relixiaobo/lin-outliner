@@ -137,8 +137,7 @@ function compactOptions<T extends Record<string, unknown>>(options: T): Partial<
 
 /**
  * Projects the runtime envelope down to what the model sees. Shared by every
- * tool (the `node_*` path passes its own computed `instructions` via a throwaway
- * envelope copy). `data` is shown only when `modelData` is defined.
+ * tool; `data` is shown only when `modelData` is defined.
  */
 export function modelVisibleEnvelope<TData>(
   envelope: ToolEnvelope<TData>,

@@ -115,8 +115,9 @@ Rules:
 - `queries` has 1-20 items and names must be non-empty and unique.
 - Batch mode requires `count: true` and cannot be combined with `outline`,
   `search_node_id`, `limit`, or `offset`.
-- Parse, resolve, scope-check, and validate every query before executing any of
-  them. One invalid query fails the whole call; no partial count map is returned.
+- Parse, resolve, and validate every query before executing any of them. Apply
+  the existing run-scope result filter before counting each query. One invalid
+  query fails the whole call; no partial count map is returned.
 - Count mode records no personal-access signal, matching existing single-count
   behavior.
 - Results preserve caller names in one compact map:
@@ -151,8 +152,8 @@ Add focused tests that lock:
 - id-only node references render current titles through the existing renderer path;
 - search results expose only `total` and optional `next_offset` metadata;
 - batch counts combine a shared condition with each parsed query;
-- duplicate names, invalid fragments, mixed single/batch parameters, and scoped
-  access fail before execution;
+- duplicate names, invalid fragments, and mixed single/batch parameters fail
+  before execution; scoped batches count only readable results;
 - batch counts do not record agent recall;
 - node tool descriptions and parameter descriptions no longer duplicate the full
   search/edit grammar;
@@ -163,6 +164,7 @@ Add focused tests that lock:
 
 - `src/main/agentNodeToolSchemas.ts`
 - `src/main/agentNodeToolGuidance.ts`
+- `src/main/agentToolEnvelope.ts`
 - `src/main/agentNodeToolSearch.ts`
 - `src/main/agentNodeTools.ts`
 - `src/main/agentNodeToolVisibility.ts`

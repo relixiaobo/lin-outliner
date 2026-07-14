@@ -5,7 +5,7 @@ import { parseHTML } from 'linkedom';
 import type { AgentMessageEntry } from '../../src/renderer/agent/runtime';
 import { serializeAgentAttachmentMarker } from '../../src/core/agentAttachments';
 import { formatChatSourceReferenceMarker, formatFileReferenceMarker, formatLocalFileReferenceUrl } from '../../src/core/referenceMarkup';
-import { AgentInlineReferenceText } from '../../src/renderer/ui/agent/AgentInlineReferenceText';
+import { AgentInlineReferenceText, nodeReferenceDisplayLabel } from '../../src/renderer/ui/agent/AgentInlineReferenceText';
 import { AgentMessageRow } from '../../src/renderer/ui/agent/AgentMessageRow';
 import { AgentMarkdown } from '../../src/renderer/ui/agent/AgentMarkdown';
 import {
@@ -58,6 +58,15 @@ function render(node: React.ReactNode, setupWindow?: (window: Window) => void | 
 }
 
 describe('transcript file-chip location marker', () => {
+  test('id-only node references resolve their current title from the renderer index', () => {
+    const nodeId = 'node:current-title';
+    const index = {
+      byId: new Map([[nodeId, { content: { text: 'Current title' } }]]),
+    } as any;
+
+    expect(nodeReferenceDisplayLabel('', nodeId, index, 'Referenced node')).toBe('Current title');
+  });
+
   test('live user message attachments inherit the transcript marker from the row frame', () => {
     const marker = serializeAgentAttachmentMarker([{
       kind: 'file',
