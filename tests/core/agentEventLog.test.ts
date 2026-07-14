@@ -815,7 +815,7 @@ describe('agent event log', () => {
     const events: AgentEvent[] = [
       { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
-        ...base(2, 'run.started', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
+        ...base(2, 'run.started', { type: 'tool', toolName: 'internal_delegation', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
         agentId: 'built-in:tenon:assistant',
         trigger: { type: 'parent-run', parentRunId: 'run-parent' },
@@ -825,7 +825,7 @@ describe('agent event log', () => {
         runProfile: 'research',
       },
       {
-        ...base(3, 'run.completed', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
+        ...base(3, 'run.completed', { type: 'tool', toolName: 'internal_delegation', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
       },
     ];
@@ -846,7 +846,7 @@ describe('agent event log', () => {
     const resumed = replayAgentEvents([
       ...events,
       {
-        ...base(4, 'run.started', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
+        ...base(4, 'run.started', { type: 'tool', toolName: 'internal_delegation', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
         agentId: 'built-in:tenon:assistant',
         trigger: { type: 'parent-run', parentRunId: 'run-parent' },
@@ -859,16 +859,16 @@ describe('agent event log', () => {
     const events: AgentEvent[] = [
       { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
-        ...base(2, 'run.started', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
+        ...base(2, 'run.started', { type: 'tool', toolName: 'internal_delegation', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
         agentId: 'built-in:tenon:assistant',
       },
       {
-        ...base(3, 'run.completed', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
+        ...base(3, 'run.completed', { type: 'tool', toolName: 'internal_delegation', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
       },
       {
-        ...base(4, 'run.failed', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
+        ...base(4, 'run.failed', { type: 'tool', toolName: 'internal_delegation', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
         errorMessage: 'late failure',
       },
@@ -968,12 +968,25 @@ describe('notification + attention projection', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Untitled' },
       notificationCreated(2, { source: { type: 'run', runId: 'run-x' } }),
-      notificationCreated(3),
+      notificationCreated(3, {
+        source: {
+          type: 'issue',
+          issueId: 'issue-1',
+          agentSessionId: 'agent-session-1',
+          state: 'complete',
+        },
+      }),
       notificationCreated(4, { kind: 'needs_input', source: { type: 'run', runId: 'run-y' } }),
     ]);
 
     expect(state.attentionByConversationId[conversationId]?.unreadCount).toBe(3);
     expect(state.notifications['notif-2']?.source).toEqual({ type: 'run', runId: 'run-x' });
+    expect(state.notifications['notif-3']?.source).toEqual({
+      type: 'issue',
+      issueId: 'issue-1',
+      agentSessionId: 'agent-session-1',
+      state: 'complete',
+    });
     expect(state.notifications['notif-4']?.kind).toBe('needs_input');
     expect(Object.values(state.notifications).every((record) => record.read === false)).toBe(true);
   });

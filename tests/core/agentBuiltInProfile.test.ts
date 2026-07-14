@@ -13,6 +13,14 @@ let currentUserData = '';
 
 mock.module('electron', () => ({
   app: { getPath: () => currentUserData },
+  BrowserWindow: class {
+    static getAllWindows() {
+      return [];
+    }
+  },
+  session: {
+    fromPartition: () => ({ clearStorageData: async () => undefined }),
+  },
 }));
 
 mock.module('@earendil-works/pi-ai/oauth', () => ({

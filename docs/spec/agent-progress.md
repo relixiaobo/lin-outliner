@@ -3,7 +3,7 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-06-23
+Last updated: 2026-07-10
 
 ## Current Direction
 
@@ -130,16 +130,35 @@ truth.
   - embedded skill shell expansion through the shared permission layer
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact
-  - same-conversation `spawn_run`, `run_status`, `run_steer`, `run_amend`, and
-    `run_stop`
+  - internal same-conversation delegation executor retained for Agent Sessions
+    and isolated skills; ordinary work management uses Issue and Agent Session
+    tools, with no direct delegated-Run compatibility tool profile
   - child runs with full/brief/none context modes, verifier retry, and their OWN
     run ledger (run unification; sidechain transcripts replay from the ledger)
-    plus background notifications
-  - Work/Runs view backed by the global `agent_list_runs` index: it replaces the
-    agent dock's chat body with a top-level run list and shared drill-in detail
-    view for non-turn, non-Dream runs across channels with open-details/stop
-    actions, breadcrumb navigation, and sub-run progress chips
-    (Dream history moved to the Settings → Agent "Memory & activity" panel)
+    plus background notifications for ordinary non-Session detached work
+  - Issue-first Work view backed by `agent_issue_search` / `agent_issue_read`:
+    it replaces the agent dock's chat body with root Issue / Recurring Issue smart
+    filters and Issue detail; child Issues use hierarchical navigation, while
+    Agent Session executions render inside Activity and Dream history stays in
+    the Settings → Agent "Memory & activity" panel
+  - origin-derived Issue trees route root completion/error to the visible
+    conversation and child completion/cancellation/error to the direct parent
+    Agent Session through a leased, retryable terminal-delivery outbox; a root
+    delivery starts a new hidden-user-input conversation Run instead of appending
+    raw Session output as an assistant message, projects one linked Issue status
+    row, and lets the conversation Agent reply, use tools, wait, or finish silently
+  - parent completion/cancellation/start and Session stop preserve unresolved
+    child edges; delivery acknowledgement and parent finalization are atomic, and
+    compaction carries exact pending child payloads across repeated summaries
+  - Agent Session binding precedes the first Run ledger lifecycle event;
+    Session-owned controller children bypass generic notifications and detached
+    summaries, using only the Issue terminal-delivery outbox
+  - live delegated execution frames retain their conversation runtime headlessly
+    across close/reopen; cold-start recovery reconciles terminal Run ledgers into
+    Session state before marking only residual executions stale
+  - durable objective/criteria amendments fence old verification work, budget-only
+    amendments preserve its verdict, and verification-required
+    `completed + active` Sessions remain active
   - skill `execution: isolated` routed through the delegation runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai

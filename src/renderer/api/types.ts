@@ -78,6 +78,23 @@ export type {
 } from '../../core/agentTypes';
 
 export type {
+  Activity,
+  AgentIssue,
+  AgentRecurringIssue,
+  AgentSession,
+  AgentSessionReadInput,
+  AgentSessionReadResult,
+  AgentSessionTranscriptResult,
+  IssueReadInput,
+  IssueReadResult,
+  IssueSearchInput,
+  IssueSearchResult,
+  IssueSearchRow,
+  IssueTargetRef,
+  TenonAgentToolResult,
+} from '../../core/agentIssue';
+
+export type {
   AgentDreamReadiness,
   AgentRenderDreamRunEntity,
 } from '../../core/agentRenderProjection';

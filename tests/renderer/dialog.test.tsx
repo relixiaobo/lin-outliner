@@ -8,6 +8,7 @@ interface Rendered {
   cleanup: () => void;
   container: HTMLElement;
   document: Document;
+  renderFocusKey: (focusKey: string) => void;
 }
 
 const mounted: Rendered[] = [];
@@ -40,6 +41,19 @@ describe('Dialog', () => {
     });
     expect(dismissCount).toBe(1);
   });
+
+  test('pulls focus back into the dialog after an in-place content swap', () => {
+    const rendered = renderDialog(() => undefined);
+    const surface = rendered.document.querySelector<HTMLElement>('.dialog-surface');
+    const previousButton = rendered.document.querySelector<HTMLElement>('[data-focus-key="initial"]');
+    let focusCount = 0;
+    if (surface) surface.focus = () => { focusCount += 1; };
+
+    act(() => rendered.renderFocusKey('nested'));
+
+    expect(previousButton?.isConnected).toBe(false);
+    expect(focusCount).toBe(1);
+  });
 });
 
 function renderDialog(onBackdropMouseDown: () => void): Rendered {
@@ -49,17 +63,21 @@ function renderDialog(onBackdropMouseDown: () => void): Rendered {
   if (!container) throw new Error('Missing root container');
 
   const root = createRoot(container);
-  act(() => {
+  const renderFocusKey = (focusKey: string) => {
     root.render(
       <Dialog
         backdropClassName="dialog-backdrop"
+        focusKey={focusKey}
         label="Test dialog"
         onBackdropMouseDown={onBackdropMouseDown}
         surfaceClassName="dialog-surface"
       >
-        <button type="button">Inside</button>
+        <button data-focus-key={focusKey} key={focusKey} type="button">Inside</button>
       </Dialog>,
     );
+  };
+  act(() => {
+    renderFocusKey('initial');
   });
 
   const rendered: Rendered = {
@@ -69,6 +87,7 @@ function renderDialog(onBackdropMouseDown: () => void): Rendered {
     },
     container,
     document,
+    renderFocusKey,
   };
   mounted.push(rendered);
   return rendered;

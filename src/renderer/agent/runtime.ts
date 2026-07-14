@@ -37,6 +37,7 @@ import type {
 } from '../../core/agentRenderProjection';
 import { applyAgentRenderProjectionPatch } from '../../core/agentRenderProjection';
 import type { AgentActor, AgentPersistedContent, AgentToolCallOutcome } from '../../core/agentEventLog';
+import { issueNotificationDisplayTitle } from './issueNotificationTitle';
 
 export interface AgentMessageEntry {
   id: string;
@@ -107,6 +108,19 @@ export interface AgentHiddenTurnBoundaryEntry {
   sourceSeqs?: number[];
 }
 
+export interface AgentIssueNotificationEntry {
+  id: string;
+  kind: 'issue-notification';
+  notificationId: string;
+  issueId: string;
+  agentSessionId?: string;
+  state: 'complete' | 'error' | 'canceled';
+  title: string;
+  timestamp: number;
+  sourceSeq?: number;
+  sourceSeqs?: number[];
+}
+
 export interface AgentCompletedDreamEntry {
   id: string;
   kind: 'dream';
@@ -128,6 +142,7 @@ export type AgentConversationEntry =
   | AgentCompactionEntry
   | AgentContextClearEntry
   | AgentHiddenTurnBoundaryEntry
+  | AgentIssueNotificationEntry
   | AgentDreamEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
@@ -230,6 +245,41 @@ function buildToolResultMap(projection: AgentRenderProjection): Map<string, Agen
   return results;
 }
 
+export interface AgentConversationProjectionRenderState {
+  entries: AgentConversationEntry[];
+  pendingToolCallIds: Set<string>;
+  subRuns: Record<string, AgentRenderRunEntity>;
+  subRunsByParentToolCallId: Map<string, AgentRenderRunEntity>;
+  toolResults: Map<string, AgentToolResultWithPayloads>;
+  turnPhase: AgentTurnPhase;
+}
+
+function subRunsByParentToolCallIdFromProjection(
+  subRuns: Record<string, AgentRenderRunEntity>,
+): Map<string, AgentRenderRunEntity> {
+  const map = new Map<string, AgentRenderRunEntity>();
+  for (const subRun of Object.values(subRuns)) {
+    if (subRun.parentToolCallId) map.set(subRun.parentToolCallId, subRun);
+  }
+  return map;
+}
+
+export function projectAgentConversationForRender(
+  projection: AgentRenderProjection,
+): AgentConversationProjectionRenderState {
+  const toolResults = buildToolResultMap(projection);
+  const { entries, turnPhase } = buildEntries(projection, toolResults);
+  const subRuns = projection.entities.runs ?? {};
+  return {
+    entries,
+    pendingToolCallIds: new Set(projection.pendingToolCallIds),
+    subRuns,
+    subRunsByParentToolCallId: subRunsByParentToolCallIdFromProjection(subRuns),
+    toolResults,
+    turnPhase,
+  };
+}
+
 function mapsHaveSameEntityValues<T>(left: ReadonlyMap<string, T>, right: ReadonlyMap<string, T>): boolean {
   if (left.size !== right.size) return false;
   for (const [key, value] of left) {
@@ -254,6 +304,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   turnPhase: AgentTurnPhase;
 } {
   const entries: AgentConversationEntry[] = [];
+  const projectedIssueNotificationIds = new Set<string>();
   const rows = projection.transcriptRows;
   const directSubRunsByParentRunId = directSubRunsByParentRunIdForProjection(projection);
   for (const row of rows) {
@@ -295,14 +346,36 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
 
     const entity = projection.entities.messages[row.messageId];
     if (!entity || (entity.role !== 'user' && entity.role !== 'assistant')) continue;
+    if (
+      entity.role === 'user'
+      && entity.issueNotification
+      && entity.actor?.type === 'system'
+      && isHiddenOnlySystemReminder(entity)
+    ) {
+      if (projectedIssueNotificationIds.has(entity.issueNotification.notificationId)) {
+        entries.push(hiddenTurnBoundaryFromEntity(entity));
+      } else {
+        projectedIssueNotificationIds.add(entity.issueNotification.notificationId);
+        entries.push({
+          id: `issue-notification:${entity.issueNotification.notificationId}`,
+          kind: 'issue-notification',
+          notificationId: entity.issueNotification.notificationId,
+          issueId: entity.issueNotification.issueId,
+          agentSessionId: entity.issueNotification.agentSessionId,
+          state: entity.issueNotification.state,
+          title: issueNotificationDisplayTitle(
+            entity.issueNotification.title,
+            entity.issueNotification.state,
+          ),
+          timestamp: entity.createdAt,
+          sourceSeq: entity.sourceSeq,
+          sourceSeqs: entity.sourceSeqs?.slice(),
+        });
+      }
+      continue;
+    }
     if (entity.role === 'user' && isHiddenOnlySystemReminder(entity)) {
-      entries.push({
-        id: `hidden-turn-boundary:${entity.id}`,
-        kind: 'hidden-turn-boundary',
-        timestamp: entity.createdAt,
-        sourceSeq: entity.sourceSeq,
-        sourceSeqs: entity.sourceSeqs?.slice(),
-      });
+      entries.push(hiddenTurnBoundaryFromEntity(entity));
       continue;
     }
     const streaming = projection.streaming?.messageId === entity.id;
@@ -397,6 +470,16 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   }
 
   return { entries, turnPhase };
+}
+
+function hiddenTurnBoundaryFromEntity(entity: AgentRenderMessageEntity): AgentHiddenTurnBoundaryEntry {
+  return {
+    id: `hidden-turn-boundary:${entity.id}`,
+    kind: 'hidden-turn-boundary',
+    timestamp: entity.createdAt,
+    sourceSeq: entity.sourceSeq,
+    sourceSeqs: entity.sourceSeqs?.slice(),
+  };
 }
 
 function directSubRunsByParentRunIdForProjection(

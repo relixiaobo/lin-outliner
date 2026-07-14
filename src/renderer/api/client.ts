@@ -13,6 +13,14 @@ import type {
   AgentDreamReadiness,
   AgentRenderDreamRunEntity,
   AgentRunListEntry,
+  IssueReadInput,
+  IssueReadResult,
+  IssueSearchInput,
+  IssueSearchResult,
+  TenonAgentToolResult,
+  AgentSessionReadInput,
+  AgentSessionReadResult,
+  AgentSessionTranscriptResult,
   AgentPickScopeFolderResult,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
@@ -117,17 +125,6 @@ export const api = {
     command<CommandResult>('set_code_block', { nodeId, codeLanguage: codeLanguage ?? null }),
   setCodeLanguage: (nodeId: string, codeLanguage: string) =>
     command<CommandResult>('set_code_language', { nodeId, codeLanguage }),
-  // Command nodes (scheduled routines). The brief is the node's text content;
-  // `setCommandSchedule` is user-only at the gateway (the bright line) — pass
-  // null to clear the schedule (manual-only).
-  setCommandNode: (nodeId: string) =>
-    command<CommandResult>('set_command_node', { nodeId }),
-  setCommandSchedule: (nodeId: string, schedule: string | null) =>
-    command<CommandResult>('set_command_schedule', { nodeId, schedule: schedule ?? null }),
-  runCommandNow: (nodeId: string) =>
-    command<{ conversationId: string }>('agent_run_command_now', { nodeId }),
-  ensureCommandConversation: (nodeId: string) =>
-    command<{ conversationId: string }>('agent_ensure_command_conversation', { nodeId }),
   // An image node's source is exactly one of `assetId` (local) or `mediaUrl`
   // (remote); the core validates that.
   createImageNode: (
@@ -324,6 +321,16 @@ export const api = {
     command<void>('agent_delete_conversation', { conversationId }),
   agentListRuns: (options: { limit?: number; perConversationLimit?: number } = {}) =>
     command<AgentRunListEntry[]>('agent_list_runs', options),
+  agentIssueSearch: (input: IssueSearchInput = {}) =>
+    command<IssueSearchResult>('agent_issue_search', input as Record<string, unknown>),
+  agentIssueRead: (input: IssueReadInput) =>
+    command<IssueReadResult>('agent_issue_read', input as unknown as Record<string, unknown>),
+  agentIssueCompleteHumanReview: (issueId: string, expectedRevision: string) =>
+    command<TenonAgentToolResult>('agent_issue_complete_human_review', { issueId, expectedRevision }),
+  agentSessionRead: (input: AgentSessionReadInput) =>
+    command<AgentSessionReadResult | null>('agent_session_read', input as unknown as Record<string, unknown>),
+  agentSessionTranscript: (agentSessionId: string) =>
+    command<AgentSessionTranscriptResult | null>('agent_session_transcript', { agentSessionId }),
   agentListDreamHistory: (options: { limit?: number } = {}) =>
     command<AgentRenderDreamRunEntity[]>('agent_list_dream_history', options),
   agentDreamReadiness: () =>

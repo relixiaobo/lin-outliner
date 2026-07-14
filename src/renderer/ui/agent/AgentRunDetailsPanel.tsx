@@ -3,12 +3,10 @@ import type {
   AgentMessage,
   AgentRunDetailPayload,
   AgentToolResultWithPayloads,
-  ToolResultMessage,
 } from '../../../core/agentTypes';
 import type { Messages } from '../../../core/i18n';
 import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
-import { localStorageOrNull } from '../../state/localStorageStore';
 import { api } from '../../api/client';
 import {
   CheckIcon,
@@ -28,6 +26,14 @@ import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentTranscriptMessageList } from './AgentTranscriptMessageList';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
+import {
+  agentRunChildToTranscriptRun,
+  agentRunDetailToTranscriptRun,
+  agentRunTranscriptHasActiveAssistantTurn,
+  buildAgentRunToolResultMap,
+  collectPendingAgentRunToolCallIds,
+  parseAgentRunTranscript,
+} from './agentRunTranscriptAdapter';
 import { useT } from '../../i18n/I18nProvider';
 import {
   AgentRunStatusMarker,
@@ -39,6 +45,7 @@ import {
   type AgentRunDisplayStatus,
   type AgentRunRowData,
 } from './AgentRunRow';
+import { AgentDetailDrawerResizeHandle, useAgentDetailDrawerHeight } from './AgentDetailDrawerResize';
 
 interface AgentRunDetailsPanelProps {
   breadcrumbRootLabel?: string;
@@ -60,123 +67,9 @@ type DisplayRunStatus = AgentRunDisplayStatus;
 /** Live-run transcript poll cadence (the fetch is meta-keyed in main, near-free when unchanged). */
 const LIVE_TRANSCRIPT_POLL_MS = 1_500;
 const RESULT_PREVIEW_CHAR_LIMIT = 900;
-const DRAWER_HEIGHT_RATIO_STORAGE_KEY = 'lin:agent-run-detail-drawer-height-ratio';
-const DRAWER_DEFAULT_HEIGHT_RATIO = 0.8;
-const DRAWER_MIN_HEIGHT_PX = 360;
-const DRAWER_TOP_GAP_PX = 52;
-const DRAWER_KEYBOARD_STEP_PX = 48;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object';
-}
-
-function isAgentMessage(value: unknown): value is AgentMessage {
-  if (!isRecord(value)) return false;
-  return value.role === 'user' || value.role === 'assistant' || value.role === 'toolResult';
-}
-
-function parseTranscript(raw: unknown[] | null): AgentMessage[] {
-  if (!raw) return [];
-  return raw.filter(isAgentMessage);
-}
-
-function toolResultFromMessage(message: ToolResultMessage): AgentToolResultWithPayloads {
-  return {
-    ...message,
-    payloadRefs: [],
-  };
-}
-
-function buildToolResultMap(messages: readonly AgentMessage[]): Map<string, AgentToolResultWithPayloads> {
-  const results = new Map<string, AgentToolResultWithPayloads>();
-  for (const message of messages) {
-    if (message.role !== 'toolResult') continue;
-    results.set(message.toolCallId, toolResultFromMessage(message));
-  }
-  return results;
-}
-
-function collectPendingToolCallIds(messages: readonly AgentMessage[], running: boolean): Set<string> {
-  if (!running) return new Set();
-  const toolResults = buildToolResultMap(messages);
-  const pending = new Set<string>();
-  for (const message of messages) {
-    if (message.role !== 'assistant') continue;
-    for (const block of message.content) {
-      if (block.type === 'toolCall' && !toolResults.has(block.id)) pending.add(block.id);
-    }
-  }
-  return pending;
-}
-
-function transcriptHasActiveAssistantTurn(
-  messages: readonly AgentMessage[],
-  running: boolean,
-  pendingToolCallIds: ReadonlySet<string>,
-): boolean {
-  if (!running) return false;
-  if (pendingToolCallIds.size > 0) return true;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]!;
-    if (message.role === 'assistant') return message.stopReason === null;
-    if (message.role === 'user') return false;
-  }
-  return false;
-}
 
 function displayStatusFor(detail: Pick<AgentRunDetailPayload, 'objectiveStatus' | 'status'>): DisplayRunStatus {
   return displayRunStatus(detail);
-}
-
-function clampDrawerHeight(height: number, maxHeight: number): number {
-  return Math.min(Math.max(height, DRAWER_MIN_HEIGHT_PX), Math.max(DRAWER_MIN_HEIGHT_PX, maxHeight));
-}
-
-function clampDrawerHeightRatio(ratio: number): number {
-  return Math.min(Math.max(ratio, 0), 1);
-}
-
-function drawerMaxHeight(drawer: HTMLElement): number {
-  const backdrop = drawer.parentElement;
-  const availableHeight = backdrop?.getBoundingClientRect().height ?? 0;
-  return Math.max(DRAWER_MIN_HEIGHT_PX, availableHeight - DRAWER_TOP_GAP_PX);
-}
-
-function readDrawerHeightRatio(): number {
-  const storage = localStorageOrNull();
-  const raw = storage?.getItem(DRAWER_HEIGHT_RATIO_STORAGE_KEY);
-  const parsed = raw ? Number.parseFloat(raw) : NaN;
-  return Number.isFinite(parsed) ? clampDrawerHeightRatio(parsed) : DRAWER_DEFAULT_HEIGHT_RATIO;
-}
-
-function writeDrawerHeightRatio(height: number, maxHeight: number) {
-  const storage = localStorageOrNull();
-  if (!storage || maxHeight <= 0) return;
-  try {
-    storage.setItem(DRAWER_HEIGHT_RATIO_STORAGE_KEY, clampDrawerHeightRatio(height / maxHeight).toFixed(4));
-  } catch {
-    // Best-effort renderer preference.
-  }
-}
-
-function detailDrawerElement(): HTMLElement | null {
-  return document.querySelector<HTMLElement>('.agent-run-detail-drawer');
-}
-
-function setDetailDrawerHeight(height: number, persist: boolean) {
-  const drawer = detailDrawerElement();
-  if (!drawer) return;
-  const maxHeight = drawerMaxHeight(drawer);
-  const nextHeight = clampDrawerHeight(height, maxHeight);
-  drawer.style.setProperty('--agent-run-detail-drawer-height', `${nextHeight}px`);
-  if (persist) writeDrawerHeightRatio(nextHeight, maxHeight);
-}
-
-function applyStoredDetailDrawerHeight() {
-  const drawer = detailDrawerElement();
-  if (!drawer) return;
-  const maxHeight = drawerMaxHeight(drawer);
-  setDetailDrawerHeight(maxHeight * readDrawerHeightRatio(), false);
 }
 
 function isVerifierRun(run: Pick<AgentRunDetailChild, 'objectiveRole' | 'runProfile'>): boolean {
@@ -190,52 +83,6 @@ function runTitle(run: AgentRunDetailChild, labels: Messages['agent']): string {
 
 function compareRuns(left: AgentRunDetailChild, right: AgentRunDetailChild): number {
   return left.startedAt - right.startedAt || left.runId.localeCompare(right.runId);
-}
-
-function runDetailToTranscriptRun(detail: AgentRunDetailPayload): AgentRenderRunEntity {
-  return {
-    id: detail.runId,
-    agentId: detail.agentId,
-    anchor: detail.conversationId
-      ? { type: 'conversation', agentId: detail.agentId, conversationId: detail.conversationId }
-      : { type: 'principal', principal: { type: 'agent', agentId: detail.agentId } },
-    conversationId: detail.conversationId ?? undefined,
-    title: detail.title,
-    parentRunId: detail.parentRunId,
-    parentToolCallId: detail.parentToolCallId,
-    runProfile: detail.runProfile,
-    runProfileLabel: detail.runProfileLabel,
-    status: detail.status,
-    objectiveStatus: detail.objectiveStatus,
-    objectiveRole: detail.objectiveRole,
-    context: detail.context,
-    startedAt: detail.startedAt,
-    updatedAt: detail.updatedAt,
-    completedAt: detail.completedAt,
-  };
-}
-
-function childToTranscriptRun(child: AgentRunDetailChild, parent: AgentRunDetailPayload): AgentRenderRunEntity {
-  return {
-    id: child.runId,
-    agentId: parent.agentId,
-    anchor: parent.conversationId
-      ? { type: 'conversation', agentId: parent.agentId, conversationId: parent.conversationId }
-      : { type: 'principal', principal: { type: 'agent', agentId: parent.agentId } },
-    conversationId: parent.conversationId ?? undefined,
-    title: child.title,
-    parentRunId: child.parentRunId,
-    parentToolCallId: child.parentToolCallId,
-    runProfile: child.runProfile,
-    runProfileLabel: child.runProfileLabel,
-    status: child.status,
-    objectiveStatus: child.objectiveStatus,
-    objectiveRole: child.objectiveRole,
-    context: parent.context,
-    startedAt: child.startedAt,
-    updatedAt: child.updatedAt,
-    completedAt: child.completedAt,
-  };
 }
 
 function CopyResultButton({ text }: { text: string }) {
@@ -438,62 +285,6 @@ function RunBreadcrumb({
   );
 }
 
-function DrawerResizeHandle({
-  onResize,
-}: {
-  onResize: (height: number) => void;
-}) {
-  const t = useT();
-
-  const updateFromKeyboard = useCallback((direction: 1 | -1) => {
-    const drawer = document.querySelector<HTMLElement>('.agent-run-detail-drawer');
-    const backdrop = drawer?.parentElement;
-    if (!drawer || !backdrop) return;
-    const maxHeight = backdrop.getBoundingClientRect().height - DRAWER_TOP_GAP_PX;
-    onResize(clampDrawerHeight(drawer.getBoundingClientRect().height + (direction * DRAWER_KEYBOARD_STEP_PX), maxHeight));
-  }, [onResize]);
-
-  return (
-    <div
-      aria-label={t.agent.runDetail.resizeDrawer}
-      aria-orientation="horizontal"
-      className="agent-run-detail-resize-handle"
-      onKeyDown={(event) => {
-        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-        event.preventDefault();
-        updateFromKeyboard(event.key === 'ArrowUp' ? 1 : -1);
-      }}
-      onPointerDown={(event) => {
-        if (event.button !== 0) return;
-        const drawer = event.currentTarget.closest<HTMLElement>('.agent-run-detail-drawer');
-        const backdrop = drawer?.parentElement;
-        if (!drawer || !backdrop) return;
-        event.currentTarget.setPointerCapture(event.pointerId);
-        const startY = event.clientY;
-        const startHeight = drawer.getBoundingClientRect().height;
-        const maxHeight = backdrop.getBoundingClientRect().height - DRAWER_TOP_GAP_PX;
-
-        const move = (moveEvent: PointerEvent) => {
-          onResize(clampDrawerHeight(startHeight + startY - moveEvent.clientY, maxHeight));
-        };
-        const stop = () => {
-          window.removeEventListener('pointermove', move);
-          window.removeEventListener('pointerup', stop);
-          window.removeEventListener('pointercancel', stop);
-        };
-
-        window.addEventListener('pointermove', move);
-        window.addEventListener('pointerup', stop, { once: true });
-        window.addEventListener('pointercancel', stop, { once: true });
-      }}
-      role="separator"
-      tabIndex={0}
-    >
-      <span aria-hidden="true" />
-    </div>
-  );
-}
-
 function TranscriptTimeline({
   error,
   loading,
@@ -550,7 +341,7 @@ function TranscriptTimeline({
 
   return (
     <AgentTranscriptMessageList
-      active={transcriptHasActiveAssistantTurn(messages, run.status === 'running', pendingToolCallIds)}
+      active={agentRunTranscriptHasActiveAssistantTurn(messages, run.status === 'running', pendingToolCallIds)}
       className="agent-run-detail-transcript-list"
       conversationId={conversationId}
       index={index}
@@ -670,22 +461,7 @@ export function AgentRunDetailsPanel({
     };
   }, [detail?.status, loadRun]);
 
-  useLayoutEffect(() => {
-    if (!conversationId || !runId) return undefined;
-    applyStoredDetailDrawerHeight();
-    const deferredApply = typeof window.requestAnimationFrame === 'function'
-      ? { kind: 'frame' as const, id: window.requestAnimationFrame(applyStoredDetailDrawerHeight) }
-      : { kind: 'timeout' as const, id: window.setTimeout(applyStoredDetailDrawerHeight, 0) };
-    window.addEventListener('resize', applyStoredDetailDrawerHeight);
-    return () => {
-      if (deferredApply.kind === 'frame' && typeof window.cancelAnimationFrame === 'function') {
-        window.cancelAnimationFrame(deferredApply.id);
-      } else {
-        window.clearTimeout(deferredApply.id);
-      }
-      window.removeEventListener('resize', applyStoredDetailDrawerHeight);
-    };
-  }, [conversationId, runId]);
+  useAgentDetailDrawerHeight(Boolean(conversationId && runId));
 
   useLayoutEffect(() => {
     if (!detail) return undefined;
@@ -705,25 +481,21 @@ export function AgentRunDetailsPanel({
   }, [detail, updateTitleDocked]);
 
 
-  const messages = useMemo(() => parseTranscript(rawTranscript), [rawTranscript]);
-  const toolResults = useMemo(() => buildToolResultMap(messages), [messages]);
+  const messages = useMemo(() => parseAgentRunTranscript(rawTranscript), [rawTranscript]);
+  const toolResults = useMemo(() => buildAgentRunToolResultMap(messages), [messages]);
   const pendingToolCallIds = useMemo(
-    () => collectPendingToolCallIds(messages, detail?.status === 'running'),
+    () => collectPendingAgentRunToolCallIds(messages, detail?.status === 'running'),
     [messages, detail?.status],
   );
-  const transcriptRun = useMemo(() => detail ? runDetailToTranscriptRun(detail) : null, [detail]);
+  const transcriptRun = useMemo(() => detail ? agentRunDetailToTranscriptRun(detail) : null, [detail]);
   const subRunsByParentToolCallId = useMemo(() => {
     if (!detail) return undefined;
     const map = new Map<string, AgentRenderRunEntity>();
     for (const child of [...detail.subRuns, ...detail.verificationRuns]) {
-      if (child.parentToolCallId) map.set(child.parentToolCallId, childToTranscriptRun(child, detail));
+      if (child.parentToolCallId) map.set(child.parentToolCallId, agentRunChildToTranscriptRun(child, detail));
     }
     return map.size > 0 ? map : undefined;
   }, [detail]);
-  const resizeDrawer = useCallback((height: number) => {
-    setDetailDrawerHeight(height, true);
-  }, []);
-
   if (!conversationId || !runId) return null;
   if (loading && !detail) {
     return (
@@ -791,7 +563,7 @@ export function AgentRunDetailsPanel({
 
   return (
     <section className="agent-run-detail-panel" aria-label={t.agent.runDetail.detailsAriaLabel}>
-      <DrawerResizeHandle onResize={resizeDrawer} />
+      <AgentDetailDrawerResizeHandle />
       {showHeader ? (
         <header className="agent-run-detail-header">
           <div className="agent-run-detail-breadcrumb-row">

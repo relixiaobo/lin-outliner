@@ -62,11 +62,11 @@ const AGENT_IDENTITY_FILE = 'identity.json';
 const CONVERSATION_INDEX_FILE = 'conversation-index.json';
 const SEARCH_INDEX_FILE = 'search-index.json';
 // The storage-generation sentinel ([[agent-run-unification]] Design 6): ONE
-// root file `layout.json {v}` written once per on-disk format generation.
+// event-store root file `layout.json {v}` written once per on-disk format generation.
 // Startup reads this single line — current generation proceeds with no
 // per-conversation probing; a stale or missing sentinel is positive proof of
-// another generation and wipes the agent data root (pre-release clean-cut, no
-// migration); an unreadable/corrupt sentinel is AMBIGUITY and fails open to
+// another generation and wipes only event-log owned paths (pre-release clean-cut,
+// no migration); an unreadable/corrupt sentinel is AMBIGUITY and fails open to
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
@@ -95,6 +95,13 @@ const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
 const MAX_CHECKPOINTS_PER_CONVERSATION = 3;
 const MAX_SEARCH_INDEX_TEXT_CHARS = 20_000;
 const SEARCH_INDEX_PREVIEW_CHARS = 240;
+const EVENT_STORE_CLEAN_CUT_PATHS = [
+  'agents',
+  'conversations',
+  'indexes',
+  'principals',
+  'runs',
+] as const;
 
 export interface AgentPayloadWriteInput {
   id?: string;
@@ -615,7 +622,7 @@ export class AgentEventStore {
 
   async readRunMetaProjection(runId: string): Promise<AgentRunMetaProjection | null> {
     await this.ensureStorageLayout();
-    return this.readRunMeta(runId);
+    return this.readConsistentRunMeta(runId);
   }
 
   /**
@@ -637,7 +644,7 @@ export class AgentEventStore {
         : index.runIds.slice(-limit);
     const metas: AgentRunMetaProjection[] = [];
     for (const runId of runIds) {
-      const meta = await this.readRunMeta(runId);
+      const meta = await this.readConsistentRunMeta(runId);
       if (meta) metas.push(meta);
     }
     return metas.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
@@ -776,11 +783,13 @@ export class AgentEventStore {
   /**
    * The `layout.json {v}` storage-generation sentinel. Pre-release clean-cut
    * (no migration, no legacy reader): a missing sentinel (pre-sentinel data or
-   * a fresh install — wiping an empty root is harmless) or a parsed sentinel
-   * from ANOTHER generation is positive proof, and the whole agent data root
-   * is deleted and recreated lazily. An unreadable/corrupt sentinel is
-   * ambiguity, not proof — fail open to operation (#180 invariants: content
-   * can never trip a wipe; probe errors never brick the store).
+   * a fresh install — wiping empty event paths is harmless) or a parsed sentinel
+   * from ANOTHER generation is positive proof, and event-log owned paths are
+   * deleted and recreated lazily. Other agent stores may share the parent root,
+   * so this clean-cut must never delete files it does not own. An
+   * unreadable/corrupt sentinel is ambiguity, not proof — fail open to
+   * operation (#180 invariants: content can never trip a wipe; probe errors
+   * never brick the store).
    */
   private async ensureStorageGeneration(): Promise<void> {
     const sentinelPath = path.join(this.rootDir, LAYOUT_SENTINEL_FILE);
@@ -816,7 +825,7 @@ export class AgentEventStore {
     // Positive proof of another generation (stale `v` or no sentinel at all).
     this.reportStorageWarning(
       `Agent storage layout generation changed (found ${raw === null ? 'no sentinel' : `v=${parseJsonRecord(raw.trim())?.v}`}, `
-      + `current v=${STORAGE_LAYOUT_VERSION}); wiping agent data root`,
+      + `current v=${STORAGE_LAYOUT_VERSION}); wiping event-log owned paths`,
       undefined,
       {
         operation: 'cleanCutStorageLayout',
@@ -825,11 +834,18 @@ export class AgentEventStore {
       },
       'agent-storage-layout-generation-changed',
     );
-    await rm(this.rootDir, { recursive: true, force: true });
+    await this.cleanCutEventStorePaths();
     this.agentEventLog.clear();
     this.runEventLog.clear();
     await mkdir(this.rootDir, { recursive: true });
     await atomicWriteFile(sentinelPath, `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION })}\n`);
+  }
+
+  private async cleanCutEventStorePaths(): Promise<void> {
+    await mkdir(this.rootDir, { recursive: true });
+    await Promise.all(EVENT_STORE_CLEAN_CUT_PATHS.map((name) => (
+      rm(path.join(this.rootDir, name), { recursive: true, force: true })
+    )));
   }
 
   private async replayFromCheckpoint(conversationId: string): Promise<AgentEventReplayState | null> {
@@ -1190,8 +1206,33 @@ export class AgentEventStore {
     });
   }
 
-  private async updateRunMeta(conversationId: string, runId: string, events: readonly AgentEvent[]): Promise<AgentRunMetaProjection | null> {
-    const existing = await this.readRunMeta(runId);
+  private async readConsistentRunMeta(runId: string): Promise<AgentRunMetaProjection | null> {
+    const runPaths = this.runPaths(runId);
+    return this.runEventLog.enqueue(runStreamLogKey(runId), async () => {
+      const existing = await this.readRunMeta(runId);
+      const latestLedgerSeq = await this.runEventLog.latestSeq(
+        runStreamLogKey(runId),
+        () => [runPaths.runEventsPath],
+      );
+      if (existing && latestLedgerSeq <= existing.latestSeq) return existing;
+      const events = await this.runEventLog.readIfExists(runPaths.runEventsPath);
+      const metaEvents = events.filter((event) => !isStreamingDeltaEvent(event));
+      const latestMetaEvent = metaEvents.at(-1);
+      if (!latestMetaEvent || (existing && latestMetaEvent.seq <= existing.latestSeq)) return existing;
+      const conversationId = latestMetaEvent.conversationId;
+      const rebuilt = await this.updateRunMeta(conversationId, runId, metaEvents, null);
+      if (rebuilt) await this.updateRunIndexes(rebuilt);
+      return rebuilt;
+    });
+  }
+
+  private async updateRunMeta(
+    conversationId: string,
+    runId: string,
+    events: readonly AgentEvent[],
+    existingOverride?: AgentRunMetaProjection | null,
+  ): Promise<AgentRunMetaProjection | null> {
+    const existing = existingOverride === undefined ? await this.readRunMeta(runId) : existingOverride;
     const latest = events.at(-1);
     if (!latest) return null;
     const started = events.find((event) => event.type === 'run.started');
@@ -1206,11 +1247,18 @@ export class AgentEventStore {
     let completedAt = existing?.execution.completedAt;
     let usage = existing?.execution.usage;
     let executionError = existing?.execution.error;
+    let objectiveText = existing?.objective?.text;
+    let criteria = existing?.objective?.criteria?.slice();
+    let objectiveRole = existing?.objective?.role;
     let objectiveStatus = existing?.objective?.status;
     let budget = existing?.objective?.budget;
     let blockedReason = existing?.objective?.blockedReason;
     let latestVerifierGap = existing?.objective?.latestVerifierGap;
     let latestSubmissionSeq = existing?.objective?.latestSubmissionSeq;
+    const verificationAttemptBase = existing?.objective?.verificationAttemptBase
+      ?? (started?.type === 'run.started' ? started.verificationAttemptBase : undefined);
+    let verifierGapSignatures = existing?.objective?.verifierGapSignatures?.slice()
+      ?? (started?.type === 'run.started' ? started.verifierGapSignatures?.slice() : undefined);
     for (const event of events) {
       if (event.type === 'run.started') {
         assertValidRunExecutionStatusTransition(executionStatus, 'running', runId);
@@ -1235,25 +1283,51 @@ export class AgentEventStore {
         objectiveStatus = event.objectiveStatus;
       }
       if (event.type === 'run.started' || isRunTerminalEvent(event)) {
+        if (event.objective !== undefined) objectiveText = event.objective;
+        if (event.criteria !== undefined) criteria = event.criteria.slice();
+        if (event.objectiveRole !== undefined) objectiveRole = event.objectiveRole;
         budget = event.budget ?? budget;
-        blockedReason = event.blockedReason ?? blockedReason;
-        latestVerifierGap = event.latestVerifierGap ?? latestVerifierGap;
-        latestSubmissionSeq = typeof event.latestSubmissionSeq === 'number' ? event.latestSubmissionSeq : latestSubmissionSeq;
+        blockedReason = event.objectiveStatus === 'active'
+          || event.objectiveStatus === 'verifying'
+          || event.objectiveStatus === 'verified'
+          ? event.blockedReason
+          : event.blockedReason ?? blockedReason;
+        latestVerifierGap = event.objectiveStatus === 'active'
+          || event.objectiveStatus === 'verifying'
+          || event.objectiveStatus === 'verified'
+          ? event.latestVerifierGap
+          : event.latestVerifierGap ?? latestVerifierGap;
+        if (event.verifierGapSignatures !== undefined) {
+          verifierGapSignatures = event.verifierGapSignatures.slice();
+        } else if (event.objectiveStatus === 'verified') {
+          verifierGapSignatures = [];
+        }
+        latestSubmissionSeq = typeof event.latestSubmissionSeq === 'number'
+          ? event.latestSubmissionSeq
+          : event.type === 'run.started'
+            ? undefined
+            : latestSubmissionSeq;
       }
     }
     executionStatus ??= 'running';
-    const objectiveText = existing?.objective?.text ?? (started?.type === 'run.started' ? started.objective : undefined);
-    const criteria = existing?.objective?.criteria ?? (started?.type === 'run.started' ? started.criteria : undefined);
-    const objectiveRole = existing?.objective?.role
-      ?? (started?.type === 'run.started' ? started.objectiveRole : undefined)
-      ?? objectiveRoleForRun(started, parentRunId);
+    objectiveText ??= started?.type === 'run.started' ? started.objective : undefined;
+    criteria ??= started?.type === 'run.started' ? started.criteria?.slice() : undefined;
+    objectiveRole ??= started?.type === 'run.started' ? started.objectiveRole : undefined;
+    objectiveRole ??= objectiveRoleForRun(started, parentRunId);
     const scope = existing?.objective?.scope ?? (started?.type === 'run.started' ? started.scope : undefined);
-    const objective = objectiveText || criteria?.length || objectiveStatus || scope || budget || blockedReason || latestVerifierGap || typeof latestSubmissionSeq === 'number'
+    const verificationRequired = existing?.objective?.verificationRequired
+      ?? (started?.type === 'run.started' ? started.verificationRequired : undefined);
+    const objective = objectiveText || criteria?.length || objectiveStatus || verificationRequired
+      || verificationAttemptBase !== undefined || verifierGapSignatures !== undefined
+      || scope || budget || blockedReason || latestVerifierGap || typeof latestSubmissionSeq === 'number'
       ? {
           text: objectiveText ?? '',
           criteria: criteria?.slice() ?? [],
           role: objectiveRole,
           status: objectiveStatus ?? 'active',
+          ...(verificationRequired ? { verificationRequired } : {}),
+          ...(verificationAttemptBase !== undefined ? { verificationAttemptBase } : {}),
+          ...(verifierGapSignatures !== undefined ? { verifierGapSignatures } : {}),
           ...(scope ? { scope } : {}),
           ...(budget ? { budget } : {}),
           ...(blockedReason ? { blockedReason } : {}),
@@ -2231,11 +2305,19 @@ function normalizeRunObjective(value: unknown): AgentRunMetaProjection['objectiv
   const role = normalizeRunObjectiveRole(value.role);
   if (!role || !isAgentObjectiveStatus(value.status)) return undefined;
   const latestSubmissionSeq = numberOrNull(value.latestSubmissionSeq);
+  const verificationAttemptBase = numberOrNull(value.verificationAttemptBase);
   return {
     text: value.text,
     criteria: Array.isArray(value.criteria) ? uniqueStrings(value.criteria.filter((item): item is string => typeof item === 'string')) : [],
     role,
     status: value.status,
+    ...(value.verificationRequired === true ? { verificationRequired: true } : {}),
+    ...(verificationAttemptBase !== null && verificationAttemptBase >= 0
+      ? { verificationAttemptBase: Math.trunc(verificationAttemptBase) }
+      : {}),
+    ...(Array.isArray(value.verifierGapSignatures)
+      ? { verifierGapSignatures: value.verifierGapSignatures.filter((item): item is string => typeof item === 'string') }
+      : {}),
     scope: normalizeAgentRunScope(value.scope),
     budget: normalizeAgentRunBudget(value.budget),
     ...(typeof value.blockedReason === 'string' ? { blockedReason: value.blockedReason } : {}),
@@ -2365,19 +2447,30 @@ function normalizeAgentRunScope(value: unknown): AgentRunScope | undefined {
     ? uniqueStrings(value.capabilities.filter((item): item is string => typeof item === 'string'))
     : undefined;
   const rawResources = isRecord(value.resources) ? value.resources : null;
-  const resources = rawResources ? {
-    docs: Array.isArray(rawResources.docs)
-      ? uniqueStrings(rawResources.docs.filter((item): item is string => typeof item === 'string'))
-      : undefined,
-    paths: Array.isArray(rawResources.paths)
-      ? uniqueStrings(rawResources.paths.filter((item): item is string => typeof item === 'string'))
-      : undefined,
-  } : undefined;
-  const compactResources = resources && (resources.docs?.length || resources.paths?.length)
-    ? resources
+  const docs = normalizeStoredResourceArray(rawResources, 'docs');
+  const paths = normalizeStoredResourceArray(rawResources, 'paths');
+  const nodes = normalizeStoredResourceArray(rawResources, 'nodes');
+  const writableNodes = normalizeStoredResourceArray(rawResources, 'writableNodes');
+  const compactResources = docs !== undefined || paths !== undefined || nodes !== undefined || writableNodes !== undefined
+    ? {
+        ...(docs !== undefined ? { docs } : {}),
+        ...(paths !== undefined ? { paths } : {}),
+        ...(nodes !== undefined ? { nodes } : {}),
+        ...(writableNodes !== undefined ? { writableNodes } : {}),
+      }
     : undefined;
   return capabilities?.length || compactResources
     ? { capabilities, resources: compactResources }
+    : undefined;
+}
+
+function normalizeStoredResourceArray(
+  resources: Record<string, unknown> | null,
+  key: string,
+): string[] | undefined {
+  if (!resources || !Object.prototype.hasOwnProperty.call(resources, key)) return undefined;
+  return Array.isArray(resources[key])
+    ? uniqueStrings(resources[key].filter((item): item is string => typeof item === 'string'))
     : undefined;
 }
 

@@ -10,8 +10,87 @@
   overflow-wrap: anywhere;
   color: var(--text-faint);
   font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
+  line-height: var(--line-meta);
   text-align: center;
+}
+
+.agent-issue-notification {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-start;
+  padding: var(--space-2) 0;
+}
+
+.agent-issue-notification-button {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  gap: var(--space-3);
+  line-height: var(--line-ui-sm);
+  padding: var(--space-2) 0;
+  text-align: left;
+}
+
+.agent-issue-notification-button:hover,
+.agent-issue-notification-button:focus-visible {
+  color: var(--text-strong);
+}
+
+.agent-issue-notification-button:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+  outline: none;
+}
+
+.agent-issue-notification-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  transition: color var(--motion-fast);
+}
+
+.agent-issue-notification-copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.agent-issue-notification-status {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.agent-issue-notification-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  transition: color var(--motion-fast);
+  white-space: nowrap;
+}
+
+.agent-issue-notification-button:hover .agent-issue-notification-title,
+.agent-issue-notification-button:focus-visible .agent-issue-notification-title,
+.agent-issue-notification-button:hover .agent-issue-notification-status,
+.agent-issue-notification-button:focus-visible .agent-issue-notification-status {
+  color: var(--text-strong);
+}
+
+.agent-issue-notification-button:hover .agent-issue-notification-chevron,
+.agent-issue-notification-button:focus-visible .agent-issue-notification-chevron {
+  color: var(--text-soft);
 }
 
 .agent-user-bubble {

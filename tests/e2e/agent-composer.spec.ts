@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { DEFAULT_DREAM_CHANNEL_ID, DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
+import { systemReminder } from '../../src/core/agentAttachments';
 import {
   commandCalls,
   e2eProjection,
@@ -8,6 +9,7 @@ import {
   emitDocumentEvent,
   ids,
   openMockedApp,
+  row,
   rowEditor,
   setAgentMessageContextMenuAction,
 } from './outlinerMock';
@@ -135,6 +137,362 @@ test.describe('agent composer controls', () => {
     await page.getByTitle('Expand agent').click();
     await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
     await expect(composer).toBeFocused();
+  });
+
+  test('sends an outliner node to composer as context only', async ({ page }) => {
+    await row(page, ids.alpha).click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: /Run selected node|Create Issue from node/i })).toHaveCount(0);
+    await page.getByRole('menuitem', { name: 'Send to composer' }).click();
+
+    const input = page.getByLabel('Agent message');
+    await expect(page.locator('[data-agent-node-ref="node-alpha"]')).toBeVisible();
+    await expect(input).toContainText('Alpha');
+    await page.keyboard.type('summarize this');
+    await page.getByRole('button', { name: 'Send message' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_send_message')?.args;
+    }).toMatchObject({
+      message: '[[node:Alpha^node-alpha]] summarize this',
+      userViewContext: {
+        referencedNodes: [{ nodeId: 'node-alpha', title: 'Alpha' }],
+      },
+    });
+  });
+
+  test('keeps Send to composer pending while Work hides the editor', async ({ page }) => {
+    await page.getByRole('button', { name: /^Open Work/ }).click();
+    await expect(page.getByRole('region', { name: 'Agent work' })).toBeVisible();
+    await expect(page.locator('.agent-composer-region')).toHaveCount(0);
+
+    await row(page, ids.alpha).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Send to composer' }).click();
+    await expect(page.getByRole('region', { name: 'Agent work' })).toBeVisible();
+
+    await page.locator('.agent-dock-header').getByRole('button', { name: 'Back to chat' }).click();
+    await expect(page.locator('[data-agent-node-ref="node-alpha"]')).toBeVisible();
+    await expect(page.getByLabel('Agent message')).toContainText('Alpha');
+  });
+
+  test('keeps the active Session badge refresh independent from Work preset changes', async ({ page }) => {
+    const now = Date.now();
+    await page.evaluate(({ now }) => {
+      const win = window as unknown as {
+        __LIN_E2E__?: { setAgentIssues: (rows: unknown[]) => void };
+      };
+      win.__LIN_E2E__?.setAgentIssues([{
+        target: { type: 'issue', id: 'issue-active-badge-race' },
+        title: 'Active badge race',
+        status: 'Started',
+        statusCategory: 'started',
+        revision: 'rev-active-badge-race',
+        updatedAt: now,
+        hasActiveSession: true,
+        latestSessionState: 'active',
+        latestSessionUpdatedAt: now,
+      }]);
+    }, { now });
+    await emitAgentEvent(page, {
+      type: 'tool_result',
+      conversationId: DEFAULT_CONVERSATION_ID,
+      toolCallId: 'tool-active-badge-seed',
+      timestamp: now,
+    });
+
+    const activeWorkButton = page.getByRole('button', { name: '1 Agent Session active' });
+    await expect(activeWorkButton).toBeVisible();
+    await activeWorkButton.click();
+    const work = page.getByRole('region', { name: 'Agent work' });
+    await expect(work.getByText('1 Agent Session active')).toBeVisible();
+
+    await page.evaluate(({ conversationId, now }) => {
+      const win = window as unknown as {
+        __LIN_E2E__?: {
+          emitAgentEvent: (event: unknown) => void;
+          setAgentIssues: (rows: unknown[]) => void;
+        };
+      };
+      win.__LIN_E2E__?.setAgentIssues([]);
+      win.__LIN_E2E__?.emitAgentEvent({
+        type: 'tool_result',
+        conversationId,
+        toolCallId: 'tool-active-badge-finished',
+        timestamp: now + 1,
+      });
+      const upcoming = [...document.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.trim() === 'Upcoming');
+      if (!upcoming) throw new Error('Upcoming Work preset button was not found.');
+      upcoming.click();
+    }, { conversationId: DEFAULT_CONVERSATION_ID, now });
+
+    await expect(work.getByRole('heading', { name: 'Upcoming' })).toBeVisible();
+    await expect(work.getByText('1 Agent Session active')).toHaveCount(0);
+  });
+
+  test('scrolls to a newly sent user message without letting streaming retake the viewport', async ({ page }) => {
+    const conversation = Array.from({ length: 44 }, (_, index) => {
+      const isUser = index % 2 === 0;
+      return {
+        nodeId: `scroll-history-${index}`,
+        message: isUser
+          ? {
+              role: 'user',
+              content: [{ type: 'text', text: `Historical user message ${index}` }],
+              timestamp: 1_800_000_000_000 + index,
+            }
+          : {
+              role: 'assistant',
+              api: 'responses',
+              provider: 'openai',
+              model: 'gpt-5.4',
+              stopReason: 'stop',
+              content: [{ type: 'text', text: `Historical assistant response ${index}` }],
+              timestamp: 1_800_000_000_000 + index,
+            },
+        branches: null,
+      };
+    });
+
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+      conversationTitle: 'Long conversation',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation,
+    });
+    const scroll = page.locator('.agent-chat-scroll');
+    await expect(page.locator('.agent-chat-transcript')).toHaveAttribute('data-virtualized', 'true');
+    await scroll.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    await expect(page.getByText('Historical user message 0')).toBeVisible();
+
+    const sentText = 'Confirm this new request is visible.';
+    await page.getByLabel('Agent message').fill(sentText);
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+      conversationTitle: 'Long conversation',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation: [...conversation, {
+        nodeId: 'scroll-new-user-message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: sentText }],
+          timestamp: 1_800_000_001_000,
+        },
+        branches: null,
+      }],
+    }, 2);
+
+    const sentRow = page.locator('[data-agent-transcript-row="scroll-new-user-message"]');
+    await expect(sentRow).toBeVisible();
+    await expect.poll(async () => sentRow.evaluate((row) => {
+      const scroller = row.closest('.agent-chat-scroll');
+      if (!(scroller instanceof HTMLElement)) return false;
+      const rowRect = row.getBoundingClientRect();
+      const scrollRect = scroller.getBoundingClientRect();
+      return scroller.scrollTop > 100
+        && rowRect.top >= scrollRect.top - 1
+        && rowRect.bottom <= scrollRect.bottom + 1;
+    })).toBe(true);
+
+    const userSelectedScrollTop = await scroll.evaluate((element) => {
+      element.scrollTop = Math.max(0, element.scrollTop - 240);
+      element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -240 }));
+      element.dispatchEvent(new Event('scroll', { bubbles: true }));
+      return element.scrollTop;
+    });
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+      conversationTitle: 'Long conversation',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation: [...conversation, {
+        nodeId: 'scroll-new-user-message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: sentText }],
+          timestamp: 1_800_000_001_000,
+        },
+        branches: null,
+      }],
+      isStreaming: true,
+      streamingMessage: {
+        role: 'assistant',
+        api: 'responses',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Streaming response '.repeat(120) }],
+        timestamp: 1_800_000_001_100,
+      },
+    }, 3);
+
+    await expect.poll(async () => scroll.evaluate((element, expected) => (
+      Math.abs(element.scrollTop - expected)
+    ), userSelectedScrollTop)).toBeLessThanOrEqual(2);
+  });
+
+  test('renders an Issue status between the original and optional follow-up responses', async ({ page }) => {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+      conversationTitle: 'Issue delivery conversation',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      conversation: [
+        {
+          nodeId: 'issue-delivery-user-request',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'Handle this work in an Issue.' }],
+            timestamp: 1_800_000_010_000,
+          },
+          branches: null,
+        },
+        {
+          nodeId: 'issue-delivery-initial-response',
+          runId: 'run-initial-response',
+          message: {
+            role: 'assistant',
+            api: 'responses',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            stopReason: 'stop',
+            content: [{ type: 'text', text: 'Initial response before the Issue completed.' }],
+            timestamp: 1_800_000_010_100,
+          },
+          branches: null,
+        },
+        {
+          nodeId: 'issue-delivery-hidden-wakeup',
+          actor: { type: 'system' },
+          issueNotification: {
+            notificationId: 'notification-issue-delivery-fixture-1',
+            issueId: 'issue-delivery-fixture-1',
+            agentSessionId: 'agent-session-delivery-fixture-1',
+            state: 'complete',
+            kind: 'task_completed',
+            title: 'Issue "Compile the report" completed.',
+            createdAt: 1_800_000_010_200,
+          },
+          message: {
+            role: 'user',
+            content: [{
+              type: 'text',
+              text: systemReminder('Issue delivery wake-up must remain hidden.'),
+            }],
+            timestamp: 1_800_000_010_200,
+          },
+          branches: null,
+        },
+        {
+          nodeId: 'issue-delivery-final-response',
+          runId: 'issue-delivery-run-fixture-1',
+          message: {
+            role: 'assistant',
+            api: 'responses',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            stopReason: 'stop',
+            content: [{ type: 'text', text: 'Independent response after the Issue completed.' }],
+            timestamp: 1_800_000_010_300,
+          },
+          branches: null,
+        },
+      ],
+    });
+    await page.evaluate(() => {
+      const win = window as E2EWindow;
+      const now = 1_800_000_010_400;
+      const target = { type: 'issue', id: 'issue-delivery-fixture-1' };
+      const issue = {
+        id: 'issue-delivery-fixture-1',
+        title: 'Compile the report',
+        status: { name: 'Completed', category: 'completed' },
+        delegate: { type: 'default-agent' },
+        relations: [],
+        trigger: { type: 'when-ready' },
+        permissionMode: 'unattended',
+        confirmation: { confirmedBy: { type: 'user', userId: 'e2e' }, confirmedAt: now - 1_000 },
+        revision: 'issue-delivery-rev-1',
+        createdAt: now - 1_000,
+        updatedAt: now,
+      };
+      win.__LIN_E2E__?.setAgentIssues([{
+        target,
+        title: issue.title,
+        status: issue.status.name,
+        revision: issue.revision,
+        updatedAt: now,
+        confirmed: true,
+        hasActiveSession: false,
+        latestSessionState: 'complete',
+        latestSessionUpdatedAt: now,
+        statusCategories: ['completed'],
+      }], {
+        'issue:issue-delivery-fixture-1': {
+          target,
+          issue,
+          sessions: [],
+          activity: [],
+        },
+      });
+    });
+    await page.addStyleTag({
+      content: '.agent-chat-transcript::after { content: ""; display: block; flex: 0 0 900px; }',
+    });
+
+    const assistantRows = page.locator('.agent-message-row.assistant');
+    const issueNotification = page.locator('.agent-issue-notification');
+    const notificationButton = issueNotification.getByRole('button', {
+      name: 'Open Issue details: Compile the report (completed)',
+    });
+    await expect(assistantRows).toHaveCount(2);
+    await expect(issueNotification).toHaveCount(1);
+    await expect(issueNotification.locator('.agent-issue-notification-title')).toHaveText('"Compile the report"');
+    await expect(issueNotification.locator('.agent-issue-notification-status')).toHaveText('completed');
+    await expect(issueNotification.locator('.agent-issue-notification-icon')).toHaveCount(0);
+    const notificationChevron = issueNotification.locator('.agent-issue-notification-chevron');
+    await expect(notificationChevron).toHaveAttribute('width', String(14));
+    await expect(notificationChevron).toHaveCSS('opacity', '1');
+    await expect(issueNotification).toHaveCSS('justify-content', 'flex-start');
+    await expect(notificationButton).toHaveCSS('text-align', 'left');
+    await expect(notificationButton).toBeVisible();
+    await expect(page.getByText('Issue delivery wake-up must remain hidden.')).toHaveCount(0);
+    const firstBox = await assistantRows.nth(0).boundingBox();
+    const notificationBox = await issueNotification.boundingBox();
+    const notificationButtonBox = await notificationButton.boundingBox();
+    const secondBox = await assistantRows.nth(1).boundingBox();
+    expect(firstBox).not.toBeNull();
+    expect(notificationBox).not.toBeNull();
+    expect(notificationButtonBox).not.toBeNull();
+    expect(secondBox).not.toBeNull();
+    expect(Math.abs(notificationBox!.x - firstBox!.x)).toBeLessThanOrEqual(1);
+    expect(notificationButtonBox!.width).toBeLessThan(notificationBox!.width);
+    expect(notificationBox!.y).toBeGreaterThan(firstBox!.y + firstBox!.height);
+    expect(secondBox!.y).toBeGreaterThan(notificationBox!.y + notificationBox!.height);
+
+    const chatScroll = page.locator('.agent-chat-scroll');
+    const savedChatScrollTop = await chatScroll.evaluate((element) => {
+      element.scrollTop = 40;
+      return element.scrollTop;
+    });
+    await notificationButton.click();
+
+    const details = page.getByRole('region', { name: 'Issue details' });
+    await expect(details).toBeVisible();
+    await expect(details.getByRole('heading', { name: 'Compile the report', level: 3 })).toBeVisible();
+    await expect(details.getByText('Activity', { exact: true })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Agent work' })).toHaveCount(0);
+    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to chat' })).toHaveCount(0);
+    await expect(page.locator('.agent-dock-title')).toHaveText('Issue delivery conversation');
+    await expect(page.locator('.agent-composer-region')).toHaveCount(1);
+
+    await details.getByRole('button', { name: 'Close Issue details' }).click();
+    await expect(details).toHaveCount(0);
+    await expect(page.locator('.agent-dock-title')).toHaveText('Issue delivery conversation');
+    await expect(page.locator('.agent-composer-region')).toBeVisible();
+    await expect(assistantRows).toHaveCount(2);
+    await expect(notificationButton).toBeVisible();
+    await expect.poll(async () => chatScroll.evaluate((element, expectedScrollTop) => (
+      Math.abs(element.scrollTop - expectedScrollTop)
+    ), savedChatScrollTop)).toBeLessThanOrEqual(2);
   });
 
   test('resolving a pending question after dock reopen does not steal focus into the composer', async ({ page }) => {
@@ -1815,7 +2173,6 @@ test.describe('agent composer controls', () => {
         isError: false,
       }],
     });
-
     // The interim text + lone tool produced no final answer, so the result-first
     // process block auto-expands (a resultless turn) — the narration markdown and,
     // below, the tool are already reachable without toggling it open.
@@ -3130,7 +3487,7 @@ test.describe('agent composer controls', () => {
     await expect(page.getByText('Compare tag layout stability.')).toBeVisible();
   });
 
-  test('opens child run details and expands nested tool calls', async ({ page }) => {
+  test('opens Issue work details from the Work panel', async ({ page }) => {
     const usage = {
       input: 0,
       output: 0,
@@ -3173,10 +3530,9 @@ test.describe('agent composer controls', () => {
             content: [{
               type: 'toolCall',
               id: 'tool-agent-1',
-              name: 'spawn_run',
+              name: 'agent_session_start',
               arguments: {
-                description: 'Inspect Run UI',
-                objective: 'Inspect the current UI.',
+                issueId: 'issue-work-1',
               },
             }],
           },
@@ -3195,33 +3551,234 @@ test.describe('agent composer controls', () => {
         parentToolCallId: 'tool-agent-1',
       }],
     });
+    await page.evaluate(() => {
+      const win = window as E2EWindow;
+      const now = Date.now();
+      const sessionStartedAt = now - 63_000;
+      const sessionCompletedAt = now;
+      const target = { type: 'issue', id: 'issue-work-1' };
+      const childTarget = { type: 'issue', id: 'issue-work-child-1' };
+      const issue = {
+        id: 'issue-work-1',
+        title: 'Inspect Run UI',
+        status: { name: 'Started', category: 'started' },
+        delegate: { type: 'default-agent' },
+        relations: [],
+        trigger: { type: 'when-ready' },
+        permissionMode: 'unattended',
+        confirmation: { confirmedBy: { type: 'user', userId: 'e2e' }, confirmedAt: 1_800_000_000_700 },
+        revision: 'issue-rev-1',
+        createdAt: 1_800_000_000_700,
+        updatedAt: now,
+      };
+      const childIssue = {
+        ...issue,
+        id: 'issue-work-child-1',
+        title: 'Inspect nested UI',
+        parentIssueId: 'issue-work-1',
+        revision: 'issue-child-rev-1',
+      };
+      const transcriptMessages = [{
+        role: 'user',
+        timestamp: sessionStartedAt,
+        content: [{ type: 'text', text: 'Inspect the current UI.' }],
+      }, {
+        role: 'assistant',
+        timestamp: sessionStartedAt + 1_000,
+        api: 'openai-completions',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: 'toolUse',
+        content: [
+          { type: 'thinking', thinking: 'Inspect the visible interface.', redacted: false },
+          { type: 'toolCall', id: 'session-tool-read-1', name: 'node_read', arguments: { node_id: 'today' } },
+        ],
+      }, {
+        role: 'toolResult',
+        toolCallId: 'session-tool-read-1',
+        toolName: 'node_read',
+        timestamp: sessionStartedAt + 2_000,
+        content: [{ type: 'text', text: 'Current UI content.' }],
+        isError: false,
+      }, {
+        role: 'assistant',
+        timestamp: sessionCompletedAt,
+        api: 'openai-completions',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Inspecting current UI.' }],
+      }];
+      const run = {
+        runId: 'child-run-1',
+        conversationId: 'mock-agent-conversation',
+        agentId: 'built-in:tenon:assistant',
+        kind: 'delegation',
+        title: 'Inspect Run UI',
+        status: 'completed',
+        runProfile: 'default',
+        runProfileLabel: 'Default',
+        context: 'full',
+        disposition: 'attended',
+        startedAt: sessionStartedAt,
+        updatedAt: sessionCompletedAt,
+        completedAt: sessionCompletedAt,
+        result: {
+          runId: 'child-run-1',
+          seq: 1,
+          submittedAt: sessionCompletedAt,
+          summary: 'Inspecting current UI.',
+          source: 'final_assistant_message',
+        },
+        ancestors: [],
+        subRuns: [],
+        verificationRuns: [],
+        transcriptMessageCount: transcriptMessages.length,
+      };
+      win.__LIN_E2E__?.setAgentIssues([{
+        target,
+        title: 'Inspect Run UI',
+        status: 'Started',
+        revision: 'issue-rev-1',
+        updatedAt: now,
+        confirmed: true,
+        hasActiveSession: false,
+        latestSessionState: 'complete',
+        latestSessionUpdatedAt: sessionCompletedAt,
+        statusCategories: ['started'],
+      }, {
+        target: childTarget,
+        title: 'Inspect nested UI',
+        status: 'Started',
+        parentIssueId: 'issue-work-1',
+        revision: 'issue-child-rev-1',
+        updatedAt: now,
+        confirmed: true,
+        hasActiveSession: true,
+        latestSessionState: 'pending',
+        latestSessionUpdatedAt: now,
+        statusCategories: ['started'],
+      }], {
+        'issue:issue-work-1': {
+          target,
+          issue,
+          childIssues: [childIssue],
+          sessions: [{
+            id: 'session-work-1',
+            issueId: 'issue-work-1',
+            delegate: { type: 'default-agent' },
+            state: 'complete',
+            source: { type: 'delegation', actor: { type: 'agent', agentId: 'neva' } },
+            issueSnapshot: issue,
+            latestOutput: 'Inspecting current UI.',
+            startedAt: sessionStartedAt,
+            completedAt: sessionCompletedAt,
+            revision: 'session-rev-1',
+            createdAt: sessionStartedAt,
+            updatedAt: sessionCompletedAt,
+          }],
+          activity: [{
+            id: 'activity-session-work-1',
+            target: { type: 'agent-session', agentSessionId: 'session-work-1' },
+            actor: { type: 'agent', agentId: 'neva' },
+            content: { type: 'agent-progress', body: 'Inspecting current UI.' },
+            createdAt: sessionCompletedAt,
+          }, {
+            id: 'activity-status-work-1',
+            target,
+            actor: { type: 'system' },
+            content: { type: 'status-change', from: 'Started', to: 'Completed' },
+            createdAt: sessionCompletedAt - 1_000,
+          }],
+        },
+        'issue:issue-work-child-1': {
+          target: childTarget,
+          issue: childIssue,
+          sessions: [{
+            id: 'session-work-child-1',
+            issueId: 'issue-work-child-1',
+            delegate: { type: 'default-agent' },
+            state: 'pending',
+            source: { type: 'delegation', actor: { type: 'agent', agentId: 'neva' } },
+            issueSnapshot: childIssue,
+            revision: 'session-child-rev-1',
+            createdAt: now,
+            updatedAt: now,
+          }],
+          activity: [],
+        },
+      }, {
+        'session-work-1': {
+          agentSessionId: 'session-work-1',
+          conversationId: 'mock-agent-conversation',
+          runId: 'child-run-1',
+          run,
+          transcript: { messages: transcriptMessages },
+        },
+      });
+    });
 
-    // A DM main-agent child run stays anchored to its spawning ordinary Agent
+    await emitAgentEvent(page, {
+      type: 'tool_result',
+      conversationId: DEFAULT_DM_CONVERSATION_ID,
+      toolCallId: 'tool-refresh-active-issue-count',
+      timestamp: Date.now(),
+    });
+    const activeWorkButton = page.getByRole('button', { name: '1 Agent Session active' });
+    await expect(activeWorkButton).toBeVisible();
+
+    // A DM main-agent child run stays anchored to its Agent Session start
     // tool-call row, NOT a free-floating conversation-level boundary. So there
     // is no boundary region, and the run remains a process row in the bubble.
     await expect(page.getByRole('region', { name: 'Agent run · Inspect Run UI' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Running agent run "Inspect Run UI"' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Starting agent session "issue-work-1"' }).first()).toBeVisible();
 
-    await page.getByRole('button', { name: /^Open Work/ }).click();
-    const runs = page.getByRole('region', { name: 'Agent runs' });
-    await expect(runs).toBeVisible();
-    await expect(runs).toHaveCSS('position', 'static');
-    await expect(page.locator('.agent-dock-header')).toContainText('Runs');
+    await page.addStyleTag({
+      content: '.agent-chat-transcript::before { content: ""; display: block; flex: 0 0 1200px; }',
+    });
+    const savedChatScrollTop = await page.locator('.agent-chat-scroll').evaluate((element) => {
+      element.scrollTop = 420;
+      return element.scrollTop;
+    });
+    expect(savedChatScrollTop).toBeGreaterThan(100);
+
+    await activeWorkButton.click();
+    const work = page.getByRole('region', { name: 'Agent work' });
+    await expect(work).toBeVisible();
+    await expect(work).toHaveCSS('position', 'static');
+    await expect(page.locator('.agent-dock-header')).toContainText('Issues');
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to chat' })).toBeVisible();
     await expect(page.locator('.agent-dock-header .agent-dock-title-leading')).toHaveCount(0);
-    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Refresh runs' })).toHaveCount(0);
+    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Refresh Issues' })).toHaveCount(0);
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: /^Open Work/ })).toHaveCount(0);
-    await expect(runs.getByRole('button', { name: 'Close Work' })).toHaveCount(0);
+    await expect(work.getByRole('button', { name: 'Close Work' })).toHaveCount(0);
     await expect(page.locator('.agent-composer-region')).toHaveCount(0);
-    await expect(runs.getByText('Inspect Run UI')).toBeVisible();
-    await expect(runs.locator('[role="treeitem"]')).toHaveCount(0);
-    await runs.getByRole('button', { name: /Inspect Run UI/ }).click();
+    await expect(work.getByText('Inspect Run UI')).toBeVisible();
+    await expect(work.getByRole('button', { name: /Inspect nested UI/ })).toHaveCount(0);
+    await expect(work.locator('[role="treeitem"]')).toHaveCount(0);
+    await work.getByRole('button', { name: /Inspect Run UI/ }).click();
 
     const detailDialog = page.locator('.agent-run-detail-drawer');
     await expect(detailDialog).toBeVisible();
     await expect(detailDialog).toHaveAttribute('role', 'dialog');
-    await expect(detailDialog).toHaveAttribute('aria-label', 'Run details');
+    await expect(detailDialog).toHaveAttribute('aria-label', 'Issue details');
     await expect(detailDialog).toHaveCSS('position', 'relative');
     await expect(page.locator('.agent-run-detail-drawer-backdrop')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     const [headerBox, detailDialogBox] = await Promise.all([
@@ -3231,75 +3788,68 @@ test.describe('agent composer controls', () => {
     expect(headerBox).toBeTruthy();
     expect(detailDialogBox).toBeTruthy();
     expect(detailDialogBox!.y).toBeGreaterThanOrEqual(headerBox!.y + headerBox!.height - 1);
-    const resizeHandle = detailDialog.locator('.agent-run-detail-resize-handle');
-    await expect(resizeHandle).toBeVisible();
-    const resizeHandleBox = await resizeHandle.boundingBox();
-    expect(resizeHandleBox).toBeTruthy();
-    await page.mouse.move(resizeHandleBox!.x + resizeHandleBox!.width / 2, resizeHandleBox!.y + resizeHandleBox!.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(resizeHandleBox!.x + resizeHandleBox!.width / 2, resizeHandleBox!.y + resizeHandleBox!.height / 2 + 120);
-    await page.mouse.up();
-    const resizedDialogBox = await detailDialog.boundingBox();
-    expect(resizedDialogBox).toBeTruthy();
-    expect(resizedDialogBox!.height).toBeLessThan(detailDialogBox!.height - 40);
-    const details = page.getByRole('region', { name: 'Run details' });
+    const details = page.getByRole('region', { name: 'Issue details' });
     await expect(details).toBeVisible();
-    await expect(runs).toBeVisible();
-    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to runs' })).toHaveCount(0);
+    await expect(details.getByRole('navigation', { name: 'Issue path' })).toContainText('Inspect Run UI');
+    await expect(work).toBeVisible();
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Back to runs' })).toBeDisabled();
     const detailHeading = details.getByRole('heading', { name: 'Inspect Run UI', level: 3 });
     await expect(detailHeading).toBeVisible();
-    await expect(details.locator('.agent-run-detail-current-row')).toHaveCount(0);
-    await expect(details.getByText(/4 messages ·/)).toHaveCount(0);
-    const breadcrumb = details.getByRole('navigation', { name: 'Run details' });
-    await expect(breadcrumb).toContainText('Neva');
-    await expect(details.locator('.agent-run-breadcrumb-root-icon')).toBeVisible();
-    await expect(breadcrumb).toHaveCSS('flex-wrap', 'nowrap');
-    const [breadcrumbBox, titleBox] = await Promise.all([
-      breadcrumb.boundingBox(),
-      detailHeading.boundingBox(),
-    ]);
-    expect(breadcrumbBox).toBeTruthy();
-    expect(titleBox).toBeTruthy();
-    expect(breadcrumbBox!.y).toBeLessThan(titleBox!.y);
+    await expect(detailDialog.getByRole('separator', { name: 'Resize details drawer' })).toBeVisible();
+    await expect(details.locator('.agent-issue-detail-status-chip')).toHaveCount(0);
+    await expect(details.getByText('Activity')).toBeVisible();
+    await expect(details.getByText('Agent Sessions')).toHaveCount(0);
+    const activityList = details.locator('.agent-issue-activity-list');
+    const sessionCard = activityList.locator('.agent-issue-session-card').first();
+    const executionSummary = sessionCard.locator('.agent-issue-execution-summary');
+    await expect(executionSummary.locator('.agent-issue-execution-heading')).toContainText('Execution');
+    await expect(executionSummary.locator('.agent-issue-execution-heading')).toContainText('Worked for 1m 3s');
+    await expect(sessionCard.locator('.agent-issue-session-result')).not.toBeVisible();
+    await executionSummary.click();
+    await expect(sessionCard.locator('.agent-issue-session-result')).toContainText('Inspecting current UI.');
+    await expect(sessionCard.locator('.agent-issue-session-process summary')).toContainText('Process');
+    await expect(sessionCard.locator('.agent-issue-session-process-transcript')).not.toBeVisible();
+    await sessionCard.locator('.agent-issue-session-process summary').click();
+    await expect(sessionCard.locator('.agent-issue-session-process-transcript')).toBeVisible();
+    await expect(details.getByRole('heading', { name: 'Agent Session', level: 3 })).toHaveCount(0);
+    await expect(details.getByRole('button', { name: 'Transcript' })).toBeVisible();
+    await expect(activityList.locator('.agent-issue-session-result').getByText('Inspecting current UI.')).toBeVisible();
+    const statusActivity = activityList.locator('.agent-issue-activity-event-card').filter({ hasText: 'Status changed to Completed.' }).first();
+    await expect(statusActivity.locator('.agent-issue-activity-heading')).toContainText('Status changed to Completed.');
+    await expect(statusActivity.locator('.agent-issue-activity-details')).not.toBeVisible();
+    await statusActivity.locator('.agent-issue-activity-summary').click();
+    await expect(statusActivity.locator('.agent-issue-activity-details')).toContainText('Actor');
+    await expect(statusActivity.locator('.agent-issue-activity-details')).toContainText('System');
 
+    await details.getByRole('button', { name: 'Transcript' }).click();
+    const runDetails = page.getByRole('region', { name: 'Run details' });
+    await expect(runDetails).toBeVisible();
+    await expect(runDetails.getByRole('button', { name: 'Back to runs' })).toBeEnabled();
+    await runDetails.getByRole('button', { name: 'Back to runs' }).click();
     await expect(details).toBeVisible();
-    await expect(details.getByText('Activity log (4)')).toHaveCount(0);
-    const processSummary = details.locator('.agent-run-detail-disclosure-section.is-process summary');
-    await expect(processSummary).toHaveText('Working');
-    await expect(details.getByText('Inspect the current UI.')).toBeHidden();
+    await expect(detailHeading).toBeVisible();
 
-    await processSummary.click();
-    await expect(details.getByText('Inspect the current UI.')).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Thought · Read the visible outline before summarizing.' })).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Read node "today"' })).toBeVisible();
+    await details.getByRole('button', { name: /Inspect nested UI/ }).click();
+    await expect(details.getByRole('heading', { name: 'Inspect nested UI', level: 3 })).toBeVisible();
+    await expect(detailDialog).toBeFocused();
+    await expect(details.getByRole('button', { name: 'Inspect Run UI' })).toBeVisible();
+    await expect(details.locator('.agent-issue-session-empty')).toHaveText('No execution details yet.');
 
-    await details.locator('.agent-tool-call-toggle').first().click();
-    await expect(details.getByText('Daily note content from the Run.')).toBeVisible();
+    // The active child schedules a delayed refresh. Navigating to the parent while
+    // that timer is pending must not let the stale child request overwrite it.
+    await page.waitForTimeout(1_600);
+    await details.getByRole('button', { name: 'Inspect Run UI' }).click();
+    await page.waitForTimeout(500);
+    await expect(detailHeading).toBeVisible();
 
-    await expect(details.getByLabel('Agent run follow-up')).toHaveCount(0);
-    await details.getByRole('button', { name: 'Stop' }).click();
-
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.filter((call) => call.cmd === 'agent_run_steer' || call.cmd === 'agent_run_stop')
-        .map((call) => ({ cmd: call.cmd, args: call.args }));
-    }).toEqual([
-      {
-        cmd: 'agent_run_stop',
-        args: {
-          runId: 'child-run-1',
-          conversationId: DEFAULT_DM_CONVERSATION_ID,
-        },
-      },
-    ]);
-
-    await details.getByRole('button', { name: 'Close run details' }).click();
+    await details.getByRole('button', { name: 'Close Issue details' }).click();
     await expect(details).toHaveCount(0);
     await expect(detailDialog).toHaveCount(0);
-    await expect(runs).toBeVisible();
+    await expect(work).toBeVisible();
     await page.locator('.agent-dock-header').getByRole('button', { name: 'Back to chat' }).click();
-    await expect(runs).toHaveCount(0);
+    await expect(work).toHaveCount(0);
+    await expect.poll(async () => page.locator('.agent-chat-scroll').evaluate((element, expectedScrollTop) => (
+      Math.abs(element.scrollTop - expectedScrollTop)
+    ), savedChatScrollTop)).toBeLessThanOrEqual(8);
   });
 });

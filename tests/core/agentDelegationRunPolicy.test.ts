@@ -9,11 +9,13 @@ import {
   normalizeRunBudget,
   normalizeRunBudgetInput,
   normalizeRunScope,
+  prepareRunBudgetAmendment,
   releaseAdmittedRunBudget,
   remainingBudgetMs,
   retryBudgetSlice,
   scopedAllowedToolNames,
   settleRunBudget,
+  verifierAllowedToolNames,
   verifierBudgetForRun,
   verifierRunScope,
 } from '../../src/main/agentDelegationRunPolicy';
@@ -40,6 +42,19 @@ describe('agent delegation run policy', () => {
       startedAt: now,
       deadlineAt: now + 5 * 60_000,
     });
+  });
+
+  test('preserves exact absolute deadlines without rounding them up to a minute', () => {
+    const now = 10_000;
+    expect(normalizeRunBudgetInput({ deadlineAt: now + 1_234 })).toEqual({ deadlineAt: now + 1_234 });
+    expect(normalizeRunBudget({ wallClockMinutes: 5, deadlineAt: now + 1_234 }, undefined, now)).toMatchObject({
+      wallClockMinutes: 5,
+      deadlineAt: now + 1_234,
+    });
+    expect(normalizeRunBudget({ deadlineAt: now - 1 }, undefined, now)).toMatchObject({
+      deadlineAt: now - 1,
+    });
+    expect(retryBudgetSlice({ deadlineAt: now + 1_234 })).toEqual({ deadlineAt: now + 1_234 });
   });
 
   test('reserves, releases, and settles parent token budget slices', () => {
@@ -80,17 +95,63 @@ describe('agent delegation run policy', () => {
 
     expect(() => admitRunBudget(parent, { wallClockMinutes: 6 }, now, false))
       .toThrow('Run budget exceeds parent remaining wall-clock budget.');
+    expect(admitRunBudget(parent, { tokens: 10 }, now, false)).toMatchObject({
+      tokens: 10,
+      deadlineAt: parent.deadlineAt,
+    });
+  });
+
+  test('prevalidates amended child budgets without mutating the parent ledger', () => {
+    const now = 1_000;
+    const parent: AgentRunBudget = {
+      tokens: 100,
+      reservedTokens: 80,
+      spentTokens: 0,
+      deadlineAt: now + 5 * 60_000,
+    };
+    const existing: AgentRunBudget = {
+      tokens: 80,
+      startedAt: now,
+      deadlineAt: parent.deadlineAt,
+    };
+
+    expect(() => prepareRunBudgetAmendment(
+      { tokens: 101 },
+      existing,
+      parent,
+      false,
+      now + 1_000,
+    )).toThrow('Amended run budget exceeds parent remaining token budget.');
+    expect(() => prepareRunBudgetAmendment(
+      { deadlineAt: parent.deadlineAt + 1 },
+      existing,
+      parent,
+      false,
+      now + 1_000,
+    )).toThrow('Amended run budget exceeds parent remaining wall-clock budget.');
+    expect(parent.reservedTokens).toBe(80);
+
+    expect(prepareRunBudgetAmendment(
+      { tokens: 90 },
+      existing,
+      parent,
+      false,
+      now + 1_000,
+    )).toEqual({
+      budget: { ...existing, tokens: 90 },
+      parentReservedTokens: 90,
+    });
   });
 
   test('normalizes and narrows run scope without widening parent constraints', () => {
     const parent: AgentRunScope = {
       capabilities: ['file.read.allowed_file_area', 'outline.read'],
-      resources: { docs: ['spec'], paths: ['src'] },
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a', 'node:b'] },
     };
 
     expect(normalizeRunScope({
       capabilities: ['file_read', 'outline.read', 'unknown'],
-      resources: { docs: [' spec '], paths: [' src '] },
+      resources: { docs: [' spec '], paths: [' src '], nodes: [' node:a '] },
     })).toEqual({
       capabilities: [
         'file.read.allowed_file_area',
@@ -98,22 +159,37 @@ describe('agent delegation run policy', () => {
         'file.read.sensitive_local_path',
         'outline.read',
       ],
-      resources: { docs: ['spec'], paths: ['src'] },
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
     });
 
     expect(narrowRunScope(parent, undefined)).toEqual(parent);
     expect(narrowRunScope(parent, {
       capabilities: ['outline.read'],
-      resources: { docs: ['spec'], paths: ['src'] },
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
     })).toEqual({
       capabilities: ['outline.read'],
-      resources: { docs: ['spec'], paths: ['src'] },
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
     });
 
     expect(() => narrowRunScope(parent, { capabilities: ['outline.edit'] }))
       .toThrow('Run scope cannot widen capabilities: outline.edit');
     expect(() => narrowRunScope(parent, { resources: { paths: ['tmp'] } }))
       .toThrow('Run scope cannot widen paths: tmp');
+    expect(() => narrowRunScope(parent, { resources: { nodes: ['node:c'] } }))
+      .toThrow('Run scope cannot widen nodes: node:c');
+
+    expect(normalizeRunScope({ resources: { nodes: [], writableNodes: [] } })).toEqual({
+      resources: { nodes: [], writableNodes: [] },
+    });
+    expect(narrowRunScope({ resources: { nodes: [] } }, undefined)).toEqual({
+      resources: { nodes: [] },
+    });
+    expect(() => narrowRunScope({ resources: { nodes: [] } }, { resources: { nodes: ['node:a'] } }))
+      .toThrow('Run scope cannot widen nodes: node:a');
+    expect(() => narrowRunScope(
+      { resources: { nodes: ['node:a'], writableNodes: [] } },
+      { resources: { nodes: ['node:a'], writableNodes: ['node:a'] } },
+    )).toThrow('Run scope cannot widen writableNodes: node:a');
   });
 
   test('derives allowed tools and verifier-only read scope from capabilities', () => {
@@ -125,9 +201,30 @@ describe('agent delegation run policy', () => {
 
     expect(verifierRunScope({
       capabilities: ['file.read.allowed_file_area', 'outline.edit', 'web.search'],
+      resources: {
+        docs: ['spec'],
+        paths: ['src'],
+        nodes: ['node:a'],
+        writableNodes: ['node:a'],
+      },
     })).toEqual({
       capabilities: ['file.read.allowed_file_area', 'web.search'],
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
     });
+    expect(verifierRunScope({ resources: { writableNodes: ['node:writable'] } })).toMatchObject({
+      resources: { nodes: ['node:writable'] },
+    });
+    expect(verifierAllowedToolNames({ capabilities: ['outline.edit'] })).toEqual([]);
+    expect(verifierAllowedToolNames({ capabilities: ['outline.read', 'web.search'] })).toEqual([
+      'web_search',
+      'node_search',
+      'node_read',
+    ]);
+    expect(verifierAllowedToolNames(undefined, ['node_read', 'node_edit'])).toEqual(['node_read']);
+    expect(verifierAllowedToolNames(
+      { capabilities: ['outline.read', 'web.search'] },
+      ['node_read'],
+    )).toEqual(['node_read']);
   });
 
   test('formats and slices budgets for prompts, retries, and timers', () => {
@@ -148,11 +245,15 @@ describe('agent delegation run policy', () => {
       spentTokens: 25,
       startedAt: 1,
       deadlineAt: 2,
-    })).toEqual({ tokens: 200, wallClockMinutes: 15 });
+    })).toEqual({ tokens: 200, wallClockMinutes: 15, deadlineAt: 2 });
     expect(formatRunBudgetForPrompt({ tokens: 10, wallClockMinutes: 2 })).toBe('- token budget: 10\n- wall-clock budget: 2 minutes');
+    expect(formatRunBudgetForPrompt({ deadlineAt: 1_800_000_000_000 })).toBe('- deadline: 2027-01-15T08:00:00.000Z');
     expect(formatRunScopeForPrompt({
       capabilities: ['outline.read'],
-      resources: { docs: ['spec'], paths: ['src'] },
-    })).toBe('- capabilities: outline.read\n- docs: spec\n- paths: src');
+      resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
+    })).toBe('- capabilities: outline.read\n- docs: spec\n- paths: src\n- nodes: node:a');
+    expect(formatRunScopeForPrompt({ resources: { nodes: [] } })).toBe('- nodes: none (deny all)');
+    expect(formatRunScopeForPrompt({ resources: { nodes: ['node:a'], writableNodes: [] } }))
+      .toBe('- nodes: node:a\n- writable nodes: none (deny all)');
   });
 });

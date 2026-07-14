@@ -62,66 +62,516 @@ surface.
 |---|---|---:|---|---|
 | `past_chats` | agent | No | No | Read/search visible prior conversation history and raw cited spans. |
 | `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
-| `spawn_run` | agent | No document mutation | No | Start a scoped child Run for a focused objective, with criteria unless `verify:false`. |
-| `run_status` | agent | No | No | Inspect a same-session background or child Run by `runId`/name. |
-| `run_steer` | agent | No | No | Send soft execution guidance to a live Run without changing its contract. |
-| `run_amend` | agent | No document mutation | No | Hard-amend a Run's objective, criteria, or budget; invalidates verifier conclusions. |
-| `run_stop` | agent | No document mutation | No | Stop a live same-session Run. |
 | `generate_image` | agent | Creates image files | Usually yes | Generate or edit raster images through enabled image-capable providers. |
+| `issue_search` | agent | No | No | Search concrete Issues and Recurring Issues by canonical work fields, execution state, node/tag scope, Activity state, and ordering fields. |
+| `issue_read` | agent | No | No | Read one Issue or Recurring Issue with requested detail slices for sessions, Activity, generated Issues, or verification evidence. |
+| `issue_create` | agent | Yes | No | Create an Issue or Recurring Issue with objective, criteria, trigger, input scope, delegate profile, and verification policy. |
+| `issue_update` | agent | Yes | Destructive changes only | Update field, status, trigger, recurrence, relations, or lifecycle changes on existing Issues and Recurring Issues. |
+| `agent_session_start` | agent | Runtime execution | No | Start one Agent Session for an Issue from the Issue input snapshot. |
+| `agent_session_read` | agent | No | No | Read an Agent Session's status, latest output, Activity, and executor-facing state without exposing a Run id. |
+| `agent_session_send_message` | agent | Runtime execution | No | Send soft guidance or requested input to a live Agent Session. |
+| `agent_session_stop` | agent | Runtime execution | Destructive cancellation only | Request cancellation of a live Agent Session. |
 
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
+The internal delegation executor is not a tool family. It backs Agent Sessions,
+and isolated skills, but agents control work through Issue / Agent Session tools
+only.
 
-## Run Delegation Tools
+### Agent Issue Manager Contract Checkpoint
 
-`spawn_run` is the only downward delegation primitive. It forks Neva into an isolated
-child Run and takes:
+The Issue Manager implementation has a canonical protocol/store checkpoint in
+code, and the Issue/Agent Session tools are wired into ordinary and child-agent
+tool pools through `AgentIssueToolRuntime`. The product/tool surface uses
+Issue, Recurring Issue, Agent Session, and Activity; V1 reuses the existing
+delegation engine as an internal Agent Session executor.
+
+The checkpoint defines the concepts, schemas, and Issue-first Work surface:
+
+- canonical types live in `src/core/agentIssue.ts`: Issue, Recurring Issue,
+  Agent Session, Activity, and the eight Issue/Agent Session tool input/result
+  contracts;
+- JSON Schema parameter contracts live in
+  `src/main/agentIssueToolSchemas.ts`, with descriptions on every visible
+  field and no model-facing `userActionId`, authorization token, or capability
+  id;
+- tool definitions live in `src/main/agentIssueToolDefinitions.ts`, keeping
+  name, kind, search hint, schema, and read/destructive classifiers in one
+  place;
+- `src/main/agentIssueTools.ts` adapts those definitions to the existing
+  `ToolEnvelope` result format behind an explicit `AgentIssueToolRuntime`;
+- `src/main/agentIssueRuntime.ts` wraps the store as an
+  `AgentIssueToolRuntime` and applies Issue state, revision, blocker, scope, and
+  executor checks before Agent Session starts, messages, or stops. A
+  request-mode `agent_session_start` creates the Agent Session first, then
+  immediately hands it to the configured executor. If no executor is available,
+  the Session is marked `error` instead of remaining indefinitely `pending`;
+- preview and request modes share the same state-level Store apply/preflight
+  functions. Update preview runs mutation semantics against an isolated state
+  clone; creation and Session controls reuse their request preflight. Object
+  existence, revision, relation, lifecycle, child-scope, and Session-state
+  failures therefore match the real request without persisting Activity or state. A
+  continuation is structurally complete only with both
+  `previousAgentSessionId` and `intent`; the Store repeats that validation at its
+  trust boundary before building a Session objective;
+- Local Issue lifecycle and Agent Session control tools do not have a separate
+  Issue-specific authorization classifier in V1; the ordinary tool permission
+  layer still blocks destructive or platform-risky downstream tools. The
+  model-facing schema carries no authorization token, capability id, or
+  `userActionId`;
+- `src/main/agentIssueInputResolver.ts` resolves an Issue's input
+  scope against the current outliner projection when an Agent Session starts.
+  `selected-nodes`, `node-children`, and `tag-query` scopes become a bounded
+  `inputSnapshot` with concrete node ids and a preview on the Agent Session;
+  the Issue remains the durable work object, and nodes do not store work state.
+- `src/main/agentIssueSessionScope.ts` maps an Agent Session's
+  `inputSnapshot` and `outputSnapshot` into delegated Run
+  `scope.resources.nodes` and `scope.resources.writableNodes` roots. Resolved
+  input nodes, attached `noteNodeIds`, and output anchors are readable; only
+  output-policy targets are writable. Explicit empty arrays mean deny all,
+  while an omitted dimension is unrestricted. The node tools enforce that resource scope at
+  runtime: `node_search` filters results to scoped node roots and their
+  descendants, `node_read` rejects scoped reads that would expose unscoped nodes
+  or backlinks, and
+  `node_create`/`node_edit`/`node_delete` reject requested targets,
+  destinations, references, duplicate sources, or affected subtrees outside the
+  scoped node set. Definition mutations preserve the read/write split:
+  definition creation requires writable access to `SCHEMA_ID`; configuration
+  targets and their implicit affected nodes are writable while config references
+  are only readable; definition reuse writes the field entry and its old
+  definition while only reading the target definition; definition merge requires
+  every target, source, and affected node to be writable. This makes unattended
+  Issue Sessions fail closed in code instead of relying on prompt instructions.
+  `outline_undo_stack` is omitted
+  entirely from every scoped Run because its global journal and undo/redo cursor
+  cannot be narrowed to one node-resource set safely.
+- `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
+  Sessions, and Activity in `issue-manager.json`, including request-mode
+  creation, origin-derived parent/child Issue relationships, Issue relations,
+  revision conflicts, session message/stop Activity,
+  due-time Recurring Issue materialization, internal Session-to-executor
+  bindings, durable terminal-delivery outbox entries, and execution status sync
+  into `active`, `complete`, `error`, or `canceled`;
+- `src/main/agentRuntime.ts` owns the Issue store lifecycle and runs a
+  lightweight Issue scheduler tick. The tick materializes due active Recurring
+  Issues into concrete Issues, then starts one Agent Session for each unattended
+  ready Issue that has not already had a Session. Ordinary
+  and child-agent tool pools receive `issueRuntime`; Dream does not, so
+  model-facing Issue tools cannot create, mutate, or start Dream work.
+  Creating a `when-ready` unattended Issue is enough to hand work to runtime:
+  the `issue_create` result reminds the model not to call `agent_session_start`
+  for the same newly created Issue unless it is retrying or continuing it later.
+  The design keeps the same clean split as a background-agent system: the durable
+  work object is not the worker transcript, the Agent Session is the execution
+  attempt, and terminal output is delivered back to the caller without exposing
+  an ordinary nested conversation.
+  Product-runtime request creation requires a routing origin. A root Issue
+  created from a visible conversation records that conversation. An Issue created
+  inside an Agent Session records the Session and derives `parentIssueId` from it;
+  the model cannot supply or rewrite either value. The creating Session must be
+  active, execution-bound, and not reserved for stop. Hidden execution
+  conversations are containers, never routing origins or user channels. A
+  Recurring Issue resolves its caller chain to one visible-conversation origin;
+  its origin type cannot point to an Agent Session. Each materialized concrete
+  Issue inherits that visible conversation origin and remains a root Issue.
+  The internal Run bound to an execution Session is durably classified as a
+  controller even when the visible starting turn is its Run parent. A verifier
+  rejection re-plans that same binding in place instead of starting an unbound
+  sibling replacement. Runtime allocates the Run in memory, then the acceptance
+  hook durably binds the Agent Session before the first `run.started` event is
+  appended. Binding failure aborts and unregisters the unannounced Run, so no
+  durable Run ledger can exist without its owning Session binding.
+
+  Routing is one hop per durable edge:
+
+  | Terminal event | Immediate destination | Durable effect |
+  |---|---|---|
+  | Issue completes | Child -> direct parent Agent Session; root -> visible origin conversation | Issue becomes completed and one terminal delivery is enqueued. |
+  | Child Issue is canceled | Direct parent Agent Session | Child becomes canceled and one cancellation delivery is enqueued. |
+  | Agent Session errors, including failed start or interrupted-startup recovery | Owning Issue's immediate origin | Session becomes error or stale; Issue remains open for retry, revision, or cancellation. |
+  | Agent Session is explicitly stopped | None | Session becomes canceled; Issue remains open. |
+  | Root Issue is canceled | None | Root becomes canceled without a synthetic result. |
+
+  A routable transition writes its terminal-delivery outbox entry in the same
+  Store transaction as the terminal state change. Entries move through
+  `pending`, leased `dispatching`, and `delivered`; concurrent drain owners cannot
+  claim one live lease, and an abandoned claim becomes eligible again after the
+  lease expires. Startup, scheduler sweeps, immediate terminal callbacks, and
+  terminal execution-frame settlement drain eligible entries. A deferred or
+  failed attempt returns to `pending`; runtime records its retry deadline and a
+  single earliest-deadline timer actively queues the next drain. Retries therefore
+  do not wait for the minute scheduler tick. A restarted process arms the same
+  timer for the exact expiry of a persisted live `dispatching` lease, while a process crash or transient
+  executor/conversation failure still cannot lose the wake-up. Enqueue deduplication
+  keys one terminal generation by Issue, Agent Session, terminal state, and
+  terminal timestamp. Root delivery uses deterministic per-attempt hidden-user
+  message and Run ids. The hidden message links the durable Issue notification
+  into the conversation projection. A successfully processed notification Run
+  acknowledges the outbox whether its final assistant `stop` contains visible
+  text or is deliberately empty; replay recognizes an already completed Run and
+  can seal a final `stop` that survived without its terminal Run event, without
+  asking the Agent twice.
+  Session-owned execution Runs and all of their verifier or
+  delegated descendants are excluded from generic Run notifications, OS
+  banners, and notification turns; the terminal-delivery outbox is their only
+  routing path, including after restart. A detached child Run whose objective
+  role is `controller` is likewise excluded from generic detached-child
+  aggregation and `<detached-sub-run-results>`. Its parent waits for the Issue
+  outbox marker instead, so an explicitly started child Session is integrated
+  exactly once. The marker carries the child execution id; the parent waiter
+  matches newly started controller identities rather than comparing against all
+  historical controller Runs, so sequential children remain routable after
+  earlier deliveries are acknowledged or after restart.
+
+  Child delivery persists an exact hidden payload plus a marker in the direct
+  parent Run ledger. A queued marker is resumed from its existing ledger tail
+  after restart instead of being appended twice. Compaction carries every pending
+  payload into the post-compaction root; marker recognition follows that logical
+  carrier through repeated compactions, including multiple simultaneous pending
+  markers. The outbox entry is acknowledged only after a continuation descending
+  from the marker ends with a normal final assistant `stop` and reaches a
+  successful `run.completed`. An agent-review parent must additionally reach
+  objective state `verified`; its verification requirement, replacement attempt
+  base, and ordered gap signatures persist across restart, while verifier Run ids
+  are derived from parent links. Resuming a Run clears the previous execution
+  span's submission pointer; reconciliation uses only the current span's final
+  tool-free assistant response or later result submission, never an older
+  "waiting" result. That acknowledgement and the parent Session
+  completion / Issue finalization happen in one Store transaction. A `verifying`,
+  rejected, blocked, budget-exhausted, stale, restore-interrupted,
+  provider-failed, canceled, or incomplete tool-turn state does not acknowledge
+  delivery.
+  These receiver-side markers make repeated dispatch idempotent before the
+  outbox entry becomes `delivered`.
+
+  Parent lifecycle gates preserve every child edge. An Issue cannot complete,
+  cancel, or start a replacement Session while a direct child is unfinished or a
+  child terminal delivery is unacknowledged. Completion and Session start also
+  reject unresolved outgoing `blocked-by` relations and incoming `blocks`
+  relations; completion and cancellation reject an active Session. Completed and
+  canceled Issues cannot transition back to an active state. Deletion rejects
+  direct children, active Sessions, incoming relation references, unfinished
+  child routing, and undelivered terminal output.
+
+  Session stop uses a persisted reservation before calling the executor. The
+  reservation blocks concurrent child creation, binding, guidance, and duplicate
+  stop. If executor stop reports an error, runtime re-reads execution state: a
+  confirmed cancellation commits; a confirmed live execution or a concurrently
+  observed non-canceled terminal state releases the reservation; only an
+  unconfirmed state that remains live retains it until recovery. Cold-start
+  recovery runs once per AgentRuntime process instance over the Session-id set
+  captured when the runtime is constructed. Sessions created after renderer
+  readiness are outside that startup set, and their stop reservations are never
+  cleared by recovery. Recovery first reconciles each captured active bound
+  Session from ledger-repaired Run metadata. A terminal Run is
+  synchronized through the normal execution-state path, using the current span's
+  latest submission or final assistant fallback; it is not converted into an
+  interrupted-startup error. Only a still-running, missing, or otherwise
+  non-terminal binding remains for the stale pass, which clears abandoned
+  reservations and marks residual `pending` or `active`
+  Sessions `stale`. An unexpected executor cancellation also maps to `stale`, not
+  `canceled`, while that Session still owns unresolved child work or an
+  unacknowledged child delivery.
+
+  Run execution status and objective status are separate inputs to Session state.
+  `completed + verifying` remains active, as does `completed + active` for a Run
+  that still requires verification. A verification-disabled completion or
+  `completed + verified` maps to `complete`; `blocked` and `budget_exhausted` map
+  to error/attention, and `stopped` maps to canceled. Stopping a live verification
+  state first cancels its verifier and records objective state `stopped`; Session
+  cancellation is never committed from an unconfirmed no-op stop.
+
+  Objective or criteria amendments invalidate the current verifier/re-plan frame,
+  stop live verifier children, clear previous verdict/gap state, and return the
+  objective to `active`. Budget-only amendments preserve the current verdict,
+  objective status, blocked reason, latest gap, and gap signatures. The amendment
+  is rejected without side effects when its budget exceeds the direct parent's
+  remaining token reservation or wall-clock deadline. Budget validation happens
+  before any verifier or contract mutation. The amendment
+  reminder and lifecycle update are appended together, while resumed and terminal
+  lifecycle events repeat the current objective, criteria, and objective role.
+  Run metadata reads repair a projection from those latest ledger facts when a
+  crash interrupts the metadata write. Restore durably blocks any orphan
+  `completed + verifying` parent that has no live verification frame, so a later
+  Session read cannot reopen it as active.
+
+  Conversation deletion preserves routing integrity. A visible conversation
+  cannot be deleted while it is the origin of a non-terminal root Issue, an
+  unarchived Recurring Issue, or an undelivered terminal result. An execution
+  conversation cannot be deleted while it carries an active or stopping Session,
+  an unfinished child edge, or an unacknowledged child delivery. Runtime blocks
+  deletion rather than silently orphaning or cascading durable work. Conversation
+  reset is also blocked while it would delete an active Agent Session carrier's
+  Run ledger. Closing the visible conversation is a separate renderer lifecycle operation: while a
+  delegated execution frame remains live, runtime retains the conversation
+  headlessly and a same-process reopen returns that existing runtime instead of
+  rebuilding it or running interruption recovery. A deferred close destroys the
+  runtime only after the final delegated frame settles.
+- Agent work has three interaction modes, none of which are stored as Issue
+  categories. **Direct answer** means no Issue is created because the assistant can
+  finish in the current turn. **Background handoff** is the default durable-work
+  mode: `issue_create` writes a when-ready, scheduled, or recurring contract;
+  runtime starts eligible work; and routable terminal state returns to the
+  Issue's immediate origin target. **Explicit wait** is a Session-level
+  control path for an existing Agent Session: the caller uses
+  `agent_session_read(wait: true)` or a non-detached explicit start only when the
+  user wants the current conversation to block for that result. There is no
+  `manual` Issue trigger and no "waiting" Issue status.
+- The renderer-facing Work panel is Issue-first: it reads Work rows with
+  `agent_issue_search` and opens Issue details with `agent_issue_read`. The
+  detail payload includes Agent Sessions, but the renderer treats them as
+  execution entries inside the Issue Activity timeline instead of a separate
+  product section. All Activity items use the same row interaction: semantic
+  icon, title, relative-time meta line, disclosure chevron, and an expanded
+  detail body. Ordinary Issue lifecycle rows expand to audit metadata; execution
+  rows expand to a `Process` disclosure for transcript-backed tool/thinking
+  details plus the latest output or error. Completed executions are collapsed by
+  default. `agent_session_read` remains a bounded
+  tool/control surface for explicit Session inspection, but it is not the Work
+  UI's default nested navigation path. The panel's Inbox, Today, Upcoming,
+  and Logbook navigation items are renderer smart filters over canonical row
+  facts, not model-facing view enums or stored categories. Every first-level
+  preset excludes child Issues. Inbox contains roots carrying an error/stale
+  Session, blocked by another Issue, past their execution deadline, awaiting
+  human review, or holding a rejected or evidence-incomplete verifier result. Today
+  contains non-terminal when-ready roots, active roots, overdue or today-scheduled
+  / due roots, recurring rules firing today, and roots finished today. Upcoming
+  contains every non-archived recurring rule plus non-terminal future scheduled
+  or due roots, so recurring rows may overlap Today. Logbook contains completed,
+  canceled, or archived root concrete Issues. Activity feeds row summaries,
+  Issue details, and inline Agent Session process details; it is not a primary
+  navigation tab, and Logbook is a view name rather than a separate object.
+  Work refreshes time-derived buckets once per minute, and separately re-arms at
+  each local midnight for DST-safe day grouping, so a newly expired deadline or
+  changed Today boundary does not require another agent event.
+  Each smart-view query follows `nextCursor` until exhaustion, and the active
+  Session badge uses a separate fully paginated query that loads and subscribes
+  even while Work is closed. Badge refresh and Work-index refresh use independent
+  debounce timers, so changing a preset can invalidate the old index request
+  without canceling a pending Session-count update. Preset changes invalidate
+  in-flight and delayed refreshes from the previous preset. Nested Issue navigation
+  stays in the same detail dialog and re-establishes focus inside the dialog after
+  content swaps.
+  Human-review acceptance is offered only when a completed execution exists and
+  no Session is currently pending or active. Work dates use the application
+  locale, not the OS locale.
+  Issues are durable work contracts for independently user-visible outcomes:
+  each row represents an outcome with its own definition, status, criteria,
+  evidence, and Activity. When work needs per-item coverage or internal
+  breakdown, the responsible Agent Session records execution details in its Run
+  transcript plus criteria progress, evidence, Activity, and final output on that
+  Issue. It creates a child Issue only when a
+  sub-outcome needs its own durable lifecycle or independent Agent Session;
+  runtime derives the parent from the creating Session. Generated Issues from
+  Recurring Issues remain roots and can be opened through the same Issue detail
+  reader.
+- `issue_search` returns lightweight rows. Its only includes are
+  `activity-summary` (latest user-visible Activity plus count) and
+  `session-summary` (active/attention facts plus latest Session state/time).
+  Full text covers Issue title/description, Issue and linked Session Activity,
+  latest Session output and error; Recurring Issue text covers its
+  title/description template and Activity. Family-specific filters are strict:
+  applying `issueIds`, parent, due, relation, or Session filters excludes
+  Recurring Issues, while `recurringIssueIds`, cadence, or next-materialization
+  filters exclude concrete Issues. `parentIssueIds` matches direct children and
+  `relation` preserves relation direction. Explicit ordering supports created,
+  updated, due, next materialization, and status; missing values stay last in
+  both directions.
+- `issue_read` supports exactly `activity`, `sessions`, `child-issues`, and
+  `generated-issues`. Issue Activity includes the Issue's own entries and linked
+  Agent Session entries; `sessions` and `child-issues` apply to concrete Issues,
+  while `generated-issues` applies to Recurring Issues. `agent_session_read`
+  supports exactly `activity-summary` and `latest-output`; Activity is bounded to
+  the newest 20 entries. Transcripts remain
+  renderer-only.
+- Model-visible `issue_read` strips `origin` from concrete, child, generated, and
+  Recurring Issues. Session projections omit `source`, `issueSnapshot`, input /
+  output snapshots, execution policy, and unrequested output;
+  `latest-output` is opt-in on `agent_session_read`. These internal values remain
+  available to runtime/store code, not to model routing decisions.
+- `relations` link independently user-visible Issues whose lifecycle is managed
+  separately, such as true external blockers, duplicates, or related outcomes.
+  Progress for a complex Issue comes from Agent Sessions, criteria, evidence,
+  and Activity on that Issue.
+
+The internal executor binding is intentionally not part of the model-facing
+schema. `agent_session_read` returns a bounded Agent Session projection, not a
+Run id. `agent_session_read`, `agent_session_send_message`, and
+`agent_session_stop` route through the binding's owning conversation when a live
+executor is available and otherwise report a warning or blocked state through the
+normal tool result. The Issue detail UI has a separate renderer-only transcript
+reader for the bound execution conversation so it can reuse the conversation
+assistant-turn renderer; that command is not an agent tool and is not part of the
+model-facing schema. Preview and blocked stop requests never touch the executor.
+A parent Session cannot be stopped while its child Issues remain unresolved or
+a child terminal result is still waiting for delivery; this keeps the immediate
+routing origin available until the child edge has settled.
+An Agent Session caller is scoped to its owning Issue and direct child branch:
+search/read/update cannot escape that set, direct completion is denied, Session
+relation targets cannot escape that set or indirectly block another branch,
+and pre-existing relations to outside that set must be preserved unchanged.
+Session control reaches only itself or a direct child Session, and execution start
+reaches only a direct child Issue. Search applies this ownership scope before
+ordering and pagination, so unrelated global rows cannot consume or expose a
+scoped page. Runtime fails closed when an internal execution conversation has no
+Session binding or a nested Run's ownership chain cannot be read; it never falls
+back to visible-conversation/global Issue authority. Missing or cyclic Run
+ownership metadata is treated as unresolved ownership, not as a root Run.
+Recurring Issue
+creation/update from an Agent Session is denied. A child Issue must be created
+while its parent Session is active, but an already persisted child may still start
+after that parent becomes complete, stale, or error as long as the parent is
+execution-bound, non-canceled, and not reserved for stop; this preserves its
+one-hop routing and scope ceiling.
+
+`agent_session_start.continuation` supports `summary`, `transcript`, and `none`.
+Summary injects only prior latest output/error; transcript uses a bounded prior
+active-path Run transcript and explicitly falls back to summary when the binding
+or ledger is unavailable; none injects no prior Session content. The new Session
+persists only `continuationOfAgentSessionId`; intent, guidance, and context mode
+are consumed when runtime builds the execution objective.
+Activity is a high-signal user-visible Issue lifecycle layer, not the Agent
+Session transcript. It records Issue behavior such as creation, edits,
+archival/deletion, status changes, high-level Agent Session start/stop events,
+verification results, questions, errors, output links, and user comments.
+Runtime keeps the full terminal output on
+`AgentSession.latestOutput`; the Issue detail transcript renders the bound Run
+ledger directly, so Activity does not copy raw model reasoning, tool calls, or
+large final answers.
+Issue `delete` is blocked by the lifecycle and reference gates above. Once
+eligible, Issue and Recurring Issue `delete` operations return
+`applied` without an object revision because the target no longer exists; the
+deletion remains auditable via Activity on the deleted target id.
+
+The target model-facing tool names are exactly:
+
+```text
+issue_search
+issue_read
+issue_create
+issue_update
+agent_session_start
+agent_session_read
+agent_session_send_message
+agent_session_stop
+```
+
+Recurring Issue belongs to the Issue family, so there is no
+`recurring_issue_*` tool family. Agent Session tools are runtime-control/read
+tools for one execution record; Activity is emitted by runtime/store code and
+is not exposed through an `activity_record` tool. The checkpoint deliberately
+does not add `task_*`, `run_*`, `project_*`, `cron_*`, or `logbook_*` tools.
+
+Recurring Issue materialization is store-owned and due-time only. Active
+Recurring Issues can create concrete Issues when a cadence is due; paused or
+archived Recurring Issues do not. Daily, weekly, and monthly cadence times are
+interpreted as wall-clock values in the persisted IANA `timeZone`, including
+daylight-saving transitions; a missing spring-forward time shifts forward and a
+repeated fall-back time fires once at the earlier occurrence. The same time zone
+determines the generated Issue title's covered local date. Repeated sweeps do not
+create duplicate Issues for the same recurrence window. When multiple due
+windows were missed, the default `coalesce-latest` policy creates only the latest
+concrete Issue, stores the number of earlier ungenerated and non-skipped windows
+as `skippedWindowCount`, and records `coalesced:<count>` in Recurring Issue
+Activity. `skip-missed` still materializes the latest due window but drops older
+missed windows without `skippedWindowCount` or coalesced Activity metadata.
+`skip-next` records the next due window in
+`skippedMaterializationAts`, advances `nextMaterializationAt`, and the
+materializer treats that window as intentionally handled rather than missed, so
+it does not create a concrete Issue or inflate a later coalesced count. `Local`
+is accepted only as an input compatibility alias and is canonicalized to the
+current IANA zone before persistence. A cadence/time-zone patch and a resume both
+reset the first-eligible cursor to the first window strictly after the change;
+paused windows and windows from an earlier cadence are not backfilled or counted
+as coalesced misses. Only paused definitions can resume. Archived definitions
+have no next-materialization cursor, cannot resume, and never materialize.
+
+Automatic trigger execution is one-shot per concrete Issue in V1: an unattended
+`when-ready` Issue or due `scheduled` Issue without any prior Agent Session can
+start one Agent Session from the scheduler. A completed Session finalizes the
+Issue only when the blocker, child/delivery, active-Session, and verification
+gates allow it; human-review Issues require an explicit lifecycle transition.
+Expired `deadlineAt` values exclude open Issues from automatic execution and add
+them to the attention set. Completion/cancellation writes immutable `terminalAt`
+for Today/Logbook projections instead of treating later `updatedAt` changes as the
+terminal time. `saved-query` input and unresolved `daily-note` output block both
+explicit start and ready-sweep execution in the current runtime. Recurring Issue
+templates intentionally carry no absolute execution policy.
+Failure does not cause the scheduler to loop on the same Issue. Retrying or
+continuing terminal work creates a new Agent Session through an explicit
+`agent_session_start` request after the same gates pass.
+
+Issue verification uses the same Agent Session mechanism. `agent_session_start`
+accepts `purpose: "verify"` only when the Issue has
+`verificationPolicy.mode === "agent-review"`. The Session uses the configured
+verifier AgentRef, defaulting to Neva's `verifier` run profile. An explicit
+verifier starts with `context: "none"` and the runtime's read-only tool allow-list.
+Its scope is derived from the concrete work Run: `docs`, `paths`, and readable
+`nodes` are preserved, while `writableNodes` is removed (or used only as the
+readable node ceiling when no readable-node list exists). It therefore receives
+the Issue verification directive rather than inherited worker conversation
+context. Its concrete tool allow-list is also intersected with the work Run's
+effective tool allow-list and read capabilities; a work Run with no read
+capability gives its verifier no tools.
+The verifier cannot read beyond the work Run or mutate work while reviewing it.
+Its response
+must begin with `Verdict: pass`, `Verdict: partial`, or `Verdict: fail`; runtime
+records the parsed result as `verification-result` Activity and links the
+verifier Agent Session as Issue evidence. `requiredVerdict` defaults to `pass`,
+while `pass-or-partial` accepts either of those explicit verdicts. Missing or
+malformed verdict lines are recorded as `fail`; they never inherit the permissive
+`partial` meaning. Every configured
+`requiredEvidence` string must also be explicitly present in the verifier output
+before completion is allowed. Policy checks use the verifier Session's complete
+latest output even though Activity stores only a bounded display summary. There
+is no `verification_*` model-facing tool.
+Human-review Issues remain open after execution and appear in Inbox. Work detail
+then exposes a renderer-only `Accept and complete` command that records the local
+user actor. Model-facing Issue tools cannot self-approve, and non-user actors
+cannot lower or clear an existing human/agent review requirement or remove/waive
+an existing completion criterion. Completion remains bound to the Session's
+criterion ids and text: adding, deleting, or rewriting active criteria after the
+Session starts requires a new execution Session, while an explicit trusted-user
+waiver may satisfy the removed requirement. Human review also requires a
+completed execution Session.
+
+## Internal Delegation Executor
+
+The delegation executor remains in the runtime for isolated skill execution and
+as the implementation substrate for Agent Session starts. It is not the product
+work-management API and has no model-facing compatibility tools. Runtime maps
+an Agent Session snapshot into an internal delegation input:
 
 ```ts
-interface SpawnInput {
+interface DelegationInput {
   objective: string;
   criteria?: string[]; // required unless verify === false
   verify?: boolean; // default true
   scope?: {
-    capabilities?: string[]; // action kinds, or legacy tool names normalized to action kinds
-    resources?: { docs?: string[]; paths?: string[] };
+    capabilities?: string[]; // action kinds
+    resources?: {
+      docs?: string[];
+      paths?: string[];
+      nodes?: string[];
+      writableNodes?: string[];
+    };
   };
   budget?: { tokens?: number; wallClockMinutes?: number };
   context?: "full" | "brief" | "none"; // verifier Runs are runtime-pinned to "none"
-  detach?: boolean;
   model?: string; // optional override
   name?: string;
 }
 ```
 
 The runtime validates that verified runs have explicit criteria. The returned
-Run result is accepted only after the parent-verifies-child loop passes. A leaf
-worker verifier failure does not resurrect the worker Run: the failed attempt
-stays completed with a blocked objective status, and a fresh replacement worker
-gets a new `runId` when budget and livelock guards allow it. A controller
-(structurally: a work Run that has spawned work children) and a root tracked goal
-replan in place after verifier failure: the same `runId` returns to `running` /
-`active`, receives the verifier gap as hidden continuation context, and keeps its
-child lineage intact.
+executor result is synchronized back to the owning Agent Session and Issue
+Activity. Scope narrows downward by action kind; resource paths/docs cannot widen
+past the parent Session scope. Budget is admitted locally at each edge, reserves
+token headroom before sibling work, and settles on termination.
 
-The control tools are intentionally uniform:
-
-- `run_status({ runId | name, wait?, timeout_ms? })`
-- `run_steer({ runId | name, message })`
-- `run_amend({ runId, changes: { objective?, criteria?, budget? } })`
-- `run_stop({ runId | name })`
-
-`run_steer` is soft guidance and never changes verifier validity.
-`run_amend` changes the contract and invalidates any prior verifier conclusion.
-Scope narrows downward by action kind; resource paths/docs cannot widen past the
-parent Run. Budget is admitted locally at each edge, reserves token headroom
-before sibling spawns, and settles on child termination.
-
-`run_status` returns the Run's execution status, objective status, budget, latest
-verifier gap if any, and one level of direct child summaries. Child summaries use
-the structural role labels `worker`, `controller`, or `verifier`; `verifier`
-comes from the persisted Run purpose, while `controller` is derived from having
-spawned work children.
+Agents inspect or control execution through `agent_session_read`,
+`agent_session_send_message`, and `agent_session_stop`; those tools do not expose
+internal executor ids as the product contract.
 
 ### Deferred Tools
 

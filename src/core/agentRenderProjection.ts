@@ -9,6 +9,7 @@ import {
   type AgentDreamRecord,
   type AgentEventMessageRecord,
   type AgentEventReplayState,
+  type AgentNotificationKind,
   type AgentPersistedContent,
   type AgentPrincipal,
   type AgentDreamCompletedChanges,
@@ -86,6 +87,8 @@ export interface AgentRenderMessageEntity {
   toolName?: string;
   isError?: boolean;
   details?: unknown;
+  /** Structured Issue status represented by this hidden system-origin message. */
+  issueNotification?: AgentRenderIssueNotification;
   /** Wall-clock the producing run took (run `updatedAt − startedAt`), for the "Worked for …" process header. */
   runDurationMs?: number;
   /**
@@ -107,6 +110,16 @@ export interface AgentRenderMessageEntity {
    * than re-deriving interruption from block structure.
    */
   turnInterrupted?: boolean;
+}
+
+export interface AgentRenderIssueNotification {
+  notificationId: string;
+  issueId: string;
+  agentSessionId?: string;
+  state: 'complete' | 'error' | 'canceled';
+  kind: AgentNotificationKind;
+  title: string;
+  createdAt: number;
 }
 
 /** A conversation member as the renderer needs it: principal + mention + label. */
@@ -627,6 +640,8 @@ function toRenderMessageEntity(
   message: AgentEventMessageRecord,
 ): AgentRenderMessageEntity {
   const run = message.runId ? state.runs[message.runId] : undefined;
+  const notification = message.notificationId ? state.notifications[message.notificationId] : undefined;
+  const issueSource = notification?.source?.type === 'issue' ? notification.source : undefined;
   return {
     id: message.id,
     role: message.role,
@@ -651,6 +666,17 @@ function toRenderMessageEntity(
     toolName: message.toolName,
     isError: message.isError,
     details: message.details,
+    issueNotification: notification && issueSource
+      ? {
+          notificationId: notification.notificationId,
+          issueId: issueSource.issueId,
+          agentSessionId: issueSource.agentSessionId,
+          state: issueSource.state,
+          kind: notification.kind,
+          title: notification.title,
+          createdAt: notification.createdAt,
+        }
+      : undefined,
     // Only a SEALED run has a meaningful wall-clock: `run.updatedAt` is bumped
     // at start and at the terminal event, never in between, so a still-`running`
     // run (live, or a top-level run left `running` after a crash/quit) has

@@ -200,7 +200,19 @@ controls. Assistant prose, user bubbles, and composer input use
 `--font-content / --line-content`. Empty agent conversations stay visually blank
 when a provider is ready; the provider-missing state shows one quiet settings CTA.
 Long user messages collapse after roughly five content lines while copy/edit still
-operate on the full message.
+operate on the full message. Submitting a local user message creates a one-shot
+scroll target for that newly rendered user row, even when the reader was inspecting
+older history. Later assistant streaming does not keep taking the scroll position;
+ordinary near-bottom following resumes only after the user scrolls again.
+Root Issue completion and failure appear as a compact, unboxed transcript status
+row between turns. It spans the content column, aligns left, and reads title-first
+(`"Compile the report" completed`, or the localized equivalent). It has no leading
+concept or status icon; the neutral text carries the result, and an inline
+chevron uses the same size and placement as adjacent process disclosures. The row
+opens canonical Issue detail directly over the current chat instead of routing
+through the Work list. Closing the detail returns to the same conversation and
+scroll position. The row remains present when the Agent chooses to handle the
+notification without a visible reply.
 
 **Identity and attribution.** Agent identity is a circular initial chip
 (`AgentIdentityAvatar`) with deterministic hue from the stable principal/agent id.

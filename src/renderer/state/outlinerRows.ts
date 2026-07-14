@@ -197,8 +197,6 @@ function displayFieldValuesFor(
       return display.tagIds.map((tagId) => byId.get(tagId)?.content.text || tagId).filter(Boolean);
     case 'nodeRefs':
       return display.refs.map((ref) => ref.label).filter(Boolean);
-    case 'commandSchedule':
-      return display.schedule ? [display.schedule] : [];
     case 'text':
       return display.text ? [display.text] : [];
     default:

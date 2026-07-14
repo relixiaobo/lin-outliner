@@ -135,6 +135,10 @@ The old mutable chat snapshot store is no longer part of the runtime.
   diagnostic or configuration-relevant: the Details popover, the run/debug panel,
   ledger metadata, and the agent profile editor. See `agent-delegation-runtime.md`
   for how a profile owns model + effort.
+- A node's **Send to composer** action is a durable renderer request, not a
+  fire-and-forget event. App opens the agent rail, while the request remains
+  pending across Work, Dream, approval/question, and component-unmount states
+  until a mounted editor inserts the reference and explicitly acknowledges it.
 
 ## Reference Analysis
 
@@ -310,16 +314,17 @@ Derived and rebuildable:
 Clean-cut startup policy (pre-release, no migration) — the storage-generation
 sentinel:
 
-- ONE root file `layout.json` `{"v": <generation>}` is written once per on-disk
-  format generation (`STORAGE_LAYOUT_VERSION`, currently `7` = conversation logs
-  no longer store child-run lifecycle markers; Run index + Run ledgers are the
-  execution record). First store access reads this single line; a
-  matching `v` proceeds with no per-conversation probing.
+- ONE event-store root file `layout.json` `{"v": <generation>}` is written once
+  per on-disk format generation (`STORAGE_LAYOUT_VERSION`, currently `7` =
+  conversation logs no longer store child-run lifecycle markers; Run index + Run
+  ledgers are the execution record). First store access reads this single line;
+  a matching `v` proceeds with no per-conversation probing.
 - A stale `v` or a MISSING sentinel is positive proof of another generation:
-  the WHOLE agent data root is hard-deleted (logged with the old generation) —
-  identities, conversations, runs, principal sidecars, indexes — and the layout is recreated
-  lazily with a fresh sentinel. There is no legacy reader, adapter, or
-  migration.
+  event-log owned paths are hard-deleted (logged with the old generation) —
+  identities, conversations, runs, principal sidecars, indexes — and the layout
+  is recreated lazily with a fresh sentinel. Sibling agent stores such as Issue
+  state are not part of this event-log clean-cut. There is no legacy reader,
+  adapter, or migration.
 - An unreadable or corrupt sentinel is AMBIGUITY, not proof: the store fails
   open onto the current layout (warn + re-probe next launch) — a permissions or
   I/O error can never trip a wipe.
@@ -454,13 +459,22 @@ unread delivery + attention signal (M2 — [[agent-conversation-model]] §Backgr
 A `notification.created` is **anchored to exactly one conversation**
 (`conversationId`, mandatory — there are no conversation-less notifications) and
 carries a `kind` (`task_completed` / `task_failed`; `needs_input` and `status` are
-reserved with no emitter yet) plus an optional `source`
-(`{ type: 'run'; runId }`) naming the off-floor run that produced it. A
+reserved with no emitter yet) plus an optional structured `source`. Run
+notifications use `{ type: 'run'; runId }`. Root Issue routing uses
+`{ type: 'issue'; issueId; agentSessionId?; state }`, and the hidden
+system-origin user event stores the matching `notificationId`; the render
+projection joins those records without parsing model-facing reminder text. A
 detached run terminal emits one with an id keyed on the completion instant
 (`notification-<runId>-<completedAt>`) so a *resumed* run that finishes again is
 delivered, not deduped; a **user-initiated stop** raises none (the user's own
 action); a run left **running when the app dies** is marked failed and raises
-its notification on the next restore. `needs_input` (reserved) would reuse the
+its notification on the next restore. Agent Session-owned execution chains are
+the exception: their Run, verifier, and delegated descendants never emit this
+generic notification, including on restore. Their Issue terminal-delivery
+outbox is the sole routing path. Session-owned `controller` children are also
+excluded from generic detached-child model injection and
+`<detached-sub-run-results>`; their parent continues only from the Issue outbox
+marker. `needs_input` (reserved) would reuse the
 run-log `user_question.*` lifecycle for the actual pause/answer/resume; the
 notification only routes the attention signal to the origin conversation.
 `user_question.answered` stores the resolved `AskUserQuestionResult`: either an
@@ -984,7 +998,7 @@ Rules:
   blocks and shows only the human-readable manual/scheduled anchor summary. Users
   can trigger a manual run only from Settings, and durable Dream history is
   surfaced in Settings → Agent "Memory & activity" via the
-  `agent_list_dream_history` IPC. Dream runs do not appear in the Work/Runs view;
+  `agent_list_dream_history` IPC. Dream runs do not appear in the Work view;
   `AgentRenderDreamTaskEntity.principal` remains the Dream subject for audit
   labeling.
 - Run metadata backs `entities.runs` and `runIds` — the compact Run projection
@@ -1004,83 +1018,118 @@ Rules:
     turn's own message, it is turn-anchored and branch-pruned with that message —
     editing the user message that started the turn removes it, with no orphan
     left at the transcript end.
-  - **Parentless Run (`parentToolCallId` absent).** A detached, scheduled, or
-    manual command Run is not inserted into the conversation transcript. It
-    surfaces through Work/Runs and durable notifications; its detail view links to
-    the full Run transcript.
-- The Work/Runs view is a global run index backed by `agent_list_runs`, not a
-  projection-only task list on the active conversation. Opening Work replaces the
-  dock's channel header with a first-level `Back to chat · Runs` header and
-  replaces the chat body with the first-level run list. The left header control
-  closes Work directly; the index refreshes on open and from agent runtime events,
-  so it does not expose a persistent manual refresh button. Opening a row overlays
-  a run detail drawer on the list rather than navigating the Work header. The
-  first level hides ordinary conversation turn wrappers and reflective/Dream
-  runs. A detached Run spawned directly by a chat turn therefore appears as its
-  own first-level compact task row even though its persisted `parentRunId` points
-  at the hidden turn wrapper. Runs nested under another visible Run stay hidden at
-  this level and are reached from the parent detail drawer. Each row uses the
-  shared Run row grammar: status icon on the left, the user-facing title as
-  primary text, one timing/status summary line, and a child-progress chip such as
-  `1/2` when direct sub-runs exist. When both are present, the progress chip and
-  the summary are separated by the same muted middle dot used between summary
-  fields, so blocked/failed rows do not visually merge `1/1` with their status.
-  The title is derived from the Run objective (with research `ARGUMENTS:` parsed
-  when present), not from the conversation/channel title or run profile label.
-  The chip is informational, not an inline tree disclosure. Clicking the row opens
-  a Run detail drawer above the list, leaving the first-level list in place behind
-  it. Running visible delegation rows reveal a Stop action on hover/focus.
+  - **Parentless Run (`parentToolCallId` absent).** A detached legacy Run is not
+    inserted into the conversation transcript. Issue-backed work surfaces through
+    the Work panel as an Issue with Activity entries that include execution
+    records; Run transcript detail remains an internal execution drill-in reached
+    from process links or legacy notifications.
+- The Work view is Issue-first. Opening Work replaces the dock's channel header
+  with a first-level `Back to chat · Issues` header and replaces the chat body
+  with renderer presets over canonical Issue data. The list is backed by
+  `agent_issue_search`, not `agent_list_runs`. Inbox, Today, Upcoming, and
+  Logbook are renderer smart filters over canonical row facts such as trigger
+  type, status category, due time, Recurring Issue `nextMaterializationAt`, active
+  Agent Sessions, and latest Activity. They are not model-facing view enums or
+  stored categories. Every first-level query excludes child Issues.
+  Inbox owns attention-needed roots: waiting-for-input, error, stale,
+  dependency-blocked, or rejected / evidence-incomplete verification work.
+  Today owns non-terminal when-ready roots, active
+  roots, overdue or today-scheduled / due roots, recurring rules whose next
+  materialization is today, and roots completed or canceled today. Upcoming owns
+  every non-archived recurring rule plus non-terminal roots scheduled or due
+  after today, so a recurring rule can appear in both Today and Upcoming.
+  Logbook owns completed, canceled, or archived root concrete Issues.
 
-  The detail drawer is a read-only drill-in, not a second chat surface: it uses a
-  Todoist-style narrow drawer surface inside the agent rail. By default the drawer
-  occupies 80% of the Work/Runs content area under the Work header with a
-  transparent backdrop, so the parent list keeps its normal color rather than
-  being dimmed. The user's last dragged drawer height is remembered as a
-  content-height ratio and reused on later openings. Only sub-run navigation
-  advances inside the drawer. The top grabber is functional: pointer drag and
-  keyboard up/down resize the drawer within the Work surface. The drawer header
-  always includes the same page-back control used by outliner pane breadcrumbs
-  before the breadcrumb; it is disabled, not removed, when there is no deeper
-  drawer stack to pop. The header carries a one-line
-  breadcrumb above the selected run title, using the same segment/divider/button
-  grammar as outliner pane breadcrumbs. The breadcrumb root is the
-  channel/conversation name rendered with the channel hash icon (for example
-  `# General`), followed by ancestor runs only; the selected run itself is the
-  title below it. Ancestor breadcrumb segments always keep the muted breadcrumb
-  style; only the selected run title may become the current-color breadcrumb
-  segment, and only after it scrolls out of the header and docks to the end of
-  the breadcrumb. Long segments truncate instead of wrapping. The selected run
-  title sits below the breadcrumb with the shared Run status marker as its leading
-  icon; status text is kept out of the primary title and remains available in
-  Details. The header and body share the same text column: body rows start at the
-  selected run title's text edge, not at the drawer edge or status icon. The body
-  begins with one `Working for ...` / `Worked for ...`
-  process disclosure row. That row defaults collapsed and reuses the conversation
-  stream work-divider visual grammar; expanding it reveals the transcript/process.
-  The run duration appears there only once for the selected run. The result
-  content follows directly without a `Result` heading and uses a quieter detail
-  text register than assistant-chat answer prose. The detail result reads
-  `run.result.submitted` first and falls back to the selected completed Run's
-  final assistant text when no structured submission exists; running Runs do not
-  synthesize a result. Long results may collapse behind a local Show more/Show
-  less control so direct child structure remains discoverable. Detail body
-  sections use spacing and disclosure chevrons rather
-  than horizontal divider lines. The `Sub-runs {completed}/{total}` disclosure
-  lists the selected run's direct children, including verifier runs, using the same
-  Run rows and their status icons. Child rows open their own detail view instead
-  of expanding in place; if a child has descendants, its row shows direct child
-  progress until the user drills in. Collapsed Details hold internal
-  mode/type/id/status fields. Completed and verified run rows use the shared
-  Done/checkbox mark rather than a bespoke check icon. The
-  Run-backed API surface is
-  `agent_run_detail` plus `agent_run_transcript`: detail reads Run meta,
-  ancestor breadcrumb metadata, and direct sub-run metadata from the Run index,
-  while transcript replays the selected Run ledger. The renderer detail page uses
-  that API directly and does not require the selected Run to exist in the active
-  conversation projection. Turn folding uses `entities.runs` through
-  `subRunsByParentToolCallId`. Running detail views expose Stop, while
-  follow-up/steering remains an internal `run_steer` runtime/tool capability
-  instead of a permanent detail-page input.
+  The first-level Work rows are root Issues or Recurring Issues. Each Issue row
+  represents a durable user-visible outcome. Child Issues are runtime-derived
+  from the Agent Session that created them and are reached through the parent
+  hierarchy rather than duplicated as first-level rows. Complex work is planned
+  and evidenced inside an Agent Session for that Issue, while the Work model stays
+  focused on the Issue definition, status, and Activity. Each row
+  shows a concept/status marker, title, and one context-sensitive meta line. The
+  meta line avoids
+  repeating the current section: an Upcoming recurring row can show `8:00 AM ·
+  Daily`, while a Today completed row can show only the completion recency.
+  Active Agent Session count is derived from Issue search filters and appears
+  only as Work button/status chrome, not as a Run count. Dream remains excluded
+  from this ordinary Work surface and stays in Settings -> Agent "Memory &
+  activity". Opening Work snapshots the current conversation transcript scroll
+  position by conversation id and restores it when the user returns to the chat,
+  so the Work surface behaves like an overlay instead of resetting the
+  conversation flow.
+
+  Opening a Work row overlays an Issue detail drawer on the list. The drawer
+  reads `agent_issue_read` and shows the durable work definition: title, status
+  chip only when the icon cannot carry the state, next run/trigger timing,
+  instructions, child/generated Issues, and Activity. Execution records render inside
+  the Activity timeline rather than as a separate top-level section. It does not
+  repeat the same state through a separate metadata table when an icon, section,
+  or chip already communicates it. Generated Issues can open in the same drawer
+  and extend the breadcrumb path. Agent Sessions do not consume a drill-in level.
+
+  A linked Issue status row in the chat bypasses the Work list and opens that
+  same canonical Issue detail drawer directly over the current conversation.
+  Opening the drawer does not enter Work mode or unmount the chat; closing it
+  therefore reveals the same conversation at the same scroll position. Run
+  transcript drill-ins preserve the surface that opened the Issue detail: Work
+  stays behind Work-origin detail, while chat stays behind transcript-origin
+  detail.
+
+  For Issue-sourced `notification.created`, the event `title` is the raw Issue
+  title used by the transcript row. The Agent delivery prompt and optional OS
+  notification retain the full terminal summary; those strings are not reused as
+  the renderer title.
+
+  Every Activity timeline item uses the same row shape: a leading semantic icon,
+  a title, a relative-time meta line, and a disclosure chevron. Ordinary lifecycle
+  events expand to audit metadata such as exact time and actor. Agent Session
+  cards are execution entries inside that same Activity row system and reuse the
+  conversation assistant-turn renderer. Each execution row has a stable
+  `Execution` title, a status icon, and a "Working for ..." / "Worked for ..."
+  meta line. Completed executions are collapsed by default, while running
+  executions can open live so the user can inspect progress. Expanding the
+  execution row reveals a `Process` disclosure plus the final markdown answer or
+  error. Process details use the same transcript adapter used by Run Details:
+  thinking/tool/process blocks, disclosure state, and child-run affordances come
+  from the Run transcript, not from Issue audit rows. Opening the full Run
+  transcript is a secondary drill-in, not the default Issue detail structure. The
+  fallback Activity/`latestOutput` summary is used only when no Run transcript
+  can be resolved. Matching
+  `agent_session_start` /
+  `agent_session_stop` audit rows are suppressed when the Activity timeline
+  already contains the execution card, so users do not see the same execution
+  twice.
+
+  Activity remains a high-signal product history and Issue lifecycle layer; it is
+  not the Agent Session transcript and does not copy raw model reasoning. It
+  includes Issue behavior such as object creation, edits, archival/deletion,
+  status changes, high-level Agent Session start/stop events, verification
+  results, questions, errors, output links, and comments. Raw Agent Session
+  responses stay in Agent Session cards, and low-level field diffs stay out of
+  the ordinary Issue Activity list unless they carry user-visible product
+  meaning. Routable Issue state follows its origin one hop at a time. Child
+  completion or cancellation and child Session error resume only the direct
+  parent Agent Session that created the child; that Session may integrate the
+  outcome and complete its own Issue. Root completion and root Session error
+  append a hidden system-origin user turn to the visible origin conversation and
+  start a new Run for that conversation's Agent. The Agent decides whether to
+  reply, use tools, wait for another Issue notification, or end without visible
+  text. Any resulting assistant response is a separate turn; raw Session output
+  is never appended directly to the previous assistant response. A linked,
+  compact Issue status row remains visible even when the Agent is silent and
+  opens canonical Issue detail directly. Explicit Session stop and root Issue
+  cancellation do not synthesize a result. The notification is the status and
+  attention source, while the Agent owns any user-visible answer. The hidden
+  `lin-agent-issue-*` execution
+  conversation itself is not a user channel. `agent_session_read` remains the
+  bounded model-facing tool/control surface for explicit Session inspection; the
+  transcript reader is renderer-only UI plumbing. The drawer is read-only in this
+  checkpoint; execution controls remain in the model-facing Agent Session tools
+  and in legacy Run transcript detail until the full Agent Session control UI
+  lands. Human-review is the exception: after an execution Session completes,
+  Issue detail exposes a trusted-user `Accept and complete` action. The command is
+  renderer-to-main only, records the local user actor, and cannot be invoked by a
+  model-facing Issue tool.
 - Long output rows are collapsed by default.
 - **Result-first turn process (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last
@@ -1194,8 +1243,8 @@ Rules:
 - **Consecutive tool calls fold into one counted activity group** (Codex's
   render-group split, `splitTimelineIntoGroups`/`summarizeToolActivity` in
   `agentRenderGroups.ts`). Inside the visible process timeline, a maximal run of
-  ≥2 adjacent tool calls, including sub-run tool calls such as `spawn_run`,
-  collapses into a single `AgentToolActivityGroup` disclosure whose header is the
+  ≥2 adjacent tool calls collapses into a single `AgentToolActivityGroup`
+  disclosure whose header is the
   counted summary, expandable to the member rows. A thinking or narration block
   and a **loaded-skill chip** (a compact glanceable affordance, not an expandable
   row) **break the run** (reasoning is a hard boundary); a lone tool call renders
@@ -1288,9 +1337,17 @@ Rules:
   markdown. Matching tool results are process data, not visible transcript
   boundaries: an `assistant(toolCall) -> toolResult -> assistant(text)` raw run
   transcript adapts into one assistant turn, with the tool/skill call in the
-  process block and the text in the final response. Hidden notification-only user
-  rows remain invisible. They are preserved as logical turn boundaries when they
-  separate different runs; when a hidden steering row sits between assistant
+  process block and the text in the final response. Generic hidden
+  notification-only user rows remain invisible. A root Issue notification is the
+  exception: its linked structured notification projects as one compact status
+  row, deduplicated by `notificationId`, while retry copies remain empty rhythm
+  boundaries. The row is left-aligned, has no leading Issue/status icon, and is
+  title-first (`"<title>" completed`, `"<title>" needs attention`, or the
+  localized equivalent). Its inline chevron matches the adjacent process
+  disclosure; clicking it opens the linked Issue detail directly over chat.
+  Hidden rows separate different runs so
+  adjacent assistant responses remain visually distinct; when a hidden steering
+  row sits between assistant
   segments from the same run, the conversation transcript skips that boundary so
   the skill/tool call and the continuation render as one assistant turn. This
   keeps the differences at the data-adapter boundary instead of forking
@@ -1625,7 +1682,10 @@ Open-conversation policy:
   the only primitive (no per-agent DM rows, no two-list / two-"+" split), and a
   row is listed when it carries a name (the conversation name lives in the legacy
   `goal` field). The reserved `lin-agent-channel-general` row is always ensured
-  and sorts first as `#General`; every other row sorts by recency.
+  and sorts first as `#General`; every other row sorts by recency. Runtime
+  implementation conversations such as legacy memory-dream ids and
+  `lin-agent-issue-*` Issue execution containers are internal and are filtered
+  from the channel list, Dream evidence set, and legacy run-list scans.
 - `#General` is a normal event-sourced Conversation with `title/goal = General`.
   It stores no `kind`; its reserved id plus the runtime invariant make it special.
   Runtime ready, restore, list, and agent-registry reload all ensure it exists
@@ -1636,8 +1696,15 @@ Open-conversation policy:
 - Every conversation — `#General` and user-created topic conversations alike — is
   a single-agent, inline-streaming, steerable thread whose members are implicitly
   `{user, Neva}` and not membership-editable. `#General` cannot be renamed or
-  deleted; named topic conversations can. The Agent Dock startup path restores a
-  remembered valid conversation id first, then falls back to `#General`.
+  deleted; named topic conversations can be deleted only when they have no active
+  Run and are not still required as an Issue/Recurring Issue origin or Session
+  delivery carrier. The Agent Dock startup path restores a remembered valid
+  conversation id first, then falls back to `#General`.
+- Closing a conversation view is not deletion or cold restore. If a delegated
+  execution frame is still live, AgentRuntime retains that conversation headlessly
+  and defers runtime destruction. Reopening it in the same process reuses the
+  existing runtime; if it stays closed, destruction occurs after the last frame
+  settles.
 - `conversation-index.json` carries list projection fields, including member
   roster (always `{user, Neva}`), unread count, message count, and the latest
   visible message snippet / timestamp. Opening the conversation menu does not
@@ -1680,6 +1747,7 @@ user sends prompt
   -> append branch.selected
   -> derive active pi-mono Message[]
   -> create/hydrate Agent
+  -> for Agent Session execution, durably bind Session before Run announcement
   -> append run.started
   -> stream pi-mono
   -> append assistant/tool events
@@ -1694,10 +1762,13 @@ user sends prompt
 
 ```txt
 open app
-  -> clean-cut probe: any old-format artifact wipes the agent data root
+  -> clean-cut probe: any old-format event artifact wipes event-log owned paths
   -> load conversation-index cache if it matches conversations/
   -> load selected conversation checkpoint
   -> replay later events
+  -> repair bound Run meta from each authoritative Run ledger
+  -> synchronize terminal bound Runs into their Agent Sessions
+  -> mark only residual non-terminal Issue Sessions stale
   -> derive render projection
   -> hydrate pi-mono only when a run is started or continued
 ```
@@ -1731,8 +1802,18 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Split conversation/run filesystem layout with conversation segments,
   run-local `events.jsonl`, run meta, scoped payloads, and agent identity
   records.
-- Run meta v2 in `runs/<runId>/meta.json`: nested `execution` and `objective`,
-  `runProfile`, `context`, `parentToolCallId`, timestamps, and `latestSeq`.
+- Run meta v2 in `runs/<runId>/meta.json`: nested `execution` and `objective`
+  (including durable verification-required state, replacement-attempt base, and
+  ordered verifier-gap signatures, and the explicit controller/worker/verifier
+  role), `runProfile`, `context`,
+  `parentToolCallId`, timestamps, and `latestSeq`. Verifier Run ids remain
+  graph-derived rather than duplicated on the target Run. Reads rebuild stale
+  meta from the authoritative Run ledger when a crash lands ledger events ahead
+  of the projection write. Resumed and terminal lifecycle events repeat the
+  current objective, criteria, and objective role, so this repair retains durable
+  amendments instead of reverting to the original `run.started` contract. A
+  resumed `run.started` clears the previous execution span's submission pointer
+  so result lookup cannot reuse stale terminal text.
 - Strict append ordering, per-conversation write queues, and replay reducers.
 - Parent-linked message chain with active branch projection.
 - pi-ai `Message[]` derivation from the joined conversation/run active event
@@ -1763,9 +1844,9 @@ The current renderer contract is `AgentRenderProjection`, carried by
   detail, not conversation replay state.
 - Notification + attention replay projection: `notification.created` /
   `notification.read` fold into per-conversation `attentionByConversationId`
-  unread counts and per-notification `read` flags (the M2 off-floor delivery
-  signal's durable substrate; runtime emitters + renderer surfaces are the
-  remaining consumer work).
+  unread counts and per-notification `read` flags. Runtime emitters, unread
+  badges, opt-in OS banners, and the root Issue notification-to-transcript join
+  all read this same durable substrate.
 
 ### Remaining
 
@@ -1775,10 +1856,6 @@ The current renderer contract is `AgentRenderProjection`, carried by
   detail views.
 - Memory consolidation beyond explicit tool writes, including extraction from
   summaries and mixed-resolution memory retrieval.
-- Notification **delivery**: emitting `notification.created` on off-floor task
-  terminal/needs-input states, the durable per-conversation in-stream message,
-  the unread badge in the conversation list, and the opt-in OS notification
-  (M2 — [[agent-conversation-model]] §Background tasks).
 - Optional checkpoint retention preferences if real conversations show storage
   pressure.
 

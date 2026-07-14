@@ -105,6 +105,7 @@ export interface AgentComposerEditorHandle {
   clear: () => void;
   focus: () => void;
   insertFileReferences: (refs: AgentComposerFileReference[]) => void;
+  insertNodeReference: (ref: AgentComposerNodeReference) => void;
   removeFileReferences: (attachmentIds: readonly string[]) => void;
   restore: (snapshot: AgentComposerEditorSnapshot) => void;
   setPlainText: (text: string) => void;
@@ -409,6 +410,18 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
         if (!view || refs.length === 0) return;
         const range = { from: view.state.selection.from, to: view.state.selection.to };
         insertFileReferenceNodes(view, range, refs);
+        syncDraft(view);
+        updateTrigger(view);
+        view.focus();
+      },
+      insertNodeReference(ref) {
+        const view = viewRef.current;
+        if (!view) return;
+        const range = { from: view.state.selection.from, to: view.state.selection.to };
+        replaceWithNodeReference(view, range, {
+          ...ref,
+          color: inlineReferenceTextColor(ref.nodeId, propsRef.current.index) ?? '',
+        });
         syncDraft(view);
         updateTrigger(view);
         view.focus();

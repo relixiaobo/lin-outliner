@@ -45,6 +45,57 @@ describe('agent permissions', () => {
     }
   });
 
+  test('classifies Issue tools as local work management allowed by default', () => {
+    const search = evaluateAgentToolPermission({
+      toolName: 'issue_search',
+      args: { targets: ['issue'] },
+      policy: { workspaceRoot },
+    });
+    expect(search.behavior).toBe('allow');
+    expect(search.descriptor?.actionKind).toBe('agent.issue.search');
+
+    const create = evaluateAgentToolPermission({
+      toolName: 'issue_create',
+      args: {
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Daily news',
+          cadence: { type: 'daily', time: '08:00' },
+          timeZone: 'UTC',
+          issueTemplate: { permissionMode: 'unattended' },
+        },
+        request: { mode: 'request' },
+      },
+      policy: { workspaceRoot },
+    });
+    expect(create.behavior).toBe('allow');
+    expect(create.descriptor?.actionKind).toBe('agent.issue.create');
+
+    const update = evaluateAgentToolPermission({
+      toolName: 'issue_update',
+      args: {
+        target: { type: 'recurring-issue', id: 'recurring:daily-news' },
+        change: { type: 'patch', patch: { titleTemplate: 'Daily news digest' } },
+        request: { mode: 'request' },
+      },
+      policy: { workspaceRoot },
+    });
+    expect(update.behavior).toBe('allow');
+    expect(update.descriptor?.actionKind).toBe('agent.issue.update');
+
+    const start = evaluateAgentToolPermission({
+      toolName: 'agent_session_start',
+      args: {
+        issueId: 'issue:daily-news-2026-07-07',
+        request: { mode: 'request' },
+      },
+      policy: { workspaceRoot },
+    });
+    expect(start.behavior).toBe('allow');
+    expect(start.descriptor?.actionKind).toBe('agent.session.start');
+    expect(start.descriptor?.platformHardBlock).toBeUndefined();
+  });
+
   test('asks before reading file paths outside the handed file scope', () => {
     const outsideRoot = '/tmp/outside-project';
     const cases = [

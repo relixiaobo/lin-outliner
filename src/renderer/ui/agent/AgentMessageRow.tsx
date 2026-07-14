@@ -98,6 +98,7 @@ interface AgentMessageRowProps {
   /** True in a Channel: turns deliver atomically and fold result-first rather than surfacing resultless process inline. */
   isChannel?: boolean;
   showProcessStatus?: boolean;
+  showProcessDetails?: boolean;
   showFinalMessages?: boolean;
   turnPhase?: AgentTurnPhase;
   speakerLabel?: string | null;
@@ -499,6 +500,7 @@ function AgentMessageRowComponent({
   conversationId,
   streaming: streamingOverride,
   showFinalMessages = true,
+  showProcessDetails = true,
   showProcessStatus = true,
   subRunsByParentToolCallId,
   toolResults,
@@ -758,6 +760,7 @@ function AgentMessageRowComponent({
     entry.runStartedAtMs,
     showProcessStatus,
     showFinalMessages,
+    showProcessDetails,
     entry.directSubRuns,
     entry.toolCallOutcomes,
   );
@@ -928,6 +931,7 @@ function sameAgentMessageRowProps(prev: AgentMessageRowProps, next: AgentMessage
     && prev.conversationId === next.conversationId
     && prev.streaming === next.streaming
     && prev.showFinalMessages === next.showFinalMessages
+    && prev.showProcessDetails === next.showProcessDetails
     && prev.showProcessStatus === next.showProcessStatus
     && sameReadonlyMap(prev.subRunsByParentToolCallId ?? EMPTY_SUB_RUN_MAP, next.subRunsByParentToolCallId ?? EMPTY_SUB_RUN_MAP)
     && sameReadonlyMap(prev.toolResults, next.toolResults)

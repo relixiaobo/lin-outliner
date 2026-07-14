@@ -63,7 +63,8 @@ const KIND_ORDER: ToolActivityKind[] = [
   'nodeRestore',
   'nodeRead',
   'nodeSearch',
-  'run',
+  'issue',
+  'session',
   'web',
   'memory',
   'skill',
@@ -193,8 +194,10 @@ function toolActivityPhrase(
       return running ? labels.nodeReadRun({ count }) : labels.nodeRead({ count });
     case 'nodeSearch':
       return running ? labels.nodeSearchRun() : labels.nodeSearch();
-    case 'run':
-      return running ? labels.runRun({ count }) : labels.run({ count });
+    case 'issue':
+      return running ? labels.issueRun({ count }) : labels.issue({ count });
+    case 'session':
+      return running ? labels.sessionRun({ count }) : labels.session({ count });
     case 'web':
       return running ? labels.webRun() : labels.web();
     case 'memory':

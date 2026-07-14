@@ -637,7 +637,7 @@ describe('agent event store', () => {
     });
   });
 
-  // --- Pre-release clean-cut: any old-format artifact wipes the WHOLE data root ---
+  // --- Pre-release clean-cut: any old-format event artifact wipes event-store owned paths ---
 
   async function seedCurrentLayout(store: AgentEventStore) {
     const conversationId = 'conversation-1';
@@ -661,9 +661,10 @@ describe('agent event store', () => {
     return { conversationId, agentPrincipal, userPrincipal };
   }
 
-  test('pre-sentinel data (no layout.json) is positive proof and wipes the root + writes the sentinel', async () => {
+  test('pre-sentinel data (no layout.json) is positive proof and wipes event paths + writes the sentinel', async () => {
     await withStore(async (store, root) => {
       const { conversationId, agentPrincipal, userPrincipal } = await seedCurrentLayout(store);
+      await writeFile(path.join(root, 'issue-manager.json'), '{"v":1,"issues":{}}\n', 'utf8');
       // Simulate a pre-sentinel generation: data exists but the sentinel does not.
       await rm(path.join(root, LAYOUT_SENTINEL_FILE), { force: true });
 
@@ -673,10 +674,11 @@ describe('agent event store', () => {
       await expect(restarted.listPrincipalRunMetaProjections(agentPrincipal)).resolves.toEqual([]);
       await expect(restarted.listPrincipalRunMetaProjections(userPrincipal)).resolves.toEqual([]);
       expect(JSON.parse(await readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8'))).toEqual({ v: STORAGE_LAYOUT_VERSION });
+      await expect(readFile(path.join(root, 'issue-manager.json'), 'utf8')).resolves.toContain('"issues"');
     });
   });
 
-  test('a stale sentinel generation wipes the root and re-stamps the current one', async () => {
+  test('a stale sentinel generation wipes event paths and re-stamps the current one', async () => {
     await withStore(async (store, root) => {
       const { conversationId } = await seedCurrentLayout(store);
       await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION - 1 })}\n`, 'utf8');
@@ -1362,6 +1364,9 @@ describe('agent event store', () => {
           criteria: ['Find the storage seam'],
           objectiveRole: 'worker',
           objectiveStatus: 'active',
+          verificationRequired: true,
+          verificationAttemptBase: 1,
+          verifierGapSignatures: ['missing evidence', 'missing evidence'],
           purpose: 'work',
           scope: { resources: { paths: ['src/main'] } },
           budget: { tokens: 1000, spentTokens: 100 },
@@ -1385,6 +1390,7 @@ describe('agent event store', () => {
           budget: { tokens: 1000, spentTokens: 250 },
           blockedReason: 'Missing evidence',
           latestVerifierGap: 'No tool evidence',
+          verifierGapSignatures: ['missing evidence', 'missing evidence'],
           usage,
         },
       ]);
@@ -1408,6 +1414,9 @@ describe('agent event store', () => {
           criteria: ['Find the storage seam'],
           role: 'worker',
           status: 'blocked',
+          verificationRequired: true,
+          verificationAttemptBase: 1,
+          verifierGapSignatures: ['missing evidence', 'missing evidence'],
           scope: { resources: { paths: ['src/main'] } },
           budget: { tokens: 1000, spentTokens: 250 },
           blockedReason: 'Missing evidence',
@@ -1418,6 +1427,46 @@ describe('agent event store', () => {
       await expect(store.listConversationRunMetaProjections(conversationId)).resolves.toMatchObject([
         { id: runId, parentToolCallId: 'tool-spawn-1', runProfile: 'research' },
       ]);
+
+      await store.appendRunStreamEvents(conversationId, runId, [
+        {
+          ...base(conversationId, 4, 'run.started'),
+          eventId: `${runId}-resume`,
+          runId,
+          agentId: 'built-in:tenon:assistant',
+          anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+          objectiveStatus: 'active',
+          verifierGapSignatures: ['missing evidence', 'missing evidence'],
+          trigger: { type: 'parent-run', parentRunId: 'parent-run-1' },
+        },
+      ]);
+      const activeMeta = await store.readRunMetaProjection(runId);
+      expect(activeMeta?.objective).toMatchObject({
+        status: 'active',
+        verificationAttemptBase: 1,
+        verifierGapSignatures: ['missing evidence', 'missing evidence'],
+      });
+      expect(activeMeta?.objective?.blockedReason).toBeUndefined();
+      expect(activeMeta?.objective?.latestVerifierGap).toBeUndefined();
+      expect(activeMeta?.objective?.latestSubmissionSeq).toBeUndefined();
+
+      await store.appendRunStreamEvents(conversationId, runId, [
+        {
+          ...base(conversationId, 5, 'run.completed'),
+          eventId: `${runId}-verified`,
+          runId,
+          objectiveStatus: 'verified',
+          verifierGapSignatures: [],
+        },
+      ]);
+      const verifiedMeta = await store.readRunMetaProjection(runId);
+      expect(verifiedMeta?.objective).toMatchObject({
+        status: 'verified',
+        verificationAttemptBase: 1,
+        verifierGapSignatures: [],
+      });
+      expect(verifiedMeta?.objective?.blockedReason).toBeUndefined();
+      expect(verifiedMeta?.objective?.latestVerifierGap).toBeUndefined();
     });
   });
 
@@ -1460,6 +1509,9 @@ describe('agent event store', () => {
           runId,
           agentId: 'built-in:tenon:assistant',
           anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+          objective: 'Use the amended objective.',
+          criteria: ['Return the amended result.'],
+          objectiveRole: 'controller',
           objectiveStatus: 'active',
           trigger: { type: 'system' },
         },
@@ -1469,7 +1521,12 @@ describe('agent event store', () => {
       expect(runningMeta?.execution.status).toBe('running');
       expect(runningMeta?.execution.completedAt).toBeUndefined();
       expect(runningMeta?.execution.error).toBeUndefined();
-      expect(runningMeta?.objective?.status).toBe('active');
+      expect(runningMeta?.objective).toMatchObject({
+        text: 'Use the amended objective.',
+        criteria: ['Return the amended result.'],
+        role: 'controller',
+        status: 'active',
+      });
 
       await store.appendRunStreamEvents(conversationId, runId, [
         {
@@ -1477,6 +1534,9 @@ describe('agent event store', () => {
           eventId: `${runId}-failed`,
           runId,
           errorMessage: 'resume failed',
+          objective: 'Use the final amended objective.',
+          criteria: ['Return final amended evidence.'],
+          objectiveRole: 'controller',
           objectiveStatus: 'blocked',
         },
       ]);
@@ -1487,7 +1547,12 @@ describe('agent event store', () => {
           completedAt: 1_700_000_000_004,
           error: 'resume failed',
         },
-        objective: { status: 'blocked' },
+        objective: {
+          text: 'Use the final amended objective.',
+          criteria: ['Return final amended evidence.'],
+          role: 'controller',
+          status: 'blocked',
+        },
       });
     });
   });

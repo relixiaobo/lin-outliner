@@ -17,7 +17,6 @@ interface RowLeadingProps {
   fieldType?: FieldType;
   markerIcon?: ComponentType<{ size?: number }>;
   markerClassName?: string;
-  processing?: boolean;
   bulletColors?: string[];
   tagDefColor?: string;
   fileIconKind?: string;
@@ -35,7 +34,6 @@ export function RowLeading({
   fieldType,
   markerIcon,
   markerClassName,
-  processing,
   bulletColors = [],
   tagDefColor,
   fileIconKind,
@@ -87,7 +85,6 @@ export function RowLeading({
           variant={variant}
           fieldType={fieldType}
           icon={markerIcon}
-          processing={processing}
           className={markerClassName}
           bulletColors={bulletColors}
           tagDefColor={tagDefColor}

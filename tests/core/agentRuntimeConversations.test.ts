@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
+import { systemReminder } from '../../src/core/agentAttachments';
 import { TOOL_CATALOG } from '../../src/core/agentToolCatalog';
 import {
   DEFAULT_DREAM_CHANNEL_ID,
@@ -12,9 +14,16 @@ import {
   channelIncludesInDreamData,
 } from '../../src/core/agentChannel';
 import { AGENT_EVENT_VERSION, getAgentEventActivePath, type AgentEvent } from '../../src/core/agentEventLog';
+import type { ActorRef, AgentSessionStartInput } from '../../src/core/agentIssue';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { agentDefinitionAgentId } from '../../src/main/agentDelegationIdentity';
+import { createAgentIssueToolRuntime } from '../../src/main/agentIssueRuntime';
+import {
+  AgentIssueStore,
+  TERMINAL_DELIVERY_CLAIM_LEASE_MS,
+  type AgentIssueTerminalDelivery,
+} from '../../src/main/agentIssueStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const electronUserDataRoot = path.join(tmpdir(), 'lin-agent-runtime-conversations-test-user-data');
@@ -46,9 +55,35 @@ async function loadRuntimeModule() {
 }
 
 const roots: string[] = [];
+const drainableRuntimes: Array<{ drainPendingWrites(): Promise<void> }> = [];
 const ASSISTANT_AGENT_ID = 'built-in:tenon:assistant';
+const ISSUE_ACTOR: ActorRef = { type: 'agent', agentId: ASSISTANT_AGENT_ID };
+
+interface IssueDeliveryRuntimeInternals {
+  deliverRootIssueToConversation(...args: unknown[]): Promise<'delivered' | 'deferred'>;
+  deliverTerminalIssueDelivery(delivery: AgentIssueTerminalDelivery): Promise<'delivered' | 'deferred'>;
+  drainTerminalIssueDeliveries(): Promise<void>;
+  notifyParentAgentSessionForIssueDelivery(
+    parentAgentSessionId: string,
+    delivery: AgentIssueTerminalDelivery,
+  ): Promise<'delivered' | 'deferred'>;
+  runLedgerIssueDeliveryState(
+    runId: string,
+    marker: string,
+    verificationRequired?: boolean,
+  ): Promise<'absent' | 'queued' | 'processed'>;
+  scheduleIssueDeliveryRetryDrain(): void;
+  issueDeliveryRetryTimerAt: number | null;
+  issueDeliveryRetryNotBefore: Map<string, number>;
+  dreamSchedulerTimer: ReturnType<typeof setInterval> | null;
+  issueSchedulerTimer: ReturnType<typeof setInterval> | null;
+  fireDream(trigger: string, now: Date): Promise<void>;
+  startTriggeredIssueSession(issue: unknown, now: Date): Promise<void>;
+  agentSessionContinuationContext(input: AgentSessionStartInput): Promise<string | undefined>;
+}
 
 afterEach(async () => {
+  await Promise.allSettled(drainableRuntimes.splice(0).map((runtime) => runtime.drainPendingWrites()));
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -96,6 +131,7 @@ async function createRuntime(dataRoot: string, localRoot?: string) {
       }),
     },
   );
+  drainableRuntimes.push(runtime);
   return { runtime, sink };
 }
 
@@ -136,7 +172,1844 @@ async function expectRejects(fn: () => Promise<unknown>, message: string) {
   throw new Error('Expected promise to reject.');
 }
 
+async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 1_000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('Timed out waiting for condition.');
+}
+
 describe('agent runtime conversations', () => {
+  test('queues interrupted Issue Session recovery only once across repeated window readiness', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-ready-recovery-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    let recoveryCount = 0;
+    const internals = runtime as unknown as {
+      queueIssueRecovery(now: Date): void;
+      queueIssueSweep(now: Date): void;
+      queueScheduledDream(now: Date): void;
+      refreshPrimaryAgentIdentity(): Promise<void>;
+      ensureDefaultChannelEventStates(): Promise<void>;
+    };
+    internals.queueIssueRecovery = () => {
+      recoveryCount += 1;
+    };
+    internals.queueIssueSweep = () => undefined;
+    internals.queueScheduledDream = () => undefined;
+    internals.refreshPrimaryAgentIdentity = async () => undefined;
+    internals.ensureDefaultChannelEventStates = async () => undefined;
+
+    runtime.ready();
+    runtime.ready();
+
+    expect(recoveryCount).toBe(1);
+  });
+
+  test('startup recovery only stales Sessions from the constructor snapshot', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-recovery-snapshot-'));
+    roots.push(dataRoot);
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const createPendingSession = async (title: string, now: number) => {
+      const created = await store.create({
+        issueType: 'issue',
+        fields: { title },
+        request: { mode: 'request' },
+        reason: `Create ${title}.`,
+      }, ISSUE_ACTOR, now);
+      const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+      const issue = (await store.read({ target: { type: 'issue', id: issueId } })).issue!;
+      const started = await store.startSession({
+        issueId,
+        expectedIssueRevision: issue.revision,
+        request: { mode: 'request' },
+        reason: `Start ${title}.`,
+      }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, now + 1);
+      return started.targets.find((target) => target.type === 'agent-session')!.id;
+    };
+
+    const interruptedSessionId = await createPendingSession('Interrupted before startup', 10);
+    const { runtime } = await createRuntime(dataRoot);
+    const internals = runtime as unknown as {
+      issueStartupSessionIds: Promise<ReadonlySet<string>>;
+      issueSweepTail: Promise<void>;
+    };
+    await internals.issueStartupSessionIds;
+
+    const newSessionId = await createPendingSession('Created after startup snapshot', 30);
+    const stopReservation = await store.reserveSessionStop({
+      agentSessionId: newSessionId,
+      request: { mode: 'request' },
+      reason: 'Keep a new Session stop reservation intact.',
+    }, 40);
+    expect(stopReservation.token).toBeDefined();
+
+    runtime.ready();
+    await internals.issueSweepTail;
+
+    const state = await store.state();
+    expect(state.sessions[interruptedSessionId]?.state).toBe('stale');
+    expect(state.sessions[newSessionId]?.state).toBe('pending');
+    expect(state.sessionStopIntents[newSessionId]?.token).toBe(stopReservation.token);
+  });
+
+  test('reconciles a terminal Run ledger before startup marks active Sessions stale', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-terminal-ledger-recovery-'));
+    roots.push(dataRoot);
+    const conversationId = 'conversation:terminal-ledger-recovery';
+    const runId = 'child-terminal-ledger-recovery';
+    const eventStore = new AgentEventStore(dataRoot);
+    await eventStore.appendEvents(conversationId, [{
+      v: AGENT_EVENT_VERSION,
+      eventId: 'terminal-ledger-recovery-conversation',
+      seq: 1,
+      conversationId,
+      type: 'conversation.created',
+      createdAt: 10,
+      actor: { type: 'system' },
+      title: 'Terminal ledger recovery',
+    }]);
+    await eventStore.appendRunStreamEvents(conversationId, runId, [
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: `${runId}-started`,
+        seq: 1,
+        conversationId,
+        type: 'run.started',
+        createdAt: 30,
+        actor: { type: 'system' },
+        runId,
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: { type: 'conversation', agentId: ASSISTANT_AGENT_ID, conversationId },
+        disposition: 'detached',
+        objective: 'Recover the completed Session result.',
+        objectiveRole: 'controller',
+        trigger: { type: 'system' },
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: `${runId}-result`,
+        seq: 2,
+        conversationId,
+        type: 'run.result.submitted',
+        createdAt: 40,
+        actor: { type: 'system' },
+        runId,
+        summary: 'Recovered authoritative terminal result.',
+        source: 'final_assistant_message',
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: `${runId}-completed`,
+        seq: 3,
+        conversationId,
+        type: 'run.completed',
+        createdAt: 50,
+        actor: { type: 'system' },
+        runId,
+        objectiveRole: 'controller',
+      },
+    ]);
+
+    const issueStore = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const created = await issueStore.create({
+      issueType: 'issue',
+      fields: { title: 'Terminal ledger recovery Issue', permissionMode: 'attended' },
+      request: { mode: 'request' },
+      reason: 'Create terminal ledger recovery work.',
+    }, ISSUE_ACTOR, 15, {
+      origin: { type: 'conversation', conversationId },
+    });
+    const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+    const issue = (await issueStore.read({ target: { type: 'issue', id: issueId } })).issue!;
+    const started = await issueStore.startSession({
+      issueId,
+      expectedIssueRevision: issue.revision,
+      request: { mode: 'request' },
+      reason: 'Start terminal ledger recovery work.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 20);
+    const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+    await issueStore.bindSessionExecution(sessionId, {
+      engine: 'delegation',
+      conversationId,
+      executionId: runId,
+      startedAt: 25,
+    }, ISSUE_ACTOR, 25);
+
+    const { runtime } = await createRuntime(dataRoot);
+    runtime.ready();
+    await runtime.drainPendingWrites();
+
+    const state = await issueStore.state();
+    expect(state.sessions[sessionId]).toMatchObject({
+      state: 'complete',
+      latestOutput: 'Recovered authoritative terminal result.',
+    });
+    expect(state.issues[issueId]?.status.category).toBe('completed');
+    expect(Object.values(state.terminalDeliveries).some((delivery) => delivery.state === 'error')).toBe(false);
+    expect(Object.values(state.activity).some((activity) => (
+      activity.target.type === 'agent-session'
+      && activity.target.agentSessionId === sessionId
+      && activity.content.type === 'agent-error'
+      && activity.content.body.includes('interrupted before runtime restore')
+    ))).toBe(false);
+  });
+
+  test('restores verification mode and inherited verifier attempts for persisted delegated Runs', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-verify-restore-'));
+    roots.push(dataRoot);
+    const conversationId = 'conversation:verify-restore';
+    const parentRunId = 'child-verify-restore-parent';
+    const verifierRunId = 'child-verify-restore-verifier';
+    const replacementRunId = 'child-verify-restore-replacement';
+    const replacementVerifierRunId = 'child-verify-restore-replacement-verifier';
+    const store = new AgentEventStore(dataRoot);
+    await store.appendEvents(conversationId, [{
+      v: AGENT_EVENT_VERSION,
+      eventId: 'verify-restore-conversation',
+      seq: 1,
+      conversationId,
+      type: 'conversation.created',
+      createdAt: 1,
+      actor: { type: 'system' },
+      title: 'Verify restore',
+    }]);
+    const runEvent = (runId: string, seq: number, type: AgentEvent['type']) => ({
+      v: AGENT_EVENT_VERSION,
+      eventId: `${runId}-${seq}`,
+      seq,
+      conversationId,
+      type,
+      createdAt: seq,
+      actor: { type: 'system' as const },
+      runId,
+    });
+    await store.appendRunStreamEvents(conversationId, parentRunId, [
+      {
+        ...runEvent(parentRunId, 1, 'run.started'),
+        type: 'run.started',
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: { type: 'conversation', agentId: ASSISTANT_AGENT_ID, conversationId },
+        disposition: 'detached',
+        objective: 'Integrate child work.',
+        criteria: ['Return a verified parent result.'],
+        objectiveRole: 'controller',
+        objectiveStatus: 'verifying',
+        verificationRequired: true,
+        purpose: 'work',
+        trigger: { type: 'system' },
+      },
+      {
+        ...runEvent(parentRunId, 2, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'verifying',
+      },
+    ]);
+    await store.appendRunStreamEvents(conversationId, verifierRunId, [
+      {
+        ...runEvent(verifierRunId, 3, 'run.started'),
+        type: 'run.started',
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: { type: 'conversation', agentId: ASSISTANT_AGENT_ID, conversationId },
+        disposition: 'detached',
+        objective: 'Verify the parent result.',
+        criteria: ['Return a verdict.'],
+        objectiveRole: 'verifier',
+        objectiveStatus: 'active',
+        purpose: 'verify',
+        trigger: { type: 'parent-run', parentRunId },
+      },
+      {
+        ...runEvent(verifierRunId, 4, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'verified',
+      },
+    ]);
+    await store.appendRunStreamEvents(conversationId, replacementRunId, [
+      {
+        ...runEvent(replacementRunId, 5, 'run.started'),
+        type: 'run.started',
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: { type: 'conversation', agentId: ASSISTANT_AGENT_ID, conversationId },
+        disposition: 'detached',
+        objective: 'Retry rejected worker output.',
+        criteria: ['Return a verified replacement result.'],
+        objectiveRole: 'worker',
+        objectiveStatus: 'verifying',
+        verificationRequired: true,
+        verificationAttemptBase: 1,
+        verifierGapSignatures: ['missing evidence', 'missing evidence'],
+        purpose: 'work',
+        trigger: { type: 'parent-run', parentRunId },
+      },
+      {
+        ...runEvent(replacementRunId, 6, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'verifying',
+        verifierGapSignatures: ['missing evidence', 'missing evidence'],
+      },
+    ]);
+    await store.appendRunStreamEvents(conversationId, replacementVerifierRunId, [
+      {
+        ...runEvent(replacementVerifierRunId, 7, 'run.started'),
+        type: 'run.started',
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: { type: 'conversation', agentId: ASSISTANT_AGENT_ID, conversationId },
+        disposition: 'detached',
+        objective: 'Verify the replacement result.',
+        criteria: ['Return a verdict.'],
+        objectiveRole: 'verifier',
+        objectiveStatus: 'active',
+        purpose: 'verify',
+        trigger: { type: 'parent-run', parentRunId: replacementRunId },
+      },
+      {
+        ...runEvent(replacementVerifierRunId, 8, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'verified',
+      },
+    ]);
+
+    const { runtime } = await createRuntime(dataRoot);
+    await runtime.restoreConversation(conversationId);
+    const runtimeInternals = runtime as unknown as {
+      conversations: Map<string, {
+        delegationRuntime: {
+          runs: Map<string, {
+            verify: boolean;
+            verificationAttemptBase: number;
+            verificationAttempts: number;
+            verifierRunIds: string[];
+            verifierGapSignatures: string[];
+          }>;
+        };
+      }>;
+    };
+    const restoredParent = runtimeInternals.conversations
+      .get(conversationId)?.delegationRuntime.runs.get(parentRunId);
+    const restoredReplacement = runtimeInternals.conversations
+      .get(conversationId)?.delegationRuntime.runs.get(replacementRunId);
+
+    expect(restoredParent).toMatchObject({
+      verify: true,
+      verificationAttempts: 1,
+      verifierRunIds: [verifierRunId],
+    });
+    expect(restoredReplacement).toMatchObject({
+      verify: true,
+      verificationAttemptBase: 1,
+      verificationAttempts: 2,
+      verifierRunIds: [replacementVerifierRunId],
+      verifierGapSignatures: ['missing evidence', 'missing evidence'],
+    });
+  });
+
+  test('blocks a completed Run left verifying across restart instead of reopening its Session', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-verify-interrupted-'));
+    roots.push(dataRoot);
+    const conversationId = 'conversation:verify-interrupted';
+    const parentRunId = 'child-verify-interrupted-parent';
+    const verifierRunId = 'child-verify-interrupted-verifier';
+    const eventStore = new AgentEventStore(dataRoot);
+    await eventStore.appendEvents(conversationId, [{
+      v: AGENT_EVENT_VERSION,
+      eventId: 'verify-interrupted-conversation',
+      seq: 1,
+      conversationId,
+      type: 'conversation.created',
+      createdAt: 1,
+      actor: { type: 'system' },
+      title: 'Verify interrupted',
+    }]);
+    const runEvent = (runId: string, seq: number, type: AgentEvent['type']) => ({
+      v: AGENT_EVENT_VERSION,
+      eventId: `${runId}-${seq}`,
+      seq,
+      conversationId,
+      type,
+      createdAt: seq,
+      actor: { type: 'system' as const },
+      runId,
+    });
+    await eventStore.appendRunStreamEvents(conversationId, parentRunId, [
+      {
+        ...runEvent(parentRunId, 1, 'run.started'),
+        type: 'run.started',
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: { type: 'conversation', agentId: ASSISTANT_AGENT_ID, conversationId },
+        disposition: 'detached',
+        objective: 'Return verified work.',
+        criteria: ['Verification must pass.'],
+        objectiveRole: 'controller',
+        objectiveStatus: 'verifying',
+        verificationRequired: true,
+        purpose: 'work',
+        trigger: { type: 'system' },
+      },
+      {
+        ...runEvent(parentRunId, 2, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'verifying',
+      },
+    ]);
+    await eventStore.appendRunStreamEvents(conversationId, verifierRunId, [
+      {
+        ...runEvent(verifierRunId, 3, 'run.started'),
+        type: 'run.started',
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: { type: 'conversation', agentId: ASSISTANT_AGENT_ID, conversationId },
+        disposition: 'detached',
+        objective: 'Verify interrupted parent.',
+        criteria: ['Return a verdict.'],
+        objectiveRole: 'verifier',
+        objectiveStatus: 'active',
+        purpose: 'verify',
+        trigger: { type: 'parent-run', parentRunId },
+      },
+    ]);
+    const issueStore = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const created = await issueStore.create({
+      issueType: 'issue',
+      fields: {
+        title: 'Interrupted verification Issue',
+        verificationPolicy: { mode: 'agent-review', requiredVerdict: 'pass' },
+      },
+      request: { mode: 'request' },
+      reason: 'Create interrupted verification Issue.',
+    }, ISSUE_ACTOR, 10);
+    const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+    const issue = (await issueStore.read({ target: { type: 'issue', id: issueId } })).issue!;
+    const started = await issueStore.startSession({
+      issueId,
+      expectedIssueRevision: issue.revision,
+      request: { mode: 'request' },
+      reason: 'Start interrupted verification Issue.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 20);
+    const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+    await issueStore.bindSessionExecution(sessionId, {
+      engine: 'delegation',
+      conversationId,
+      executionId: parentRunId,
+      startedAt: 25,
+    }, ISSUE_ACTOR, 25);
+
+    const { runtime } = await createRuntime(dataRoot);
+    await runtime.restoreConversation(conversationId);
+
+    expect((await eventStore.readRunMetaProjection(parentRunId))?.objective).toMatchObject({
+      status: 'blocked',
+      blockedReason: 'Verification was interrupted before conversation restore.',
+    });
+    expect((await eventStore.readRunMetaProjection(verifierRunId))?.execution.status).toBe('failed');
+    const conversationEvents = await eventStore.readConversationStreamEvents(conversationId);
+    expect(conversationEvents.some((event) => (
+      event.type === 'notification.created'
+      && event.source?.type === 'run'
+      && event.source.runId === verifierRunId
+    ))).toBe(false);
+    expect((await runtime.readAgentSession({ agentSessionId: sessionId }))?.agentSession.state).toBe('error');
+  });
+
+  test('serializes Run-detail stop behind Session guidance across Store instances', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-run-stop-serialization-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const conversation = await runtime.restoreLatestConversation();
+    const runtimeStore = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const created = await runtimeStore.create({
+      issueType: 'issue',
+      fields: { title: 'Run detail stop serialization' },
+      request: { mode: 'request' },
+      reason: 'Create serialized Run detail work.',
+    }, ISSUE_ACTOR, 10);
+    const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+    const issue = (await runtimeStore.read({ target: { type: 'issue', id: issueId } })).issue!;
+    const started = await runtimeStore.startSession({
+      issueId,
+      expectedIssueRevision: issue.revision,
+      request: { mode: 'request' },
+      reason: 'Start serialized Run detail work.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 20);
+    const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+    const runId = 'run:detail-stop-serialization';
+    await runtimeStore.bindSessionExecution(sessionId, {
+      engine: 'delegation',
+      conversationId: conversation.conversationId,
+      executionId: runId,
+      startedAt: 25,
+    }, ISSUE_ACTOR, 25);
+
+    let releaseSend!: () => void;
+    let markSendStarted!: () => void;
+    const sendStarted = new Promise<void>((resolve) => {
+      markSendStarted = resolve;
+    });
+    const sendGate = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const sendRuntime = createAgentIssueToolRuntime({
+      store: new AgentIssueStore(runtimeStore.coordinationKey()),
+      actor: ISSUE_ACTOR,
+      executor: {
+        start: () => ({
+          engine: 'delegation',
+          conversationId: conversation.conversationId,
+          executionId: runId,
+          startedAt: 25,
+        }),
+        sendMessage: async () => {
+          markSendStarted();
+          await sendGate;
+        },
+      },
+    });
+    const runtimeInternals = runtime as unknown as {
+      conversations: Map<string, {
+        delegationRuntime: {
+          stop(input: { runId: string }): Promise<{
+            status: 'cancelled';
+            runId: string;
+            objective_status: 'stopped';
+            updated_at: number;
+            completed_at: number;
+          }>;
+        };
+      }>;
+    };
+    let stopCalls = 0;
+    runtimeInternals.conversations.get(conversation.conversationId)!.delegationRuntime.stop = async () => {
+      stopCalls += 1;
+      return {
+        status: 'cancelled',
+        runId,
+        objective_status: 'stopped',
+        updated_at: 40,
+        completed_at: 40,
+      };
+    };
+
+    const send = sendRuntime.sendSessionMessage({
+      agentSessionId: sessionId,
+      message: 'Persist guidance before the Run-detail stop.',
+      request: { mode: 'request' },
+      reason: 'Exercise cross-surface serialization.',
+    });
+    await sendStarted;
+    const stop = runtime.runStop(conversation.conversationId, runId);
+    await Promise.resolve();
+
+    expect(stopCalls).toBe(0);
+    expect((await runtimeStore.state()).sessionStopIntents[sessionId]).toBeUndefined();
+
+    releaseSend();
+    expect((await send).status).toBe('applied');
+    expect((await stop).status).toBe('cancelled');
+    expect(stopCalls).toBe(1);
+    const read = await runtimeStore.readSession({ agentSessionId: sessionId, include: ['activity-summary'] });
+    expect(read?.activity?.some((entry) => (
+      entry.content.type === 'comment'
+      && entry.content.body === 'Persist guidance before the Run-detail stop.'
+    ))).toBe(true);
+    expect(read?.agentSession.state).toBe('canceled');
+  });
+
+  test('keeps a naturally completed Issue Session terminal when Run-detail stop loses the race', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-run-stop-terminal-race-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const conversation = await runtime.restoreLatestConversation();
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const created = await store.create({
+      issueType: 'issue',
+      fields: { title: 'Run detail terminal race' },
+      request: { mode: 'request' },
+      reason: 'Create Run detail terminal race work.',
+    }, ISSUE_ACTOR, 10);
+    const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+    const issue = (await store.read({ target: { type: 'issue', id: issueId } })).issue!;
+    const started = await store.startSession({
+      issueId,
+      expectedIssueRevision: issue.revision,
+      request: { mode: 'request' },
+      reason: 'Start Run detail terminal race work.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 20);
+    const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+    const runId = 'run:detail-stop-terminal-race';
+    await store.bindSessionExecution(sessionId, {
+      engine: 'delegation',
+      conversationId: conversation.conversationId,
+      executionId: runId,
+      startedAt: 25,
+    }, ISSUE_ACTOR, 25);
+    const runtimeInternals = runtime as unknown as {
+      conversations: Map<string, {
+        delegationRuntime: {
+          stop(input: { runId: string }): Promise<{
+            status: 'completed';
+            runId: string;
+            objective_status: 'active';
+            result: string;
+            updated_at: number;
+            completed_at: number;
+          }>;
+        };
+      }>;
+    };
+    runtimeInternals.conversations.get(conversation.conversationId)!.delegationRuntime.stop = async () => ({
+      status: 'completed',
+      runId,
+      objective_status: 'active',
+      result: 'Completed before the stop reached execution.',
+      updated_at: 40,
+      completed_at: 40,
+    });
+
+    const result = await runtime.runStop(conversation.conversationId, runId);
+
+    expect(result.status).toBe('completed');
+    expect((await store.readSession({ agentSessionId: sessionId }))?.agentSession).toMatchObject({
+      state: 'complete',
+      latestOutput: 'Completed before the stop reached execution.',
+    });
+    expect((await store.state()).sessionStopIntents[sessionId]).toBeUndefined();
+    expect((await store.read({ target: { type: 'issue', id: issueId } })).issue?.status.category).toBe('completed');
+  });
+
+  test('deduplicates concurrent notification delivery before appending events', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    await runtime.restoreLatestConversation();
+
+    await Promise.all([
+      runtime.appendNotificationForTest(DEFAULT_GENERAL_CHANNEL_ID, 'notification:duplicate'),
+      runtime.appendNotificationForTest(DEFAULT_GENERAL_CHANNEL_ID, 'notification:duplicate'),
+    ]);
+
+    const events = await new AgentEventStore(dataRoot).readConversationStreamEvents(DEFAULT_GENERAL_CHANNEL_ID);
+    expect(events.filter((event) => (
+      event.type === 'notification.created' && event.notificationId === 'notification:duplicate'
+    ))).toHaveLength(1);
+  });
+
+  test('recovers a root Issue delivery after notification append without duplicating its attention event', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-root-delivery-recovery-'));
+    roots.push(dataRoot);
+    const { runtime: crashedRuntime } = await createRuntime(dataRoot);
+    const conversation = await crashedRuntime.restoreLatestConversation();
+    const issueStore = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const created = await issueStore.create({
+      issueType: 'issue',
+      fields: { title: 'Recover root delivery' },
+      request: { mode: 'request' },
+      reason: 'Create durable root delivery work.',
+    }, ISSUE_ACTOR, 100, {
+      origin: { type: 'conversation', conversationId: conversation.conversationId },
+    });
+    const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+    const issue = (await issueStore.read({ target: { type: 'issue', id: issueId } })).issue!;
+    const started = await issueStore.startSession({
+      issueId,
+      expectedIssueRevision: issue.revision,
+      request: { mode: 'request' },
+      reason: 'Start root delivery work.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 110);
+    const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+    await issueStore.bindSessionExecution(sessionId, {
+      engine: 'delegation',
+      conversationId: conversation.conversationId,
+      executionId: 'execution:root-delivery-recovery',
+      startedAt: 120,
+    }, ISSUE_ACTOR, 120);
+    await issueStore.syncSessionExecution({
+      engine: 'delegation',
+      executionId: 'execution:root-delivery-recovery',
+      state: 'completed',
+      latestOutput: 'Recovered root delivery result.',
+      completedAt: 130,
+    }, ISSUE_ACTOR, 130);
+
+    const [claimed] = await issueStore.claimTerminalDeliveries('owner:crashed-runtime', 10, 140);
+    expect(claimed).toBeDefined();
+    const crashedInternals = crashedRuntime as unknown as IssueDeliveryRuntimeInternals;
+    crashedInternals.deliverRootIssueToConversation = async () => {
+      throw new Error('Simulated crash after notification append.');
+    };
+    await expectRejects(
+      () => crashedInternals.deliverTerminalIssueDelivery(claimed!),
+      'Simulated crash after notification append.',
+    );
+
+    const eventStore = new AgentEventStore(dataRoot);
+    const eventsAfterCrash = await eventStore.readConversationStreamEvents(conversation.conversationId);
+    expect(eventsAfterCrash.filter((event) => (
+      event.type === 'notification.created'
+      && event.notificationId === `notification-${claimed!.id}`
+    ))).toHaveLength(1);
+    expect(eventsAfterCrash.filter((event) => event.type === 'user_message.created')).toHaveLength(0);
+    expect((await issueStore.state()).terminalDeliveries[claimed!.id]).toMatchObject({
+      status: 'dispatching',
+      dispatchOwnerId: 'owner:crashed-runtime',
+      attemptCount: 1,
+    });
+
+    const { runtime: restartedRuntime } = await createRuntime(dataRoot);
+    await restartedRuntime.restoreLatestConversation();
+    const restartedInternals = restartedRuntime as unknown as IssueDeliveryRuntimeInternals;
+    let resumedDeliveryTurns = 0;
+    restartedInternals.deliverRootIssueToConversation = async () => {
+      resumedDeliveryTurns += 1;
+      return 'delivered';
+    };
+    await restartedInternals.drainTerminalIssueDeliveries();
+    await restartedInternals.drainTerminalIssueDeliveries();
+
+    expect((await issueStore.state()).terminalDeliveries[claimed!.id]).toMatchObject({
+      status: 'delivered',
+      attemptCount: 2,
+    });
+    expect(resumedDeliveryTurns).toBe(1);
+    const recoveredEvents = await new AgentEventStore(dataRoot).readEvents(conversation.conversationId);
+    expect(recoveredEvents.filter((event) => (
+      event.type === 'notification.created'
+      && event.notificationId === `notification-${claimed!.id}`
+    ))).toHaveLength(1);
+  });
+
+  test('seals a persisted silent root notification after restart without calling the Agent again', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-root-response-recovery-'));
+    roots.push(dataRoot);
+    const { runtime: crashedRuntime } = await createRuntime(dataRoot);
+    const conversation = await crashedRuntime.restoreLatestConversation();
+    const issueStore = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const created = await issueStore.create({
+      issueType: 'issue',
+      fields: { title: 'Recover persisted root response' },
+      request: { mode: 'request' },
+      reason: 'Create persisted root response recovery work.',
+    }, ISSUE_ACTOR, 100, {
+      origin: { type: 'conversation', conversationId: conversation.conversationId },
+    });
+    const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+    const issue = (await issueStore.read({ target: { type: 'issue', id: issueId } })).issue!;
+    const started = await issueStore.startSession({
+      issueId,
+      expectedIssueRevision: issue.revision,
+      request: { mode: 'request' },
+      reason: 'Start persisted root response recovery work.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 110);
+    const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+    await issueStore.bindSessionExecution(sessionId, {
+      engine: 'delegation',
+      conversationId: conversation.conversationId,
+      executionId: 'execution:root-response-recovery',
+      startedAt: 120,
+    }, ISSUE_ACTOR, 120);
+    await issueStore.syncSessionExecution({
+      engine: 'delegation',
+      executionId: 'execution:root-response-recovery',
+      state: 'completed',
+      latestOutput: 'Persisted authoritative root result.',
+      completedAt: 130,
+    }, ISSUE_ACTOR, 130);
+
+    const delivery = Object.values((await issueStore.state()).terminalDeliveries)[0]!;
+    const deliveryKey = createHash('sha256').update(delivery.id).digest('hex').slice(0, 24);
+    const runId = `issue-delivery-run-${deliveryKey}-1`;
+    const userMessageId = `user-issue-delivery-${deliveryKey}-1`;
+    const assistantMessageId = `assistant-issue-delivery-${deliveryKey}-1`;
+    const eventStore = new AgentEventStore(dataRoot);
+    let seq = (await eventStore.replay(conversation.conversationId)).latestSeq;
+    const createdAt = Date.now();
+    await eventStore.appendEvents(conversation.conversationId, [
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: `notification-${deliveryKey}`,
+        seq: ++seq,
+        conversationId: conversation.conversationId,
+        type: 'notification.created',
+        createdAt,
+        actor: { type: 'system' },
+        notificationId: `notification-${delivery.id}`,
+        kind: 'task_completed',
+        title: delivery.title,
+        body: delivery.body,
+        source: {
+          type: 'issue',
+          issueId: delivery.issueId,
+          agentSessionId: delivery.agentSessionId,
+          state: delivery.state,
+        },
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: `user-${deliveryKey}`,
+        seq: ++seq,
+        conversationId: conversation.conversationId,
+        type: 'user_message.created',
+        createdAt: createdAt + 1,
+        actor: { type: 'system' },
+        messageId: userMessageId,
+        parentMessageId: null,
+        content: [{
+          type: 'text',
+          text: systemReminder([
+            `<root-issue-delivery id="tenon-issue-delivery:${delivery.id}">`,
+            '<result>Persisted authoritative root result.</result>',
+            '</root-issue-delivery>',
+          ].join('\n')),
+        }],
+        notificationId: `notification-${delivery.id}`,
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: `branch-${deliveryKey}`,
+        seq: ++seq,
+        conversationId: conversation.conversationId,
+        type: 'branch.selected',
+        createdAt: createdAt + 2,
+        actor: { type: 'system' },
+        leafMessageId: userMessageId,
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: `run-${deliveryKey}`,
+        seq: ++seq,
+        conversationId: conversation.conversationId,
+        type: 'run.started',
+        createdAt: createdAt + 3,
+        actor: { type: 'system' },
+        runId,
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: {
+          type: 'conversation',
+          agentId: ASSISTANT_AGENT_ID,
+          conversationId: conversation.conversationId,
+        },
+        trigger: { type: 'message', messageId: userMessageId },
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: `assistant-start-${deliveryKey}`,
+        seq: ++seq,
+        conversationId: conversation.conversationId,
+        type: 'assistant_message.started',
+        createdAt: createdAt + 4,
+        actor: { type: 'agent', agentId: ASSISTANT_AGENT_ID },
+        runId,
+        messageId: assistantMessageId,
+        parentMessageId: userMessageId,
+        providerId: 'test',
+        modelId: 'test-model',
+        apiId: 'test-api',
+      },
+      {
+        v: AGENT_EVENT_VERSION,
+        eventId: `assistant-complete-${deliveryKey}`,
+        seq: ++seq,
+        conversationId: conversation.conversationId,
+        type: 'assistant_message.completed',
+        createdAt: createdAt + 5,
+        actor: { type: 'agent', agentId: ASSISTANT_AGENT_ID },
+        runId,
+        messageId: assistantMessageId,
+        stopReason: 'stop',
+        content: [],
+      },
+    ]);
+
+    const { runtime: restartedRuntime } = await createRuntime(dataRoot);
+    await restartedRuntime.restoreLatestConversation();
+    const restartedInternals = restartedRuntime as unknown as IssueDeliveryRuntimeInternals;
+    await restartedInternals.drainTerminalIssueDeliveries();
+    await restartedInternals.drainTerminalIssueDeliveries();
+
+    expect((await issueStore.state()).terminalDeliveries[delivery.id]).toMatchObject({
+      status: 'delivered',
+      attemptCount: 1,
+    });
+    const runEvents = await eventStore.readRunStreamEvents(runId);
+    expect(runEvents.filter((event) => event.type === 'assistant_message.started')).toHaveLength(1);
+    expect(runEvents.filter((event) => event.type === 'assistant_message.completed')).toHaveLength(1);
+    expect(runEvents.filter((event) => event.type === 'run.result.submitted')).toHaveLength(0);
+    expect(runEvents.filter((event) => event.type === 'run.completed')).toHaveLength(1);
+    const restored = await restartedRuntime.restoreConversation(conversation.conversationId);
+    expect(restored.renderProjection.entities.messages[userMessageId]?.issueNotification).toMatchObject({
+      issueId: delivery.issueId,
+      state: 'complete',
+      title: delivery.title,
+    });
+    expect(restored.renderProjection.entities.messages[assistantMessageId]?.content).toEqual([]);
+  });
+
+  test('releases and retries a parent Agent Session delivery after a transient notify failure', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-parent-delivery-retry-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const conversation = await runtime.restoreLatestConversation();
+    const issueStore = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const parentCreated = await issueStore.create({
+      issueType: 'issue',
+      fields: { title: 'Parent delivery retry' },
+      request: { mode: 'request' },
+      reason: 'Create parent work.',
+    }, ISSUE_ACTOR, 100, {
+      origin: { type: 'conversation', conversationId: conversation.conversationId },
+    });
+    const parentIssueId = parentCreated.targets.find((target) => target.type === 'issue')!.id;
+    const parentIssue = (await issueStore.read({ target: { type: 'issue', id: parentIssueId } })).issue!;
+    const parentStarted = await issueStore.startSession({
+      issueId: parentIssueId,
+      expectedIssueRevision: parentIssue.revision,
+      request: { mode: 'request' },
+      reason: 'Start parent work.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 110);
+    const parentSessionId = parentStarted.targets.find((target) => target.type === 'agent-session')!.id;
+    await issueStore.bindSessionExecution(parentSessionId, {
+      engine: 'delegation',
+      conversationId: conversation.conversationId,
+      executionId: 'execution:parent-delivery-retry',
+      startedAt: 120,
+    }, ISSUE_ACTOR, 120);
+
+    const childCreated = await issueStore.create({
+      issueType: 'issue',
+      fields: { title: 'Child delivery retry' },
+      request: { mode: 'request' },
+      reason: 'Create child work.',
+    }, ISSUE_ACTOR, 130, {
+      origin: { type: 'agent-session', agentSessionId: parentSessionId },
+    });
+    const childIssueId = childCreated.targets.find((target) => target.type === 'issue')!.id;
+    const childIssue = (await issueStore.read({ target: { type: 'issue', id: childIssueId } })).issue!;
+    const childStarted = await issueStore.startSession({
+      issueId: childIssueId,
+      expectedIssueRevision: childIssue.revision,
+      request: { mode: 'request' },
+      reason: 'Start child work.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 140);
+    const childSessionId = childStarted.targets.find((target) => target.type === 'agent-session')!.id;
+    await issueStore.bindSessionExecution(childSessionId, {
+      engine: 'delegation',
+      conversationId: conversation.conversationId,
+      executionId: 'execution:child-delivery-retry',
+      startedAt: 150,
+    }, ISSUE_ACTOR, 150);
+    await issueStore.syncSessionExecution({
+      engine: 'delegation',
+      executionId: 'execution:child-delivery-retry',
+      state: 'completed',
+      latestOutput: 'Child result for retry.',
+      completedAt: 160,
+    }, ISSUE_ACTOR, 160);
+
+    const [delivery] = Object.values((await issueStore.state()).terminalDeliveries);
+    expect(delivery).toMatchObject({
+      issueId: childIssueId,
+      origin: { type: 'agent-session', agentSessionId: parentSessionId },
+      status: 'pending',
+      attemptCount: 0,
+    });
+    let notifyAttempts = 0;
+    const internals = runtime as unknown as IssueDeliveryRuntimeInternals;
+    internals.notifyParentAgentSessionForIssueDelivery = async (agentSessionId, candidate) => {
+      notifyAttempts += 1;
+      expect(agentSessionId).toBe(parentSessionId);
+      expect(candidate.id).toBe(delivery!.id);
+      if (notifyAttempts === 1) throw new Error('Transient parent notify failure.');
+      return notifyAttempts === 2 ? 'deferred' : 'delivered';
+    };
+
+    await internals.drainTerminalIssueDeliveries();
+    expect((await issueStore.state()).terminalDeliveries[delivery!.id]).toMatchObject({
+      status: 'pending',
+      attemptCount: 1,
+      lastError: 'Transient parent notify failure.',
+    });
+    expect(internals.issueDeliveryRetryNotBefore.get(delivery!.id)).toBeGreaterThan(Date.now());
+    internals.issueDeliveryRetryNotBefore.set(delivery!.id, 0);
+
+    await internals.drainTerminalIssueDeliveries();
+    expect((await issueStore.state()).terminalDeliveries[delivery!.id]).toMatchObject({
+      status: 'pending',
+      attemptCount: 2,
+    });
+    await internals.drainTerminalIssueDeliveries();
+    expect((await issueStore.state()).terminalDeliveries[delivery!.id]).toMatchObject({
+      status: 'delivered',
+      attemptCount: 3,
+    });
+    await internals.drainTerminalIssueDeliveries();
+    expect(notifyAttempts).toBe(3);
+  });
+
+  test('schedules restart recovery at the persisted terminal-delivery lease expiry', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-delivery-lease-restart-'));
+    roots.push(dataRoot);
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const created = await store.create({
+      issueType: 'issue',
+      fields: { title: 'Lease recovery delivery' },
+      request: { mode: 'request' },
+      reason: 'Create routed work for lease recovery.',
+    }, ISSUE_ACTOR, 10, { origin: { type: 'conversation', conversationId: 'conversation:origin' } });
+    const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+    const issue = (await store.read({ target: { type: 'issue', id: issueId } })).issue!;
+    const started = await store.startSession({
+      issueId,
+      expectedIssueRevision: issue.revision,
+      request: { mode: 'request' },
+      reason: 'Start work that will fail before dispatch.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 20);
+    const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+    await store.failSessionStart(sessionId, 'Provider unavailable.', ISSUE_ACTOR, 30);
+    const claimNow = Date.now();
+    const [claimed] = await store.claimTerminalDeliveries('owner:crashed', 10, claimNow);
+    expect(claimed).toBeDefined();
+
+    const { runtime } = await createRuntime(dataRoot);
+    const internals = runtime as unknown as IssueDeliveryRuntimeInternals;
+    runtime.ready();
+    await waitFor(() => internals.issueDeliveryRetryTimerAt !== null);
+    expect(internals.issueDeliveryRetryTimerAt).toBe(claimNow + TERMINAL_DELIVERY_CLAIM_LEASE_MS);
+    await runtime.drainPendingWrites();
+  });
+
+  test('drain waits for retry scheduling and prevents later Issue store access', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-delivery-drain-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const internals = runtime as unknown as IssueDeliveryRuntimeInternals & {
+      getIssueStore(): AgentIssueStore;
+    };
+    let dreamRunsAfterDrain = 0;
+    internals.fireDream = async () => {
+      dreamRunsAfterDrain += 1;
+    };
+    const store = internals.getIssueStore();
+    const originalState = store.state.bind(store);
+    let stateReads = 0;
+    let blockNextStateRead = true;
+    let releaseStateRead = () => undefined;
+    const stateReadStarted = new Promise<void>((resolve) => {
+      store.state = async () => {
+        stateReads += 1;
+        if (blockNextStateRead) {
+          blockNextStateRead = false;
+          resolve();
+          await new Promise<void>((release) => {
+            releaseStateRead = release;
+          });
+        }
+        return originalState();
+      };
+    });
+
+    try {
+      internals.scheduleIssueDeliveryRetryDrain();
+      await stateReadStarted;
+      let drained = false;
+      const draining = runtime.drainPendingWrites().then(() => {
+        drained = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(drained).toBe(false);
+      releaseStateRead();
+      await draining;
+
+      const readsAfterDrain = stateReads;
+      expect(internals.dreamSchedulerTimer).toBeNull();
+      expect(internals.issueSchedulerTimer).toBeNull();
+      internals.scheduleIssueDeliveryRetryDrain();
+      await runtime.runScheduledDreamsForTest();
+      await expectRejects(() => runtime.runDreamNow(), 'shutting down');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(stateReads).toBe(readsAfterDrain);
+      expect(dreamRunsAfterDrain).toBe(0);
+      expect(internals.issueDeliveryRetryTimerAt).toBeNull();
+    } finally {
+      releaseStateRead();
+      store.state = originalState;
+    }
+  });
+
+  test('drain waits for a Session startup launched by the Issue scheduler', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-trigger-start-drain-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    await store.create({
+      issueType: 'issue',
+      fields: {
+        title: 'Drain scheduled startup',
+        trigger: { type: 'when-ready' },
+        permissionMode: 'unattended',
+      },
+      request: { mode: 'request' },
+      reason: 'Create ready work for shutdown draining.',
+    }, ISSUE_ACTOR, Date.now(), {
+      origin: { type: 'conversation', conversationId: 'conversation:trigger-start-drain' },
+    });
+    const internals = runtime as unknown as IssueDeliveryRuntimeInternals;
+    let releaseStart = () => undefined;
+    let markStartEntered = () => undefined;
+    let startSettled = false;
+    let drainedAfterStart = false;
+    const startEntered = new Promise<void>((resolve) => {
+      markStartEntered = resolve;
+    });
+    internals.drainTerminalIssueDeliveries = async () => {
+      if (startSettled) drainedAfterStart = true;
+    };
+    internals.startTriggeredIssueSession = async () => {
+      markStartEntered();
+      await new Promise<void>((resolve) => {
+        releaseStart = resolve;
+      });
+      startSettled = true;
+    };
+
+    runtime.runIssueCatchUp();
+    await startEntered;
+    let drained = false;
+    const draining = runtime.drainPendingWrites().then(() => {
+      drained = true;
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(drained).toBe(false);
+    } finally {
+      releaseStart();
+      await draining;
+    }
+    expect(drainedAfterStart).toBe(true);
+  });
+
+  test('records Work human-review acceptance as the trusted local user', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-human-review-'));
+    roots.push(dataRoot);
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const created = await store.create({
+      issueType: 'issue',
+      fields: {
+        title: 'Human review from Work',
+        verificationPolicy: { mode: 'human-review' },
+      },
+      request: { mode: 'request' },
+      reason: 'Create review-gated work.',
+    }, ISSUE_ACTOR, 10, { origin: { type: 'conversation', conversationId: 'conversation:origin' } });
+    const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+    const issue = (await store.read({ target: { type: 'issue', id: issueId } })).issue!;
+    const started = await store.startSession({
+      issueId,
+      expectedIssueRevision: issue.revision,
+      request: { mode: 'request' },
+      reason: 'Produce a result for review.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 20);
+    const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+    await store.bindSessionExecution(sessionId, {
+      engine: 'delegation',
+      conversationId: 'conversation:execution',
+      executionId: 'execution:human-review-work',
+      startedAt: 30,
+    }, ISSUE_ACTOR, 30);
+    await store.syncSessionExecution({
+      engine: 'delegation',
+      executionId: 'execution:human-review-work',
+      state: 'completed',
+      latestOutput: 'Reviewable result.',
+      completedAt: 40,
+    }, ISSUE_ACTOR, 40);
+    const current = (await store.read({ target: { type: 'issue', id: issueId } })).issue!;
+    const { runtime } = await createRuntime(dataRoot);
+
+    const completed = await runtime.completeHumanReview(issueId, current.revision);
+    expect(completed.status).toBe('applied');
+    const detail = await store.read({ target: { type: 'issue', id: issueId }, include: ['activity'] });
+    expect(detail.issue?.status.category).toBe('completed');
+    expect(detail.activity).toContainEqual(expect.objectContaining({
+      actor: { type: 'user', userId: 'local-user' },
+      content: { type: 'status-change', from: 'Started', to: 'Completed' },
+    }));
+    await runtime.drainPendingWrites();
+  });
+
+  test('builds summary, transcript, none, and explicit transcript-fallback continuation context', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-session-continuation-context-'));
+    roots.push(dataRoot);
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const created = await store.create({
+      issueType: 'issue',
+      fields: { title: 'Continuation context source' },
+      request: { mode: 'request' },
+      reason: 'Create prior Session work.',
+    }, ISSUE_ACTOR, 10);
+    const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+    const issue = (await store.read({ target: { type: 'issue', id: issueId } })).issue!;
+    const started = await store.startSession({
+      issueId,
+      expectedIssueRevision: issue.revision,
+      request: { mode: 'request' },
+      reason: 'Create the prior Session.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 20);
+    const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+    const conversationId = 'conversation:continuation-context';
+    const runId = 'execution:continuation-context';
+    await store.bindSessionExecution(sessionId, {
+      engine: 'delegation',
+      conversationId,
+      executionId: runId,
+      startedAt: 30,
+    }, ISSUE_ACTOR, 30);
+    await store.syncSessionExecution({
+      engine: 'delegation',
+      executionId: runId,
+      state: 'completed',
+      latestOutput: 'Stored latest output only.',
+      completedAt: 40,
+    }, ISSUE_ACTOR, 40);
+    const base = (seq: number, type: AgentEvent['type']) => ({
+      v: AGENT_EVENT_VERSION,
+      eventId: `continuation-context-${seq}`,
+      seq,
+      conversationId,
+      type,
+      createdAt: 30 + seq,
+      actor: { type: 'system' as const },
+      runId,
+    });
+    await new AgentEventStore(dataRoot).appendRunStreamEvents(conversationId, runId, [
+      {
+        ...base(1, 'user_message.created'),
+        type: 'user_message.created',
+        messageId: 'continuation-user',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Prior transcript instruction.' }],
+      },
+      {
+        ...base(2, 'assistant_message.started'),
+        type: 'assistant_message.started',
+        messageId: 'continuation-assistant',
+        parentMessageId: 'continuation-user',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(3, 'assistant_message.completed'),
+        type: 'assistant_message.completed',
+        messageId: 'continuation-assistant',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Prior transcript final.' }],
+      },
+    ]);
+    const { runtime } = await createRuntime(dataRoot);
+    const internals = runtime as unknown as IssueDeliveryRuntimeInternals;
+    const input = (context: 'summary' | 'transcript' | 'none'): AgentSessionStartInput => ({
+      issueId,
+      continuation: { previousAgentSessionId: sessionId, intent: 'continue', context },
+      request: { mode: 'request' },
+      reason: 'Continue prior work.',
+    });
+
+    const summary = await internals.agentSessionContinuationContext(input('summary'));
+    expect(summary).toContain('Stored latest output only.');
+    expect(summary).not.toContain('Prior transcript instruction.');
+    expect(await internals.agentSessionContinuationContext(input('none'))).toBeUndefined();
+    const transcript = await internals.agentSessionContinuationContext(input('transcript'));
+    expect(transcript).toContain('Previous Agent Session transcript:');
+    expect(transcript).toContain('Prior transcript instruction.');
+    expect(transcript).toContain('Prior transcript final.');
+
+    const unboundCreated = await store.create({
+      issueType: 'issue',
+      fields: { title: 'Unbound continuation source' },
+      request: { mode: 'request' },
+      reason: 'Create an unbound failed Session.',
+    }, ISSUE_ACTOR, 50);
+    const unboundIssueId = unboundCreated.targets.find((target) => target.type === 'issue')!.id;
+    const unboundIssue = (await store.read({ target: { type: 'issue', id: unboundIssueId } })).issue!;
+    const unboundStarted = await store.startSession({
+      issueId: unboundIssueId,
+      expectedIssueRevision: unboundIssue.revision,
+      request: { mode: 'request' },
+      reason: 'Fail before binding.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 60);
+    const unboundSessionId = unboundStarted.targets.find((target) => target.type === 'agent-session')!.id;
+    await store.failSessionStart(unboundSessionId, 'Binding never existed.', ISSUE_ACTOR, 70);
+    const fallback = await internals.agentSessionContinuationContext({
+      issueId: unboundIssueId,
+      continuation: { previousAgentSessionId: unboundSessionId, intent: 'retry', context: 'transcript' },
+      request: { mode: 'request' },
+      reason: 'Retry with transcript fallback.',
+    });
+    expect(fallback).toContain('Previous Agent Session transcript unavailable.');
+    expect(fallback).toContain('Binding never existed.');
+    await runtime.drainPendingWrites();
+  });
+
+  test('acknowledges a child delivery only after its parent continuation completes', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-parent-delivery-ack-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const conversation = await runtime.restoreLatestConversation();
+    const eventStore = new AgentEventStore(dataRoot);
+    const runId = 'run:parent-delivery-ack';
+    const marker = 'tenon-issue-delivery:delivery-ack';
+    const base = (seq: number, type: AgentEvent['type']) => ({
+      v: AGENT_EVENT_VERSION,
+      eventId: `event-${seq}`,
+      seq,
+      conversationId: conversation.conversationId,
+      type,
+      createdAt: seq,
+      actor: { type: 'system' as const },
+      runId,
+    });
+    await eventStore.appendRunStreamEvents(conversation.conversationId, runId, [
+      {
+        ...base(1, 'user_message.created'),
+        type: 'user_message.created',
+        messageId: 'user-delivery-marker',
+        parentMessageId: null,
+        content: [{ type: 'text', text: marker }],
+      },
+      {
+        ...base(2, 'run.failed'),
+        type: 'run.failed',
+        errorMessage: 'The delegated run was interrupted before conversation restore.',
+      },
+    ]);
+    const internals = runtime as unknown as IssueDeliveryRuntimeInternals;
+    expect(await internals.runLedgerIssueDeliveryState(runId, marker)).toBe('queued');
+
+    await eventStore.appendRunStreamEvents(conversation.conversationId, runId, [
+      {
+        ...base(3, 'run.started'),
+        type: 'run.started',
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: {
+          type: 'conversation',
+          agentId: ASSISTANT_AGENT_ID,
+          conversationId: conversation.conversationId,
+        },
+        disposition: 'detached',
+        trigger: { type: 'system' },
+      },
+      {
+        ...base(4, 'assistant_message.started'),
+        type: 'assistant_message.started',
+        messageId: 'assistant-delivery-tool',
+        parentMessageId: 'user-delivery-marker',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(5, 'assistant_message.completed'),
+        type: 'assistant_message.completed',
+        messageId: 'assistant-delivery-tool',
+        stopReason: 'toolUse',
+        content: [],
+      },
+      {
+        ...base(6, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'active',
+      },
+    ]);
+    expect(await internals.runLedgerIssueDeliveryState(runId, marker)).toBe('queued');
+
+    await eventStore.appendRunStreamEvents(conversation.conversationId, runId, [
+      {
+        ...base(7, 'run.started'),
+        type: 'run.started',
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: {
+          type: 'conversation',
+          agentId: ASSISTANT_AGENT_ID,
+          conversationId: conversation.conversationId,
+        },
+        disposition: 'detached',
+        objectiveStatus: 'active',
+        trigger: { type: 'system' },
+      },
+      {
+        ...base(8, 'tool_result.created'),
+        type: 'tool_result.created',
+        toolCallId: 'tool-delivery',
+        toolName: 'issue_read',
+        messageId: 'tool-result-delivery',
+        parentMessageId: 'assistant-delivery-tool',
+        isError: false,
+        content: [{ type: 'text', text: 'Integrated child state.' }],
+        outputSummary: 'Integrated child state.',
+      },
+      {
+        ...base(9, 'assistant_message.started'),
+        type: 'assistant_message.started',
+        messageId: 'assistant-delivery-final',
+        parentMessageId: 'tool-result-delivery',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(10, 'assistant_message.completed'),
+        type: 'assistant_message.completed',
+        messageId: 'assistant-delivery-final',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Parent continuation complete.' }],
+      },
+      {
+        ...base(11, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'verifying',
+      },
+    ]);
+    expect(await internals.runLedgerIssueDeliveryState(runId, marker, true)).toBe('queued');
+
+    await eventStore.appendRunStreamEvents(conversation.conversationId, runId, [{
+      ...base(12, 'run.completed'),
+      type: 'run.completed',
+      objectiveStatus: 'verified',
+    }]);
+    expect(await internals.runLedgerIssueDeliveryState(runId, marker, true)).toBe('processed');
+  });
+
+  test('requires the final assistant completion in a Run span to be a tool-free stop', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-parent-delivery-final-turn-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const conversation = await runtime.restoreLatestConversation();
+    const eventStore = new AgentEventStore(dataRoot);
+    const internals = runtime as unknown as IssueDeliveryRuntimeInternals;
+    const appendCase = async (
+      runId: string,
+      marker: string,
+      finalContent: Extract<AgentEvent, { type: 'assistant_message.completed' }>['content'],
+      includeLaterToolTurn: boolean,
+    ) => {
+      const base = (seq: number, type: AgentEvent['type']) => ({
+        v: AGENT_EVENT_VERSION,
+        eventId: `${runId}-event-${seq}`,
+        seq,
+        conversationId: conversation.conversationId,
+        type,
+        createdAt: seq,
+        actor: { type: 'system' as const },
+        runId,
+      });
+      const events: AgentEvent[] = [
+        {
+          ...base(1, 'user_message.created'),
+          type: 'user_message.created',
+          messageId: `${runId}-marker`,
+          parentMessageId: null,
+          content: [{ type: 'text', text: marker }],
+        },
+        {
+          ...base(2, 'run.started'),
+          type: 'run.started',
+          agentId: ASSISTANT_AGENT_ID,
+          anchor: { type: 'conversation', agentId: ASSISTANT_AGENT_ID, conversationId: conversation.conversationId },
+          disposition: 'detached',
+          trigger: { type: 'system' },
+        },
+        {
+          ...base(3, 'assistant_message.started'),
+          type: 'assistant_message.started',
+          messageId: `${runId}-stop`,
+          parentMessageId: `${runId}-marker`,
+          providerId: 'test',
+          modelId: 'test',
+        },
+        {
+          ...base(4, 'assistant_message.completed'),
+          type: 'assistant_message.completed',
+          messageId: `${runId}-stop`,
+          stopReason: 'stop',
+          content: finalContent,
+        },
+      ];
+      if (includeLaterToolTurn) {
+        events.push(
+          {
+            ...base(5, 'user_message.created'),
+            type: 'user_message.created',
+            messageId: `${runId}-follow-up`,
+            parentMessageId: `${runId}-stop`,
+            content: [{ type: 'text', text: 'Continue before completing.' }],
+          },
+          {
+            ...base(6, 'assistant_message.started'),
+            type: 'assistant_message.started',
+            messageId: `${runId}-tool-turn`,
+            parentMessageId: `${runId}-follow-up`,
+            providerId: 'test',
+            modelId: 'test',
+          },
+          {
+            ...base(7, 'assistant_message.completed'),
+            type: 'assistant_message.completed',
+            messageId: `${runId}-tool-turn`,
+            stopReason: 'toolUse',
+            content: [{ type: 'toolCall', id: 'tool-late', name: 'issue_read', arguments: {} }],
+          },
+        );
+      }
+      const completionSeq = includeLaterToolTurn ? 8 : 5;
+      events.push({
+        ...base(completionSeq, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'active',
+      });
+      await eventStore.appendRunStreamEvents(conversation.conversationId, runId, events);
+    };
+
+    await appendCase(
+      'run:delivery-stop-before-tool',
+      'tenon-issue-delivery:stop-before-tool',
+      [{ type: 'text', text: 'Premature final response.' }],
+      true,
+    );
+    expect(await internals.runLedgerIssueDeliveryState(
+      'run:delivery-stop-before-tool',
+      'tenon-issue-delivery:stop-before-tool',
+    )).toBe('queued');
+
+    await appendCase(
+      'run:delivery-stop-with-tool',
+      'tenon-issue-delivery:stop-with-tool',
+      [
+        { type: 'text', text: 'Claims completion but still calls a tool.' },
+        { type: 'toolCall', id: 'tool-inline', name: 'issue_read', arguments: {} },
+      ],
+      false,
+    );
+    expect(await internals.runLedgerIssueDeliveryState(
+      'run:delivery-stop-with-tool',
+      'tenon-issue-delivery:stop-with-tool',
+    )).toBe('queued');
+  });
+
+  test('reconciles a processed child delivery from the Run ledger when Run metadata is stale', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-parent-delivery-stale-meta-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const conversation = await runtime.restoreLatestConversation();
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const eventStore = new AgentEventStore(dataRoot);
+    const parentCreated = await store.create({
+      issueType: 'issue',
+      fields: { title: 'Parent stale-meta work' },
+      request: { mode: 'request' },
+      reason: 'Create parent stale-meta work.',
+    }, ISSUE_ACTOR, 10);
+    const parentIssueId = parentCreated.targets.find((target) => target.type === 'issue')!.id;
+    const parentIssue = (await store.read({ target: { type: 'issue', id: parentIssueId } })).issue!;
+    const parentStarted = await store.startSession({
+      issueId: parentIssueId,
+      expectedIssueRevision: parentIssue.revision,
+      request: { mode: 'request' },
+      reason: 'Start parent stale-meta work.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 20);
+    const parentSessionId = parentStarted.targets.find((target) => target.type === 'agent-session')!.id;
+    const runId = 'child-parent-delivery-stale-meta';
+    await store.bindSessionExecution(parentSessionId, {
+      engine: 'delegation',
+      conversationId: conversation.conversationId,
+      executionId: runId,
+      startedAt: 25,
+    }, ISSUE_ACTOR, 25);
+    const childCreated = await store.create({
+      issueType: 'issue',
+      fields: { title: 'Child stale-meta work' },
+      request: { mode: 'request' },
+      reason: 'Create child stale-meta work.',
+    }, ISSUE_ACTOR, 30, { origin: { type: 'agent-session', agentSessionId: parentSessionId } });
+    const childIssueId = childCreated.targets.find((target) => target.type === 'issue')!.id;
+    const childIssue = (await store.read({ target: { type: 'issue', id: childIssueId } })).issue!;
+    await store.update({
+      target: { type: 'issue', id: childIssueId, expectedRevision: childIssue.revision },
+      change: { type: 'transition', status: { name: 'Canceled', category: 'canceled' } },
+      request: { mode: 'request' },
+      reason: 'Cancel child stale-meta work.',
+    }, ISSUE_ACTOR, 40);
+    const delivery = Object.values((await store.state()).terminalDeliveries)[0]!;
+    const marker = `tenon-issue-delivery:${delivery.id}`;
+    const base = (seq: number, type: AgentEvent['type']) => ({
+      v: AGENT_EVENT_VERSION,
+      eventId: `stale-meta-event-${seq}`,
+      seq,
+      conversationId: conversation.conversationId,
+      type,
+      createdAt: seq,
+      actor: { type: 'system' as const },
+      runId,
+    });
+    await eventStore.appendRunStreamEvents(conversation.conversationId, runId, [
+      {
+        ...base(1, 'user_message.created'),
+        type: 'user_message.created',
+        messageId: 'stale-meta-initial-user',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Wait for the child result.' }],
+      },
+      {
+        ...base(2, 'run.started'),
+        type: 'run.started',
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: { type: 'conversation', agentId: ASSISTANT_AGENT_ID, conversationId: conversation.conversationId },
+        disposition: 'detached',
+        objective: 'Integrate a canceled child.',
+        objectiveStatus: 'active',
+        trigger: { type: 'system' },
+      },
+      {
+        ...base(3, 'assistant_message.started'),
+        type: 'assistant_message.started',
+        messageId: 'stale-meta-waiting-response',
+        parentMessageId: 'stale-meta-initial-user',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(4, 'assistant_message.completed'),
+        type: 'assistant_message.completed',
+        messageId: 'stale-meta-waiting-response',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Parent is waiting for the child result.' }],
+      },
+      {
+        ...base(5, 'run.result.submitted'),
+        type: 'run.result.submitted',
+        summary: 'Parent is waiting for the child result.',
+        source: 'final_assistant_message',
+      },
+      {
+        ...base(6, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'active',
+      },
+      {
+        ...base(7, 'user_message.created'),
+        type: 'user_message.created',
+        messageId: 'stale-meta-marker',
+        parentMessageId: 'stale-meta-waiting-response',
+        content: [{ type: 'text', text: marker }],
+      },
+      {
+        ...base(8, 'run.started'),
+        type: 'run.started',
+        agentId: ASSISTANT_AGENT_ID,
+        anchor: { type: 'conversation', agentId: ASSISTANT_AGENT_ID, conversationId: conversation.conversationId },
+        disposition: 'detached',
+        objectiveStatus: 'active',
+        trigger: { type: 'system' },
+      },
+      {
+        ...base(9, 'assistant_message.started'),
+        type: 'assistant_message.started',
+        messageId: 'stale-meta-final-response',
+        parentMessageId: 'stale-meta-marker',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(10, 'assistant_message.completed'),
+        type: 'assistant_message.completed',
+        messageId: 'stale-meta-final-response',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Handled the canceled child with the current result.' }],
+      },
+      {
+        ...base(11, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'active',
+      },
+    ]);
+    const completedMeta = (await eventStore.readRunMetaProjection(runId))!;
+    await eventStore.writeRunMeta({
+      ...completedMeta,
+      execution: { status: 'running' },
+      objective: completedMeta.objective
+        ? { ...completedMeta.objective, latestSubmissionSeq: 5 }
+        : undefined,
+      updatedAt: 9,
+      latestSeq: 9,
+    });
+
+    const { runtime: restoredRuntime } = await createRuntime(dataRoot);
+    await restoredRuntime.restoreConversation(conversation.conversationId);
+    expect((await eventStore.readRunMetaProjection(runId))?.execution.status).toBe('completed');
+
+    const internals = restoredRuntime as unknown as IssueDeliveryRuntimeInternals;
+    expect(await internals.notifyParentAgentSessionForIssueDelivery(parentSessionId, delivery)).toBe('delivered');
+    expect((await store.state()).terminalDeliveries[delivery.id]?.status).toBe('delivered');
+    expect((await store.readSession({ agentSessionId: parentSessionId }))?.agentSession).toMatchObject({
+      state: 'complete',
+      latestOutput: 'Handled the canceled child with the current result.',
+    });
+    expect((await store.read({ target: { type: 'issue', id: parentIssueId } })).issue?.status.category).toBe('completed');
+    expect((await eventStore.readRunMetaProjection(runId))?.execution.status).toBe('completed');
+  });
+
+  test('keeps a child delivery queued when the parent objective is blocked', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-parent-delivery-blocked-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const conversation = await runtime.restoreLatestConversation();
+    const eventStore = new AgentEventStore(dataRoot);
+    const runId = 'run:parent-delivery-blocked';
+    const marker = 'tenon-issue-delivery:delivery-blocked';
+    const base = (seq: number, type: AgentEvent['type']) => ({
+      v: AGENT_EVENT_VERSION,
+      eventId: `blocked-event-${seq}`,
+      seq,
+      conversationId: conversation.conversationId,
+      type,
+      createdAt: seq,
+      actor: { type: 'system' as const },
+      runId,
+    });
+    await eventStore.appendRunStreamEvents(conversation.conversationId, runId, [
+      {
+        ...base(1, 'user_message.created'),
+        type: 'user_message.created',
+        messageId: 'blocked-delivery-marker',
+        parentMessageId: null,
+        content: [{ type: 'text', text: marker }],
+      },
+      {
+        ...base(2, 'assistant_message.started'),
+        type: 'assistant_message.started',
+        messageId: 'blocked-delivery-response',
+        parentMessageId: 'blocked-delivery-marker',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(3, 'assistant_message.completed'),
+        type: 'assistant_message.completed',
+        messageId: 'blocked-delivery-response',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Candidate parent result.' }],
+      },
+      {
+        ...base(4, 'run.completed'),
+        type: 'run.completed',
+        objectiveStatus: 'blocked',
+      },
+    ]);
+
+    const internals = runtime as unknown as IssueDeliveryRuntimeInternals;
+    expect(await internals.runLedgerIssueDeliveryState(runId, marker)).toBe('queued');
+    expect(await internals.runLedgerIssueDeliveryState(runId, marker, true)).toBe('queued');
+  });
+
+  test('tracks an Issue delivery marker through repeated compaction carriers', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-delivery-compaction-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const conversation = await runtime.restoreLatestConversation();
+    const eventStore = new AgentEventStore(dataRoot);
+    const runId = 'run:delivery-compaction';
+    const marker = 'tenon-issue-delivery:delivery-compaction';
+    const exactPayload = `<child-issue-delivery id="${marker}"><result>Exact child payload.</result></child-issue-delivery>`;
+    const base = (seq: number, type: AgentEvent['type']) => ({
+      v: AGENT_EVENT_VERSION,
+      eventId: `compact-event-${seq}`,
+      seq,
+      conversationId: conversation.conversationId,
+      type,
+      createdAt: seq,
+      actor: { type: 'system' as const },
+      runId,
+    });
+    await eventStore.appendRunStreamEvents(conversation.conversationId, runId, [
+      {
+        ...base(1, 'user_message.created'),
+        type: 'user_message.created',
+        messageId: 'delivery-marker',
+        parentMessageId: null,
+        content: [{ type: 'text', text: exactPayload }],
+      },
+      {
+        ...base(2, 'assistant_message.started'),
+        type: 'assistant_message.started',
+        messageId: 'failed-response',
+        parentMessageId: 'delivery-marker',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(3, 'assistant_message.completed'),
+        type: 'assistant_message.completed',
+        messageId: 'failed-response',
+        stopReason: 'error',
+        content: [],
+      },
+      {
+        ...base(4, 'compaction.completed'),
+        type: 'compaction.completed',
+        messageId: 'compact-root-1',
+        summary: 'Summary intentionally omits the child result.',
+        source: { fromMessageId: 'delivery-marker', throughMessageId: 'failed-response' },
+        trigger: 'reactive',
+      },
+      {
+        ...base(5, 'user_message.created'),
+        type: 'user_message.created',
+        messageId: 'compact-root-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: `Conversation compacted.\n${exactPayload}` }],
+      },
+      {
+        ...base(6, 'compaction.completed'),
+        type: 'compaction.completed',
+        messageId: 'compact-root-2',
+        summary: 'Second summary also omits the child result.',
+        source: { fromMessageId: 'compact-root-1', throughMessageId: 'compact-root-1' },
+        trigger: 'auto',
+      },
+      {
+        ...base(7, 'user_message.created'),
+        type: 'user_message.created',
+        messageId: 'compact-root-2',
+        parentMessageId: null,
+        content: [{ type: 'text', text: `Conversation compacted again.\n${exactPayload}` }],
+      },
+    ]);
+    const internals = runtime as unknown as IssueDeliveryRuntimeInternals;
+    expect(await internals.runLedgerIssueDeliveryState(runId, marker)).toBe('queued');
+
+    await eventStore.appendRunStreamEvents(conversation.conversationId, runId, [
+      {
+        ...base(8, 'assistant_message.started'),
+        type: 'assistant_message.started',
+        messageId: 'successful-response',
+        parentMessageId: 'compact-root-2',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(9, 'assistant_message.completed'),
+        type: 'assistant_message.completed',
+        messageId: 'successful-response',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Integrated exact child payload.' }],
+      },
+      {
+        ...base(10, 'run.completed'),
+        type: 'run.completed',
+      },
+    ]);
+
+    expect(await internals.runLedgerIssueDeliveryState(runId, marker)).toBe('processed');
+    const activePath = getAgentEventActivePath(await eventStore.replayRunStream(runId));
+    expect(JSON.stringify(activePath[0]?.content)).toContain('Exact child payload.');
+  });
+
   test('exposes the built-in Tenon assistant as a directly editable agent definition', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     roots.push(dataRoot);
@@ -398,6 +2271,141 @@ describe('agent runtime conversations', () => {
     await runtime.deleteConversation(channel.conversationId);
     expect((await runtime.listConversations()).map((entry) => entry.id))
       .toEqual([DEFAULT_GENERAL_CHANNEL_ID, DEFAULT_DREAM_CHANNEL_ID]);
+  });
+
+  test('blocks Channel deletion while Issue routing still references it', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversation-routing-delete-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const channel = await runtime.createConversation({ title: 'Routed work' });
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+
+    const rootCreated = await store.create({
+      issueType: 'issue',
+      fields: { title: 'Root routed work' },
+      request: { mode: 'request' },
+      reason: 'Create root routed work.',
+    }, ISSUE_ACTOR, 10, {
+      origin: { type: 'conversation', conversationId: channel.conversationId },
+    });
+    const rootIssueId = rootCreated.targets.find((target) => target.type === 'issue')!.id;
+    await expectRejects(
+      () => runtime.deleteConversation(channel.conversationId),
+      'active Issue routing',
+    );
+    const rootIssue = (await store.read({ target: { type: 'issue', id: rootIssueId } })).issue!;
+    await store.update({
+      target: { type: 'issue', id: rootIssueId, expectedRevision: rootIssue.revision },
+      change: { type: 'transition', status: { name: 'Canceled', category: 'canceled' } },
+      request: { mode: 'request' },
+      reason: 'Cancel root routed work.',
+    }, ISSUE_ACTOR, 20);
+
+    const recurringCreated = await store.create({
+      issueType: 'recurring-issue',
+      fields: {
+        titleTemplate: 'Recurring routed work',
+        cadence: { type: 'daily', time: '09:00' },
+        timeZone: 'UTC',
+        issueTemplate: { permissionMode: 'unattended' },
+      },
+      request: { mode: 'request' },
+      reason: 'Create recurring routed work.',
+    }, ISSUE_ACTOR, 30, {
+      origin: { type: 'conversation', conversationId: channel.conversationId },
+    });
+    const recurringIssueId = recurringCreated.targets.find((target) => target.type === 'recurring-issue')!.id;
+    await expectRejects(
+      () => runtime.deleteConversation(channel.conversationId),
+      'active Issue routing',
+    );
+    const recurringIssue = (await store.read({
+      target: { type: 'recurring-issue', id: recurringIssueId },
+    })).recurringIssue!;
+    await store.update({
+      target: {
+        type: 'recurring-issue',
+        id: recurringIssueId,
+        expectedRevision: recurringIssue.revision,
+      },
+      change: { type: 'archive' },
+      request: { mode: 'request' },
+      reason: 'Archive recurring routed work.',
+    }, ISSUE_ACTOR, 40);
+
+    await runtime.deleteConversation(channel.conversationId);
+    expect((await runtime.listConversations()).some((entry) => entry.id === channel.conversationId)).toBe(false);
+  });
+
+  test('keeps a parent Session execution Channel until child delivery is acknowledged', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-parent-binding-delete-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    const channel = await runtime.createConversation({ title: 'Parent execution' });
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const parentCreated = await store.create({
+      issueType: 'issue',
+      fields: { title: 'Parent binding work' },
+      request: { mode: 'request' },
+      reason: 'Create parent binding work.',
+    }, ISSUE_ACTOR, 10);
+    const parentIssueId = parentCreated.targets.find((target) => target.type === 'issue')!.id;
+    const parentIssue = (await store.read({ target: { type: 'issue', id: parentIssueId } })).issue!;
+    const parentStarted = await store.startSession({
+      issueId: parentIssueId,
+      expectedIssueRevision: parentIssue.revision,
+      request: { mode: 'request' },
+      reason: 'Start parent binding work.',
+    }, { type: 'runtime-action', actor: ISSUE_ACTOR }, ISSUE_ACTOR, 20);
+    const parentSessionId = parentStarted.targets.find((target) => target.type === 'agent-session')!.id;
+    await store.bindSessionExecution(parentSessionId, {
+      engine: 'delegation',
+      conversationId: channel.conversationId,
+      executionId: 'execution:parent-binding-delete',
+      startedAt: 25,
+    }, ISSUE_ACTOR, 25);
+    const childCreated = await store.create({
+      issueType: 'issue',
+      fields: { title: 'Child binding work' },
+      request: { mode: 'request' },
+      reason: 'Create child binding work.',
+    }, ISSUE_ACTOR, 30, {
+      origin: { type: 'agent-session', agentSessionId: parentSessionId },
+    });
+    const childIssueId = childCreated.targets.find((target) => target.type === 'issue')!.id;
+    await store.syncSessionExecution({
+      engine: 'delegation',
+      executionId: 'execution:parent-binding-delete',
+      state: 'completed',
+      latestOutput: 'Waiting for child work.',
+      completedAt: 35,
+    }, ISSUE_ACTOR, 35);
+
+    await expectRejects(
+      () => runtime.deleteConversation(channel.conversationId),
+      'active Issue routing',
+    );
+    await expectRejects(
+      () => runtime.resetConversation(channel.conversationId),
+      'active Agent Session routing',
+    );
+    const childIssue = (await store.read({ target: { type: 'issue', id: childIssueId } })).issue!;
+    await store.update({
+      target: { type: 'issue', id: childIssueId, expectedRevision: childIssue.revision },
+      change: { type: 'transition', status: { name: 'Canceled', category: 'canceled' } },
+      request: { mode: 'request' },
+      reason: 'Cancel child binding work.',
+    }, ISSUE_ACTOR, 40);
+    await expectRejects(
+      () => runtime.deleteConversation(channel.conversationId),
+      'active Issue routing',
+    );
+    const [delivery] = await store.claimTerminalDeliveries('owner:delete-test', 10, 50);
+    expect(delivery).toBeDefined();
+    expect(await store.completeTerminalDelivery(delivery!.id, 'owner:delete-test', 60)).toBe(true);
+
+    await runtime.deleteConversation(channel.conversationId);
+    expect((await runtime.listConversations()).some((entry) => entry.id === channel.conversationId)).toBe(false);
   });
 
   test('Channel creation can be untitled; a channel always has exactly {user, Neva}', async () => {

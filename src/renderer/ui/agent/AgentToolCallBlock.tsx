@@ -111,6 +111,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
 
+function nestedSubject(args: Record<string, unknown>, objectKey: string, ...subjectKeys: string[]): string | null {
+  const nested = args[objectKey];
+  return isRecord(nested) ? pickSubject(nested, ...subjectKeys) : null;
+}
+
 type ToolCallLabels = Messages['agent']['toolCall'];
 type ToolVerbForms = { base: string; pending: string; done: string };
 
@@ -158,15 +163,31 @@ function firstQuestionSubject(args: Record<string, unknown>): string | null {
 
 export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels: ToolCallLabels): string {
   const verbs = labels.verbs;
-  if (toolCall.name === 'spawn_run') {
-    const subject = pickSubject(toolCall.arguments, 'description', 'objective', 'runProfile');
-    return withSubject(verbByStatus(verbs.runChildAgent, status, labels), subject, labels);
-  }
-  if (toolCall.name === 'run_status') return verbByStatus(verbs.checkChildAgent, status, labels);
-  if (toolCall.name === 'run_steer') return verbByStatus(verbs.messageChildAgent, status, labels);
-  if (toolCall.name === 'run_stop') return verbByStatus(verbs.stopChildRun, status, labels);
-  if (toolCall.name === 'run_amend') return verbByStatus(verbs.messageChildAgent, status, labels);
   const args = toolCall.arguments;
+  if (toolCall.name === 'issue_search') {
+    return withSubject(verbByStatus(verbs.searchIssues, status, labels), pickSubject(args, 'text'), labels);
+  }
+  if (toolCall.name === 'issue_read') {
+    return withSubject(verbByStatus(verbs.readIssue, status, labels), nestedSubject(args, 'target', 'id'), labels);
+  }
+  if (toolCall.name === 'issue_create') {
+    return withSubject(verbByStatus(verbs.createIssue, status, labels), nestedSubject(args, 'fields', 'title', 'titleTemplate'), labels);
+  }
+  if (toolCall.name === 'issue_update') {
+    return withSubject(verbByStatus(verbs.updateIssue, status, labels), nestedSubject(args, 'target', 'id'), labels);
+  }
+  if (toolCall.name === 'agent_session_start') {
+    return withSubject(verbByStatus(verbs.startAgentSession, status, labels), pickSubject(args, 'issueId', 'agentSessionId', 'sessionId'), labels);
+  }
+  if (toolCall.name === 'agent_session_read') {
+    return withSubject(verbByStatus(verbs.readAgentSession, status, labels), pickSubject(args, 'agentSessionId', 'sessionId', 'issueId'), labels);
+  }
+  if (toolCall.name === 'agent_session_send_message') {
+    return withSubject(verbByStatus(verbs.messageAgentSession, status, labels), pickSubject(args, 'agentSessionId', 'sessionId', 'message'), labels);
+  }
+  if (toolCall.name === 'agent_session_stop') {
+    return withSubject(verbByStatus(verbs.stopAgentSession, status, labels), pickSubject(args, 'agentSessionId', 'sessionId', 'issueId'), labels);
+  }
   if (toolCall.name === 'recall') {
     return withSubject(verbByStatus(verbs.recallMemory, status, labels), pickSubject(args, 'query'), labels);
   }
@@ -252,14 +273,6 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
     status,
     labels,
   );
-}
-
-function isRunControlTool(toolName: string): boolean {
-  return toolName === 'spawn_run'
-    || toolName === 'run_status'
-    || toolName === 'run_steer'
-    || toolName === 'run_amend'
-    || toolName === 'run_stop';
 }
 
 export function runToolStatus(run: AgentRenderRunEntity): ToolStatus {

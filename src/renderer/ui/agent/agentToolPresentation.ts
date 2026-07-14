@@ -8,6 +8,8 @@ import {
   FileReadToolIcon,
   FileWriteToolIcon,
   GenericToolIcon,
+  SearchIcon,
+  SendIcon,
   NodeCreateToolIcon,
   NodeDeleteToolIcon,
   NodeEditToolIcon,
@@ -15,10 +17,9 @@ import {
   NodeSearchToolIcon,
   OutlineUndoStackToolIcon,
   PastChatsToolIcon,
+  PlayIcon,
   QuestionToolIcon,
   RestoreIcon,
-  RunMessageToolIcon,
-  RunSpawnToolIcon,
   RunStatusToolIcon,
   SkillAuthorToolIcon,
   SkillIcon,
@@ -42,12 +43,13 @@ export type ToolActivityKind =
   | 'nodeRestore'
   | 'nodeRead'
   | 'nodeSearch'
-  | 'run'
   | 'web'
   | 'memory'
   | 'skill'
   | 'question'
   | 'history'
+  | 'issue'
+  | 'session'
   | 'other';
 
 export interface AgentToolPresentation {
@@ -55,19 +57,26 @@ export interface AgentToolPresentation {
   icon: AppIcon;
 }
 
-const RUN_STATUS_TOOLS = new Set(['run_status']);
-const RUN_MESSAGE_TOOLS = new Set(['run_steer', 'run_amend']);
-const RUN_STOP_TOOLS = new Set(['run_stop']);
-const RUN_SPAWN_TOOLS = new Set(['spawn_run']);
-
 export function agentToolPresentation(toolCall: ToolCall): AgentToolPresentation {
   const name = toolCall.name;
-  if (RUN_SPAWN_TOOLS.has(name)) return { activityKind: 'run', icon: RunSpawnToolIcon };
-  if (RUN_STATUS_TOOLS.has(name)) return { activityKind: 'run', icon: RunStatusToolIcon };
-  if (RUN_MESSAGE_TOOLS.has(name)) return { activityKind: 'run', icon: RunMessageToolIcon };
-  if (RUN_STOP_TOOLS.has(name)) return { activityKind: 'run', icon: BashStopToolIcon };
 
   switch (name) {
+    case 'issue_search':
+      return { activityKind: 'issue', icon: SearchIcon };
+    case 'issue_read':
+      return { activityKind: 'issue', icon: NodeReadToolIcon };
+    case 'issue_create':
+      return { activityKind: 'issue', icon: NodeCreateToolIcon };
+    case 'issue_update':
+      return { activityKind: 'issue', icon: NodeEditToolIcon };
+    case 'agent_session_start':
+      return { activityKind: 'session', icon: PlayIcon };
+    case 'agent_session_read':
+      return { activityKind: 'session', icon: RunStatusToolIcon };
+    case 'agent_session_send_message':
+      return { activityKind: 'session', icon: SendIcon };
+    case 'agent_session_stop':
+      return { activityKind: 'session', icon: BashStopToolIcon };
     case 'bash':
       return { activityKind: 'command', icon: TerminalIcon };
     case 'bash_stop':

@@ -28,8 +28,6 @@ export const ids = {
   alpha: 'node-alpha',
   beta: 'node-beta',
   gamma: 'node-gamma',
-  commandNode: 'node-command',
-  commandScheduleEntry: 'field-entry-command-schedule',
 } as const;
 
 interface MockFixtureOptions {
@@ -40,8 +38,6 @@ interface MockFixtureOptions {
   oauthProvider?: boolean;
   /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
   noProvider?: boolean;
-  /** Adds an armed `command` (scheduled routine) node under today for the command-node specs. */
-  commandNode?: boolean;
   /** Preloads remembered permission grants for settings/security specs. */
   permissionGrants?: string[];
   /** Preloads user blocklist rules for settings/security specs. */
@@ -85,6 +81,11 @@ type E2EWindow = Window & {
     emitDocumentEvent: (event: unknown) => void;
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
+    setAgentIssues: (
+      rows: unknown[],
+      details?: Record<string, unknown>,
+      sessionTranscripts?: Record<string, unknown>,
+    ) => void;
     setAgentRuns: (runs: unknown[]) => void;
     setAgentMessageContextMenuAction: (action: 'copy' | 'retry' | 'regenerate' | 'details' | null) => void;
   };
@@ -303,7 +304,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      videoDurationMs?: number;
 	      configKey?: string;
 	      refRole?: string;
-	      commandSchedule?: string;
 	    };
     type CreateNodeTree = {
       content: RichText;
@@ -348,6 +348,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const documentListeners: Array<(event: unknown) => void> = [];
     const oauthListeners: Array<(envelope: unknown) => void> = [];
     let messageContextMenuAction: 'copy' | 'retry' | 'regenerate' | 'details' | null = null;
+    let agentIssueRows: unknown[] = [];
+    let agentIssueDetails: Record<string, unknown> = {};
+    let agentSessionTranscripts: Record<string, unknown> = {};
     let agentRuns: unknown[] = [];
     const providerApiKeys = new Map<string, string>([['openai', 'sk-openai-saved']]);
     // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
@@ -1557,20 +1560,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.alpha, 'Alpha', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.beta, 'Beta', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.gamma, 'Gamma', { parentId: ids.today, completedAt: 0 });
-    if (options.commandNode) {
-      makeNode(ids.commandNode, 'Summarize my unread feeds and post the highlights', {
-        type: 'command',
-        parentId: ids.today,
-        commandSchedule: '2026-06-09T09:00 RRULE:FREQ=DAILY',
-      });
-      // The node-native Schedule config row — a real field entry pointing at the
-      // built-in system field, as `setCommandNode` seeds it.
-      makeNode(ids.commandScheduleEntry, '', {
-        type: 'fieldEntry',
-        parentId: ids.commandNode,
-        fieldDefId: 'sys:commandSchedule',
-      });
-    }
     appendChild(ids.workspace, ids.root);
     for (const childId of [ids.daily, ids.library, ids.schema, ids.searches, ids.trash]) appendChild(ids.root, childId);
 	    appendChild(ids.searches, ids.recents);
@@ -1593,10 +1582,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     if (options.dateField) appendChild(ids.today, ids.dueEntry);
     if (options.referenceField) appendChild(ids.today, ids.referencesEntry);
     for (const childId of [ids.alpha, ids.beta, ids.gamma]) appendChild(ids.today, childId);
-    if (options.commandNode) {
-      appendChild(ids.today, ids.commandNode);
-      appendChild(ids.commandNode, ids.commandScheduleEntry);
-    }
 
     Object.defineProperty(navigator, 'clipboard', {
       value: {
@@ -1676,6 +1661,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       emitDocumentEvent,
       emitOAuthEvent,
       resolveOAuthLogin,
+      setAgentIssues: (rows, details = {}, sessionTranscripts = {}) => {
+        agentIssueRows = rows;
+        agentIssueDetails = details;
+        agentSessionTranscripts = sessionTranscripts;
+      },
       setAgentRuns: (runs) => { agentRuns = runs; },
       setAgentMessageContextMenuAction: (action) => { messageContextMenuAction = action; },
     };
@@ -1899,6 +1889,61 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(agentConversations) as T;
         }
         if (cmd === 'agent_list_runs') return clone(agentRuns) as T;
+        if (cmd === 'agent_issue_search') {
+          const targets = Array.isArray(args.targets) ? new Set(args.targets.map(String)) : null;
+          const filter = args.filter && typeof args.filter === 'object' ? args.filter as Record<string, unknown> : {};
+          const statusCategories = Array.isArray(filter.statusCategories) ? new Set(filter.statusCategories.map(String)) : null;
+          const rows = agentIssueRows.filter((row) => {
+            if (!row || typeof row !== 'object') return false;
+            const record = row as Record<string, unknown>;
+            const target = record.target && typeof record.target === 'object' ? record.target as Record<string, unknown> : {};
+            if (targets && !targets.has(String(target.type))) return false;
+            if (filter.hasActiveSession === true && record.hasActiveSession !== true) return false;
+            if (filter.hasActiveSession === false && record.hasActiveSession === true) return false;
+            const hasParentIssue = typeof record.parentIssueId === 'string' && record.parentIssueId.length > 0;
+            if (filter.hasParentIssue === true && !hasParentIssue) return false;
+            if (filter.hasParentIssue === false && hasParentIssue) return false;
+            if (filter.archived === false && record.archived === true) return false;
+            if (statusCategories) {
+              const buckets = [
+                ...(Array.isArray(record.viewBuckets) ? record.viewBuckets.map(String) : []),
+                ...(Array.isArray(record.statusCategories) ? record.statusCategories.map(String) : []),
+                String(record.statusCategory ?? ''),
+              ].filter(Boolean);
+              if (!buckets.some((bucket) => statusCategories.has(bucket))) return false;
+            }
+            return true;
+          });
+          return clone({ rows }) as T;
+        }
+        if (cmd === 'agent_issue_read') {
+          const target = args.target && typeof args.target === 'object' ? args.target as Record<string, unknown> : {};
+          const key = `${String(target.type)}:${String(target.id)}`;
+          return clone(agentIssueDetails[key] ?? { target }) as T;
+        }
+        if (cmd === 'agent_session_read') {
+          const agentSessionId = String(args.agentSessionId ?? '');
+          for (const detail of Object.values(agentIssueDetails)) {
+            if (!detail || typeof detail !== 'object') continue;
+            const sessions = Array.isArray((detail as Record<string, unknown>).sessions)
+              ? (detail as Record<string, unknown>).sessions as Record<string, unknown>[]
+              : [];
+            const session = sessions.find((entry) => String(entry.id ?? '') === agentSessionId);
+            if (session) {
+              return clone({
+                agentSession: session,
+                activity: Array.isArray((detail as Record<string, unknown>).activity)
+                  ? (detail as Record<string, unknown>).activity
+                  : [],
+              }) as T;
+            }
+          }
+          return clone(null) as T;
+        }
+        if (cmd === 'agent_session_transcript') {
+          const agentSessionId = String(args.agentSessionId ?? '');
+          return clone(agentSessionTranscripts[agentSessionId] ?? null) as T;
+        }
         if (cmd === 'agent_rename_conversation') {
           const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
           if (target) {
@@ -2190,7 +2235,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 ancestors: [],
                 subRuns: [],
                 verificationRuns: [],
-                transcriptMessageCount: childRunTranscriptMessages.length,
+                transcriptMessageCount: Array.isArray(runEntry?.transcriptMessages)
+                  ? runEntry.transcriptMessages.length
+                  : childRunTranscriptMessages.length,
               }
             : null) as T;
         }
@@ -2205,9 +2252,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           ));
           const fixtureConversationId = runId === 'child-run-1' ? ASSISTANT_DM_ID : generalChannelId;
           const conversationId = String(runEntry?.conversationId ?? fixtureConversationId);
-          return clone((runId === 'child-run-1' || runId === 'child-run-source-e2e')
-            && (!requestedConversationId || requestedConversationId === conversationId)
-            ? { messages: childRunTranscriptMessages }
+          const transcriptMessages = Array.isArray(runEntry?.transcriptMessages)
+            ? runEntry.transcriptMessages
+            : runId === 'child-run-1' || runId === 'child-run-source-e2e'
+              ? childRunTranscriptMessages
+              : null;
+          return clone(transcriptMessages && (!requestedConversationId || requestedConversationId === conversationId)
+            ? { messages: transcriptMessages }
             : null) as T;
         }
         if (cmd === 'agent_run_conversation_id') {
@@ -3197,34 +3248,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ) {
           return clone(outcome());
         }
-        if (cmd === 'set_command_node') {
-          const node = nodes.get(String(args.nodeId));
-          if (node) {
-            node.type = 'command';
-            // Seed the node-native Schedule config row if absent — find-or-create,
-            // mirroring `ensureCommandFieldEntriesDirect`.
-            const seedField = (defId: string, index: number) => {
-              const exists = node.children.some((childId) => {
-                const child = nodes.get(childId);
-                return child?.type === 'fieldEntry' && child.fieldDefId === defId;
-              });
-              if (exists) return;
-              const entryId = `field-entry-${++sequence}`;
-              makeNode(entryId, '', { type: 'fieldEntry', parentId: node.id, fieldDefId: defId });
-              appendChild(node.id, entryId, index);
-            };
-            seedField('sys:commandSchedule', 0);
-          }
-          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
-        }
-        if (cmd === 'set_command_schedule') {
-          const node = nodes.get(String(args.nodeId));
-          if (node) {
-            const schedule = args.schedule == null ? '' : String(args.schedule);
-            if (schedule) node.commandSchedule = schedule; else delete node.commandSchedule;
-          }
-          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
-        }
         throw new Error(`Unhandled mock invoke: ${cmd}`);
       },
       onAgentEvent: (listener: (event: unknown) => void) => {
@@ -3461,6 +3484,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       stopReason: message.stopReason,
       usage: message.usage,
       errorMessage: message.errorMessage,
+      issueNotification: entry.issueNotification ?? message.issueNotification,
     };
   }
 

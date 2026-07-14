@@ -7,13 +7,14 @@ import {
   type WebContentsWillRedirectEventParams,
 } from 'electron';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { AgentRunScope } from '../core/agentEventLog';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createNodeTools, type ChatSourceValidator, type OutlinerToolHost } from './agentNodeTools';
 import { createLocalTools, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
-import { createAgentDelegationTools, type AgentDelegationRuntime } from './agentDelegation';
+import { createAgentIssueTools, type AgentIssueToolRuntime } from './agentIssueTools';
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
 import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
@@ -211,13 +212,14 @@ export interface AgentToolsOptions {
   localWorkspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
   skillToolEnabled?: boolean;
-  delegationRuntime?: AgentDelegationRuntime;
+  issueRuntime?: AgentIssueToolRuntime;
   pastChats?: PastChatsToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
   imageGeneration?: AgentImageGenerationRuntime;
   chatSourceValidator?: ChatSourceValidator;
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
+  runScope?: AgentRunScope;
 }
 
 interface AgentToolCatalogEntry {
@@ -246,6 +248,7 @@ function buildAgentToolCatalog(
     create: () => outliner ? createNodeTools(outliner, {
       chatSourceValidator: options.chatSourceValidator,
       localFileRoot: options.localFileRoot,
+      runScope: options.runScope,
     }) : [],
   }, {
     precondition: true,
@@ -261,6 +264,9 @@ function buildAgentToolCatalog(
     precondition: true,
     create: () => [createWebFetchTool(scratchRoot)],
   }, {
+    precondition: !!options.issueRuntime,
+    create: () => options.issueRuntime ? createAgentIssueTools(options.issueRuntime) : [],
+  }, {
     precondition: !!options.pastChats,
     create: () => options.pastChats ? [createPastChatsTool(options.pastChats)] : [],
   }, {
@@ -272,9 +278,6 @@ function buildAgentToolCatalog(
   }, {
     precondition: !!options.skillRuntime && options.skillToolEnabled !== false,
     create: () => options.skillRuntime ? [createSkillTool(options.skillRuntime)] : [],
-  }, {
-    precondition: !!options.delegationRuntime,
-    create: () => options.delegationRuntime ? createAgentDelegationTools(options.delegationRuntime) : [],
   }];
 }
 

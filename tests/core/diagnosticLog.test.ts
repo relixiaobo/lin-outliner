@@ -67,6 +67,7 @@ describe('DiagnosticLogStore', () => {
       statusCode: 400,
       providerId: 'anthropic',
       source: 'index.ts',
+      errorMessage: 'Bad request',
       errorName: 'TypeError',
       stackHash: expect.any(String),
     });
@@ -89,7 +90,7 @@ describe('DiagnosticLogStore', () => {
         severity: 'error',
         code: `command-${index}`,
         message: `Command failed ${index}`,
-        context: { commandNodeId: `node-${index}` },
+        context: { nodeId: `node-${index}` },
       });
     }
 

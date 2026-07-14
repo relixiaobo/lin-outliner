@@ -34,11 +34,11 @@ describe('agent permission model', () => {
 
     expect(isReadOnlyActionKind('file.read.allowed_file_area')).toBe(true);
     expect(isReadOnlyActionKind('web.search')).toBe(true);
-    expect(isReadOnlyActionKind('agent.delegate.status')).toBe(true);
+    expect(isReadOnlyActionKind('agent.session.read')).toBe(true);
     expect(isReadOnlyActionKind('file.edit.allowed_file_area')).toBe(false);
     expect(isReadOnlyActionKind('agent.skill.invoke')).toBe(false);
     expect(isReadOnlyActionKind('agent.image.generate')).toBe(false);
-    expect(isReadOnlyActionKind('agent.delegate.spawn')).toBe(false);
+    expect(isReadOnlyActionKind('agent.session.start')).toBe(false);
 
     const tools = readOnlyAgentToolNames();
     expect(tools).toEqual(expect.arrayContaining([
@@ -50,7 +50,9 @@ describe('agent permission model', () => {
       'web_search',
       'web_fetch',
       'past_chats',
-      'run_status',
+      'issue_search',
+      'issue_read',
+      'agent_session_read',
     ]));
     expect(tools).not.toContain('file_write');
     expect(tools).not.toContain('file_edit');
@@ -60,12 +62,13 @@ describe('agent permission model', () => {
     expect(tools).not.toContain('skill');
     expect(tools).not.toContain('generate_image');
     expect(tools).not.toContain('spawn_run');
+    expect(tools).not.toContain('run_status');
     expect(tools).not.toContain('recall');
     expect(tools).not.toContain('dream');
 
-    expect(readOnlyAgentToolNames(['file_read', 'file_write', 'run_status'])).toEqual([
+    expect(readOnlyAgentToolNames(['file_read', 'file_write', 'agent_session_read'])).toEqual([
       'file_read',
-      'run_status',
+      'agent_session_read',
     ]);
     expect(agentToolActionKindProfile('outline_undo_stack', { action: 'list' })).toEqual(['outline.read']);
     expect(agentToolActionKindProfile('outline_undo_stack', { action: 'undo' })).toEqual(['outline.edit']);
@@ -75,11 +78,11 @@ describe('agent permission model', () => {
   });
 
   test('maps action-kind scope to the visible tool catalog', () => {
-    expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).toEqual(expect.arrayContaining([
-      'run_status',
+    expect(agentToolNamesForActionKindScope(['agent.session.read'], ['*'])).toEqual(expect.arrayContaining([
+      'agent_session_read',
     ]));
-    expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).not.toContain('spawn_run');
-    expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).not.toContain('run_amend');
+    expect(agentToolNamesForActionKindScope(['agent.session.read'], ['*'])).not.toContain('spawn_run');
+    expect(agentToolNamesForActionKindScope(['agent.session.read'], ['*'])).not.toContain('run_amend');
     expect(agentToolNamesForActionKindScope(['file.read.allowed_file_area'], ['file_read', 'file_write'])).toEqual(['file_read']);
   });
 });

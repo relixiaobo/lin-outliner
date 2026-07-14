@@ -161,7 +161,6 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'ask_user_question',
   'skill',
   'bash_stop',
-  'run_status',
   'node_read',
   'node_search',
 ]);
@@ -193,15 +192,6 @@ const TOOL_ALIASES = new Map<string, string>([
   ['askuserquestion', 'ask_user_question'],
   ['skill', 'skill'],
   ['bash_stop', 'bash_stop'],
-  ['spawn_run', 'spawn_run'],
-  ['runstatus', 'run_status'],
-  ['run_status', 'run_status'],
-  ['runsteer', 'run_steer'],
-  ['run_steer', 'run_steer'],
-  ['runamend', 'run_amend'],
-  ['run_amend', 'run_amend'],
-  ['runstop', 'run_stop'],
-  ['run_stop', 'run_stop'],
   ['node_read', 'node_read'],
   ['node_search', 'node_search'],
   ['node_create', 'node_create'],
@@ -627,6 +617,20 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
+  if (isAgentIssueToolName(toolName)) {
+    const copy = agentIssuePermissionCopy(toolName, input.args);
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, copy.actionKind), {
+      accessScope: 'none',
+      title: copy.title,
+      summary: copy.summary,
+      consequence: copy.consequence,
+      reversible: copy.reversible,
+      externalEffect: false,
+      highConsequence: false,
+      code: copy.code,
+    })];
+  }
+
   if (toolName === 'node_read' || toolName === 'node_search' || toolName === 'outline_undo_stack') {
     const actionKind = firstActionKindForTool(toolName, input.args, 'outline.read');
     const writes = actionKind === 'outline.edit';
@@ -683,66 +687,15 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
-  if (toolName === 'bash_stop' || toolName === 'run_stop') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, toolName === 'run_stop' ? 'agent.delegate.stop' : 'shell.stop'), {
+  if (toolName === 'bash_stop') {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'shell.stop'), {
       accessScope: 'none',
-      title: toolName === 'run_stop' ? 'run stop' : 'bash task stop',
-      summary: toolName === 'run_stop' ? 'Stop a background Run.' : 'Stop a background task launched by the agent.',
-      consequence: toolName === 'run_stop'
-        ? 'This controls a local background Run; downstream Run actions keep their own permission gates.'
-        : 'This only controls a local background task.',
+      title: 'bash task stop',
+      summary: 'Stop a background task launched by the agent.',
+      consequence: 'This only controls a local background task.',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'run_status') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.status'), {
-      accessScope: 'none',
-      title: 'run status',
-      summary: 'Read the status of a background Run.',
-      consequence: 'This reads local Run state.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'run_steer') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.send'), {
-      accessScope: 'none',
-      title: 'run steer',
-      summary: 'Send follow-up guidance to an existing Run.',
-      consequence: 'This can steer an already-running local Run; downstream Run actions keep their own permission gates.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'run_amend') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.amend'), {
-      accessScope: 'none',
-      title: 'run amend',
-      summary: 'Change an existing Run objective, criteria, or budget.',
-      consequence: 'This changes local Run control metadata; downstream Run actions keep their own permission gates.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'spawn_run') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.delegate.spawn'), {
-      accessScope: 'none',
-      title: 'spawn run',
-      summary: 'Create a same-agent sub-run.',
-      consequence: 'This creates a local Run; downstream Run actions keep their own permission gates.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-      capabilities: ['agent_spawn'],
     })];
   }
 
@@ -770,6 +723,129 @@ export function deriveAgentToolActionDescriptors(input: {
     platformHardBlock: true,
     redline: true,
   })];
+}
+
+function isAgentIssueToolName(toolName: string): boolean {
+  return toolName === 'issue_search'
+    || toolName === 'issue_read'
+    || toolName === 'issue_create'
+    || toolName === 'issue_update'
+    || toolName === 'agent_session_start'
+    || toolName === 'agent_session_read'
+    || toolName === 'agent_session_send_message'
+    || toolName === 'agent_session_stop';
+}
+
+function agentIssuePermissionCopy(
+  toolName: string,
+  args: unknown,
+): {
+  actionKind: AgentToolActionKind;
+  title: string;
+  summary: string;
+  consequence: string;
+  reversible: boolean;
+  code: string;
+} {
+  const target = agentIssueToolTarget(toolName, args);
+  switch (toolName) {
+    case 'issue_search':
+      return {
+        actionKind: 'agent.issue.search',
+        title: 'issue search',
+        summary: 'Search local Issues and Recurring Issues.',
+        consequence: 'This reads local Issue metadata without changing it.',
+        reversible: true,
+        code: 'agent_issue_search',
+      };
+    case 'issue_read':
+      return {
+        actionKind: 'agent.issue.read',
+        title: 'issue read',
+        summary: `Read local Issue details for ${target}.`,
+        consequence: 'This reads local Issue metadata, Agent Sessions, and Activity without changing them.',
+        reversible: true,
+        code: 'agent_issue_read',
+      };
+    case 'issue_create':
+      return {
+        actionKind: 'agent.issue.create',
+        title: 'issue create',
+        summary: 'Create local Issue or Recurring Issue work metadata.',
+        consequence: 'This creates local work metadata with runtime provenance. Scheduled or ready triggers may run automatically when their runtime checks pass.',
+        reversible: true,
+        code: 'agent_issue_create',
+      };
+    case 'issue_update':
+      return {
+        actionKind: 'agent.issue.update',
+        title: 'issue update',
+        summary: `Update local Issue metadata for ${target}.`,
+        consequence: 'This changes durable local Issue metadata.',
+        reversible: false,
+        code: 'agent_issue_update',
+      };
+    case 'agent_session_start':
+      return {
+        actionKind: 'agent.session.start',
+        title: 'agent session start',
+        summary: `Start one Agent Session for ${target}.`,
+        consequence: 'This starts execution for an eligible Issue. Downstream tools keep their own permission gates.',
+        reversible: false,
+        code: 'agent_session_start',
+      };
+    case 'agent_session_read':
+      return {
+        actionKind: 'agent.session.read',
+        title: 'agent session read',
+        summary: `Read Agent Session state for ${target}.`,
+        consequence: 'This reads local execution state and bounded output without changing it.',
+        reversible: true,
+        code: 'agent_session_read',
+      };
+    case 'agent_session_send_message':
+      return {
+        actionKind: 'agent.session.send',
+        title: 'agent session message',
+        summary: `Send guidance to ${target}.`,
+        consequence: 'This steers an existing Agent Session within the current Issue definition.',
+        reversible: false,
+        code: 'agent_session_send_message',
+      };
+    case 'agent_session_stop':
+      return {
+        actionKind: 'agent.session.stop',
+        title: 'agent session stop',
+        summary: `Stop ${target}.`,
+        consequence: 'This cancels a pending or active Agent Session without deleting the durable Issue.',
+        reversible: false,
+        code: 'agent_session_stop',
+      };
+    default:
+      return {
+        actionKind: 'shell.unknown',
+        title: 'unknown issue tool',
+        summary: `Use unknown Issue tool ${toolName}.`,
+        consequence: 'This Issue tool is outside the supported permission classification surface.',
+        reversible: false,
+        code: 'unknown_issue_tool',
+      };
+  }
+}
+
+function agentIssueToolTarget(toolName: string, args: unknown): string {
+  if (!args || typeof args !== 'object') return toolName;
+  const record = args as Record<string, unknown>;
+  const target = record.target;
+  if (target && typeof target === 'object') {
+    const id = (target as Record<string, unknown>).id;
+    if (typeof id === 'string' && id.trim()) return id;
+  }
+  for (const key of ['issueId', 'agentSessionId']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return toolName;
 }
 
 function derivePathToolActionDescriptor(
@@ -2137,7 +2213,7 @@ export function toolPathArgumentName(toolNameInput: string): string | null {
 
 function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'bash_stop' || toolName === 'spawn_run' || toolName === 'run_status' || toolName === 'run_steer' || toolName === 'run_amend' || toolName === 'run_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'generate_image') return 'control';
+  if (toolName === 'bash_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'generate_image') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete' || toolName === 'data_import') return 'write';
   if (toolName === 'outline_undo_stack') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';

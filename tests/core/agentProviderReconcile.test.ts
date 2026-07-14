@@ -15,6 +15,14 @@ let currentUserData = '';
 
 mock.module('electron', () => ({
   app: { getPath: () => currentUserData },
+  BrowserWindow: class {
+    static getAllWindows() {
+      return [];
+    }
+  },
+  session: {
+    fromPartition: () => ({ clearStorageData: async () => undefined }),
+  },
 }));
 
 // Only the OAuth login subpath is faked; provider catalog/auth status comes from

@@ -30,6 +30,7 @@ export function renderAssistantBlocks(
   runStartedAtMs: number | null,
   showProcessStatus = true,
   showFinalMessages = true,
+  showProcessDetails = true,
   directSubRuns?: readonly AgentRenderRunEntity[],
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>,
 ) {
@@ -49,7 +50,7 @@ export function renderAssistantBlocks(
     workedForMs,
   });
 
-  if (turn.process) {
+  if (showProcessDetails && turn.process) {
     // Codex-style turn process: live "Working" rows stay non-interactive, while
     // settled "Worked for ..." rows can fold the process details. Inner
     // reasoning/tool groups keep their own independent disclosures.

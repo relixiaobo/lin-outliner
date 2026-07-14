@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { TOOL_CATALOG } from '../../src/core/agentToolCatalog';
-import type { AgentDelegationRuntime } from '../../src/main/agentDelegation';
+import type { AgentIssueToolRuntime } from '../../src/main/agentIssueTools';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 mock.module('electron', () => ({
@@ -22,7 +22,6 @@ describe('agent tool catalog', () => {
     const { createAgentTools } = await import('../../src/main/agentTools');
     const filteredNames = createAgentTools(undefined, {
       localFileRoot: '/tmp',
-      delegationRuntime: {} as AgentDelegationRuntime,
       imageGeneration: {
         listModels: async () => [],
         getActiveProviderId: async () => null,
@@ -30,12 +29,30 @@ describe('agent tool catalog', () => {
         writeGeneratedImage: async () => { throw new Error('not used'); },
         generateImages: async () => { throw new Error('not used'); },
       },
+      issueRuntime: issueRuntimeStub(),
       allowedTools: [...TOOL_CATALOG],
     })
       .map((tool) => tool.name.toLowerCase())
       .sort();
 
     expect(filteredNames).toEqual([...TOOL_CATALOG].sort());
+  });
+
+  test('delegation runtime remains internal and does not expose direct Run tools', async () => {
+    const { createAgentTools } = await import('../../src/main/agentTools');
+    const names = createAgentTools(undefined, {
+      localFileRoot: '/tmp',
+      issueRuntime: issueRuntimeStub(),
+    }).map((tool) => tool.name);
+    expect(names).toEqual(expect.arrayContaining([
+      'issue_search',
+      'agent_session_start',
+    ]));
+    expect(names).not.toContain('spawn_run');
+    expect(names).not.toContain('run_status');
+    expect(names).not.toContain('run_steer');
+    expect(names).not.toContain('run_amend');
+    expect(names).not.toContain('run_stop');
   });
 
   test('default outliner-backed tools do not expose the internal data import adapter', async () => {
@@ -50,3 +67,16 @@ describe('agent tool catalog', () => {
     expect(names).toContain('node_create');
   });
 });
+
+function issueRuntimeStub(): AgentIssueToolRuntime {
+  return {
+    search: () => ({ rows: [] }),
+    read: (input) => ({ target: input.target }),
+    create: () => ({ status: 'preview', targets: [] }),
+    update: () => ({ status: 'preview', targets: [] }),
+    startSession: () => ({ status: 'preview', targets: [] }),
+    readSession: () => null,
+    sendSessionMessage: () => ({ status: 'preview', targets: [] }),
+    stopSession: () => ({ status: 'preview', targets: [] }),
+  };
+}

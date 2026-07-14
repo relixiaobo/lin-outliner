@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import path from 'node:path';
+import type { AgentRunScope } from '../core/agentEventLog';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
 import { projectFieldConfig, projectTagConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import {
@@ -113,6 +114,7 @@ import type {
   NodeReadData,
   NodeSearchData,
   NormalizedEditParams,
+  NormalizedReadParams,
   OperationHistoryData,
   OperationHistoryItem,
   OperationHistoryParams,
@@ -138,6 +140,7 @@ export type { OutlinerToolHost } from './agentNodeToolTypes';
 export interface NodeToolsOptions {
   chatSourceValidator?: ChatSourceValidator;
   localFileRoot?: string;
+  runScope?: AgentRunScope;
 }
 
 export type ChatSourceValidator = (
@@ -150,14 +153,15 @@ export type ChatSourceValidationResult =
 
 export function createNodeTools(host: OutlinerToolHost, options: NodeToolsOptions = {}): AgentTool<any>[] {
   const agentHost = asAgentToolHost(host);
-  return [
-    createNodeSearchTool(agentHost),
-    createNodeReadTool(agentHost),
+  const tools = [
+    createNodeSearchTool(agentHost, options),
+    createNodeReadTool(agentHost, options),
     createNodeCreateTool(agentHost, options),
     createNodeEditTool(agentHost, options),
-    createNodeDeleteTool(agentHost),
-    createOutlineUndoStackTool(agentHost),
-  ].map((tool) => tool.name === 'outline_undo_stack' ? tool : withAgentToolTransaction(tool, agentHost));
+    createNodeDeleteTool(agentHost, options),
+    ...(options.runScope ? [] : [createOutlineUndoStackTool(agentHost)]),
+  ];
+  return tools.map((tool) => tool.name === 'outline_undo_stack' ? tool : withAgentToolTransaction(tool, agentHost));
 }
 
 function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {
@@ -254,6 +258,76 @@ function visibleHistoryItem(item: OperationHistoryItem) {
   };
 }
 
+interface NodeScopeIssue {
+  nodeId: string;
+  error?: string;
+}
+
+type NodeScopeAccess = 'read' | 'write';
+
+function scopedNodeRoots(options: NodeToolsOptions, access: NodeScopeAccess = 'read'): string[] | null {
+  const resources = options.runScope?.resources;
+  const nodeIds = access === 'write'
+    ? resources?.writableNodes ?? resources?.nodes
+    : resources?.nodes;
+  if (nodeIds === undefined) return null;
+  return unique(nodeIds.map((nodeId) => nodeId.trim()).filter(Boolean));
+}
+
+function hasNodeResourceScope(options: NodeToolsOptions, access: NodeScopeAccess = 'read'): boolean {
+  return scopedNodeRoots(options, access) !== null;
+}
+
+function filterNodeResourceScope(options: NodeToolsOptions, index: ProjectionIndex, nodeIds: readonly string[]): string[] {
+  const roots = scopedNodeRoots(options);
+  return roots ? nodeIds.filter((nodeId) => nodeIsInsideResourceScope(index, nodeId, roots)) : [...nodeIds];
+}
+
+function validateNodeResourceScope(
+  options: NodeToolsOptions,
+  index: ProjectionIndex,
+  nodeIds: readonly string[],
+  access: NodeScopeAccess = 'read',
+): NodeScopeIssue | null {
+  const roots = scopedNodeRoots(options, access);
+  if (!roots) return null;
+  const outside = nodeIds.find((nodeId) => !nodeIsInsideResourceScope(index, nodeId, roots));
+  return outside ? { nodeId: outside } : null;
+}
+
+function nodeIsInsideResourceScope(index: ProjectionIndex, nodeId: string, roots: readonly string[]): boolean {
+  return roots.some((rootId) => nodeId === rootId || isDescendantOf(index, nodeId, rootId));
+}
+
+function nodeScopeIssueDetails(issue: NodeScopeIssue): { code: string; error: string; instructions: string } {
+  return {
+    code: 'outside_scope',
+    error: issue.error ?? `Node is outside this run's confirmed resource scope: ${issue.nodeId}`,
+    instructions: 'Stop and ask for an Issue scope change or a new authorized Agent Session instead of broadening the work silently.',
+  };
+}
+
+function nodeScopeError<TData>(toolName: string, issue: NodeScopeIssue, started: number) {
+  const details = nodeScopeIssueDetails(issue);
+  return nodeErrorResult(errorEnvelope<TData>(toolName, details.code, details.error, {
+    instructions: details.instructions,
+    metrics: { durationMs: elapsed(started) },
+  }));
+}
+
+function readVisibleNodeIds(index: ProjectionIndex, nodeId: string, params: NormalizedReadParams): string[] {
+  const out: string[] = [];
+  const visit = (currentId: string, remainingDepth: number, offset: number, limit: number) => {
+    out.push(currentId);
+    if (remainingDepth <= 0) return;
+    const childIds = normalChildIds(index, currentId, params.includeDeleted)
+      .slice(offset, offset + limit);
+    for (const childId of childIds) visit(childId, remainingDepth - 1, 0, limit);
+  };
+  visit(nodeId, params.depth, params.childOffset, params.childLimit);
+  return unique(out);
+}
+
 function createNodeEditTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeEditData>> {
   return {
     name: 'node_edit',
@@ -275,23 +349,23 @@ function createNodeEditTool(host: OutlinerToolHost, options: NodeToolsOptions): 
         case 'replace_outline':
           return executeOutlineEdit(host, params, started, options);
         case 'move':
-          return executeMoveEdit(host, params, started);
+          return executeMoveEdit(host, params, started, options);
         case 'merge':
-          return executeMergeEdit(host, params, started);
+          return executeMergeEdit(host, params, started, options);
         case 'replace_with_reference':
-          return executeReferenceReplaceEdit(host, params, started);
+          return executeReferenceReplaceEdit(host, params, started, options);
         case 'configure_definition':
-          return executeDefinitionConfigEdit(host, params, started);
+          return executeDefinitionConfigEdit(host, params, started, options);
         case 'reuse_field_definition':
-          return executeReuseFieldDefinitionEdit(host, params, started);
+          return executeReuseFieldDefinitionEdit(host, params, started, options);
         case 'merge_definition':
-          return executeDefinitionMergeEdit(host, params, started);
+          return executeDefinitionMergeEdit(host, params, started, options);
       }
     },
   };
 }
 
-function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<NodeDeleteData>> {
+function createNodeDeleteTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeDeleteData>> {
   return {
     name: 'node_delete',
     label: 'Node Delete',
@@ -323,6 +397,11 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           instructions: 'Choose a user-created node instead of a protected system node.',
           metrics: { durationMs: elapsed(started) },
         }));
+      }
+      const scopedNodeIds = requestedNodeIds.flatMap((nodeId) => [...descendantNodeIdSet(index, nodeId, true)]);
+      const scopeIssue = validateNodeResourceScope(options, index, scopedNodeIds, 'write');
+      if (scopeIssue) {
+        return nodeScopeError<NodeDeleteData>('node_delete', scopeIssue, started);
       }
       if (params.restore) {
         const notTrashed = requestedNodeIds.find((nodeId) => !isInTrash(index, nodeId));
@@ -427,6 +506,10 @@ async function executeOutlineEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
+  const scopeIssue = validateNodeResourceScope(options, index, [params.nodeId], 'write');
+  if (scopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', scopeIssue, started);
+  }
   requiredNode(index, params.nodeId);
   const currentRevision = editableOutlineRevision(index, params.nodeId);
   if (params.expectedRevision && params.expectedRevision !== currentRevision) {
@@ -492,6 +575,10 @@ async function executeOutlineEdit(
       instructions: annotationValidation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
+  }
+  const annotationScopeIssue = validateNodeResourceScope(options, index, collectOutlineAnnotationIds(parsed.document));
+  if (annotationScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', annotationScopeIssue, started);
   }
   const referenceValidation = await validateOutlineReferenceTargets(options, index, parsed.document);
   if (referenceValidation) {
@@ -591,6 +678,7 @@ async function executeMoveEdit(
   host: OutlinerToolHost,
   params: Extract<NormalizedEditParams, { action: 'move' }>,
   started: number,
+  options: NodeToolsOptions,
 ) {
   const index = indexProjection(host.getProjection());
   const validation = validateMutableNodeIds(index, params.nodeIds);
@@ -599,6 +687,22 @@ async function executeMoveEdit(
       instructions: validation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
+  }
+  if (hasNodeResourceScope(options, 'write') && params.move.structuralAction) {
+    return nodeScopeError<NodeEditData>('node_edit', {
+      nodeId: params.move.structuralAction,
+      error: 'Structural moves infer a destination outside the explicit request and are not available in a node-scoped run.',
+    }, started);
+  }
+
+  const requestedScopeNodeIds = unique([
+    ...params.nodeIds,
+    ...(params.move.parentId ? [params.move.parentId] : []),
+    ...(typeof params.move.afterId === 'string' ? [params.move.afterId] : []),
+  ]);
+  const scopeIssue = validateNodeResourceScope(options, index, requestedScopeNodeIds, 'write');
+  if (scopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', scopeIssue, started);
   }
 
   const moveValidation = validateMoveRequest(index, params.nodeIds, params.move);
@@ -651,6 +755,7 @@ async function executeMergeEdit(
   host: OutlinerToolHost,
   params: Extract<NormalizedEditParams, { action: 'merge' }>,
   started: number,
+  options: NodeToolsOptions,
 ) {
   const index = indexProjection(host.getProjection());
   const nodeIds = [params.nodeId, ...params.mergeFromNodeIds];
@@ -660,6 +765,10 @@ async function executeMergeEdit(
       instructions: validation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
+  }
+  const initialScopeIssue = validateNodeResourceScope(options, index, nodeIds, 'write');
+  if (initialScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', initialScopeIssue, started);
   }
   if (params.mergeFromNodeIds.includes(params.nodeId)) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_merge', 'merge_from_node_ids cannot include the target node_id.', {
@@ -707,6 +816,10 @@ async function executeMergeEdit(
     },
     revisions: { [params.nodeId]: revisionOf(requiredNode(index, params.nodeId)) },
   };
+  const affectedScopeIssue = validateNodeResourceScope(options, index, data.affectedNodeIds, 'write');
+  if (affectedScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', affectedScopeIssue, started);
+  }
 
   if (params.previewOnly) {
     return nodeToolResult(successEnvelope('node_edit', data, {
@@ -738,6 +851,7 @@ async function executeReferenceReplaceEdit(
   host: OutlinerToolHost,
   params: Extract<NormalizedEditParams, { action: 'replace_with_reference' }>,
   started: number,
+  options: NodeToolsOptions,
 ) {
   const index = indexProjection(host.getProjection());
   const validation = validateMutableNodeIds(index, [params.nodeId]);
@@ -753,6 +867,14 @@ async function executeReferenceReplaceEdit(
       instructions: targetValidation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
+  }
+  const writeScopeIssue = validateNodeResourceScope(options, index, [params.nodeId], 'write');
+  if (writeScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', writeScopeIssue, started);
+  }
+  const referenceScopeIssue = validateNodeResourceScope(options, index, [params.replaceWithReferenceTo]);
+  if (referenceScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', referenceScopeIssue, started);
   }
   if (params.nodeId === params.replaceWithReferenceTo) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_reference', 'A node cannot be replaced with a reference to itself.', {
@@ -814,8 +936,17 @@ async function executeDefinitionConfigEdit(
   host: OutlinerToolHost,
   params: Extract<NormalizedEditParams, { action: 'configure_definition' }>,
   started: number,
+  options: NodeToolsOptions,
 ) {
   const index = indexProjection(host.getProjection());
+  const targetScopeIssue = validateNodeResourceScope(options, index, [params.nodeId], 'write');
+  if (targetScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', targetScopeIssue, started);
+  }
+  const referenceScopeIssue = validateNodeResourceScope(options, index, definitionPatchNodeIds(params.definitionPatch));
+  if (referenceScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', referenceScopeIssue, started);
+  }
   const validation = validateMutableNodeIds(index, [params.nodeId]);
   if (validation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
@@ -830,6 +961,15 @@ async function executeDefinitionConfigEdit(
       instructions: 'Use node_read/node_search to locate a tagDef or fieldDef node, then retry configure_definition.',
       metrics: { durationMs: elapsed(started) },
     }));
+  }
+  const affectedScopeIssue = validateNodeResourceScope(
+    options,
+    index,
+    definitionConfigAffectedNodeIds(index, node),
+    'write',
+  );
+  if (affectedScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', affectedScopeIssue, started);
   }
   const foreignKeys = kind === 'field' ? presentPatchKeys(params.definitionPatch, TAG_PATCH_KEYS) : presentPatchKeys(params.definitionPatch, FIELD_PATCH_KEYS);
   if (foreignKeys.length > 0) {
@@ -931,8 +1071,19 @@ async function executeReuseFieldDefinitionEdit(
   host: OutlinerToolHost,
   params: Extract<NormalizedEditParams, { action: 'reuse_field_definition' }>,
   started: number,
+  options: NodeToolsOptions,
 ) {
   const index = indexProjection(host.getProjection());
+  const entryScopeIssue = validateNodeResourceScope(options, index, [params.nodeId], 'write');
+  if (entryScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', entryScopeIssue, started);
+  }
+  const targetScopeIssue = validateNodeResourceScope(options, index, [
+    ...(!isSystemFieldId(params.targetDefinitionId) ? [params.targetDefinitionId] : []),
+  ]);
+  if (targetScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', targetScopeIssue, started);
+  }
   const validation = validateMutableNodeIds(index, [params.nodeId]);
   if (validation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
@@ -963,6 +1114,12 @@ async function executeReuseFieldDefinitionEdit(
   }
 
   const previousDefinitionId = entry.fieldDefId;
+  const previousScopeIssue = validateNodeResourceScope(options, index, [
+    ...(previousDefinitionId && !isSystemFieldId(previousDefinitionId) ? [previousDefinitionId] : []),
+  ], 'write');
+  if (previousScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', previousScopeIssue, started);
+  }
   const targetFieldDef = target?.type === 'fieldDef' ? target : undefined;
   const targetType = targetFieldDef ? projectFieldConfig(index.nodes, targetFieldDef).fieldType : undefined;
   if (targetType) {
@@ -1022,8 +1179,13 @@ async function executeDefinitionMergeEdit(
   host: OutlinerToolHost,
   params: Extract<NormalizedEditParams, { action: 'merge_definition' }>,
   started: number,
+  options: NodeToolsOptions,
 ) {
   const index = indexProjection(host.getProjection());
+  const requestedScopeIssue = validateNodeResourceScope(options, index, [params.nodeId, ...params.mergeFromNodeIds], 'write');
+  if (requestedScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', requestedScopeIssue, started);
+  }
   const validation = validateMutableNodeIds(index, [params.nodeId, ...params.mergeFromNodeIds]);
   if (validation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
@@ -1037,6 +1199,10 @@ async function executeDefinitionMergeEdit(
       instructions: preview.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
+  }
+  const affectedScopeIssue = validateNodeResourceScope(options, index, preview.affectedNodeIds, 'write');
+  if (affectedScopeIssue) {
+    return nodeScopeError<NodeEditData>('node_edit', affectedScopeIssue, started);
   }
   const target = requiredNode(index, params.nodeId);
   const data: NodeEditData = {
@@ -1076,8 +1242,13 @@ async function executeDefinitionCreate(
   definition: NodeDefinitionCreateParams,
   previewOnly: boolean,
   started: number,
+  options: NodeToolsOptions,
 ): Promise<AgentToolResult<ToolEnvelope<NodeCreateData>>> {
   const initialIndex = indexProjection(host.getProjection());
+  const schemaScopeIssue = validateNodeResourceScope(options, initialIndex, [SCHEMA_ID], 'write');
+  if (schemaScopeIssue) return nodeScopeError<NodeCreateData>('node_create', schemaScopeIssue, started);
+  const referenceScopeIssue = validateNodeResourceScope(options, initialIndex, definitionPatchNodeIds(definition.config ?? {}));
+  if (referenceScopeIssue) return nodeScopeError<NodeCreateData>('node_create', referenceScopeIssue, started);
   const existing = findDefinitionByName(initialIndex, definition.kind, definition.name);
   const beforeConfig = existing ? projectDefinitionConfig(initialIndex, existing) : undefined;
   const projectedDefault = beforeConfig ?? defaultDefinitionConfig(definition.kind, definition.config);
@@ -1463,6 +1634,37 @@ function inlineReferenceHostNodeIds(index: ProjectionIndex, targetIds: string[])
     .map((node) => node.id);
 }
 
+function definitionPatchNodeIds(patch: FieldConfigPatch | TagConfigPatch): string[] {
+  const fieldPatch = patch as FieldConfigPatch;
+  const tagPatch = patch as TagConfigPatch;
+  return unique([
+    fieldPatch.sourceSupertag,
+    tagPatch.extends,
+    tagPatch.childSupertag,
+    ...(tagPatch.doneMapChecked ?? []),
+    ...(tagPatch.doneMapUnchecked ?? []),
+  ].filter((nodeId): nodeId is string => typeof nodeId === 'string' && nodeId.length > 0));
+}
+
+function definitionConfigAffectedNodeIds(index: ProjectionIndex, node: NodeProjection): string[] {
+  if (node.type === 'fieldDef') {
+    return unique([
+      node.id,
+      ...activeFieldEntriesForDefinition(index, node.id)
+        .flatMap((entry) => [...descendantNodeIdSet(index, entry.id, true)]),
+    ]);
+  }
+  if (node.type === 'tagDef') {
+    return unique([
+      node.id,
+      ...index.projection.nodes
+        .filter((candidate) => !isInTrash(index, candidate.id) && candidate.tags.includes(node.id))
+        .map((candidate) => candidate.id),
+    ]);
+  }
+  return [node.id];
+}
+
 function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeCreateData>> {
   return {
     name: 'node_create',
@@ -1481,7 +1683,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
       }
 
       if (params.definition) {
-        return executeDefinitionCreate(host, params.definition, params.previewOnly === true, started);
+        return executeDefinitionCreate(host, params.definition, params.previewOnly === true, started, options);
       }
 
       const initialIndex = indexProjection(host.getProjection());
@@ -1491,6 +1693,20 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           instructions: insertion.instructions,
           metrics: { durationMs: elapsed(started) },
         }));
+      }
+      const insertionScopeIssue = validateNodeResourceScope(options, initialIndex, [
+        insertion.parentId,
+        ...(typeof insertion.afterId === 'string' ? [insertion.afterId] : []),
+      ], 'write');
+      if (insertionScopeIssue) {
+        return nodeScopeError<NodeCreateData>('node_create', insertionScopeIssue, started);
+      }
+      const sourceScopeIssue = validateNodeResourceScope(options, initialIndex, [
+        ...(params.targetId ? [params.targetId] : []),
+        ...(params.duplicateId ? [...descendantNodeIdSet(initialIndex, params.duplicateId, false)] : []),
+      ]);
+      if (sourceScopeIssue) {
+        return nodeScopeError<NodeCreateData>('node_create', sourceScopeIssue, started);
       }
 
       if (params.targetId) {
@@ -1646,7 +1862,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
   };
 }
 
-function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<NodeReadData>> {
+function createNodeReadTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeReadData>> {
   return {
     name: 'node_read',
     label: 'Node Read',
@@ -1679,6 +1895,20 @@ function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
           metrics: { durationMs: elapsed(started) },
         }));
       }
+      if (params.includeBacklinks && hasNodeResourceScope(options)) {
+        return nodeScopeError<NodeReadData>('node_read', {
+          nodeId: 'backlinks',
+          error: 'Backlinks can expose nodes outside this run scope.',
+        }, started);
+      }
+      const scopeIssue = validateNodeResourceScope(
+        options,
+        index,
+        nodeIds.flatMap((nodeId) => readVisibleNodeIds(index, nodeId, params)),
+      );
+      if (scopeIssue) {
+        return nodeScopeError<NodeReadData>('node_read', scopeIssue, started);
+      }
 
       const data: NodeReadData = { items: nodeIds.map((nodeId) => buildReadItem(index, nodeId, params)) };
       const visible = visibleReadResult(index, nodeIds, params);
@@ -1693,7 +1923,7 @@ function createNodeReadTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope
   };
 }
 
-function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelope<NodeSearchData>> {
+function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeSearchData>> {
   return {
     name: 'node_search',
     label: 'Node Search',
@@ -1713,6 +1943,12 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const index = indexProjection(host.getProjection());
       const offset = clampInteger(params.offset, 0, Number.MAX_SAFE_INTEGER, 0);
       const limit = clampInteger(params.limit, 1, 50, 20);
+      if (params.searchNodeId) {
+        const scopeIssue = validateNodeResourceScope(options, index, [params.searchNodeId]);
+        if (scopeIssue) {
+          return nodeScopeError<NodeSearchData>('node_search', scopeIssue, started);
+        }
+      }
       const search = resolveSearch(index, params);
       if ('error' in search) {
         return nodeErrorResult(errorEnvelope('node_search', search.code, search.error, {
@@ -1740,8 +1976,9 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
           metrics: { durationMs: elapsed(started) },
         }));
       }
-      const total = resultIds.length;
-      const pageIds = resultIds.slice(offset, offset + limit);
+      const scopedResultIds = filterNodeResourceScope(options, index, resultIds);
+      const total = scopedResultIds.length;
+      const pageIds = scopedResultIds.slice(offset, offset + limit);
       const items = params.count ? undefined : pageIds.map((nodeId) => buildSearchItem(index, nodeId, search.queryTerms));
       if (!params.count) {
         try {
@@ -3478,13 +3715,13 @@ async function validateOutlineReferenceTargets(
   document: OutlineDocument,
 ): Promise<{ code: string; error: string; instructions: string } | null> {
   const targets = collectReferenceTargets(document);
-  const nodeValidation = validateReferenceTargetIds(
-    index,
-    targets
-      .filter((target): target is Extract<ReferenceTarget, { kind: 'node' }> => target.kind === 'node')
-      .map((target) => target.nodeId),
-  );
+  const nodeTargetIds = targets
+    .filter((target): target is Extract<ReferenceTarget, { kind: 'node' }> => target.kind === 'node')
+    .map((target) => target.nodeId);
+  const nodeValidation = validateReferenceTargetIds(index, nodeTargetIds);
   if (nodeValidation) return nodeValidation;
+  const scopeIssue = validateNodeResourceScope(options, index, nodeTargetIds);
+  if (scopeIssue) return nodeScopeIssueDetails(scopeIssue);
 
   const chatSources = targets
     .filter((target): target is Extract<ReferenceTarget, { kind: 'chat-source' }> => target.kind === 'chat-source');

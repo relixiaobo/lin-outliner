@@ -25,7 +25,7 @@ event so the user sees the failure in place. The same `emitError` path also
 reports a diagnostic record. Unclassified foreground failures use the `runtime`
 domain; callers pass a narrower domain such as `command`, `provider`, or
 `persistence` when the failing boundary is known. Background paths that previously
-only warned in the terminal, including Dream extraction, scheduled command
+only warned in the terminal, including Dream extraction, Issue scheduler
 failures, child-run ledger append failures, memory reminder failures, and agent
 storage sentinel/probe failures, report through the same diagnostic path.
 

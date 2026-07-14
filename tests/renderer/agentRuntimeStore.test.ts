@@ -20,6 +20,7 @@ import type {
   AgentRenderActiveDream,
   AgentRenderDreamEntity,
   AgentRenderProjection,
+  AgentRenderIssueNotification,
   AgentRenderRunEntity,
 } from '../../src/core/agentRenderProjection';
 import type { AgentPayloadRef, AgentPersistedContent } from '../../src/core/agentEventLog';
@@ -65,6 +66,8 @@ interface ProjectionEntry {
   nodeId: string;
   message: UserMessage | AssistantMessage;
   branches: { ids: string[]; currentIndex: number } | null;
+  actor?: { type: 'system' } | { type: 'user'; userId: string } | { type: 'agent'; agentId: string };
+  issueNotification?: AgentRenderIssueNotification;
 }
 
 function projection(
@@ -113,6 +116,8 @@ function projection(
         createdAt: entry.message.timestamp,
         updatedAt: entry.message.timestamp,
         branches: entry.branches,
+        actor: entry.actor,
+        issueNotification: entry.issueNotification,
         apiId: entry.message.role === 'assistant' ? entry.message.api : undefined,
         providerId: entry.message.role === 'assistant' ? entry.message.provider : undefined,
         modelId: entry.message.role === 'assistant' ? entry.message.model : undefined,
@@ -613,6 +618,60 @@ describe('agent runtime store', () => {
       'message',
     ]);
     expect(store.getSnapshot().entries[1]?.kind === 'message' ? store.getSnapshot().entries[1].nodeId : null).toBe('a1');
+    unsubscribe();
+  });
+
+  test('projects a linked Issue notification as a visible status entry', async () => {
+    const restored = conversation('saved', projection([
+      {
+        nodeId: 'issue-notification-turn',
+        actor: { type: 'system' },
+        message: userMessage(systemReminder('<root-issue-delivery />')),
+        branches: null,
+        issueNotification: {
+          notificationId: 'notification-issue-1',
+          issueId: 'issue-1',
+          agentSessionId: 'agent-session-1',
+          state: 'complete',
+          kind: 'task_completed',
+          title: 'Compile the report',
+          createdAt: 1,
+        },
+      },
+      {
+        nodeId: 'issue-notification-retry-turn',
+        actor: { type: 'system' },
+        message: userMessage(systemReminder('<root-issue-delivery retry="true" />'), 2),
+        branches: null,
+        issueNotification: {
+          notificationId: 'notification-issue-1',
+          issueId: 'issue-1',
+          agentSessionId: 'agent-session-1',
+          state: 'complete',
+          kind: 'task_completed',
+          title: 'Compile the report',
+          createdAt: 1,
+        },
+      },
+      { nodeId: 'a1', message: assistantMessage('Report ready'), branches: null },
+    ]));
+    const fake = createFakeClient({ latestConversation: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(store.getSnapshot().entries.map((entry) => entry.kind)).toEqual([
+      'issue-notification',
+      'hidden-turn-boundary',
+      'message',
+    ]);
+    expect(store.getSnapshot().entries[0]).toMatchObject({
+      kind: 'issue-notification',
+      issueId: 'issue-1',
+      state: 'complete',
+      title: 'Compile the report',
+    });
     unsubscribe();
   });
 
@@ -1182,10 +1241,9 @@ describe('agent runtime store', () => {
           content: [{
             type: 'toolCall',
             id: 'tool-agent-1',
-            name: 'spawn_run',
+            name: 'agent_session_start',
             arguments: {
-              description: 'Inspect Run UI',
-              objective: 'Inspect the current UI.',
+              issueId: 'issue-run-ui',
             },
           }],
         },

@@ -1255,10 +1255,9 @@ test.describe('agent process disclosure', () => {
           content: [{
             type: 'toolCall',
             id: 'tool-agent-source-e2e',
-            name: 'spawn_run',
+            name: 'agent_session_start',
             arguments: {
-              description: 'Inspect jump source run',
-              objective: 'Inspect jump source run.',
+              issueId: 'issue-jump-source-run',
             },
           }],
           timestamp: 1_800_000_001_500,

@@ -41,6 +41,7 @@ import {
   type AgentMessageContextMenuRequest,
 } from '../core/agentTypes';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
+import type { AgentSessionReadInput, IssueReadInput, IssueSearchInput } from '../core/agentIssue';
 import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
 import { normalizePreviewHttpUrl } from '../core/preview';
 import { handlePreviewCommand } from './previewSource';
@@ -2597,6 +2598,19 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         limit: typeof args.limit === 'number' ? args.limit : undefined,
         perConversationLimit: typeof args.perConversationLimit === 'number' ? args.perConversationLimit : undefined,
       });
+    case 'agent_issue_search':
+      return agentRuntime.searchIssues(args as IssueSearchInput);
+    case 'agent_issue_read':
+      return agentRuntime.readIssue(args as unknown as IssueReadInput);
+    case 'agent_issue_complete_human_review':
+      return agentRuntime.completeHumanReview(
+        String(args.issueId ?? ''),
+        typeof args.expectedRevision === 'string' ? args.expectedRevision : undefined,
+      );
+    case 'agent_session_read':
+      return agentRuntime.readAgentSession(args as unknown as AgentSessionReadInput);
+    case 'agent_session_transcript':
+      return agentRuntime.agentSessionTranscript(String(args.agentSessionId ?? ''));
     case 'agent_list_dream_history':
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
     case 'agent_dream_readiness':
@@ -2643,10 +2657,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         args.attachments,
         args.userViewContext,
       );
-    case 'agent_run_command_now':
-      return agentRuntime.runCommandNow(String(args.nodeId));
-    case 'agent_ensure_command_conversation':
-      return agentRuntime.ensureCommandConversation(String(args.nodeId));
     case 'agent_edit_message':
       return agentRuntime.editMessage(
         conversationId(),
@@ -2865,9 +2875,10 @@ if (!app.requestSingleInstanceLock()) {
     configureSessionSecurity();
     registerIpc();
     createWindow();
-    // Anacron catch-up on system wake: a command whose occurrence elapsed while
-    // the device slept fires once on resume (coalesced via the watermark).
-    powerMonitor.on('resume', () => agentRuntime.runCommandCatchUp());
+    // Anacron catch-up on system wake belongs to Issue triggers.
+    powerMonitor.on('resume', () => {
+      agentRuntime.runIssueCatchUp();
+    });
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     createLauncherWindow({
       preloadPath: join(__dirname, '../preload/index.cjs'),
@@ -2911,8 +2922,7 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     quitAfterFlush = true;
     // We force-exit below (app.exit bypasses will-quit), so do the on-quit cleanup
-    // here: stop the command scheduler and release the global hotkey(s).
-    agentRuntime.stopCommandScheduler();
+    // here: release the global hotkey(s).
     unregisterLauncherHotkeys();
     // Settle in-flight writes, then exit. We force-exit instead of re-issuing
     // app.quit(): after preventDefault() cancels the OS ⌘Q terminate, Electron's

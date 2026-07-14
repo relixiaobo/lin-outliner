@@ -68,13 +68,13 @@ describe('agent child run UI', () => {
       />,
     );
 
-    expect(rendered.container.textContent).toContain('Ran agent run');
-    expect(rendered.container.textContent).toContain('Inspect Run UI');
+    expect(rendered.container.textContent).toContain('Started agent session');
+    expect(rendered.container.textContent).toContain('issue-run-ui');
 
     await click(rendered, firstToolCallToggle(rendered));
 
     expect(rendered.container.textContent).toContain('Input');
-    expect(rendered.container.textContent).toContain('Inspect the current UI.');
+    expect(rendered.container.textContent).toContain('issue-run-ui');
     expect(rendered.container.textContent).not.toContain('Found the relevant UI path.');
 
     await click(rendered, textButton(rendered, 'View transcript'));
@@ -114,7 +114,7 @@ describe('agent child run UI', () => {
       />,
     );
 
-    expect(rendered.container.textContent).toContain('Ran a command · managing an agent run');
+    expect(rendered.container.textContent).toContain('Ran a command · managing an agent session');
   });
 
   test('loads a run transcript and keeps nested tool calls expandable', async () => {
@@ -294,8 +294,8 @@ describe('agent child run UI', () => {
             {
               type: 'toolCall',
               id: 'tool-nested-agent',
-              name: 'spawn_run',
-              arguments: { description: 'Nested sub-run', objective: 'Inspect the nested UI.' },
+              name: 'agent_session_start',
+              arguments: { issueId: 'issue-nested-run' },
             },
           ],
         },
@@ -327,7 +327,7 @@ describe('agent child run UI', () => {
       },
     );
 
-    await waitForText(rendered, 'Ran agent run');
+    await waitForText(rendered, 'Started agent session');
     await click(rendered, firstToolCallToggle(rendered));
     await click(rendered, textButton(rendered, 'View transcript'));
 
@@ -1035,10 +1035,9 @@ function agentToolCall(): ToolCall {
   return {
     type: 'toolCall',
     id: 'tool-agent-1',
-    name: 'spawn_run',
+    name: 'agent_session_start',
     arguments: {
-      description: 'Inspect Run UI',
-      objective: 'Inspect the current UI.',
+      issueId: 'issue-run-ui',
     },
   };
 }

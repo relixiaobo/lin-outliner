@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { focusableElements } from './focusable';
 
@@ -8,6 +8,7 @@ interface DialogProps {
   label?: string;
   labelledBy?: string;
   surfaceClassName: string;
+  focusKey?: string | number;
   initialFocus?: () => HTMLElement | null;
   restoreFocus?: () => HTMLElement | null;
   onBackdropMouseDown?: () => void;
@@ -17,6 +18,7 @@ interface DialogProps {
 export function Dialog({
   backdropClassName,
   children,
+  focusKey,
   initialFocus,
   label,
   labelledBy,
@@ -28,6 +30,7 @@ export function Dialog({
   const surfaceRef = useRef<HTMLElement | null>(null);
   const initialFocusRef = useRef(initialFocus);
   const restoreFocusRef = useRef(restoreFocus);
+  const focusKeyMountedRef = useRef(false);
 
   useEffect(() => {
     initialFocusRef.current = initialFocus;
@@ -49,6 +52,17 @@ export function Dialog({
       }
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (!focusKeyMountedRef.current) {
+      focusKeyMountedRef.current = true;
+      return;
+    }
+    const surface = surfaceRef.current;
+    if (!surface || surface.contains(document.activeElement)) return;
+    const target = initialFocusRef.current?.() ?? surface;
+    target.focus({ preventScroll: true });
+  }, [focusKey]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Escape') {

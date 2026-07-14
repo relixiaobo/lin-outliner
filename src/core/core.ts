@@ -18,8 +18,7 @@ import {
 } from './operationJournal';
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
-import { formatDateSchedule, parseDateSchedule } from './dateSchedule';
-import { COMMAND_SCHEDULE_FIELD_ID, DONE_FIELD, systemFieldLabel } from './systemFields';
+import { DONE_FIELD, systemFieldLabel } from './systemFields';
 import {
   fieldEntryDisplayName,
   normalizeFieldNameKey,
@@ -82,8 +81,6 @@ import {
   type Node,
   type AttachmentNode,
   type CodeBlockNode,
-  type CommandNode,
-  COMMAND_SCHEDULE_FIELD,
   type DefConfigNode,
   type DisplayFieldNode,
   type EmbedNode,
@@ -901,105 +898,6 @@ export class Core {
         throw CoreError.invalidOperation('node is not a code block');
       }
       setOptional(node, 'codeLanguage', normalizeCodeLanguage(codeLanguage));
-    });
-  }
-
-  // Convert a plain content row into a command node (its text content stays the
-  // brief). Idempotent; seeds the user-only `commandSchedule` protected field so
-  // the bright line holds the moment the node becomes a command, and seeds the two
-  // config field rows (Schedule / Agent) so the command is fully node-native — the
-  // editors hang off real `fieldEntry` children, and the prompt is the remaining
-  // (non-field) child outline. Drafting a command (including this conversion) is
-  // allowed from any origin — only *arming* the schedule is user-only (see
-  // `setCommandSchedule`).
-  setCommandNode(nodeId: string): CommandOutcome {
-    return this.mutate(() => {
-      const state = this.snapshot();
-      ensureNodeEditable(state, nodeId);
-      const node = clone(requiredNode(state, nodeId));
-      if (node.type !== undefined && node.type !== 'command') {
-        throw CoreError.invalidOperation('only plain content nodes can become command nodes');
-      }
-      const protectedFields = node.protectedFields?.includes(COMMAND_SCHEDULE_FIELD)
-        ? node.protectedFields
-        : [...(node.protectedFields ?? []), COMMAND_SCHEDULE_FIELD];
-      const command: CommandNode = { ...node, type: 'command', protectedFields } as CommandNode;
-      command.updatedAt = nowMs();
-      this.loro.writeNode(command);
-      this.ensureCommandFieldEntriesDirect(nodeId);
-      return focus(nodeId);
-    });
-  }
-
-  // Seed the Schedule config row for a command node as a real `fieldEntry` child
-  // pointing at the built-in system field (`sys:commandSchedule`), whose value
-  // editor writes the gated scalar. Find-or-create so a re-conversion never
-  // duplicates the row; it sits ahead of the prompt (the remaining non-field
-  // children).
-  private ensureCommandFieldEntriesDirect(nodeId: string): void {
-    const hasEntry = (defId: string): boolean =>
-      (this.snapshot().nodes[nodeId]?.children ?? []).some((childId) => {
-        const child = this.snapshot().nodes[childId];
-        return child?.type === 'fieldEntry' && child.fieldDefId === defId;
-      });
-    if (!hasEntry(COMMAND_SCHEDULE_FIELD_ID)) {
-      this.insertFieldEntryNodeDirect(nodeId, 0, COMMAND_SCHEDULE_FIELD_ID);
-    }
-  }
-
-  // Arm / change / clear a command node's schedule. The bright line: a write to
-  // the protected `commandSchedule` field is rejected unless it originates from
-  // the user. A non-empty value re-arms (`sysLastRunAt = now`) so an occurrence
-  // that already passed today does not retroactively fire; clearing it leaves
-  // the watermark untouched (the node simply becomes manual-only).
-  setCommandSchedule(nodeId: string, schedule: string | undefined, origin: CommitOrigin): CommandOutcome {
-    return this.patchNode(nodeId, (node) => {
-      if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
-      // The bright line, keyed to the node-type invariant (not the mutable
-      // `protectedFields` array, which could drift and fail open): arming /
-      // changing / clearing a command node's schedule is user-only. The agent
-      // can draft the brief and propose a schedule as text, but only the user
-      // can arm an unattended run.
-      if (origin !== 'user') {
-        throw CoreError.invalidOperation('only the user can arm a command node schedule');
-      }
-      const normalized = normalizeCommandSchedule(schedule);
-      const command = node as CommandNode;
-      setOptional(command, 'commandSchedule', normalized);
-      if (normalized) command.sysLastRunAt = nowMs();
-    });
-  }
-
-  // Advance a command node's system fire watermark after a successful run. Not
-  // user-facing and not protected (system-managed, never agent-written): the
-  // anacron scheduler calls this via a `system`-origin command. The agent is
-  // barred — otherwise a future agent→document-command path could push the
-  // watermark to the far future and permanently suppress the user's schedule
-  // (the symmetric counterpart to the user-only `setCommandSchedule` gate).
-  // Forward-only — a fire whose captured timestamp is older than the current
-  // watermark (a long run that straddled a user re-arm) must never move it
-  // backward and re-expose a covered occurrence.
-  markCommandFired(nodeId: string, firedAt: number, origin: CommitOrigin): CommandOutcome {
-    return this.patchNode(nodeId, (node) => {
-      if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
-      if (origin === 'agent') throw CoreError.invalidOperation('the agent cannot advance a command fire watermark');
-      const command = node as CommandNode;
-      command.sysLastRunAt = Math.max(command.sysLastRunAt ?? 0, firedAt);
-    });
-  }
-
-  // Record that a command occurrence is being ATTEMPTED, before its run starts.
-  // System-managed (same agent bar as `markCommandFired`); forward-only. Used
-  // only by the startup reconciliation: if a crash/quit/sleep left
-  // `sysLastAttemptAt > sysLastRunAt`, that occurrence is treated as consumed and
-  // not re-fired (at-most-once). The due check never reads this field, so an
-  // in-process run failure still retries (watermark un-advanced + backoff).
-  markCommandAttempted(nodeId: string, attemptedAt: number, origin: CommitOrigin): CommandOutcome {
-    return this.patchNode(nodeId, (node) => {
-      if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
-      if (origin === 'agent') throw CoreError.invalidOperation('the agent cannot advance a command attempt marker');
-      const command = node as CommandNode;
-      command.sysLastAttemptAt = Math.max(command.sysLastAttemptAt ?? 0, attemptedAt);
     });
   }
 
@@ -4167,19 +4065,6 @@ function requiredNode(state: DocumentState, nodeId: string): Node {
 function setOptional<T extends object, K extends keyof T>(object: T, key: K, value: T[K] | undefined) {
   if (value === undefined || value === null || value === '') delete object[key];
   else object[key] = value;
-}
-
-// Validate and canonicalize a command schedule string. Empty → undefined
-// (manual-only). A non-empty value must parse as a `<endpoint> RRULE:...`
-// schedule (src/core/dateSchedule.ts); we store the canonical re-serialization
-// so the offline scheduler always reads a normalized form.
-function normalizeCommandSchedule(raw: string | undefined): string | undefined {
-  if (raw === undefined) return undefined;
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  const parsed = parseDateSchedule(trimmed);
-  if (!parsed) throw CoreError.invalidOperation('invalid command schedule');
-  return formatDateSchedule(parsed);
 }
 
 function ensureParentMutable(state: DocumentState, parentId: string) {

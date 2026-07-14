@@ -11,7 +11,7 @@ built-in name is a product bug and fails loudly instead of being silently
 dropped. The current user-visible built-in skills are `/skillify`, `/research`,
 `/data-cleanup`, `/data-analysis`, `/document`, `/feed-processing`, `/pdf`,
 `/presentation`, and `/spreadsheet`.
-`goal-launching` is a model-only built-in workflow and is not exposed as a slash
+`issue-planning` is a model-only built-in workflow and is not exposed as a slash
 skill.
 
 `/skillify` is a user- and model-invocable workflow for creating or updating
@@ -26,13 +26,23 @@ this as a skill" or "update the import skill with this workflow" as direct
 `/skillify` user invocations when slash skills are enabled; ordinary questions
 about whether a skill exists or how skills work remain normal conversation.
 
-`goal-launching` is a model-invocable guidance workflow for turning a
-natural-language handoff into a persistent verified Run. It tells the model to
-separate objective from acceptance criteria, clarify missing criteria when
-needed, launch with `spawn_run` using `detach:true`, `context:"brief"`, a finite
-budget, and narrow scope, and then rely on verifier/objective status rather than
-the worker's own completion claim. There is no user-facing `/goal` shortcut or
-composer goal button; ordinary prose is the entry point.
+`issue-planning` is a model-invocable guidance workflow for turning a
+natural-language durable-work request into one or more verified Issues. It tells
+the model to choose Issue boundaries from independently user-visible outcomes,
+author the durable objective/scope/criteria/output/trigger/verification
+definition, encode per-item coverage as criteria or description text, leave
+execution sequencing and short-lived subtasks to the later Agent Session, and
+create a child Issue only when a sub-outcome needs its own durable lifecycle or
+independent Agent Session. Runtime derives child parentage from the creating
+Session and routes child completion, cancellation, or Session error back one hop
+without exposing routing origins to the model. The workflow uses relations only
+between independently managed Issues and relies on Issue criteria, Activity, and
+verifier evidence rather than one Session's own completion claim.
+It also separates interaction mode: direct one-turn work should be answered
+directly, durable work should be handed off through runtime-triggered background
+execution, and `agent_session_read(wait)` is reserved for an explicit wait on an
+existing Session. There is no user-facing `/issue-planning` or `/goal` shortcut,
+and no composer goal button; ordinary prose is the entry point.
 
 `/research` is a user- and model-invocable `execution: isolated` workflow for
 bounded investigation. It starts an isolated same-agent Run and
@@ -436,7 +446,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `allowed-tools` | Supported as run-scoped preapproval metadata, not as a tool visibility list. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery for mutable skills. Built-ins load immediately even when they declare `paths`. |
-| `execution: isolated` | Supported through the same-conversation `spawn_run`/delegation runtime. Isolated skill bodies run in a sidechain sub-run of the current agent and return only the final result to the parent. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
+| `execution: isolated` | Supported through the runtime-owned delegation executor. Isolated skill bodies run in a sidechain worker of the current agent and return only the final result to the parent; they do not require exposing direct delegated-run tools. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary file-tool permissions, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
 | Agent-managed agent-definition writes | Not supported. The one-Neva invariant removed agent authoring as a self-definition surface (no `/create-agent` workflow, and the self-definition write gate governs skills only). The single agent, Neva, is configured through the agent-config window (`agentUpdateAgentDefinition`), not by authoring `AGENT.md` files. |
@@ -620,7 +630,7 @@ Intentional omissions:
 - Session-memory compact: omitted because Lin does not use this memory model.
 - Pre/post/session-start compact hooks: omitted until Lin has a first-class hook system.
 - Plan-mode and plan-file attachments: omitted because Lin does not have that separate plan-mode runtime.
-- Task-output-file compatibility tools: omitted because Lin follows cc-2.1's preferred path of surfacing durable output references that can be read with `file_read`. `run_status` remains only for explicit same-conversation status/wait checks.
+- Task-output-file compatibility tools: omitted because Lin follows cc-2.1's preferred path of surfacing durable output references that can be read with `file_read`. Ordinary work inspection goes through `issue_read` and `agent_session_read`.
 - Deferred-tool/MCP delta re-announcement: omitted for now because Lin's tool registry is stable in `pi-agent-core`; future plugin/app tools should add their own compact restore state.
 - Provider-specific cache-edit microcompact: omitted because it depends on cache editing support that is not available through the generic pi provider path. Lin uses stable event-log replacements instead.
 - Prompt-cache telemetry and survey plumbing: omitted because it is observability, not model-visible behavior.

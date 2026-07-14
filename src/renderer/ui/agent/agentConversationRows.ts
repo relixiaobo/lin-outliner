@@ -3,6 +3,7 @@ import type {
   AgentConversationEntry,
   AgentMessageEntry,
   AgentHiddenTurnBoundaryEntry,
+  AgentIssueNotificationEntry,
   AgentTurnPhase,
 } from '../../agent/runtime';
 
@@ -26,12 +27,12 @@ export function isBoundaryEntry(entry: AgentConversationEntry): boolean {
 }
 
 export function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' | 'system' {
-  if (entry.kind === 'hidden-turn-boundary') return 'system';
+  if (entry.kind === 'hidden-turn-boundary' || entry.kind === 'issue-notification') return 'system';
   return isBoundaryEntry(entry) ? 'system' : (entry as AgentMessageEntry).message.role;
 }
 
 export function getEntryTimestamp(entry: AgentConversationEntry): number {
-  if (entry.kind === 'hidden-turn-boundary') return entry.timestamp;
+  if (entry.kind === 'hidden-turn-boundary' || entry.kind === 'issue-notification') return entry.timestamp;
   if (entry.kind === 'dream') return entry.status === 'active' ? entry.dream.startedAt : entry.dream.createdAt;
   if (entry.kind === 'context-clear') return entry.contextClear.createdAt;
   if (entry.kind !== 'compaction') return entry.message.timestamp;
@@ -43,12 +44,16 @@ function isAssistantEntry(entry: AgentConversationEntry): entry is AssistantEntr
 }
 
 export function isTurnBoundaryEntry(entry: AgentConversationEntry): boolean {
-  if (entry.kind === 'hidden-turn-boundary') return true;
+  if (entry.kind === 'hidden-turn-boundary' || entry.kind === 'issue-notification') return true;
   return isBoundaryEntry(entry) || (entry as AgentMessageEntry).message.role === 'user';
 }
 
 function isHiddenTurnBoundaryEntry(entry: AgentConversationEntry): entry is AgentHiddenTurnBoundaryEntry {
   return entry.kind === 'hidden-turn-boundary';
+}
+
+function isIssueNotificationEntry(entry: AgentConversationEntry): entry is AgentIssueNotificationEntry {
+  return entry.kind === 'issue-notification';
 }
 
 // Channel relay puts back-to-back assistant turns from DIFFERENT agents in the
@@ -148,7 +153,16 @@ export function buildConversationRenderRows(
   while (index < entries.length) {
     const entry = entries[index]!;
 
-    if (isHiddenTurnBoundaryEntry(entry)) {
+    if (isHiddenTurnBoundaryEntry(entry) || isIssueNotificationEntry(entry)) {
+      rows.push(buildConversationRenderRow({
+        entry,
+        endIndex: index,
+        key: entry.id,
+        sourceSeqs: sourceSeqsForEntry(entry),
+        turnPhase,
+        totalEntryCount: entries.length,
+        nextEntry: entries[index + 1],
+      }));
       index += 1;
       continue;
     }
