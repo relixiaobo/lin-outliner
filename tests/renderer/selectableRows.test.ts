@@ -102,6 +102,34 @@ describe('buildSelectableRows', () => {
     });
   });
 
+  test('classifies a direct nested field entry by its owning field-value boundary', () => {
+    const byId = byIdOf([
+      node('root', { children: ['entry'] }),
+      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['nested-entry'] }),
+      node('nested-entry', {
+        parentId: 'entry',
+        type: 'fieldEntry',
+        children: ['nested-value'],
+      }),
+      node('nested-value', { parentId: 'nested-entry' }),
+    ]);
+
+    const rows = buildSelectableRows('root', byId, { expanded: new Set() });
+
+    expect(rowIds(rows)).toEqual(['entry', 'nested-entry', 'nested-value']);
+    expect(rows[1]).toMatchObject({
+      id: 'nested-entry',
+      parentId: 'entry',
+      kind: 'fieldValue',
+      actionPolicy: { delete: 'field-value-remove' },
+    });
+    expect(rows[2]).toMatchObject({
+      id: 'nested-value',
+      parentId: 'nested-entry',
+      kind: 'fieldValue',
+    });
+  });
+
   test('treats expanded field value descendants as ordinary content rows', () => {
     const byId = byIdOf([
       node('root', { children: ['entry'] }),

@@ -1473,6 +1473,11 @@ test.describe('outliner trigger parity', () => {
       type: 'fieldEntry',
     });
     await expect(row(page, valueId).locator('.field-name-input')).toBeFocused();
+
+    await page.keyboard.press('Escape');
+    await expect(rowBody(page, valueId)).toHaveClass(/selected/);
+    await page.keyboard.press('Shift+Tab');
+    await expect.poll(async () => (await nodeById(page, valueId))?.parentId).toBe(fieldId);
   });
 
   test('checkbox field values use the shared checkbox mark', async ({ page }) => {
@@ -1512,10 +1517,34 @@ test.describe('outliner trigger parity', () => {
 
     await checkbox.click();
     await expect(mark).toHaveClass(/checked/);
+    let valueId = '';
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.find((node) => node.parentId === fieldId)?.content.text;
+      const value = projection.nodes.find((node) => node.parentId === fieldId);
+      valueId = value?.id ?? '';
+      return value?.content.text;
     }).toBe('true');
+
+    const valueRow = rowBody(page, valueId);
+    const storedCheckbox = valueRow.getByRole('checkbox');
+    await expect(storedCheckbox).toBeFocused();
+    await expect(valueRow.locator(':scope > .row-leading')).toHaveCount(1);
+
+    await valueRow.hover();
+    await valueRow.locator(':scope > .row-leading > .row-chevron-button').click();
+    const childDraft = trailingEditor(page, valueId);
+    await expect(childDraft).toBeFocused();
+    await childDraft.type('Boolean detail');
+
+    let childId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const child = projection.nodes.find((node) => node.parentId === valueId);
+      childId = child?.id ?? '';
+      return child?.content.text;
+    }).toBe('Boolean detail');
+    await expect(row(page, childId)).toBeVisible();
+    await expect(storedCheckbox).toHaveAttribute('aria-checked', 'true');
   });
 
 });

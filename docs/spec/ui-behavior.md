@@ -194,7 +194,10 @@ to open. Each stored value is still an ordinary expandable node. Its descendants
 render below it inside the value column, use normal node commands, and are not
 interpreted as additional values of the field. A leaf value's chevron opens an
 empty ordinary child draft. A direct value keeps field-aware add/remove cleanup;
-deeper descendants use ordinary node creation and deletion.
+deeper descendants use ordinary node creation and deletion. An empty checkbox
+field shows its standalone toggle before a value node exists; after the toggle
+creates a stored boolean, that value uses the same expandable row with the
+checkbox as its primary control.
 
 A typed field value that fails its type's format check shows a trailing warning
 icon; the message is revealed on hover, never as always-on inline text.

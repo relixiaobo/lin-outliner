@@ -79,6 +79,7 @@ import { fileNodeIconKind, fileNodeTitle, isFileNode } from '../preview/fileNode
 import { FileNodeImage } from '../preview/FileNodeImage';
 import { FilePreviewBody } from '../preview/FilePreviewBody';
 import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
+import { CheckboxFieldControl } from './CheckboxFieldControl';
 import { CodeBlockRow } from './CodeBlockRow';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -304,6 +305,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // value against an existing pool option in one shot, instead of per keystroke.
   const fieldValueDraft = Boolean(props.fieldValue) && props.draft === true && !realNode;
   const fieldDescriptor = props.fieldValue?.descriptor;
+  const checkboxFieldValue = Boolean(
+    props.fieldValue
+    && fieldDescriptor?.isWholeFieldControl
+    && realNode,
+  );
   // An options field's draft shows the additive options overlay and treats free
   // text as the filter query, so #/@// and the code fence are plain text there.
   const optionPickerDraft = fieldValueDraft && fieldDescriptor?.interaction === 'optionPicker';
@@ -412,7 +418,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // A file node renders its editor visually hidden (the sr-only keyboard anchor), so
   // the inline tag slot inside that editor would be invisible. File rows render
   // their tags in the read-only filename row instead; code rows keep the sibling bar.
-  const useInlineTagSlot = isPlainTextRow && !fileNodeRow;
+  const useInlineTagSlot = isPlainTextRow && !fileNodeRow && !checkboxFieldValue;
   const inlineTagSlotRef = useRef<HTMLSpanElement | null>(null);
   if (useInlineTagSlot && hasTags && inlineTagSlotRef.current === null) {
     const el = document.createElement('span');
@@ -1905,10 +1911,22 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // no button (avoids a redundant icon beside the placeholder).
   const showDateTrigger = dateFieldValue && Boolean(realNode);
 
-  // The row's text editor for ordinary nodes. Non-image file nodes mount a
-  // separate read-only title editor below; image file nodes use a hidden anchor
-  // because the visible row content is the image itself.
-  const rowEditorElement = isCodeBlock ? (
+  // The row's primary focus surface. A stored checkbox keeps its boolean control
+  // inside the ordinary row; other values use the shared text/code editors.
+  const rowEditorElement = checkboxFieldValue && props.fieldValue && realNode ? (
+    <CheckboxFieldControl
+      entryId={props.fieldValue.entryId}
+      run={props.run}
+      valueNode={realNode}
+      focusTarget={editorFocusTarget}
+      focusRequest={props.ui.focusRequest}
+      onFocus={row.updateSelection}
+      onFocusRequestConsumed={(request) => {
+        props.setUi((prev) => clearFocusRequestState(prev, request));
+      }}
+      onTab={(shiftKey) => void handleTab(shiftKey, 0)}
+    />
+  ) : isCodeBlock ? (
     <CodeBlockRow
       nodeId={props.nodeId}
       text={draftContent.text}

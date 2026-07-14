@@ -119,7 +119,9 @@ Field name `Enter` creates a sibling node; it does not jump into the value child
 The field entry itself is not expandable because its direct children are the
 values rendered in its value column. Each stored value is an ordinary expandable
 node: it uses the shared leading disclosure grid, may contain ordinary child rows
-or nested field rows, and keeps those descendants inside the value column.
+or nested field rows, and keeps those descendants inside the value column. An
+empty checkbox field uses a standalone toggle; once stored, its boolean value uses
+the same row geometry and renders that toggle in place of editable text.
 
 ### References
 

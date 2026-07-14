@@ -65,6 +65,9 @@ uses the same disclosure behavior as an ordinary row:
 - Expanded values render normal child rows, trailing drafts, and indent guides.
 - Reference values expand through the existing reference target projection and
   preserve the existing cycle guard.
+- An empty checkbox field keeps its standalone toggle because no value node exists
+  yet. Once toggled, the stored boolean renders through the same expandable value
+  row as other types, with the checkbox control replacing editable text.
 
 The value column keeps its dense field layout, but it must reserve a real,
 stable disclosure slot. Nested field-entry rows continue to hide their own

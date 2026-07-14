@@ -190,8 +190,8 @@ function selectableRowKind(
   parent: NodeProjection | undefined,
 ): SelectableRowKind {
   if (isSyntheticSystemValueId(id)) return 'syntheticSystemValue';
-  if (node?.type === 'fieldEntry') return 'fieldEntry';
   if (parent?.type === 'fieldEntry') return 'fieldValue';
+  if (node?.type === 'fieldEntry') return 'fieldEntry';
   return 'content';
 }
 

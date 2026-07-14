@@ -73,6 +73,43 @@ describe('selection batch action policy', () => {
     })).toEqual(['body']);
   });
 
+  test('keeps a direct nested field entry inside its owning field boundary', () => {
+    const byId = byIdOf([
+      node('root', { children: ['entry'] }),
+      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value', 'nested-entry'] }),
+      node('value', { parentId: 'entry' }),
+      node('nested-entry', { parentId: 'entry', type: 'fieldEntry' }),
+    ]);
+    const rowsById = selectableRowMap(buildSelectableRows('root', byId, { expanded: new Set() }));
+    const ids = ['nested-entry'];
+
+    expect(rowsById.get('nested-entry')?.kind).toBe('fieldValue');
+    expect(idsAllowedForStructuralBatch({
+      ids,
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual([]);
+    expect(idsAllowedForStructuralIndentBatch({
+      ids,
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual(ids);
+    expect(idsAllowedForStructuralOutdentBatch({
+      ids,
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual([]);
+    expect(idsAllowedForMoveTo({
+      ids,
+      panelRootId: 'root',
+      byId,
+      rowMap: rowsById,
+    })).toEqual([]);
+  });
+
   test('blocks structural outdent at the panel root boundary', () => {
     const byId = byIdOf([
       node('root', { children: ['top', 'entry'] }),
