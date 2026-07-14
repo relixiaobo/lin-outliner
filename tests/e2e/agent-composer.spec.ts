@@ -3487,6 +3487,84 @@ test.describe('agent composer controls', () => {
     await expect(page.getByText('Compare tag layout stability.')).toBeVisible();
   });
 
+  test('clears the queued steer preview as soon as the active run consumes it', async ({ page }) => {
+    await openNevaDm(page);
+    const steerText = 'Check whether other fields have the same issue.';
+    const now = Date.now();
+    const priorMatchingMessage = {
+      nodeId: 'user-prior-matching-steer',
+      sourceSeq: 10,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: steerText }],
+        timestamp: now - 2_000,
+      },
+    };
+    const streamingMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'Still working.' }],
+      api: 'responses',
+      provider: 'openai',
+      model: 'gpt-5.4',
+      stopReason: null,
+      timestamp: now,
+      runId: 'run-consuming-steer',
+      sourceSeq: 11,
+    };
+
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
+      conversationTitle: 'Neva',
+      conversation: [priorMatchingMessage],
+      streamingMessage,
+      isStreaming: true,
+      runActive: true,
+      activeRunId: 'run-consuming-steer',
+      pendingToolCallIds: [],
+      errorMessage: null,
+    }, 1);
+
+    await page.getByLabel('Agent message').fill(steerText);
+    await page.getByRole('button', { name: 'Steer agent' }).click();
+
+    const queuedPreview = page.locator('.agent-steer-bubble');
+    const composerEditor = page.locator('.agent-composer-editor');
+    await expect(queuedPreview).toContainText(steerText);
+    await expect(composerEditor).toHaveAttribute('data-placeholder', 'Append another steer...');
+
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
+      conversationTitle: 'Neva',
+      conversation: [
+        priorMatchingMessage,
+        {
+          nodeId: 'user-consumed-steer',
+          sourceSeq: 12,
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: steerText }],
+            timestamp: now + 1,
+          },
+        },
+      ],
+      streamingMessage: {
+        ...streamingMessage,
+        content: [{ type: 'text', text: 'Continuing with the new direction.' }],
+        sourceSeq: 13,
+        timestamp: now + 2,
+      },
+      isStreaming: true,
+      runActive: true,
+      activeRunId: 'run-consuming-steer',
+      pendingToolCallIds: [],
+      errorMessage: null,
+    }, 2);
+
+    await expect(queuedPreview).toHaveCount(0);
+    await expect(composerEditor).toHaveAttribute('data-placeholder', 'Steer the conversation...');
+    await expect(page.locator('[data-agent-message-id="user-consumed-steer"] .agent-user-bubble'))
+      .toHaveText(steerText);
+    await expect(page.getByRole('button', { name: 'Stop agent' })).toBeVisible();
+  });
+
   test('opens Issue work details from the Work panel', async ({ page }) => {
     const usage = {
       input: 0,
