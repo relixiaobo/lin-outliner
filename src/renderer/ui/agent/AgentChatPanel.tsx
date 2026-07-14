@@ -136,6 +136,19 @@ interface PendingUserMessageScroll {
   targetRowKey: string | null;
 }
 
+interface VisibleUserMessageSignal {
+  id: string;
+  sourceSeq: number | null;
+  text: string;
+}
+
+interface QueuedSteerState {
+  conversationId: string | null;
+  text: string;
+  baselineUserMessageId: string | null;
+  baselineUserMessageSourceSeq: number | null;
+}
+
 function parseCssTimeMs(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -171,6 +184,44 @@ function withReferencedNodes(
     }];
   });
   return referencedNodes.length > 0 ? { ...context, referencedNodes } : context;
+}
+
+function visibleUserMessageText(entry: AgentMessageEntry): string {
+  if (entry.message.role !== 'user') return '';
+  const { content } = entry.message;
+  if (typeof content === 'string') return content.trim();
+  return content
+    .map((part) => part.type === 'text' ? part.text : '')
+    .join('\n')
+    .trim();
+}
+
+function latestVisibleUserMessage(
+  entries: readonly AgentConversationEntry[],
+): VisibleUserMessageSignal | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.kind !== 'message' || entry.message.role !== 'user') continue;
+    return {
+      id: entry.nodeId ?? entry.id,
+      sourceSeq: entry.sourceSeq ?? null,
+      text: visibleUserMessageText(entry),
+    };
+  }
+  return null;
+}
+
+function queuedSteerWasConsumed(
+  queuedSteer: QueuedSteerState,
+  conversationId: string | null,
+  latestUserMessage: VisibleUserMessageSignal | null,
+): boolean {
+  if (queuedSteer.conversationId !== conversationId || !latestUserMessage) return false;
+  const laterMessage = queuedSteer.baselineUserMessageSourceSeq !== null
+    && latestUserMessage.sourceSeq !== null
+    ? latestUserMessage.sourceSeq > queuedSteer.baselineUserMessageSourceSeq
+    : latestUserMessage.id !== queuedSteer.baselineUserMessageId;
+  return laterMessage && latestUserMessage.text === queuedSteer.text;
 }
 
 // The agent runtime stores this English placeholder as a conversation's title until it
@@ -473,7 +524,7 @@ export function AgentChatPanel({
   const anyRunActive = runActive;
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [steeringNote, setSteeringNote] = useState<string | null>(null);
+  const [queuedSteer, setQueuedSteer] = useState<QueuedSteerState | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState<AgentConversationListMeta[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
@@ -570,6 +621,16 @@ export function AgentChatPanel({
     () => buildConversationRenderRows(entries, turnPhase),
     [entries, turnPhase],
   );
+  const latestUserMessage = latestVisibleUserMessage(entries);
+  const queuedSteerConsumed = queuedSteer !== null
+    && queuedSteerWasConsumed(queuedSteer, conversationId, latestUserMessage);
+  const visibleQueuedSteer = queuedSteer !== null
+    && queuedSteer.conversationId === conversationId
+    && runActive
+    && !queuedSteerConsumed
+    ? queuedSteer
+    : null;
+  const steeringNote = visibleQueuedSteer?.text ?? null;
   const selectedIssueDetail = issueDetailStack.length > 0 ? issueDetailStack[issueDetailStack.length - 1]! : null;
   const selectedIssueTarget = selectedIssueDetail?.target ?? null;
   const selectedRunTarget = runDetailStack.length > 0 ? runDetailStack[runDetailStack.length - 1]! : null;
@@ -1184,11 +1245,11 @@ export function AgentChatPanel({
   }, [loadSlashCommands]);
 
   useEffect(() => {
-    // Clear the steering note when the run settles.
-    if (!runActive) {
-      setSteeringNote(null);
+    if (!queuedSteer) return;
+    if (!runActive || queuedSteer.conversationId !== conversationId || queuedSteerConsumed) {
+      setQueuedSteer((current) => current === queuedSteer ? null : current);
     }
-  }, [runActive]);
+  }, [conversationId, queuedSteer, queuedSteerConsumed, runActive]);
 
   // A command Run reveals its delivery conversation and asks for the Work panel;
   // the open run panel persists across the conversation switch this same reveal
@@ -1382,15 +1443,26 @@ export function AgentChatPanel({
     const trimmed = message.trim();
     if (!trimmed) return;
     const combined = steeringNote ? `${steeringNote}\n${trimmed}` : trimmed;
-    setSteeringNote(combined);
-    const queued = await steerRuntime(combined);
-    if (!queued) {
-      setSteeringNote(null);
+    const nextQueuedSteer: QueuedSteerState = {
+      conversationId,
+      text: combined,
+      baselineUserMessageId: latestUserMessage?.id ?? null,
+      baselineUserMessageSourceSeq: latestUserMessage?.sourceSeq ?? null,
+    };
+    setQueuedSteer(nextQueuedSteer);
+    try {
+      const queued = await steerRuntime(combined);
+      if (!queued) {
+        setQueuedSteer((current) => current === nextQueuedSteer ? null : current);
+      }
+    } catch (error) {
+      setQueuedSteer((current) => current === nextQueuedSteer ? null : current);
+      throw error;
     }
   }
 
   async function handleCancelSteer() {
-    setSteeringNote(null);
+    setQueuedSteer(null);
     await clearSteer();
   }
 

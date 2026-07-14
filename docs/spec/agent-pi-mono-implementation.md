@@ -1161,6 +1161,11 @@ sends a new instruction while the agent is streaming, Tenon queues it as steer
 input for the active run instead of starting an unrelated run in the same
 conversation.
 
+The composer shows an editable/cancellable preview only while that steer remains
+unconsumed. As soon as pi-agent-core emits the steer as the next visible user
+message, the preview disappears even though the same Run may continue streaming;
+the transcript message is then the single visible representation of that input.
+
 Examples:
 
 - "Stop editing files, just explain the plan."
