@@ -234,34 +234,52 @@ describe('agent node tools', () => {
     const nodeSearch = tools.find((tool) => tool.name === 'node_search')!;
     const history = tools.find((tool) => tool.name === 'outline_undo_stack')!;
     const nodeCreateOutlineDescription = (nodeCreate.parameters as any).properties.outline.description as string;
+    const nodeSearchParameters = JSON.stringify(nodeSearch.parameters);
+    const nodeEditParameters = JSON.stringify(nodeEdit.parameters);
 
     expect(nodeRead.description).toContain('Use node_read before node_edit');
     expect(nodeCreate.description).toContain('Usage:');
-    expect(nodeCreate.description).toContain('YYYY-MM-DDTHH:mm');
-    expect(nodeCreate.description).toContain('Use child nodes for ordinary notes');
     expect(nodeCreate.description).toContain('Prefer nested child lines over node descriptions');
     expect(nodeCreate.description).toContain('Prefer ordinary child nodes over Field:: lines');
     expect(nodeCreate.description).toContain('Use [ ]/[x] only for real tasks');
     expect(nodeCreate.description).toContain('Use %%search%% only when creating a saved search/view');
+    expect(nodeCreateOutlineDescription).toContain('YYYY-MM-DDTHH:mm');
+    expect(nodeCreateOutlineDescription).toContain('Use child nodes for ordinary notes');
     expect(nodeCreateOutlineDescription).toContain('Use "Title - description" only when the user explicitly asks');
     expect(nodeCreateOutlineDescription).toContain('Markdown inline syntax creates rich-text marks');
     expect(nodeCreateOutlineDescription).toContain('Field:: writes resolve existing owner fields');
+    expect(`${nodeCreate.description}${nodeCreateOutlineDescription}`.split('Markdown inline syntax creates rich-text marks').length - 1).toBe(1);
     expect(JSON.stringify(nodeCreate.parameters)).toContain("today's journal node, not the current UI selection");
     expect(nodeSearch.description).toContain('DONE_LAST_DAYS value:: 7');
     expect(nodeSearch.description).toContain('Use node_search for temporary lookup');
+    expect(nodeSearch.description).toContain('common_query');
+    expect(nodeSearch.description).toContain('[[node:^exact-id]]');
     expect(nodeSearch.description).toContain('Do not express done state as FIELD_IS');
     expect(nodeSearch.description).toContain('Use DATE_OVERLAPS only for values stored in a date field');
-    expect(JSON.stringify(nodeSearch.parameters)).toContain('Plain field names');
-    expect(JSON.stringify(nodeSearch.parameters)).toContain('Date field values use YYYY-MM-DD');
+    expect(nodeSearchParameters).not.toContain('Plain field names');
+    expect(nodeSearchParameters).not.toContain('Date field values use YYYY-MM-DD');
+    expect((nodeSearch.parameters as any).properties.queries.maxItems).toBe(20);
+    expect((nodeSearch.parameters as any).properties.common_query).toBeDefined();
+    expect(`${nodeSearch.description}${nodeSearchParameters}`.split('EDITED_BY exists in the data model').length - 1).toBe(1);
     expect(nodeEdit.description).toContain('Set operation explicitly');
-    expect(JSON.stringify(nodeEdit.parameters)).toContain('replace_outline');
-    expect(nodeEdit.description).toContain('old_string "*" only to replace');
-    expect(nodeEdit.description).toContain('target root line only');
-    expect(JSON.stringify(nodeEdit.parameters)).toContain('Date field values use YYYY-MM-DD');
-    expect(JSON.stringify(nodeEdit.parameters)).toContain('edits require expected_revision');
-    expect(JSON.stringify(nodeEdit.parameters)).toContain('leading %%node:id%% marker may be omitted');
-    expect(JSON.stringify(nodeEdit.parameters)).toContain('Include enough surrounding lines');
+    expect(nodeEditParameters).toContain('replace_outline');
+    expect(nodeEditParameters).toContain('Use \\"*\\" only to replace');
+    expect(nodeEditParameters).toContain('target root line only');
+    expect(nodeEditParameters).toContain('Date field values use YYYY-MM-DD');
+    expect(nodeEditParameters).toContain('edits require expected_revision');
+    expect(nodeEditParameters).toContain('leading %%node:id%% marker may be omitted');
+    expect(nodeEditParameters).toContain('Include enough surrounding lines');
+    expect(`${nodeEdit.description}${nodeEditParameters}`.split('Do not edit child structure through node_edit outline fragments').length - 1).toBe(1);
     expect(history.description).toContain('Use action "list" first');
+  });
+
+  test('node_create catalog independently explains edit handles and final-answer references', () => {
+    const nodeCreate = createNodeTools(hostFor(Core.new())).find((tool) => tool.name === 'node_create')!;
+    const catalog = `${nodeCreate.description}\n${JSON.stringify(nodeCreate.parameters)}`;
+
+    expect(catalog).toContain('Successful creation results include fresh %%node:id%% edit handles');
+    expect(catalog).toContain('never show %%node:id%% edit handles');
+    expect(catalog).toContain('[[node:^exact-id]]');
   });
 
   test('node tools enforce run-scoped node resources for Issue Sessions', async () => {
@@ -1192,8 +1210,7 @@ describe('agent node tools', () => {
       ...(result.details.data!.createdFieldEntryIds ?? []),
     ]);
     expect((visible.data! as any).refs).toBeUndefined();
-    // create now carries the final-answer citation guidance.
-    expect(visible.instructions).toContain('[[node:');
+    expect(visible.instructions).toBeUndefined();
     expect(result.details.data!.outline).toContain('Status:: Active');
   });
 
@@ -1676,7 +1693,7 @@ describe('agent node tools', () => {
     expect(core.state().nodes[oldChild]!.parentId).toBe(root);
   });
 
-  test('node_edit guidance reports a real no-op instead of claiming the edit applied', async () => {
+  test('node_edit reports a real no-op through informative status without static guidance', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const root = mustFocus(core.createNode(today, null, 'Task'));
@@ -1687,11 +1704,11 @@ describe('agent node tools', () => {
       old_string: '- Task',
       new_string: '- Task',
     });
-    const visible = parseVisibleToolResult<{ instructions?: string }>(result.contentText);
+    const visible = parseVisibleToolResult<{ status?: string; instructions?: string }>(result.contentText);
 
     expect(result.details.status).toBe('unchanged');
-    expect(visible.instructions).toContain('No change was needed');
-    expect(visible.instructions).not.toContain('Edit applied');
+    expect(visible.status).toBe('unchanged');
+    expect(visible.instructions).toBeUndefined();
   });
 
   test('node_edit accepts explicit replace_outline operation and returns the next revision visibly', async () => {
@@ -2032,8 +2049,7 @@ describe('agent node tools', () => {
     expect(result.details.data!.beforeOutline).toContain('Root');
     expect(result.details.data!.afterOutline).toContain('Root updated');
     expect(visible).toMatchObject({ ok: true });
-    expect(visible.instructions).toContain('Use node_delete for removals');
-    expect(visible.instructions).not.toContain('removed marked lines were moved to Trash');
+    expect(visible.instructions).toBeUndefined();
     expect(visible).not.toHaveProperty('tool');
     expect(visible).not.toHaveProperty('status');
     expect(visible.data).not.toHaveProperty('kind');
@@ -2609,7 +2625,7 @@ describe('agent node tools', () => {
     }
   });
 
-  test('node_read default returns one annotated outline without duplicate refs', async () => {
+  test('node_read default returns one annotated outline without duplicate references', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const root = mustFocus(core.createNode(today, null, 'Root'));
@@ -2622,7 +2638,6 @@ describe('agent node tools', () => {
       ok: boolean;
       data?: {
         outline?: string;
-        references?: Array<{ node_id: string; title: string; display_ref: string; edit_handle: string; type: string }>;
       };
     }>(result.contentText);
 
@@ -2632,22 +2647,8 @@ describe('agent node tools', () => {
     expect((visible as any).metrics).toBeUndefined();
     expect(visible.data!.outline).toBe(`- %%node:${root}%% Root\n  - %%node:${child}%% Child`);
     expect((visible.data! as any).refs).toBeUndefined();
-    expect(visible.data!.references).toEqual([
-      {
-        display_ref: nodeRef(core, root, 'Root'),
-        edit_handle: `%%node:${root}%%`,
-        node_id: root,
-        title: 'Root',
-        type: 'node',
-      },
-      {
-        display_ref: nodeRef(core, child, 'Child'),
-        edit_handle: `%%node:${child}%%`,
-        node_id: child,
-        title: 'Child',
-        type: 'node',
-      },
-    ]);
+    expect((visible.data! as any).references).toBeUndefined();
+    expect(visible.instructions).toBeUndefined();
     expect(result.details.data!.items[0]!.children.items).toEqual([expect.objectContaining({ nodeId: child })]);
   });
 
@@ -2670,7 +2671,7 @@ describe('agent node tools', () => {
 
     expect(visible.data!.page).toMatchObject({ total: 2, offset: 0, limit: 1, next_offset: 1 });
     expect((visible.data!.page as any).nextOffset).toBeUndefined();
-    expect(visible.instructions).toContain('child_offset 1');
+    expect(visible.instructions).toBeUndefined();
   });
 
   test('node_read annotated outline includes field entry and field value ids', async () => {
@@ -2849,33 +2850,26 @@ describe('agent node tools', () => {
       instructions?: string;
       data?: {
         outline?: string;
-        references?: Array<{ node_id: string; title: string; display_ref: string; edit_handle: string; type: string }>;
-        page?: { total: number; offset: number; limit: number; next_offset?: number };
+        total: number;
+        next_offset?: number;
       };
     }>(result.contentText);
 
     expect(visible).toMatchObject({ ok: true });
     expect(visible).not.toHaveProperty('tool');
     expect(visible.data).not.toHaveProperty('kind');
-    expect(visible.instructions).toContain('[[node:Display^...]]');
-    expect(visible.instructions).toContain('[[node:^...]]');
-    expect(visible.instructions).toContain('never show %%node:id%%');
-    expect(visible.instructions).toContain('data.references[].display_ref');
+    expect(visible.instructions).toBeUndefined();
     expect(visible.data!.outline).toBe(`- %%node:${chengdu}%% Chengdu weather`);
+    expect(visible.data!.total).toBe(1);
+    expect(visible.data!.next_offset).toBeUndefined();
     expect((visible.data! as any).matches).toBeUndefined();
     expect((visible.data! as any).refs).toBeUndefined();
-    expect(visible.data!.references).toEqual([{
-      display_ref: nodeRef(core, chengdu, 'Chengdu weather'),
-      edit_handle: `%%node:${chengdu}%%`,
-      node_id: chengdu,
-      title: 'Chengdu weather',
-      type: 'node',
-    }]);
-    expect(visible.data!.page).toMatchObject({ total: 1, offset: 0, limit: 10 });
+    expect((visible.data! as any).references).toBeUndefined();
+    expect((visible.data! as any).page).toBeUndefined();
     expect(result.details.data!.items![0]!.nodeId).toBe(chengdu);
   });
 
-  test('node_search count mode guides toward an id-returning call instead of an outline', async () => {
+  test('node_search count mode returns one total without pagination or static guidance', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     mustFocus(core.createNode(today, null, 'Chengdu weather'));
@@ -2889,19 +2883,14 @@ describe('agent node tools', () => {
     const visible = parseVisibleToolResult<{
       ok: boolean;
       instructions?: string;
-      data?: { total?: number; outline?: string; references?: unknown };
+      data?: { total?: number; outline?: string; references?: unknown; page?: unknown };
     }>(result.contentText);
 
-    // Count-only mode is signalled by the caller-supplied ctx, not by sniffing
-    // the payload shape — guidance must point back to an id-returning call.
-    expect(visible.instructions).toContain('Only the result count was requested');
-    expect(visible.instructions).toContain('without count');
-    // Editing guidance is suppressed: no outline markers, no reference hints.
-    expect(visible.instructions).not.toContain('%%node:id%%');
-    expect(visible.instructions).not.toContain('display_ref');
+    expect(visible.instructions).toBeUndefined();
     expect(visible.data!.total).toBe(1);
     expect(visible.data).not.toHaveProperty('outline');
     expect(visible.data).not.toHaveProperty('references');
+    expect(visible.data).not.toHaveProperty('page');
   });
 
   test('node_search count mode does not record agent recall', async () => {
@@ -2922,6 +2911,220 @@ describe('agent node tools', () => {
 
     expect(result.details.ok).toBe(true);
     expect(recorded).toEqual([]);
+  });
+
+  test('node_search batch counts combine one shared query with named fragments', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Batch root'));
+    const alpha = mustFocus(core.createNode(root, null, 'Alpha note'));
+    mustFocus(core.createNode(root, null, 'Beta note'));
+    mustFocus(core.createNode(today, null, 'Alpha outside'));
+    const authorEntry = mustFocus(core.createInlineField(alpha, null, 'Author', 'plain'));
+    mustFocus(core.createNode(authorEntry, null, 'Ada'));
+    const authorField = core.state().nodes[authorEntry]!.fieldDefId!;
+    const recorded: Array<{ nodeIds: string[]; source: string }> = [];
+    let searchIndexReads = 0;
+
+    const result = await executeRawTool<{
+      results: Array<{ name: string; total: number; query: { kind: string }; durationMs: number }>;
+    }>(core, 'node_search', {
+      count: true,
+      common_query: `- DESCENDANT_OF\n  - target:: ${root}`,
+      queries: [
+        { name: 'alpha', query: '- STRING_MATCH\n  - value:: Alpha' },
+        { name: 'beta', query: '- STRING_MATCH\n  - value:: Beta' },
+        { name: 'author_field', query: `- FIELD_IS_SET\n  - field:: ${authorField}` },
+      ],
+    }, { runScope: { resources: { nodes: [alpha] } } }, {
+      recordNodeAccess: (nodeIds, source) => recorded.push({ nodeIds: [...nodeIds], source }),
+      getTextSearchIndex: () => {
+        searchIndexReads += 1;
+        return buildTextSearchIndex(core.projection());
+      },
+    });
+    const visible = parseVisibleToolResult<{
+      ok: boolean;
+      instructions?: string;
+      data?: { counts: Record<string, number> };
+    }>(result.contentText);
+
+    expect(result.details.ok).toBe(true);
+    expect(result.details.data!.results.map((item) => ({ name: item.name, total: item.total }))).toEqual([
+      { name: 'alpha', total: 1 },
+      { name: 'beta', total: 0 },
+      { name: 'author_field', total: 1 },
+    ]);
+    expect(result.details.data!.results.every((item) => item.query.kind === 'group')).toBe(true);
+    expect(result.details.data!.results.every((item) => item.durationMs >= 0)).toBe(true);
+    expect(visible).toEqual({ ok: true, data: { counts: { alpha: 1, beta: 0, author_field: 1 } } });
+    expect(visible.instructions).toBeUndefined();
+    expect(searchIndexReads).toBe(1);
+    expect(recorded).toEqual([]);
+  });
+
+  test('node_search batch counts validate the whole batch before executing queries', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Batch root'));
+    mustFocus(core.createNode(root, null, 'Alpha note'));
+    let searchExecutions = 0;
+
+    const result = await executeRawTool(core, 'node_search', {
+      count: true,
+      common_query: `- DESCENDANT_OF\n  - target:: ${root}`,
+      queries: [
+        { name: 'valid', query: '- STRING_MATCH\n  - value:: Alpha' },
+        { name: 'invalid', query: '- NOT_A_REAL_OPERATOR' },
+      ],
+    }, undefined, {
+      getTextSearchIndex: () => {
+        searchExecutions += 1;
+        return buildTextSearchIndex(core.projection());
+      },
+    });
+
+    expect(result.details.ok).toBe(false);
+    expect(result.details.error?.code).toBe('unsupported_search_rule');
+    expect(result.details.error?.message).toContain('Query "invalid"');
+    expect(searchExecutions).toBe(0);
+  });
+
+  test('node_search batch counts reject semantic errors before reading search execution hooks', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    mustFocus(core.createNode(today, null, 'Alpha note'));
+    let searchIndexReads = 0;
+    let transientOptionReads = 0;
+    let personalRankingReads = 0;
+
+    const result = await executeRawTool(core, 'node_search', {
+      count: true,
+      queries: [
+        { name: 'valid', query: '- STRING_MATCH\n  - value:: Alpha' },
+        { name: 'invalid_regexp', query: '- REGEXP_MATCH\n  - value:: [' },
+      ],
+    }, undefined, {
+      getTextSearchIndex: () => {
+        searchIndexReads += 1;
+        return buildTextSearchIndex(core.projection());
+      },
+      getTransientSearchOptions: () => {
+        transientOptionReads += 1;
+        return {
+          personalAccessRanking: {
+            getNodeAccessStats: () => {
+              personalRankingReads += 1;
+              return undefined;
+            },
+          },
+        };
+      },
+    });
+
+    expect(result.details.ok).toBe(false);
+    expect(result.details.error?.code).toBe('invalid_search_condition');
+    expect(result.details.error?.message).toContain('Query "invalid_regexp"');
+    expect(result.details.error?.message).toContain('valid regular expression');
+    expect(searchIndexReads).toBe(0);
+    expect(transientOptionReads).toBe(0);
+    expect(personalRankingReads).toBe(0);
+  });
+
+  test('node_search batch count rejects mixed modes, missing count, and duplicate names', async () => {
+    const core = Core.new();
+    const query = '- STRING_MATCH\n  - value:: Alpha';
+
+    const missingCount = await executeTool(core, 'node_search', {
+      queries: [{ name: 'alpha', query }],
+    });
+    const mixed = await executeTool(core, 'node_search', {
+      count: true,
+      outline: '- %%search%% Alpha\n  - STRING_MATCH\n    - value:: Alpha',
+      queries: [{ name: 'alpha', query }],
+    });
+    const blankMixed = await executeTool(core, 'node_search', {
+      count: true,
+      outline: ' ',
+      queries: [{ name: 'alpha', query }],
+    });
+    const duplicate = await executeTool(core, 'node_search', {
+      count: true,
+      queries: [
+        { name: 'alpha', query },
+        { name: 'alpha', query },
+      ],
+    });
+
+    expect(missingCount.error?.code).toBe('invalid_args');
+    expect(missingCount.error?.message).toContain('requires count true');
+    expect(mixed.error?.code).toBe('invalid_args');
+    expect(mixed.error?.message).toContain('cannot combine');
+    expect(blankMixed.error?.code).toBe('invalid_args');
+    expect(blankMixed.error?.message).toContain('cannot combine');
+    expect(duplicate.error?.code).toBe('invalid_args');
+    expect(duplicate.error?.message).toContain('must be unique');
+  });
+
+  test('node_search batch count cuts the representative repeated-call bytes by at least sixty percent', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Audit root'));
+    for (const label of ['Author', 'Status', 'Type']) mustFocus(core.createNode(root, null, `${label} entry`));
+    const variants = [
+      ['author_visible', 'Author'],
+      ['author_bound', 'Author entry'],
+      ['status_visible', 'Status'],
+      ['status_bound', 'Status entry'],
+      ['type_visible', 'Type'],
+      ['type_bound', 'Type entry'],
+    ] as const;
+    const params = {
+      count: true,
+      common_query: `- DESCENDANT_OF\n  - target:: ${root}`,
+      queries: variants.map(([name, value]) => ({
+        name,
+        query: `- STRING_MATCH\n  - value:: ${value}`,
+      })),
+    };
+    const result = await executeRawTool(core, 'node_search', params);
+    const visible = parseVisibleToolResult<unknown>(result.contentText);
+    const legacyInstruction = 'Only the result count was requested; call node_search without count when you need editable node ids.';
+    const legacyCalls = variants.map(([, value]) => ({
+      count: true,
+      outline: `- %%search%% Audit\n  - AND\n    - DESCENDANT_OF\n      - target:: ${root}\n    - STRING_MATCH\n      - value:: ${value}`,
+    }));
+    const legacyResults = variants.map(() => ({
+      ok: true,
+      data: { total: 1, page: { total: 1, offset: 0, limit: 20 } },
+      instructions: legacyInstruction,
+    }));
+    const legacyBytes = Buffer.byteLength(JSON.stringify(legacyCalls)) + Buffer.byteLength(JSON.stringify(legacyResults));
+    const compactBytes = Buffer.byteLength(JSON.stringify(params)) + Buffer.byteLength(JSON.stringify(visible));
+
+    expect(result.details.ok).toBe(true);
+    expect(compactBytes / legacyBytes).toBeLessThanOrEqual(0.4);
+  });
+
+  test('node_search pagination exposes total and next_offset without a page echo', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    mustFocus(core.createNode(today, null, 'Paged needle one'));
+    mustFocus(core.createNode(today, null, 'Paged needle two'));
+
+    const result = await executeRawTool(core, 'node_search', {
+      outline: '- %%search%% Paged\n  - STRING_MATCH\n    - value:: Paged needle',
+      limit: 1,
+    });
+    const visible = parseVisibleToolResult<{
+      instructions?: string;
+      data?: { total: number; next_offset?: number; page?: unknown };
+    }>(result.contentText);
+
+    expect(visible.data).toMatchObject({ total: 2, next_offset: 1 });
+    expect(visible.data).not.toHaveProperty('page');
+    expect(visible.instructions).toBeUndefined();
+    expect(result.details.instructions).toBe('Call node_search with offset 1 to continue.');
   });
 
   test('node_search resolves tag conditions from temporary search outlines', async () => {

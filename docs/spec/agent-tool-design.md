@@ -930,6 +930,10 @@ should be written as operational guidance, not as implementation notes:
   file/bash tools, and a search/fetch split for `web_*`.
 - Avoid exposing internal implementation details unless the model must act on
   them, such as `%%node:id%%` markers, `operation_id` guards, or `nextOffset`.
+- State each grammar rule once across a tool description and its parameter
+  descriptions. Do not embed the same operator guide or outline manual in both.
+- Keep each tool's required output-handle and final-answer guidance self-contained;
+  strict `allowedTools` can expose one tool without neighboring tool descriptions.
 - Do not promise capabilities that are not implemented.
 
 ## Tool Result Layers
@@ -1008,7 +1012,7 @@ interface ToolMetrics {
 The model-visible projection carries **only what the model cannot cheaply derive**
 from its own call plus the rest of the payload. The full runtime envelope stays in
 `details`. Across **every** tool, the shared `modelVisibleEnvelope` / node
-`nodeVisibleEnvelope` apply these cuts:
+visible-result builders apply these cuts:
 
 - **No `tool`.** The model already knows which tool it called (tool-call
   correlation).
@@ -1030,9 +1034,11 @@ there is no sentinel and no accidental fallback to the full runtime payload. To
 show the model a slim projection, pass it; to echo `envelope.data` in full, pass
 it explicitly.
 
-All tools — `node_*` included — project through one shared `modelVisibleEnvelope`
-(the `node_*` path passes its own computed `instructions` via a throwaway
-envelope copy, keeping `details` untouched). The model-visible shape is:
+All tools — `node_*` included — project through one shared
+`modelVisibleEnvelope`, keeping `details` untouched. A tool-specific projection
+may omit a runtime instruction that is already represented structurally in the
+visible data; the original instruction remains in `details`. The model-visible
+shape is:
 
 ```ts
 interface ModelVisibleToolEnvelope {
@@ -1048,26 +1054,22 @@ type NodeVisibleResult =
   | NodeVisibleReadResult
   | NodeVisibleSearchResult
   | NodeVisibleCountResult
+  | NodeVisibleBatchCountResult
   | NodeVisibleMutationResult;
 
 // The result kind is no longer carried in the payload — it is implied by
-// `envelope.tool` (read/search/create/edit/delete). The data shape still differs
-// honestly (count returns `total`, results return `outline`), but the *guidance*
-// text is selected from a caller-supplied `NodeInstructionContext { count?,
-// outcome? }` — `count` is node_search's count-only mode, `outcome` is the
-// mutation result ("preview" / "applied" / a real no-op "unchanged"). These are
-// facts the builder already holds; guidance never sniffs the payload shape
-// (which would drift) and a no-op edit reports "no change", not "edit applied".
+// `envelope.tool` plus the caller's arguments. Static tool-use rules live in the
+// always-present tool schema rather than being repeated in every success result.
 interface NodeVisibleReadResult {
   outline?: string;
-  references?: NodeVisibleReference[];
+  definitions?: NodeDefinitionRead[];
   page?: NodeVisiblePage;
 }
 
 interface NodeVisibleSearchResult {
   outline?: string;
-  references?: NodeVisibleReference[];
-  page: NodeVisiblePage;
+  total: number;
+  next_offset?: number;
 }
 
 // `kind`/`action`/`status` dropped: the tool name implies the operation, and the
@@ -1080,7 +1082,10 @@ interface NodeVisibleMutationResult {
 
 interface NodeVisibleCountResult {
   total: number;
-  page: NodeVisiblePage;
+}
+
+interface NodeVisibleBatchCountResult {
+  counts: Record<string, number>;
 }
 
 interface NodeVisibleChanges {
@@ -1103,6 +1108,14 @@ Rules:
 
 - `outline` is the single model-visible representation for read/search results.
   It is an annotated outline: `%%node:id%%` is protocol metadata, not node text.
+- Read/search results do not return a parallel `references[]` array. The outline
+  already carries each current title and exact id. Final answers use
+  `[[node:^exact-id]]`; the renderer resolves the current title.
+- Single search results carry `total` once and `next_offset` only when another
+  page exists. Count-only results carry only `total`; they do not echo offset,
+  limit, or a nested page object. Runtime `details.instructions` retains the
+  existing continuation message for compatibility and debugging; the visible
+  result omits that prose because `next_offset` carries the same action.
 - Mutating tools return a fresh annotated `outline` when that is useful for
   follow-up edits. When a fresh outline is present, model-visible `changes` may
   be omitted because the ids are already visible in the outline; the full
@@ -1114,13 +1127,18 @@ Rules:
 - `summary` is not part of the model-visible node protocol. Human-facing summary
   text belongs in UI rendering or `details`.
 
-Guidance is first-class:
+Dynamic guidance is first-class:
 
 - `instructions`: the current state, recommended next action, boundary, and
   recovery guidance in one field.
 
 Use `instructions` for unknown tags, unresolved fields, permission denials,
-truncation, no-op updates, and ambiguous targets.
+dynamic recovery, and ambiguous targets. Successful node results do not repeat
+static rules about edit markers, final-answer references, previews, count mode,
+pagination parameters, or Trash semantics; those rules live in the tool schema.
+Runtime-only compatibility guidance may remain in `details` when the visible
+projection already expresses the action structurally. No-op mutations use the
+informative visible `status: "unchanged"` instead of a prose restatement.
 
 `ToolPreview` and `ValidationReport` are defined in the TypeScript parser section
 because they are produced by the mutation planner, but they belong in the common
@@ -1487,10 +1505,17 @@ interface NodeSearchParams {
   limit?: number; // default 20, max 50
   offset?: number;
   count?: boolean;
+  common_query?: string;
+  queries?: Array<{
+    name: string;
+    query: string;
+  }>;
 }
 ```
 
-Exactly one of `outline` and `search_node_id` is required.
+Single mode requires exactly one of `outline` and `search_node_id`. Batch count
+mode requires `count: true` plus `queries`, may include `common_query`, and cannot
+include `outline`, `search_node_id`, `limit`, or `offset`.
 
 Return data:
 
@@ -1521,6 +1546,16 @@ interface NodeSearchItem {
   childCount: number;
   updatedAt: string;
 }
+
+interface NodeSearchBatchCountData {
+  commonQuery?: SearchQueryExpr;
+  results: Array<{
+    name: string;
+    query: SearchQueryExpr;
+    total: number;
+    durationMs: number;
+  }>;
+}
 ```
 
 Result behavior:
@@ -1532,7 +1567,20 @@ Result behavior:
   child.
 - Keyword search is represented as a `STRING_MATCH` rule, for example
   `- %%search%% 成都天气\n  - STRING_MATCH\n    - value:: 成都天气`. There is no
-  separate `query` parameter.
+  separate single-search `query` parameter.
+- Batch count mode accepts 1-20 uniquely named `queries`. `common_query` and
+  every `queries[].query` contain exactly one canonical query rule/group root
+  without a `%%search%%` or `%%view:*%%` wrapper. The runtime parses them through
+  the same query-expression resolver used by full search outlines and combines
+  each item as `AND(common_query, item.query)` when a common query exists.
+- The complete batch is parsed, resolved, and semantically validated before the
+  runtime reads the host text index, obtains personal-access ranking options, or
+  executes any query. The shared core validator applies the same regular
+  expression, date, scalar, and context-dependent operand rules as execution. An
+  invalid common fragment, item fragment, operand reference, semantic operand,
+  duplicate name, or mixed single/batch parameter set fails the whole call;
+  batch results are never partial. Each query's matches pass through the same
+  run-scope result filter as single searches before its total is counted.
 - The root title is returned as `title` and may be used for temporary UI display.
 - `%%view:table%%`, `%%view:list%%`, `%%view:cards%%`, and similar directives are
   returned as `view` and drive temporary result presentation.
@@ -1558,14 +1606,16 @@ Result behavior:
   saved search materialization.
 - When `count` is false, only the returned page of `items` records weak
   `agentRecall` access for those node ids. `count: true` records nothing, and
-  candidates beyond the returned page are never recorded.
+  candidates beyond the returned page are never recorded. Batch count mode also
+  records no access signal.
 - Subtree restriction, parent restriction, backlink search, and relationship
   filters should be represented as search conditions in the outline, not as
   separate tool parameters.
 - Model-visible search results return one annotated outline of matches, not
-  separate `matches` and `refs` arrays.
-- `count: true` returns `kind: "count"` with total and guidance without item
-  payloads.
+  separate `matches`, `refs`, or `references` arrays. They carry `total` and an
+  optional `next_offset` directly.
+- Single `count: true` returns only `data.total`. Batch count mode returns only
+  `data.counts`, keyed by the caller's unique query names.
 
 Examples:
 
@@ -1585,6 +1635,23 @@ Examples:
 ```json
 {
   "search_node_id": "node_saved_search"
+}
+```
+
+```json
+{
+  "count": true,
+  "common_query": "- DESCENDANT_OF\n  - target:: node:feed-root",
+  "queries": [
+    {
+      "name": "author_text",
+      "query": "- STRING_MATCH\n  - value:: Author::"
+    },
+    {
+      "name": "author_field",
+      "query": "- FIELD_IS_SET\n  - field:: field:author"
+    }
+  ]
 }
 ```
 
@@ -1775,6 +1842,10 @@ Result behavior:
   only emitted by read/search results and accepted by edit replacements.
 - After apply, model-visible data returns a fresh annotated `outline` for the
   created roots.
+- The `node_create` tool description independently identifies those
+  `%%node:id%%` markers as edit handles and tells the model to use
+  `[[node:^exact-id]]` in final answers. This guidance cannot depend on
+  `node_read`, `node_search`, or `node_edit` also being present in the tool catalog.
 - Reference targets must exist and must not be in Trash.
 - `preview_only: true` returns preview and validation without applying.
 

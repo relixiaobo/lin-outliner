@@ -149,11 +149,28 @@ export interface NodeSearchParams {
   limit?: number;
   offset?: number;
   count?: boolean;
+  commonQuery?: string;
+  queries?: NodeSearchCountQuery[];
 }
 
-export type NormalizedSearchParams = Required<Pick<NodeSearchParams, 'limit' | 'offset' | 'count'>>
+export interface NodeSearchCountQuery {
+  name: string;
+  query: string;
+}
+
+export type NormalizedSingleSearchParams = Required<Pick<NodeSearchParams, 'limit' | 'offset' | 'count'>>
   & Pick<NodeSearchParams, 'outline' | 'searchNodeId'>
-  & { error?: string };
+  & { mode: 'single'; error?: string };
+
+export type NormalizedBatchCountSearchParams = {
+  mode: 'batch_count';
+  count: true;
+  commonQuery?: string;
+  queries: NodeSearchCountQuery[];
+  error?: string;
+};
+
+export type NormalizedSearchParams = NormalizedSingleSearchParams | NormalizedBatchCountSearchParams;
 
 export interface NodeSearchData {
   source: 'temporary' | 'saved';
@@ -166,6 +183,20 @@ export interface NodeSearchData {
   limit: number;
   items?: NodeSearchItem[];
 }
+
+export interface NodeSearchBatchCountItemData {
+  name: string;
+  query: SearchQueryExpr;
+  total: number;
+  durationMs: number;
+}
+
+export interface NodeSearchBatchCountData {
+  commonQuery?: SearchQueryExpr;
+  results: NodeSearchBatchCountItemData[];
+}
+
+export type NodeSearchResultData = NodeSearchData | NodeSearchBatchCountData;
 
 export interface NodeSearchItem {
   nodeId: string;
@@ -393,20 +424,20 @@ export interface NodeDeleteSkip {
 export type NodeVisibleResult =
   | NodeVisibleReadResult
   | NodeVisibleSearchResult
+  | NodeVisibleBatchCountResult
   | NodeVisibleMutationResult
   | NodeVisibleCountResult;
 
 export interface NodeVisibleReadResult {
   outline?: string;
   definitions?: NodeDefinitionRead[];
-  references?: NodeVisibleReference[];
   page?: NodeVisiblePage;
 }
 
 export interface NodeVisibleSearchResult {
   outline?: string;
-  references?: NodeVisibleReference[];
-  page: NodeVisiblePage;
+  total: number;
+  next_offset?: number;
 }
 
 export interface NodeVisibleMutationResult {
@@ -418,15 +449,10 @@ export interface NodeVisibleMutationResult {
 
 export interface NodeVisibleCountResult {
   total: number;
-  page: NodeVisiblePage;
 }
 
-export interface NodeVisibleReference {
-  node_id: string;
-  title: string;
-  display_ref: string;
-  edit_handle: string;
-  type: string;
+export interface NodeVisibleBatchCountResult {
+  counts: Record<string, number>;
 }
 
 export interface NodeVisibleChanges {

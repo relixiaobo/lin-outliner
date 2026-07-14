@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { AgentRunScope } from '../core/agentEventLog';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
 import { projectFieldConfig, projectTagConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
+import { validateSearchQueries } from '../core/searchEngine';
 import {
   SCHEMA_ID,
   plainText,
@@ -15,6 +16,7 @@ import {
   type NodeProjection,
   type ReferenceTarget,
   type RichText,
+  type SearchQueryExpr,
   type TagConfigPatch,
 } from '../core/types';
 import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from './agentToolEnvelope';
@@ -52,8 +54,10 @@ import {
 } from './agentNodeToolRead';
 import {
   buildSearchItem,
+  combineSearchQueryFragments,
   normalizeSearchParams,
   resolveSearch,
+  resolveSearchQueryFragment,
   resolveSearchSpecFromOutlineNode,
   runSearch,
   searchNodeConfigFromSpec,
@@ -92,6 +96,7 @@ import {
   visibleDeleteResult,
   visibleEditResult,
   visibleReadResult,
+  visibleSearchBatchCountResult,
   visibleSearchResult,
 } from './agentNodeToolVisibility';
 import type {
@@ -112,7 +117,10 @@ import type {
   NodeMergeFieldPreview,
   ProjectedDefinitionConfig,
   NodeReadData,
+  NodeSearchBatchCountData,
   NodeSearchData,
+  NodeSearchResultData,
+  NormalizedBatchCountSearchParams,
   NormalizedEditParams,
   NormalizedReadParams,
   OperationHistoryData,
@@ -1923,7 +1931,7 @@ function createNodeReadTool(host: OutlinerToolHost, options: NodeToolsOptions): 
   };
 }
 
-function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeSearchData>> {
+function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions): AgentTool<any, ToolEnvelope<NodeSearchResultData>> {
   return {
     name: 'node_search',
     label: 'Node Search',
@@ -1934,13 +1942,16 @@ function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions)
       const started = Date.now();
       const params = normalizeSearchParams(rawParams);
       if (params.error) {
-        return nodeErrorResult(errorEnvelope('node_search', 'invalid_args', params.error, {
-          instructions: 'Call node_search with exactly one of outline or search_node_id.',
+        return nodeErrorResult(errorEnvelope<NodeSearchResultData>('node_search', 'invalid_args', params.error, {
+          instructions: 'Use exactly one single search source (outline or search_node_id), or use count true with queries for a batch count.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
 
       const index = indexProjection(host.getProjection());
+      if (params.mode === 'batch_count') {
+        return executeNodeSearchBatchCount(host, index, params, started, options);
+      }
       const offset = clampInteger(params.offset, 0, Number.MAX_SAFE_INTEGER, 0);
       const limit = clampInteger(params.limit, 1, 50, 20);
       if (params.searchNodeId) {
@@ -2008,9 +2019,88 @@ function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions)
           truncated: offset + limit < total,
           outputBytes: jsonByteLength(data),
         },
-      }), visible);
+      }), visible, { omitInstructions: true });
     },
   };
+}
+
+function executeNodeSearchBatchCount(
+  host: OutlinerToolHost,
+  index: ProjectionIndex,
+  params: NormalizedBatchCountSearchParams,
+  started: number,
+  options: NodeToolsOptions,
+): AgentToolResult<ToolEnvelope<NodeSearchResultData>> {
+  let commonQuery: SearchQueryExpr | undefined;
+  if (params.commonQuery) {
+    const resolved = resolveSearchQueryFragment(index, params.commonQuery);
+    if ('error' in resolved) {
+      return nodeErrorResult(errorEnvelope<NodeSearchResultData>('node_search', resolved.code, `common_query: ${resolved.error}`, {
+        instructions: resolved.instructions,
+        metrics: { durationMs: elapsed(started) },
+      }));
+    }
+    commonQuery = resolved;
+  }
+
+  const queries: Array<{ name: string; query: SearchQueryExpr }> = [];
+  for (const item of params.queries) {
+    const resolved = resolveSearchQueryFragment(index, item.query);
+    if ('error' in resolved) {
+      return nodeErrorResult(errorEnvelope<NodeSearchResultData>('node_search', resolved.code, `Query "${item.name}": ${resolved.error}`, {
+        instructions: resolved.instructions,
+        metrics: { durationMs: elapsed(started) },
+      }));
+    }
+    queries.push({
+      name: item.name,
+      query: combineSearchQueryFragments(commonQuery, resolved),
+    });
+  }
+
+  const validationTargets: Array<{ name?: string; query: SearchQueryExpr }> = [
+    ...(commonQuery ? [{ query: commonQuery }] : []),
+    ...queries,
+  ];
+  const validation = validateSearchQueries(index.projection, validationTargets.map((item) => item.query));
+  if (!validation.ok) {
+    const item = validationTargets[validation.queryIndex];
+    const label = item?.name ? `Query "${item.name}"` : 'common_query';
+    return nodeErrorResult(errorEnvelope<NodeSearchResultData>('node_search', validation.issue.code, `${label}: ${validation.issue.message}`, {
+      instructions: 'Fix the canonical search query tree and retry.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+
+  const results: NodeSearchBatchCountData['results'] = [];
+  const searchOptions = {
+    textIndex: host.getTextSearchIndex?.(),
+    transientSearchOptions: host.getTransientSearchOptions?.(),
+  };
+  for (const item of queries) {
+    const queryStarted = Date.now();
+    const resultIds = runSearch(index, { query: item.query }, searchOptions);
+    if ('error' in resultIds) {
+      return nodeErrorResult(errorEnvelope<NodeSearchResultData>('node_search', resultIds.code, `Query "${item.name}": ${resultIds.error}`, {
+        instructions: resultIds.instructions,
+        metrics: { durationMs: elapsed(started) },
+      }));
+    }
+    results.push({
+      name: item.name,
+      query: item.query,
+      total: filterNodeResourceScope(options, index, resultIds).length,
+      durationMs: elapsed(queryStarted),
+    });
+  }
+
+  const data: NodeSearchBatchCountData = {
+    commonQuery,
+    results,
+  };
+  return nodeToolResult(successEnvelope<NodeSearchResultData>('node_search', data, {
+    metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
+  }), visibleSearchBatchCountResult(data));
 }
 
 function normalizeCreateParams(rawParams: unknown): NodeCreateParams & { error?: string } {

@@ -41,12 +41,15 @@ import {
 } from './agentNodeToolProjection';
 import type {
   NodeSearchItem,
+  NodeSearchCountQuery,
   NodeToolIssue,
+  NormalizedBatchCountSearchParams,
   NormalizedSearchParams,
+  NormalizedSingleSearchParams,
   ProjectionIndex,
   ResolvedSearchSpec,
 } from './agentNodeToolTypes';
-import { asRecord, clampInteger } from './agentNodeToolUtils';
+import { asRecord, clampInteger, firstDuplicate } from './agentNodeToolUtils';
 
 const QUERY_LOGICS = new Set<QueryLogic>(['AND', 'OR', 'NOT']);
 const QUERY_OP_SET = new Set<QueryOp>(QUERY_OPS);
@@ -101,8 +104,14 @@ export function normalizeSearchParams(rawParams: unknown): NormalizedSearchParam
   const input = asRecord(rawParams);
   const outline = typeof input.outline === 'string' && input.outline.trim() ? input.outline.trim() : undefined;
   const searchNodeId = typeof input.search_node_id === 'string' && input.search_node_id.trim() ? input.search_node_id.trim() : undefined;
+  const commonQuery = typeof input.common_query === 'string' && input.common_query.trim() ? input.common_query.trim() : undefined;
+  const hasBatchInput = input.queries !== undefined || input.common_query !== undefined;
+  if (hasBatchInput) {
+    return normalizeBatchCountSearchParams(input, commonQuery);
+  }
   const provided = [outline, searchNodeId].filter(Boolean).length;
   return {
+    mode: 'single',
     outline,
     searchNodeId,
     limit: clampInteger(input.limit, 1, 50, 20),
@@ -110,6 +119,56 @@ export function normalizeSearchParams(rawParams: unknown): NormalizedSearchParam
     count: input.count === true,
     error: provided === 1 ? undefined : 'Exactly one of outline or search_node_id is required.',
   };
+}
+
+function normalizeBatchCountSearchParams(
+  input: Record<string, unknown>,
+  commonQuery: string | undefined,
+): NormalizedBatchCountSearchParams {
+  const queries = normalizeCountQueries(input.queries);
+  const mixedSingleParams = input.outline !== undefined
+    || input.search_node_id !== undefined
+    || input.limit !== undefined
+    || input.offset !== undefined;
+  const errors = [
+    input.count === true ? undefined : 'Batch node_search requires count true.',
+    mixedSingleParams ? 'Batch node_search cannot combine queries/common_query with outline, search_node_id, limit, or offset.' : undefined,
+    queries.error,
+    input.common_query !== undefined && !commonQuery ? 'common_query must be a non-empty string when provided.' : undefined,
+    commonQuery && commonQuery.length > 12000 ? 'common_query must be at most 12000 characters.' : undefined,
+  ].filter((value): value is string => Boolean(value));
+  return {
+    mode: 'batch_count',
+    count: true,
+    commonQuery,
+    queries: queries.items,
+    error: errors[0],
+  };
+}
+
+function normalizeCountQueries(value: unknown): { items: NodeSearchCountQuery[]; error?: string } {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 20) {
+    return { items: [], error: 'queries must contain 1 to 20 named query fragments.' };
+  }
+  const items: NodeSearchCountQuery[] = [];
+  for (const [index, rawItem] of value.entries()) {
+    const item = asRecord(rawItem);
+    const name = typeof item.name === 'string' ? item.name.trim() : '';
+    const query = typeof item.query === 'string' ? item.query.trim() : '';
+    if (!name || !query) {
+      return { items: [], error: `queries[${index}] requires non-empty name and query strings.` };
+    }
+    if (name.length > 80) {
+      return { items: [], error: `queries[${index}].name must be at most 80 characters.` };
+    }
+    if (query.length > 12000) {
+      return { items: [], error: `queries[${index}].query must be at most 12000 characters.` };
+    }
+    items.push({ name, query });
+  }
+  const duplicate = firstDuplicate(items.map((item) => item.name));
+  if (duplicate) return { items: [], error: `queries names must be unique; duplicate: ${duplicate}.` };
+  return { items };
 }
 
 export function buildSearchItem(index: ProjectionIndex, nodeId: string, queryTerms: string[]): NodeSearchItem {
@@ -197,7 +256,7 @@ export function searchSpecFromSavedSearch(index: ProjectionIndex, node: NodeProj
   };
 }
 
-export function resolveSearch(index: ProjectionIndex, params: NormalizedSearchParams): {
+export function resolveSearch(index: ProjectionIndex, params: NormalizedSingleSearchParams): {
   source: 'temporary' | 'saved';
   title?: string;
   view?: string;
@@ -242,6 +301,50 @@ export function resolveSearch(index: ProjectionIndex, params: NormalizedSearchPa
     warnings: spec.warnings,
     hasExecutableRules: searchNodeHasRules(index.projection, searchNodeId),
   };
+}
+
+export function resolveSearchQueryFragment(index: ProjectionIndex, outline: string): SearchQueryExpr | NodeToolIssue {
+  const parsed = parseLinOutline(outline);
+  if (!parsed.ok) {
+    return {
+      code: 'parse_error',
+      error: `${parsed.error.message} Line ${parsed.error.line}, column ${parsed.error.column}.`,
+      instructions: 'Use one query rule/group outline fragment with "- " lines and 2-space indentation.',
+    };
+  }
+  if (parsed.document.fields.length > 0 || parsed.document.roots.length !== 1) {
+    return {
+      code: 'ambiguous_search',
+      error: 'Query fragment must contain exactly one root rule or group.',
+      instructions: 'Use one root such as "- STRING_MATCH" or "- AND", without a %%search%% wrapper.',
+    };
+  }
+  const root = parsed.document.roots[0]!;
+  if (root.search || root.view) {
+    return {
+      code: 'invalid_search_fragment',
+      error: 'Query fragments cannot include %%search%% or %%view:*%% directives.',
+      instructions: 'Pass only the query rule/group subtree in common_query and queries[].query.',
+    };
+  }
+  const query = queryExprFromOutlineNode(index, root);
+  if ('error' in query) return query;
+  if (!searchQueryHasRules(query)) {
+    return {
+      code: 'empty_search',
+      error: 'Query fragment has no executable rules.',
+      instructions: 'Add at least one executable search rule.',
+    };
+  }
+  return query;
+}
+
+export function combineSearchQueryFragments(
+  commonQuery: SearchQueryExpr | undefined,
+  query: SearchQueryExpr,
+): SearchQueryExpr {
+  if (!commonQuery) return query;
+  return { kind: 'group', logic: 'AND', children: [commonQuery, query] };
 }
 
 export function searchViewModeOf(index: ProjectionIndex, node: NodeProjection): string | undefined {

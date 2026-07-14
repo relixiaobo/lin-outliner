@@ -60,7 +60,9 @@ export const NODE_READ_PARAMETERS = {
 export const NODE_SEARCH_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
-  // Exactly one of outline / search_node_id required (enforced in normalizeSearchParams).
+  // Single mode requires exactly one of outline / search_node_id. Batch count
+  // mode uses count + queries (+ optional common_query). Runtime normalization
+  // enforces the mutually exclusive groups because OpenAI rejects root oneOf.
   properties: {
     outline: {
       type: 'string',
@@ -72,6 +74,37 @@ export const NODE_SEARCH_PARAMETERS = {
       type: 'string',
       minLength: 1,
       description: 'Existing saved search node id to execute. Use outline instead for a one-off search.',
+    },
+    common_query: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 12000,
+      description: 'Optional query rule/group outline fragment shared by every queries item. Batch count mode only; uses the same query-tree grammar as queries[].query.',
+    },
+    queries: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 20,
+      description: 'Named query rule/group outline fragments for one count-only batch. Set count true and omit outline, search_node_id, limit, and offset.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name', 'query'],
+        properties: {
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 80,
+            description: 'Unique result name returned as a key in data.counts.',
+          },
+          query: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 12000,
+            description: 'One canonical query rule/group outline fragment, without a %%search%% wrapper.',
+          },
+        },
+      },
     },
     limit: {
       type: 'integer',
@@ -86,7 +119,7 @@ export const NODE_SEARCH_PARAMETERS = {
     },
     count: {
       type: 'boolean',
-      description: 'When true, return only the total count without result items.',
+      description: 'When true, return only counts without editable result ids. Required with queries for shared-condition batch count mode.',
     },
   },
 };
