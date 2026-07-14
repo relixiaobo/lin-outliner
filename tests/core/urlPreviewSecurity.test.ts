@@ -12,6 +12,16 @@ const PREVIEW_RENDERERS_SRC = readFileSync(
   'utf8',
 );
 
+const TRANSLATION_GUEST_SRC = readFileSync(
+  join(import.meta.dir, '../../src/renderer/ui/preview/urlPageTranslationGuest.ts'),
+  'utf8',
+);
+
+const PAGE_TRANSLATION_SRC = readFileSync(
+  join(import.meta.dir, '../../src/main/pageTranslation.ts'),
+  'utf8',
+);
+
 describe('URL preview webview security posture', () => {
   test('the main window enables webview only behind attach-time hardening', () => {
     expect(MAIN_SRC).toContain('webviewTag: true');
@@ -51,5 +61,22 @@ describe('URL preview webview security posture', () => {
     expect(webview).not.toContain('nodeintegration');
     expect(webview).not.toContain('disablewebsecurity');
     expect(webview).not.toContain('allowpopups');
+  });
+
+  test('translation keeps the guest unprivileged and inserts only inert text', () => {
+    expect(TRANSLATION_GUEST_SRC).toContain("'input', 'textarea', 'select', 'option', 'button', 'form', 'nav'");
+    expect(TRANSLATION_GUEST_SRC).toContain("'[contenteditable]'");
+    expect(TRANSLATION_GUEST_SRC).toContain('translation.textContent = item.translation');
+    expect(TRANSLATION_GUEST_SRC).not.toContain('translation.innerHTML');
+    expect(TRANSLATION_GUEST_SRC).not.toContain('ipcRenderer');
+    expect(TRANSLATION_GUEST_SRC).not.toContain('preload');
+  });
+
+  test('translation validates bounded blocks and exact response ids in main', () => {
+    expect(PAGE_TRANSLATION_SRC).toContain('URL_PAGE_TRANSLATION_MAX_BLOCKS');
+    expect(PAGE_TRANSLATION_SRC).toContain('URL_PAGE_TRANSLATION_MAX_BATCH_CHARS');
+    expect(PAGE_TRANSLATION_SRC).toContain('requestedIds.has(id)');
+    expect(PAGE_TRANSLATION_SRC).toContain('translations.has(id)');
+    expect(MAIN_SRC).toContain("event.sender !== mainWindow.webContents");
   });
 });

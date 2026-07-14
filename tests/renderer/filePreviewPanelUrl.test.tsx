@@ -27,6 +27,9 @@ describe('FilePreviewPanel URL preview chrome', () => {
     expect(rendered.document.querySelector('.panel-title-file-heading')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-message')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-url-webview')?.getAttribute('src')).toBe('https://example.com/docs');
+    const translationToggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
+    expect(translationToggle?.getAttribute('aria-label')).toBe('Translate page');
+    expect(translationToggle?.getAttribute('aria-pressed')).toBe('false');
   });
 
   test('updates the breadcrumb from webview page title and favicon events', async () => {

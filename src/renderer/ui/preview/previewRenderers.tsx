@@ -222,6 +222,7 @@ export function PreviewRenderer({
   displayMode,
   onSummaryPageSelect,
   onUrlMetadataChange,
+  onUrlWebviewChange,
   onOpenTarget,
   scrollToPageNumber,
   onScrollToPageNumberConsumed,
@@ -237,10 +238,17 @@ export function PreviewRenderer({
   onScrollToPageNumberConsumed?: () => void;
   source: PreviewSourceDescriptor;
   onUrlMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
+  onUrlWebviewChange?: (webview: Electron.WebviewTag | null) => void;
   scrollRootRef?: RefObject<HTMLElement | null>;
 }) {
   if (source.kind === 'url') {
-    return <UrlPreview onMetadataChange={onUrlMetadataChange} source={source} />;
+    return (
+      <UrlPreview
+        onMetadataChange={onUrlMetadataChange}
+        onWebviewChange={onUrlWebviewChange}
+        source={source}
+      />
+    );
   }
   const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
   return (
@@ -271,6 +279,7 @@ export interface FilePreviewShellProps {
   /** Dedicated split-pane reader: full content only, with header actions outside the preview. */
   readerMode?: boolean;
   onUrlMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
+  onUrlWebviewChange?: (webview: Electron.WebviewTag | null) => void;
 }
 
 /**
@@ -293,6 +302,7 @@ export function FilePreviewShell({
   initialExpanded = false,
   readerMode = false,
   onUrlMetadataChange,
+  onUrlWebviewChange,
 }: FilePreviewShellProps) {
   const labels = useT().shell.filePreview;
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -420,6 +430,7 @@ export function FilePreviewShell({
             displayMode={displayMode}
             onSummaryPageSelect={openSummaryPage}
             onUrlMetadataChange={onUrlMetadataChange}
+            onUrlWebviewChange={onUrlWebviewChange}
             source={state.source}
             onOpenTarget={onOpenTarget}
             scrollToPageNumber={effectiveExpanded ? scrollToPageNumber : null}
@@ -531,12 +542,18 @@ function ImagePreview({ source }: PreviewRendererProps) {
 
 function UrlPreview({
   onMetadataChange,
+  onWebviewChange,
   source,
 }: {
   onMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
+  onWebviewChange?: (webview: Electron.WebviewTag | null) => void;
   source: PreviewUrlSource;
 }) {
-  const webviewRef = useRef<HTMLElement | null>(null);
+  const webviewRef = useRef<Electron.WebviewTag | null>(null);
+  const setWebviewRef = useCallback((webview: Electron.WebviewTag | null) => {
+    webviewRef.current = webview;
+    onWebviewChange?.(webview);
+  }, [onWebviewChange]);
 
   useEffect(() => {
     onMetadataChange?.({ title: source.title });
@@ -568,7 +585,7 @@ function UrlPreview({
       <webview
         className="file-preview-url-webview"
         partition="url-preview"
-        ref={webviewRef}
+        ref={setWebviewRef}
         src={source.url}
         title={source.title}
       />

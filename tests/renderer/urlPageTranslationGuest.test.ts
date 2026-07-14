@@ -1,0 +1,196 @@
+import { describe, expect, test } from 'bun:test';
+import { parseHTML } from 'linkedom';
+import {
+  URL_PAGE_TRANSLATION_RUNTIME_KEY,
+  installUrlPageTranslationRuntime,
+  type UrlPageTranslationGuestBatch,
+} from '../../src/renderer/ui/preview/urlPageTranslationGuest';
+import type { UrlPageTranslationItem } from '../../src/core/urlPageTranslation';
+
+interface GuestRuntime {
+  version: 1;
+  setEnabled(enabled: boolean, targetLocale: 'en' | 'zh-Hans'): void;
+  nextBatch(maxBlocks: number, maxChars: number, maxBlockChars: number): UrlPageTranslationGuestBatch;
+  apply(items: readonly UrlPageTranslationItem[]): void;
+  fail(ids: readonly string[]): void;
+  destroy(): void;
+}
+
+describe('URL page translation guest runtime', () => {
+  test('collects only visible and nearby readable blocks and excludes sensitive regions', () => {
+    const fixture = createFixture();
+    const runtime = fixture.runtime;
+    runtime.setEnabled(true, 'zh-Hans');
+
+    const batch = runtime.nextBatch(12, 12_000, 6_000);
+    const texts = batch.blocks.map((block) => block.text);
+
+    expect(batch.priority).toBe(0);
+    expect(texts).toContain('Above the viewport');
+    expect(texts).toContain('Current paragraph');
+    expect(texts).toContain('Prefetched paragraph');
+    expect(texts).toContain('Recently passed paragraph');
+    expect(texts).not.toContain('Far away paragraph');
+    expect(texts).not.toContain('Do not upload this draft');
+    expect(texts).not.toContain('const secret = 1');
+    expect(texts).not.toContain('Password label');
+    expect(texts).not.toContain('Already translated content');
+  });
+
+  test('runs from its serialized function body without renderer closures', () => {
+    const fixture = createFixture({ serialized: true });
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+
+    expect(fixture.runtime.nextBatch(1, 12_000, 6_000).blocks).toHaveLength(1);
+  });
+
+  test('inserts model output with textContent and preserves the current reading anchor', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const batch = fixture.runtime.nextBatch(12, 12_000, 6_000);
+    const above = batch.blocks.find((block) => block.text === 'Above the viewport');
+    if (!above) throw new Error('Missing above-viewport block');
+
+    fixture.runtime.apply([{
+      id: above.id,
+      translation: '<img src=x onerror=alert(1)> 视口上方',
+    }]);
+
+    const translation = fixture.document.querySelector<HTMLElement>('[data-tenon-bilingual-translation="true"]');
+    expect(translation?.textContent).toBe('<img src=x onerror=alert(1)> 视口上方');
+    expect(translation?.querySelector('img')).toBeNull();
+    expect(translation?.getAttribute('lang')).toBe('zh-Hans');
+    expect(fixture.scrollDeltas).toEqual([30]);
+
+    fixture.runtime.setEnabled(false, 'zh-Hans');
+    expect(fixture.document.documentElement.getAttribute('data-tenon-bilingual-hidden')).toBe('true');
+    expect(fixture.scrollDeltas).toEqual([30, -30]);
+
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    expect(fixture.document.documentElement.hasAttribute('data-tenon-bilingual-hidden')).toBe(false);
+    expect(fixture.scrollDeltas).toEqual([30, -30, 30]);
+  });
+
+  test('keeps failed blocks paused until the user turns translation off and on', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const first = fixture.runtime.nextBatch(1, 12_000, 6_000);
+    expect(first.blocks).toHaveLength(1);
+    fixture.runtime.fail(first.blocks.map((block) => block.id));
+
+    const second = fixture.runtime.nextBatch(1, 12_000, 6_000);
+    expect(second.blocks[0]?.id).not.toBe(first.blocks[0]?.id);
+
+    fixture.runtime.setEnabled(false, 'zh-Hans');
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const retried = collectUntil(
+      fixture.runtime,
+      (block) => block.id === first.blocks[0]?.id,
+    );
+    expect(retried?.id).toBe(first.blocks[0]?.id);
+  });
+
+  test('removes injected state when the preview is destroyed', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const block = fixture.runtime.nextBatch(1, 12_000, 6_000).blocks[0];
+    if (!block) throw new Error('Missing block');
+    fixture.runtime.apply([{ id: block.id, translation: '译文' }]);
+
+    fixture.runtime.destroy();
+
+    expect(fixture.document.querySelector('[data-tenon-bilingual-translation="true"]')).toBeNull();
+    expect((fixture.window as unknown as Record<string, unknown>)[URL_PAGE_TRANSLATION_RUNTIME_KEY]).toBeUndefined();
+  });
+});
+
+function createFixture(options: { serialized?: boolean } = {}): {
+  document: Document;
+  runtime: GuestRuntime;
+  scrollDeltas: number[];
+  window: Window;
+} {
+  const { document, window } = parseHTML(`<!doctype html><html><body><main>
+    <p id="behind">Recently passed paragraph</p>
+    <p id="above">Above the viewport</p>
+    <p id="current">Current paragraph</p>
+    <p id="ahead">Prefetched paragraph</p>
+    <p id="far">Far away paragraph</p>
+    <form><p id="form">Password label</p><input value="secret"></form>
+    <pre><code>const secret = 1</code></pre>
+    <div contenteditable="true"><p id="editable">Do not upload this draft</p></div>
+    <p id="target-language" lang="zh-Hans">Already translated content</p>
+  </main></body></html>`);
+  const testWindow = window as unknown as Window & Record<string, unknown>;
+  Object.defineProperties(testWindow, {
+    innerHeight: { configurable: true, value: 600 },
+    scrollY: { configurable: true, value: 0, writable: true },
+  });
+  testWindow.NodeFilter = { SHOW_TEXT: 4 } as unknown as typeof NodeFilter;
+  testWindow.getComputedStyle = () => ({
+    display: 'block',
+    visibility: 'visible',
+  }) as CSSStyleDeclaration;
+
+  const translationVisible = () => !document.documentElement.hasAttribute('data-tenon-bilingual-hidden');
+  setRect(document, 'behind', () => rect(-200, -150));
+  setRect(document, 'above', () => rect(-20, 20));
+  setRect(document, 'current', () => {
+    const translatedAbove = Boolean(document.querySelector('#above [data-tenon-bilingual-translation="true"]'));
+    const top = 100 + (translatedAbove && translationVisible() ? 30 : 0);
+    return rect(top, top + 40);
+  });
+  setRect(document, 'ahead', () => rect(800, 850));
+  setRect(document, 'far', () => rect(1_900, 1_950));
+  setRect(document, 'form', () => rect(200, 240));
+  setRect(document, 'editable', () => rect(260, 300));
+  setRect(document, 'target-language', () => rect(320, 360));
+
+  const scrollDeltas: number[] = [];
+  testWindow.scrollBy = (_x: number, y: number) => {
+    scrollDeltas.push(y);
+  };
+  if (options.serialized) {
+    const install = new Function(
+      'host',
+      'runtimeKey',
+      'targetLocale',
+      `return (${installUrlPageTranslationRuntime.toString()})(host, runtimeKey, targetLocale);`,
+    ) as (host: Window, runtimeKey: string, targetLocale: string) => void;
+    install(testWindow, URL_PAGE_TRANSLATION_RUNTIME_KEY, 'zh-Hans');
+  } else {
+    installUrlPageTranslationRuntime(testWindow, URL_PAGE_TRANSLATION_RUNTIME_KEY, 'zh-Hans');
+  }
+  const runtime = testWindow[URL_PAGE_TRANSLATION_RUNTIME_KEY] as GuestRuntime;
+  return { document, runtime, scrollDeltas, window: testWindow };
+}
+
+function setRect(document: Document, id: string, read: () => DOMRect): void {
+  const element = document.getElementById(id);
+  if (!element) throw new Error(`Missing fixture element: ${id}`);
+  element.getBoundingClientRect = read;
+}
+
+function rect(top: number, bottom: number): DOMRect {
+  return {
+    bottom,
+    height: bottom - top,
+    left: 0,
+    right: 500,
+    top,
+    width: 500,
+    x: 0,
+    y: top,
+    toJSON: () => ({}),
+  };
+}
+
+function collectUntil(runtime: GuestRuntime, predicate: (block: { id: string }) => boolean) {
+  for (let index = 0; index < 10; index += 1) {
+    const block = runtime.nextBatch(1, 12_000, 6_000).blocks[0];
+    if (!block) return undefined;
+    if (predicate(block)) return block;
+    runtime.fail([block.id]);
+  }
+  return undefined;
+}

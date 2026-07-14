@@ -679,6 +679,7 @@ export function App() {
           index={index}
           onActivatePanel={activatePanel}
           onClosePanel={closePanel}
+          onError={setError}
           onNavigatePanelBack={navigatePanelBack}
           onNavigatePanelPreview={navigatePanelPreview}
           onNavigatePanelRoot={navigatePanelRoot}

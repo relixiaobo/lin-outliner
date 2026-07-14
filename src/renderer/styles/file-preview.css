@@ -56,8 +56,25 @@
 
 .file-preview-reader-actions:hover,
 .file-preview-reader-actions:focus-visible,
-.file-preview-reader-actions[aria-expanded='true'] {
+.file-preview-reader-actions[aria-expanded='true'],
+.file-preview-translation-toggle[aria-pressed='true'] {
   color: var(--text-primary);
+}
+
+.file-preview-translation-toggle.is-starting > svg {
+  animation: file-preview-translation-spin var(--motion-spin-cycle) linear infinite;
+}
+
+@keyframes file-preview-translation-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-preview-translation-toggle.is-starting > svg {
+    animation: none;
+  }
 }
 
 .file-preview-message {

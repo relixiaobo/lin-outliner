@@ -399,6 +399,33 @@ Source authority stays source-specific:
   resolution is synchronous in the renderer because the source is the URL itself;
   the pane must not show a file-preview loading overlay before the webview starts.
 
+URL previews also expose one neutral `Languages` icon immediately before the
+header actions menu. Translation is explicit opt-in and defaults off. Enabling it
+keeps the remote page as the reading surface and inserts an inert plain-text
+translation after each eligible source block; disabling it hides translations
+without discarding the current page's in-memory cache. A navigation, reload,
+locale change, pane close, or webview replacement cancels pending work and resets
+the control to off.
+
+Translation is viewport-driven rather than an eager whole-page request. The
+guest runtime selects visible readable blocks first, then approximately two
+viewports ahead in the current scroll direction and half a viewport behind.
+Blocks outside that window are not sent. Adjacent blocks are submitted in bounded
+batches with one active request per pane; dynamic content joins only after it
+enters the same window. Successful blocks remain cached in memory so back-scrolling
+does not call the provider again. DOM insertion, hide, and restore capture the
+first visible source block and compensate its post-write offset, keeping the
+reader's current sentence anchored.
+
+The guest collector excludes scripts/styles, code/preformatted content, form
+controls, editable regions, navigation, hidden/inert/`aria-hidden` subtrees, and
+Tenon-injected nodes. Main revalidates the bounded block ids and text before using
+Neva's configured model. The response must contain exactly the requested ids;
+translations enter the page through `textContent`, never model-produced HTML.
+The guest still has no preload, Node integration, permissions, popup capability,
+or non-HTTP navigation. Translation does not weaken the URL-preview security
+posture or add a guest-to-main IPC channel.
+
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the
 scroll viewport and is fitted to the available width, with no page-nav or zoom

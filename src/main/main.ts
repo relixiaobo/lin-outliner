@@ -44,7 +44,9 @@ import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTyp
 import type { AgentSessionReadInput, IssueReadInput, IssueSearchInput } from '../core/agentIssue';
 import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
 import { normalizePreviewHttpUrl } from '../core/preview';
+import { isUrlPageTranslationCommand } from '../core/urlPageTranslation';
 import { handlePreviewCommand } from './previewSource';
+import { PageTranslationService } from './pageTranslation';
 import { setBoundedMapEntry } from './boundedMap';
 import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
 import {
@@ -326,6 +328,16 @@ const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   assetResolver: assetService,
   dreamMemoryExtractionEnabled: true,
   errorReporter: reportError,
+});
+const pageTranslationService = new PageTranslationService({
+  onError: (error) => reportError({
+    domain: 'page-translation',
+    severity: 'warn',
+    code: 'page-translation-request-failed',
+    message: error instanceof Error ? error.message : String(error),
+    context: { operation: 'translate-url-preview' },
+    error,
+  }),
 });
 const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [agentLocalFileRoot, agentScratchRoot]);
 
@@ -878,8 +890,10 @@ function createWindow() {
   }
 
   mainWindow.on('closed', () => {
+    pageTranslationService.dispose();
     mainWindow = null;
   });
+  mainWindow.webContents.on('did-start-loading', () => pageTranslationService.dispose());
   mainWindow.webContents.once('did-finish-load', () => {
     agentRuntime.ready();
   });
@@ -1389,6 +1403,12 @@ function registerIpc() {
     const dispatch = () => {
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
       if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
+      if (isUrlPageTranslationCommand(command)) {
+        if (!mainWindow || event.sender !== mainWindow.webContents) {
+          throw new Error('Page translation is only available to the main window.');
+        }
+        return pageTranslationService.handle(command, args ?? {});
+      }
       if (isPreviewCommand(command)) {
         return handlePreviewCommand(command, args ?? {}, {
           agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
@@ -2924,6 +2944,7 @@ if (!app.requestSingleInstanceLock()) {
     // We force-exit below (app.exit bypasses will-quit), so do the on-quit cleanup
     // here: release the global hotkey(s).
     unregisterLauncherHotkeys();
+    pageTranslationService.dispose();
     // Settle in-flight writes, then exit. We force-exit instead of re-issuing
     // app.quit(): after preventDefault() cancels the OS ⌘Q terminate, Electron's
     // graceful re-quit lingers for seconds before the process actually exits, so ⌘Q

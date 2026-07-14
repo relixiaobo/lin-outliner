@@ -13,14 +13,25 @@ import { createPortal } from 'react-dom';
 import type { PreviewTarget } from '../../../core/preview';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
-import { useT } from '../../i18n/I18nProvider';
+import { useI18n, useT } from '../../i18n/I18nProvider';
 import { type DocumentIndex, type UiState } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
-import { AddChildIcon, FolderIcon, ICON_SIZE, LibraryIcon, MoreIcon, OpenIcon, UrlIcon } from '../icons';
+import {
+  AddChildIcon,
+  FolderIcon,
+  ICON_SIZE,
+  LanguagesIcon,
+  LibraryIcon,
+  LoaderIcon,
+  MoreIcon,
+  OpenIcon,
+  UrlIcon,
+} from '../icons';
 import { buildOutlinerRows } from '../outliner/row-model';
 import { RECURSIVE_OUTLINER_FALLBACK_ENABLED } from '../outliner/OutlinerFlatView';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { IconButton } from '../primitives/IconButton';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
@@ -49,6 +60,7 @@ import {
   usePreviewSource,
   type UrlPreviewPageMetadata,
 } from './previewRenderers';
+import { useUrlPageTranslation } from './useUrlPageTranslation';
 
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
 
@@ -61,6 +73,7 @@ interface FilePreviewPanelProps {
   nodeId?: NodeId;
   onBack: () => void;
   onClose: () => void;
+  onError?: (message: string) => void;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   onScrollPositionChange?: (scrollTop: number) => void;
@@ -88,7 +101,7 @@ interface LooseBreadcrumbSegment {
  * breadcrumb, preview hero, and optional children outline.
  */
 export function FilePreviewPanel(props: FilePreviewPanelProps) {
-  const t = useT();
+  const { locale, t } = useI18n();
   const previewLabels = t.shell.filePreview;
   const attachmentLabels = t.outliner.field.attachment;
   const state = usePreviewSource(props.target);
@@ -98,6 +111,16 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const fileRoot = readerMode ? null : boundFileNode;
   const nodeTarget = boundFileNode ? fileNodeTarget(boundFileNode) : null;
   const looseUrlPreview = !readerMode && !boundFileNode && props.target.kind === 'url';
+  const handleTranslationError = useCallback((error: 'invalid-response' | 'not-configured' | 'provider-error') => {
+    props.onError?.(error === 'not-configured'
+      ? previewLabels.translationNotConfigured
+      : previewLabels.translationFailed);
+  }, [previewLabels.translationFailed, previewLabels.translationNotConfigured, props.onError]);
+  const urlTranslation = useUrlPageTranslation({
+    active: looseUrlPreview,
+    targetLocale: locale,
+    onError: handleTranslationError,
+  });
   const previewTitle = state.status === 'ready'
     ? sourceTitle(state.source)
     : props.target.label ?? targetTitleFallback(props.target);
@@ -414,6 +437,18 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 {displayTitle}
               </span>
             </span>
+            <IconButton
+              aria-pressed={urlTranslation.status !== 'off'}
+              className={`file-preview-reader-actions file-preview-translation-toggle ${urlTranslation.status === 'starting' ? 'is-starting' : ''}`}
+              icon={urlTranslation.status === 'starting' ? LoaderIcon : LanguagesIcon}
+              label={urlTranslation.status === 'off'
+                ? previewLabels.translatePage
+                : urlTranslation.status === 'starting'
+                  ? previewLabels.stopTranslation
+                  : previewLabels.hideTranslation}
+              onClick={urlTranslation.toggle}
+              variant="panel"
+            />
             {looseUrlOpenAction ? (
               <FilePreviewHeaderMenu
                 actions={[{
@@ -470,6 +505,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           initialExpanded={readerMode}
           readerMode={readerMode}
           onUrlMetadataChange={looseUrlPreview ? handleUrlMetadataChange : undefined}
+          onUrlWebviewChange={looseUrlPreview ? urlTranslation.attachWebview : undefined}
         />
         {fileRoot && (
           <>

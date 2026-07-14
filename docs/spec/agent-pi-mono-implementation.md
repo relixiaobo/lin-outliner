@@ -387,7 +387,8 @@ reachability. Otherwise (or if listing is unsupported but a catalog exists), sen
 model to fall back to surfaces its status (401/404/timeout) directly. The probe is
 bounded: short timeout, tiny output budget, cancellable UI.
 
-**Runtime model resolution** (`agentRuntime.ts`):
+**Runtime model resolution** (`agentModelResolution.ts`, consumed by
+`agentRuntime.ts`):
 
 1. Resolve the active usable provider connection.
 2. Resolve the running agent's model/effort: user/project override → built-in
@@ -459,6 +460,25 @@ bounded: short timeout, tiny output budget, cancellable UI.
 Assistant events still record the actual `providerId`, `modelId`, `usage`, and
 thinking level so Details / debug stay faithful — the connection-only storage
 change does not strip per-message model metadata.
+
+### Non-conversation utility completion
+
+Main-process product utilities may use the configured language model without
+fabricating a hidden conversation or Agent Run. URL-preview translation is the
+first such consumer. It resolves Neva's explicit model over the active provider
+connection through the same `agentModelResolution.ts` helpers as AgentRuntime,
+then calls `piCompleteSimple` with no tools and the model's lowest supported
+reasoning level (`off` is represented by omitting the reasoning option).
+
+This path is deliberately non-durable: it emits no Agent event, transcript,
+memory, debug Run, or runtime retry row. Each request has an ephemeral session id,
+disables provider prompt-cache retention for page text, inherits the configured
+provider timeout/retry-delay options and custom Responses payload profile, and
+passes a renderer cancellation through to the provider signal. The main window is
+the only allowed IPC sender. Main bounds the block count, per-block text, total
+batch text, output text, active sessions, and ids before dispatch; it accepts only
+an exact JSON id set afterward. Remote-page instructions remain untrusted user
+data and model output is returned as text rather than executable markup.
 
 ## Provider Authentication
 

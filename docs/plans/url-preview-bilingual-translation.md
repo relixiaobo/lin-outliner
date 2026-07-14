@@ -71,9 +71,10 @@ order.
 
 Never collect content inside `script`, `style`, `noscript`, `pre`, `code`,
 form controls, editable regions, hidden/inert/`aria-hidden` subtrees, or
-Tenon-injected translation nodes. Ignore empty, punctuation-only, and
-already-target-language blocks. The main process revalidates request counts,
-ids, and bounded text lengths before any provider call.
+Tenon-injected translation nodes. Ignore empty and punctuation-only blocks, plus
+blocks whose nearest declared `lang` already matches the target language. The
+main process revalidates request counts, ids, and bounded text lengths before any
+provider call.
 
 The provider receives only the eligible blocks that enter the active viewport
 window. Translation results are accepted only for requested ids and are
@@ -161,7 +162,9 @@ Neva-model ownership, and format boundary are ratified.
 
 ## Files
 
-- `src/main/agentRuntime.ts` and a focused main-process page-translation module
+- `src/core/urlPageTranslation.ts`
+- `src/main/agentModelResolution.ts`, `src/main/agentRuntime.ts`, and a focused
+  main-process page-translation module
 - `src/main/main.ts`
 - `src/renderer/api/client.ts`
 - `src/renderer/ui/preview/FilePreviewPanel.tsx`
