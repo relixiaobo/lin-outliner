@@ -21,7 +21,6 @@ import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
 import {
   AddChildIcon,
-  CheckIcon,
   FolderIcon,
   HideIcon,
   ICON_SIZE,
@@ -477,6 +476,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
               aria-haspopup="dialog"
               aria-label={translationControlLabel}
               className={`file-preview-reader-actions file-preview-translation-toggle ${urlTranslation.status === 'starting' ? 'is-starting' : ''}`}
+              data-translation-completed={translationCompleted}
               data-translation-enabled={translationEnabled}
               onClick={(event) => {
                 event.stopPropagation();
@@ -492,14 +492,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
               {urlTranslation.status === 'starting' ? (
                 <LoaderIcon size={ICON_SIZE.menu} />
               ) : (
-                <span className="file-preview-translation-icon" aria-hidden="true">
-                  <LanguagesIcon size={ICON_SIZE.menu} />
-                  {translationCompleted ? (
-                    <span className="file-preview-translation-check">
-                      <CheckIcon size={ICON_SIZE.badge} />
-                    </span>
-                  ) : null}
-                </span>
+                <LanguagesIcon size={ICON_SIZE.menu} />
               )}
             </ButtonControl>
             {translationPopoverOpen ? (

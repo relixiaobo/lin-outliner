@@ -406,10 +406,11 @@ then groups the globally remembered automatic-translation and model preferences.
 Translate page uses the shared high-contrast neutral primary-button treatment,
 while the active page's Show original reversal uses the quieter secondary-button
 treatment. Both commands retain the matching semantic icon and shortcut. At
-least one completed translation adds a compact circular check badge to the header
-icon, while the trigger's accessible name reports the translation state independently
-from popover expansion. Clicking either host chrome or the webpage webview closes
-the popover. Manual translation and automatic translation both default off.
+least one completed translation gives the stable header language glyph a subtle
+circular selected fill without compositing a second glyph into its small slot.
+The trigger's accessible name reports the translation state independently from
+popover expansion. Clicking either host chrome or the webpage webview closes the
+popover. Manual translation and automatic translation both default off.
 Enabling translation keeps the remote page as the reading surface and inserts an
 inert plain-text translation after each eligible source block; disabling it hides
 translations without discarding the current page's in-memory cache. `Option+A`

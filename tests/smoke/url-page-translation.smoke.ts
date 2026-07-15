@@ -168,7 +168,7 @@ test.describe('URL page translation', () => {
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
     await smoke.window.waitForTimeout(600);
     expect(batches).toHaveLength(0);
-    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(0);
+    await expect(toggle).toHaveAttribute('data-translation-completed', 'false');
     expect(await guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-status]').length
     `)).toBe(0);
@@ -185,7 +185,7 @@ test.describe('URL page translation', () => {
       document.querySelectorAll('[data-tenon-bilingual-status="loading"]').length
     `)).toBeGreaterThan(0);
     await expect(toggle).toHaveClass(/is-starting/);
-    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(0);
+    await expect(toggle).toHaveAttribute('data-translation-completed', 'false');
     const loaderMetrics = await guest<Array<{
       controlHeight: number;
       controlWidth: number;
@@ -213,8 +213,8 @@ test.describe('URL page translation', () => {
     await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-translation="true"]').length
     `)).toBeGreaterThanOrEqual(2);
-    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(1);
-    await expect(toggle.locator('.file-preview-translation-check > svg')).toHaveCount(1);
+    await expect(toggle).toHaveAttribute('data-translation-completed', 'true');
+    await expect(toggle.locator('svg')).toHaveCount(1);
     expect(await guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-status]').length
     `)).toBe(0);
@@ -235,7 +235,7 @@ test.describe('URL page translation', () => {
     await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-translation="true"]').length
     `)).toBeGreaterThanOrEqual(2);
-    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(1);
+    await expect(toggle).toHaveAttribute('data-translation-completed', 'true');
     await dismissTranslationPopover(smoke.window, popover);
 
     const initialTexts = batches.flatMap((batch) => batch.blocks.map((block) => block.text));
@@ -255,7 +255,7 @@ test.describe('URL page translation', () => {
     await toggle.click();
     await popover.getByRole('button', { name: 'Show original' }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
-    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(0);
+    await expect(toggle).toHaveAttribute('data-translation-completed', 'false');
     expect(await guest(webview, `document.documentElement.getAttribute('data-tenon-bilingual-hidden')`))
       .toBe('true');
     expect(await guest(webview, `
@@ -269,7 +269,7 @@ test.describe('URL page translation', () => {
     await expect.poll(() => guest(webview, `
       document.documentElement.hasAttribute('data-tenon-bilingual-hidden')
     `)).toBe(false);
-    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(1);
+    await expect(toggle).toHaveAttribute('data-translation-completed', 'true');
     await smoke.window.waitForTimeout(600);
     expect(batches).toHaveLength(completedRequestCount);
 
@@ -287,11 +287,11 @@ test.describe('URL page translation', () => {
     await autoTranslate.click();
     await expect(autoTranslate).toHaveAttribute('aria-checked', 'true');
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
-    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(1);
+    await expect(toggle).toHaveAttribute('data-translation-completed', 'true');
     await autoTranslate.click();
     await expect(autoTranslate).toHaveAttribute('aria-checked', 'false');
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
-    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(1);
+    await expect(toggle).toHaveAttribute('data-translation-completed', 'true');
     await popover.getByRole('button', { name: 'Show original' }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
 

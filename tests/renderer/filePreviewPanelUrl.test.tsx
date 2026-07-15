@@ -150,9 +150,9 @@ describe('FilePreviewPanel URL preview chrome', () => {
     });
 
     expect(toggle.getAttribute('data-translation-enabled')).toBe('true');
+    expect(toggle.getAttribute('data-translation-completed')).toBe('false');
     expect(toggle.getAttribute('aria-label')).toStartWith('Translation settings:');
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(toggle.querySelector('.file-preview-translation-check')).toBeNull();
 
     await act(async () => {
       toggle.click();
@@ -166,8 +166,8 @@ describe('FilePreviewPanel URL preview chrome', () => {
       await Promise.resolve();
     });
     expect(toggle.getAttribute('data-translation-enabled')).toBe('false');
+    expect(toggle.getAttribute('data-translation-completed')).toBe('false');
     expect(toggle.getAttribute('aria-label')).toBe('Translation settings: Translation off');
-    expect(toggle.querySelector('.file-preview-translation-check')).toBeNull();
   });
 
   test('keeps an unavailable explicit model visible and requires another selection', async () => {

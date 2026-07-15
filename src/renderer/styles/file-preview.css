@@ -65,28 +65,13 @@
   animation: file-preview-translation-spin var(--motion-spin-cycle) linear infinite;
 }
 
-.file-preview-translation-icon {
-  position: relative;
-  display: inline-flex;
-  width: var(--icon-size-md);
-  height: var(--icon-size-md);
-  align-items: center;
-  justify-content: center;
+.file-preview-translation-toggle[data-translation-completed='true']:not(.is-starting) {
+  background: var(--fill-2);
 }
 
-.file-preview-translation-check {
-  position: absolute;
-  right: calc(0px - var(--space-2));
-  bottom: calc(0px - var(--space-2));
-  display: inline-grid;
-  width: calc(var(--icon-size-xs) - var(--space-1));
-  height: calc(var(--icon-size-xs) - var(--space-1));
-  place-items: center;
-  border-radius: var(--radius-pill);
-  outline: var(--space-hairline) solid var(--bg-content);
-  background: var(--surface-inverse);
-  color: var(--bg-content);
-  pointer-events: none;
+.file-preview-translation-toggle[data-translation-completed='true']:not(.is-starting):hover,
+.file-preview-translation-toggle[data-translation-completed='true'][aria-expanded='true']:not(.is-starting) {
+  background: var(--fill-3);
 }
 
 .file-preview-translation-popover {
