@@ -313,7 +313,8 @@ function scanMarkdownCodeSpans(
   input: string,
   escaped: Uint8Array,
 ): Map<number, MarkdownCodeSpan> {
-  const spans = new Map<number, MarkdownCodeSpan>();
+  const candidates = new Map<number, MarkdownCodeSpan>();
+  const openingOrder: number[] = [];
   const pendingByLength = new Map<number, Array<{ contentStart: number; start: number }>>();
   for (let index = 0; index < input.length;) {
     if (input[index] === '\n') {
@@ -332,7 +333,7 @@ function scanMarkdownCodeSpans(
     // outside code, only the suffix after an escaped first tick may open.
     for (const opening of pendingByLength.get(physicalLength) ?? []) {
       if (opening.contentStart >= index) continue;
-      spans.set(opening.start, {
+      candidates.set(opening.start, {
         contentStart: opening.contentStart,
         contentEnd: index,
         end,
@@ -343,11 +344,21 @@ function scanMarkdownCodeSpans(
     const openingStart = index + (escaped[index] !== 0 ? 1 : 0);
     const openingLength = end - openingStart;
     if (openingLength > 0) {
+      openingOrder.push(openingStart);
       const pending = pendingByLength.get(openingLength);
       if (pending) pending.push({ start: openingStart, contentStart: end });
       else pendingByLength.set(openingLength, [{ start: openingStart, contentStart: end }]);
     }
     index = end;
+  }
+
+  const spans = new Map<number, MarkdownCodeSpan>();
+  let selectedUntil = -1;
+  for (const openingStart of openingOrder) {
+    const span = candidates.get(openingStart);
+    if (!span || openingStart < selectedUntil) continue;
+    spans.set(openingStart, span);
+    selectedUntil = span.end;
   }
   return spans;
 }

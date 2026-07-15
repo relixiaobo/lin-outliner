@@ -1274,10 +1274,14 @@ Rules:
 - Inline code pairs opening and closing backtick runs only when their lengths
   match on the same line. Backslashes inside code remain literal; empty or
   unclosed spans remain literal source. An escaped backtick adjacent to an
-  opening delimiter remains a separate literal character. Serialization chooses
-  a delimiter longer than every backtick run in each emitted code segment and
-  uses reversible CommonMark-style inner space padding when segment content
-  starts or ends with a backtick or needs its own surrounding spaces preserved.
+  opening delimiter remains a separate literal character. Candidate spans are
+  selected greedily in source order and never overlap, so a run that closes a
+  selected span is not reused as another selected span's opening; tags and fields
+  between consecutive spans remain available for metadata harvesting.
+  Serialization chooses a delimiter longer than every backtick run in each
+  emitted code segment and uses reversible CommonMark-style inner space padding
+  when segment content starts or ends with a backtick or needs its own surrounding
+  spaces preserved.
 - Overlapping Markdown marks remain overlapping rich-text marks. Canonical
   serialization orders equal and nested ranges as properly nested delimiters.
   At crossing boundaries it selects a legal nesting order, closes ending marks,

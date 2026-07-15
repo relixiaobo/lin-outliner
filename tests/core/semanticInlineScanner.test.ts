@@ -192,6 +192,25 @@ describe('semantic inline scanner', () => {
     });
   });
 
+  test('harvests metadata between adjacent code spans', () => {
+    expect(scanMarkdownInline(
+      '`one` Status:: open #work `two`',
+      { metadata: 'tags-and-fields', linkifyBareUrls: true, references: true },
+    )).toEqual({
+      source: '`one` `two`',
+      content: {
+        text: 'one two',
+        marks: [
+          { start: 0, end: 3, type: 'code' },
+          { start: 4, end: 7, type: 'code' },
+        ],
+        inlineRefs: [],
+      },
+      fields: [{ name: 'Status', value: 'open', source: { start: 6, end: 19 } }],
+      tags: [{ name: 'work', source: { start: 20, end: 25 } }],
+    });
+  });
+
   test('merges equivalent marks after materializing inline references', () => {
     expect(scanMarkdownInline(
       '**a[[node:Alpha^node-alpha]]b**',
