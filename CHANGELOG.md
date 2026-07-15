@@ -67,6 +67,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Persistent URL preview sessions (PR #400, codex-3)** — URL Preview panes now
+  share one Tenon-owned persistent website profile across panes and relaunches,
+  while remote guests remain sandboxed, Node-free, preload-free, HTTP(S)-only,
+  and pinned to the same partition. Safe GET new-window requests stay in the
+  requesting Preview without creating a child window; Settings can clear only
+  Preview cookies, cache, auth, and site storage through a native confirmation,
+  and quit now flushes DOM storage and cookies inside the bounded drain. Future
+  Browser Control plans now attach to visible Tenon Preview guests instead of an
+  external browser profile. **Gate (main):** deep review covering the session,
+  permission, navigation, and IPC boundaries found no reportable issues.
+  Verified with typecheck, focused Core/security tests, 795 renderer tests,
+  production build, real Electron smoke, light/dark visual QA, docs check, and
+  diff check.
 - **URL preview bilingual translation (PR #396, codex-4)** — URL previews now
   support opt-in bilingual reading with target/model preferences, automatic
   activation from valid page-language metadata, a scoped shortcut, and

@@ -23,8 +23,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398**) |
 | Codex 2 | `lin-outliner-codex-2/` | `codex-2/semantic-ingest-pipeline` | PR #397 — semantic ingest shared scanner and normal-node parity |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped field-value-node-children #394) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped field-value-node-children #394, url-preview-persistent-session #400) |
+| Codex 4 | `lin-outliner-codex-4/` | `codex-4/url-video-bilingual-subtitles` | PR #399 — URL video bilingual subtitles |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
@@ -32,8 +32,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-15).** Open PR queue: #397
-(`codex-2/semantic-ingest-pipeline`; ready for main review). Recently merged:
-#396 (`codex-4/url-preview-bilingual-translation`) merged 2026-07-15 after three
+(`codex-2/semantic-ingest-pipeline`; ready for main review) and #399
+(`codex-4/url-video-bilingual-subtitles`; ready for main review). Recently
+merged: #400 (`codex-3/url-preview-persistent-session`) merged 2026-07-15 after
+main review; see *Recently completed*. #396
+(`codex-4/url-preview-bilingual-translation`) merged 2026-07-15 after three
 main review rounds; see *Recently completed*. #398
 (`codex/agent-issue-execution-preflight`) merged 2026-07-15 after two main
 review rounds; see *Recently completed*. #394
@@ -502,6 +505,24 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **url-preview-persistent-session**
+  (`codex-3/url-preview-persistent-session`, PR #400, codex-3, merged
+  2026-07-15, plan-track) — every URL Preview pane now shares one Tenon-owned
+  persistent website session across panes and relaunches. Main pins every remote
+  guest to that partition, keeps the HTTP(S)-only sandbox and permission
+  allowlist, routes safe GET new-window requests back into the requesting Preview,
+  flushes website state during bounded quit, and exposes a native-confirmed
+  Settings action that clears only Preview website data before reloading attached
+  guests. The current workspace spec and future Browser Control plans now share
+  the same single-Preview profile boundary. **Gate (main):** deep review covering
+  the session, permission, navigation, and IPC boundaries found no reportable
+  issues. Verified on final head `4a7b4941`
+  with typecheck, 12 focused Core/security tests, 795 renderer tests, production
+  build, real Electron persistence/clear/popup smoke, light/dark visual QA,
+  `docs:check`, and `git diff --check`; the full Core suite added six passes and
+  retained the merge-base's external Presentation skill failures. Plan archived
+  `done`: `docs/plans/archive/url-preview-persistent-session.md`.
 
 - **url-preview-bilingual-translation**
   (`codex-4/url-preview-bilingual-translation`, PR #396, codex-4, merged
