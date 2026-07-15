@@ -152,7 +152,7 @@ describe('FilePreviewShell URL previews', () => {
 
     const webview = rendered.document.querySelector('.file-preview-url-webview');
     expect(webview).not.toBeNull();
-    expect(webview?.getAttribute('partition')).toBe('url-preview');
+    expect(webview?.getAttribute('partition')).toBe('persist:url-preview');
     expect(webview?.getAttribute('src')).toBe('https://example.com/docs');
     expect(webview?.getAttribute('title')).toBe('Example docs');
     expect(rendered.document.querySelector('.file-node-body--url')).not.toBeNull();

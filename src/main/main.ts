@@ -14,6 +14,12 @@ import { AgentImportService } from './agentImportService';
 import { AgentImportApiServer } from './agentImportApi';
 import { configureTenonImportRuntime } from './tenonImportRuntime';
 import { isRendererPermissionAllowed } from './rendererPermissions';
+import {
+  clearUrlPreviewSessionData,
+  configureUrlPreviewSession,
+  createUrlPreviewWindowOpenHandler,
+  flushUrlPreviewSession,
+} from './urlPreviewSession';
 import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/chromeGeometry';
 import { windowMaterialKind } from '../core/windowMaterial';
 import { applyMacWindowCorner } from './nativeWindowCorner';
@@ -52,6 +58,11 @@ import {
   type UrlPageTranslationPreferences,
 } from '../core/urlPageTranslation';
 import { LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL } from '../core/urlPageTranslationGuest';
+import {
+  LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL,
+  URL_PREVIEW_WEBVIEW_PARTITION,
+  type ClearUrlPreviewDataResult,
+} from '../core/urlPreviewSession';
 import { handlePreviewCommand } from './previewSource';
 import { PageTranslationService, pageTranslationErrorReport } from './pageTranslation';
 import { executeUrlPageTranslationGuestCommand } from './urlPageTranslationGuest';
@@ -286,6 +297,8 @@ let settingsWindow: BrowserWindow | null = null;
 let providerConfigWindow: BrowserWindow | null = null;
 let agentConfigWindow: BrowserWindow | null = null;
 let channelConfigWindow: BrowserWindow | null = null;
+let urlPreviewSession: Electron.Session | null = null;
+const urlPreviewGuests = new Set<Electron.WebContents>();
 let quitAfterFlush = false;
 let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
@@ -441,7 +454,6 @@ agentRuntime.setOsNotifier(({ title, body, conversationId }) => {
 const RENDERER_DEV_URL = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
 const RENDERER_DEV_ORIGIN = RENDERER_DEV_URL ? safeOrigin(RENDERER_DEV_URL) : null;
 const RENDERER_SCRIPT_SRC = "script-src 'self'";
-const URL_PREVIEW_WEBVIEW_PARTITION = 'url-preview';
 // Hash of @vitejs/plugin-react's dev preamble for base "/". Recompute if the
 // plugin changes that injected module script.
 const VITE_REACT_REFRESH_PREAMBLE_CSP_HASH =
@@ -545,18 +557,25 @@ function hardenWebContents(contents: Electron.WebContents) {
     params.src = normalizedSrc;
   });
   contents.on('did-attach-webview', (_event, webContents) => {
-    webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
-      callback(false);
-    });
-    webContents.session.setPermissionCheckHandler(() => false);
-    webContents.setWindowOpenHandler(({ url }) => {
-      openExternalUrl(url);
-      return { action: 'deny' };
-    });
+    if (!urlPreviewSession || webContents.session !== urlPreviewSession) {
+      webContents.close();
+      return;
+    }
+    urlPreviewGuests.add(webContents);
+    webContents.once('destroyed', () => urlPreviewGuests.delete(webContents));
+    webContents.setWindowOpenHandler(createUrlPreviewWindowOpenHandler(webContents, (error) => {
+      reportError({
+        domain: 'url-preview',
+        severity: 'warn',
+        code: 'url-preview-popup-navigation',
+        message: 'URL Preview could not route a new-window request in place',
+        context: { operation: 'popup-navigation' },
+        error,
+      });
+    }));
     const guardWebviewNavigation = (event: Electron.Event, url: string) => {
       if (normalizePreviewHttpUrl(url)) return;
       event.preventDefault();
-      openExternalUrl(url);
     };
     webContents.on('will-navigate', guardWebviewNavigation);
     webContents.on('will-redirect', guardWebviewNavigation);
@@ -1223,6 +1242,50 @@ function openSettingsWindow(openTarget: SettingsOpenTarget = {}) {
   });
 }
 
+async function clearUrlPreviewWebsiteData(
+  event: IpcMainInvokeEvent,
+): Promise<ClearUrlPreviewDataResult> {
+  const window = liveWindow(settingsWindow);
+  if (!window || event.sender !== window.webContents || !urlPreviewSession) {
+    return { status: 'failed', error: 'unavailable' };
+  }
+
+  const labels = getMessages(effectiveLocale()).settings.general;
+  const confirmation = await dialog.showMessageBox(window, {
+    type: 'warning',
+    title: labels.websiteDataClearConfirmTitle,
+    message: labels.websiteDataClearConfirmMessage,
+    detail: labels.websiteDataClearConfirmDetail,
+    buttons: [labels.websiteDataClearConfirmAction, labels.websiteDataCancelAction],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (confirmation.response !== 0) return { status: 'canceled' };
+
+  try {
+    await clearUrlPreviewSessionData(urlPreviewSession);
+    for (const guest of [...urlPreviewGuests]) {
+      if (guest.isDestroyed()) {
+        urlPreviewGuests.delete(guest);
+        continue;
+      }
+      guest.reloadIgnoringCache();
+    }
+    return { status: 'cleared' };
+  } catch (error) {
+    reportError({
+      domain: 'url-preview',
+      severity: 'error',
+      code: 'url-preview-clear-data',
+      message: 'URL Preview website data could not be cleared',
+      context: { operation: 'clear-data' },
+      error,
+    });
+    return { status: 'failed', error: 'clear-failed' };
+  }
+}
+
 // The per-provider API-key form opens as its OWN native window — a modal child of
 // the settings window (the macOS System Settings idiom: a list row pushes its
 // detail into a real attached dialog, not an in-renderer overlay). It reuses the
@@ -1489,6 +1552,7 @@ function registerIpc() {
 
   ipcMain.handle('lin:open-settings', (_event, target?: unknown) => openSettingsWindow(sanitizeSettingsOpenTarget(target)));
   ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
+  ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, clearUrlPreviewWebsiteData);
   ipcMain.handle(LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL, async (
     event,
     request?: Partial<AgentMessageContextMenuRequest>,
@@ -2955,6 +3019,8 @@ if (!app.requestSingleInstanceLock()) {
     // on or fails from it. See `reconcileProviderConfig`.
     void reconcileProviderConfig().catch(() => { /* best-effort; cleaned next launch */ });
     configureSessionSecurity();
+    urlPreviewSession = session.fromPartition(URL_PREVIEW_WEBVIEW_PARTITION);
+    configureUrlPreviewSession(urlPreviewSession);
     registerIpc();
     createWindow();
     // Anacron catch-up on system wake belongs to Issue triggers.
@@ -3021,6 +3087,7 @@ if (!app.requestSingleInstanceLock()) {
         nodeAccessStore.flushNow(),
         importApiServer.stop(),
         agentRuntime.drainPendingWrites(),
+        flushUrlPreviewSession(urlPreviewSession),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2500)),
     ]).finally(() => app.exit(0));

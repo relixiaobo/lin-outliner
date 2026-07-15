@@ -57,6 +57,7 @@ import {
   resolveUsableActiveProvider,
 } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
+import { WebsiteDataSettingsGroup } from './WebsiteDataSettingsGroup';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -995,6 +996,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     wrap
                   />
                 </InsetGroup>
+                <WebsiteDataSettingsGroup onError={setError} onNotice={setNotice} />
                 <InsetGroup
                   ariaLabel={t.settings.general.diagnosticsGroup}
                   label={t.settings.general.diagnosticsGroup}

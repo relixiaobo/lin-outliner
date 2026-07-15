@@ -12,6 +12,16 @@ const PREVIEW_RENDERERS_SRC = readFileSync(
   'utf8',
 );
 
+const URL_PREVIEW_SESSION_CORE_SRC = readFileSync(
+  join(import.meta.dir, '../../src/core/urlPreviewSession.ts'),
+  'utf8',
+);
+
+const URL_PREVIEW_SESSION_MAIN_SRC = readFileSync(
+  join(import.meta.dir, '../../src/main/urlPreviewSession.ts'),
+  'utf8',
+);
+
 const TRANSLATION_GUEST_SRC = readFileSync(
   join(import.meta.dir, '../../src/renderer/ui/preview/urlPageTranslationGuest.ts'),
   'utf8',
@@ -52,20 +62,28 @@ describe('URL preview webview security posture', () => {
     expect(MAIN_SRC).toContain('normalizePreviewHttpUrl(url)');
     expect(MAIN_SRC).toContain('params.partition = URL_PREVIEW_WEBVIEW_PARTITION');
     expect(MAIN_SRC).not.toContain('params.partition !== URL_PREVIEW_WEBVIEW_PARTITION');
-    expect(MAIN_SRC).toContain('webContents.session.setPermissionRequestHandler');
-    expect(MAIN_SRC).toContain('webContents.session.setPermissionCheckHandler');
+    expect(MAIN_SRC).toContain('webContents.session !== urlPreviewSession');
+    expect(MAIN_SRC).toContain('configureUrlPreviewSession(urlPreviewSession)');
+    expect(URL_PREVIEW_SESSION_CORE_SRC).toContain("'persist:url-preview'");
+    expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('previewSession.setPermissionRequestHandler');
+    expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('previewSession.setPermissionCheckHandler');
+    expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain('isRendererPermissionAllowed(permission)');
   });
 
   test('the renderer URL preview does not request privileged webview features', () => {
     const webview = PREVIEW_RENDERERS_SRC.match(/<webview[\s\S]*?\/>/)?.[0] ?? '';
     expect(webview).toContain('<webview');
-    expect(webview).toContain('partition="url-preview"');
+    expect(PREVIEW_RENDERERS_SRC).toContain("import { URL_PREVIEW_WEBVIEW_PARTITION } from '../../../core/urlPreviewSession'");
+    expect(webview).toContain('partition={URL_PREVIEW_WEBVIEW_PARTITION}');
     expect(PREVIEW_RENDERERS_SRC).not.toContain("addEventListener('did-stop-loading'");
     expect(PREVIEW_RENDERERS_SRC).not.toContain('file-preview-url-loading');
     expect(webview).not.toContain('preload=');
     expect(webview).not.toContain('nodeintegration');
     expect(webview).not.toContain('disablewebsecurity');
-    expect(webview).not.toContain('allowpopups');
+    expect(webview).toContain('allowpopups');
+    expect(MAIN_SRC).toContain('webContents.setWindowOpenHandler(createUrlPreviewWindowOpenHandler');
+    expect(URL_PREVIEW_SESSION_MAIN_SRC).toContain("return { action: 'deny' }");
+    expect(URL_PREVIEW_SESSION_MAIN_SRC).not.toContain("action: 'allow'");
   });
 
   test('translation keeps the guest unprivileged and inserts only inert text', () => {

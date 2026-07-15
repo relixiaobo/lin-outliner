@@ -394,10 +394,29 @@ Source authority stays source-specific:
   URL targets normalize through one shared `http(s)`-only helper in core. The pane
   renders the webpage through a dedicated sandboxed Electron webview that allows
   only `http(s)` navigation, strips preload/Node privileges at attach time,
-  force-assigns the URL-preview partition, denies popups, and keeps the explicit
-  fallback action for opening the URL in the system browser. URL preview source
-  resolution is synchronous in the renderer because the source is the URL itself;
-  the pane must not show a file-preview loading overlay before the webview starts.
+  force-assigns the shared persistent `persist:url-preview` partition, denies
+  child windows, and keeps the explicit fallback action for opening the URL in
+  the system browser. The webview forwards new-window requests to main, where a
+  safe HTTP(S) GET navigates the requesting Preview guest in place while
+  Electron still returns `deny`; POST popups and unsupported schemes stay
+  blocked. URL preview source resolution is
+  synchronous in the renderer because the source is the URL itself; the pane
+  must not show a file-preview loading overlay before the webview starts.
+
+All URL Preview panes and launches share that one Tenon-owned profile inside the
+already-isolated Electron `userData` directory. Chromium-managed cookies and
+site storage therefore preserve sessions that compatible sites permit the
+embedded Electron user agent to establish across panes and app restarts. This is
+session persistence, not provider compatibility: Tenon does not disguise its
+user agent, weaken site policy, guarantee Google/YouTube sign-in, import an
+external browser profile, expose cookies to the renderer, provide
+password/autofill storage, or claim passkey-only authentication. Main configures
+the partition once, allows only fullscreen and sanitized clipboard writes,
+flushes DOM storage and cookies inside the bounded before-quit drain, and rejects
+a guest attached to any other session. Settings > General provides one
+native-confirmed **Clear website data** action that closes live connections,
+removes auth/cache/cookies/site storage for only this partition, and reloads
+attached Preview guests.
 
 URL previews also expose one neutral `Languages` icon immediately before the
 header actions menu. It opens a compact, task-first popover: target language and
@@ -509,9 +528,10 @@ the dynamically followed Agent model or the explicitly selected qualified model.
 An explicit model must still be runnable on its provider and never silently falls
 back to Agent. The response must contain exactly the requested ids;
 translations enter the page through `textContent`, never model-produced HTML.
-The guest still has no preload, Node integration, permissions, popup capability,
-or non-HTTP navigation. Translation does not weaken the URL-preview security
-posture or add a guest-to-main IPC channel.
+The guest still has no preload, Node integration, child-window capability, or
+non-HTTP navigation; only fullscreen and sanitized clipboard writes are
+permitted. Translation does not weaken the URL-preview security posture or add
+a guest-to-main IPC channel.
 
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the

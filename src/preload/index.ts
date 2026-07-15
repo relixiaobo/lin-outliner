@@ -60,6 +60,10 @@ import {
   LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL,
   type UrlPageTranslationGuestRequest,
 } from '../core/urlPageTranslationGuest';
+import {
+  LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL,
+  type ClearUrlPreviewDataResult,
+} from '../core/urlPreviewSession';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -287,6 +291,8 @@ const api = {
     ipcRenderer.invoke('lin:get-notification-prefs') as Promise<{ osNotificationsEnabled: boolean }>,
   setNotificationPrefs: (prefs: { osNotificationsEnabled: boolean }) =>
     ipcRenderer.invoke('lin:set-notification-prefs', prefs) as Promise<{ osNotificationsEnabled: boolean }>,
+  clearUrlPreviewData: () =>
+    ipcRenderer.invoke(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL) as Promise<ClearUrlPreviewDataResult>,
   // Durably mark a conversation read (the user opened/viewed it). Separate from
   // restoreConversation so a config reload never clears unread.
   agentMarkConversationRead: (conversationId: string) =>

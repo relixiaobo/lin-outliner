@@ -24,6 +24,7 @@ import type {
   PreviewUrlSource,
 } from '../../../core/preview';
 import { normalizePreviewHttpUrl } from '../../../core/preview';
+import { URL_PREVIEW_WEBVIEW_PARTITION } from '../../../core/urlPreviewSession';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import {
@@ -61,6 +62,10 @@ import { openUrlPreviewFromClick } from './urlPreviewRouting';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
+
+// React drops boolean values for this Electron-only attribute, so pass the
+// string value Electron expects while retaining React's intrinsic webview type.
+const ENABLE_WEBVIEW_POPUPS = 'true' as unknown as boolean;
 
 export type PreviewSourceState =
   | { status: 'loading' }
@@ -583,8 +588,9 @@ function UrlPreview({
   return (
     <div className="file-preview-url" data-preserve-selection>
       <webview
+        allowpopups={ENABLE_WEBVIEW_POPUPS}
         className="file-preview-url-webview"
-        partition="url-preview"
+        partition={URL_PREVIEW_WEBVIEW_PARTITION}
         ref={setWebviewRef}
         src={source.url}
         title={source.title}
