@@ -1038,6 +1038,42 @@ describe('agent node tools', () => {
     }
   });
 
+  test('node_create appends field values with the same label and distinct link destinations', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const record = mustFocus(core.createNode(today, null, 'Record'));
+    const entry = mustFocus(core.createInlineField(record, null, 'Links', 'plain'));
+
+    const first = await executeTool(core, 'node_create', {
+      parent_id: record,
+      outline: '- Links:: [docs](https://a.test)',
+    });
+    expect(first.ok).toBe(true);
+    const firstValueId = core.state().nodes[entry]!.children[0]!;
+
+    const second = await executeTool(core, 'node_create', {
+      parent_id: record,
+      outline: '- Links:: [docs](https://b.test)',
+    });
+    expect(second.ok).toBe(true);
+
+    const valueIds = core.state().nodes[entry]!.children;
+    expect(valueIds).toHaveLength(2);
+    expect(valueIds[0]).toBe(firstValueId);
+    expect(valueIds.map((valueId) => core.state().nodes[valueId]!.content)).toEqual([
+      {
+        text: 'docs',
+        marks: [{ start: 0, end: 4, type: 'link', attrs: { href: 'https://a.test' } }],
+        inlineRefs: [],
+      },
+      {
+        text: 'docs',
+        marks: [{ start: 0, end: 4, type: 'link', attrs: { href: 'https://b.test' } }],
+        inlineRefs: [],
+      },
+    ]);
+  });
+
   test('node_create rejects pure inline references for typed fields before mutation', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-typed-field-ref-'));
     try {
@@ -1670,6 +1706,30 @@ describe('agent node tools', () => {
     expect(core.state().nodes[cloneId]!.content).toEqual(core.state().nodes[sourceId]!.content);
     expect(richTextToMarkdownReferenceMarkup(core.state().nodes[cloneId]!.content))
       .toBe('**[https://example.com](https://example.com)**');
+  });
+
+  test('node_create duplicate_id preserves crossing bold and link marks', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const sourceId = mustFocus(core.createRichTextContentNode(today, null, {
+      text: 'See https://example.com',
+      marks: [
+        { start: 0, end: 9, type: 'bold' },
+        { start: 4, end: 23, type: 'link', attrs: { href: 'https://example.com' } },
+      ],
+      inlineRefs: [],
+    }));
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      duplicate_id: sourceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const cloneId = duplicated.data!.createdRootIds[0]!;
+    expect(core.state().nodes[cloneId]!.content).toEqual(core.state().nodes[sourceId]!.content);
+    expect(richTextToMarkdownReferenceMarkup(core.state().nodes[cloneId]!.content))
+      .toBe('**See [https](https://example.com)**[://example.com](https://example.com)');
   });
 
   test('node_create persists saved search nodes with executable conditions', async () => {

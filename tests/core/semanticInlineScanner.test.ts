@@ -5,6 +5,17 @@ import {
 } from '../../src/core/semanticIngest/inlineScanner';
 
 describe('semantic inline scanner', () => {
+  test('keeps non-canonical Markdown delimiters as literal text', () => {
+    expect(scanMarkdownInline(
+      '__init__ _private_ ~draft~',
+      { metadata: 'none', linkifyBareUrls: true, references: true },
+    ).content).toEqual({
+      text: '__init__ _private_ ~draft~',
+      marks: [],
+      inlineRefs: [],
+    });
+  });
+
   test('links bare URLs while keeping protected link and code ranges intact', () => {
     expect(scanMarkdownInline(
       'Visit https://example.com/docs, [site #literal](https://linked.example) and `https://code.example #code` #work',

@@ -130,6 +130,7 @@ import type {
   ProjectionIndex,
 } from './agentNodeToolTypes';
 import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
+import { mergeEquivalentTextMarks, textMarkIdentity } from '../core/textMarks';
 import { isPathInside } from './agentAttachmentMaterialization';
 import {
   inferFieldTypeFromValues,
@@ -3156,15 +3157,20 @@ function outlineValueKey(value: OutlineValue): string {
 
 function richTextValueKey(content: RichText): string {
   const text = content.text.trim().toLowerCase();
-  if (content.inlineRefs.length === 0) return `value:${text}`;
   const references = [...content.inlineRefs]
     .sort((left, right) => (
       left.offset - right.offset
       || referenceTargetSortKey(left.target).localeCompare(referenceTargetSortKey(right.target))
     ))
-    .map((ref) => `${ref.offset}:${referenceTargetSortKey(ref.target)}`)
-    .join('|');
-  return `inline-value:${text}:${references}`;
+    .map((ref) => [ref.offset, referenceTargetSortKey(ref.target)]);
+  const marks = mergeEquivalentTextMarks(content.marks)
+    .sort((left, right) => (
+      left.start - right.start
+      || left.end - right.end
+      || textMarkIdentity(left).localeCompare(textMarkIdentity(right))
+    ))
+    .map((mark) => [mark.start, mark.end, textMarkIdentity(mark)]);
+  return `value:${JSON.stringify({ text, references, marks })}`;
 }
 
 function outlineValueSource(value: OutlineValue): string {

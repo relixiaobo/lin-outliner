@@ -1253,6 +1253,9 @@ Rules:
 - Markdown inline delimiters in ordinary node text create rich-text marks:
   `**bold**`, `*italic*`, `~~strike~~`, `==highlight==`, inline `` `code` ``,
   and `[label](https://example.com)`.
+- Delimiter recognition is canonical: `__bold__`, `_italic_`, and `~strike~`
+  remain literal text. Marked-compatible alternate delimiters do not expand the
+  outline grammar or change existing snake-case and identifier text.
 - Bare `http://`, `https://`, and `www.` URLs in ordinary node text become link
   marks. `www.` hrefs normalize to `https://`; trailing sentence punctuation and
   unmatched closing delimiters remain outside the link. Link clicks still use the
@@ -1265,9 +1268,13 @@ Rules:
   text. Parsing decodes escaped punctuation such as `\#`, `\*`, and `\\` back
   to its visible label without leaking serializer backslashes into node text.
 - Overlapping Markdown marks remain overlapping rich-text marks. Canonical
-  serialization orders equal and nested ranges as properly nested delimiters,
-  so a bold bare URL round-trips as `**[https://example.com](https://example.com)**`
-  without corrupting either its visible text or link destination.
+  serialization orders equal and nested ranges as properly nested delimiters.
+  At crossing style/link boundaries it closes the inner marks, closes the
+  ending outer mark, and reopens continuing marks; parsing merges adjacent mark
+  segments with the same type and attributes. A bold bare URL therefore
+  round-trips as `**[https://example.com](https://example.com)**`, while a link
+  that extends beyond bold text is split into legal Markdown link segments and
+  restored as one link mark without corrupting its label or destination.
 - Complete Markdown links, inline code, reference markers, bare URLs, and
   backslash-escaped tokens are protected from tag and field harvesting. A
   grammar-shaped token in one of those ranges remains literal.
@@ -1985,6 +1992,10 @@ Outline edit semantics:
   Unmarked field lines resolve through the semantic field write resolver by
   display name; unmarked value lines append values. Omitted fields and values are
   preserved.
+- Unmarked field-value reconciliation compares normalized visible text, inline
+  reference target identities, and canonical rich-text mark ranges, types, and
+  sorted attributes. Values with the same label but different link destinations
+  are distinct and append instead of updating one another in place.
 - Annotated field value ids can update text in place only when the stored value
   kind stays compatible. Changing a plain value into a reference, a reference into
   text, or a reference target is rejected before mutation; delete the old value id

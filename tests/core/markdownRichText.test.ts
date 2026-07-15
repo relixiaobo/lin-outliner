@@ -80,6 +80,17 @@ describe('markdown rich text outline bridge', () => {
     expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
   });
 
+  test('round-trips literal alternate Markdown delimiters without creating marks', () => {
+    const content = {
+      text: '__init__ _private_ ~draft~',
+      marks: [],
+      inlineRefs: [],
+    };
+
+    const serialized = richTextToMarkdownReferenceMarkup(content);
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
+
   test('round-trips protected code text without interpreting its grammar or URLs', () => {
     const text = String.raw`#tag Status:: https://example.com C:\path`;
     const content = {
@@ -137,6 +148,26 @@ describe('markdown rich text outline bridge', () => {
     const serialized = richTextToMarkdownReferenceMarkup(parsed);
     expect(serialized).toBe('**[https://example.com](https://example.com)**');
     expect(markdownReferenceMarkupToRichText(serialized)).toEqual(parsed);
+  });
+
+  test('round-trips crossing Markdown mark ranges by closing and reopening marks', () => {
+    const content = {
+      text: 'See https://example.com',
+      marks: [
+        { start: 0, end: 9, type: 'bold' as const },
+        {
+          start: 4,
+          end: 23,
+          type: 'link' as const,
+          attrs: { href: 'https://example.com' },
+        },
+      ],
+      inlineRefs: [],
+    };
+
+    const serialized = richTextToMarkdownReferenceMarkup(content);
+    expect(serialized).toBe('**See [https](https://example.com)**[://example.com](https://example.com)');
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
   });
 
   test('round-trips link destinations with balanced parentheses', () => {

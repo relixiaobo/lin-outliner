@@ -4,6 +4,7 @@ import {
   matchTagTokens,
   parseTagTokenMatch,
 } from '../textSyntax';
+import { mergeEquivalentTextMarks } from '../textMarks';
 import type { InlineRef, ReferenceTarget, RichText, TextMark, TextMarkKind } from '../types';
 import type {
   InlineFieldToken,
@@ -214,7 +215,10 @@ function markdownInlineTokens(input: string): InlineToken[] {
       });
       continue;
     }
-    if (token.type === 'strong' || token.type === 'em' || token.type === 'del') {
+    if (
+      (token.type === 'strong' || token.type === 'em' || token.type === 'del')
+      && hasCanonicalMarkdownDelimiter(token.type, token.raw)
+    ) {
       const type: TextMarkKind = token.type === 'strong'
         ? 'bold'
         : token.type === 'em'
@@ -285,8 +289,14 @@ function parseMarkdown(input: string): ParsedMarkdown {
     cursor = token.end;
   }
   text += decodeEscapes(input.slice(cursor), text.length, escapedOffsets);
-  marks.sort(compareMarkdownMarks);
-  return { content: { text, marks, inlineRefs: [] }, escapedOffsets };
+  const normalizedMarks = mergeEquivalentTextMarks(marks).sort(compareMarkdownMarks);
+  return { content: { text, marks: normalizedMarks, inlineRefs: [] }, escapedOffsets };
+}
+
+function hasCanonicalMarkdownDelimiter(type: 'strong' | 'em' | 'del', raw: string): boolean {
+  if (type === 'strong') return raw.startsWith('**') && raw.endsWith('**');
+  if (type === 'em') return raw.startsWith('*') && raw.endsWith('*');
+  return raw.startsWith('~~') && raw.endsWith('~~');
 }
 
 function compareMarkdownMarks(left: TextMark, right: TextMark): number {
