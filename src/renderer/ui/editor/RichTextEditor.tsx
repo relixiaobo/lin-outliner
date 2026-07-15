@@ -267,6 +267,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const selectAllRowsReadyRef = useRef(false);
   const composingRef = useRef(false);
   const compositionDocChangedRef = useRef(false);
+  const structuredPastePendingRef = useRef(false);
   // Cross-editor composition gate state (issue #176): this editor's gate token,
   // the focusRequest snapshot at composition start (a request that PREDATES the
   // composition is someone else's business — only one that arrived mid-
@@ -277,6 +278,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const compositionStartFocusRequestRef = useRef<FocusRequest | null>(null);
   const pendingHandoffRef = useRef(false);
   const [isEmpty, setIsEmpty] = useState(() => isEmptyRichText(props.content));
+  const [structuredPastePending, setStructuredPastePending] = useState(false);
   const [toolbar, setToolbar] = useState({
     visible: false,
     anchorRect: null as OverlayAnchorRect | null,
@@ -432,7 +434,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
     const view = new EditorView(mount, {
       state: initialState,
-      editable: () => isEditableSurface(propsRef.current),
+      editable: () => !structuredPastePendingRef.current && isEditableSurface(propsRef.current),
       // Inline trailing slot (the row's tag chips). A view-level prop, not a state
       // plugin, so it survives the bare `updateState(EditorState.create(...))` calls
       // on the paste path. Recomputed every update, so its position tracks edits.
@@ -451,6 +453,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
         ]);
       },
       dispatchTransaction(transaction) {
+        if (structuredPastePendingRef.current && transaction.docChanged) return;
         // Dev-only forensic trail for the #176 family — its argument
         // construction (DOM serialization per composing transaction) is not
         // free, so the whole block is gated, not just the sink.
@@ -494,7 +497,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
         }
       },
       handleTextInput(viewInstance, from, to, text) {
-        if (propsRef.current.readOnly) return true;
+        if (propsRef.current.readOnly || structuredPastePendingRef.current) return true;
         if (composingRef.current || viewInstance.composing) return false;
         const tr = createInlineMarkShortcutTransaction(viewInstance.state, from, to, text);
         if (!tr) return false;
@@ -512,6 +515,10 @@ export function RichTextEditor(props: RichTextEditorProps) {
           return false;
         },
         keydown(_viewInstance, event) {
+          if (structuredPastePendingRef.current) {
+            event.preventDefault();
+            return true;
+          }
           if (isImeComposingEvent(event as KeyboardEvent)) {
             markComposing();
             clearMatchingPendingInput();
@@ -519,6 +526,10 @@ export function RichTextEditor(props: RichTextEditorProps) {
           return false;
         },
         beforeinput(viewInstance, event) {
+          if (structuredPastePendingRef.current) {
+            event.preventDefault();
+            return true;
+          }
           clearMatchingPendingInput();
           if (propsRef.current.readOnly) {
             event.preventDefault();
@@ -555,6 +566,10 @@ export function RichTextEditor(props: RichTextEditorProps) {
         },
         paste(viewInstance, event) {
           const clipboardEvent = event as ClipboardEvent;
+          if (structuredPastePendingRef.current) {
+            clipboardEvent.preventDefault();
+            return true;
+          }
 
           // First-chance hook: the trailing slot owns create-on-paste semantics
           // and short-circuits the in-place editing logic below.
@@ -651,10 +666,42 @@ export function RichTextEditor(props: RichTextEditorProps) {
           clipboardEvent.preventDefault();
           const first = parsed[0];
 
+          const applyStructuredPaste = (
+            payload: Parameters<typeof onPasteOutliner>[0],
+            nextEditorContent?: RichText,
+          ) => {
+            const restoreEditability = () => {
+              structuredPastePendingRef.current = false;
+              if (!viewInstance.isDestroyed) {
+                setStructuredPastePending(false);
+                viewInstance.setProps({
+                  editable: () => isEditableSurface(propsRef.current),
+                });
+              }
+            };
+            structuredPastePendingRef.current = true;
+            setStructuredPastePending(true);
+            viewInstance.setProps({ editable: () => false });
+            let pendingPaste: Promise<boolean>;
+            try {
+              pendingPaste = onPasteOutliner(payload);
+            } catch (error) {
+              restoreEditability();
+              throw error;
+            }
+            void pendingPaste
+              .then((applyEditorContent) => {
+                if (applyEditorContent && nextEditorContent && !viewInstance.isDestroyed) {
+                  setContent(nextEditorContent);
+                }
+              })
+              .finally(restoreEditability);
+          };
+
           // A typed first block (e.g. a code block) can't live inside this
           // ProseMirror row, so keep the row and insert everything after it.
           if (first.type !== undefined) {
-            void onPasteOutliner({
+            applyStructuredPaste({
               content: docToRichText(viewInstance.state.doc),
               children: [],
               siblingsAfter: parsed,
@@ -676,14 +723,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
             delete firstMeta.checkbox;
             delete firstMeta.done;
           }
-          void onPasteOutliner({
+          applyStructuredPaste({
             content: nextContent,
             children: first.children,
             siblingsAfter: parsed.slice(1),
             firstMeta,
-          }).then((applyEditorContent) => {
-            if (applyEditorContent && !viewInstance.isDestroyed) setContent(nextContent);
-          });
+          }, nextContent);
           return true;
         },
         focus() {
@@ -1044,7 +1089,9 @@ export function RichTextEditor(props: RichTextEditorProps) {
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.setProps({ editable: () => isEditableSurface(props) });
+    view.setProps({
+      editable: () => !structuredPastePendingRef.current && isEditableSurface(propsRef.current),
+    });
   }, [props.readOnly, props.readOnlyCaret]);
 
   // The inline tag slot appears/disappears (node <-> null) when tags are added or
@@ -1089,7 +1136,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
     const target = propsRef.current.focusTarget;
     if (!view || view.isDestroyed || !input || !target) return;
     if (!focusTargetMatches(input.target, target)) return;
-    if (propsRef.current.readOnly || composingRef.current || view.composing) return;
+    if (
+      propsRef.current.readOnly
+      || structuredPastePendingRef.current
+      || composingRef.current
+      || view.composing
+    ) return;
 
     imeTrace('pendingInput:apply', props.nodeId, 'text:', JSON.stringify(input.char));
     focusEditorDom(view);
@@ -1103,7 +1155,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     updateTrigger(view);
     handleContentUpdateAction(docToRichText(view.state.doc));
     propsRef.current.onPendingInputConsumed?.(input);
-  }, [props.pendingInput]);
+  }, [props.pendingInput, structuredPastePending]);
 
   return (
     <>

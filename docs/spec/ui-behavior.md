@@ -446,6 +446,13 @@ row; the rest become siblings/children. Behavior parity target is nodex
 | `[[node:Label^node-id]]` in plain-text or HTML paste | Materialized as an inline node reference, then preflighted by Core before any row or metadata write. Every referenced node must exist outside Trash; one missing or trashed target rejects the entire paste atomically, including first-row merge, descendants, trailing siblings, and yielding bulk paste. The renderer applies its local draft only after that command succeeds, so rejection leaves the edited row unchanged. Local-file and chat-source references keep their own validation rules. |
 | Single-line or metadata-only semantic paste | Uses structured paste whenever parsing adds a link, tag, field, checkbox, reference, node type, or other semantic state. A metadata-only row can update the target row or materialize at a pristine trailing position; only a truly literal unmarked line delegates to native paste. |
 
+While a structured paste command is pending, its target editor is temporarily
+non-editable and rejects additional paste, keyboard, `beforeinput`, and
+document-changing transactions. It applies the captured first-row content only
+after Core succeeds, then restores editability; rejection leaves the local
+content unchanged and also restores editability. This prevents input typed
+during command latency from being overwritten by the successful paste snapshot.
+
 ## Leading Control Matrix
 
 | Interaction | Expected behavior |
