@@ -407,6 +407,14 @@ without discarding the current page's in-memory cache. A navigation, reload,
 locale change, pane close, or webview replacement cancels pending work and resets
 the control to off.
 
+The target defaults to Tenon's effective UI locale. If the page root declares
+that same language, or the body does when the root declaration is absent, the
+target automatically switches to the other supported locale: English pages
+translate to Simplified Chinese under an English UI, and Chinese pages translate
+to English under a Simplified Chinese UI. Pages that declare another language,
+or no language, continue to target the UI locale. Descendant blocks whose nearest
+declared language already matches the effective target are excluded.
+
 Translation is viewport-driven rather than an eager whole-page request. The
 guest runtime selects visible readable blocks first, then approximately two
 viewports ahead in the current scroll direction and half a viewport behind.

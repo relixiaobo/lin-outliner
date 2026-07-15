@@ -29,7 +29,9 @@ fully working webpage reader rather than standalone groundwork.
 - Translation for source code, delimited data, directories, images, audio, or
   video.
 - A target-language setting. The first version targets the effective Tenon UI
-  locale (`en` or `zh-Hans`).
+  locale (`en` or `zh-Hans`), except when the page declares that same language;
+  in that case it automatically targets the other supported language so the
+  result remains bilingual.
 - Persistent or cross-page translation caches, translation history, glossary
   management, provider selection, or usage accounting UI.
 - Reader extraction, browser-extension integration, authenticated-browser

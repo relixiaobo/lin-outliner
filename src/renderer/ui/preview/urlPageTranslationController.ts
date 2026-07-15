@@ -33,6 +33,7 @@ export class UrlPageTranslationController {
   private readonly cancel: (sessionId: string) => Promise<unknown>;
   private destroyed = false;
   private domReady = false;
+  private effectiveTargetLocale: Locale;
   private enabled = false;
   private generation = 0;
   private initialized = false;
@@ -50,6 +51,7 @@ export class UrlPageTranslationController {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.translate = options.translate ?? api.translateUrlPageBlocks;
     this.cancel = options.cancel ?? api.cancelUrlPageTranslation;
+    this.effectiveTargetLocale = options.targetLocale;
     this.domReady = webviewIsReady(webview);
     webview.addEventListener('did-start-navigation', this.handleDidStartNavigation);
     webview.addEventListener('dom-ready', this.handleDomReady);
@@ -82,7 +84,7 @@ export class UrlPageTranslationController {
     const cancelledSessionId = this.sessionId;
     this.sessionId = nextId('session');
     void this.cancel(cancelledSessionId).catch(() => undefined);
-    if (this.initialized) void this.guest.setEnabled(false, this.options.targetLocale).catch(() => undefined);
+    if (this.initialized) void this.guest.setEnabled(false, this.effectiveTargetLocale).catch(() => undefined);
     this.inFlight = false;
     this.setStatus('off');
   }
@@ -112,6 +114,7 @@ export class UrlPageTranslationController {
     this.enabled = false;
     this.pausedForError = false;
     this.initialized = false;
+    this.effectiveTargetLocale = this.options.targetLocale;
     this.inFlight = false;
     this.generation += 1;
     this.clearTimer();
@@ -124,11 +127,12 @@ export class UrlPageTranslationController {
   private async startGuest(generation: number): Promise<void> {
     try {
       if (!this.initialized) {
-        await this.guest.initialize(this.options.targetLocale);
+        const targetLocale = await this.guest.initialize(this.options.targetLocale);
         if (!this.isCurrent(generation)) return;
+        this.effectiveTargetLocale = targetLocale;
         this.initialized = true;
       }
-      await this.guest.setEnabled(true, this.options.targetLocale);
+      await this.guest.setEnabled(true, this.effectiveTargetLocale);
       if (!this.isCurrent(generation)) return;
       this.scheduleTick(0, generation);
     } catch {
@@ -164,7 +168,7 @@ export class UrlPageTranslationController {
       const response = await this.translate({
         sessionId: this.sessionId,
         requestId,
-        targetLocale: this.options.targetLocale,
+        targetLocale: this.effectiveTargetLocale,
         blocks: batch.blocks,
       });
       if (!this.isCurrent(generation)) return;
@@ -202,7 +206,7 @@ export class UrlPageTranslationController {
     this.pausedForError = false;
     this.generation += 1;
     this.clearTimer();
-    if (this.initialized) void this.guest.setEnabled(false, this.options.targetLocale).catch(() => undefined);
+    if (this.initialized) void this.guest.setEnabled(false, this.effectiveTargetLocale).catch(() => undefined);
     this.setStatus('off');
     this.options.onError(error);
   }

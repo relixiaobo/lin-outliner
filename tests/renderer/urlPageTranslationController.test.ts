@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { parseHTML } from 'linkedom';
+import type { Locale } from '../../src/core/locale';
 import type { UrlPageTranslationResponse } from '../../src/core/urlPageTranslation';
 import {
   UrlPageTranslationController,
@@ -56,6 +57,36 @@ describe('UrlPageTranslationController', () => {
     expect(guest.applied).toEqual([[{ id: 'b1', translation: '你好' }]]);
     expect(controller.currentStatus).toBe('on');
     expect(statuses).toEqual(['starting', 'on']);
+    controller.destroy();
+  });
+
+  test('uses the guest-resolved target when the page language matches the UI locale', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
+    ], 'zh-Hans');
+    const targets: Locale[] = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLocale: 'en',
+      guest,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        targets.push(request.targetLocale);
+        return {
+          ok: true,
+          requestId: request.requestId,
+          translations: [{ id: 'b1', translation: '你好' }],
+        };
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => guest.applied.length === 1);
+
+    expect(targets).toEqual(['zh-Hans']);
+    expect(guest.enabledCalls[0]).toEqual([true, 'zh-Hans']);
     controller.destroy();
   });
 
@@ -198,9 +229,14 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
   enabledCalls: Array<[boolean, 'en' | 'zh-Hans']> = [];
   failed: string[][] = [];
 
-  constructor(private readonly batches: UrlPageTranslationGuestBatch[]) {}
+  constructor(
+    private readonly batches: UrlPageTranslationGuestBatch[],
+    private readonly initializedTargetLocale?: Locale,
+  ) {}
 
-  async initialize(): Promise<void> {}
+  async initialize(preferredLocale: Locale): Promise<Locale> {
+    return this.initializedTargetLocale ?? preferredLocale;
+  }
 
   async setEnabled(enabled: boolean, targetLocale: 'en' | 'zh-Hans'): Promise<void> {
     this.enabledCalls.push([enabled, targetLocale]);

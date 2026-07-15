@@ -98,11 +98,11 @@ test.describe('URL page translation', () => {
     await configureTranslationProvider(smoke.window, `${origin}/v1`);
     await smoke.window.evaluate(async () => {
       const lin = (window as unknown as {
-        lin: { setLanguage: (locale: 'zh-Hans') => Promise<void> };
+        lin: { setLanguage: (locale: 'en') => Promise<void> };
       }).lin;
-      await lin.setLanguage('zh-Hans');
+      await lin.setLanguage('en');
     });
-    await expect.poll(() => smoke.window.locator('html').getAttribute('lang')).toBe('zh-Hans');
+    await expect.poll(() => smoke.window.locator('html').getAttribute('lang')).toBe('en');
   });
 
   test.afterAll(async () => {
@@ -135,6 +135,7 @@ test.describe('URL page translation', () => {
     `)).toBeGreaterThanOrEqual(2);
 
     const initialTexts = batches.flatMap((batch) => batch.blocks.map((block) => block.text));
+    expect(batches.every((batch) => batch.targetLanguage === 'Simplified Chinese')).toBe(true);
     expect(initialTexts).toContain('Visible source paragraph.');
     expect(initialTexts).toContain('Prefetched source paragraph.');
     expect(initialTexts).not.toContain('Far source paragraph.');

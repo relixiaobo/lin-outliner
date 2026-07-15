@@ -3,6 +3,7 @@ import {
   URL_PAGE_TRANSLATION_MAX_BATCH_CHARS,
   URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS,
   URL_PAGE_TRANSLATION_MAX_BLOCKS,
+  resolveUrlPageTranslationTargetLocale,
   type UrlPageTranslationBlock,
   type UrlPageTranslationItem,
 } from '../../../core/urlPageTranslation';
@@ -45,7 +46,7 @@ export interface UrlPageTranslationGuestBatch {
 }
 
 export interface UrlPageTranslationGuestBridge {
-  initialize(targetLocale: Locale): Promise<void>;
+  initialize(preferredLocale: Locale): Promise<Locale>;
   setEnabled(enabled: boolean, targetLocale: Locale): Promise<void>;
   nextBatch(): Promise<UrlPageTranslationGuestBatch>;
   apply(translations: readonly UrlPageTranslationItem[]): Promise<void>;
@@ -75,11 +76,21 @@ export function createUrlPageTranslationGuestBridge(
   };
 
   return {
-    async initialize(targetLocale) {
+    async initialize(preferredLocale) {
       await removeCss();
       cssKey = await webview.insertCSS(TRANSLATION_CSS);
+      const declaredLanguage = await webview.executeJavaScript(`(() => {
+        const rootLanguage = document.documentElement?.lang?.trim();
+        if (rootLanguage) return rootLanguage;
+        return document.body?.lang?.trim() ?? '';
+      })()`);
+      const targetLocale = resolveUrlPageTranslationTargetLocale(
+        preferredLocale,
+        typeof declaredLanguage === 'string' ? declaredLanguage : '',
+      );
       const source = `(${installUrlPageTranslationRuntime.toString()})(window, ${JSON.stringify(URL_PAGE_TRANSLATION_RUNTIME_KEY)}, ${JSON.stringify(targetLocale)})`;
       await webview.executeJavaScript(source);
+      return targetLocale;
     },
     async setEnabled(enabled, targetLocale) {
       await execute('setEnabled', enabled, targetLocale);

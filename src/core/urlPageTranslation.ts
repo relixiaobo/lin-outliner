@@ -57,6 +57,21 @@ export interface UrlPageTranslationCancelResponse {
   cancelled: boolean;
 }
 
+export function resolveUrlPageTranslationTargetLocale(
+  preferredLocale: Locale,
+  declaredLanguage: string | null | undefined,
+): Locale {
+  const language = declaredLanguage?.trim().toLowerCase() ?? '';
+  const declaredLocale = language === 'en' || language.startsWith('en-')
+    ? 'en'
+    : language === 'zh' || language.startsWith('zh-')
+      ? 'zh-Hans'
+      : null;
+
+  if (declaredLocale !== preferredLocale) return preferredLocale;
+  return preferredLocale === 'en' ? 'zh-Hans' : 'en';
+}
+
 export function isUrlPageTranslationCommand(command: string): command is UrlPageTranslationCommand {
   return command === URL_PAGE_TRANSLATE_COMMAND || command === URL_PAGE_TRANSLATION_CANCEL_COMMAND;
 }
