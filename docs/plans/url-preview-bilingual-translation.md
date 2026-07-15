@@ -46,11 +46,13 @@ fully working webpage reader rather than standalone groundwork.
 ### Header control and states
 
 Place a `Languages` icon button immediately before the existing URL-preview
-actions menu. It opens a compact anchored translation popover containing target
-language and model selectors, an automatic-translation switch, and one full-width
-Translate page / Show original command. The command uses the matching semantic
-show/hide icon, a stable neutral fill, and distinct hover, pressed, and keyboard
-focus feedback so it reads as the popover's primary action. The header button
+actions menu. It opens a compact anchored translation popover ordered by task
+frequency: target language, the full-width Translate page / Show original command,
+then globally remembered automatic-translation and model preferences below a
+separator. The command uses the matching semantic show/hide icon and the shared
+high-contrast neutral primary button while translation is off; once translation
+is active, Show original becomes a quieter secondary reversal. Hover, pressed,
+and keyboard focus feedback remain distinct. The header button
 exposes popover expansion separately from a dynamic accessible label that reports
 whether translation is on or off. It follows the neutral icon-control states from
 the design system and never adds a rounded-square hover fill. Once at least one

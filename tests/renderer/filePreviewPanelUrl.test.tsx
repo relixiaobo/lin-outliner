@@ -77,7 +77,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
     });
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
 
-    const select = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Target language"]');
+    const select = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Translate to"]');
     expect(select?.querySelectorAll('option')).toHaveLength(TRANSLATION_LANGUAGES.length);
     expect(select?.textContent).toContain('日本語');
     if (!select) throw new Error('Missing target-language select');
@@ -89,7 +89,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
     expect(rendered.savedLanguages).toEqual(['ja']);
 
     const modelSelect = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Model"]');
-    expect(modelSelect?.textContent).toContain('Follow Agent');
+    expect(modelSelect?.textContent).toContain('Agent model');
     expect(modelSelect?.textContent).toContain('GPT-4.1 mini');
     expect(modelSelect?.querySelector('optgroup')?.getAttribute('label')).toBe('OpenAI');
     if (!modelSelect) throw new Error('Missing translation-model select');
@@ -114,6 +114,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
     });
 
     const autoSwitch = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-auto-switch');
+    if (!autoSwitch) throw new Error('Missing automatic-translation switch');
     expect(autoSwitch?.getAttribute('aria-checked')).toBe('false');
     await act(async () => {
       autoSwitch?.click();
@@ -127,6 +128,9 @@ describe('FilePreviewPanel URL preview chrome', () => {
     const command = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-command');
     expect(command?.textContent).toContain('Translate page');
     expect(command?.querySelector('svg')).not.toBeNull();
+    expect(command?.classList.contains('button-primary')).toBe(true);
+    expect(command?.nextElementSibling?.classList.contains('file-preview-translation-divider')).toBe(true);
+    expect(command?.nextElementSibling?.nextElementSibling).toBe(autoSwitch);
     await act(async () => {
       command?.click();
       webview.dispatchEvent(new rendered.window.Event('dom-ready'));
@@ -144,6 +148,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
     });
     const disableCommand = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-command');
     expect(disableCommand?.textContent).toContain('Show original');
+    expect(disableCommand?.classList.contains('button-secondary')).toBe(true);
     await act(async () => {
       disableCommand?.click();
       await Promise.resolve();
@@ -173,7 +178,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
       .find((option) => option.textContent?.includes('claude-retired'));
     expect(unavailable?.hasAttribute('disabled')).toBe(true);
     expect(unavailable?.textContent).toContain('unavailable');
-    expect(modelSelect?.textContent).toContain('Follow Agent');
+    expect(modelSelect?.textContent).toContain('Agent model');
   });
 
   test('routes a webview shortcut only to the matching active URL panel', async () => {

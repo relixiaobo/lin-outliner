@@ -148,11 +148,16 @@ test.describe('URL page translation', () => {
 
     await toggle.click();
     await expect(popover).toBeVisible();
-    const languageSelect = popover.getByLabel('Target language');
+    const languageSelect = popover.getByLabel('Translate to');
     const modelSelect = popover.getByLabel('Model');
     await expect(languageSelect).toHaveValue('en');
     await expect(modelSelect).toHaveValue('');
     await expect(modelSelect.locator('option[value="groq/llama-3.1-8b-instant"]')).toHaveCount(1);
+    if (visualDir) {
+      await captureOpenTranslationVisual(smoke.window, visualDir, 'light');
+      await captureOpenTranslationVisual(smoke.window, visualDir, 'dark');
+      await restoreTranslationVisualTheme(smoke.window);
+    }
     await popover.getByRole('button', { name: 'Translate page' }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
     await smoke.window.waitForTimeout(600);
@@ -210,12 +215,7 @@ test.describe('URL page translation', () => {
     if (visualDir) {
       await captureTranslationVisual(smoke.window, toggle, popover, visualDir, 'light');
       await captureTranslationVisual(smoke.window, toggle, popover, visualDir, 'dark');
-      await smoke.window.emulateMedia({ colorScheme: 'no-preference' });
-      await smoke.window.evaluate(async () => {
-        await (window as unknown as {
-          lin: { setTheme: (theme: 'system') => Promise<void> };
-        }).lin.setTheme('system');
-      });
+      await restoreTranslationVisualTheme(smoke.window);
     }
 
     const followAgentRequestCount = batches.length;
@@ -276,7 +276,7 @@ test.describe('URL page translation', () => {
     await toggle.click();
     await expect(popover).toBeVisible();
     await expect(modelSelect).toHaveValue('groq/llama-3.1-8b-instant');
-    const autoTranslate = popover.getByRole('switch', { name: 'Translate webpages automatically' });
+    const autoTranslate = popover.getByRole('switch', { name: 'Translate automatically' });
     await expect(autoTranslate).toHaveAttribute('aria-checked', 'false');
     await autoTranslate.click();
     await expect(autoTranslate).toHaveAttribute('aria-checked', 'true');
@@ -296,8 +296,8 @@ test.describe('URL page translation', () => {
         },
       }));
     }, `${origin}/article?failure`);
-    await expect.poll(() => guest<string>(webview, 'window.location.search')).toBe('?failure');
-    await expect.poll(() => guest<string>(webview, 'document.readyState')).toBe('complete');
+    await expect.poll(() => guestOrNull<string>(webview, 'window.location.search')).toBe('?failure');
+    await expect.poll(() => guestOrNull<string>(webview, 'document.readyState')).toBe('complete');
 
     failNextRequest = true;
     await toggle.click();
@@ -377,6 +377,24 @@ async function captureTranslationVisual(
   directory: string,
   theme: 'dark' | 'light',
 ): Promise<void> {
+  await setTranslationVisualTheme(page, theme);
+  await toggle.click();
+  await expect(popover).toBeVisible();
+  await page.screenshot({ path: `${directory}/url-translation-${theme}.png` });
+  await toggle.click();
+  await expect(popover).toBeHidden();
+}
+
+async function captureOpenTranslationVisual(
+  page: Page,
+  directory: string,
+  theme: 'dark' | 'light',
+): Promise<void> {
+  await setTranslationVisualTheme(page, theme);
+  await page.screenshot({ path: `${directory}/url-translation-off-${theme}.png` });
+}
+
+async function setTranslationVisualTheme(page: Page, theme: 'dark' | 'light'): Promise<void> {
   await page.emulateMedia({ colorScheme: theme });
   await page.evaluate(async (nextTheme) => {
     await (window as unknown as {
@@ -386,11 +404,18 @@ async function captureTranslationVisual(
   await expect.poll(() => page.evaluate(() => (
     window.matchMedia('(prefers-color-scheme: dark)').matches
   ))).toBe(theme === 'dark');
-  await toggle.click();
-  await expect(popover).toBeVisible();
-  await page.screenshot({ path: `${directory}/url-translation-${theme}.png` });
-  await toggle.click();
-  await expect(popover).toBeHidden();
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+}
+
+async function restoreTranslationVisualTheme(page: Page): Promise<void> {
+  await page.emulateMedia({ colorScheme: 'no-preference' });
+  await page.evaluate(async () => {
+    await (window as unknown as {
+      lin: { setTheme: (theme: 'system') => Promise<void> };
+    }).lin.setTheme('system');
+  });
 }
 
 async function findMainWindow(smokeApp: SmokeApp): Promise<Page> {
@@ -408,6 +433,14 @@ async function guest<T>(webview: ReturnType<Page['locator']>, expression: string
   return await webview.evaluate(async (element, source) => (
     await (element as Electron.WebviewTag).executeJavaScript(source) as T
   ), expression);
+}
+
+async function guestOrNull<T>(webview: ReturnType<Page['locator']>, expression: string): Promise<T | null> {
+  try {
+    return await guest<T>(webview, expression);
+  } catch {
+    return null;
+  }
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {

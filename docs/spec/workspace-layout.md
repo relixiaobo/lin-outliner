@@ -400,10 +400,13 @@ Source authority stays source-specific:
   the pane must not show a file-preview loading overlay before the webview starts.
 
 URL previews also expose one neutral `Languages` icon immediately before the
-header actions menu. It opens a compact popover with target-language and model
-selectors, an automatic-translation switch, and a filled full-width Translate
-page / Show original command with the matching semantic icon. At least one
-completed translation adds a check to the header icon, while the trigger's
+header actions menu. It opens a compact, task-first popover: target language and
+the full-width Translate page / Show original command come first; a separator
+then groups the globally remembered automatic-translation and model preferences.
+Translate page uses the shared high-contrast neutral primary-button treatment,
+while the active page's Show original reversal uses the quieter secondary-button
+treatment. Both commands retain the matching semantic icon and shortcut. At
+least one completed translation adds a check to the header icon, while the trigger's
 accessible name reports the translation state independently from popover
 expansion. Manual translation and automatic translation both default off.
 Enabling translation keeps the remote page as the reading surface and inserts an

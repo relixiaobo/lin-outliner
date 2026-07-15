@@ -34,6 +34,7 @@ import {
 } from '../icons';
 import { buildOutlinerRows } from '../outliner/row-model';
 import { RECURSIVE_OUTLINER_FALLBACK_ENABLED } from '../outliner/OutlinerFlatView';
+import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { MenuItem } from '../primitives/MenuItem';
@@ -727,6 +728,28 @@ function UrlTranslationPopover({
           ))}
         </SelectControl>
       </label>
+      <Button
+        aria-pressed={enabled}
+        className="file-preview-translation-command"
+        onClick={onToggle}
+        variant={enabled ? 'secondary' : 'primary'}
+      >
+        <span className="file-preview-translation-command-label">
+          {enabled ? <HideIcon size={ICON_SIZE.menu} /> : <LanguagesIcon size={ICON_SIZE.menu} />}
+          <span>{enabled ? labels.showOriginal : labels.translatePage}</span>
+        </span>
+        <kbd>{translationShortcutLabel()}</kbd>
+      </Button>
+      <div className="file-preview-translation-divider" role="presentation" />
+      <SwitchControl
+        checked={autoTranslate}
+        className="file-preview-translation-auto-switch"
+        label={labels.autoTranslateWebpages}
+        onCheckedChange={onAutoTranslateChange}
+      >
+        <span>{labels.autoTranslateWebpages}</span>
+        <SwitchMark checked={autoTranslate} />
+      </SwitchControl>
       <label className="file-preview-translation-option-row">
         <span>{labels.translationModel}</span>
         <SelectControl
@@ -754,22 +777,6 @@ function UrlTranslationPopover({
           ))}
         </SelectControl>
       </label>
-      <SwitchControl
-        checked={autoTranslate}
-        className="file-preview-translation-auto-switch"
-        label={labels.autoTranslateWebpages}
-        onCheckedChange={onAutoTranslateChange}
-      >
-        <span>{labels.autoTranslateWebpages}</span>
-        <SwitchMark checked={autoTranslate} />
-      </SwitchControl>
-      <ButtonControl aria-pressed={enabled} className="file-preview-translation-command" onClick={onToggle}>
-        <span className="file-preview-translation-command-label">
-          {enabled ? <HideIcon size={ICON_SIZE.menu} /> : <LanguagesIcon size={ICON_SIZE.menu} />}
-          <span>{enabled ? labels.showOriginal : labels.translatePage}</span>
-        </span>
-        <kbd>{translationShortcutLabel()}</kbd>
-      </ButtonControl>
     </MenuSurface>,
     document.body,
   );
