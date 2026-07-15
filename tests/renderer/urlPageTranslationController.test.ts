@@ -25,6 +25,64 @@ afterEach(() => {
 });
 
 describe('UrlPageTranslationController', () => {
+  test('stays idle without reporting completion when no eligible blocks exist', async () => {
+    const guest = new FakeGuest([]);
+    const statuses: UrlPageTranslationStatus[] = [];
+    const requests: string[] = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'en',
+      guest,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: (status) => statuses.push(status),
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(...request.blocks.map((block) => block.text));
+        return { ok: true, requestId: request.requestId, translations: [] };
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => guest.nextBatchCalls.length > 0);
+
+    expect(requests).toEqual([]);
+    expect(controller.currentStatus).toBe('idle');
+    expect(controller.hasCompletedTranslations).toBe(false);
+    expect(statuses).toEqual(['starting', 'idle']);
+    controller.destroy();
+  });
+
+  test('returns to starting when an eligible block appears after idle', async () => {
+    const guest = new FakeGuest([]);
+    const statuses: UrlPageTranslationStatus[] = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: (status) => statuses.push(status),
+      cancel: async () => undefined,
+      translate: async (request) => ({
+        ok: true,
+        requestId: request.requestId,
+        translations: [{ id: 'b1', translation: '你好' }],
+      }),
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => controller.currentStatus === 'idle');
+
+    guest.queueBatch({ blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 });
+    await waitFor(() => guest.applied.length === 1);
+
+    expect(controller.currentStatus).toBe('on');
+    expect(controller.hasCompletedTranslations).toBe(true);
+    expect(statuses).toEqual(['starting', 'idle', 'starting', 'on']);
+    controller.destroy();
+  });
+
   test('translates the guest-selected viewport batch and settles the header state', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
@@ -56,6 +114,7 @@ describe('UrlPageTranslationController', () => {
     expect(requests).toEqual(['Hello']);
     expect(guest.applied).toEqual([[{ id: 'b1', translation: '你好' }]]);
     expect(controller.currentStatus).toBe('on');
+    expect(controller.hasCompletedTranslations).toBe(true);
     expect(statuses).toEqual(['starting', 'on']);
     controller.destroy();
   });
@@ -123,6 +182,7 @@ describe('UrlPageTranslationController', () => {
 
     expect(errors).toEqual(['not-configured']);
     expect(controller.currentStatus).toBe('error');
+    expect(controller.hasCompletedTranslations).toBe(false);
     expect(guest.failed).toEqual([['b1']]);
     expect(guest.nextBatchCalls.slice(1).every(Boolean)).toBe(true);
     expect(guest.enabledCalls).toEqual([[true, 'zh-Hans']]);
@@ -132,7 +192,46 @@ describe('UrlPageTranslationController', () => {
     await waitFor(() => guest.applied.length === 1);
 
     expect(controller.currentStatus).toBe('on');
+    expect(controller.hasCompletedTranslations).toBe(true);
     expect(statuses).toEqual(['starting', 'error', 'on']);
+    controller.destroy();
+  });
+
+  test('keeps completion visible when a later viewport batch fails', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'First' }], priority: 0 },
+      { blocks: [{ id: 'b2', text: 'Second' }], priority: 0 },
+    ]);
+    const completionStates: boolean[] = [];
+    let requestCount = 0;
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onCompletionChange: (completed) => completionStates.push(completed),
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request): Promise<UrlPageTranslationResponse> => {
+        requestCount += 1;
+        if (requestCount === 1) {
+          return {
+            ok: true,
+            requestId: request.requestId,
+            translations: [{ id: 'b1', translation: '第一' }],
+          };
+        }
+        return { ok: false, requestId: request.requestId, error: 'provider-error' };
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => controller.currentStatus === 'error');
+
+    expect(guest.applied).toEqual([[{ id: 'b1', translation: '第一' }]]);
+    expect(controller.hasCompletedTranslations).toBe(true);
+    expect(completionStates).toEqual([true]);
     controller.destroy();
   });
 
@@ -169,6 +268,39 @@ describe('UrlPageTranslationController', () => {
     expect(controller.currentStatus).toBe('off');
     expect(cancelled).toHaveLength(1);
     expect(guest.enabledCalls.at(-1)).toEqual([false, 'zh-Hans']);
+    controller.destroy();
+  });
+
+  test('restores the completed state when cached translations are shown again', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
+      { blocks: [], priority: null },
+    ]);
+    const statuses: UrlPageTranslationStatus[] = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: (status) => statuses.push(status),
+      cancel: async () => undefined,
+      translate: async (request) => ({
+        ok: true,
+        requestId: request.requestId,
+        translations: [{ id: 'b1', translation: '你好' }],
+      }),
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => controller.currentStatus === 'on');
+    controller.disable();
+    controller.enable();
+    await waitFor(() => statuses.filter((status) => status === 'on').length === 2);
+
+    expect(statuses).toEqual(['starting', 'on', 'off', 'starting', 'on']);
+    expect(guest.applied).toHaveLength(1);
+    expect(controller.hasCompletedTranslations).toBe(true);
     controller.destroy();
   });
 

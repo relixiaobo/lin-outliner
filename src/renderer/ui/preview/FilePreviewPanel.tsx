@@ -137,6 +137,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     onError: handleTranslationError,
   });
   const translationEnabled = urlTranslation.status !== 'off';
+  const translationCompleted = translationEnabled && urlTranslation.completed;
   const translationStatusLabel = urlTranslation.status === 'off'
     ? previewLabels.translationOff
     : urlTranslation.status === 'starting'
@@ -482,7 +483,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
               ) : (
                 <span className="file-preview-translation-icon" aria-hidden="true">
                   <LanguagesIcon size={ICON_SIZE.menu} />
-                  {translationEnabled ? (
+                  {translationCompleted ? (
                     <CheckIcon className="file-preview-translation-check" size={ICON_SIZE.tiny} />
                   ) : null}
                 </span>

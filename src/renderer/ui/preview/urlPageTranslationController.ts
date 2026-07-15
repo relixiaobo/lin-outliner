@@ -19,10 +19,11 @@ const DEFAULT_GUEST_LABELS: UrlPageTranslationGuestLabels = {
 
 let fallbackId = 1;
 
-export type UrlPageTranslationStatus = 'error' | 'off' | 'on' | 'starting';
+export type UrlPageTranslationStatus = 'error' | 'idle' | 'off' | 'on' | 'starting';
 
 interface UrlPageTranslationControllerOptions {
   targetLanguage: TranslationLanguage;
+  onCompletionChange?: (completed: boolean) => void;
   onError: (error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>) => void;
   onStatusChange: (status: UrlPageTranslationStatus) => void;
   labels?: UrlPageTranslationGuestLabels;
@@ -43,6 +44,7 @@ export class UrlPageTranslationController {
   private readonly failedIds = new Set<string>();
   private generation = 0;
   private guestQueue: Promise<void> = Promise.resolve();
+  private hasCompletedTranslation = false;
   private initialized = false;
   private inFlightGeneration: number | null = null;
   private pausedForError = false;
@@ -67,6 +69,10 @@ export class UrlPageTranslationController {
 
   get currentStatus(): UrlPageTranslationStatus {
     return this.status;
+  }
+
+  get hasCompletedTranslations(): boolean {
+    return this.hasCompletedTranslation;
   }
 
   toggle(): void {
@@ -96,6 +102,7 @@ export class UrlPageTranslationController {
     this.inFlightGeneration = null;
     this.pausedForError = false;
     this.failedIds.clear();
+    this.setHasCompletedTranslation(false);
     const resetGuest = this.runGuest(() => this.guest.destroy()).catch(() => undefined);
     if (!shouldRestart) {
       void resetGuest;
@@ -151,6 +158,7 @@ export class UrlPageTranslationController {
     this.initialized = false;
     this.inFlightGeneration = null;
     this.failedIds.clear();
+    this.setHasCompletedTranslation(false);
     this.generation += 1;
     this.clearTimer();
     void this.cancel(this.sessionId).catch(() => undefined);
@@ -193,12 +201,15 @@ export class UrlPageTranslationController {
       const batch = await this.runGuest(() => this.guest.nextBatch(this.pausedForError));
       if (!this.isCurrent(generation)) return;
       if (batch.blocks.length === 0) {
-        if (this.status === 'starting') this.setStatus('on');
+        if (this.status === 'starting') {
+          this.setStatus(this.hasCompletedTranslation ? 'on' : 'idle');
+        }
         this.scheduleTick(this.pollIntervalMs, generation);
         return;
       }
 
       ids = batch.blocks.map((block) => block.id);
+      if (this.status === 'idle') this.setStatus('starting');
       this.inFlightGeneration = generation;
       const requestId = nextId('request');
       const response = await this.translate({
@@ -224,9 +235,12 @@ export class UrlPageTranslationController {
 
       await this.runGuest(() => this.guest.apply(response.translations));
       if (!this.isCurrent(generation)) return;
+      if (response.translations.length > 0) this.setHasCompletedTranslation(true);
       for (const translation of response.translations) this.failedIds.delete(translation.id);
       this.pausedForError = this.failedIds.size > 0;
-      this.setStatus(this.pausedForError ? 'error' : 'on');
+      this.setStatus(
+        this.pausedForError ? 'error' : this.hasCompletedTranslation ? 'on' : 'idle',
+      );
       this.scheduleTick(this.pausedForError ? this.pollIntervalMs : 0, generation);
     } catch {
       if (!this.isCurrent(generation)) return;
@@ -279,6 +293,12 @@ export class UrlPageTranslationController {
     if (this.status === status) return;
     this.status = status;
     this.options.onStatusChange(status);
+  }
+
+  private setHasCompletedTranslation(completed: boolean): void {
+    if (this.hasCompletedTranslation === completed) return;
+    this.hasCompletedTranslation = completed;
+    this.options.onCompletionChange?.(completed);
   }
 
   private clearTimer(): void {

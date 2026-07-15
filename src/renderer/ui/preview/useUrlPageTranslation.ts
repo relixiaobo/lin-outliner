@@ -24,9 +24,11 @@ export function useUrlPageTranslation({
   onError,
 }: UseUrlPageTranslationOptions): {
   attachWebview: (webview: Electron.WebviewTag | null) => void;
+  completed: boolean;
   status: UrlPageTranslationStatus;
   toggle: () => void;
 } {
+  const [completed, setCompleted] = useState(false);
   const [status, setStatus] = useState<UrlPageTranslationStatus>('off');
   const controllerRef = useRef<UrlPageTranslationController | null>(null);
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
@@ -43,11 +45,13 @@ export function useUrlPageTranslation({
     controllerRef.current?.destroy();
     controllerRef.current = null;
     webviewRef.current = webview;
+    setCompleted(false);
     setStatus('off');
     if (!active || !webview) return;
     controllerRef.current = new UrlPageTranslationController(webview, {
       targetLanguage: targetLanguageRef.current,
       labels,
+      onCompletionChange: setCompleted,
       onError: (error) => onErrorRef.current(error),
       onStatusChange: setStatus,
     });
@@ -84,5 +88,5 @@ export function useUrlPageTranslation({
     });
   }, [active]);
 
-  return { attachWebview, status, toggle };
+  return { attachWebview, completed, status, toggle };
 }

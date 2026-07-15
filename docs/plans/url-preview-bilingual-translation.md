@@ -48,9 +48,9 @@ actions menu. It opens a compact anchored translation popover containing a
 native target-language selector and one Translate page / Show original command.
 The button exposes popover expansion separately from a dynamic accessible label
 that reports whether translation is on or off. It follows the neutral icon-control
-states from the design system and never adds a rounded-square hover fill. While
-translation is active, a small check overlays the language icon so state remains
-visible after the popover closes.
+states from the design system and never adds a rounded-square hover fill. Once
+at least one translation succeeds, a small check overlays the language icon and
+appears whenever that page-local cached translation is visible.
 
 The target-language catalog contains common model-supported languages as stable
 BCP-47 codes and presents each language by its autonym. The default follows the
@@ -65,16 +65,20 @@ active URL-preview panel, including while focus is inside its webview. It never
 registers a system-global shortcut and does nothing when the active panel is not
 a URL preview. The shortcut appears in the control tooltip and popover action.
 
-The control has four observable states:
+The control has five observable states:
 
 1. **Off**: no page text is collected or sent.
 2. **Starting**: visible blocks are being discovered and each submitted source
    block shows an inline loading indicator; the control remains operable so the
    user can cancel.
-3. **On**: translations are visible and the viewport scheduler remains active.
-4. **Partial error**: completed translations stay readable, the original text
+3. **Idle**: translation remains enabled, but the current page window has no
+   eligible untranslated blocks and the header does not claim completion.
+4. **On**: at least one translation is visible and the viewport scheduler remains
+   active without unresolved failures.
+5. **Partial error**: completed translations stay readable, the original text
    stays intact, and each failed source block replaces its loader with a focused,
-   clickable error control. Clicking it retries only that block. Tenon's existing
+   clickable error control. The completion check remains if an earlier block
+   succeeded. Clicking the error retries only that block. Tenon's existing
    dismissible error toast still announces the failure wave.
 
 Turning translation off hides injected translations, removes transient loading
@@ -140,7 +144,9 @@ Reduced-motion users receive no insertion animation; the feature does not need
 motion in the default mode either.
 
 As soon as a block enters a submitted batch, append a small neutral inline
-loader at the end of its source. Success removes that loader as the inert
+loader at the end of its source. Its 16px status area and 10px spinner stay
+constant across headings and body text instead of inheriting the page's type
+scale. Success removes that loader as the inert
 translation is inserted. A provider or parse failure replaces it with a compact
 error control; activating the control changes it back to loading and retries
 only that record. Cancel, disable, navigation, source mutation, and destruction
@@ -173,8 +179,9 @@ the source page.
 - No configured provider/model: keep submitted blocks in the recoverable error
   state and show a localized error directing the user to Agent settings. After
   configuration, activating a block's error control retries only that block.
-- No eligible visible text: remain On and wait for later eligible content; do
-  not treat an image-only viewport or same-language blocks as a failure.
+- No eligible visible text: remain enabled in Idle and wait for later eligible
+  content; do not show the completion check or treat an image-only viewport or
+  same-language blocks as a failure.
 - Provider or parse failure: preserve successful translations and report one
   localized toast for the current failure wave. Do not retry automatically;
   poll only for an explicit failed-block retry while paused.

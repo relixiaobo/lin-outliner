@@ -23,7 +23,7 @@ const ARTICLE_HTML = `<!doctype html>
   </head>
   <body>
     <main>
-      <h1 id="heading">Viewport translation smoke test</h1>
+      <h1 id="heading">Article heading</h1>
       <p id="visible">Visible source paragraph.</p>
       <div class="near-spacer"></div>
       <p id="prefetch">Prefetched source paragraph.</p>
@@ -144,6 +144,7 @@ test.describe('URL page translation', () => {
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
     await smoke.window.waitForTimeout(600);
     expect(batches).toHaveLength(0);
+    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(0);
     expect(await guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-status]').length
     `)).toBe(0);
@@ -159,12 +160,36 @@ test.describe('URL page translation', () => {
     await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-status="loading"]').length
     `)).toBeGreaterThan(0);
+    await expect(toggle).toHaveClass(/is-starting/);
+    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(0);
+    const loaderMetrics = await guest<Array<{
+      controlHeight: number;
+      controlWidth: number;
+      spinnerHeight: string;
+      spinnerWidth: string;
+    }>>(webview, `['heading', 'visible'].map((id) => {
+      const loader = document.querySelector('#' + id + ' [data-tenon-bilingual-status="loading"]');
+      if (!loader) return { controlHeight: 0, controlWidth: 0, spinnerHeight: '', spinnerWidth: '' };
+      const rect = loader.getBoundingClientRect();
+      const spinner = getComputedStyle(loader, '::before');
+      return {
+        controlHeight: rect.height,
+        controlWidth: rect.width,
+        spinnerHeight: spinner.height,
+        spinnerWidth: spinner.width,
+      };
+    })`);
+    expect(loaderMetrics).toEqual([
+      { controlHeight: 16, controlWidth: 16, spinnerHeight: '10px', spinnerWidth: '10px' },
+      { controlHeight: 16, controlWidth: 16, spinnerHeight: '10px', spinnerWidth: '10px' },
+    ]);
     if (visualDir) {
       await smoke.window.screenshot({ path: `${visualDir}/url-translation-loading.png` });
     }
     await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-translation="true"]').length
     `)).toBeGreaterThanOrEqual(2);
+    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(1);
     expect(await guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-status]').length
     `)).toBe(0);
@@ -197,6 +222,7 @@ test.describe('URL page translation', () => {
     await toggle.click();
     await popover.getByRole('button', { name: 'Show original' }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
+    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(0);
     expect(await guest(webview, `document.documentElement.getAttribute('data-tenon-bilingual-hidden')`))
       .toBe('true');
     expect(await guest(webview, `
@@ -210,6 +236,7 @@ test.describe('URL page translation', () => {
     await expect.poll(() => guest(webview, `
       document.documentElement.hasAttribute('data-tenon-bilingual-hidden')
     `)).toBe(false);
+    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(1);
     await smoke.window.waitForTimeout(600);
     expect(batches).toHaveLength(completedRequestCount);
 

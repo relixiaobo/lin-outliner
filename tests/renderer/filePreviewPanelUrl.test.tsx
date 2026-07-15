@@ -61,7 +61,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
     expect(favicon?.getAttribute('src')).toBe('https://github.githubassets.com/favicons/favicon.svg');
   });
 
-  test('opens the target-language popover, remembers a selection, and shows enabled state', async () => {
+  test('opens the target-language popover, remembers a selection, and does not check an untranslated page', async () => {
     const rendered = renderUrlPanel();
     const toggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
     const webview = rendered.document.querySelector('.file-preview-url-webview') as Electron.WebviewTag | null;
@@ -96,7 +96,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
     expect(toggle.getAttribute('data-translation-enabled')).toBe('true');
     expect(toggle.getAttribute('aria-label')).toStartWith('Translation settings:');
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(toggle.querySelector('.file-preview-translation-check')).not.toBeNull();
+    expect(toggle.querySelector('.file-preview-translation-check')).toBeNull();
 
     await act(async () => {
       toggle.click();

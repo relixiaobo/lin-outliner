@@ -9,7 +9,7 @@ import {
 
 export const URL_PAGE_TRANSLATION_RUNTIME_KEY = '__tenonBilingualTranslationV1__';
 
-const TRANSLATION_CSS = `
+export const URL_PAGE_TRANSLATION_GUEST_CSS = `
 [data-tenon-bilingual-translation="true"] {
   display: block !important;
   width: 100% !important;
@@ -36,47 +36,47 @@ html[data-tenon-bilingual-hidden="true"] [data-tenon-bilingual-translation="true
   all: unset !important;
   box-sizing: border-box !important;
   display: inline-flex !important;
-  width: max(1em, 16px) !important;
-  height: max(1em, 16px) !important;
+  width: 16px !important;
+  height: 16px !important;
   align-items: center !important;
   justify-content: center !important;
-  margin-inline-start: 0.35em !important;
+  margin-inline-start: 4px !important;
   border: 0 !important;
   border-radius: 50% !important;
   background: transparent !important;
   color: currentColor !important;
   cursor: default !important;
-  font: 700 0.72em/1 system-ui, sans-serif !important;
+  font: 700 11px/1 system-ui, sans-serif !important;
   opacity: 0.52 !important;
-  vertical-align: 0.05em !important;
+  vertical-align: -2px !important;
 }
 [data-tenon-bilingual-status="loading"]::before {
   box-sizing: border-box !important;
-  width: 0.72em !important;
-  height: 0.72em !important;
-  border: 0.11em solid currentColor !important;
+  width: 10px !important;
+  height: 10px !important;
+  border: 1.5px solid currentColor !important;
   border-inline-end-color: transparent !important;
   border-radius: 50% !important;
   animation: tenon-bilingual-spin 0.8s linear infinite !important;
   content: "" !important;
 }
 [data-tenon-bilingual-status="error"] {
-  border: 0.1em solid currentColor !important;
+  border: 1px solid currentColor !important;
   opacity: 0.78 !important;
 }
 [data-tenon-bilingual-status="error"]:hover {
   opacity: 0.92 !important;
 }
 [data-tenon-bilingual-status="error"]:active {
-  border-width: 0.14em !important;
+  border-width: 2px !important;
   opacity: 1 !important;
 }
 [data-tenon-bilingual-status="error"]::before {
   content: "!" !important;
 }
 [data-tenon-bilingual-status="error"]:focus-visible {
-  outline: 0.12em solid currentColor !important;
-  outline-offset: 0.12em !important;
+  outline: 2px solid currentColor !important;
+  outline-offset: 2px !important;
   opacity: 1 !important;
 }
 @keyframes tenon-bilingual-spin {
@@ -138,7 +138,7 @@ export function createUrlPageTranslationGuestBridge(
   return {
     async initialize(targetLanguage, labels) {
       await removeCss();
-      cssKey = await webview.insertCSS(TRANSLATION_CSS);
+      cssKey = await webview.insertCSS(URL_PAGE_TRANSLATION_GUEST_CSS);
       const source = `(${installUrlPageTranslationRuntime.toString()})(window, ${JSON.stringify(URL_PAGE_TRANSLATION_RUNTIME_KEY)}, ${JSON.stringify(targetLanguage)}, ${JSON.stringify(labels)})`;
       await webview.executeJavaScript(source);
     },

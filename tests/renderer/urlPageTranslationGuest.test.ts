@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { parseHTML } from 'linkedom';
 import {
+  URL_PAGE_TRANSLATION_GUEST_CSS,
   URL_PAGE_TRANSLATION_RUNTIME_KEY,
   installUrlPageTranslationRuntime,
   type UrlPageTranslationGuestBatch,
@@ -29,6 +30,21 @@ interface GuestRuntime {
 }
 
 describe('URL page translation guest runtime', () => {
+  test('keeps inline loading controls the same size across page typography', () => {
+    const statusRule = cssRuleBody(URL_PAGE_TRANSLATION_GUEST_CSS, '[data-tenon-bilingual-status]');
+    const loaderRule = cssRuleBody(
+      URL_PAGE_TRANSLATION_GUEST_CSS,
+      '[data-tenon-bilingual-status="loading"]::before',
+    );
+
+    expect(statusRule).toContain('width: 16px !important;');
+    expect(statusRule).toContain('height: 16px !important;');
+    expect(loaderRule).toContain('width: 10px !important;');
+    expect(loaderRule).toContain('height: 10px !important;');
+    expect(statusRule).not.toContain('width: max(1em, 16px)');
+    expect(loaderRule).not.toContain('width: 0.72em');
+  });
+
   test('collects only visible and nearby readable blocks and excludes sensitive regions', () => {
     const fixture = createFixture();
     const runtime = fixture.runtime;
@@ -143,6 +159,13 @@ describe('URL page translation guest runtime', () => {
     expect((fixture.window as unknown as Record<string, unknown>)[URL_PAGE_TRANSLATION_RUNTIME_KEY]).toBeUndefined();
   });
 });
+
+function cssRuleBody(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, 'u'));
+  if (!match?.[1]) throw new Error(`Missing CSS rule: ${selector}`);
+  return match[1];
+}
 
 function createFixture(options: { serialized?: boolean } = {}): {
   document: Document;
