@@ -160,7 +160,10 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   missing tag/field definitions, or extend an existing options definition. It
   may reuse existing definitions and options; implicit Schema changes require
   independently granted writable Schema/definition scope and are validated
-  before any outline node is created.
+  before any outline node is created. Reuse considers only active definitions;
+  a same-name definition in Trash is a missing definition. Every insertion also
+  revalidates that the exact parent is active and still accepts ordinary content;
+  locked canonical Daily Note nodes are the intentional exception to edit locks.
   `outline_undo_stack` is omitted
   entirely from every scoped Run because its global journal and undo/redo cursor
   cannot be narrowed to one node-resource set safely.
@@ -530,16 +533,21 @@ Issue's zone, the Recurring Issue zone for materialized work, or the app-local
 IANA zone otherwise. `due-date` uses the Issue due instant and zone and is
 rejected when neither a concrete due date nor a materialized recurrence can
 supply one. Canonical lookup requires the tagged Daily Notes hierarchy and does
-not reuse same-title ordinary nodes.
+not reuse same-title ordinary nodes. A timestamp must also fit the JavaScript
+Date range; formatting exceptions become structured `daily_note_date_invalid`
+validation rather than escaping Session failure recording.
 
-An execution-preparation failure creates one terminal `error` Session, records
-error Activity, and queues the ordinary one-hop terminal delivery. The presence
-of that Session removes the concrete Issue from automatic eligibility, so the
-scheduler does not retry every minute. Preview remains non-mutating and reports
-the blockers without creating a Session. Retrying or continuing terminal work
-creates a new Agent Session through an explicit `agent_session_start` request
-after the same gates pass. Recurring Issue templates intentionally carry no
-absolute execution policy.
+An execution-preparation failure is unconditionally bound to the Issue revision
+that was actually prepared. While that revision remains current, it creates one
+terminal `error` Session, records error Activity, and queues the ordinary one-hop
+terminal delivery. A symbolic child definition whose concrete Daily Note or
+dynamic input exceeds the parent Session is atomically rechecked and uses this
+same path. The presence of that Session removes the concrete Issue from automatic
+eligibility, so the scheduler does not retry every minute. Preview remains
+non-mutating and reports the blockers without creating a Session. Retrying or
+continuing terminal work creates a new Agent Session through an explicit
+`agent_session_start` request after the same gates pass. Recurring Issue templates
+intentionally carry no absolute execution policy.
 
 Issue verification uses the same Agent Session mechanism. `agent_session_start`
 accepts `purpose: "verify"` only when the Issue has
@@ -574,7 +582,9 @@ an existing completion criterion. Completion remains bound to the Session's
 criterion ids and text: adding, deleting, or rewriting active criteria after the
 Session starts requires a new execution Session, while an explicit trusted-user
 waiver may satisfy the removed requirement. Human review also requires a
-completed execution Session.
+completed execution Session. Daily Note completion additionally fences the due
+date, trigger, and materialized recurrence basis captured by the evidence
+Session, because those fields determine its concrete output destination.
 
 ## Internal Delegation Executor
 

@@ -500,6 +500,62 @@ describe('agent node tools', () => {
     ))).toBe(false);
   });
 
+  test('rejects inactive create parents and trashed tag definitions before mutation', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const trashedParent = mustFocus(core.createNode(today, null, 'Trashed output parent'));
+    core.trashNode(trashedParent);
+    const trashedParentResult = await executeTool(core, 'node_create', {
+      parent_id: trashedParent,
+      outline: '- Must not be hidden in Trash',
+    }, {
+      runScope: {
+        resources: {
+          nodes: [trashedParent],
+          writableNodes: [] as string[],
+          creatableNodeParents: [trashedParent],
+        },
+      },
+    });
+    expect(trashedParentResult.error?.code).toBe('node_in_trash');
+    expect(core.state().nodes[trashedParent]!.children).toEqual([]);
+
+    const activeParent = mustFocus(core.createNode(today, null, 'Active output parent'));
+    const trashedTag = mustFocus(core.createTag('trashed-session-tag'));
+    core.trashNode(trashedTag);
+    const childCountBefore = core.state().nodes[activeParent]!.children.length;
+    const trashedTagResult = await executeTool(core, 'node_create', {
+      parent_id: activeParent,
+      outline: '- Must not partially persist #trashed-session-tag',
+    }, {
+      runScope: {
+        resources: {
+          nodes: [activeParent],
+          writableNodes: [] as string[],
+          creatableNodeParents: [activeParent],
+        },
+      },
+    });
+    expect(trashedTagResult.error?.code).toBe('outside_scope');
+    expect(core.state().nodes[activeParent]!.children).toHaveLength(childCountBefore);
+
+    const lockedDay = mustFocus(core.ensureDateNode(2035, 4, 6));
+    expect(core.state().nodes[lockedDay]!.locked).toBe(true);
+    const lockedDayResult = await executeTool(core, 'node_create', {
+      parent_id: lockedDay,
+      outline: '- Allowed Daily Note child',
+    }, {
+      runScope: {
+        resources: {
+          nodes: [lockedDay],
+          writableNodes: [] as string[],
+          creatableNodeParents: [lockedDay],
+        },
+      },
+    });
+    expect(lockedDayResult.ok).toBe(true);
+  });
+
   test('allows implicit definitions only when the Run explicitly grants Schema writes', async () => {
     const core = Core.new();
     const outputParent = mustFocus(core.createNode(core.projection().todayId, null, 'Schema-authorized output'));

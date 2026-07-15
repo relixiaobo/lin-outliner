@@ -77,6 +77,10 @@ const SESSION_PREPARATION_VALIDATION_CODES = new Set([
   'daily_note_output_not_supported',
   'replace_input_confirmation_unavailable',
 ]);
+const PREPARED_SCOPE_VALIDATION_CODES = new Set([
+  'child_scope_broadened',
+  'child_scope_unverifiable',
+]);
 const ISSUE_FIELD_KEYS = new Set([
   'title',
   'description',
@@ -590,9 +594,15 @@ export class AgentIssueStore {
   async recordSessionPreparationFailure(
     input: AgentSessionStartInput,
     source: AgentSessionSource,
+    preparedIssueRevision: string,
     preparationValidation: readonly ValidationMessage[],
     actor: ActorRef = DEFAULT_ACTOR,
     now = Date.now(),
+    options: {
+      preparedExecution?: PreparedIssueExecution;
+      authorizeChildScope?: ChildIssueScopeAuthorizer;
+      requirePreparedScopeFailure?: boolean;
+    } = {},
   ): Promise<TenonAgentToolResult> {
     const issueTarget: RelatedTargetRef = { type: 'issue', id: input.issueId };
     let outcome: TenonAgentToolResult | null = null;
@@ -606,6 +616,15 @@ export class AgentIssueStore {
         };
         return state;
       }
+      if (preparedIssueRevision !== issue.revision) {
+        outcome = {
+          status: 'conflict',
+          targets: [issueTarget],
+          validation: [{ code: 'revision_mismatch', message: 'Issue changed after execution preparation.' }],
+          revisions: [{ target: issueTarget, revision: issue.revision }],
+        };
+        return state;
+      }
       if (input.expectedIssueRevision && input.expectedIssueRevision !== issue.revision) {
         outcome = {
           status: 'conflict',
@@ -615,8 +634,43 @@ export class AgentIssueStore {
         };
         return state;
       }
-      const gateValidation = validateSessionStart(state, issue, input, now)
+      const gateValidation = validateSessionStart(state, issue, input, now, options.preparedExecution)
         .filter((message) => !SESSION_PREPARATION_VALIDATION_CODES.has(message.code));
+      const session = buildSession(issue, input, source, now, {
+        preparedExecution: options.preparedExecution,
+      });
+      let effectivePreparationValidation = [...preparationValidation];
+      if (options.preparedExecution) {
+        const scopeValidation = validateChildSessionScope(
+          state,
+          issue,
+          session,
+          options.authorizeChildScope,
+        );
+        if (options.requirePreparedScopeFailure) {
+          const preparedScopeValidation = scopeValidation.filter((message) => (
+            PREPARED_SCOPE_VALIDATION_CODES.has(message.code)
+          ));
+          gateValidation.push(...scopeValidation.filter((message) => (
+            !PREPARED_SCOPE_VALIDATION_CODES.has(message.code)
+          )));
+          if (preparedScopeValidation.length === 0 && gateValidation.length === 0) {
+            outcome = {
+              status: 'conflict',
+              targets: [issueTarget],
+              validation: [{
+                code: 'preparation_failure_stale',
+                message: 'Prepared Session scope no longer fails against the current document and parent Session.',
+              }],
+              revisions: [{ target: issueTarget, revision: issue.revision }],
+            };
+            return state;
+          }
+          effectivePreparationValidation = preparedScopeValidation;
+        } else {
+          gateValidation.push(...scopeValidation);
+        }
+      }
       if (gateValidation.length > 0) {
         outcome = {
           status: 'blocked',
@@ -627,11 +681,10 @@ export class AgentIssueStore {
         return state;
       }
 
-      const errorMessage = preparationValidation
+      const errorMessage = effectivePreparationValidation
         .map((message) => message.message.trim())
         .filter(Boolean)
         .join('\n');
-      const session = buildSession(issue, input, source, now, {});
       session.state = 'error';
       session.errorMessage = errorMessage || 'Issue execution preparation failed.';
       session.completedAt = now;
@@ -658,7 +711,7 @@ export class AgentIssueStore {
       outcome = {
         status: 'blocked',
         targets: [issueTarget, sessionTarget],
-        validation: [...preparationValidation],
+        validation: effectivePreparationValidation,
         revisions: [{ target: sessionTarget, revision: session.revision }],
       };
       return state;
@@ -3088,6 +3141,9 @@ function issueDefinitionChangesSinceSession(
     'permissionMode',
     'executionPolicy',
   ];
+  if (issue.output?.type === 'daily-note' || snapshot.output?.type === 'daily-note') {
+    fields.push('dueDate', 'trigger', 'recurrence');
+  }
   return fields.filter((field) => JSON.stringify(issue[field] ?? null) !== JSON.stringify(snapshot[field] ?? null));
 }
 

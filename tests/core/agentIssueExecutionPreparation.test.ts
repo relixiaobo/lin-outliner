@@ -142,6 +142,27 @@ describe('Agent Issue execution preparation', () => {
     });
   });
 
+  test('rejects finite timestamps outside the JavaScript Date range without throwing', async () => {
+    const core = Core.new();
+    const issue = issueWith({
+      dueDate: { targetAt: 1e20, timeZone: 'UTC' },
+      output: { type: 'daily-note', datePolicy: 'due-date' },
+    });
+
+    expect(validateIssueNodeDefinition(issue, core.projection())).toContainEqual(
+      expect.objectContaining({ code: 'daily_note_date_invalid' }),
+    );
+    await expect(prepareIssueExecution(issue, core.projection(), 100, {
+      mode: 'request',
+      ensureDailyNote: async () => {
+        throw new Error('The invalid date must not reach the resolver.');
+      },
+    })).resolves.toEqual({
+      ok: false,
+      validation: [expect.objectContaining({ code: 'daily_note_date_invalid' })],
+    });
+  });
+
   test('uses recurrence metadata to prepare legacy materialized due-date output', async () => {
     const core = Core.new();
     const windowStartAt = Date.parse('2033-06-07T02:00:00Z');

@@ -151,22 +151,22 @@ export function validateIssueNodeDefinition(
             message: 'Daily-note due-date output requires an Issue due date.',
           });
         }
-        if (definition.dueDate && !Number.isFinite(definition.dueDate.targetAt)) {
+        if (definition.dueDate && !isValidDateInstant(definition.dueDate.targetAt)) {
           validation.push({
             path: 'dueDate.targetAt',
             code: 'daily_note_date_invalid',
-            message: 'Daily-note output requires a finite Issue due date.',
+            message: 'Daily-note output requires a valid JavaScript Issue due date.',
           });
         }
         if (
           !definition.dueDate
           && definition.recurrence
-          && !Number.isFinite(definition.recurrence.windowStartAt)
+          && !isValidDateInstant(definition.recurrence.windowStartAt)
         ) {
           validation.push({
             path: 'recurrence.windowStartAt',
             code: 'daily_note_date_invalid',
-            message: 'Daily-note output requires a finite recurrence window date.',
+            message: 'Daily-note output requires a valid JavaScript recurrence window date.',
           });
         }
         if (
@@ -327,7 +327,7 @@ function resolveDailyNoteDate(
   const targetAt = output.datePolicy === 'due-date'
     ? issue.dueDate?.targetAt ?? issue.recurrence?.windowStartAt
     : now;
-  if (targetAt === undefined || !Number.isFinite(targetAt)) {
+  if (targetAt === undefined || !isValidDateInstant(targetAt)) {
     return {
       ok: false,
       validation: {
@@ -335,7 +335,7 @@ function resolveDailyNoteDate(
         code: targetAt === undefined ? 'daily_note_due_date_missing' : 'daily_note_date_invalid',
         message: targetAt === undefined
           ? 'Daily-note due-date output requires an Issue due date.'
-          : 'Daily-note output requires a finite calendar date.',
+          : 'Daily-note output requires a valid JavaScript calendar date.',
       },
     };
   }
@@ -346,7 +346,19 @@ function resolveDailyNoteDate(
       : issue.recurrence
         ? recurrenceTimeZone
         : fallbackTimeZone;
-  const isoDate = formatRecurringIssueWindowDate(targetAt, timeZone);
+  let isoDate: string;
+  try {
+    isoDate = formatRecurringIssueWindowDate(targetAt, timeZone);
+  } catch {
+    return {
+      ok: false,
+      validation: {
+        path: 'output.datePolicy',
+        code: 'daily_note_date_invalid',
+        message: 'Daily-note output requires a valid calendar date.',
+      },
+    };
+  }
   const [year, month, day] = isoDate.split('-').map(Number);
   return {
     ok: true,
@@ -487,4 +499,8 @@ function normalizeTag(raw: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isValidDateInstant(value: number): boolean {
+  return Number.isFinite(value) && Number.isFinite(new Date(value).getTime());
 }

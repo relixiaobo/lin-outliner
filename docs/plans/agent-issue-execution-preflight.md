@@ -41,7 +41,8 @@ The Store remains the revision authority. A prepared plan carries the Issue
 revision used to build it, and `startSession` rechecks that revision inside its
 existing atomic update before persisting the Session. Preparation is repeated at
 every Session start; create/update checks are activation preflights, not durable
-node snapshots.
+node snapshots. A preparation failure carries that same required revision; it
+cannot write an error Session against a newer Issue definition.
 
 Definition creation and patches that change an executable input/output contract
 run the same non-mutating preflight before persistence. An active definition
@@ -90,6 +91,8 @@ the Issue due date and its zone. A materialized Recurring Issue carries its
 window start as `dueDate` and in its recurrence context, preserving the Recurring
 Issue zone so catch-up runs resolve deterministically. Existing materialized
 Issues without the derived `dueDate` fall back to their recurrence window.
+Finite timestamps outside the JavaScript Date range are invalid rather than
+escaping preparation through `Intl` exceptions.
 
 Date-node creation may target a locked canonical day node: locking prevents
 editing or moving the day page, but does not prevent creating a child beneath
@@ -101,7 +104,9 @@ arbitrary same-title child.
 Extend Run node resources with explicit create-parent ids. Existing
 `writableNodes` continues to mean mutation of existing node subtrees;
 create-parent ids mean that `node_create` may insert direct children only under
-those exact parents.
+those exact parents. Every call revalidates that the parent still exists, is not
+in Trash, and remains an ordinary content container; locked canonical day nodes
+remain valid creation parents.
 
 Creation-style Issue outputs expose their anchor as readable, expose no mutable
 existing subtree, and expose the anchor only as a create parent. `node_edit` and
@@ -112,6 +117,8 @@ Create-only Runs may reuse existing tag/field definitions and options, but an
 outline that would create or extend Schema is rejected before node mutation
 unless the Run independently has writable Schema authority. Top-level field
 lines likewise require existing-node write authority for the output parent.
+Only active tag and field definitions are reusable; a same-name definition in
+Trash is treated as a Schema creation request.
 
 Run-scope normalization, narrowing, verifier projection, prompt formatting,
 event-log restoration, and child-Issue scope authorization all preserve the new
@@ -124,7 +131,9 @@ A scheduler preparation failure records one error Agent Session for the concrete
 Issue. This makes the Issue attention-needed, prevents a minute-by-minute retry
 loop, preserves the failed recurrence window, and queues the ordinary terminal
 delivery to the visible origin. The error names the selector or output anchor and
-the required remediation.
+the required remediation. If a symbolic child definition passes but its concrete
+prepared nodes exceed the parent Session, the Store atomically rechecks that
+scope failure and records the same terminal error Session.
 
 Manual preview remains non-mutating. Manual request creates the same error
 Session when preparation reached the execution boundary but could not produce a
@@ -164,7 +173,9 @@ The second risk is a document/Issue race while a date node is ensured. Serialize
 date creation through the existing document command queue, then require the
 Store's expected Issue revision before persisting the prepared Session. Node
 tools revalidate the concrete parent against the current projection before every
-write.
+write. Daily Note completion also compares the current due date, trigger, and
+recurrence basis with the evidence Session snapshot, so work for an old concrete
+date cannot complete a revised Issue.
 
 Open PR #396 also edits `src/main/agentRuntime.ts`; open PR #397 edits
 `src/main/agentNodeTools.ts`, its tests, and `docs/spec/agent-tool-design.md`.

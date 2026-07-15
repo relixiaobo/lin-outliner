@@ -70,6 +70,10 @@ export interface AgentSessionExecutor {
 }
 
 const sessionControlTails = new Map<string, Promise<void>>();
+const PREPARED_SCOPE_VALIDATION_CODES = new Set([
+  'child_scope_broadened',
+  'child_scope_unverifiable',
+]);
 
 export function createAgentIssueToolRuntime(options: AgentIssueToolRuntimeOptions): AgentIssueToolRuntime {
   const now = () => options.now?.() ?? Date.now();
@@ -434,6 +438,7 @@ async function startSession(
       const failed = await options.store.recordSessionPreparationFailure(
         input,
         source,
+        currentIssue.revision,
         previewPreparation.validation,
         options.actor,
         now,
@@ -477,6 +482,7 @@ async function startSession(
     const failed = await options.store.recordSessionPreparationFailure(
       input,
       source,
+      currentIssue!.revision,
       requestPreparation.validation,
       options.actor,
       now,
@@ -492,7 +498,30 @@ async function startSession(
     authorizeChildScope: options.authorizeChildScope,
     preparedExecution,
   });
-  if (started.status !== 'applied') return started;
+  if (started.status !== 'applied') {
+    if (
+      preparedExecution
+      && started.status === 'blocked'
+      && started.validation?.some((message) => PREPARED_SCOPE_VALIDATION_CODES.has(message.code))
+    ) {
+      const failed = await options.store.recordSessionPreparationFailure(
+        input,
+        source,
+        preparedExecution.issueRevision,
+        started.validation,
+        options.actor,
+        now,
+        {
+          preparedExecution,
+          authorizeChildScope: options.authorizeChildScope,
+          requirePreparedScopeFailure: true,
+        },
+      );
+      options.onIssueDeliveryQueued?.();
+      return failed;
+    }
+    return started;
+  }
   const activated = await activateStartedSession(options, input, started, now);
   options.onIssueDeliveryQueued?.();
   return activated;

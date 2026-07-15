@@ -210,6 +210,94 @@ describe('agent issue tool runtime execution', () => {
     });
   });
 
+  test('records a prepared child-scope blocker as one terminal Session', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Prepared scope parent' },
+        request: { mode: 'request' },
+        reason: 'Create the scope parent.',
+      }, actor, 100, { origin: rootOrigin });
+      const parent = (await store.search({ text: 'Prepared scope parent' })).rows[0]!;
+      const parentStarted = await store.startSession({
+        issueId: parent.target.id,
+        expectedIssueRevision: parent.revision,
+        request: { mode: 'request' },
+        reason: 'Start the scope parent.',
+      }, { type: 'runtime-action', actor }, actor, 110);
+      const parentSessionId = parentStarted.targets.find((target) => target.type === 'agent-session')!.id;
+      await store.bindSessionExecution(parentSessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:prepared-scope-parent',
+        executionId: 'execution:prepared-scope-parent',
+        startedAt: 120,
+      }, actor, 120);
+      const authorizeChildScope = (_parent: unknown, definition: { output?: { type: string; nodeId?: string } }) => (
+        definition.output?.type === 'create-child-under-node'
+        && definition.output.nodeId === 'node:outside-parent-scope'
+          ? [{
+              path: 'output',
+              code: 'child_scope_broadened',
+              message: 'Prepared output exceeds the parent Session scope.',
+            }]
+          : []
+      );
+      const childCreated = await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Prepared scope child',
+          output: { type: 'daily-note', datePolicy: 'session-date' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create symbolic child work.',
+      }, actor, 130, {
+        origin: { type: 'agent-session', agentSessionId: parentSessionId },
+        authorizeChildScope,
+      });
+      const childId = childCreated.targets.find((target) => target.type === 'issue')!.id;
+      const child = (await store.read({ target: { type: 'issue', id: childId } })).issue!;
+      const runtime = createAgentIssueToolRuntime({
+        store,
+        actor,
+        origin: () => ({ type: 'agent-session', agentSessionId: parentSessionId }),
+        authorizeChildScope,
+        prepareExecution: async (issue, _now, mode) => ({
+          ok: true,
+          prepared: {
+            issueRevision: issue.revision,
+            mode,
+            outputSnapshot: mode === 'preview'
+              ? { type: 'daily-note', datePolicy: 'session-date' }
+              : { type: 'create-child-under-node', nodeId: 'node:outside-parent-scope' },
+            warnings: [],
+          },
+        }),
+        now: () => 140,
+      });
+
+      const result = await runtime.startSession({
+        issueId: child.id,
+        expectedIssueRevision: child.revision,
+        request: { mode: 'request' },
+        reason: 'Record the concrete scope failure.',
+      });
+
+      expect(result.status).toBe('blocked');
+      const childSessions = Object.values((await store.state()).sessions)
+        .filter((session) => session.issueId === child.id);
+      expect(childSessions).toHaveLength(1);
+      expect(childSessions[0]).toMatchObject({
+        state: 'error',
+        errorMessage: 'Prepared output exceeds the parent Session scope.',
+        outputSnapshot: {
+          type: 'create-child-under-node',
+          nodeId: 'node:outside-parent-scope',
+        },
+      });
+      expect((await store.listReadyIssuesForExecution(141)).map((issue) => issue.id)).not.toContain(child.id);
+    });
+  });
+
   test('preflights executable definitions before creating or resuming active work', async () => {
     await withStore(async (store) => {
       const core = Core.new();

@@ -79,8 +79,10 @@ When `agent_session_start` is approved and eligible:
 1. Runtime prepares the current Issue revision against the current document
    projection. Preview is non-mutating; request mode resolves symbolic output
    such as `daily-note` to a concrete destination. A preparation blocker creates
-   one terminal error Session only for request mode, making scheduler failure
-   visible without a minute-by-minute retry loop.
+   one terminal error Session only for request mode and only while that prepared
+   revision is still current, making scheduler failure visible without a
+   minute-by-minute retry loop. A concrete child scope that exceeds its parent is
+   rechecked atomically and recorded through the same failure path.
 2. Runtime durably creates the Agent Session record with the prepared input and
    output snapshots.
 3. Runtime resolves the Agent Session snapshot into a delegation input:
@@ -229,6 +231,9 @@ mutate existing nodes. Creation outputs leave that list empty and put their exac
 anchor in `resources.creatableNodeParents`; `node_create` may insert a direct
 child there but may not mutate the anchor or its existing descendants. Input and
 note nodes remain read-only unless the output policy independently names them.
+Before every insertion, the node tool revalidates that an exact create parent is
+active and remains an ordinary content container; moving it to Trash invalidates
+the prepared authority, while a locked canonical day node remains usable.
 An explicit empty array means deny all, while an omitted resource dimension is
 unrestricted. Child Issue Sessions may narrow but never widen any parent
 ceiling; an exact create parent does not imply create authority at an existing

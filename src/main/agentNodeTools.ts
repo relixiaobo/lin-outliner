@@ -1709,6 +1709,17 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           metrics: { durationMs: elapsed(started) },
         }));
       }
+      const parentValidation = validateCreateParent(
+        initialIndex,
+        insertion.parentId,
+        options.runScope?.resources?.creatableNodeParents !== undefined,
+      );
+      if (parentValidation) {
+        return nodeErrorResult(errorEnvelope('node_create', parentValidation.code, parentValidation.error, {
+          instructions: parentValidation.instructions,
+          metrics: { durationMs: elapsed(started) },
+        }));
+      }
       const insertionScopeIssue = validateNodeResourceScope(
         options,
         initialIndex,
@@ -3540,6 +3551,33 @@ function parentNotFound(parentId: string) {
     error: `Parent node not found: ${parentId}`,
     instructions: 'Use node_read or node_search to find the current parent node id.',
   };
+}
+
+function validateCreateParent(
+  index: ProjectionIndex,
+  parentId: string,
+  requireOrdinaryContentParent: boolean,
+): { code: string; error: string; instructions: string } | null {
+  const parent = index.nodes.get(parentId);
+  if (!parent) return parentNotFound(parentId);
+  if (isInTrash(index, parentId)) {
+    return {
+      code: 'node_in_trash',
+      error: `Parent node is in Trash: ${parentId}`,
+      instructions: 'Restore the parent or prepare a new active output destination before creating content.',
+    };
+  }
+  if (
+    requireOrdinaryContentParent
+    && (isSystemNodeId(parentId) || isInternalConfigNode(parent) || parent.type !== undefined)
+  ) {
+    return {
+      code: 'invalid_parent',
+      error: `Parent cannot contain ordinary agent-created content: ${parentId}`,
+      instructions: 'Choose an active ordinary node as the parent. Locked canonical Daily Note nodes remain valid parents.',
+    };
+  }
+  return null;
 }
 
 interface MutationTracker {
