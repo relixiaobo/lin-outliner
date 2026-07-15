@@ -149,11 +149,12 @@ When enabled, prioritize work in this order:
 3. a smaller buffer behind the current scroll direction.
 
 Each paragraph remains an independently cached/status-tracked block, but model
-requests use bounded micro-batches rather than one request per paragraph. A
-foreground batch contains at most four visible blocks or roughly 4,000 source
-characters. A background batch contains at most eight adjacent prefetch blocks
-or roughly 8,000 source characters. The model response still settles one whole
-micro-batch atomically; completed micro-batches render as soon as they return.
+requests use bounded micro-batches rather than one request per paragraph. The
+first visible request is a latency-oriented batch of at most two blocks or
+roughly 2,000 source characters. Later visible and prefetch requests contain at
+most four blocks or roughly 4,000 source characters. Each model response still
+settles one whole micro-batch atomically, but concurrent micro-batches settle
+independently and render in actual response order.
 
 Before a meaningful scroll direction is known, prefetch approximately two
 viewports above and below the activation point. Once direction is known, keep a
@@ -162,15 +163,17 @@ detection and priority are symmetric for upward and downward reading, including
 when translation begins in the middle of an article. Blocks outside that window
 stay unsent, so the feature never degrades into eager whole-page translation.
 
-Keep at most one model request active per page. While it is active, probe the
-viewport on a short bounded interval. If a newly visible untranslated block is
-not covered by that request, invalidate the old request, remove its transient
-loaders, return its blocks to the pending pool, and start a foreground batch
-without waiting for the old provider response. A prefetch request that now
-covers the visible block may finish instead of being restarted. Cancellation is
-not an error and never leaves a permanent loading state. Fast scrolling therefore
-discards obsolete work and rebuilds priority around the current viewport while
-preserving the single-request provider limit.
+Keep at most three model requests active per page and at most one prefetch
+request among them. Fill free slots with visible work before prefetch so a dense
+initial viewport can start the two-block fast batch plus two four-block batches
+without waiting for any response. While requests are active, probe the viewport
+on a short bounded interval. If new visible work arrives while all slots are
+full, invalidate only an offscreen lowest-priority request, remove its transient
+loaders, return its blocks to the pending pool, and reuse that capacity for a
+visible batch. Requests that still cover visible content continue instead of
+being restarted. Cancellation is not an error and never leaves a permanent
+loading state. Page teardown and configuration changes cancel every page-local
+request; ordinary batch completion or failure settles only that batch.
 
 Dynamic page mutations register new eligible blocks, but they are not submitted
 until they enter the same bounded window. Completed blocks are never requested
@@ -190,8 +193,12 @@ Observable scheduling acceptance:
   blocks with the same priority as scrolling downward schedules later blocks.
 - Preemption produces neither an error state nor a stranded loader, and released
   blocks remain eligible when the reader returns.
-- No scheduler path exceeds the bounded viewport window or starts a second model
-  request for the same page.
+- A dense initial viewport starts batches sized `2 / 4 / 4` without waiting for
+  the first response, never exceeds three active requests, and never keeps more
+  than one prefetch request active.
+- A later batch that returns first renders first; request order never blocks a
+  completed batch from becoming readable.
+- No scheduler path exceeds the bounded viewport window.
 
 ### Scroll anchoring and DOM presentation
 

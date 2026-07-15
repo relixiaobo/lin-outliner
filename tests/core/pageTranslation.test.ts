@@ -165,6 +165,50 @@ describe('page translation service', () => {
     expect(signals[1]?.aborted).toBe(false);
   });
 
+  test('keeps requests from different sessions active concurrently', async () => {
+    const signals: AbortSignal[] = [];
+    const resolveRequests: Array<(output: string) => void> = [];
+    const service = new PageTranslationService({
+      complete: async ({ signal }) => {
+        signals.push(signal);
+        return await new Promise<string>((resolve) => {
+          resolveRequests.push(resolve);
+        });
+      },
+    });
+    const first = service.handle(URL_PAGE_TRANSLATE_COMMAND, {
+      ...request({
+        sessionId: 'session:first',
+        requestId: 'request:first',
+        blocks: [{ id: 'b1', text: 'First' }],
+      }),
+    });
+    const second = service.handle(URL_PAGE_TRANSLATE_COMMAND, {
+      ...request({
+        sessionId: 'session:second',
+        requestId: 'request:second',
+        blocks: [{ id: 'b2', text: 'Second' }],
+      }),
+    });
+    await Promise.resolve();
+
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => !signal.aborted)).toBe(true);
+    resolveRequests[1]?.('[{"id":"b2","translation":"第二"}]');
+    expect(await second).toEqual({
+      ok: true,
+      requestId: 'request:second',
+      translations: [{ id: 'b2', translation: '第二' }],
+    });
+    expect(signals[0]?.aborted).toBe(false);
+    resolveRequests[0]?.('[{"id":"b1","translation":"第一"}]');
+    expect(await first).toEqual({
+      ok: true,
+      requestId: 'request:first',
+      translations: [{ id: 'b1', translation: '第一' }],
+    });
+  });
+
   test('rejects duplicate input ids before invoking a model', async () => {
     let called = false;
     const service = new PageTranslationService({

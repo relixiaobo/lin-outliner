@@ -447,21 +447,25 @@ the language rule for an auto-activated page and turns translation off when the
 new target matches the document language.
 
 Translation is viewport-driven rather than an eager whole-page request. Visible
-content uses foreground micro-batches of at most four blocks or roughly 4,000
-source characters; background prefetch uses at most eight blocks or roughly
-8,000 characters. Before direction is known, the guest runtime prefetches about
-two viewports above and below the activation point. It then keeps about four
-viewports ahead and one behind the observed reading direction, with symmetric
-upward and downward behavior. Blocks outside that window are not sent.
+content starts with a latency-oriented batch of at most two blocks or roughly
+2,000 source characters; later visible and prefetch batches contain at most four
+blocks or roughly 4,000 characters. Before direction is known, the guest runtime
+prefetches about two viewports above and below the activation point. It then keeps
+about four viewports ahead and one behind the observed reading direction, with
+symmetric upward and downward behavior. Blocks outside that window are not sent.
 
-Each pane keeps one active model request. A 120ms scheduling probe continues
-while that request is pending. When a newly visible eligible block is not covered
-by the active request, the controller invalidates the offscreen work, removes its
-transient loaders, returns those blocks to the pending pool, and starts a visible
-micro-batch without waiting for the obsolete provider response. Cancellation is
-not surfaced as an error. Dynamic content joins only after it enters the same
-window, and successful blocks remain cached in memory so back-scrolling does not
-call the provider again. DOM insertion, hide, and restore capture the
+Each pane keeps at most three active model requests and at most one prefetch
+request. Free capacity always takes visible work first, so a dense initial
+viewport starts `2 / 4 / 4` blocks without waiting for an earlier response.
+Micro-batches settle independently and render in response order. A 120ms
+scheduling probe continues while translation is enabled. When all slots are full
+and new visible work appears, the controller invalidates only an offscreen
+lowest-priority request, removes its transient loaders, returns those blocks to
+the pending pool, and starts a visible micro-batch without waiting for the
+obsolete provider response. Cancellation is not surfaced as an error. Dynamic
+content joins only after it enters the same window, and successful blocks remain
+cached in memory so back-scrolling does not call the provider again. DOM
+insertion, hide, and restore capture the
 first visible source block and compensate its post-write offset immediately and
 across two bounded animation frames. Compensation stays instant on sites that
 request smooth scrolling, and injected nodes do not become browser scroll anchors,

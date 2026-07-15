@@ -4,6 +4,7 @@ import {
   URL_PAGE_TRANSLATION_GUEST_CSS,
   URL_PAGE_TRANSLATION_RUNTIME_KEY,
   installUrlPageTranslationRuntime,
+  type UrlPageTranslationGuestActiveBatch,
   type UrlPageTranslationGuestBatch,
   type UrlPageTranslationGuestLabels,
 } from '../../src/renderer/ui/preview/urlPageTranslationGuest';
@@ -14,23 +15,20 @@ const TEST_LABELS: UrlPageTranslationGuestLabels = {
   retry: 'Retry translation',
   translating: 'Translating',
 };
-const VISIBLE_MAX_BLOCKS = 4;
-const VISIBLE_MAX_CHARS = 4_000;
-const PREFETCH_MAX_BLOCKS = 8;
-const PREFETCH_MAX_CHARS = 8_000;
+const MAX_BLOCKS = 4;
+const MAX_CHARS = 4_000;
 const MAX_BLOCK_CHARS = 6_000;
 
 interface GuestRuntime {
   version: 1;
   setEnabled(enabled: boolean, targetLanguage: TranslationLanguage): void;
   nextBatch(
-    visibleMaxBlocks: number,
-    visibleMaxChars: number,
-    prefetchMaxBlocks: number,
-    prefetchMaxChars: number,
+    maxBlocks: number,
+    maxChars: number,
     maxBlockChars: number,
     retryOnly?: boolean,
-    activeIds?: readonly string[],
+    visibleOnly?: boolean,
+    activeBatches?: readonly UrlPageTranslationGuestActiveBatch[],
   ): UrlPageTranslationGuestBatch;
   release(ids: readonly string[]): void;
   apply(items: readonly UrlPageTranslationItem[]): void;
@@ -101,20 +99,36 @@ describe('URL page translation guest runtime', () => {
     expect(fixture.document.querySelector('#current [data-tenon-bilingual-status]')).toBeNull();
   });
 
+  test('keeps a second prefetch batch out when the controller requests visible-only work', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const visible = nextBatch(fixture.runtime);
+    fixture.runtime.apply(visible.blocks.map((block) => ({
+      id: block.id,
+      translation: `Translated: ${block.text}`,
+    })));
+
+    expect(nextBatch(fixture.runtime, { visibleOnly: true }).blocks).toEqual([]);
+    expect(nextBatch(fixture.runtime).priority).toBe(1);
+  });
+
   test('returns newly visible earlier blocks while a downward request is still pending', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
     fixture.setScrollY(800);
 
-    const downwardBatch = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 });
+    const downwardBatch = nextBatch(fixture.runtime, { maxBlocks: 1 });
     expect(downwardBatch.blocks.map((block) => block.text)).toEqual(['Prefetched paragraph']);
 
     fixture.setScrollY(0);
     const upwardBatch = nextBatch(fixture.runtime, {
-      activeIds: downwardBatch.blocks.map((block) => block.id),
+      activeBatches: [{
+        ids: downwardBatch.blocks.map((block) => block.id),
+        requestId: 'request:downward',
+      }],
     });
 
-    expect(upwardBatch.activePriority).toBe(2);
+    expect(upwardBatch.preemptRequestId).toBe('request:downward');
     expect(upwardBatch.priority).toBe(0);
     expect(upwardBatch.blocks.map((block) => block.text)).toContain('Current paragraph');
     fixture.runtime.release(downwardBatch.blocks.map((block) => block.id));
@@ -125,13 +139,13 @@ describe('URL page translation guest runtime', () => {
     const fixture = createFixture({ serialized: true });
     fixture.runtime.setEnabled(true, 'zh-Hans');
 
-    expect(nextBatch(fixture.runtime, { visibleMaxBlocks: 1 }).blocks).toHaveLength(1);
+    expect(nextBatch(fixture.runtime, { maxBlocks: 1 }).blocks).toHaveLength(1);
   });
 
   test('inserts model output with textContent and preserves the current reading anchor', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const batch = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 });
+    const batch = nextBatch(fixture.runtime, { maxBlocks: 1 });
     const above = batch.blocks.find((block) => block.text === 'Above the viewport');
     if (!above) throw new Error('Missing above-viewport block');
 
@@ -167,7 +181,7 @@ describe('URL page translation guest runtime', () => {
   test('prevents a replaced runtime from applying stale frame corrections', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const batch = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 });
+    const batch = nextBatch(fixture.runtime, { maxBlocks: 1 });
     const above = batch.blocks.find((block) => block.text === 'Above the viewport');
     if (!above) throw new Error('Missing above-viewport block');
     fixture.runtime.apply([{ id: above.id, translation: 'Translated above viewport' }]);
@@ -190,7 +204,7 @@ describe('URL page translation guest runtime', () => {
   test('changes a failed loader into a retry control and retries only after it is clicked', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const first = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 });
+    const first = nextBatch(fixture.runtime, { maxBlocks: 1 });
     expect(first.blocks).toHaveLength(1);
     const loading = fixture.document.querySelector<HTMLButtonElement>('[data-tenon-bilingual-status="loading"]');
     expect(loading?.disabled).toBe(true);
@@ -200,19 +214,19 @@ describe('URL page translation guest runtime', () => {
     const retry = fixture.document.querySelector<HTMLButtonElement>('[data-tenon-bilingual-status="error"]');
     expect(retry?.disabled).toBe(false);
     expect(retry?.getAttribute('aria-label')).toBe('Retry translation');
-    expect(nextBatch(fixture.runtime, { retryOnly: true, visibleMaxBlocks: 1 }).blocks).toEqual([]);
+    expect(nextBatch(fixture.runtime, { maxBlocks: 1, retryOnly: true }).blocks).toEqual([]);
 
     retry?.click();
 
     expect(retry?.getAttribute('data-tenon-bilingual-status')).toBe('loading');
-    const retried = nextBatch(fixture.runtime, { retryOnly: true, visibleMaxBlocks: 1 });
+    const retried = nextBatch(fixture.runtime, { maxBlocks: 1, retryOnly: true });
     expect(retried.blocks[0]?.id).toBe(first.blocks[0]?.id);
   });
 
   test('removes transient status controls when translation is disabled', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const block = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 }).blocks[0];
+    const block = nextBatch(fixture.runtime, { maxBlocks: 1 }).blocks[0];
     if (!block) throw new Error('Missing block');
     fixture.runtime.fail([block.id]);
 
@@ -224,7 +238,7 @@ describe('URL page translation guest runtime', () => {
   test('removes injected state when the preview is destroyed', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const block = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 }).blocks[0];
+    const block = nextBatch(fixture.runtime, { maxBlocks: 1 }).blocks[0];
     if (!block) throw new Error('Missing block');
     fixture.runtime.apply([{ id: block.id, translation: '译文' }]);
 
@@ -238,20 +252,19 @@ describe('URL page translation guest runtime', () => {
 function nextBatch(
   runtime: GuestRuntime,
   options: {
-    activeIds?: readonly string[];
-    prefetchMaxBlocks?: number;
+    activeBatches?: readonly UrlPageTranslationGuestActiveBatch[];
+    maxBlocks?: number;
     retryOnly?: boolean;
-    visibleMaxBlocks?: number;
+    visibleOnly?: boolean;
   } = {},
 ): UrlPageTranslationGuestBatch {
   return runtime.nextBatch(
-    options.visibleMaxBlocks ?? VISIBLE_MAX_BLOCKS,
-    VISIBLE_MAX_CHARS,
-    options.prefetchMaxBlocks ?? PREFETCH_MAX_BLOCKS,
-    PREFETCH_MAX_CHARS,
+    options.maxBlocks ?? MAX_BLOCKS,
+    MAX_CHARS,
     MAX_BLOCK_CHARS,
     options.retryOnly ?? false,
-    options.activeIds ?? [],
+    options.visibleOnly ?? false,
+    options.activeBatches ?? [],
   );
 }
 

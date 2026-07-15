@@ -26,6 +26,14 @@ const ARTICLE_HTML = `<!doctype html>
     <main>
       <h1 id="heading">Article heading</h1>
       <p id="visible">Visible source paragraph.</p>
+      <p>Visible source paragraph 2.</p>
+      <p>Visible source paragraph 3.</p>
+      <p>Visible source paragraph 4.</p>
+      <p>Visible source paragraph 5.</p>
+      <p>Visible source paragraph 6.</p>
+      <p>Visible source paragraph 7.</p>
+      <p>Visible source paragraph 8.</p>
+      <p>Visible source paragraph 9.</p>
       <div class="near-spacer"></div>
       <p id="prefetch">Prefetched source paragraph.</p>
       <div class="far-spacer"></div>
@@ -41,7 +49,8 @@ test.describe('URL page translation', () => {
   const batches: TranslationBatch[] = [];
   const requestedModels: string[] = [];
   let failNextRequest = false;
-  let responseDelayMs = 250;
+  const responseDelayMs = 250;
+  let responseDelayForBatch: ((batch: TranslationBatch) => number) | null = null;
 
   test.beforeAll(async () => {
     server = createServer(async (request, response) => {
@@ -75,7 +84,8 @@ test.describe('URL page translation', () => {
               id: block.id,
               translation: `ZH: ${block.text}`,
             })));
-        await new Promise((resolve) => setTimeout(resolve, responseDelayMs));
+        const delayMs = responseDelayForBatch?.(payload) ?? responseDelayMs;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
         if (response.destroyed || response.writableEnded) return;
         const id = 'chatcmpl-translation-smoke';
         response.writeHead(200, {
@@ -182,6 +192,7 @@ test.describe('URL page translation', () => {
 
     await toggle.click();
     await languageSelect.selectOption('zh-Hans');
+    const initialTranslationStart = batches.length;
     await popover.getByRole('button', { name: 'Translate page' }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
     await expect.poll(() => guest<number>(webview, `
@@ -189,6 +200,10 @@ test.describe('URL page translation', () => {
     `)).toBeGreaterThan(0);
     await expect(toggle).toHaveClass(/is-starting/);
     await expect(toggle).toHaveAttribute('data-translation-completed', 'false');
+    await expect.poll(() => batches.length).toBeGreaterThanOrEqual(initialTranslationStart + 3);
+    expect(batches.slice(initialTranslationStart, initialTranslationStart + 3)
+      .map((batch) => batch.blocks.length)
+      .sort((left, right) => left - right)).toEqual([2, 4, 4]);
     const loaderMetrics = await guest<Array<{
       controlHeight: number;
       controlWidth: number;
@@ -218,7 +233,7 @@ test.describe('URL page translation', () => {
     `)).toBeGreaterThanOrEqual(2);
     await expect(toggle).toHaveAttribute('data-translation-completed', 'true');
     await expect(toggle.locator('svg')).toHaveCount(1);
-    expect(await guest<number>(webview, `
+    await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-status]').length
     `)).toBe(0);
 
@@ -314,7 +329,9 @@ test.describe('URL page translation', () => {
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
 
     const preemptionStart = batches.length;
-    responseDelayMs = 1_200;
+    responseDelayForBatch = (batch) => batch.blocks.some((block) => (
+      block.text === 'Far source paragraph.'
+    )) ? 1_200 : 250;
     await smoke.window.evaluate((url) => {
       window.dispatchEvent(new CustomEvent('lin:preview-target-open', {
         detail: {
@@ -338,6 +355,10 @@ test.describe('URL page translation', () => {
       batch.blocks.some((block) => block.text === 'Article heading')
     ))).toBe(true);
     expect(Date.now() - upwardScrollStartedAt).toBeLessThan(700);
+    await expect.poll(() => batches.slice(preemptionStart + 1).filter((batch) => (
+      batch.blocks.some((block) => block.text.startsWith('Visible source paragraph'))
+    )).length).toBeGreaterThanOrEqual(2);
+    expect(batches.slice(preemptionStart + 1).every((batch) => batch.blocks.length <= 4)).toBe(true);
     expect(await guest(webview, `
       document.querySelector('#far [data-tenon-bilingual-status]') === null
     `)).toBe(true);
@@ -347,7 +368,11 @@ test.describe('URL page translation', () => {
     expect(await guest(webview, `
       document.querySelector('#far [data-tenon-bilingual-translation="true"]')?.textContent ?? null
     `)).toBeNull();
-    responseDelayMs = 250;
+    await smoke.window.waitForTimeout(1_100);
+    expect(await guest(webview, `
+      document.querySelector('#far [data-tenon-bilingual-translation="true"]')?.textContent ?? null
+    `)).toBeNull();
+    responseDelayForBatch = null;
 
     await smoke.window.evaluate((url) => {
       window.dispatchEvent(new CustomEvent('lin:preview-target-open', {

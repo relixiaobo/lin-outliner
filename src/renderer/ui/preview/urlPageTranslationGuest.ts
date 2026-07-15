@@ -9,10 +9,8 @@ import {
 
 export const URL_PAGE_TRANSLATION_RUNTIME_KEY = '__tenonBilingualTranslationV1__';
 
-const URL_PAGE_TRANSLATION_VISIBLE_MAX_BLOCKS = 4;
-const URL_PAGE_TRANSLATION_VISIBLE_MAX_CHARS = 4_000;
-const URL_PAGE_TRANSLATION_PREFETCH_MAX_BLOCKS = 8;
-const URL_PAGE_TRANSLATION_PREFETCH_MAX_CHARS = 8_000;
+const URL_PAGE_TRANSLATION_DEFAULT_MAX_BLOCKS = 4;
+const URL_PAGE_TRANSLATION_DEFAULT_MAX_CHARS = 4_000;
 
 export const URL_PAGE_TRANSLATION_GUEST_CSS = `
 [data-tenon-bilingual-translation="true"] {
@@ -108,16 +106,29 @@ export interface UrlPageTranslationGuestLabels {
 }
 
 export interface UrlPageTranslationGuestBatch {
-  activePriority?: number | null;
   blocks: UrlPageTranslationBlock[];
+  preemptRequestId?: string | null;
   priority: number | null;
+}
+
+export interface UrlPageTranslationGuestActiveBatch {
+  ids: readonly string[];
+  requestId: string;
+}
+
+export interface UrlPageTranslationGuestBatchOptions {
+  activeBatches?: readonly UrlPageTranslationGuestActiveBatch[];
+  maxBlocks?: number;
+  maxChars?: number;
+  retryOnly?: boolean;
+  visibleOnly?: boolean;
 }
 
 export interface UrlPageTranslationGuestBridge {
   documentLanguage(): Promise<string | null>;
   initialize(targetLanguage: TranslationLanguage, labels: UrlPageTranslationGuestLabels): Promise<void>;
   setEnabled(enabled: boolean, targetLanguage: TranslationLanguage): Promise<void>;
-  nextBatch(retryOnly?: boolean, activeIds?: readonly string[]): Promise<UrlPageTranslationGuestBatch>;
+  nextBatch(options?: UrlPageTranslationGuestBatchOptions): Promise<UrlPageTranslationGuestBatch>;
   release(ids: readonly string[]): Promise<void>;
   apply(translations: readonly UrlPageTranslationItem[]): Promise<void>;
   fail(ids: readonly string[]): Promise<void>;
@@ -161,16 +172,15 @@ export function createUrlPageTranslationGuestBridge(
     async setEnabled(enabled, targetLanguage) {
       await execute('setEnabled', enabled, targetLanguage);
     },
-    async nextBatch(retryOnly = false, activeIds = []) {
+    async nextBatch(options = {}) {
       const raw = await execute<unknown>(
         'nextBatch',
-        URL_PAGE_TRANSLATION_VISIBLE_MAX_BLOCKS,
-        URL_PAGE_TRANSLATION_VISIBLE_MAX_CHARS,
-        URL_PAGE_TRANSLATION_PREFETCH_MAX_BLOCKS,
-        URL_PAGE_TRANSLATION_PREFETCH_MAX_CHARS,
+        options.maxBlocks ?? URL_PAGE_TRANSLATION_DEFAULT_MAX_BLOCKS,
+        options.maxChars ?? URL_PAGE_TRANSLATION_DEFAULT_MAX_CHARS,
         URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS,
-        retryOnly,
-        activeIds,
+        options.retryOnly ?? false,
+        options.visibleOnly ?? false,
+        options.activeBatches ?? [],
       );
       return validatedGuestBatch(raw);
     },
@@ -506,15 +516,14 @@ export function installUrlPageTranslationRuntime(
       dirty = true;
     },
     nextBatch(
-      visibleMaxBlocks: number,
-      visibleMaxChars: number,
-      prefetchMaxBlocks: number,
-      prefetchMaxChars: number,
+      maxBlocks: number,
+      maxChars: number,
       maxBlockChars: number,
       retryOnly = false,
-      activeIds: readonly string[] = [],
+      visibleOnly = false,
+      activeBatches: readonly { ids: readonly string[]; requestId: string }[] = [],
     ): UrlPageTranslationGuestBatch {
-      if (!enabled) return { activePriority: null, blocks: [], priority: null };
+      if (!enabled) return { blocks: [], preemptRequestId: null, priority: null };
       scanCount += 1;
       if (dirty || scanCount % 10 === 0) discover();
 
@@ -524,13 +533,20 @@ export function installUrlPageTranslationRuntime(
       lastScrollTop = scrollTop;
       const viewportHeight = Math.max(1, host.innerHeight);
 
-      let activePriority: number | null = null;
-      for (const id of activeIds) {
-        const record = records.get(id);
-        if (!record?.element.isConnected) continue;
-        const priority = priorityForRect(record.element.getBoundingClientRect(), viewportHeight);
-        if (priority === null) continue;
-        activePriority = activePriority === null ? priority : Math.min(activePriority, priority);
+      let preemptRequestId: string | null = null;
+      for (const activeBatch of activeBatches) {
+        let activePriority: number | null = null;
+        for (const id of activeBatch.ids) {
+          const record = records.get(id);
+          if (!record?.element.isConnected) continue;
+          const priority = priorityForRect(record.element.getBoundingClientRect(), viewportHeight);
+          if (priority === null) continue;
+          activePriority = activePriority === null ? priority : Math.min(activePriority, priority);
+        }
+        if (activePriority !== 0) {
+          preemptRequestId = activeBatch.requestId;
+          break;
+        }
       }
 
       let pending = [...records.values()]
@@ -548,14 +564,12 @@ export function installUrlPageTranslationRuntime(
         .filter((entry): entry is typeof entry & { priority: number } => entry.priority !== null)
         .sort((left, right) => left.priority - right.priority || left.distance - right.distance);
 
-      if (activeIds.length > 0) {
-        if (activePriority === 0) return { activePriority, blocks: [], priority: null };
+      if (activeBatches.length > 0) {
+        if (!preemptRequestId) return { blocks: [], preemptRequestId: null, priority: null };
+        pending = pending.filter((entry) => entry.priority === 0);
+      } else if (visibleOnly) {
         pending = pending.filter((entry) => entry.priority === 0);
       }
-
-      const candidatePriority = pending[0]?.priority ?? null;
-      const maxBlocks = candidatePriority === 0 ? visibleMaxBlocks : prefetchMaxBlocks;
-      const maxChars = candidatePriority === 0 ? visibleMaxChars : prefetchMaxChars;
 
       const blocks: UrlPageTranslationBlock[] = [];
       const selected: RecordEntry[] = [];
@@ -577,7 +591,7 @@ export function installUrlPageTranslationRuntime(
           for (const record of selected) showStatus(record, 'loading');
         });
       }
-      return { activePriority, blocks, priority: firstPriority };
+      return { blocks, preemptRequestId, priority: firstPriority };
     },
     release(ids: readonly string[]): void {
       withStableAnchor(() => {
@@ -645,7 +659,7 @@ export function installUrlPageTranslationRuntime(
 
 function validatedGuestBatch(value: unknown): UrlPageTranslationGuestBatch {
   if (!isRecord(value) || !Array.isArray(value.blocks)) {
-    return { activePriority: null, blocks: [], priority: null };
+    return { blocks: [], preemptRequestId: null, priority: null };
   }
   const blocks: UrlPageTranslationBlock[] = [];
   const ids = new Set<string>();
@@ -665,10 +679,11 @@ function validatedGuestBatch(value: unknown): UrlPageTranslationGuestBatch {
   const priority = typeof value.priority === 'number' && Number.isInteger(value.priority)
     ? value.priority
     : null;
-  const activePriority = typeof value.activePriority === 'number' && Number.isInteger(value.activePriority)
-    ? value.activePriority
+  const preemptRequestId = typeof value.preemptRequestId === 'string'
+    && /^[A-Za-z0-9:_-]{1,96}$/.test(value.preemptRequestId)
+    ? value.preemptRequestId
     : null;
-  return { activePriority, blocks, priority };
+  return { blocks, preemptRequestId, priority };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

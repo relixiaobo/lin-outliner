@@ -8,6 +8,7 @@ import {
 } from '../../src/renderer/ui/preview/urlPageTranslationController';
 import type {
   UrlPageTranslationGuestBatch,
+  UrlPageTranslationGuestBatchOptions,
   UrlPageTranslationGuestBridge,
 } from '../../src/renderer/ui/preview/urlPageTranslationGuest';
 
@@ -116,6 +117,137 @@ describe('UrlPageTranslationController', () => {
     expect(controller.currentStatus).toBe('on');
     expect(controller.hasCompletedTranslations).toBe(true);
     expect(statuses).toEqual(['starting', 'on']);
+    controller.destroy();
+  });
+
+  test('starts three bounded visible batches and applies whichever response finishes first', async () => {
+    const guest = new FakeGuest([
+      {
+        blocks: [
+          { id: 'b1', text: 'Heading' },
+          { id: 'b2', text: 'Introduction' },
+        ],
+        priority: 0,
+      },
+      {
+        blocks: [
+          { id: 'b3', text: 'Paragraph 3' },
+          { id: 'b4', text: 'Paragraph 4' },
+          { id: 'b5', text: 'Paragraph 5' },
+          { id: 'b6', text: 'Paragraph 6' },
+        ],
+        priority: 0,
+      },
+      {
+        blocks: [
+          { id: 'b7', text: 'Paragraph 7' },
+          { id: 'b8', text: 'Paragraph 8' },
+          { id: 'b9', text: 'Paragraph 9' },
+          { id: 'b10', text: 'Paragraph 10' },
+        ],
+        priority: 0,
+      },
+    ]);
+    const requests: UrlPageTranslationRequest[] = [];
+    const resolveRequests: Array<(response: UrlPageTranslationResponse) => void> = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        return await new Promise<UrlPageTranslationResponse>((resolve) => {
+          resolveRequests.push(resolve);
+        });
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => requests.length === 3);
+
+    expect(requests.map((request) => request.blocks.length)).toEqual([2, 4, 4]);
+    expect(new Set(requests.map((request) => request.sessionId)).size).toBe(3);
+    expect(guest.nextBatchCalls.slice(0, 3).map((call) => ({
+      maxBlocks: call.maxBlocks,
+      maxChars: call.maxChars,
+      visibleOnly: call.visibleOnly,
+    }))).toEqual([
+      { maxBlocks: 2, maxChars: 2_000, visibleOnly: true },
+      { maxBlocks: 4, maxChars: 4_000, visibleOnly: false },
+      { maxBlocks: 4, maxChars: 4_000, visibleOnly: false },
+    ]);
+
+    const second = requests[1]!;
+    resolveRequests[1]?.({
+      ok: true,
+      requestId: second.requestId,
+      translations: second.blocks.map((block) => ({
+        id: block.id,
+        translation: `ZH: ${block.text}`,
+      })),
+    });
+    await waitFor(() => guest.applied.length === 1);
+    expect(guest.applied[0]?.map((translation) => translation.id)).toEqual(['b3', 'b4', 'b5', 'b6']);
+    expect(controller.currentStatus).toBe('on');
+
+    for (const index of [0, 2]) {
+      const request = requests[index]!;
+      resolveRequests[index]?.({
+        ok: true,
+        requestId: request.requestId,
+        translations: request.blocks.map((block) => ({
+          id: block.id,
+          translation: `ZH: ${block.text}`,
+        })),
+      });
+    }
+    await waitFor(() => guest.applied.length === 3);
+    controller.destroy();
+  });
+
+  test('reports one failure wave when concurrent batches fail together', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'First' }], priority: 0 },
+      { blocks: [{ id: 'b2', text: 'Second' }], priority: 0 },
+      { blocks: [{ id: 'b3', text: 'Third' }], priority: 0 },
+    ]);
+    const errors: string[] = [];
+    const requests: UrlPageTranslationRequest[] = [];
+    const resolveRequests: Array<(response: UrlPageTranslationResponse) => void> = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onError: (error) => errors.push(error),
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        return await new Promise<UrlPageTranslationResponse>((resolve) => {
+          resolveRequests.push(resolve);
+        });
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => requests.length === 3);
+    for (const [index, request] of requests.entries()) {
+      resolveRequests[index]?.({
+        ok: false,
+        requestId: request.requestId,
+        error: 'provider-error',
+      });
+    }
+    await waitFor(() => guest.failed.length === 3);
+
+    expect(errors).toEqual(['provider-error']);
+    expect(guest.failed).toEqual([['b1'], ['b2'], ['b3']]);
+    expect(controller.currentStatus).toBe('error');
     controller.destroy();
   });
 
@@ -307,7 +439,6 @@ describe('UrlPageTranslationController', () => {
   test('cancels, clears, and restarts the visible work when the translation model changes', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'First' }], priority: 0 },
-      { blocks: [{ id: 'b2', text: 'Second' }], priority: 0 },
     ]);
     const models: Array<string | undefined> = [];
     const sessions: string[] = [];
@@ -316,6 +447,7 @@ describe('UrlPageTranslationController', () => {
     const controller = new UrlPageTranslationController(fakeWebview(), {
       targetLanguage: 'zh-Hans',
       guest,
+      maxConcurrentRequests: 1,
       onError: () => undefined,
       onStatusChange: () => undefined,
       cancel: async (sessionId) => {
@@ -340,6 +472,7 @@ describe('UrlPageTranslationController', () => {
     controller.enable();
     dispatch(controller, 'dom-ready');
     await waitFor(() => models.length === 1);
+    guest.queueBatch({ blocks: [{ id: 'b2', text: 'Second' }], priority: 0 });
     controller.setTranslationModel('openai/gpt-4.1-mini');
     await waitFor(() => models.length === 2);
 
@@ -354,18 +487,26 @@ describe('UrlPageTranslationController', () => {
   test('preempts an offscreen request when a new visible batch appears', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'Old prefetch' }], priority: 1 },
-      { blocks: [{ id: 'b2', text: 'Now visible' }], priority: 0 },
+      (options) => ({
+        blocks: [{ id: 'b2', text: 'Now visible' }],
+        preemptRequestId: options.activeBatches?.[0]?.requestId ?? null,
+        priority: 0,
+      }),
     ]);
     const errors: string[] = [];
     const requests: UrlPageTranslationRequest[] = [];
+    const cancelled: string[] = [];
     let resolveFirst: ((response: UrlPageTranslationResponse) => void) | null = null;
     const controller = new UrlPageTranslationController(fakeWebview(), {
       targetLanguage: 'zh-Hans',
       guest,
+      maxConcurrentRequests: 1,
       pollIntervalMs: 5,
       onError: (error) => errors.push(error),
       onStatusChange: () => undefined,
-      cancel: async () => undefined,
+      cancel: async (sessionId) => {
+        cancelled.push(sessionId);
+      },
       translate: async (request) => {
         requests.push(request);
         if (requests.length === 1) {
@@ -386,9 +527,13 @@ describe('UrlPageTranslationController', () => {
     await waitFor(() => guest.applied.length === 1);
 
     expect(requests.map((request) => request.blocks[0]?.id)).toEqual(['b1', 'b2']);
-    expect(requests[1]?.sessionId).toBe(requests[0]?.sessionId);
+    expect(requests[1]?.sessionId).not.toBe(requests[0]?.sessionId);
+    expect(cancelled).toContain(requests[0]!.sessionId);
     expect(guest.released).toEqual([['b1']]);
-    expect(guest.nextBatchActiveIds).toContainEqual(['b1']);
+    expect(guest.nextBatchActiveBatches).toContainEqual([{
+      ids: ['b1'],
+      requestId: requests[0]!.requestId,
+    }]);
     expect(guest.applied).toEqual([[{ id: 'b2', translation: 'Visible translation' }]]);
     expect(errors).toEqual([]);
 
@@ -431,13 +576,14 @@ describe('UrlPageTranslationController', () => {
 
     controller.enable();
     dispatch(controller, 'dom-ready');
-    await waitFor(() => guest.nextBatchCalls.length >= 2);
+    await waitFor(() => guest.nextBatchCalls.some((call) => call.retryOnly));
 
     expect(errors).toEqual(['not-configured']);
     expect(controller.currentStatus).toBe('error');
     expect(controller.hasCompletedTranslations).toBe(false);
     expect(guest.failed).toEqual([['b1']]);
-    expect(guest.nextBatchCalls.slice(1).every(Boolean)).toBe(true);
+    const firstRetryCall = guest.nextBatchCalls.findIndex((call) => call.retryOnly);
+    expect(guest.nextBatchCalls.slice(firstRetryCall).every((call) => call.retryOnly)).toBe(true);
     expect(guest.enabledCalls).toEqual([[true, 'zh-Hans']]);
 
     configured = true;
@@ -488,12 +634,14 @@ describe('UrlPageTranslationController', () => {
     controller.destroy();
   });
 
-  test('hides guest translations and cancels the active session when disabled', async () => {
+  test('hides guest translations and cancels every active session when disabled', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
+      { blocks: [{ id: 'b2', text: 'World' }], priority: 0 },
+      { blocks: [{ id: 'b3', text: 'Again' }], priority: 0 },
     ]);
-    let resolveResponse: ((response: UrlPageTranslationResponse) => void) | null = null;
-    let activeRequestId = '';
+    const requests: UrlPageTranslationRequest[] = [];
+    const resolveResponses: Array<(response: UrlPageTranslationResponse) => void> = [];
     const cancelled: string[] = [];
     const controller = new UrlPageTranslationController(fakeWebview(), {
       targetLanguage: 'zh-Hans',
@@ -504,22 +652,24 @@ describe('UrlPageTranslationController', () => {
         cancelled.push(sessionId);
       },
       translate: async (request) => {
-        activeRequestId = request.requestId;
+        requests.push(request);
         return await new Promise<UrlPageTranslationResponse>((resolve) => {
-          resolveResponse = resolve;
+          resolveResponses.push(resolve);
         });
       },
     });
 
     controller.enable();
     dispatch(controller, 'dom-ready');
-    await waitFor(() => Boolean(resolveResponse));
+    await waitFor(() => requests.length === 3);
     controller.disable();
-    resolveResponse?.({ ok: false, requestId: activeRequestId, error: 'cancelled' });
+    for (const [index, request] of requests.entries()) {
+      resolveResponses[index]?.({ ok: false, requestId: request.requestId, error: 'cancelled' });
+    }
     await Promise.resolve();
 
     expect(controller.currentStatus).toBe('off');
-    expect(cancelled).toHaveLength(1);
+    expect(new Set(cancelled)).toEqual(new Set(requests.map((request) => request.sessionId)));
     expect(guest.enabledCalls.at(-1)).toEqual([false, 'zh-Hans']);
     controller.destroy();
   });
@@ -689,12 +839,15 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
   destroyed = 0;
   enabledCalls: Array<[boolean, TranslationLanguage]> = [];
   failed: string[][] = [];
-  nextBatchActiveIds: string[][] = [];
-  nextBatchCalls: boolean[] = [];
+  nextBatchActiveBatches: Array<Array<{ ids: string[]; requestId: string }>> = [];
+  nextBatchCalls: UrlPageTranslationGuestBatchOptions[] = [];
   released: string[][] = [];
 
   constructor(
-    private readonly batches: UrlPageTranslationGuestBatch[],
+    private readonly batches: Array<
+      | UrlPageTranslationGuestBatch
+      | ((options: UrlPageTranslationGuestBatchOptions) => UrlPageTranslationGuestBatch)
+    >,
     public declaredLanguage: string | null = 'en',
   ) {}
 
@@ -713,13 +866,17 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
     this.enabledCalls.push([enabled, targetLanguage]);
   }
 
-  async nextBatch(
-    retryOnly = false,
-    activeIds: readonly string[] = [],
-  ): Promise<UrlPageTranslationGuestBatch> {
-    this.nextBatchCalls.push(retryOnly);
-    this.nextBatchActiveIds.push([...activeIds]);
-    return this.batches.shift() ?? { blocks: [], priority: null };
+  async nextBatch(options: UrlPageTranslationGuestBatchOptions = {}): Promise<UrlPageTranslationGuestBatch> {
+    const activeBatches = (options.activeBatches ?? []).map((batch) => ({
+      ids: [...batch.ids],
+      requestId: batch.requestId,
+    }));
+    this.nextBatchCalls.push({ ...options, activeBatches });
+    this.nextBatchActiveBatches.push(activeBatches);
+    const batch = this.batches.shift();
+    return typeof batch === 'function'
+      ? batch(options)
+      : batch ?? { blocks: [], priority: null };
   }
 
   async release(ids: readonly string[]): Promise<void> {
