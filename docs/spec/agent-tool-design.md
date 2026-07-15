@@ -1264,13 +1264,20 @@ Rules:
   parentheses. Canonical serialization escapes destination backslashes and
   parentheses, so `node_read` output reused by `node_create`, `node_edit`, or
   `duplicate_id` preserves the complete href.
+- Explicit links cannot nest. When malformed outer link source contains a valid
+  inner link, the scanner materializes the inner link and keeps the enclosing
+  label and destination syntax literal instead of recursively creating
+  overlapping links.
 - Markdown link labels use the same canonical semantic escapes as ordinary
   text. Parsing decodes escaped punctuation such as `\#`, `\*`, and `\\` back
   to its visible label without leaking serializer backslashes into node text.
 - Inline code pairs opening and closing backtick runs only when their lengths
   match on the same line. Backslashes inside code remain literal; empty or
-  unclosed spans remain literal source. Serialization chooses a delimiter longer
-  than every backtick run in the marked text.
+  unclosed spans remain literal source. An escaped backtick adjacent to an
+  opening delimiter remains a separate literal character. Serialization chooses
+  a delimiter longer than every backtick run in each emitted code segment and
+  uses reversible CommonMark-style inner space padding when segment content
+  starts or ends with a backtick or needs its own surrounding spaces preserved.
 - Overlapping Markdown marks remain overlapping rich-text marks. Canonical
   serialization orders equal and nested ranges as properly nested delimiters.
   At crossing boundaries it selects a legal nesting order, closes ending marks,

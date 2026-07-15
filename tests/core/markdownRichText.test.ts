@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../../src/core/markdownRichText';
-import type { TextMark, TextMarkKind } from '../../src/core/types';
+import type { RichText, TextMark, TextMarkKind } from '../../src/core/types';
 
 describe('markdown rich text outline bridge', () => {
   test('parses inline markdown marks while preserving node reference markers', () => {
@@ -129,6 +129,50 @@ describe('markdown rich text outline bridge', () => {
     const serialized = richTextToMarkdownReferenceMarkup(content);
     expect(serialized).toBe('``code ` tick``');
     expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
+
+  test('round-trips escaped backticks adjacent to canonical code spans', () => {
+    const marker = '[[node:Alpha^node-alpha]]';
+    const cases: RichText[] = [
+      { text: '`a', marks: [{ start: 1, end: 2, type: 'code' }], inlineRefs: [] },
+      { text: 'a`', marks: [{ start: 0, end: 1, type: 'code' }], inlineRefs: [] },
+      { text: '`a', marks: [{ start: 0, end: 2, type: 'code' }], inlineRefs: [] },
+      { text: 'a`', marks: [{ start: 0, end: 2, type: 'code' }], inlineRefs: [] },
+      { text: '`a`', marks: [{ start: 0, end: 3, type: 'code' }], inlineRefs: [] },
+      { text: '``', marks: [{ start: 0, end: 2, type: 'code' }], inlineRefs: [] },
+      { text: ' ` ', marks: [{ start: 0, end: 3, type: 'code' }], inlineRefs: [] },
+      { text: '   ', marks: [{ start: 0, end: 3, type: 'code' }], inlineRefs: [] },
+      {
+        text: '`abcdefgh`',
+        marks: [
+          { start: 0, end: 8, type: 'code' },
+          { start: 2, end: 10, type: 'bold' },
+        ],
+        inlineRefs: [],
+      },
+      {
+        text: '`abcdefgh`',
+        marks: [
+          { start: 0, end: 10, type: 'code' },
+          { start: 2, end: 8, type: 'highlight' },
+        ],
+        inlineRefs: [],
+      },
+      {
+        text: `\`${marker}`,
+        marks: [{ start: 1, end: marker.length + 1, type: 'code' }],
+        inlineRefs: [],
+      },
+    ];
+
+    const failures = cases.flatMap((content) => {
+      const serialized = richTextToMarkdownReferenceMarkup(content);
+      const parsed = markdownReferenceMarkupToRichText(serialized);
+      return JSON.stringify(parsed) === JSON.stringify(content)
+        ? []
+        : [{ content, serialized, parsed }];
+    });
+    expect(failures).toEqual([]);
   });
 
   test('materializes bare URLs as link marks without double-linking protected ranges', () => {

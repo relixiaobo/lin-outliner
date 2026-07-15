@@ -220,6 +220,14 @@ describe('semantic inline scanner', () => {
     ).content.text).toBe(nestedInvalidLinks);
     const invalidLinkElapsedMs = performance.now() - startedAt;
 
+    const escapedBacktickRuns = '\\``x'.repeat(16_000);
+    startedAt = performance.now();
+    expect(scanMarkdownInline(
+      escapedBacktickRuns,
+      { metadata: 'none', linkifyBareUrls: false, references: false },
+    ).content.text).toBe('``x'.repeat(16_000));
+    const escapedBacktickElapsedMs = performance.now() - startedAt;
+
     const longUrl = `https://example.com/${'a'.repeat(16_000)}${')'.repeat(16_000)}`;
     startedAt = performance.now();
     const scannedUrl = scanMarkdownInline(
@@ -236,7 +244,38 @@ describe('semantic inline scanner', () => {
     }]);
     expect(bracketElapsedMs).toBeLessThan(1_000);
     expect(invalidLinkElapsedMs).toBeLessThan(1_000);
+    expect(escapedBacktickElapsedMs).toBeLessThan(1_000);
     expect(urlElapsedMs).toBeLessThan(1_000);
+  });
+
+  test('keeps nested Markdown links recoverable without recursive parsing', () => {
+    const nested = scanMarkdownInline(
+      '[outer [inner](https://i.test) tail](https://o.test)',
+      { metadata: 'none', linkifyBareUrls: false, references: false },
+    ).content;
+    expect(nested).toEqual({
+      text: '[outer inner tail](https://o.test)',
+      marks: [{ start: 7, end: 12, type: 'link', attrs: { href: 'https://i.test' } }],
+      inlineRefs: [],
+    });
+
+    const depth = 2_000;
+    const prefix = '[x '.repeat(depth);
+    const suffix = '](o)'.repeat(depth);
+    const source = `${prefix}[inner](i)${suffix}`;
+    const startedAt = performance.now();
+    const parsed = scanMarkdownInline(
+      source,
+      { metadata: 'none', linkifyBareUrls: false, references: false },
+    ).content;
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(parsed).toEqual({
+      text: `${prefix}inner${suffix}`,
+      marks: [{ start: prefix.length, end: prefix.length + 5, type: 'link', attrs: { href: 'i' } }],
+      inlineRefs: [],
+    });
+    expect(elapsedMs).toBeLessThan(1_000);
   });
 
   test('materializes rich-text references while preserving existing refs and protected marks', () => {

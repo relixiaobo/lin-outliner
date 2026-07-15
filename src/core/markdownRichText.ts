@@ -41,10 +41,10 @@ export function richTextToMarkdownReferenceMarkup(
     skippedRanges,
     content.text.length,
   )).flatMap((mark) => {
-    const delimiters = markDelimiters(mark, content.text);
-    return delimiters ? [{ mark, delimiters }] : [];
+    const delimiters = markDelimiters(mark, content.text, mark.start, mark.end);
+    return delimiters ? [{ mark }] : [];
   });
-  addMarkdownMarkTransitions(serializableMarks, add);
+  addMarkdownMarkTransitions(serializableMarks, content.text, add);
   const codeRanges = content.marks
     .filter((mark) => mark.type === 'code')
     .map((mark) => ({ start: mark.start, end: mark.end }));
@@ -137,11 +137,23 @@ function marksOutsideSkippedRanges(
 
 interface SerializableMarkdownMark {
   mark: TextMark;
-  delimiters: { open: string; close: string };
+}
+
+interface SerializableMarkdownSegment {
+  end: number;
+  entry: SerializableMarkdownMark;
+  start: number;
+}
+
+interface MarkdownMarkTransition {
+  closing: SerializableMarkdownSegment[];
+  offset: number;
+  opening: SerializableMarkdownSegment[];
 }
 
 function addMarkdownMarkTransitions(
   entries: readonly SerializableMarkdownMark[],
+  text: string,
   add: (offset: number, text: string, order: number) => void,
 ): void {
   const starting = new Map<number, SerializableMarkdownMark[]>();
@@ -152,6 +164,9 @@ function addMarkdownMarkTransitions(
   }
   const boundaries = [...new Set([...starting.keys(), ...ending.keys()])].sort((left, right) => left - right);
   const active = new Set<SerializableMarkdownMark>();
+  const activeSegments = new Map<SerializableMarkdownMark, SerializableMarkdownSegment>();
+  const transitions: MarkdownMarkTransition[] = [];
+  // Segment ends must be known before code delimiters and padding can be emitted.
   let current: SerializableMarkdownMark[] = [];
   for (const offset of boundaries) {
     for (const entry of ending.get(offset) ?? []) active.delete(entry);
@@ -160,19 +175,33 @@ function addMarkdownMarkTransitions(
     let shared = 0;
     while (shared < current.length && current[shared] === target[shared]) shared += 1;
 
-    const closing = current
-      .slice(shared)
-      .reverse()
-      .map((entry) => entry.delimiters.close)
-      .join('');
-    if (closing) add(offset, closing, -1_000);
-
-    const opening = target
-      .slice(shared)
-      .map((entry) => entry.delimiters.open)
-      .join('');
-    if (opening) add(offset, opening, 1_000);
+    const closing: SerializableMarkdownSegment[] = [];
+    for (const entry of current.slice(shared).reverse()) {
+      const segment = activeSegments.get(entry);
+      if (!segment) continue;
+      segment.end = offset;
+      activeSegments.delete(entry);
+      closing.push(segment);
+    }
+    const opening = target.slice(shared).map((entry) => {
+      const segment = { entry, start: offset, end: offset };
+      activeSegments.set(entry, segment);
+      return segment;
+    });
+    transitions.push({ offset, closing, opening });
     current = target;
+  }
+
+  for (const transition of transitions) {
+    const closing = transition.closing.map((segment) => (
+      markDelimiters(segment.entry.mark, text, segment.start, segment.end)?.close ?? ''
+    )).join('');
+    if (closing) add(transition.offset, closing, -1_000);
+
+    const opening = transition.opening.map((segment) => (
+      markDelimiters(segment.entry.mark, text, segment.start, segment.end)?.open ?? ''
+    )).join('');
+    if (opening) add(transition.offset, opening, 1_000);
   }
 }
 
@@ -205,20 +234,34 @@ function subtractRange(
   return next;
 }
 
-function markDelimiters(mark: TextMark, text: string): { open: string; close: string } | null {
+function markDelimiters(
+  mark: TextMark,
+  text: string,
+  start: number,
+  end: number,
+): { open: string; close: string } | null {
   if (mark.type === 'bold') return { open: '**', close: '**' };
   if (mark.type === 'italic') return { open: '*', close: '*' };
   if (mark.type === 'strike') return { open: '~~', close: '~~' };
   if (mark.type === 'highlight') return { open: '==', close: '==' };
   if (mark.type === 'code') {
-    const delimiter = '`'.repeat(longestBacktickRun(text, mark.start, mark.end) + 1);
-    return { open: delimiter, close: delimiter };
+    const delimiter = '`'.repeat(longestBacktickRun(text, start, end) + 1);
+    const segment = text.slice(clampTextOffset(start, text.length), clampTextOffset(end, text.length));
+    const needsPadding = segment.startsWith('`')
+      || segment.endsWith('`')
+      || (segment.startsWith(' ') && segment.endsWith(' ') && /[^ ]/u.test(segment));
+    const padding = needsPadding ? ' ' : '';
+    return { open: `${delimiter}${padding}`, close: `${padding}${delimiter}` };
   }
   if (mark.type === 'link') {
     const href = typeof mark.attrs?.href === 'string' ? mark.attrs.href : '';
     return href ? { open: '[', close: `](${escapeMarkdownLinkDestination(href)})` } : null;
   }
   return null;
+}
+
+function clampTextOffset(offset: number, length: number): number {
+  return Math.min(Math.max(0, Math.trunc(offset)), length);
 }
 
 function longestBacktickRun(text: string, start: number, end: number): number {

@@ -119,7 +119,7 @@ export function parseCanonicalMarkdown(
       const codeSpan = lexemes.codeSpans.get(index);
       if (codeSpan) {
         const markStart = text.length;
-        text += input.slice(codeSpan.contentStart, codeSpan.contentEnd);
+        text += parseMarkdownCodeSpanContent(input.slice(codeSpan.contentStart, codeSpan.contentEnd));
         if (text.length > markStart) {
           states = states.map((state) => ({
             ...state,
@@ -313,11 +313,11 @@ function scanMarkdownCodeSpans(
   input: string,
   escaped: Uint8Array,
 ): Map<number, MarkdownCodeSpan> {
-  const nextRunWithLength = new Map<number, { end: number; start: number }>();
-  const previousRunByLength = new Map<number, { end: number; start: number }>();
+  const spans = new Map<number, MarkdownCodeSpan>();
+  const pendingByLength = new Map<number, Array<{ contentStart: number; start: number }>>();
   for (let index = 0; index < input.length;) {
     if (input[index] === '\n') {
-      previousRunByLength.clear();
+      pendingByLength.clear();
       index += 1;
       continue;
     }
@@ -327,34 +327,39 @@ function scanMarkdownCodeSpans(
     }
     let end = index + 1;
     while (input[end] === '`') end += 1;
-    const run = { start: index, end };
-    const previous = previousRunByLength.get(end - index);
-    if (previous) nextRunWithLength.set(previous.start, run);
-    previousRunByLength.set(end - index, run);
+    const physicalLength = end - index;
+    // Inside code, escapes are literal so the whole physical run may close;
+    // outside code, only the suffix after an escaped first tick may open.
+    for (const opening of pendingByLength.get(physicalLength) ?? []) {
+      if (opening.contentStart >= index) continue;
+      spans.set(opening.start, {
+        contentStart: opening.contentStart,
+        contentEnd: index,
+        end,
+      });
+    }
+    pendingByLength.delete(physicalLength);
+
+    const openingStart = index + (escaped[index] !== 0 ? 1 : 0);
+    const openingLength = end - openingStart;
+    if (openingLength > 0) {
+      const pending = pendingByLength.get(openingLength);
+      if (pending) pending.push({ start: openingStart, contentStart: end });
+      else pendingByLength.set(openingLength, [{ start: openingStart, contentStart: end }]);
+    }
     index = end;
   }
-
-  const spans = new Map<number, MarkdownCodeSpan>();
-  for (let index = 0; index < input.length;) {
-    if (input[index] !== '`') {
-      index += 1;
-      continue;
-    }
-    let openingEnd = index + 1;
-    while (input[openingEnd] === '`') openingEnd += 1;
-    const closing = nextRunWithLength.get(index);
-    if (escaped[index] === 0 && closing && openingEnd < closing.start) {
-      spans.set(index, {
-        contentStart: openingEnd,
-        contentEnd: closing.start,
-        end: closing.end,
-      });
-      index = closing.end;
-      continue;
-    }
-    index = openingEnd;
-  }
   return spans;
+}
+
+function parseMarkdownCodeSpanContent(raw: string): string {
+  if (
+    raw.length >= 2
+    && raw.startsWith(' ')
+    && raw.endsWith(' ')
+    && /[^ ]/u.test(raw)
+  ) return raw.slice(1, -1);
+  return raw;
 }
 
 function scanMarkdownLinks(
@@ -366,7 +371,7 @@ function scanMarkdownLinks(
   const linkIndex = buildMarkdownLinkIndex(input, escaped, codeSpans);
   const parenthesisPairs = scanParenthesisPairs(input, escaped, codeSpans, linkIndex);
   const links = new Map<number, MarkdownLinkMatch>();
-  const labelStack: number[] = [];
+  const labelStack: Array<{ containsLink: boolean; start: number }> = [];
   for (let index = 0; index < input.length;) {
     const codeSpan = codeSpans.get(index);
     if (codeSpan) {
@@ -379,7 +384,7 @@ function scanMarkdownLinks(
       continue;
     }
     if (char === '[') {
-      labelStack.push(index);
+      labelStack.push({ start: index, containsLink: false });
       index += 1;
       continue;
     }
@@ -387,10 +392,12 @@ function scanMarkdownLinks(
       index += 1;
       continue;
     }
-    const labelStart = labelStack.pop();
+    const label = labelStack.pop();
+    const parentLabel = labelStack[labelStack.length - 1];
+    if (label?.containsLink && parentLabel) parentLabel.containsLink = true;
     const destinationStart = index + 1;
     const destinationEnd = parenthesisPairs.get(destinationStart);
-    if (labelStart === undefined || destinationEnd === undefined) {
+    if (!label || destinationEnd === undefined) {
       index += 1;
       continue;
     }
@@ -401,12 +408,13 @@ function scanMarkdownLinks(
       linkIndex,
       parenthesisPairs,
     );
-    if (href !== null) {
-      links.set(labelStart, {
+    if (href !== null && !label.containsLink) {
+      links.set(label.start, {
         end: destinationEnd + 1,
         href,
-        label: input.slice(labelStart + 1, index),
+        label: input.slice(label.start + 1, index),
       });
+      if (parentLabel) parentLabel.containsLink = true;
       index = destinationEnd + 1;
       continue;
     }
