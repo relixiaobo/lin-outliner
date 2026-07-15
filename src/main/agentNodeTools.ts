@@ -129,7 +129,6 @@ import type {
   OutlinerToolHost,
   ProjectionIndex,
 } from './agentNodeToolTypes';
-import { parseReferenceMarkers, splitFileReferenceMarkers } from '../core/referenceMarkup';
 import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
 import { isPathInside } from './agentAttachmentMaterialization';
 import {
@@ -3899,8 +3898,8 @@ function collectNodeLocalFileReferencePaths(node: OutlineNode, paths: string[]) 
 
 function collectTextLocalFileReferencePaths(text: string, paths: string[]) {
   if (!text.includes('[[file:')) return;
-  for (const segment of splitFileReferenceMarkers(text)) {
-    if (segment.type === 'file') paths.push(segment.path);
+  for (const ref of markdownReferenceMarkupToRichText(text).inlineRefs) {
+    if (ref.target.kind === 'local-file') paths.push(ref.target.path);
   }
 }
 
@@ -4003,7 +4002,7 @@ function collectFieldReferenceTargets(field: OutlineField, targets: ReferenceTar
 
 function collectTextReferenceTargets(text: string, targets: ReferenceTarget[]) {
   if (!text.includes('[[')) return;
-  for (const marker of parseReferenceMarkers(text)) targets.push(marker.target);
+  for (const ref of markdownReferenceMarkupToRichText(text).inlineRefs) targets.push(ref.target);
 }
 
 function focusFromOutcome(outcome: unknown): string {
@@ -4015,17 +4014,9 @@ function focusFromOutcome(outcome: unknown): string {
 }
 
 function richTextFromOutlineText(text: string): RichText {
-  return text.includes('[[') || hasMarkdownInlineSyntax(text)
-    ? markdownReferenceMarkupToRichText(text)
-    : plainText(text);
+  return markdownReferenceMarkupToRichText(text);
 }
 
 function richTextOutlineText(content: RichText): string {
-  return content.inlineRefs.length > 0 || content.marks.length > 0
-    ? richTextToMarkdownReferenceMarkup(content)
-    : content.text;
-}
-
-function hasMarkdownInlineSyntax(text: string): boolean {
-  return /\[[^\]\n]+\]\([^)]+\)|\*\*[^*\n]+\*\*|~~[^~\n]+~~|==[^=\n]+==|\*[^*\n]+\*|`[^`\n]+`/u.test(text);
+  return richTextToMarkdownReferenceMarkup(content);
 }

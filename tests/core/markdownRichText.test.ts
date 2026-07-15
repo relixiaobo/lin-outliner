@@ -68,4 +68,58 @@ describe('markdown rich text outline bridge', () => {
       }],
     })).toBe(`**See **${marker}** today**`);
   });
+
+  test('round-trips grammar-significant literal text without creating semantics', () => {
+    const content = {
+      text: String.raw`Literal #tag Status:: value [x] %%search%% **stars** [[node:fake^id]] C:\path https://example.com www.example.com`,
+      marks: [],
+      inlineRefs: [],
+    };
+
+    const serialized = richTextToMarkdownReferenceMarkup(content);
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
+
+  test('round-trips protected code text without interpreting its grammar or URLs', () => {
+    const text = String.raw`#tag Status:: https://example.com C:\path`;
+    const content = {
+      text,
+      marks: [{ start: 0, end: text.length, type: 'code' as const }],
+      inlineRefs: [],
+    };
+
+    const serialized = richTextToMarkdownReferenceMarkup(content);
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
+
+  test('materializes bare URLs as link marks without double-linking protected ranges', () => {
+    expect(markdownReferenceMarkupToRichText(
+      'Visit https://example.com/docs, [site](https://linked.example), and `https://code.example`.',
+    )).toEqual({
+      text: 'Visit https://example.com/docs, site, and https://code.example.',
+      marks: [
+        { start: 6, end: 30, type: 'link', attrs: { href: 'https://example.com/docs' } },
+        { start: 32, end: 36, type: 'link', attrs: { href: 'https://linked.example' } },
+        { start: 42, end: 62, type: 'code' },
+      ],
+      inlineRefs: [],
+    });
+  });
+
+  test('keeps explicit bare-URL link serialization readable and reversible', () => {
+    const content = {
+      text: 'https://example.com',
+      marks: [{
+        start: 0,
+        end: 19,
+        type: 'link' as const,
+        attrs: { href: 'https://example.com' },
+      }],
+      inlineRefs: [],
+    };
+
+    const serialized = richTextToMarkdownReferenceMarkup(content);
+    expect(serialized).toBe('[https://example.com](https://example.com)');
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
 });

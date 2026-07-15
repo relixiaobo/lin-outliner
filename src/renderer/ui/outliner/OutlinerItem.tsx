@@ -690,7 +690,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       const trees: CreateNodeTree[] = [];
       const firstHasBody = payload.content.text.trim().length > 0
         || payload.content.inlineRefs.length > 0
-        || payload.children.length > 0;
+        || payload.children.length > 0
+        || (payload.firstMeta?.tags?.length ?? 0) > 0
+        || (payload.firstMeta?.fields?.length ?? 0) > 0
+        || payload.firstMeta?.checkbox === true;
       if (firstHasBody) {
         trees.push({
           content: payload.content,

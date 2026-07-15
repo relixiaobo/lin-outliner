@@ -16,6 +16,7 @@ import {
   tagLabels,
 } from './agentNodeToolProjection';
 import { searchQueryOutlineLines, searchViewModeOf } from './agentNodeToolSearch';
+import { escapeSemanticText } from '../core/semanticIngest/inlineScanner';
 import type {
   ChildrenPage,
   NodeChildSummary,
@@ -189,7 +190,7 @@ function serializeAnnotatedOutlineNode(
   const lines = [`${indent}- ${nodeMarker(nodeId)}${outlineNodeText(index, node)}`];
   for (const field of fieldReads(index, node, includeDeleted)) {
     const fieldIndent = '  '.repeat(level + 1);
-    lines.push(`${fieldIndent}- ${nodeMarker(field.fieldEntryId)}${field.name}::`);
+    lines.push(`${fieldIndent}- ${nodeMarker(field.fieldEntryId)}${escapeSemanticText(field.name)}::`);
     for (const value of field.values) {
       const marker = value.valueNodeId ? nodeMarker(value.valueNodeId) : '';
       lines.push(`${fieldIndent}  - ${marker}${value.text}`);
@@ -244,11 +245,11 @@ function serializeOutlineNode(
   for (const field of fieldReads(index, node, includeDeleted)) {
     const fieldIndent = '  '.repeat(level + 1);
     if (field.values.length === 0) {
-      lines.push(`${fieldIndent}- ${field.name}::`);
+      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name)}::`);
     } else if (field.values.length === 1) {
-      lines.push(`${fieldIndent}- ${field.name}:: ${field.values[0]!.text}`);
+      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name)}:: ${field.values[0]!.text}`);
     } else {
-      lines.push(`${fieldIndent}- ${field.name}::`);
+      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name)}::`);
       for (const value of field.values) lines.push(`${fieldIndent}  - ${value.text}`);
     }
   }
@@ -274,7 +275,7 @@ function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
   if (nodeIsDone(node)) parts.push('[x]');
   else if (nodeShowsCheckbox(index.nodes, node)) parts.push('[ ]');
   parts.push((referenceText(index, node) ?? nodeContentText(node)) || '(untitled)');
-  if (node.description) parts.push(`- ${node.description}`);
+  if (node.description) parts.push(`- ${escapeSemanticText(node.description)}`);
   parts.push(...tagLabels(index, node));
   return parts.join(' ').trim();
 }

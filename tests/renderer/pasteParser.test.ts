@@ -219,7 +219,14 @@ describe('parseMarkdownBlocks', () => {
 
   test('leaves code/URL colons and mid-word hashes alone', () => {
     expect(parseMarkdownBlocks('run std::cout then visit http://x.com for C#9')).toEqual([
-      { content: { text: 'run std::cout then visit http://x.com for C#9', marks: [], inlineRefs: [] }, children: [] },
+      {
+        content: {
+          text: 'run std::cout then visit http://x.com for C#9',
+          marks: [{ start: 25, end: 37, type: 'link', attrs: { href: 'http://x.com' } }],
+          inlineRefs: [],
+        },
+        children: [],
+      },
     ]);
   });
 
@@ -290,6 +297,7 @@ describe('detectSingleLineUrl', () => {
 
   test('rejects ambiguous or multi-token text', () => {
     expect(detectSingleLineUrl('example.com')).toBeNull();
+    expect(detectSingleLineUrl('www.example')).toBeNull();
     expect(detectSingleLineUrl('see https://x.com now')).toBeNull();
     expect(detectSingleLineUrl('hello')).toBeNull();
   });
@@ -301,5 +309,14 @@ describe('isPlainSingleParagraph', () => {
     expect(isPlainSingleParagraph(parseOutlinerPaste('**bold**'))).toBe(false);
     expect(isPlainSingleParagraph(parseOutlinerPaste('line one\nline two'))).toBe(false);
     expect(isPlainSingleParagraph(parseOutlinerPaste('```\ncode\n```'))).toBe(false);
+  });
+
+  test('is false for a single row carrying only semantic metadata', () => {
+    expect(parseOutlinerPaste('#work')).toEqual([
+      { content: { text: '', marks: [], inlineRefs: [] }, children: [], tags: ['work'] },
+    ]);
+    expect(isPlainSingleParagraph(parseOutlinerPaste('#work'))).toBe(false);
+    expect(isPlainSingleParagraph(parseOutlinerPaste('status:: done'))).toBe(false);
+    expect(isPlainSingleParagraph(parseOutlinerPaste('[x]'))).toBe(false);
   });
 });

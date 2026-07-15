@@ -1154,6 +1154,52 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(ids.schema, tagId);
       return outcome({ nodeId: tagId, selectAll: false });
     };
+    const applyPasteMetadata = (
+      nodeId: string,
+      metadata: { tags?: string[]; fields?: Array<{ name: string; value: string }> },
+    ) => {
+      const owner = nodes.get(nodeId);
+      if (!owner) return;
+      for (const rawName of metadata.tags ?? []) {
+        const name = rawName.trim();
+        if (!name) continue;
+        const existing = [...nodes.values()].find((node) => (
+          node.type === 'tagDef' && node.content.text.trim().toLowerCase() === name.toLowerCase()
+        ));
+        const tagId = existing?.id ?? createTag(name).focus?.nodeId;
+        if (tagId && !owner.tags.includes(tagId)) owner.tags.push(tagId);
+      }
+      for (const field of metadata.fields ?? []) {
+        const name = field.name.trim();
+        const value = field.value.trim();
+        if (!name || !value) continue;
+        let fieldDef = [...nodes.values()].find((node) => (
+          node.type === 'fieldDef' && node.content.text.trim().toLowerCase() === name.toLowerCase()
+        ));
+        if (!fieldDef) {
+          const fieldDefId = `field-def-${++sequence}`;
+          makeNode(fieldDefId, name, { type: 'fieldDef', fieldType: 'plain', parentId: ids.schema, nullable: true });
+          appendChild(ids.schema, fieldDefId);
+          fieldDef = nodes.get(fieldDefId);
+        }
+        if (!fieldDef) continue;
+        let entry = owner.children
+          .map((childId) => nodes.get(childId))
+          .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldDef.id);
+        if (!entry) {
+          const entryId = `field-entry-${++sequence}`;
+          makeNode(entryId, '', {
+            type: 'fieldEntry',
+            parentId: nodeId,
+            fieldDefId: fieldDef.id,
+            fieldType: fieldDef.fieldType ?? 'plain',
+          });
+          appendChild(nodeId, entryId);
+          entry = nodes.get(entryId);
+        }
+        if (entry) createNode(entry.id, null, value);
+      }
+    };
     const createTree = (parentId: string, tree: CreateNodeTree[], index: number | null = null) => {
       let lastId: string | null = null;
       tree.forEach((item, offset) => {
@@ -1171,6 +1217,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           // (0 = unchecked checkbox, a timestamp = checked).
           if (item.checkbox) node.completedAt = item.done ? ++now : 0;
         }
+        applyPasteMetadata(nodeId, item);
         if (item.children.length > 0) createTree(nodeId, item.children);
         lastId = nodeId;
       });
@@ -2632,8 +2679,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           // Mirror core: the merged first row adopts the pasted checkbox state
           // only when the renderer forwarded it (it suppresses checkbox/done for a
           // non-empty target row so an existing line isn't silently checked).
-          const firstMeta = (args.firstMeta ?? {}) as { checkbox?: boolean; done?: boolean };
+          const firstMeta = (args.firstMeta ?? {}) as {
+            checkbox?: boolean;
+            done?: boolean;
+            tags?: string[];
+            fields?: Array<{ name: string; value: string }>;
+          };
           if (firstMeta.checkbox) node.completedAt = firstMeta.done ? ++now : 0;
+          applyPasteMetadata(nodeId, firstMeta);
           createTree(nodeId, args.children as CreateNodeTree[]);
           const parent = nodes.get(node.parentId);
           const index = parent ? parent.children.indexOf(nodeId) + 1 : null;

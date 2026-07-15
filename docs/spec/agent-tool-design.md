@@ -1253,6 +1253,13 @@ Rules:
 - Markdown inline delimiters in ordinary node text create rich-text marks:
   `**bold**`, `*italic*`, `~~strike~~`, `==highlight==`, inline `` `code` ``,
   and `[label](https://example.com)`.
+- Bare `http://`, `https://`, and `www.` URLs in ordinary node text become link
+  marks. `www.` hrefs normalize to `https://`; trailing sentence punctuation and
+  unmatched closing delimiters remain outside the link. Link clicks still use the
+  existing safe external-navigation path and do not expand its scheme allowlist.
+- Complete Markdown links, inline code, reference markers, bare URLs, and
+  backslash-escaped tokens are protected from tag and field harvesting. A
+  grammar-shaped token in one of those ranges remains literal.
 - `- title - description` sets a node description. The first ` - ` separates
   title from description; later ` - ` text stays in the description.
 - Ordinary notes, task details, meeting notes, and explanatory body text should
@@ -1345,6 +1352,10 @@ Rules:
 - `node_create` materializes supported inline Markdown marks and code fences.
   `node_read` serializes those marks and code blocks back to the same outline
   form so later agent turns can preserve them.
+- `node_read` backslash-escapes grammar-significant literal text, including tag,
+  field, checkbox, search/view, annotation, reference, Markdown-mark, and
+  description-separator shapes. `node_create` and `node_edit` decode those
+  escapes, so read-then-write does not accidentally create semantics.
 
 Runtime compatibility:
 

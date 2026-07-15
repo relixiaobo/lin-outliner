@@ -103,6 +103,35 @@ test.describe('paste format support', () => {
     await expect.poll(() => siblingTextsAfter(page, ids.alpha, 2)).toEqual(['one', 'two']);
   });
 
+  test('harvests HTML metadata while protecting anchor content and link offsets', async ({ page }) => {
+    await selectEditorContents(page, ids.alpha);
+    await pasteRich(page, {
+      plain: 'See #linked then #work status:: done',
+      html: '<p>See <a href="https://example.com">#linked</a> then #work status:: done</p>',
+    });
+
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.text).toBe('See #linked then');
+    const alpha = await nodeById(page, ids.alpha);
+    expect(alpha?.content.marks).toEqual([
+      { start: 4, end: 11, type: 'link', attrs: { href: 'https://example.com' } },
+    ]);
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const byId = new Map(projection.nodes.map((node) => [node.id, node]));
+      const owner = byId.get(ids.alpha);
+      const tags = (owner?.tags ?? []).map((id) => byId.get(id)?.content.text).filter(Boolean);
+      const fields = (owner?.children ?? []).flatMap((id) => {
+        const entry = byId.get(id);
+        if (entry?.type !== 'fieldEntry' || !entry.fieldDefId) return [];
+        return [{
+          name: byId.get(entry.fieldDefId)?.content.text,
+          values: entry.children.map((valueId) => byId.get(valueId)?.content.text),
+        }];
+      });
+      return { tags, fields };
+    }).toEqual({ tags: ['work'], fields: [{ name: 'Status', values: ['done'] }] });
+  });
+
   test('splits a <br>-separated block into one row per line', async ({ page }) => {
     await selectEditorContents(page, ids.alpha);
     // Gmail / Apple Notes / many contenteditable sources wrap soft line breaks

@@ -79,6 +79,40 @@ describe('agent outline parser', () => {
     });
   });
 
+  test('keeps escaped control syntax literal and search operand tags as values', () => {
+    const parsed = parseLinOutline([
+      String.raw`- Literal \#tag Status\:: value \[x] \%%search%%`,
+      '- STRING_MATCH',
+      '  - value:: #project',
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots[0]).toMatchObject({
+      title: String.raw`Literal \#tag Status\:: value \[x] \%%search%%`,
+      tags: [],
+      search: false,
+    });
+    expect(parsed.document.roots[1]?.fields[0]?.values).toEqual([{ text: '#project' }]);
+  });
+
+  test('decodes canonical escapes in descriptions and field names', () => {
+    const parsed = parseLinOutline([
+      String.raw`- Title - Literal \#tag \%\%search\%\%`,
+      String.raw`  - Status\:\: label:: Open`,
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots[0]?.description).toBe('Literal #tag %%search%%');
+    expect(parsed.document.roots[0]?.tags).toEqual([]);
+    expect(parsed.document.roots[0]?.search).toBe(false);
+    expect(parsed.document.roots[0]?.fields[0]).toMatchObject({
+      name: 'Status:: label',
+      values: [{ text: 'Open' }],
+    });
+  });
+
   test('requires checkbox markers to be separated from body text', () => {
     const parsed = parseLinOutline([
       '- [x] shipped',

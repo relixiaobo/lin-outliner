@@ -7,6 +7,10 @@ import {
   type ParsedPasteNode,
 } from '../../../core/markdownPaste';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
+import {
+  scanMarkdownInline,
+  scanRichTextInline,
+} from '../../../core/semanticIngest/inlineScanner';
 export {
   applyHeadingMark,
   parseInlineMarkdown,
@@ -234,7 +238,28 @@ function htmlToTrees(html: string): CreateNodeTree[] {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const roots: CreateNodeTree[] = [];
   walkBlocks(doc.body, roots);
-  return roots;
+  return roots.map(applyHtmlSemantics);
+}
+
+function applyHtmlSemantics(tree: CreateNodeTree): CreateNodeTree {
+  const children = tree.children.map(applyHtmlSemantics);
+  if (tree.type === 'codeBlock') return { ...tree, children };
+  const scanned = scanRichTextInline(tree.content, {
+    metadata: 'tags-and-fields',
+    linkifyBareUrls: true,
+  });
+  const tags = [...(tree.tags ?? []), ...scanned.tags.map((tag) => tag.name)];
+  const fields = [
+    ...(tree.fields ?? []),
+    ...scanned.fields.map((field) => ({ name: field.name, value: field.value })),
+  ];
+  return {
+    ...tree,
+    content: scanned.content,
+    children,
+    ...(tags.length > 0 ? { tags: [...new Set(tags)] } : {}),
+    ...(fields.length > 0 ? { fields } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +292,13 @@ function looksLikeStrongMarkdown(text: string): boolean {
 }
 
 function treeHasContent(node: CreateNodeTree): boolean {
-  return node.content.text.trim().length > 0 || node.children.length > 0 || node.checkbox === true;
+  return node.content.text.trim().length > 0
+    || node.content.inlineRefs.length > 0
+    || node.children.length > 0
+    || (node.tags?.length ?? 0) > 0
+    || (node.fields?.length ?? 0) > 0
+    || node.checkbox === true
+    || node.type !== undefined;
 }
 
 export function parseClipboardPaste(plain: string, html?: string | null): CreateNodeTree[] {
@@ -296,7 +327,11 @@ export function isPlainSingleParagraph(trees: CreateNodeTree[]): boolean {
     trees.length === 1 &&
     trees[0].children.length === 0 &&
     trees[0].type === undefined &&
-    trees[0].content.marks.length === 0
+    trees[0].content.marks.length === 0 &&
+    trees[0].content.inlineRefs.length === 0 &&
+    (trees[0].tags?.length ?? 0) === 0 &&
+    (trees[0].fields?.length ?? 0) === 0 &&
+    trees[0].checkbox !== true
   );
 }
 
@@ -304,7 +339,14 @@ export function isPlainSingleParagraph(trees: CreateNodeTree[]): boolean {
 export function detectSingleLineUrl(text: string): string | null {
   const trimmed = text.trim();
   if (!trimmed || /\s/u.test(trimmed)) return null;
-  if (/^https?:\/\/\S+$/iu.test(trimmed)) return trimmed;
-  if (/^www\.[^\s.]+\.[^\s]+$/iu.test(trimmed)) return `https://${trimmed}`;
-  return null;
+  const scanned = scanMarkdownInline(trimmed, {
+    metadata: 'none',
+    linkifyBareUrls: true,
+    references: false,
+  });
+  const link = scanned.content.marks.length === 1 && scanned.content.marks[0]?.type === 'link'
+    ? scanned.content.marks[0]
+    : null;
+  if (!link || link.start !== 0 || link.end !== scanned.content.text.length || scanned.content.text !== trimmed) return null;
+  return typeof link.attrs?.href === 'string' ? link.attrs.href : null;
 }

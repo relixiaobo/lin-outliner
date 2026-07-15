@@ -1090,6 +1090,85 @@ describe('agent node tools', () => {
     expect(result.contentText).toContain('Ship **bold** *italic* ~~old~~ ==hot== `code` [site](https://example.com)');
   });
 
+  test('node_create materializes bare URLs as clickable rich-text links', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+
+    const result = await executeRawTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- Read https://example.com/docs, then `https://code.example`.',
+    });
+
+    expect(result.details.ok).toBe(true);
+    const nodeId = result.details.data!.createdRootIds[0]!;
+    expect(core.state().nodes[nodeId]!.content).toEqual({
+      text: 'Read https://example.com/docs, then https://code.example.',
+      marks: [
+        { start: 5, end: 29, type: 'link', attrs: { href: 'https://example.com/docs' } },
+        { start: 36, end: 56, type: 'code' },
+      ],
+      inlineRefs: [],
+    });
+  });
+
+  test('node_read emits reversible literal syntax across title description and fields', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const rootText = 'Literal #tag https://example.com';
+    const root = mustFocus(core.createNode(today, null, rootText));
+    core.updateNodeDescription(root, 'Keep #detail %%search%%');
+    const fieldEntry = mustFocus(core.createInlineField(root, null, 'Status:: label', 'plain'));
+    mustFocus(core.createNode(fieldEntry, null, 'www.example.com'));
+
+    const read = await executeTool<{ items: Array<{ outline?: string; revision: string }> }>(core, 'node_read', {
+      node_id: root,
+      depth: 0,
+    });
+    const outline = read.data!.items[0]!.outline!;
+    expect(outline).toContain(String.raw`Literal \#tag https\://example.com - Keep \#detail \%\%search\%\%`);
+    expect(outline).toContain(String.raw`Status\:\: label:: www\.example.com`);
+
+    const edited = await executeTool(core, 'node_edit', {
+      node_id: root,
+      old_string: '*',
+      new_string: outline,
+      expected_revision: read.data!.items[0]!.revision,
+    });
+    expect(edited.ok).toBe(true);
+    expect(core.state().nodes[root]!.content).toEqual({ text: rootText, marks: [], inlineRefs: [] });
+    expect(core.state().nodes[root]!.description).toBe('Keep #detail %%search%%');
+    expect(core.state().nodes[core.state().nodes[fieldEntry]!.fieldDefId!]!.content.text).toBe('Status:: label');
+    expect(core.state().nodes[fieldEntry]!.children.map((id) => core.state().nodes[id]!.content)).toEqual([
+      { text: 'www.example.com', marks: [], inlineRefs: [] },
+    ]);
+  });
+
+  test('saved-search operands keep tag annotation and URL-shaped text literal', async () => {
+    const core = Core.new();
+    const literal = '#project %%node:literal%% https://example.com';
+    const outline = String.raw`- %%search%% Literal query
+  - STRING_MATCH
+    - value:: \#project \%\%node:literal\%\% https\://example.com`;
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: core.projection().searchesId,
+      outline,
+    });
+
+    expect(created.ok).toBe(true);
+    const searchId = created.data!.createdRootIds[0]!;
+    const read = await executeTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', {
+      node_id: searchId,
+      depth: 1,
+    });
+    expect(read.data!.items[0]!.outline).toContain(`value:: ${String.raw`\#project \%\%node:literal\%\% https\://example.com`}`);
+    const search = core.state().nodes[searchId]!;
+    const queryText = search.children
+      .map((id) => core.state().nodes[id]!)
+      .find((node) => node.type === 'queryCondition')
+      ?.content.text;
+    expect(queryText).toContain(literal);
+  });
+
   test('node_create materializes fenced outline entries as code block rows', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

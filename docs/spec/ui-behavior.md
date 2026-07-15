@@ -437,11 +437,13 @@ row; the rest become siblings/children. Behavior parity target is nodex
 | Fenced ```` ``` ```` / `~~~` block | Becomes a code-block row with detected language. |
 | Inline Markdown (`**bold**`, `*italic*`, `~~strike~~`, `[label](url)`) | Converted to the corresponding marks. |
 | Single-line bare URL with a text selection | Wraps the selection as a link. |
+| Bare `http://`, `https://`, or `www.` URL in ordinary pasted text | Becomes a link mark on the URL only. `www.` hrefs normalize to `https://`; sentence punctuation and unmatched closing delimiters stay outside the link. Existing HTML anchors and inline code remain authoritative protected ranges. |
 | GFM task line `- [ ]` / `- [x]` | Becomes a checkbox row (`completedAt` sentinel: `undefined` none, `0` unchecked, timestamp checked) when the marker is alone or followed by whitespace; `[x]title` stays literal text. Merging a task line into an existing **non-empty** row never flips it to checked — only a genuinely empty target row adopts the pasted checkbox state. |
 | `#tag` on a Markdown/plain line | Harvested and applied; unknown tags are auto-created (find-or-create), reusing same-named defs. Guard: start/whitespace before the shared tag token. Bare tags accept Unicode letters/numbers, `_`, and `-`; `[[#tag]]` / `#[[tag]]` are accepted; bracket names accept raw backslashes, and serializers escape `]`, backslash, and newline-style characters as `\]`, `\\`, `\n`, `\r`, and `\t`; bare CSS hex colors such as `#fff` and `#112233` are left literal. |
 | `name:: value` on a Markdown/plain line | Harvested as a field; unknown fields auto-created as `plain`, existing `options` fields smart-select the option. Guard: a double colon **followed by whitespace** (`name:: value`), so `std::cout`, `http://…`, `foo::bar` never match. Field values stop before the next field or shared tag token; bare CSS hex colors do not terminate the field. |
-| `#tag` / `name::` inside a link label, URL, or `` `code` `` span | Left literal — link/code spans are masked out of the metadata scan (so `See [the #section](url)` keeps its label). |
-| Metadata on the HTML paste path | Not harvested — `#tag` / `field::` extraction is scoped to the plain-text / Markdown path; HTML pastes still convert structure. |
+| `#tag` / `name::` inside a link label, URL, `` `code` `` span, reference marker, or backslash-escaped token | Left literal. Protected ranges are excluded before metadata extraction, and removing surrounding metadata remaps marks and inline-reference offsets. |
+| Metadata on the HTML paste path | Harvested through the same scanner as plain text after DOM structure and marks are converted. Existing `<a>` and `<code>` ranges stay literal; metadata outside those ranges is applied to the row. |
+| Single-line or metadata-only semantic paste | Uses structured paste whenever parsing adds a link, tag, field, checkbox, reference, node type, or other semantic state. A metadata-only row can update the target row or materialize at a pristine trailing position; only a truly literal unmarked line delegates to native paste. |
 
 ## Leading Control Matrix
 

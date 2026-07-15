@@ -1,50 +1,16 @@
-import { parseInlineMarkdown } from './markdownPaste';
 import {
   formatChatSourceReferenceMarker,
   formatFileReferenceMarker,
   formatNodeReferenceMarker,
-  parseReferenceMarkers,
 } from './referenceMarkup';
 import type { ReferenceTarget, RichText, TextMark } from './types';
+import {
+  escapeSemanticTextChar,
+  parseMarkdownReferenceRichText,
+} from './semanticIngest/inlineScanner';
 
 export function markdownReferenceMarkupToRichText(rawText: string): RichText {
-  const parsed = parseInlineMarkdown(rawText);
-  const markers = parseReferenceMarkers(parsed.text);
-  if (markers.length === 0) return parsed;
-
-  const inlineRefs: RichText['inlineRefs'] = [];
-  let text = '';
-  let cursor = 0;
-  const ranges: Array<{ oldStart: number; oldEnd: number; newStart: number }> = [];
-  for (const marker of markers) {
-    text += parsed.text.slice(cursor, marker.start);
-    const displayName = marker.label || referenceDisplayFallback(marker.target);
-    const newStart = text.length;
-    inlineRefs.push({
-      offset: newStart,
-      target: marker.target,
-      ...(displayName ? { displayName } : {}),
-    });
-    ranges.push({
-      oldStart: marker.start,
-      oldEnd: marker.end,
-      newStart,
-    });
-    cursor = marker.end;
-  }
-  text += parsed.text.slice(cursor);
-
-  return {
-    text,
-    marks: parsed.marks
-      .map((mark) => ({
-        ...mark,
-        start: mapReferenceStrippedOffset(mark.start, ranges),
-        end: mapReferenceStrippedOffset(mark.end, ranges),
-      }))
-      .filter((mark) => mark.end > mark.start),
-    inlineRefs,
-  };
+  return parseMarkdownReferenceRichText(rawText);
 }
 
 export function richTextToMarkdownReferenceMarkup(content: RichText): string {
@@ -71,6 +37,12 @@ export function richTextToMarkdownReferenceMarkup(content: RichText): string {
     add(mark.start, delimiters.open, 20);
     add(mark.end, delimiters.close, -20);
   }
+  const codeRanges = content.marks
+    .filter((mark) => mark.type === 'code')
+    .map((mark) => ({ start: mark.start, end: mark.end }));
+  const linkRanges = content.marks
+    .filter((mark) => mark.type === 'link')
+    .map((mark) => ({ start: mark.start, end: mark.end }));
 
   let out = '';
   for (let index = 0; index <= content.text.length; index += 1) {
@@ -85,24 +57,15 @@ export function richTextToMarkdownReferenceMarkup(content: RichText): string {
       index = skipped.end - 1;
       continue;
     }
-    if (index < content.text.length) out += content.text[index];
+    if (index < content.text.length) {
+      const insideCode = codeRanges.some((range) => index >= range.start && index < range.end);
+      const insideLink = linkRanges.some((range) => index >= range.start && index < range.end);
+      out += insideCode
+        ? content.text[index]
+        : escapeSemanticTextChar(content.text, index, { escapeBareUrls: !insideLink });
+    }
   }
   return out;
-}
-
-function mapReferenceStrippedOffset(
-  offset: number,
-  ranges: ReadonlyArray<{ oldStart: number; oldEnd: number; newStart: number }>,
-): number {
-  let delta = 0;
-  for (const range of ranges) {
-    if (offset < range.oldStart) break;
-    if (offset <= range.oldEnd) {
-      return range.newStart;
-    }
-    delta -= range.oldEnd - range.oldStart;
-  }
-  return offset + delta;
 }
 
 function referenceDisplayFallback(target: ReferenceTarget): string {
