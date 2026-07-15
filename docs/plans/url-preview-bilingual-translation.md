@@ -209,9 +209,10 @@ compensate the webview with instant scrolling immediately and over two bounded
 animation frames. Injected translation and status nodes stay out of native
 scroll-anchor selection, so native and manual correction do not compete. This
 keeps the source sentence stationary when a site requests smooth scrolling and
-when cached translations are hidden or shown. Wheel, touch, and scroll-key input
-invalidate deferred frame corrections so a late layout check never reverses the
-reader's own scroll.
+when cached translations are hidden or shown. Wheel, touch, scroll-key input, and
+viewport scroll events that do not match Tenon's own instant compensation
+invalidate deferred frame corrections, including native scrollbar drags, so a
+late layout check never reverses the reader's own scroll.
 
 Each translation is one inert block immediately after its source. It inherits
 the page's font and current text color, uses a quiet opacity and modest block

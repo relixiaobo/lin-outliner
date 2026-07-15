@@ -267,27 +267,38 @@ export function installUrlPageTranslationRuntime(
 
   const records = new Map<string, RecordEntry>();
   const elementIds = new WeakMap<HTMLElement, string>();
+  const readScrollTop = () => doc.scrollingElement?.scrollTop ?? host.scrollY;
   let nextId = 1;
   let enabled = false;
   let dirty = true;
   let scanCount = 0;
-  let lastScrollTop = doc.scrollingElement?.scrollTop ?? host.scrollY;
+  let lastScrollTop = readScrollTop();
   let direction: 'down' | 'neutral' | 'up' = 'neutral';
   let targetLanguage = initialTargetLanguage;
   let anchorRevision = 0;
+  let applyingAnchorScroll = false;
+  let expectedAnchorScrollTop: number | null = null;
   let runtimeActive = true;
   const scrollKeys = new Set([' ', 'ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp']);
 
   const invalidateDeferredAnchorCorrection = (): void => {
+    expectedAnchorScrollTop = null;
     anchorRevision += 1;
   };
   const invalidateDeferredAnchorCorrectionForKey = (event: KeyboardEvent): void => {
     if (scrollKeys.has(event.key)) invalidateDeferredAnchorCorrection();
   };
+  const handleViewportScroll = (): void => {
+    if (applyingAnchorScroll) return;
+    const scrollTop = readScrollTop();
+    if (expectedAnchorScrollTop !== null && Math.abs(scrollTop - expectedAnchorScrollTop) <= 1) return;
+    invalidateDeferredAnchorCorrection();
+  };
   host.addEventListener('wheel', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
   host.addEventListener('touchstart', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
   host.addEventListener('touchmove', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
   host.addEventListener('keydown', invalidateDeferredAnchorCorrectionForKey, { capture: true });
+  host.addEventListener('scroll', handleViewportScroll, { capture: true, passive: true });
 
   const normalizeText = (value: string) => value.replace(/\s+/g, ' ').trim();
   const hasReadableText = (value: string) => /[\p{L}\p{N}]/u.test(value);
@@ -457,9 +468,19 @@ export function installUrlPageTranslationRuntime(
     if (!runtimeActive || revision !== anchorRevision || !anchor.element.isConnected) return;
     const delta = anchor.element.getBoundingClientRect().top - anchor.top;
     if (Math.abs(delta) > 0.5) {
-      host.scrollBy({ behavior: 'instant', left: 0, top: delta });
+      const scrollTopBefore = readScrollTop();
+      applyingAnchorScroll = true;
+      try {
+        host.scrollBy({ behavior: 'instant', left: 0, top: delta });
+      } finally {
+        applyingAnchorScroll = false;
+      }
+      const scrollTopAfter = readScrollTop();
+      expectedAnchorScrollTop = Math.abs(scrollTopAfter - scrollTopBefore) > 0.5
+        ? scrollTopAfter
+        : null;
     }
-    lastScrollTop = doc.scrollingElement?.scrollTop ?? host.scrollY;
+    lastScrollTop = readScrollTop();
   };
 
   const withStableAnchor = (mutate: () => void): void => {
@@ -564,7 +585,7 @@ export function installUrlPageTranslationRuntime(
       scanCount += 1;
       if (dirty || scanCount % 10 === 0) discover();
 
-      const scrollTop = doc.scrollingElement?.scrollTop ?? host.scrollY;
+      const scrollTop = readScrollTop();
       if (scrollTop > lastScrollTop + 2) direction = 'down';
       else if (scrollTop < lastScrollTop - 2) direction = 'up';
       lastScrollTop = scrollTop;
@@ -683,6 +704,7 @@ export function installUrlPageTranslationRuntime(
       host.removeEventListener('touchstart', invalidateDeferredAnchorCorrection, { capture: true });
       host.removeEventListener('touchmove', invalidateDeferredAnchorCorrection, { capture: true });
       host.removeEventListener('keydown', invalidateDeferredAnchorCorrectionForKey, { capture: true });
+      host.removeEventListener('scroll', handleViewportScroll, { capture: true });
       anchorRevision += 1;
       withStableAnchor(() => {
         for (const record of records.values()) {

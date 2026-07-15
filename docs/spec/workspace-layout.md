@@ -469,8 +469,10 @@ element's normalized text changes, it receives a fresh block id; responses,
 failures, and releases from the previous text snapshot can no longer affect it.
 DOM insertion, hide, and restore capture the
 first visible source block and compensate its post-write offset immediately and
-across two bounded animation frames. Wheel, touch, or keyboard scroll input
-invalidates any deferred compensation before it can undo the reader's movement.
+across two bounded animation frames. Wheel, touch, keyboard input, or any viewport
+scroll that does not match Tenon's own instant compensation (including a native
+scrollbar drag) invalidates deferred compensation before it can undo the reader's
+movement.
 Compensation stays instant on sites that
 request smooth scrolling, and injected nodes do not become browser scroll anchors,
 keeping the reader's current sentence stationary through translation growth or

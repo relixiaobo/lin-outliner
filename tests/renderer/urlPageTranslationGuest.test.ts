@@ -205,6 +205,7 @@ describe('URL page translation guest runtime', () => {
     expect(fixture.scrollDeltas).toEqual([30]);
     expect(fixture.scrollBehaviors).toEqual(['instant']);
 
+    fixture.dispatchScroll();
     fixture.shiftCurrentAnchor(12);
     fixture.flushAnimationFrame();
     expect(fixture.scrollDeltas).toEqual([30, 12]);
@@ -251,7 +252,7 @@ describe('URL page translation guest runtime', () => {
     expect(source.querySelector('[data-tenon-bilingual-status="loading"]')).not.toBeNull();
   });
 
-  test('does not undo user scrolling from a deferred anchor correction', () => {
+  test('does not undo scrollbar scrolling from a deferred anchor correction', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
     const block = nextBatch(fixture.runtime, { maxBlocks: 1 }).blocks[0];
@@ -259,9 +260,8 @@ describe('URL page translation guest runtime', () => {
     fixture.runtime.apply([{ id: block.id, translation: 'Translated above viewport' }]);
     expect(fixture.scrollDeltas).toEqual([30]);
 
-    const EventCtor = (fixture.window as unknown as { Event: typeof Event }).Event;
-    fixture.window.dispatchEvent(new EventCtor('wheel'));
     fixture.setScrollY(130);
+    fixture.dispatchScroll();
     fixture.flushAnimationFrame();
     fixture.flushAnimationFrame();
 
@@ -367,6 +367,7 @@ function cssRuleBody(css: string, selector: string): string {
 
 function createFixture(options: { serialized?: boolean } = {}): {
   document: Document;
+  dispatchScroll: () => void;
   flushAnimationFrame: () => void;
   runtime: GuestRuntime;
   scrollBehaviors: ScrollBehavior[];
@@ -457,8 +458,10 @@ function createFixture(options: { serialized?: boolean } = {}): {
     installUrlPageTranslationRuntime(testWindow, URL_PAGE_TRANSLATION_RUNTIME_KEY, 'zh-Hans', TEST_LABELS);
   }
   const runtime = testWindow[URL_PAGE_TRANSLATION_RUNTIME_KEY] as GuestRuntime;
+  const EventCtor = (testWindow as unknown as { Event: typeof Event }).Event;
   return {
     document,
+    dispatchScroll: () => testWindow.dispatchEvent(new EventCtor('scroll')),
     flushAnimationFrame,
     runtime,
     scrollBehaviors,
