@@ -542,12 +542,15 @@ that was actually prepared. While that revision remains current, it creates one
 terminal `error` Session, records error Activity, and queues the ordinary one-hop
 terminal delivery. A symbolic child definition whose concrete Daily Note or
 dynamic input exceeds the parent Session is atomically rechecked and uses this
-same path. The presence of that Session removes the concrete Issue from automatic
-eligibility, so the scheduler does not retry every minute. Preview remains
-non-mutating and reports the blockers without creating a Session. Retrying or
-continuing terminal work creates a new Agent Session through an explicit
-`agent_session_start` request after the same gates pass. Recurring Issue templates
-intentionally carry no absolute execution policy.
+same path. If a dynamic selector broadens during a request's non-mutating preview
+eligibility gate, the Store validates and atomically rechecks that preview
+snapshot before recording the failure; request-mode preparation does not run.
+The presence of that Session removes the concrete Issue from automatic
+eligibility, so the scheduler does not retry every minute. An actual preview
+request remains non-mutating and reports the blockers without creating a
+Session. Retrying or continuing terminal work creates a new Agent Session through
+an explicit `agent_session_start` request after the same gates pass. Recurring
+Issue templates intentionally carry no absolute execution policy.
 
 Issue verification uses the same Agent Session mechanism. `agent_session_start`
 accepts `purpose: "verify"` only when the Issue has

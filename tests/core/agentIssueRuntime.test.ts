@@ -5,8 +5,12 @@ import path from 'node:path';
 import { Core } from '../../src/core/core';
 import type { ActorRef } from '../../src/core/agentIssue';
 import { createAgentIssueToolRuntime, type AgentSessionExecutor } from '../../src/main/agentIssueRuntime';
-import { validateIssueNodeDefinition } from '../../src/main/agentIssueExecutionPreparation';
-import { AgentIssueStore } from '../../src/main/agentIssueStore';
+import {
+  prepareIssueExecution,
+  validateIssueNodeDefinition,
+} from '../../src/main/agentIssueExecutionPreparation';
+import { validateChildIssueNodeScope } from '../../src/main/agentIssueScopeAuthorization';
+import { AgentIssueStore, type ChildIssueScopeAuthorizer } from '../../src/main/agentIssueStore';
 
 const actor: ActorRef = { type: 'agent', agentId: 'built-in:tenon:assistant' };
 const rootOrigin = { type: 'conversation' as const, conversationId: 'conversation:runtime-test-origin' };
@@ -294,6 +298,114 @@ describe('agent issue tool runtime execution', () => {
           nodeId: 'node:outside-parent-scope',
         },
       });
+      expect((await store.listReadyIssuesForExecution(141)).map((issue) => issue.id)).not.toContain(child.id);
+    });
+  });
+
+  test('records a dynamically broadened tag-query scope blocker as one terminal Session', async () => {
+    await withStore(async (store) => {
+      const core = Core.new();
+      const allowedNodeId = mustFocus(core.createNode(
+        core.projection().todayId,
+        null,
+        'Allowed parent input',
+      ));
+      const tagId = mustFocus(core.createTag('dynamic-child-input'));
+      await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Dynamic scope parent',
+          noteNodeIds: [allowedNodeId],
+          output: { type: 'activity-only' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create the dynamic scope parent.',
+      }, actor, 100, { origin: rootOrigin });
+      const parent = (await store.search({ text: 'Dynamic scope parent' })).rows[0]!;
+      const parentStarted = await store.startSession({
+        issueId: parent.target.id,
+        expectedIssueRevision: parent.revision,
+        request: { mode: 'request' },
+        reason: 'Start the dynamic scope parent.',
+      }, { type: 'runtime-action', actor }, actor, 110);
+      const parentSessionId = parentStarted.targets.find((target) => target.type === 'agent-session')!.id;
+      await store.bindSessionExecution(parentSessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:dynamic-scope-parent',
+        executionId: 'execution:dynamic-scope-parent',
+        startedAt: 120,
+      }, actor, 120);
+      const authorizeChildScope: ChildIssueScopeAuthorizer = (parentSession, definition) => (
+        validateChildIssueNodeScope(parentSession, definition, core.projection())
+      );
+      const childCreated = await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Dynamic scope child',
+          input: { type: 'tag-query', tag: tagId },
+          output: { type: 'activity-only' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create child work while its dynamic input is empty.',
+      }, actor, 130, {
+        origin: { type: 'agent-session', agentSessionId: parentSessionId },
+        authorizeChildScope,
+      });
+      expect(childCreated.status).toBe('applied');
+      const childId = childCreated.targets.find((target) => target.type === 'issue')!.id;
+      const child = (await store.read({ target: { type: 'issue', id: childId } })).issue!;
+
+      const outsideNodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Outside parent scope'));
+      core.applyTag(outsideNodeId, tagId);
+      const preparationModes: Array<'preview' | 'request'> = [];
+      let deliveryNotifications = 0;
+      const runtime = createAgentIssueToolRuntime({
+        store,
+        actor,
+        origin: () => ({ type: 'agent-session', agentSessionId: parentSessionId }),
+        authorizeChildScope,
+        prepareExecution: (issue, now, mode) => {
+          preparationModes.push(mode);
+          return prepareIssueExecution(issue, core.projection(), now, { mode });
+        },
+        onIssueDeliveryQueued: () => {
+          deliveryNotifications += 1;
+        },
+        now: () => 140,
+      });
+
+      expect((await store.listReadyIssuesForExecution(139)).map((issue) => issue.id)).toContain(child.id);
+      const preview = await runtime.startSession({
+        issueId: child.id,
+        expectedIssueRevision: child.revision,
+        request: { mode: 'preview' },
+        reason: 'Preview the broadened dynamic input scope.',
+      });
+      expect(preview.status).toBe('blocked');
+      expect(preview.validation).toContainEqual(expect.objectContaining({ code: 'child_scope_broadened' }));
+      expect(Object.values((await store.state()).sessions)
+        .filter((session) => session.issueId === child.id)).toEqual([]);
+      expect(deliveryNotifications).toBe(0);
+
+      const result = await runtime.startSession({
+        issueId: child.id,
+        expectedIssueRevision: child.revision,
+        request: { mode: 'request' },
+        reason: 'Record the broadened dynamic input scope.',
+      });
+
+      expect(result.status).toBe('blocked');
+      expect(result.validation).toContainEqual(expect.objectContaining({ code: 'child_scope_broadened' }));
+      expect(preparationModes).toEqual(['preview', 'preview']);
+      const childSessions = Object.values((await store.state()).sessions)
+        .filter((session) => session.issueId === child.id);
+      expect(childSessions).toHaveLength(1);
+      expect(childSessions[0]).toMatchObject({
+        state: 'error',
+        inputSnapshot: { nodeIds: [outsideNodeId] },
+      });
+      expect(childSessions[0]?.errorMessage).toContain(outsideNodeId);
+      expect(deliveryNotifications).toBe(1);
       expect((await store.listReadyIssuesForExecution(141)).map((issue) => issue.id)).not.toContain(child.id);
     });
   });
@@ -1529,3 +1641,8 @@ describe('agent issue tool runtime execution', () => {
     });
   });
 });
+
+function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T): string {
+  if (!outcome.focus) throw new Error('Expected focused node id.');
+  return outcome.focus.nodeId;
+}

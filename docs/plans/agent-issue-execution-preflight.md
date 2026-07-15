@@ -133,7 +133,10 @@ loop, preserves the failed recurrence window, and queues the ordinary terminal
 delivery to the visible origin. The error names the selector or output anchor and
 the required remediation. If a symbolic child definition passes but its concrete
 prepared nodes exceed the parent Session, the Store atomically rechecks that
-scope failure and records the same terminal error Session.
+scope failure and records the same terminal error Session. A dynamic selector
+that broadens during the request's preview eligibility gate uses that preview
+snapshot for the atomic recheck and failure Session without running mutating
+request preparation first.
 
 Manual preview remains non-mutating. Manual request creates the same error
 Session when preparation reached the execution boundary but could not produce a
@@ -205,4 +208,6 @@ a trusted `replace-input` confirmation flow are separate product decisions.
 - Preview performs no document mutation.
 - Scheduler preparation failure creates one visible error Session and does not
   retry every minute.
+- A child tag query that gains a parent-scope-external match records one error
+  Session on request while an explicit preview remains non-persistent.
 - Typecheck, focused core tests, the full core suite, and `docs:check` pass.

@@ -27,6 +27,7 @@ import type {
 import type {
   IssueExecutionPreparationResult,
   IssueNodeDefinition,
+  PreparedIssueExecution,
 } from './agentIssueExecutionPreparation';
 
 export interface AgentIssueToolRuntimeOptions {
@@ -473,7 +474,19 @@ async function startSession(
       authorizeChildScope: options.authorizeChildScope,
       preparedExecution: previewExecution,
     });
-    if (eligibility.status !== 'preview') return eligibility;
+    if (eligibility.status !== 'preview') {
+      if (hasPreparedScopeFailure(eligibility)) {
+        return recordPreparedScopeFailure(
+          options,
+          input,
+          source,
+          previewExecution,
+          eligibility.validation ?? [],
+          now,
+        );
+      }
+      return eligibility;
+    }
   }
   const requestPreparation = currentIssue && options.prepareExecution
     ? await options.prepareExecution(currentIssue, now, 'request')
@@ -499,32 +512,51 @@ async function startSession(
     preparedExecution,
   });
   if (started.status !== 'applied') {
-    if (
-      preparedExecution
-      && started.status === 'blocked'
-      && started.validation?.some((message) => PREPARED_SCOPE_VALIDATION_CODES.has(message.code))
-    ) {
-      const failed = await options.store.recordSessionPreparationFailure(
+    if (preparedExecution && hasPreparedScopeFailure(started)) {
+      return recordPreparedScopeFailure(
+        options,
         input,
         source,
-        preparedExecution.issueRevision,
-        started.validation,
-        options.actor,
+        preparedExecution,
+        started.validation ?? [],
         now,
-        {
-          preparedExecution,
-          authorizeChildScope: options.authorizeChildScope,
-          requirePreparedScopeFailure: true,
-        },
       );
-      options.onIssueDeliveryQueued?.();
-      return failed;
     }
     return started;
   }
   const activated = await activateStartedSession(options, input, started, now);
   options.onIssueDeliveryQueued?.();
   return activated;
+}
+
+function hasPreparedScopeFailure(result: TenonAgentToolResult): boolean {
+  return result.status === 'blocked'
+    && result.validation?.some((message) => PREPARED_SCOPE_VALIDATION_CODES.has(message.code)) === true;
+}
+
+async function recordPreparedScopeFailure(
+  options: AgentIssueToolRuntimeOptions,
+  input: AgentSessionStartInput,
+  source: AgentSessionSource,
+  preparedExecution: PreparedIssueExecution,
+  validation: readonly ValidationMessage[],
+  now: number,
+): Promise<TenonAgentToolResult> {
+  const failed = await options.store.recordSessionPreparationFailure(
+    input,
+    source,
+    preparedExecution.issueRevision,
+    validation,
+    options.actor,
+    now,
+    {
+      preparedExecution,
+      authorizeChildScope: options.authorizeChildScope,
+      requirePreparedScopeFailure: true,
+    },
+  );
+  options.onIssueDeliveryQueued?.();
+  return failed;
 }
 
 async function activateStartedSession(

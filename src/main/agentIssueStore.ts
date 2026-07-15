@@ -634,7 +634,21 @@ export class AgentIssueStore {
         };
         return state;
       }
-      const gateValidation = validateSessionStart(state, issue, input, now, options.preparedExecution)
+      // Dynamic scope can fail during the request's non-mutating preview gate.
+      // Validate that snapshot in its own mode before persisting the requested failure.
+      const preparedValidationInput = options.requirePreparedScopeFailure && options.preparedExecution
+        ? {
+            ...input,
+            request: { ...input.request, mode: options.preparedExecution.mode },
+          }
+        : input;
+      const gateValidation = validateSessionStart(
+        state,
+        issue,
+        preparedValidationInput,
+        now,
+        options.preparedExecution,
+      )
         .filter((message) => !SESSION_PREPARATION_VALIDATION_CODES.has(message.code));
       const session = buildSession(issue, input, source, now, {
         preparedExecution: options.preparedExecution,
