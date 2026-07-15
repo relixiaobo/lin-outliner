@@ -14,6 +14,7 @@ const ARTICLE_HTML = `<!doctype html>
     <meta charset="utf-8">
     <title>Translation smoke article</title>
     <style>
+      html { scroll-behavior: smooth; }
       body { margin: 0; color: #202124; background: #fff; font: 18px/1.55 system-ui, sans-serif; }
       main { box-sizing: border-box; max-width: 760px; margin: 0 auto; padding: 48px 32px 96px; }
       h1, p { margin: 0 0 24px; }
@@ -244,7 +245,7 @@ test.describe('URL page translation', () => {
     expect(initialTexts).toContain('Prefetched source paragraph.');
     expect(initialTexts).not.toContain('Far source paragraph.');
 
-    await guest(webview, `document.getElementById('far').scrollIntoView({ block: 'center' }); true`);
+    await guest(webview, `document.getElementById('far').scrollIntoView({ block: 'center', behavior: 'instant' }); true`);
     await expect.poll(() => guest<string | null>(webview, `
       document.querySelector('#far [data-tenon-bilingual-translation="true"]')?.textContent ?? null
     `)).toBe('ZH: Far source paragraph.');
@@ -252,6 +253,10 @@ test.describe('URL page translation', () => {
       .toContain('Far source paragraph.');
 
     const completedRequestCount = batches.length;
+    const farTopBeforeOriginal = await guest<number>(webview, `
+      document.getElementById('far')?.getBoundingClientRect().top ?? Number.NaN
+    `);
+    const toggleBoxBeforeOriginal = await toggle.boundingBox();
     await toggle.click();
     await popover.getByRole('button', { name: 'Show original' }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
@@ -261,6 +266,17 @@ test.describe('URL page translation', () => {
     expect(await guest(webview, `
       document.querySelectorAll('[data-tenon-bilingual-translation="true"]').length
     `)).toBeGreaterThanOrEqual(3);
+    const farTopsAfterOriginal = await guest<number[]>(webview, `new Promise((resolve) => {
+      const readTop = () => document.getElementById('far')?.getBoundingClientRect().top ?? Number.NaN;
+      requestAnimationFrame(() => {
+        const first = readTop();
+        requestAnimationFrame(() => resolve([first, readTop()]));
+      });
+    })`);
+    for (const top of farTopsAfterOriginal) {
+      expect(Math.abs(top - farTopBeforeOriginal)).toBeLessThanOrEqual(1);
+    }
+    expect(await toggle.boundingBox()).toEqual(toggleBoxBeforeOriginal);
 
     await toggle.click();
     await expect(languageSelect).toHaveValue('zh-Hans');

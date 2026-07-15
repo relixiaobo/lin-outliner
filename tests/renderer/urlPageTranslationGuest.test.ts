@@ -31,6 +31,10 @@ interface GuestRuntime {
 
 describe('URL page translation guest runtime', () => {
   test('keeps inline loading controls the same size across page typography', () => {
+    const translationRule = cssRuleBody(
+      URL_PAGE_TRANSLATION_GUEST_CSS,
+      '[data-tenon-bilingual-translation="true"]',
+    );
     const statusRule = cssRuleBody(URL_PAGE_TRANSLATION_GUEST_CSS, '[data-tenon-bilingual-status]');
     const loaderRule = cssRuleBody(
       URL_PAGE_TRANSLATION_GUEST_CSS,
@@ -43,6 +47,8 @@ describe('URL page translation guest runtime', () => {
     expect(loaderRule).toContain('height: 10px !important;');
     expect(statusRule).not.toContain('width: max(1em, 16px)');
     expect(loaderRule).not.toContain('width: 0.72em');
+    expect(translationRule).toContain('overflow-anchor: none !important;');
+    expect(statusRule).toContain('overflow-anchor: none !important;');
   });
 
   test('collects only visible and nearby readable blocks and excludes sensitive regions', () => {
@@ -102,14 +108,45 @@ describe('URL page translation guest runtime', () => {
     expect(translation?.getAttribute('lang')).toBe('zh-Hans');
     expect(fixture.document.querySelector('[data-tenon-bilingual-status]')).toBeNull();
     expect(fixture.scrollDeltas).toEqual([30]);
+    expect(fixture.scrollBehaviors).toEqual(['instant']);
+
+    fixture.shiftCurrentAnchor(12);
+    fixture.flushAnimationFrame();
+    expect(fixture.scrollDeltas).toEqual([30, 12]);
+    expect(fixture.scrollBehaviors).toEqual(['instant', 'instant']);
+    fixture.flushAnimationFrame();
+    expect(fixture.scrollDeltas).toEqual([30, 12]);
 
     fixture.runtime.setEnabled(false, 'zh-Hans');
     expect(fixture.document.documentElement.getAttribute('data-tenon-bilingual-hidden')).toBe('true');
-    expect(fixture.scrollDeltas).toEqual([30, -30]);
+    expect(fixture.scrollDeltas).toEqual([30, 12, -30]);
 
     fixture.runtime.setEnabled(true, 'zh-Hans');
     expect(fixture.document.documentElement.hasAttribute('data-tenon-bilingual-hidden')).toBe(false);
-    expect(fixture.scrollDeltas).toEqual([30, -30, 30]);
+    expect(fixture.scrollDeltas).toEqual([30, 12, -30, 30]);
+  });
+
+  test('prevents a replaced runtime from applying stale frame corrections', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const batch = fixture.runtime.nextBatch(1, 12_000, 6_000);
+    const above = batch.blocks.find((block) => block.text === 'Above the viewport');
+    if (!above) throw new Error('Missing above-viewport block');
+    fixture.runtime.apply([{ id: above.id, translation: 'Translated above viewport' }]);
+    expect(fixture.scrollDeltas).toEqual([30]);
+
+    installUrlPageTranslationRuntime(
+      fixture.window,
+      URL_PAGE_TRANSLATION_RUNTIME_KEY,
+      'zh-Hans',
+      TEST_LABELS,
+    );
+    expect(fixture.scrollDeltas).toEqual([30, -30]);
+
+    fixture.shiftCurrentAnchor(12);
+    fixture.flushAnimationFrame();
+    fixture.flushAnimationFrame();
+    expect(fixture.scrollDeltas).toEqual([30, -30]);
   });
 
   test('changes a failed loader into a retry control and retries only after it is clicked', () => {
@@ -169,8 +206,11 @@ function cssRuleBody(css: string, selector: string): string {
 
 function createFixture(options: { serialized?: boolean } = {}): {
   document: Document;
+  flushAnimationFrame: () => void;
   runtime: GuestRuntime;
+  scrollBehaviors: ScrollBehavior[];
   scrollDeltas: number[];
+  shiftCurrentAnchor: (delta: number) => void;
   window: Window;
 } {
   const { document, window } = parseHTML(`<!doctype html><html lang="en"><body><main>
@@ -185,8 +225,19 @@ function createFixture(options: { serialized?: boolean } = {}): {
     <p id="target-language" lang="zh-Hans">Already translated content</p>
   </main></body></html>`);
   const testWindow = window as unknown as Window & Record<string, unknown>;
+  // Linkedom window globals can survive across parsed documents in one test file.
+  testWindow[URL_PAGE_TRANSLATION_RUNTIME_KEY] = undefined;
+  const animationFrames: FrameRequestCallback[] = [];
+  let currentAnchorShift = 0;
   Object.defineProperties(testWindow, {
     innerHeight: { configurable: true, value: 600 },
+    requestAnimationFrame: {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        animationFrames.push(callback);
+        return animationFrames.length;
+      },
+    },
     scrollY: { configurable: true, value: 0, writable: true },
   });
   testWindow.NodeFilter = { SHOW_TEXT: 4 } as unknown as typeof NodeFilter;
@@ -196,11 +247,14 @@ function createFixture(options: { serialized?: boolean } = {}): {
   }) as CSSStyleDeclaration;
 
   const translationVisible = () => !document.documentElement.hasAttribute('data-tenon-bilingual-hidden');
-  setRect(document, 'behind', () => rect(-200, -150));
-  setRect(document, 'above', () => rect(-20, 20));
+  setRect(document, 'behind', () => rect(-200 - testWindow.scrollY, -150 - testWindow.scrollY));
+  setRect(document, 'above', () => rect(-20 - testWindow.scrollY, 20 - testWindow.scrollY));
   setRect(document, 'current', () => {
     const translatedAbove = Boolean(document.querySelector('#above [data-tenon-bilingual-translation="true"]'));
-    const top = 100 + (translatedAbove && translationVisible() ? 30 : 0);
+    const top = 100
+      + (translatedAbove && translationVisible() ? 30 : 0)
+      + currentAnchorShift
+      - testWindow.scrollY;
     return rect(top, top + 40);
   });
   setRect(document, 'ahead', () => rect(800, 850));
@@ -210,8 +264,18 @@ function createFixture(options: { serialized?: boolean } = {}): {
   setRect(document, 'target-language', () => rect(320, 360));
 
   const scrollDeltas: number[] = [];
-  testWindow.scrollBy = (_x: number, y: number) => {
-    scrollDeltas.push(y);
+  const scrollBehaviors: ScrollBehavior[] = [];
+  testWindow.scrollBy = ((optionsOrX: number | ScrollToOptions, y?: number) => {
+    const delta = typeof optionsOrX === 'number' ? (y ?? 0) : (optionsOrX.top ?? 0);
+    scrollDeltas.push(delta);
+    if (typeof optionsOrX !== 'number' && optionsOrX.behavior) {
+      scrollBehaviors.push(optionsOrX.behavior);
+    }
+    testWindow.scrollY += delta;
+  }) as typeof testWindow.scrollBy;
+  const flushAnimationFrame = () => {
+    const callbacks = animationFrames.splice(0);
+    for (const callback of callbacks) callback(0);
   };
   if (options.serialized) {
     const install = new Function(
@@ -231,7 +295,17 @@ function createFixture(options: { serialized?: boolean } = {}): {
     installUrlPageTranslationRuntime(testWindow, URL_PAGE_TRANSLATION_RUNTIME_KEY, 'zh-Hans', TEST_LABELS);
   }
   const runtime = testWindow[URL_PAGE_TRANSLATION_RUNTIME_KEY] as GuestRuntime;
-  return { document, runtime, scrollDeltas, window: testWindow };
+  return {
+    document,
+    flushAnimationFrame,
+    runtime,
+    scrollBehaviors,
+    scrollDeltas,
+    shiftCurrentAnchor: (delta) => {
+      currentAnchorShift += delta;
+    },
+    window: testWindow,
+  };
 }
 
 function setRect(document: Document, id: string, read: () => DOMRect): void {

@@ -453,8 +453,11 @@ Blocks outside that window are not sent. Adjacent blocks are submitted in bounde
 batches with one active request per pane; dynamic content joins only after it
 enters the same window. Successful blocks remain cached in memory so back-scrolling
 does not call the provider again. DOM insertion, hide, and restore capture the
-first visible source block and compensate its post-write offset, keeping the
-reader's current sentence anchored.
+first visible source block and compensate its post-write offset immediately and
+across two bounded animation frames. Compensation stays instant on sites that
+request smooth scrolling, and injected nodes do not become browser scroll anchors,
+keeping the reader's current sentence stationary through translation growth or
+collapse.
 
 Every block entering a submitted batch immediately shows a small inline loading
 control at the end of its source. The control keeps a fixed 16px status area and

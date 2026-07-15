@@ -51,6 +51,7 @@
   justify-content: center;
   border-radius: var(--radius-pill);
   color: color-mix(in srgb, var(--text-primary) 44%, transparent);
+  transition: background var(--motion-fast), color var(--motion-fast);
   -webkit-app-region: no-drag;
 }
 

@@ -25,6 +25,7 @@ export const URL_PAGE_TRANSLATION_GUEST_CSS = `
   letter-spacing: 0 !important;
   line-height: inherit !important;
   opacity: 0.72 !important;
+  overflow-anchor: none !important;
   text-decoration: none !important;
   text-transform: none !important;
   white-space: pre-wrap !important;
@@ -48,6 +49,7 @@ html[data-tenon-bilingual-hidden="true"] [data-tenon-bilingual-translation="true
   cursor: default !important;
   font: 700 11px/1 system-ui, sans-serif !important;
   opacity: 0.52 !important;
+  overflow-anchor: none !important;
   vertical-align: -2px !important;
 }
 [data-tenon-bilingual-status="loading"]::before {
@@ -231,6 +233,8 @@ export function installUrlPageTranslationRuntime(
   let lastScrollTop = doc.scrollingElement?.scrollTop ?? host.scrollY;
   let direction: 'down' | 'up' = 'down';
   let targetLanguage = initialTargetLanguage;
+  let anchorRevision = 0;
+  let runtimeActive = true;
 
   const normalizeText = (value: string) => value.replace(/\s+/g, ' ').trim();
   const hasReadableText = (value: string) => /[\p{L}\p{N}]/u.test(value);
@@ -386,13 +390,28 @@ export function installUrlPageTranslationRuntime(
     return anchor ? { element: anchor.record.element, top: anchor.rect.top } : null;
   };
 
+  const correctAnchor = (
+    anchor: { element: HTMLElement; top: number },
+    revision: number,
+  ): void => {
+    if (!runtimeActive || revision !== anchorRevision || !anchor.element.isConnected) return;
+    const delta = anchor.element.getBoundingClientRect().top - anchor.top;
+    if (Math.abs(delta) <= 0.5) return;
+    host.scrollBy({ behavior: 'instant', left: 0, top: delta });
+  };
+
   const withStableAnchor = (mutate: () => void): void => {
     if (dirty) discover();
     const anchor = captureAnchor();
+    const revision = ++anchorRevision;
     mutate();
-    if (!anchor?.element.isConnected) return;
-    const delta = anchor.element.getBoundingClientRect().top - anchor.top;
-    if (Math.abs(delta) > 0.5) host.scrollBy(0, delta);
+    if (!anchor) return;
+    correctAnchor(anchor, revision);
+    if (typeof host.requestAnimationFrame !== 'function') return;
+    host.requestAnimationFrame(() => {
+      correctAnchor(anchor, revision);
+      host.requestAnimationFrame(() => correctAnchor(anchor, revision));
+    });
   };
 
   const priorityForRect = (rect: DOMRect, viewportHeight: number): number | null => {
@@ -555,6 +574,7 @@ export function installUrlPageTranslationRuntime(
     },
     destroy(): void {
       observer?.disconnect();
+      anchorRevision += 1;
       withStableAnchor(() => {
         for (const record of records.values()) {
           record.translationNode?.remove();
@@ -562,6 +582,7 @@ export function installUrlPageTranslationRuntime(
         }
         doc.documentElement.removeAttribute(hiddenAttribute);
       });
+      runtimeActive = false;
       records.clear();
       const holder = host as unknown as Record<string, unknown>;
       if (holder[runtimeKey] === runtime) delete holder[runtimeKey];

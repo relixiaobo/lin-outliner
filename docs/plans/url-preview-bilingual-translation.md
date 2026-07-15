@@ -164,10 +164,12 @@ webview.
 ### Scroll anchoring and DOM presentation
 
 Before a batch changes visibility or inserts results, capture the first visible
-source block and its viewport offset. Apply DOM writes as one batch, measure the
-same anchor once, and compensate the webview scroll position by the delta. This
-prevents translations above the reading point from moving the user's current
-sentence.
+source block and its viewport offset. Apply DOM writes as one batch, then
+compensate the webview with instant scrolling immediately and over two bounded
+animation frames. Injected translation and status nodes stay out of native
+scroll-anchor selection, so native and manual correction do not compete. This
+keeps the source sentence stationary when a site requests smooth scrolling and
+when cached translations are hidden or shown.
 
 Each translation is one inert block immediately after its source. It inherits
 the page's font and current text color, uses a quiet opacity and modest block
