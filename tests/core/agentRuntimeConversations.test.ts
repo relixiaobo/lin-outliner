@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
+import { TAG_DAY_ID } from '../../src/core/types';
 import { systemReminder } from '../../src/core/agentAttachments';
 import { TOOL_CATALOG } from '../../src/core/agentToolCatalog';
 import {
@@ -92,7 +93,14 @@ function hostFor(core: Core): OutlinerToolHost {
     getProjection: () => core.projection(),
     transaction: async (_meta, fn) => fn(),
     operationHistory: async () => ({ entries: [], count: 0 }),
-    handle: async () => {
+    handle: async (command, args = {}) => {
+      if (command === 'ensure_date_node') {
+        return core.ensureDateNode(
+          Number(args.year),
+          Number(args.month),
+          Number(args.day),
+        );
+      }
       throw new Error('node tools are not used in this test');
     },
   };
@@ -115,9 +123,10 @@ function createWindowSink() {
 async function createRuntime(dataRoot: string, localRoot?: string) {
   const { AgentRuntime } = await loadRuntimeModule();
   const sink = createWindowSink();
+  const core = Core.new();
   const runtime = new AgentRuntime(
     () => sink.window as never,
-    hostFor(Core.new()),
+    hostFor(core),
     {
       agentDataRoot: dataRoot,
       localFileRoot: localRoot,
@@ -132,7 +141,7 @@ async function createRuntime(dataRoot: string, localRoot?: string) {
     },
   );
   drainableRuntimes.push(runtime);
-  return { runtime, sink };
+  return { runtime, sink, core };
 }
 
 async function createProjectAgent(localRoot: string, name = 'self') {
@@ -1285,6 +1294,44 @@ describe('agent runtime conversations', () => {
       await draining;
     }
     expect(drainedAfterStart).toBe(true);
+  });
+
+  test('scheduler startup prepares Daily Note output into a concrete Session scope', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-daily-note-start-'));
+    roots.push(dataRoot);
+    const { runtime, core } = await createRuntime(dataRoot);
+    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
+    const now = new Date('2034-03-04T10:00:00Z');
+    const created = await store.create({
+      issueType: 'issue',
+      fields: {
+        title: 'Prepared Daily Note scheduler work',
+        trigger: { type: 'scheduled', startAt: now.getTime(), timeZone: 'UTC' },
+        dueDate: { targetAt: now.getTime(), timeZone: 'UTC' },
+        permissionMode: 'unattended',
+        output: { type: 'daily-note', datePolicy: 'due-date' },
+      },
+      request: { mode: 'request' },
+      reason: 'Create scheduler preparation work.',
+    }, ISSUE_ACTOR, now.getTime(), {
+      origin: { type: 'conversation', conversationId: 'conversation:daily-note-start' },
+    });
+    const issueId = created.targets.find((target) => target.type === 'issue')!.id;
+    const issue = (await store.read({ target: { type: 'issue', id: issueId } })).issue!;
+
+    await (runtime as unknown as IssueDeliveryRuntimeInternals)
+      .startTriggeredIssueSession(issue, now);
+
+    const session = Object.values((await store.state()).sessions)
+      .find((candidate) => candidate.issueId === issueId)!;
+    expect(session.outputSnapshot).toMatchObject({ type: 'create-child-under-node' });
+    if (session.outputSnapshot?.type !== 'create-child-under-node') {
+      throw new Error('Expected a concrete Daily Note output snapshot.');
+    }
+    expect(core.state().nodes[session.outputSnapshot.nodeId]).toMatchObject({
+      content: { text: '2034-03-04' },
+      tags: expect.arrayContaining([TAG_DAY_ID]),
+    });
   });
 
   test('records Work human-review acceptance as the trusted local user', async () => {

@@ -2,6 +2,7 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import path from 'node:path';
 import type { AgentRunScope } from '../core/agentEventLog';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
+import { isInternalConfigNode } from '../core/configSchema';
 import { projectFieldConfig, projectTagConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import { validateSearchQueries } from '../core/searchEngine';
 import {
@@ -271,13 +272,15 @@ interface NodeScopeIssue {
   error?: string;
 }
 
-type NodeScopeAccess = 'read' | 'write';
+type NodeScopeAccess = 'read' | 'write' | 'create';
 
 function scopedNodeRoots(options: NodeToolsOptions, access: NodeScopeAccess = 'read'): string[] | null {
   const resources = options.runScope?.resources;
-  const nodeIds = access === 'write'
-    ? resources?.writableNodes ?? resources?.nodes
-    : resources?.nodes;
+  const nodeIds = access === 'create'
+    ? resources?.creatableNodeParents ?? resources?.writableNodes ?? resources?.nodes
+    : access === 'write'
+      ? resources?.writableNodes ?? resources?.nodes
+      : resources?.nodes;
   if (nodeIds === undefined) return null;
   return unique(nodeIds.map((nodeId) => nodeId.trim()).filter(Boolean));
 }
@@ -299,7 +302,11 @@ function validateNodeResourceScope(
 ): NodeScopeIssue | null {
   const roots = scopedNodeRoots(options, access);
   if (!roots) return null;
-  const outside = nodeIds.find((nodeId) => !nodeIsInsideResourceScope(index, nodeId, roots));
+  const exactCreateParents = access === 'create'
+    && options.runScope?.resources?.creatableNodeParents !== undefined;
+  const outside = nodeIds.find((nodeId) => exactCreateParents
+    ? !roots.includes(nodeId)
+    : !nodeIsInsideResourceScope(index, nodeId, roots));
   return outside ? { nodeId: outside } : null;
 }
 
@@ -1702,12 +1709,20 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           metrics: { durationMs: elapsed(started) },
         }));
       }
-      const insertionScopeIssue = validateNodeResourceScope(options, initialIndex, [
-        insertion.parentId,
-        ...(typeof insertion.afterId === 'string' ? [insertion.afterId] : []),
-      ], 'write');
+      const insertionScopeIssue = validateNodeResourceScope(
+        options,
+        initialIndex,
+        [insertion.parentId],
+        'create',
+      );
       if (insertionScopeIssue) {
         return nodeScopeError<NodeCreateData>('node_create', insertionScopeIssue, started);
+      }
+      const insertionReferenceScopeIssue = validateNodeResourceScope(options, initialIndex, [
+        ...(typeof insertion.afterId === 'string' ? [insertion.afterId] : []),
+      ]);
+      if (insertionReferenceScopeIssue) {
+        return nodeScopeError<NodeCreateData>('node_create', insertionReferenceScopeIssue, started);
       }
       const sourceScopeIssue = validateNodeResourceScope(options, initialIndex, [
         ...(params.targetId ? [params.targetId] : []),
@@ -1798,6 +1813,15 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           instructions: searchValidation.instructions,
           metrics: { durationMs: elapsed(started) },
         }));
+      }
+      const outlineMutationScopeIssue = validateOutlineMutationScope(
+        options,
+        initialIndex,
+        insertion.parentId,
+        parsed.document,
+      );
+      if (outlineMutationScopeIssue) {
+        return nodeScopeError<NodeCreateData>('node_create', outlineMutationScopeIssue, started);
       }
 
       if (params.previewOnly) {
@@ -3729,6 +3753,120 @@ function fieldResolutionValues(field: OutlineField): FieldResolutionValue[] {
     text: value.text,
     ...(value.targetId ? { targetId: value.targetId } : {}),
   }));
+}
+
+function validateOutlineMutationScope(
+  options: NodeToolsOptions,
+  index: ProjectionIndex,
+  parentId: string,
+  document: OutlineDocument,
+): NodeScopeIssue | null {
+  if (document.fields.length > 0) {
+    const parentWriteIssue = validateNodeResourceScope(options, index, [parentId], 'write');
+    if (parentWriteIssue) return parentWriteIssue;
+  }
+
+  const nestedFields: OutlineField[] = [];
+  let createsTagDefinition = false;
+  const visitNode = (node: OutlineNode) => {
+    if (node.tags.some((tagName) => !findTagByName(index, tagName))) {
+      createsTagDefinition = true;
+    }
+    if (node.search) return;
+    nestedFields.push(...node.fields);
+    node.children.forEach(visitNode);
+  };
+  document.roots.forEach(visitNode);
+
+  if (createsTagDefinition) {
+    const schemaWriteIssue = validateNodeResourceScope(options, index, [SCHEMA_ID], 'write');
+    if (schemaWriteIssue) return schemaWriteIssue;
+  }
+
+  const topLevelTargets = document.fields
+    .map((field) => resolveFieldWriteTarget(
+      fieldResolutionMap(index),
+      parentId,
+      field.name,
+      fieldResolutionValues(field),
+      { isDeleted: (nodeId) => isInTrash(index, nodeId) },
+    ))
+    .map((resolution) => resolution.ok ? resolution.target : null);
+  const nestedTargets = nestedFields
+    .map((field, fieldIndex) => resolveProspectiveFieldWriteTarget(index, field, fieldIndex));
+
+  for (const target of [...topLevelTargets, ...nestedTargets].filter(
+    (candidate): candidate is FieldWriteTarget => candidate !== null,
+  )) {
+    if (target.kind === 'newFieldDef') {
+      const schemaWriteIssue = validateNodeResourceScope(options, index, [SCHEMA_ID], 'write');
+      if (schemaWriteIssue) return schemaWriteIssue;
+    }
+  }
+
+  const fieldsAndTargets = [
+    ...document.fields.map((field, fieldIndex) => ({ field, target: topLevelTargets[fieldIndex] })),
+    ...nestedFields.map((field, fieldIndex) => ({ field, target: nestedTargets[fieldIndex] })),
+  ];
+  for (const { field, target } of fieldsAndTargets) {
+    const fieldDefId = target?.kind === 'existingFieldDef'
+      ? target.fieldDefId
+      : target?.kind === 'existingEntry'
+        ? target.fieldDefId
+        : undefined;
+    const usesOptions = target?.kind === 'existingFieldDef' || target?.kind === 'existingEntry'
+      ? target.fieldType === 'options'
+      : false;
+    if (
+      usesOptions
+      && fieldDefId
+      && field.values.some((value) => (
+        !value.targetId
+        && value.text.trim().length > 0
+        && !fieldOptionExists(index, fieldDefId, value.text)
+      ))
+    ) {
+      const definitionWriteIssue = validateNodeResourceScope(options, index, [fieldDefId], 'write');
+      if (definitionWriteIssue) return definitionWriteIssue;
+    }
+  }
+  return null;
+}
+
+function resolveProspectiveFieldWriteTarget(
+  index: ProjectionIndex,
+  field: OutlineField,
+  fieldIndex: number,
+): FieldWriteTarget | null {
+  const ownerId = `virtual:node-create:${fieldIndex}`;
+  const nodes = new Map<string, FieldResolutionNode>();
+  for (const [nodeId, node] of index.nodes) nodes.set(nodeId, node);
+  nodes.set(ownerId, {
+    id: ownerId,
+    children: [],
+    content: plainText(''),
+  });
+  const resolution = resolveFieldWriteTarget(
+    nodes,
+    ownerId,
+    field.name,
+    fieldResolutionValues(field),
+    { isDeleted: (nodeId) => isInTrash(index, nodeId) },
+  );
+  return resolution.ok ? resolution.target : null;
+}
+
+function fieldOptionExists(index: ProjectionIndex, fieldDefId: string, rawLabel: string): boolean {
+  const label = rawLabel.trim().toLowerCase();
+  if (!label) return true;
+  return (index.nodes.get(fieldDefId)?.children ?? []).some((childId) => {
+    const child = index.nodes.get(childId);
+    if (!child || isInternalConfigNode(child) || isInTrash(index, child.id)) return false;
+    const option = child.type === 'reference' && child.targetId
+      ? index.nodes.get(child.targetId)
+      : child;
+    return option?.content.text.trim().toLowerCase() === label;
+  });
 }
 
 async function createField(

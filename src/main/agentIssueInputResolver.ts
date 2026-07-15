@@ -94,9 +94,11 @@ function collectTaggedNodeIds(
 function resolveTagId(index: ReturnType<typeof indexProjection>, rawTag: string): string | null {
   const tag = normalizeTag(rawTag);
   const direct = index.nodes.get(rawTag);
-  if (direct?.type === 'tagDef') return direct.id;
+  if (direct?.type === 'tagDef' && !isInTrash(index, direct.id)) return direct.id;
   const byName = index.projection.nodes.find((node) => (
-    node.type === 'tagDef' && normalizeTag(node.content.text) === tag
+    node.type === 'tagDef'
+    && !isInTrash(index, node.id)
+    && normalizeTag(node.content.text) === tag
   ));
   return byName?.id ?? null;
 }

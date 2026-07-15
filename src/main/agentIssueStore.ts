@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { isActiveAgentSessionState, isUserVisibleIssueActivity } from '../core/agentIssue';
 import type {
   Activity,
@@ -43,7 +44,13 @@ import type {
   ValidationMessage,
 } from '../core/agentIssue';
 import type { ChildIssueScopeDefinition } from './agentIssueScopeAuthorization';
-import { agentSessionRunScope, issueOutputNodeIds, issueWritableNodeIds } from './agentIssueSessionScope';
+import type { PreparedIssueExecution } from './agentIssueExecutionPreparation';
+import {
+  agentSessionRunScope,
+  issueCreatableNodeParentIds,
+  issueOutputNodeIds,
+  issueWritableNodeIds,
+} from './agentIssueSessionScope';
 import {
   PRIVATE_JSON_FILE_OPTIONS,
   readJsonOrDefault,
@@ -65,6 +72,11 @@ const MAX_ACTIVITY_BODY_CHARS = 1_200;
 export const TERMINAL_DELIVERY_CLAIM_LEASE_MS = 30_000;
 const DEFAULT_ISSUE_STATUS: IssueStatus = { name: 'Triage', category: 'triage' };
 const DEFAULT_ACTOR: ActorRef = { type: 'system' };
+const SESSION_PREPARATION_VALIDATION_CODES = new Set([
+  'saved_query_not_supported',
+  'daily_note_output_not_supported',
+  'replace_input_confirmation_unavailable',
+]);
 const ISSUE_FIELD_KEYS = new Set([
   'title',
   'description',
@@ -431,6 +443,7 @@ export class AgentIssueStore {
     options: {
       resolveInput?: IssueInputResolver;
       authorizeChildScope?: ChildIssueScopeAuthorizer;
+      preparedExecution?: PreparedIssueExecution;
     } = {},
   ): Promise<TenonAgentToolResult> {
     if (input.request.mode === 'preview') {
@@ -452,9 +465,17 @@ export class AgentIssueStore {
           revisions: [{ target: issueTarget, revision: issue.revision }],
         };
       }
-      const validation = validateSessionStart(state, issue, input, now);
+      if (options.preparedExecution && options.preparedExecution.issueRevision !== issue.revision) {
+        return {
+          status: 'conflict',
+          targets: [issueTarget],
+          validation: [{ code: 'revision_mismatch', message: 'Issue changed after execution preparation.' }],
+          revisions: [{ target: issueTarget, revision: issue.revision }],
+        };
+      }
+      const validation = validateSessionStart(state, issue, input, now, options.preparedExecution);
       if (validation.length === 0) {
-        const session = buildSession(issue, input, source, now, options.resolveInput);
+        const session = buildSession(issue, input, source, now, options);
         validation.push(...validateChildSessionScope(
           state,
           issue,
@@ -469,7 +490,13 @@ export class AgentIssueStore {
             validation,
             revisions: [{ target: issueTarget, revision: issue.revision }],
           }
-        : { status: 'preview', targets: [issueTarget] };
+        : {
+            status: 'preview',
+            targets: [issueTarget],
+            ...(options.preparedExecution?.warnings.length
+              ? { warnings: options.preparedExecution.warnings }
+              : {}),
+          };
     }
 
     const issueTarget: RelatedTargetRef = { type: 'issue', id: input.issueId };
@@ -493,7 +520,16 @@ export class AgentIssueStore {
         };
         return state;
       }
-      const validation = validateSessionStart(state, issue, input, now);
+      if (options.preparedExecution && options.preparedExecution.issueRevision !== issue.revision) {
+        outcome = {
+          status: 'conflict',
+          targets: [issueTarget],
+          validation: [{ code: 'revision_mismatch', message: 'Issue changed after execution preparation.' }],
+          revisions: [{ target: issueTarget, revision: issue.revision }],
+        };
+        return state;
+      }
+      const validation = validateSessionStart(state, issue, input, now, options.preparedExecution);
       if (validation.length > 0) {
         outcome = {
           status: 'blocked',
@@ -503,7 +539,7 @@ export class AgentIssueStore {
         };
         return state;
       }
-      const session = buildSession(issue, input, source, now, options.resolveInput);
+      const session = buildSession(issue, input, source, now, options);
       const scopeValidation = validateChildSessionScope(
         state,
         issue,
@@ -538,6 +574,92 @@ export class AgentIssueStore {
         status: 'applied',
         targets: [issueTarget, { type: 'agent-session', id: session.id }],
         revisions: [{ target: { type: 'agent-session', id: session.id }, revision: session.revision }],
+        ...(options.preparedExecution?.warnings.length
+          ? { warnings: options.preparedExecution.warnings }
+          : {}),
+      };
+      return state;
+    }, PRIVATE_JSON_FILE_OPTIONS);
+    return outcome ?? {
+      status: 'blocked',
+      targets: [issueTarget],
+      validation: [{ code: 'not_found_or_conflict', message: 'Issue was not found or revision did not match.' }],
+    };
+  }
+
+  async recordSessionPreparationFailure(
+    input: AgentSessionStartInput,
+    source: AgentSessionSource,
+    preparationValidation: readonly ValidationMessage[],
+    actor: ActorRef = DEFAULT_ACTOR,
+    now = Date.now(),
+  ): Promise<TenonAgentToolResult> {
+    const issueTarget: RelatedTargetRef = { type: 'issue', id: input.issueId };
+    let outcome: TenonAgentToolResult | null = null;
+    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+      const issue = state.issues[input.issueId];
+      if (!issue) {
+        outcome = {
+          status: 'blocked',
+          targets: [issueTarget],
+          validation: [{ code: 'not_found', message: 'Issue was not found.' }],
+        };
+        return state;
+      }
+      if (input.expectedIssueRevision && input.expectedIssueRevision !== issue.revision) {
+        outcome = {
+          status: 'conflict',
+          targets: [issueTarget],
+          validation: [{ code: 'revision_mismatch', message: 'Issue changed since it was read.' }],
+          revisions: [{ target: issueTarget, revision: issue.revision }],
+        };
+        return state;
+      }
+      const gateValidation = validateSessionStart(state, issue, input, now)
+        .filter((message) => !SESSION_PREPARATION_VALIDATION_CODES.has(message.code));
+      if (gateValidation.length > 0) {
+        outcome = {
+          status: 'blocked',
+          targets: [issueTarget],
+          validation: gateValidation,
+          revisions: [{ target: issueTarget, revision: issue.revision }],
+        };
+        return state;
+      }
+
+      const errorMessage = preparationValidation
+        .map((message) => message.message.trim())
+        .filter(Boolean)
+        .join('\n');
+      const session = buildSession(issue, input, source, now, {});
+      session.state = 'error';
+      session.errorMessage = errorMessage || 'Issue execution preparation failed.';
+      session.completedAt = now;
+      state.sessions[session.id] = session;
+      appendActivity(state, {
+        target: { type: 'issue', issueId: issue.id },
+        actor,
+        content: { type: 'agent-action', action: 'agent_session_start', result: session.id },
+        relatedTargets: [{ type: 'agent-session', id: session.id }],
+        createdAt: now,
+      });
+      appendActivity(state, {
+        target: { type: 'agent-session', agentSessionId: session.id },
+        actor,
+        content: {
+          type: 'agent-error',
+          body: activityBody(session.errorMessage, 'Issue execution preparation failed.'),
+        },
+        relatedTargets: [{ type: 'issue', id: issue.id }],
+        createdAt: now,
+      });
+      enqueueSessionErrorDelivery(state, session, now);
+      const sessionTarget: RelatedTargetRef = { type: 'agent-session', id: session.id };
+      outcome = {
+        status: 'blocked',
+        targets: [issueTarget, sessionTarget],
+        validation: [...preparationValidation],
+        revisions: [{ target: sessionTarget, revision: session.revision }],
       };
       return state;
     }, PRIVATE_JSON_FILE_OPTIONS);
@@ -1371,11 +1493,16 @@ function issueFromRecurringIssue(
     ...(template.delegate ? { delegate: template.delegate } : {}),
     relations: template.relations ?? [],
     trigger: template.trigger ?? { type: 'when-ready' },
+    dueDate: {
+      targetAt: windowStartAt,
+      timeZone: recurringIssue.timeZone,
+    },
     recurrence: {
       recurringIssueId: recurringIssue.id,
       windowStartAt,
       windowEndAt,
       materializedAt: now,
+      timeZone: recurringIssue.timeZone,
       ...(skippedWindowCount > 0 ? { skippedWindowCount } : {}),
     },
     ...(template.completionCriteria ? { completionCriteria: template.completionCriteria } : {}),
@@ -1395,11 +1522,16 @@ function buildSession(
   input: AgentSessionStartInput,
   source: AgentSessionSource,
   now: number,
-  resolveInput?: IssueInputResolver,
+  options: {
+    resolveInput?: IssueInputResolver;
+    preparedExecution?: PreparedIssueExecution;
+  },
 ): AgentSession {
-  const inputSnapshot = issue.input
-    ? resolveInput?.(issue.input, issue, now) ?? { scope: issue.input, resolvedAt: now }
-    : undefined;
+  const inputSnapshot = options.preparedExecution?.inputSnapshot
+    ?? (issue.input
+      ? options.resolveInput?.(issue.input, issue, now) ?? { scope: issue.input, resolvedAt: now }
+      : undefined);
+  const outputSnapshot = options.preparedExecution?.outputSnapshot ?? issue.output;
   const purpose = input.purpose ?? 'execute';
   return {
     id: `agent-session:${randomUUID()}`,
@@ -1412,7 +1544,7 @@ function buildSession(
     source,
     issueSnapshot: issue,
     ...(inputSnapshot ? { inputSnapshot } : {}),
-    ...(issue.output ? { outputSnapshot: issue.output } : {}),
+    ...(outputSnapshot ? { outputSnapshot } : {}),
     executionPolicy: {
       ...baseSessionExecutionPolicy(issue, now),
       ...(input.executionPolicyOverride ?? {}),
@@ -1548,11 +1680,16 @@ function validateChildIssueScope(
     ...issueOutputNodeIds(definition.output, inputNodeIds),
   ]);
   const requestedWriteNodeIds = uniqueStrings(issueWritableNodeIds(definition.output, inputNodeIds));
+  const requestedCreateParentIds = uniqueStrings(issueCreatableNodeParentIds(definition.output));
   const parentScope = agentSessionRunScope(parentSession).resources;
   const parentReadNodeIds = new Set(parentScope?.nodes ?? []);
   const parentWriteNodeIds = new Set(parentScope?.writableNodes ?? parentScope?.nodes ?? []);
+  const parentCreateNodeIds = new Set(parentScope?.creatableNodeParents ?? []);
   const outsideRead = requestedReadNodeIds.filter((nodeId) => !parentReadNodeIds.has(nodeId));
   const outsideWrite = requestedWriteNodeIds.filter((nodeId) => !parentWriteNodeIds.has(nodeId));
+  const outsideCreate = requestedCreateParentIds.filter((nodeId) => (
+    !parentCreateNodeIds.has(nodeId) && !parentWriteNodeIds.has(nodeId)
+  ));
   return [
     ...(outsideRead.length > 0 ? [{
         path: 'input',
@@ -1563,6 +1700,11 @@ function validateChildIssueScope(
         path: 'output',
         code: 'child_scope_broadened',
         message: `Child Issue writable node scope cannot exceed parent Agent Session output resources: ${outsideWrite.join(', ')}.`,
+      }] : []),
+    ...(outsideCreate.length > 0 ? [{
+        path: 'output',
+        code: 'child_scope_broadened',
+        message: `Child Issue create-parent scope cannot exceed parent Agent Session output resources: ${outsideCreate.join(', ')}.`,
       }] : []),
   ];
 }
@@ -2203,8 +2345,6 @@ function derivedRecurringIssueBuckets(recurringIssue: AgentRecurringIssue): Issu
 function isIssueReadyForExecution(issue: AgentIssue, state: AgentIssueStoreState, now: number): boolean {
   if (issue.archivedAt) return false;
   if (issue.status.category === 'completed' || issue.status.category === 'canceled') return false;
-  if (issue.input?.type === 'saved-query') return false;
-  if (issue.output?.type === 'daily-note') return false;
   if (issue.executionPolicy && issue.executionPolicy.deadlineAt <= now) return false;
   if (issueHasAnySession(issue, state)) return false;
   if (unresolvedBlockingIssueIds(issue, state).length > 0) return false;
@@ -2217,6 +2357,7 @@ function validateSessionStart(
   issue: AgentIssue,
   input: AgentSessionStartInput,
   now: number,
+  preparedExecution?: PreparedIssueExecution,
 ): ValidationMessage[] {
   const messages: ValidationMessage[] = [];
   if (issue.archivedAt) {
@@ -2228,6 +2369,7 @@ function validateSessionStart(
   if (input.purpose === 'verify' && issue.verificationPolicy?.mode !== 'agent-review') {
     messages.push({ code: 'missing_agent_review_policy', message: 'Verifier Agent Sessions require an agent-review verification policy.' });
   }
+  messages.push(...validatePreparedExecution(issue, input, preparedExecution));
   if (issue.input?.type === 'saved-query') {
     messages.push({
       path: 'input',
@@ -2235,11 +2377,27 @@ function validateSessionStart(
       message: 'Saved-query Issue inputs cannot start an Agent Session until saved-query resolution is implemented.',
     });
   }
-  if (issue.output?.type === 'daily-note') {
+  if (
+    issue.output?.type === 'daily-note'
+    && (
+      !preparedExecution
+      || (
+        input.request.mode === 'request'
+        && preparedExecution.outputSnapshot?.type !== 'create-child-under-node'
+      )
+    )
+  ) {
     messages.push({
       path: 'output',
       code: 'daily_note_output_not_supported',
       message: 'Daily-note output cannot start an Agent Session until its concrete destination is resolved into the Session scope.',
+    });
+  }
+  if (issue.output?.type === 'replace-input') {
+    messages.push({
+      path: 'output',
+      code: 'replace_input_confirmation_unavailable',
+      message: 'Replace-input output cannot start without trusted per-Session confirmation.',
     });
   }
   messages.push(...validateSessionExecutionPolicyOverride(issue, input, now));
@@ -2280,6 +2438,63 @@ function validateSessionStart(
     }
   }
   return messages;
+}
+
+function validatePreparedExecution(
+  issue: AgentIssue,
+  input: AgentSessionStartInput,
+  preparedExecution: PreparedIssueExecution | undefined,
+): ValidationMessage[] {
+  if (!preparedExecution) return [];
+  const validation: ValidationMessage[] = [];
+  if (preparedExecution.mode !== input.request.mode) {
+    validation.push({
+      code: 'prepared_execution_mode_mismatch',
+      message: 'Issue execution preparation mode does not match the Session request mode.',
+    });
+  }
+  if (issue.input) {
+    if (
+      !preparedExecution.inputSnapshot
+      || !isDeepStrictEqual(preparedExecution.inputSnapshot.scope, issue.input)
+    ) {
+      validation.push({
+        path: 'input',
+        code: 'prepared_execution_input_mismatch',
+        message: 'Prepared Issue input does not match the current Issue input definition.',
+      });
+    }
+  } else if (preparedExecution.inputSnapshot) {
+    validation.push({
+      path: 'input',
+      code: 'prepared_execution_input_mismatch',
+      message: 'Prepared Issue input cannot add a scope that the Issue did not declare.',
+    });
+  }
+
+  const preparedOutput = preparedExecution.outputSnapshot;
+  if (issue.output?.type === 'daily-note') {
+    const outputMatches = preparedOutput?.type === 'create-child-under-node'
+      || (
+        input.request.mode === 'preview'
+        && preparedOutput?.type === 'daily-note'
+        && preparedOutput.datePolicy === issue.output.datePolicy
+      );
+    if (!outputMatches) {
+      validation.push({
+        path: 'output',
+        code: 'prepared_execution_output_mismatch',
+        message: 'Prepared Daily Note output must resolve to its concrete create parent before execution.',
+      });
+    }
+  } else if (!isDeepStrictEqual(preparedOutput, issue.output)) {
+    validation.push({
+      path: 'output',
+      code: 'prepared_execution_output_mismatch',
+      message: 'Prepared Issue output does not match the current Issue output definition.',
+    });
+  }
+  return validation;
 }
 
 function baseSessionExecutionPolicy(issue: AgentIssue, now: number): AgentExecutionPolicy {

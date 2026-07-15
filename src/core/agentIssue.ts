@@ -59,6 +59,7 @@ export interface IssueRecurrenceContext {
   windowStartAt: number;
   windowEndAt: number;
   materializedAt: number;
+  timeZone?: string;
   skippedWindowCount?: number;
 }
 

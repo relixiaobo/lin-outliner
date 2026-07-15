@@ -416,6 +416,118 @@ describe('agent node tools', () => {
     expect(allowedOutputWrite.ok).toBe(true);
   });
 
+  test('enforces create-only Session output without widening existing-node or Schema writes', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const outputParent = mustFocus(core.createNode(today, null, 'Create-only output'));
+    const existingChild = mustFocus(core.createNode(outputParent, null, 'Existing child'));
+    const existingTagId = mustFocus(core.createTag('existing-tag'));
+    const seed = mustFocus(core.createNode(today, null, 'Field seed'));
+    const existingFieldEntryId = mustFocus(core.createInlineField(seed, null, 'Existing field', 'plain'));
+    const existingFieldDefId = core.state().nodes[existingFieldEntryId]!.fieldDefId!;
+    const optionEntryId = mustFocus(core.createInlineField(seed, null, 'Existing option', 'options'));
+    const optionFieldDefId = core.state().nodes[optionEntryId]!.fieldDefId!;
+    core.registerCollectedOption(optionFieldDefId, 'Known');
+    const options = {
+      runScope: {
+        resources: {
+          nodes: [outputParent],
+          writableNodes: [] as string[],
+          creatableNodeParents: [outputParent],
+        },
+      },
+    };
+
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: outputParent,
+      outline: '- Allowed child #existing-tag\n  - Existing field:: value\n  - Existing option:: Known',
+    }, options);
+    expect(created.ok).toBe(true);
+    expect(created.data?.createdRootIds).toHaveLength(1);
+    const createdNode = core.state().nodes[created.data!.createdRootIds[0]!]!;
+    expect(createdNode.tags).toContain(existingTagId);
+    expect(fieldEntryByName(core, createdNode.id, 'Existing field')).toBeTruthy();
+    expect(fieldEntryByName(core, createdNode.id, 'Existing option')).toBeTruthy();
+
+    const savedSearch = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: outputParent,
+      outline: '- %%search%% Scoped search\n  - STRING_MATCH\n    - value:: needle',
+    }, options);
+    expect(savedSearch.ok).toBe(true);
+    expect(core.state().nodes[savedSearch.data!.createdRootIds[0]!]!.type).toBe('search');
+
+    const blockedNestedCreate = await executeTool(core, 'node_create', {
+      parent_id: existingChild,
+      outline: '- Must not be nested under an existing child',
+    }, options);
+    expect(blockedNestedCreate.error?.code).toBe('outside_scope');
+
+    const blockedEdit = await executeTool(core, 'node_edit', {
+      operation: 'replace_outline',
+      node_id: outputParent,
+      old_string: '- Create-only output',
+      new_string: '- Mutated output',
+    }, options);
+    expect(blockedEdit.error?.code).toBe('outside_scope');
+    const blockedDelete = await executeTool(core, 'node_delete', {
+      node_id: outputParent,
+    }, options);
+    expect(blockedDelete.error?.code).toBe('outside_scope');
+
+    const childCountBefore = core.state().nodes[outputParent]!.children.length;
+    const blockedTopLevelField = await executeTool(core, 'node_create', {
+      parent_id: outputParent,
+      outline: '- Existing field:: parent mutation\n- Must not exist',
+    }, options);
+    expect(blockedTopLevelField.error?.code).toBe('outside_scope');
+    expect(core.state().nodes[outputParent]!.children).toHaveLength(childCountBefore);
+
+    for (const outline of [
+      '- Missing tag #new-session-tag',
+      '- Missing field\n  - New session field:: value',
+      '- Missing option\n  - Existing option:: New option',
+    ]) {
+      const blocked = await executeTool(core, 'node_create', {
+        parent_id: outputParent,
+        outline,
+      }, options);
+      expect(blocked.error?.code).toBe('outside_scope');
+      expect(core.state().nodes[outputParent]!.children).toHaveLength(childCountBefore);
+    }
+    expect(core.state().nodes[existingFieldDefId]).toBeDefined();
+    expect(core.state().nodes[optionFieldDefId]!.children.some((childId) => (
+      core.state().nodes[childId]?.content.text === 'New option'
+    ))).toBe(false);
+  });
+
+  test('allows implicit definitions only when the Run explicitly grants Schema writes', async () => {
+    const core = Core.new();
+    const outputParent = mustFocus(core.createNode(core.projection().todayId, null, 'Schema-authorized output'));
+    const result = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: outputParent,
+      outline: '- Authorized #new-authorized-tag\n  - New authorized field:: value',
+    }, {
+      runScope: {
+        resources: {
+          nodes: [outputParent, SCHEMA_ID],
+          writableNodes: [SCHEMA_ID],
+          creatableNodeParents: [outputParent],
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data?.createdRootIds).toHaveLength(1);
+    expect(Object.values(core.state().nodes)).toContainEqual(expect.objectContaining({
+      type: 'tagDef',
+      content: expect.objectContaining({ text: 'new-authorized-tag' }),
+    }));
+    expect(Object.values(core.state().nodes)).toContainEqual(expect.objectContaining({
+      type: 'fieldDef',
+      content: expect.objectContaining({ text: 'New authorized field' }),
+    }));
+  });
+
   test('keeps readable definition resources immutable when writable scope is empty', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

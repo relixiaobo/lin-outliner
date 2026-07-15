@@ -8,7 +8,12 @@ import type {
 import type { DocumentProjection } from '../core/types';
 import { indexProjection } from './agentNodeToolProjection';
 import { resolveIssueInputNodeIdsFromProjection } from './agentIssueInputResolver';
-import { agentSessionRunScope, issueOutputNodeIds, issueWritableNodeIds } from './agentIssueSessionScope';
+import {
+  agentSessionRunScope,
+  issueCreatableNodeParentIds,
+  issueOutputNodeIds,
+  issueWritableNodeIds,
+} from './agentIssueSessionScope';
 
 export interface ChildIssueScopeDefinition {
   input?: IssueInputScope;
@@ -25,6 +30,7 @@ export function validateChildIssueNodeScope(
   const parentScope = agentSessionRunScope(parentSession).resources;
   const parentReadRoots = parentScope?.nodes ?? [];
   const parentWriteRoots = parentScope?.writableNodes ?? parentReadRoots;
+  const parentCreateParents = parentScope?.creatableNodeParents ?? [];
   const resolvedInputNodeIds = definition.resolvedInput?.nodeIds
     ?? (definition.input ? resolveIssueInputNodeIdsFromProjection(definition.input, projection) : []);
   const declaredInputNodeIds = inputScopeAnchorNodeIds(definition.input);
@@ -35,9 +41,14 @@ export function validateChildIssueNodeScope(
     ...issueOutputNodeIds(definition.output, resolvedInputNodeIds),
   ]);
   const requestedWriteNodeIds = unique(issueWritableNodeIds(definition.output, resolvedInputNodeIds));
+  const requestedCreateParentIds = unique(issueCreatableNodeParentIds(definition.output));
   const index = indexProjection(projection);
   const outsideRead = requestedReadNodeIds.filter((nodeId) => !nodeIsInsideRoots(index, nodeId, parentReadRoots));
   const outsideWrite = requestedWriteNodeIds.filter((nodeId) => !nodeIsInsideRoots(index, nodeId, parentWriteRoots));
+  const outsideCreate = requestedCreateParentIds.filter((nodeId) => (
+    !parentCreateParents.includes(nodeId)
+    && !nodeIsInsideRoots(index, nodeId, parentWriteRoots)
+  ));
   return [
     ...(outsideRead.length > 0 ? [{
         path: 'input',
@@ -48,6 +59,11 @@ export function validateChildIssueNodeScope(
         path: 'output',
         code: 'child_scope_broadened',
         message: `Child Issue writable node scope cannot exceed parent Agent Session output resources: ${outsideWrite.join(', ')}.`,
+      }] : []),
+    ...(outsideCreate.length > 0 ? [{
+        path: 'output',
+        code: 'child_scope_broadened',
+        message: `Child Issue create-parent scope cannot exceed parent Agent Session output resources: ${outsideCreate.join(', ')}.`,
       }] : []),
   ];
 }

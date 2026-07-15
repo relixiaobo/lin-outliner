@@ -4,7 +4,7 @@ import type { AgentIssue, AgentSession } from '../../src/core/agentIssue';
 import { validateChildIssueNodeScope } from '../../src/main/agentIssueScopeAuthorization';
 
 describe('child Issue scope authorization', () => {
-  test('allows descendants but rejects nodes outside the parent Session ceiling', () => {
+  test('allows descendant reads but keeps create parents exact', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const allowedRoot = mustFocus(core.createNode(today, null, 'Allowed root'));
@@ -19,8 +19,15 @@ describe('child Issue scope authorization', () => {
         resolvedAt: 1,
         nodeIds: [allowedChild],
       },
-      output: { type: 'append-to-node', nodeId: allowedChild },
+      output: { type: 'append-to-node', nodeId: allowedRoot },
     }, core.projection())).toEqual([]);
+
+    expect(validateChildIssueNodeScope(parentSession, {
+      output: { type: 'append-to-node', nodeId: allowedChild },
+    }, core.projection())).toContainEqual(expect.objectContaining({
+      code: 'child_scope_broadened',
+      path: 'output',
+    }));
 
     expect(validateChildIssueNodeScope(parentSession, {
       input: { type: 'tag-query', tag: 'dynamic' },

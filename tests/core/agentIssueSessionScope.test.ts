@@ -16,14 +16,15 @@ describe('agent issue session scope', () => {
     expect(agentSessionRunScope(session)).toEqual({
       resources: {
         nodes: ['node:input-a', 'node:input-b', 'node:output-parent'],
-        writableNodes: ['node:output-parent'],
+        writableNodes: [],
+        creatableNodeParents: ['node:output-parent'],
       },
     });
   });
 
   test('uses an explicit deny-all node scope when no nodes resolve', () => {
     expect(agentSessionRunScope(sessionWith())).toEqual({
-      resources: { nodes: [], writableNodes: [] },
+      resources: { nodes: [], writableNodes: [], creatableNodeParents: [] },
     });
   });
 
@@ -35,7 +36,26 @@ describe('agent issue session scope', () => {
       },
     });
     expect(agentSessionRunScope(session)).toEqual({
-      resources: { nodes: ['node:note'], writableNodes: [] },
+      resources: { nodes: ['node:note'], writableNodes: [], creatableNodeParents: [] },
+    });
+  });
+
+  test('keeps replacement authority separate from create-only output authority', () => {
+    const replacement = sessionWith({
+      inputSnapshot: {
+        scope: { type: 'selected-nodes', nodeIds: ['node:input'] },
+        resolvedAt: 1,
+        nodeIds: ['node:input'],
+      },
+      outputSnapshot: { type: 'replace-input', requiresConfirmation: true },
+    });
+
+    expect(agentSessionRunScope(replacement)).toEqual({
+      resources: {
+        nodes: ['node:input'],
+        writableNodes: ['node:input'],
+        creatableNodeParents: [],
+      },
     });
   });
 });

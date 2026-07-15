@@ -87,8 +87,9 @@ concrete snapshot.
 `session-date` uses the Session start instant in the Issue schedule's IANA zone,
 falling back to the app's local IANA zone for unscheduled work. `due-date` uses
 the Issue due date and its zone. A materialized Recurring Issue carries its
-window start as `dueDate`, preserving the Recurring Issue zone so catch-up runs
-resolve deterministically.
+window start as `dueDate` and in its recurrence context, preserving the Recurring
+Issue zone so catch-up runs resolve deterministically. Existing materialized
+Issues without the derived `dueDate` fall back to their recurrence window.
 
 Date-node creation may target a locked canonical day node: locking prevents
 editing or moving the day page, but does not prevent creating a child beneath
@@ -107,6 +108,10 @@ existing subtree, and expose the anchor only as a create parent. `node_edit` and
 `node_delete` therefore cannot modify the output root or its existing
 descendants. A single `node_create` call may still create a complete outline
 subtree with fields, tags, references, and nested content atomically.
+Create-only Runs may reuse existing tag/field definitions and options, but an
+outline that would create or extend Schema is rejected before node mutation
+unless the Run independently has writable Schema authority. Top-level field
+lines likewise require existing-node write authority for the output parent.
 
 Run-scope normalization, narrowing, verifier projection, prompt formatting,
 event-log restoration, and child-Issue scope authorization all preserve the new
