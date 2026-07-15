@@ -67,6 +67,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Field value nodes support ordinary children (PR #394, codex-3)** — stored
+  field values now disclose and contain ordinary child rows while their direct
+  values remain bounded by the owning field entry. Direct values retain
+  field-aware cleanup, deeper descendants use ordinary node commands, reference
+  values preserve target projection and cycle guards, and stored checkbox values
+  retain native activation plus the shared row keyboard contract. Arrow and Tab
+  navigation now follows the panel's visible selectable order without revealing
+  hidden value drafts. **Gate (main):** review found four correctness issues;
+  codex-3 fixed all four before merge. Verified with typecheck, 747 renderer
+  tests, focused Playwright coverage, docs check, and diff check; one unrelated
+  background-command timing assertion in the broader outliner run reproduces on
+  the merge-base.
 - **Node tool context compression (PR #392, codex-2)** — successful
   model-visible `node_*` projections now omit redundant input echoes, static
   instructions, and uninformative envelope fields while retaining the complete

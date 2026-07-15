@@ -23,17 +23,18 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped agent-image-generation-tool #383, node-tool-context-compression #392) |
-| Codex 3 | `lin-outliner-codex-3/` | `codex-3/field-value-node-children` | PR #394 — field value nodes support ordinary children |
-| Codex 4 | `lin-outliner-codex-4/` | `codex-4/url-preview-bilingual-translation` | Draft PR #396 — URL preview bilingual translation |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped field-value-node-children #394) |
+| Codex 4 | `lin-outliner-codex-4/` | `codex-4/url-preview-bilingual-translation` | PR #396 — URL preview bilingual translation |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-14).** Open PR queue: #394
-(`codex-3/field-value-node-children`; ready for main review) and Draft #396
-(`codex-4/url-preview-bilingual-translation`). Recently merged: #395
+**In flight (2026-07-15).** Open PR queue: #396
+(`codex-4/url-preview-bilingual-translation`; ready for main review). Recently
+merged: #394 (`codex-3/field-value-node-children`) merged 2026-07-15 after main
+review; see *Recently completed*. #395
 (`codex/provider-transient-retry`) merged 2026-07-14 after main review; see
 *Recently completed*. #393
 (`codex-4/remove-reference-field-type`) merged 2026-07-14 after main review; see
@@ -497,6 +498,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **field-value-node-children** (`codex-3/field-value-node-children`, PR #394,
+  codex-3, merged 2026-07-15, plan-track) — stored field values now disclose and
+  own ordinary child rows while keeping direct values inside the field-entry
+  boundary. Direct values retain field-aware cleanup, deeper descendants use
+  ordinary node commands, reference and checkbox values keep their specialized
+  presentation, and Arrow/Tab navigation follows the panel's visible selectable
+  order without mounting hidden value drafts. **Gate (main):** code review found
+  three initial correctness issues plus a follow-up stored-checkbox keyboard
+  gap; codex-3 fixed all four before merge. Verified on the exact final PR head
+  with typecheck, 747 renderer tests, focused Playwright coverage, `docs:check`,
+  and `git diff --check`. The broader 126-test outliner run reached 125 pass / 1
+  fail; the same background `agent_issue_search` timing failure reproduces on
+  the merge-base and is not introduced by this PR. Plan archived `done`:
+  `docs/plans/archive/field-value-node-children.md`.
 
 - **provider-transient-request-retry** (`codex/provider-transient-retry`, PR
   #395, codex, merged 2026-07-14, plan-track) — retries pre-stream OpenAI and
