@@ -21,8 +21,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped agent-image-generation-tool #383, node-tool-context-compression #392) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398**) |
+| Codex 2 | `lin-outliner-codex-2/` | `codex-2/semantic-ingest-pipeline` | PR #397 — semantic ingest shared scanner and normal-node parity |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped field-value-node-children #394) |
 | Codex 4 | `lin-outliner-codex-4/` | `codex-4/url-preview-bilingual-translation` | PR #396 — URL preview bilingual translation |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -32,9 +32,12 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-15).** Open PR queue: #396
-(`codex-4/url-preview-bilingual-translation`; ready for main review). Recently
-merged: #394 (`codex-3/field-value-node-children`) merged 2026-07-15 after main
-review; see *Recently completed*. #395
+(`codex-4/url-preview-bilingual-translation`; ready for main review) and #397
+(`codex-2/semantic-ingest-pipeline`; ready for main review). Recently merged:
+#398 (`codex/agent-issue-execution-preflight`) merged 2026-07-15 after two main
+review rounds; see *Recently completed*. #394
+(`codex-3/field-value-node-children`) merged 2026-07-15 after main review; see
+*Recently completed*. #395
 (`codex/provider-transient-retry`) merged 2026-07-14 after main review; see
 *Recently completed*. #393
 (`codex-4/remove-reference-field-type`) merged 2026-07-14 after main review; see
@@ -498,6 +501,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-issue-execution-preflight**
+  (`codex/agent-issue-execution-preflight`, PR #398, codex, merged 2026-07-15,
+  plan-track) — active Issue definitions now preflight their node contracts,
+  Session starts persist revision-bound dynamic input and concrete output
+  snapshots, and Daily Note output resolves to an exact create-only destination.
+  Prepared failures produce one visible terminal Session, while node-tool and
+  child-scope enforcement prevent Trash writes, partial Schema mutation, and
+  scope widening. **Gate (main):** two review rounds closed all reported
+  preparation-boundary issues, including the dynamic tag-query preview-gate
+  follow-up. Verified on final head `9d95fa92` with typecheck, 87 focused Core
+  tests, `docs:check`, and `git diff --check`; the full Core suite reached 1452
+  pass / 3 fail, with all three failures caused by external Presentation skill
+  resource drift. Plan archived `done`:
+  `docs/plans/archive/agent-issue-execution-preflight.md`.
 
 - **field-value-node-children** (`codex-3/field-value-node-children`, PR #394,
   codex-3, merged 2026-07-15, plan-track) — stored field values now disclose and

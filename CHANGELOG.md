@@ -67,6 +67,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent Issue execution preflight (PR #398, codex)** — active Issue
+  definitions now validate their node inputs and outputs before execution,
+  Session starts resolve dynamic inputs and symbolic Daily Note destinations
+  into revision-bound snapshots, and creation outputs grant only exact
+  direct-child insertion authority. Invalid or broadened prepared scopes now
+  create one visible terminal error Session instead of retrying indefinitely;
+  node tools also reject stale Trash destinations and implicit Schema writes
+  before partial mutation. **Gate (main):** two review rounds found and fixed
+  all reported preparation-boundary issues, including the dynamic tag-query
+  preview-gate follow-up. Verified with typecheck, 87 focused Core tests, docs
+  check, and diff check; the full Core suite reached 1452 pass / 3 fail, with
+  all three failures coming from external Presentation skill resource drift.
 - **Field value nodes support ordinary children (PR #394, codex-3)** — stored
   field values now disclose and contain ordinary child rows while their direct
   values remain bounded by the owning field entry. Direct values retain
