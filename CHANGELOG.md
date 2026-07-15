@@ -67,6 +67,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **URL preview bilingual translation (PR #396, codex-4)** — URL previews now
+  support opt-in bilingual reading with target/model preferences, automatic
+  activation from valid page-language metadata, a scoped shortcut, and
+  viewport-prioritized concurrent translation batches. Paragraph-local loading,
+  retry, and in-memory cache state preserve reading flow, while isolated-world
+  collection, main-side request bounds, sensitive-region exclusion, inert text
+  insertion, stale-source ids, and user-scroll-aware anchor correction preserve
+  the URL preview's privacy and sandbox boundaries. **Gate (main):** three review
+  rounds closed all five initial findings and the native-scrollbar follow-up.
+  Verified with typecheck, 18 focused Core/security tests, 15 guest tests, 786
+  renderer tests, production build, real Electron smoke, docs check, and diff
+  check.
 - **Agent Issue execution preflight (PR #398, codex)** — active Issue
   definitions now validate their node inputs and outputs before execution,
   Session starts resolve dynamic inputs and symbolic Daily Note destinations

@@ -24,17 +24,18 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398**) |
 | Codex 2 | `lin-outliner-codex-2/` | `codex-2/semantic-ingest-pipeline` | PR #397 — semantic ingest shared scanner and normal-node parity |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped field-value-node-children #394) |
-| Codex 4 | `lin-outliner-codex-4/` | `codex-4/url-preview-bilingual-translation` | PR #396 — URL preview bilingual translation |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-15).** Open PR queue: #396
-(`codex-4/url-preview-bilingual-translation`; ready for main review) and #397
+**In flight (2026-07-15).** Open PR queue: #397
 (`codex-2/semantic-ingest-pipeline`; ready for main review). Recently merged:
-#398 (`codex/agent-issue-execution-preflight`) merged 2026-07-15 after two main
+#396 (`codex-4/url-preview-bilingual-translation`) merged 2026-07-15 after three
+main review rounds; see *Recently completed*. #398
+(`codex/agent-issue-execution-preflight`) merged 2026-07-15 after two main
 review rounds; see *Recently completed*. #394
 (`codex-3/field-value-node-children`) merged 2026-07-15 after main review; see
 *Recently completed*. #395
@@ -501,6 +502,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **url-preview-bilingual-translation**
+  (`codex-4/url-preview-bilingual-translation`, PR #396, codex-4, merged
+  2026-07-15, plan-track) — URL previews now provide opt-in bilingual reading
+  with target/model preferences, language-aware automatic activation, scoped
+  keyboard control, viewport-prioritized concurrent micro-batches, and
+  paragraph-local loading, retry, and in-memory cache state. The remote page
+  remains sandboxed: collection runs in an isolated world, excludes sensitive
+  regions, revalidates bounded requests in main, and inserts provider output only
+  as inert text. **Gate (main):** three review rounds closed five initial
+  security/correctness findings and the native-scrollbar follow-up. Verified on
+  final head `c1003524` with typecheck, 18 focused Core/security tests, 15 guest
+  tests, 786 renderer tests, production build, real Electron smoke,
+  `docs:check`, and `git diff --check`. Plan archived `done`:
+  `docs/plans/archive/url-preview-bilingual-translation.md`.
 
 - **agent-issue-execution-preflight**
   (`codex/agent-issue-execution-preflight`, PR #398, codex, merged 2026-07-15,
