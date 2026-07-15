@@ -19,6 +19,8 @@ separately. The detailed action/tool design remains in
 - Reading `DevToolsActivePort`, asking users to enable remote debugging, or
   attaching to Chrome, Edge, Brave, Chromium, or their profiles.
 - Importing cookies, saved passwords, history, autofill, extensions, or tabs.
+- Guaranteeing Google/YouTube sign-in or using capture/control to bypass a
+  provider's embedded-user-agent policy.
 - Treating an external browser's active tab as a rich capture source. The
   existing basic launcher capture can still record its public URL/title through
   OS integration, but authenticated DOM state stays outside Tenon.
@@ -81,8 +83,8 @@ can see where the agent is operating.
 - Run-scoped snapshots, element refs, debugger attachments, and network rules
   are discarded when the run ends or the guest is destroyed. Clearing website
   data remains the user's global Settings action and is never an agent tool.
-- Passkey and unsigned mock-keychain limitations belong to the Preview profile
-  itself; capture/control cannot bypass them.
+- Passkey, provider sign-in compatibility, and unsigned mock-keychain limitations
+  belong to the Preview profile itself; capture/control cannot bypass them.
 
 ## Relationship To Current Modules
 

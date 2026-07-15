@@ -405,15 +405,18 @@ Source authority stays source-specific:
 
 All URL Preview panes and launches share that one Tenon-owned profile inside the
 already-isolated Electron `userData` directory. Chromium-managed cookies and
-site storage therefore preserve ordinary direct website sign-ins across panes
-and app restarts. Tenon does not import an external browser profile, expose
-cookies to the renderer, provide password/autofill storage, or claim passkey-only
-authentication. Main configures the partition once, allows only fullscreen and
-sanitized clipboard writes, flushes DOM storage and cookies inside the bounded
-before-quit drain, and rejects a guest attached to any other session. Settings >
-General provides one native-confirmed **Clear website data** action that closes
-live connections, removes auth/cache/cookies/site storage for only this
-partition, and reloads attached Preview guests.
+site storage therefore preserve sessions that compatible sites permit the
+embedded Electron user agent to establish across panes and app restarts. This is
+session persistence, not provider compatibility: Tenon does not disguise its
+user agent, weaken site policy, guarantee Google/YouTube sign-in, import an
+external browser profile, expose cookies to the renderer, provide
+password/autofill storage, or claim passkey-only authentication. Main configures
+the partition once, allows only fullscreen and sanitized clipboard writes,
+flushes DOM storage and cookies inside the bounded before-quit drain, and rejects
+a guest attached to any other session. Settings > General provides one
+native-confirmed **Clear website data** action that closes live connections,
+removes auth/cache/cookies/site storage for only this partition, and reloads
+attached Preview guests.
 
 URL previews also expose one neutral `Languages` icon immediately before the
 header actions menu. It opens a compact, task-first popover: target language and

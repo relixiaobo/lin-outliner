@@ -8,7 +8,7 @@ agent runtime, permission model, event log, and multimodal tool-result pipeline.
 
 The user-facing capability is the Browser Control tool family. It gives the
 agent audited access to the user's existing Tenon URL Preview panes and their
-shared logged-in session: observe pages, act on elements, upload files, capture
+shared Preview session: observe pages, act on elements, upload files, capture
 screenshots and PDFs, inspect cookies, switch visible panes and frames, handle
 HTTP auth and dialogs, and inspect or modify network traffic. URL Preview remains
 the only user-visible browser surface.
@@ -32,6 +32,9 @@ to infer from a CLI file path that an image exists.
 - Do not attach to Chrome, Edge, Brave, or Chromium profiles; import their data;
   require remote debugging; install a browser extension; or create a Pilot
   window/tab. Browser Control must reuse Tenon-owned URL Preview guests.
+- Do not claim or bypass website sign-in compatibility that URL Preview itself
+  does not have. Browser Control inherits each provider's embedded-user-agent
+  policy and cannot turn OAuth tokens into website cookies.
 - Do not let the agent perform irreversible, outward-facing, credential,
   payment, account-security, or permission-changing actions without an explicit
   product safety decision.

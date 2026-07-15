@@ -3,10 +3,11 @@
 ## Goal
 
 Make URL Preview Tenon's only user-visible web browsing surface. Every URL
-Preview pane shares one Tenon-owned persistent browser profile, so a user can
-sign in directly inside Preview, keep ordinary website sessions across panes
-and app restarts, watch signed-in media, and clear all retained website data
-from Settings.
+Preview pane shares one Tenon-owned persistent browser profile, so sessions that
+compatible websites allow users to establish survive across panes and app
+restarts, while all retained website data can be cleared from Settings. Session
+persistence does not change whether a website accepts Electron as a sign-in
+environment.
 
 This is shape **(a)**: one complete feature in one PR. Future agent browser
 control may attach to these visible Preview guests, but it must not introduce a
@@ -21,6 +22,9 @@ second browser UI, external Chromium profile, or separate user-facing session.
 - Claiming support for passkey-only authentication. Electron's macOS system
   passkey work is not available in the pinned release, and arbitrary relying
   parties require platform/browser entitlements outside this change.
+- Guaranteeing sign-in compatibility with Google, YouTube, or any other provider
+  that rejects embedded user agents. Tenon does not disguise Electron, weaken a
+  site's CSP, inject authorization tokens, or bypass a provider's security policy.
 - Improving the at-rest protection of unsigned builds. They continue to use
   Chromium's mock keychain; persistent website sessions therefore remain a
   pre-release/local-device capability until signed packaging is ratified.
@@ -110,9 +114,11 @@ main agent will add the board and changelog entries at merge.
 - Shared session configuration must be idempotent because multiple Preview
   guests can attach concurrently.
 - Same-surface popup routing intentionally gives up opener-dependent popup
-  semantics. Direct top-level website login is the supported path.
-- Google/YouTube smoke testing can establish that the login UI and playback stay
-  inside Preview, but passkey-only completion remains outside acceptance.
+  semantics. Compatible sites may still use direct top-level login, but this is
+  not a provider-compatibility claim.
+- Persistence can retain only sessions that a site permits the embedded Electron
+  user agent to create. Google/YouTube may reject that environment; this feature
+  does not change user agents, CSP, headers, or external-browser credentials.
 
 ## Collision Result
 
@@ -132,17 +138,18 @@ edit. No live claim overlaps the implementation scope.
   cookies plus local storage, close the app, relaunch with the same isolated
   `userData`, and verify both are present in a new Preview pane; then clear data
   and verify they are absent after reload and another relaunch.
-- Manually verify YouTube signed-out rendering, direct sign-in navigation up to
-  the available account challenge, normal playback, fullscreen, explicit Open
-  in browser, and a GET `_blank` link staying in Preview.
+- Manually verify YouTube signed-out rendering, normal public playback,
+  fullscreen, explicit Open in browser, and a GET `_blank` link staying in
+  Preview. Google sign-in completion is not an acceptance criterion.
 - Run `bun run typecheck`, relevant Core/renderer/smoke suites,
   `bun run docs:check`, and `git diff --check`; inspect Settings in light and
   dark themes.
 
 ## Open Questions
 
-None. The PM ratified the single-Preview profile, no-import, no-second-browser,
-and explicit passkey/mock-keychain limitations before implementation.
+None. The PM ratified the single-Preview profile, compatible-site-only session
+boundary, no-import, no-second-browser, and explicit passkey/mock-keychain
+limitations before implementation.
 
 ## Subtasks
 

@@ -299,9 +299,10 @@ paths:
   sandboxed preview webview. "Open original" uses `shell.openExternal` after URL
   validation.
 - URL Preview owns one persistent Tenon profile shared across panes and launches.
-  Users sign in directly in Preview; Chrome/Chromium profile, cookie, password,
-  history, extension, and tab import are not supported. Settings owns the one
-  clear-all website-data action.
+  It retains sessions that compatible sites allow users to establish in Preview;
+  it does not guarantee embedded sign-in compatibility. Chrome/Chromium profile,
+  cookie, password, history, extension, and tab import are not supported.
+  Settings owns the one clear-all website-data action.
 - Optional static reader extraction, if later desired, would add main fetch /
   defuddle / DOMPurify / remote-image policy work as its own complete PR.
 
