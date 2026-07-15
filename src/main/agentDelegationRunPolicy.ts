@@ -25,12 +25,18 @@ export function normalizeRunScope(value: unknown): AgentRunScope | undefined {
   const paths = resourcesValue ? coerceResourceArray(resourcesValue, 'paths') : undefined;
   const nodes = resourcesValue ? coerceResourceArray(resourcesValue, 'nodes') : undefined;
   const writableNodes = resourcesValue ? coerceResourceArray(resourcesValue, 'writableNodes') : undefined;
-  const compactResources = docs !== undefined || paths !== undefined || nodes !== undefined || writableNodes !== undefined
+  const creatableNodeParents = resourcesValue ? coerceResourceArray(resourcesValue, 'creatableNodeParents') : undefined;
+  const compactResources = docs !== undefined
+    || paths !== undefined
+    || nodes !== undefined
+    || writableNodes !== undefined
+    || creatableNodeParents !== undefined
     ? {
         ...(docs !== undefined ? { docs } : {}),
         ...(paths !== undefined ? { paths } : {}),
         ...(nodes !== undefined ? { nodes } : {}),
         ...(writableNodes !== undefined ? { writableNodes } : {}),
+        ...(creatableNodeParents !== undefined ? { creatableNodeParents } : {}),
       }
     : undefined;
   return capabilities?.length || compactResources
@@ -165,7 +171,14 @@ export function verifierRunScope(runScope: AgentRunScope | undefined): AgentRunS
     ? parentCapabilities.filter((kind) => isReadOnlyActionKind(kind))
     : normalizeAgentToolActionKinds(readOnlyAgentToolNames());
   const resources = runScope?.resources;
-  const nodes = resources?.nodes ?? resources?.writableNodes;
+  const mutationNodes = resources?.writableNodes !== undefined
+    || resources?.creatableNodeParents !== undefined
+    ? [...new Set([
+        ...(resources.writableNodes ?? []),
+        ...(resources.creatableNodeParents ?? []),
+      ])]
+    : undefined;
+  const nodes = resources?.nodes ?? mutationNodes;
   const readResources = resources
     ? {
         ...(resources.docs !== undefined ? { docs: [...resources.docs] } : {}),
@@ -259,6 +272,9 @@ export function formatRunScopeForPrompt(scope: AgentRunScope | undefined): strin
   if (scope.resources?.paths !== undefined) lines.push(`- paths: ${scope.resources.paths.join(', ') || 'none (deny all)'}`);
   if (scope.resources?.nodes !== undefined) lines.push(`- nodes: ${scope.resources.nodes.join(', ') || 'none (deny all)'}`);
   if (scope.resources?.writableNodes !== undefined) lines.push(`- writable nodes: ${scope.resources.writableNodes.join(', ') || 'none (deny all)'}`);
+  if (scope.resources?.creatableNodeParents !== undefined) {
+    lines.push(`- creatable node parents: ${scope.resources.creatableNodeParents.join(', ') || 'none (deny all)'}`);
+  }
   return lines.length ? lines.join('\n') : null;
 }
 
@@ -284,14 +300,55 @@ function narrowRunResources(parent: AgentRunScope['resources'] | undefined, requ
   const paths = narrowResourceArray(parent?.paths, requested?.paths, 'paths');
   const nodes = narrowResourceArray(parent?.nodes, requested?.nodes, 'nodes');
   const writableNodes = narrowWritableNodeResources(parent, requested, nodes);
-  return docs !== undefined || paths !== undefined || nodes !== undefined || writableNodes !== undefined
+  const creatableNodeParents = narrowCreatableNodeParents(parent, requested, nodes);
+  return docs !== undefined
+    || paths !== undefined
+    || nodes !== undefined
+    || writableNodes !== undefined
+    || creatableNodeParents !== undefined
     ? {
         ...(docs !== undefined ? { docs } : {}),
         ...(paths !== undefined ? { paths } : {}),
         ...(nodes !== undefined ? { nodes } : {}),
         ...(writableNodes !== undefined ? { writableNodes } : {}),
+        ...(creatableNodeParents !== undefined ? { creatableNodeParents } : {}),
       }
     : undefined;
+}
+
+function narrowCreatableNodeParents(
+  parent: AgentRunScope['resources'] | undefined,
+  requested: AgentRunScope['resources'] | undefined,
+  narrowedReadableNodes: readonly string[] | undefined,
+): string[] | undefined {
+  let creatableNodeParents: string[] | undefined;
+  if (parent?.creatableNodeParents !== undefined) {
+    creatableNodeParents = requested?.creatableNodeParents !== undefined
+      ? assertScopeSubset(
+          requested.creatableNodeParents,
+          parent.creatableNodeParents,
+          'creatableNodeParents',
+        )
+      : [...parent.creatableNodeParents];
+  } else if (parent?.writableNodes !== undefined && requested?.creatableNodeParents !== undefined) {
+    creatableNodeParents = assertScopeSubset(
+      requested.creatableNodeParents,
+      parent.writableNodes,
+      'creatableNodeParents',
+    );
+  } else if (parent?.nodes !== undefined && requested?.creatableNodeParents !== undefined) {
+    creatableNodeParents = assertScopeSubset(
+      requested.creatableNodeParents,
+      parent.nodes,
+      'creatableNodeParents',
+    );
+  } else if (requested?.creatableNodeParents !== undefined) {
+    creatableNodeParents = [...requested.creatableNodeParents];
+  }
+  if (creatableNodeParents !== undefined && narrowedReadableNodes !== undefined) {
+    return assertScopeSubset(creatableNodeParents, narrowedReadableNodes, 'creatableNodeParents');
+  }
+  return creatableNodeParents;
 }
 
 function narrowWritableNodeResources(

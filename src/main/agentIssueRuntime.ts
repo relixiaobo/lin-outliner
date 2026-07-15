@@ -1,6 +1,7 @@
 import { isActiveAgentSessionState } from '../core/agentIssue';
 import type {
   AgentIssueOrigin,
+  AgentIssue,
   AgentSession,
   AgentSessionSource,
   AgentSessionStartInput,
@@ -13,6 +14,8 @@ import type {
   TenonAgentToolResult,
   IssueOutputPolicy,
   IssueInputScope,
+  RecurringIssueUpdateChange,
+  ValidationMessage,
 } from '../core/agentIssue';
 import type { AgentIssueToolRuntime } from './agentIssueTools';
 import type {
@@ -21,6 +24,11 @@ import type {
   ChildIssueScopeAuthorizer,
   IssueInputResolver,
 } from './agentIssueStore';
+import type {
+  IssueExecutionPreparationResult,
+  IssueNodeDefinition,
+  PreparedIssueExecution,
+} from './agentIssueExecutionPreparation';
 
 export interface AgentIssueToolRuntimeOptions {
   store: AgentIssueStore;
@@ -29,6 +37,15 @@ export interface AgentIssueToolRuntimeOptions {
   startSource?: (input: AgentSessionStartInput) => AgentSessionSource;
   origin?: () => AgentIssueOrigin | null | undefined | Promise<AgentIssueOrigin | null | undefined>;
   resolveInputScope?: IssueInputResolver;
+  prepareExecution?: (
+    issue: AgentIssue,
+    now: number,
+    mode: 'preview' | 'request',
+  ) => Promise<IssueExecutionPreparationResult>;
+  validateDefinition?: (
+    definition: IssueNodeDefinition,
+    options?: { materializedRecurring?: boolean },
+  ) => ValidationMessage[];
   authorizeChildScope?: ChildIssueScopeAuthorizer;
   onIssueCreated?: () => void;
   onIssueDeliveryQueued?: () => void;
@@ -54,6 +71,10 @@ export interface AgentSessionExecutor {
 }
 
 const sessionControlTails = new Map<string, Promise<void>>();
+const PREPARED_SCOPE_VALIDATION_CODES = new Set([
+  'child_scope_broadened',
+  'child_scope_unverifiable',
+]);
 
 export function createAgentIssueToolRuntime(options: AgentIssueToolRuntimeOptions): AgentIssueToolRuntime {
   const now = () => options.now?.() ?? Date.now();
@@ -218,6 +239,15 @@ async function createIssue(
       }
     }
   }
+  const definitionValidation = options.validateDefinition?.(
+    input.issueType === 'issue'
+      ? input.fields
+      : input.fields.issueTemplate,
+    input.issueType === 'recurring-issue' ? { materializedRecurring: true } : undefined,
+  ) ?? [];
+  if (definitionValidation.length > 0) {
+    return { status: 'blocked', targets: [], validation: definitionValidation };
+  }
   const result = await options.store.create(input, options.actor, now, origin
     ? { origin, authorizeChildScope: options.authorizeChildScope }
     : { authorizeChildScope: options.authorizeChildScope });
@@ -244,6 +274,10 @@ async function updateIssue(
   now: number,
 ): Promise<TenonAgentToolResult> {
   const caller = await issueRuntimeCaller(options);
+  const currentRead = input.change.type === 'patch'
+    || (input.target.type === 'recurring-issue' && input.change.type === 'resume')
+    ? await options.store.read({ target: input.target })
+    : undefined;
   if (caller.origin?.type === 'agent-session') {
     const target: RelatedTargetRef = { type: input.target.type, id: input.target.id };
     if (!caller.session || input.target.type !== 'issue') {
@@ -295,6 +329,73 @@ async function updateIssue(
       }
     }
   }
+  const currentRevision = input.target.type === 'issue'
+    ? currentRead?.issue?.revision
+    : currentRead?.recurringIssue?.revision;
+  if (
+    input.target.expectedRevision
+    && currentRevision
+    && input.target.expectedRevision !== currentRevision
+  ) {
+    return options.store.update(input, options.actor, now, {
+      authorizeChildScope: options.authorizeChildScope,
+      allowHumanReviewTransition: false,
+    });
+  }
+  if (input.change.type === 'patch' && options.validateDefinition) {
+    let definition: IssueNodeDefinition | undefined;
+    if (input.target.type === 'issue' && currentRead?.issue) {
+      const change = input.change as IssueUpdateChange;
+      if (change.type === 'patch') {
+        definition = {
+          input: change.patch.input ?? currentRead.issue.input,
+          output: change.patch.output ?? currentRead.issue.output,
+          noteNodeIds: change.patch.noteNodeIds ?? currentRead.issue.noteNodeIds,
+          dueDate: change.patch.dueDate === null
+            ? undefined
+            : change.patch.dueDate ?? currentRead.issue.dueDate,
+          trigger: change.patch.trigger ?? currentRead.issue.trigger,
+          recurrence: currentRead.issue.recurrence,
+        };
+      }
+    } else if (input.target.type === 'recurring-issue' && currentRead?.recurringIssue) {
+      const change = input.change as RecurringIssueUpdateChange;
+      if (change.type === 'patch') {
+        definition = change.patch.issueTemplate ?? currentRead.recurringIssue.issueTemplate;
+      }
+    }
+    if (definition) {
+      const definitionValidation = options.validateDefinition(
+        definition,
+        input.target.type === 'recurring-issue' ? { materializedRecurring: true } : undefined,
+      );
+      if (definitionValidation.length > 0) {
+        return {
+          status: 'blocked',
+          targets: [{ type: input.target.type, id: input.target.id }],
+          validation: definitionValidation,
+        };
+      }
+    }
+  }
+  if (
+    input.target.type === 'recurring-issue'
+    && input.change.type === 'resume'
+    && currentRead?.recurringIssue
+    && options.validateDefinition
+  ) {
+    const definitionValidation = options.validateDefinition(
+      currentRead.recurringIssue.issueTemplate,
+      { materializedRecurring: true },
+    );
+    if (definitionValidation.length > 0) {
+      return {
+        status: 'blocked',
+        targets: [{ type: 'recurring-issue', id: input.target.id }],
+        validation: definitionValidation,
+      };
+    }
+  }
   const result = await options.store.update(input, options.actor, now, {
     authorizeChildScope: options.authorizeChildScope,
     allowHumanReviewTransition: false,
@@ -327,20 +428,135 @@ async function startSession(
     ?? (caller.session
       ? { type: 'orchestration' as const, coordinatorAgentSessionId: caller.session.id }
       : { type: 'runtime-action' as const, actor: options.actor });
+  const currentIssue = (await options.store.read({
+    target: { type: 'issue', id: input.issueId },
+  })).issue;
+  const previewPreparation = currentIssue && options.prepareExecution
+    ? await options.prepareExecution(currentIssue, now, 'preview')
+    : undefined;
+  if (currentIssue && previewPreparation && !previewPreparation.ok) {
+    if (input.request.mode === 'request') {
+      const failed = await options.store.recordSessionPreparationFailure(
+        input,
+        source,
+        currentIssue.revision,
+        previewPreparation.validation,
+        options.actor,
+        now,
+      );
+      options.onIssueDeliveryQueued?.();
+      return failed;
+    }
+    return {
+      status: 'blocked',
+      targets: [{ type: 'issue', id: input.issueId }],
+      validation: previewPreparation.validation,
+      revisions: [{
+        target: { type: 'issue', id: currentIssue.id },
+        revision: currentIssue.revision,
+      }],
+    };
+  }
+  const previewExecution = previewPreparation?.ok ? previewPreparation.prepared : undefined;
   if (input.request.mode === 'preview') {
     return options.store.startSession(input, source, options.actor, now, {
       resolveInput: options.resolveInputScope,
       authorizeChildScope: options.authorizeChildScope,
+      preparedExecution: previewExecution,
     });
   }
+  if (currentIssue && options.prepareExecution && previewExecution) {
+    const eligibility = await options.store.startSession({
+      ...input,
+      request: { mode: 'preview' },
+    }, source, options.actor, now, {
+      resolveInput: options.resolveInputScope,
+      authorizeChildScope: options.authorizeChildScope,
+      preparedExecution: previewExecution,
+    });
+    if (eligibility.status !== 'preview') {
+      if (hasPreparedScopeFailure(eligibility)) {
+        return recordPreparedScopeFailure(
+          options,
+          input,
+          source,
+          previewExecution,
+          eligibility.validation ?? [],
+          now,
+        );
+      }
+      return eligibility;
+    }
+  }
+  const requestPreparation = currentIssue && options.prepareExecution
+    ? await options.prepareExecution(currentIssue, now, 'request')
+    : undefined;
+  if (requestPreparation && !requestPreparation.ok) {
+    const failed = await options.store.recordSessionPreparationFailure(
+      input,
+      source,
+      currentIssue!.revision,
+      requestPreparation.validation,
+      options.actor,
+      now,
+    );
+    options.onIssueDeliveryQueued?.();
+    return failed;
+  }
+  const preparedExecution = requestPreparation?.ok
+    ? requestPreparation.prepared
+    : undefined;
   const started = await options.store.startSession(input, source, options.actor, now, {
     resolveInput: options.resolveInputScope,
     authorizeChildScope: options.authorizeChildScope,
+    preparedExecution,
   });
-  if (started.status !== 'applied') return started;
+  if (started.status !== 'applied') {
+    if (preparedExecution && hasPreparedScopeFailure(started)) {
+      return recordPreparedScopeFailure(
+        options,
+        input,
+        source,
+        preparedExecution,
+        started.validation ?? [],
+        now,
+      );
+    }
+    return started;
+  }
   const activated = await activateStartedSession(options, input, started, now);
   options.onIssueDeliveryQueued?.();
   return activated;
+}
+
+function hasPreparedScopeFailure(result: TenonAgentToolResult): boolean {
+  return result.status === 'blocked'
+    && result.validation?.some((message) => PREPARED_SCOPE_VALIDATION_CODES.has(message.code)) === true;
+}
+
+async function recordPreparedScopeFailure(
+  options: AgentIssueToolRuntimeOptions,
+  input: AgentSessionStartInput,
+  source: AgentSessionSource,
+  preparedExecution: PreparedIssueExecution,
+  validation: readonly ValidationMessage[],
+  now: number,
+): Promise<TenonAgentToolResult> {
+  const failed = await options.store.recordSessionPreparationFailure(
+    input,
+    source,
+    preparedExecution.issueRevision,
+    validation,
+    options.actor,
+    now,
+    {
+      preparedExecution,
+      authorizeChildScope: options.authorizeChildScope,
+      requirePreparedScopeFailure: true,
+    },
+  );
+  options.onIssueDeliveryQueued?.();
+  return failed;
 }
 
 async function activateStartedSession(

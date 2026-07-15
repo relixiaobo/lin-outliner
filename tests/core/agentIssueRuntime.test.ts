@@ -2,9 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Core } from '../../src/core/core';
 import type { ActorRef } from '../../src/core/agentIssue';
 import { createAgentIssueToolRuntime, type AgentSessionExecutor } from '../../src/main/agentIssueRuntime';
-import { AgentIssueStore } from '../../src/main/agentIssueStore';
+import {
+  prepareIssueExecution,
+  validateIssueNodeDefinition,
+} from '../../src/main/agentIssueExecutionPreparation';
+import { validateChildIssueNodeScope } from '../../src/main/agentIssueScopeAuthorization';
+import { AgentIssueStore, type ChildIssueScopeAuthorizer } from '../../src/main/agentIssueStore';
 
 const actor: ActorRef = { type: 'agent', agentId: 'built-in:tenon:assistant' };
 const rootOrigin = { type: 'conversation' as const, conversationId: 'conversation:runtime-test-origin' };
@@ -103,6 +109,389 @@ describe('agent issue tool runtime execution', () => {
       const read = await runtime.readSession({ agentSessionId: sessionId });
       expect(read?.agentSession.state).toBe('error');
       expect(read?.agentSession.errorMessage).toBe('No Agent Session executor is configured.');
+    });
+  });
+
+  test('turns request preparation failures into terminal Sessions while previews stay non-persistent', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Unresolvable runtime work' },
+        request: { mode: 'request' },
+        reason: 'Create work for preparation failure.',
+      }, actor, 100, { origin: rootOrigin });
+      const row = (await store.search({ text: 'Unresolvable runtime work' })).rows[0]!;
+      let deliveryNotifications = 0;
+      const runtime = createAgentIssueToolRuntime({
+        store,
+        actor,
+        origin: () => rootOrigin,
+        prepareExecution: async () => ({
+          ok: false,
+          validation: [{
+            path: 'output',
+            code: 'daily_note_resolution_failed',
+            message: 'The Daily Note destination could not be resolved.',
+          }],
+        }),
+        onIssueDeliveryQueued: () => {
+          deliveryNotifications += 1;
+        },
+        now: () => 110,
+      });
+
+      const preview = await runtime.startSession({
+        issueId: row.target.id,
+        expectedIssueRevision: row.revision,
+        request: { mode: 'preview' },
+        reason: 'Preview the failure.',
+      });
+      expect(preview.status).toBe('blocked');
+      expect(Object.values((await store.state()).sessions)).toHaveLength(0);
+
+      const request = await runtime.startSession({
+        issueId: row.target.id,
+        expectedIssueRevision: row.revision,
+        request: { mode: 'request' },
+        reason: 'Record the execution failure.',
+      });
+      expect(request.status).toBe('blocked');
+      const sessions = Object.values((await store.state()).sessions);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({
+        state: 'error',
+        errorMessage: 'The Daily Note destination could not be resolved.',
+      });
+      expect(deliveryNotifications).toBe(1);
+    });
+  });
+
+  test('runs request preparation only after the non-mutating Store gate passes', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Two-stage preparation' },
+        request: { mode: 'request' },
+        reason: 'Create gated work.',
+      }, actor, 100, { origin: rootOrigin });
+      const row = (await store.search({ text: 'Two-stage preparation' })).rows[0]!;
+      const modes: Array<'preview' | 'request'> = [];
+      const runtime = createAgentIssueToolRuntime({
+        store,
+        actor,
+        origin: () => rootOrigin,
+        prepareExecution: async (issue, _now, mode) => {
+          modes.push(mode);
+          return {
+            ok: true,
+            prepared: {
+              issueRevision: issue.revision,
+              mode,
+              warnings: [],
+            },
+          };
+        },
+        now: () => 110,
+      });
+
+      const conflict = await runtime.startSession({
+        issueId: row.target.id,
+        expectedIssueRevision: 'revision:stale',
+        request: { mode: 'request' },
+        reason: 'Reject before request preparation can mutate.',
+      });
+      expect(conflict.status).toBe('conflict');
+      expect(modes).toEqual(['preview']);
+
+      const started = await runtime.startSession({
+        issueId: row.target.id,
+        expectedIssueRevision: row.revision,
+        request: { mode: 'request' },
+        reason: 'Run both preparation phases.',
+      });
+      expect(started.status).toBe('applied');
+      expect(modes).toEqual(['preview', 'preview', 'request']);
+    });
+  });
+
+  test('records a prepared child-scope blocker as one terminal Session', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Prepared scope parent' },
+        request: { mode: 'request' },
+        reason: 'Create the scope parent.',
+      }, actor, 100, { origin: rootOrigin });
+      const parent = (await store.search({ text: 'Prepared scope parent' })).rows[0]!;
+      const parentStarted = await store.startSession({
+        issueId: parent.target.id,
+        expectedIssueRevision: parent.revision,
+        request: { mode: 'request' },
+        reason: 'Start the scope parent.',
+      }, { type: 'runtime-action', actor }, actor, 110);
+      const parentSessionId = parentStarted.targets.find((target) => target.type === 'agent-session')!.id;
+      await store.bindSessionExecution(parentSessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:prepared-scope-parent',
+        executionId: 'execution:prepared-scope-parent',
+        startedAt: 120,
+      }, actor, 120);
+      const authorizeChildScope = (_parent: unknown, definition: { output?: { type: string; nodeId?: string } }) => (
+        definition.output?.type === 'create-child-under-node'
+        && definition.output.nodeId === 'node:outside-parent-scope'
+          ? [{
+              path: 'output',
+              code: 'child_scope_broadened',
+              message: 'Prepared output exceeds the parent Session scope.',
+            }]
+          : []
+      );
+      const childCreated = await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Prepared scope child',
+          output: { type: 'daily-note', datePolicy: 'session-date' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create symbolic child work.',
+      }, actor, 130, {
+        origin: { type: 'agent-session', agentSessionId: parentSessionId },
+        authorizeChildScope,
+      });
+      const childId = childCreated.targets.find((target) => target.type === 'issue')!.id;
+      const child = (await store.read({ target: { type: 'issue', id: childId } })).issue!;
+      const runtime = createAgentIssueToolRuntime({
+        store,
+        actor,
+        origin: () => ({ type: 'agent-session', agentSessionId: parentSessionId }),
+        authorizeChildScope,
+        prepareExecution: async (issue, _now, mode) => ({
+          ok: true,
+          prepared: {
+            issueRevision: issue.revision,
+            mode,
+            outputSnapshot: mode === 'preview'
+              ? { type: 'daily-note', datePolicy: 'session-date' }
+              : { type: 'create-child-under-node', nodeId: 'node:outside-parent-scope' },
+            warnings: [],
+          },
+        }),
+        now: () => 140,
+      });
+
+      const result = await runtime.startSession({
+        issueId: child.id,
+        expectedIssueRevision: child.revision,
+        request: { mode: 'request' },
+        reason: 'Record the concrete scope failure.',
+      });
+
+      expect(result.status).toBe('blocked');
+      const childSessions = Object.values((await store.state()).sessions)
+        .filter((session) => session.issueId === child.id);
+      expect(childSessions).toHaveLength(1);
+      expect(childSessions[0]).toMatchObject({
+        state: 'error',
+        errorMessage: 'Prepared output exceeds the parent Session scope.',
+        outputSnapshot: {
+          type: 'create-child-under-node',
+          nodeId: 'node:outside-parent-scope',
+        },
+      });
+      expect((await store.listReadyIssuesForExecution(141)).map((issue) => issue.id)).not.toContain(child.id);
+    });
+  });
+
+  test('records a dynamically broadened tag-query scope blocker as one terminal Session', async () => {
+    await withStore(async (store) => {
+      const core = Core.new();
+      const allowedNodeId = mustFocus(core.createNode(
+        core.projection().todayId,
+        null,
+        'Allowed parent input',
+      ));
+      const tagId = mustFocus(core.createTag('dynamic-child-input'));
+      await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Dynamic scope parent',
+          noteNodeIds: [allowedNodeId],
+          output: { type: 'activity-only' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create the dynamic scope parent.',
+      }, actor, 100, { origin: rootOrigin });
+      const parent = (await store.search({ text: 'Dynamic scope parent' })).rows[0]!;
+      const parentStarted = await store.startSession({
+        issueId: parent.target.id,
+        expectedIssueRevision: parent.revision,
+        request: { mode: 'request' },
+        reason: 'Start the dynamic scope parent.',
+      }, { type: 'runtime-action', actor }, actor, 110);
+      const parentSessionId = parentStarted.targets.find((target) => target.type === 'agent-session')!.id;
+      await store.bindSessionExecution(parentSessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:dynamic-scope-parent',
+        executionId: 'execution:dynamic-scope-parent',
+        startedAt: 120,
+      }, actor, 120);
+      const authorizeChildScope: ChildIssueScopeAuthorizer = (parentSession, definition) => (
+        validateChildIssueNodeScope(parentSession, definition, core.projection())
+      );
+      const childCreated = await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Dynamic scope child',
+          input: { type: 'tag-query', tag: tagId },
+          output: { type: 'activity-only' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create child work while its dynamic input is empty.',
+      }, actor, 130, {
+        origin: { type: 'agent-session', agentSessionId: parentSessionId },
+        authorizeChildScope,
+      });
+      expect(childCreated.status).toBe('applied');
+      const childId = childCreated.targets.find((target) => target.type === 'issue')!.id;
+      const child = (await store.read({ target: { type: 'issue', id: childId } })).issue!;
+
+      const outsideNodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Outside parent scope'));
+      core.applyTag(outsideNodeId, tagId);
+      const preparationModes: Array<'preview' | 'request'> = [];
+      let deliveryNotifications = 0;
+      const runtime = createAgentIssueToolRuntime({
+        store,
+        actor,
+        origin: () => ({ type: 'agent-session', agentSessionId: parentSessionId }),
+        authorizeChildScope,
+        prepareExecution: (issue, now, mode) => {
+          preparationModes.push(mode);
+          return prepareIssueExecution(issue, core.projection(), now, { mode });
+        },
+        onIssueDeliveryQueued: () => {
+          deliveryNotifications += 1;
+        },
+        now: () => 140,
+      });
+
+      expect((await store.listReadyIssuesForExecution(139)).map((issue) => issue.id)).toContain(child.id);
+      const preview = await runtime.startSession({
+        issueId: child.id,
+        expectedIssueRevision: child.revision,
+        request: { mode: 'preview' },
+        reason: 'Preview the broadened dynamic input scope.',
+      });
+      expect(preview.status).toBe('blocked');
+      expect(preview.validation).toContainEqual(expect.objectContaining({ code: 'child_scope_broadened' }));
+      expect(Object.values((await store.state()).sessions)
+        .filter((session) => session.issueId === child.id)).toEqual([]);
+      expect(deliveryNotifications).toBe(0);
+
+      const result = await runtime.startSession({
+        issueId: child.id,
+        expectedIssueRevision: child.revision,
+        request: { mode: 'request' },
+        reason: 'Record the broadened dynamic input scope.',
+      });
+
+      expect(result.status).toBe('blocked');
+      expect(result.validation).toContainEqual(expect.objectContaining({ code: 'child_scope_broadened' }));
+      expect(preparationModes).toEqual(['preview', 'preview']);
+      const childSessions = Object.values((await store.state()).sessions)
+        .filter((session) => session.issueId === child.id);
+      expect(childSessions).toHaveLength(1);
+      expect(childSessions[0]).toMatchObject({
+        state: 'error',
+        inputSnapshot: { nodeIds: [outsideNodeId] },
+      });
+      expect(childSessions[0]?.errorMessage).toContain(outsideNodeId);
+      expect(deliveryNotifications).toBe(1);
+      expect((await store.listReadyIssuesForExecution(141)).map((issue) => issue.id)).not.toContain(child.id);
+    });
+  });
+
+  test('preflights executable definitions before creating or resuming active work', async () => {
+    await withStore(async (store) => {
+      const core = Core.new();
+      const runtime = createAgentIssueToolRuntime({
+        store,
+        actor,
+        origin: () => rootOrigin,
+        validateDefinition: (definition, validationOptions) => validateIssueNodeDefinition(
+          definition,
+          core.projection(),
+          validationOptions,
+        ),
+        now: () => 100,
+      });
+
+      const savedQuery = await runtime.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Unsupported saved query',
+          input: { type: 'saved-query', queryId: 'query:missing' },
+        },
+        request: { mode: 'request' },
+        reason: 'Reject unsupported active work.',
+      });
+      expect(savedQuery.validation?.map((entry) => entry.code)).toContain('saved_query_not_supported');
+
+      const missingDueDate = await runtime.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Missing Daily Note due date',
+          output: { type: 'daily-note', datePolicy: 'due-date' },
+        },
+        request: { mode: 'request' },
+        reason: 'Reject a due-date output without a due date.',
+      });
+      expect(missingDueDate.validation?.map((entry) => entry.code)).toContain('daily_note_due_date_missing');
+
+      const recurring = await runtime.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Daily Note routine',
+          cadence: { type: 'daily', time: '10:00' },
+          timeZone: 'Asia/Shanghai',
+          issueTemplate: {
+            permissionMode: 'unattended',
+            output: { type: 'daily-note', datePolicy: 'due-date' },
+          },
+        },
+        request: { mode: 'request' },
+        reason: 'Recurring windows supply the concrete due date.',
+      });
+      expect(recurring.status).toBe('applied');
+      await store.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Legacy paused saved query',
+          cadence: { type: 'daily', time: '11:00' },
+          timeZone: 'UTC',
+          issueTemplate: {
+            permissionMode: 'unattended',
+            input: { type: 'saved-query', queryId: 'query:legacy' },
+          },
+        },
+        request: { mode: 'request' },
+        reason: 'Seed a pre-preflight definition.',
+      }, actor, 101, { origin: rootOrigin });
+      let legacy = (await store.search({ text: 'Legacy paused saved query' })).rows[0]!;
+      await store.update({
+        target: { type: 'recurring-issue', id: legacy.target.id, expectedRevision: legacy.revision },
+        change: { type: 'pause' },
+        request: { mode: 'request' },
+        reason: 'Pause the legacy definition.',
+      }, actor, 102);
+      legacy = (await store.search({ text: 'Legacy paused saved query' })).rows[0]!;
+      const resumed = await runtime.update({
+        target: { type: 'recurring-issue', id: legacy.target.id, expectedRevision: legacy.revision },
+        change: { type: 'resume' },
+        request: { mode: 'request' },
+        reason: 'Do not reactivate an unsupported definition.',
+      });
+      expect(resumed.validation?.map((entry) => entry.code)).toContain('saved_query_not_supported');
+      expect((await store.read({ target: legacy.target })).recurringIssue?.status).toBe('paused');
     });
   });
 
@@ -1252,3 +1641,8 @@ describe('agent issue tool runtime execution', () => {
     });
   });
 });
+
+function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T): string {
+  if (!outcome.focus) throw new Error('Expected focused node id.');
+  return outcome.focus.nodeId;
+}

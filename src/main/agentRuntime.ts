@@ -180,6 +180,11 @@ import {
   type AgentSessionExecutionSyncInput,
 } from './agentIssueStore';
 import { resolveIssueInputScopeFromProjection } from './agentIssueInputResolver';
+import {
+  prepareIssueExecution as prepareIssueExecutionFromProjection,
+  validateIssueNodeDefinition,
+  type IssueDailyNoteDate,
+} from './agentIssueExecutionPreparation';
 import { validateChildIssueNodeScope } from './agentIssueScopeAuthorization';
 import { agentSessionRunScope } from './agentIssueSessionScope';
 import {
@@ -4551,6 +4556,16 @@ export class AgentRuntime {
       resolveInputScope: (scope, currentIssue, resolvedAt) => (
         resolveIssueInputScopeFromProjection(scope, currentIssue, this.outlinerToolHost.getProjection(), resolvedAt)
       ),
+      prepareExecution: (currentIssue, preparedAt, mode) => (
+        this.prepareIssueExecution(currentIssue, preparedAt, mode)
+      ),
+      validateDefinition: (definition, validationOptions) => (
+        validateIssueNodeDefinition(
+          definition,
+          this.outlinerToolHost.getProjection(),
+          validationOptions,
+        )
+      ),
       authorizeChildScope: (parentSession, definition) => (
         validateChildIssueNodeScope(parentSession, definition, this.outlinerToolHost.getProjection())
       ),
@@ -5828,12 +5843,57 @@ export class AgentRuntime {
       resolveInputScope: (scope, issue, now) => (
         resolveIssueInputScopeFromProjection(scope, issue, this.outlinerToolHost.getProjection(), now)
       ),
+      prepareExecution: (issue, preparedAt, mode) => (
+        this.prepareIssueExecution(issue, preparedAt, mode)
+      ),
+      validateDefinition: (definition, validationOptions) => (
+        validateIssueNodeDefinition(
+          definition,
+          this.outlinerToolHost.getProjection(),
+          validationOptions,
+        )
+      ),
       authorizeChildScope: (parentSession, definition) => (
         validateChildIssueNodeScope(parentSession, definition, this.outlinerToolHost.getProjection())
       ),
       onIssueCreated: () => this.queueIssueSweep(new Date()),
       onIssueDeliveryQueued: () => this.queueIssueDeliveryDrain(),
     });
+  }
+
+  private prepareIssueExecution(
+    issue: AgentIssue,
+    preparedAt: number,
+    mode: 'preview' | 'request',
+  ) {
+    return prepareIssueExecutionFromProjection(
+      issue,
+      this.outlinerToolHost.getProjection(),
+      preparedAt,
+      {
+        mode,
+        getProjection: () => this.outlinerToolHost.getProjection(),
+        ...(mode === 'request' ? {
+          ensureDailyNote: (date: IssueDailyNoteDate) => this.ensureIssueDailyNote(date),
+        } : {}),
+      },
+    );
+  }
+
+  private async ensureIssueDailyNote(date: IssueDailyNoteDate): Promise<string> {
+    const outcome = await this.outlinerToolHost.handle('ensure_date_node', {
+      year: date.year,
+      month: date.month,
+      day: date.day,
+    }, {
+      origin: 'system',
+      command: 'ensure_date_node',
+      summary: `Prepared Daily Note output for ${date.isoDate}.`,
+    });
+    const focus = isRecord(outcome) && isRecord(outcome.focus) ? outcome.focus : null;
+    const nodeId = focus && typeof focus.nodeId === 'string' ? focus.nodeId : undefined;
+    if (!nodeId) throw new Error(`ensure_date_node returned no date node for ${date.isoDate}.`);
+    return nodeId;
   }
 
   private async resolveIssueOrigin(context?: {
@@ -10282,7 +10342,9 @@ function agentSessionObjective(
     issue.noteNodeIds?.length ? `Attached note node ids: ${issue.noteNodeIds.join(', ')}` : '',
     issue.recurrence ? `Recurring Issue id: ${issue.recurrence.recurringIssueId}` : '',
     session.inputSnapshot ? `Input snapshot:\n${formatIssueInputSnapshot(session.inputSnapshot)}` : 'Input snapshot: none',
-    issue.output ? `Output policy:\n${formatIssueOutputPolicy(issue.output)}` : 'Output policy: activity only',
+    session.outputSnapshot
+      ? `Prepared output policy:\n${formatIssueOutputPolicy(session.outputSnapshot)}`
+      : 'Prepared output policy: activity only',
     formatIssueCriteria(issue.completionCriteria),
     issue.verificationPolicy?.requiredEvidence?.length
       ? `Required evidence:\n${issue.verificationPolicy.requiredEvidence.map((item) => `- ${item}`).join('\n')}`

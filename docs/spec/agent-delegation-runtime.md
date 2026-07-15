@@ -76,31 +76,39 @@ read-only tool allow-list.
 
 When `agent_session_start` is approved and eligible:
 
-1. Runtime durably creates the Agent Session record.
-2. Runtime resolves the Issue snapshot into a delegation input:
+1. Runtime prepares the current Issue revision against the current document
+   projection. Preview is non-mutating; request mode resolves symbolic output
+   such as `daily-note` to a concrete destination. A preparation blocker creates
+   one terminal error Session only for request mode and only while that prepared
+   revision is still current, making scheduler failure visible without a
+   minute-by-minute retry loop. A concrete child scope that exceeds its parent is
+   rechecked atomically and recorded through the same failure path.
+2. Runtime durably creates the Agent Session record with the prepared input and
+   output snapshots.
+3. Runtime resolves the Agent Session snapshot into a delegation input:
    objective, criteria, input scope, execution policy, profile, and verification
    policy.
-3. The internal executor allocates the Run and child-agent harness in memory. An
+4. The internal executor allocates the Run and child-agent harness in memory. An
    execution Session owns a durable `controller` role even when the Run is a
    child of the visible conversation turn that started it. Verification rejection
    therefore re-plans the same bound Run in place; it never creates an unbound
    sibling replacement.
-4. Before any Run lifecycle event is written, the executor acceptance hook
+5. Before any Run lifecycle event is written, the executor acceptance hook
    durably binds the Agent Session to that Run. Binding failure aborts and
    unregisters the unannounced Run, marks the Session as failed, and leaves no
    orphan Run ledger.
-5. Only after binding succeeds does runtime append the initial `run.started`
+6. Only after binding succeeds does runtime append the initial `run.started`
    event and enter the child model loop. The worker must never reach
    `issue_create` without a persisted binding.
-6. Once the binding exists, an `issue_create` call inside the worker can resolve
+7. Once the binding exists, an `issue_create` call inside the worker can resolve
    the current execution chain back to the owning Agent Session and derive the
    child Issue's origin and `parentIssueId`. Missing internal bindings and
    missing, cyclic, or unreadable Run ownership metadata are fatal to Issue
    tools; origin resolution never degrades to visible-conversation/global
    authority.
-7. Worker progress, result, failure, cancellation, and verifier verdicts are
+8. Worker progress, result, failure, cancellation, and verifier verdicts are
    copied back to Activity and Session state.
-8. The model continues to interact through Agent Session tools, not through the
+9. The model continues to interact through Agent Session tools, not through the
    executor id.
 
 ## Decomposition
@@ -215,17 +223,27 @@ instead of depending on the original message remaining on the active path.
 
 ## Scope And Continuation
 
-An Issue Session Run has separate readable and writable node ceilings.
+An Issue Session Run has separate readable, existing-node writable, and
+direct-child creation ceilings.
 `resources.nodes` contains resolved input nodes, attached `noteNodeIds`, and any
-output anchor; `resources.writableNodes` contains only output-policy targets.
-Input and note nodes remain read-only unless the output policy independently
-names them. An explicit empty array means deny all, while an omitted resource
-dimension is unrestricted. Child Issue Sessions may narrow but never widen the
-parent Session's readable or writable ceiling.
+output anchor. `resources.writableNodes` contains only output policies allowed to
+mutate existing nodes. Creation outputs leave that list empty and put their exact
+anchor in `resources.creatableNodeParents`; `node_create` may insert a direct
+child there but may not mutate the anchor or its existing descendants. Input and
+note nodes remain read-only unless the output policy independently names them.
+Before every insertion, the node tool revalidates that an exact create parent is
+active and remains an ordinary content container; moving it to Trash invalidates
+the prepared authority, while a locked canonical day node remains usable.
+An explicit empty array means deny all, while an omitted resource dimension is
+unrestricted. Child Issue Sessions may narrow but never widen any parent
+ceiling; an exact create parent does not imply create authority at an existing
+descendant.
 
-`saved-query` input and unresolved `daily-note` output are valid durable
-definitions but are not executable in the current runtime; Session start and the
-ready sweep both fail closed until resolvers exist. A concrete Issue may carry one
+Runtime activation preflight rejects new active `saved-query` definitions and
+destructive `replace-input` definitions without trusted per-Session
+confirmation. Legacy saved-query work fails preparation visibly. `daily-note`
+is prepared per Session into a concrete canonical day-node create parent; the
+symbolic definition is never used as execution authority. A concrete Issue may carry one
 absolute `deadlineAt`; runtime maps that exact timestamp into the Run budget
 without minute rounding. Recurring Issue templates do not carry absolute
 execution policy.

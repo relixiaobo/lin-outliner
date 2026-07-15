@@ -3683,15 +3683,19 @@ export class Core {
     const yearName = String(year);
     const weekName = `W${String(isoWeek(date)).padStart(2, '0')}`;
     const dayName = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const yearId = findNamedChild(state, DAILY_NOTES_ID, yearName);
-    const weekId = yearId ? findNamedChild(state, yearId, weekName) : undefined;
-    return weekId ? findNamedChild(state, weekId, dayName) : undefined;
+    const yearId = findNamedTaggedChild(state, DAILY_NOTES_ID, yearName, TAG_YEAR_ID);
+    const weekId = yearId ? findNamedTaggedChild(state, yearId, weekName, TAG_WEEK_ID) : undefined;
+    return weekId ? findNamedTaggedChild(state, weekId, dayName, TAG_DAY_ID) : undefined;
   }
 
   private findOrCreateNamedChildDirect(parentId: string, name: string, tagId?: string) {
     const state = this.snapshot();
     for (const childId of state.nodes[parentId]?.children ?? []) {
-      if (state.nodes[childId]?.content.text === name) return childId;
+      const child = state.nodes[childId];
+      if (
+        child?.content.text === name
+        && (!tagId || child.tags.includes(tagId))
+      ) return childId;
     }
     const id = freshId('date');
     this.loro.createNodeWithId(id, parentId, 0, undefined, (node) => {
@@ -4718,8 +4722,16 @@ function pasteCompletedAt(meta: PasteRowMeta): number | undefined {
   return meta.done ? nowMs() : 0;
 }
 
-function findNamedChild(state: DocumentState, parentId: string, name: string) {
-  return state.nodes[parentId]?.children.find((childId) => state.nodes[childId]?.content.text === name);
+function findNamedTaggedChild(
+  state: DocumentState,
+  parentId: string,
+  name: string,
+  tagId: string,
+) {
+  return state.nodes[parentId]?.children.find((childId) => {
+    const child = state.nodes[childId];
+    return child?.content.text === name && child.tags.includes(tagId);
+  });
 }
 
 function nextTagColor(state: DocumentState) {

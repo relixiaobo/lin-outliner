@@ -124,12 +124,24 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   `selected-nodes`, `node-children`, and `tag-query` scopes become a bounded
   `inputSnapshot` with concrete node ids and a preview on the Agent Session;
   the Issue remains the durable work object, and nodes do not store work state.
+- `src/main/agentIssueExecutionPreparation.ts` is the shared execution boundary
+  for explicit and scheduler-started Sessions. Definition activation rejects
+  unsupported saved queries, destructive replacement without a trusted
+  per-Session confirmation path, missing or trashed input/note anchors,
+  ambiguous or missing tags, and invalid fixed output parents. Every Session
+  start repeats preparation against the current projection and binds the result
+  to the Issue revision and preview/request mode. Selected-node membership is
+  exact; tag queries remain dynamic, and an empty current match set is a warning
+  plus an explicit deny-all input snapshot rather than unrestricted access.
 - `src/main/agentIssueSessionScope.ts` maps an Agent Session's
   `inputSnapshot` and `outputSnapshot` into delegated Run
-  `scope.resources.nodes` and `scope.resources.writableNodes` roots. Resolved
-  input nodes, attached `noteNodeIds`, and output anchors are readable; only
-  output-policy targets are writable. Explicit empty arrays mean deny all,
-  while an omitted dimension is unrestricted. The node tools enforce that resource scope at
+  `scope.resources.nodes`, `scope.resources.writableNodes`, and
+  `scope.resources.creatableNodeParents`. Resolved input nodes, attached
+  `noteNodeIds`, and output anchors are readable. Existing-node mutation is
+  granted only through `writableNodes`; creation outputs instead name exact
+  direct-child parents in `creatableNodeParents` and leave `writableNodes`
+  empty. Explicit empty arrays mean deny all, while an omitted dimension is
+  unrestricted. The node tools enforce that resource scope at
   runtime: `node_search` filters results to scoped node roots and their
   descendants, `node_read` rejects scoped reads that would expose unscoped nodes
   or backlinks, and
@@ -142,6 +154,16 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   definition while only reading the target definition; definition merge requires
   every target, source, and affected node to be writable. This makes unattended
   Issue Sessions fail closed in code instead of relying on prompt instructions.
+  In a create-only Run, `node_create` may build a complete new subtree under an
+  exact parent but cannot edit/delete that parent, create beneath one of its
+  existing descendants, use top-level field lines to mutate the parent, create
+  missing tag/field definitions, or extend an existing options definition. It
+  may reuse existing definitions and options; implicit Schema changes require
+  independently granted writable Schema/definition scope and are validated
+  before any outline node is created. Reuse considers only active definitions;
+  a same-name definition in Trash is a missing definition. Every insertion also
+  revalidates that the exact parent is active and still accepts ordinary content;
+  locked canonical Daily Note nodes are the intentional exception to edit locks.
   `outline_undo_stack` is omitted
   entirely from every scoped Run because its global journal and undo/redo cursor
   cannot be narrowed to one node-resource set safely.
@@ -485,6 +507,11 @@ reset the first-eligible cursor to the first window strictly after the change;
 paused windows and windows from an earlier cadence are not backfilled or counted
 as coalesced misses. Only paused definitions can resume. Archived definitions
 have no next-materialization cursor, cannot resume, and never materialize.
+Each materialized concrete Issue stores the recurrence window start as its
+`dueDate` and records the same canonical IANA zone in its recurrence context.
+Output preparation therefore has a stable calendar basis even when a missed
+window starts later; pre-existing materialized Issues can fall back to their
+persisted recurrence window.
 
 Automatic trigger execution is one-shot per concrete Issue in V1: an unattended
 `when-ready` Issue or due `scheduled` Issue without any prior Agent Session can
@@ -494,12 +521,36 @@ gates allow it; human-review Issues require an explicit lifecycle transition.
 Expired `deadlineAt` values exclude open Issues from automatic execution and add
 them to the attention set. Completion/cancellation writes immutable `terminalAt`
 for Today/Logbook projections instead of treating later `updatedAt` changes as the
-terminal time. `saved-query` input and unresolved `daily-note` output block both
-explicit start and ready-sweep execution in the current runtime. Recurring Issue
-templates intentionally carry no absolute execution policy.
-Failure does not cause the scheduler to loop on the same Issue. Retrying or
-continuing terminal work creates a new Agent Session through an explicit
-`agent_session_start` request after the same gates pass.
+terminal time. Before persistence, product-runtime create/update and Recurring
+Issue resume validate that the active input/output contract is executable.
+`saved-query` remains storage-schema-valid for older data but is not executable;
+`replace-input` is fail-closed until a trusted per-Session confirmation channel
+exists. `daily-note` is executable: preview resolves an existing canonical day
+without mutation, while request mode idempotently ensures the canonical
+year/week/day path and persists `create-child-under-node` for that concrete day
+in the Session snapshot. `session-date` uses the Session instant in a scheduled
+Issue's zone, the Recurring Issue zone for materialized work, or the app-local
+IANA zone otherwise. `due-date` uses the Issue due instant and zone and is
+rejected when neither a concrete due date nor a materialized recurrence can
+supply one. Canonical lookup requires the tagged Daily Notes hierarchy and does
+not reuse same-title ordinary nodes. A timestamp must also fit the JavaScript
+Date range; formatting exceptions become structured `daily_note_date_invalid`
+validation rather than escaping Session failure recording.
+
+An execution-preparation failure is unconditionally bound to the Issue revision
+that was actually prepared. While that revision remains current, it creates one
+terminal `error` Session, records error Activity, and queues the ordinary one-hop
+terminal delivery. A symbolic child definition whose concrete Daily Note or
+dynamic input exceeds the parent Session is atomically rechecked and uses this
+same path. If a dynamic selector broadens during a request's non-mutating preview
+eligibility gate, the Store validates and atomically rechecks that preview
+snapshot before recording the failure; request-mode preparation does not run.
+The presence of that Session removes the concrete Issue from automatic
+eligibility, so the scheduler does not retry every minute. An actual preview
+request remains non-mutating and reports the blockers without creating a
+Session. Retrying or continuing terminal work creates a new Agent Session through
+an explicit `agent_session_start` request after the same gates pass. Recurring
+Issue templates intentionally carry no absolute execution policy.
 
 Issue verification uses the same Agent Session mechanism. `agent_session_start`
 accepts `purpose: "verify"` only when the Issue has
@@ -507,8 +558,9 @@ accepts `purpose: "verify"` only when the Issue has
 verifier AgentRef, defaulting to Neva's `verifier` run profile. An explicit
 verifier starts with `context: "none"` and the runtime's read-only tool allow-list.
 Its scope is derived from the concrete work Run: `docs`, `paths`, and readable
-`nodes` are preserved, while `writableNodes` is removed (or used only as the
-readable node ceiling when no readable-node list exists). It therefore receives
+`nodes` are preserved, while `writableNodes` and `creatableNodeParents` are
+removed (either mutation dimension is used only as the readable node ceiling
+when no readable-node list exists). It therefore receives
 the Issue verification directive rather than inherited worker conversation
 context. Its concrete tool allow-list is also intersected with the work Run's
 effective tool allow-list and read capabilities; a work Run with no read
@@ -533,7 +585,9 @@ an existing completion criterion. Completion remains bound to the Session's
 criterion ids and text: adding, deleting, or rewriting active criteria after the
 Session starts requires a new execution Session, while an explicit trusted-user
 waiver may satisfy the removed requirement. Human review also requires a
-completed execution Session.
+completed execution Session. Daily Note completion additionally fences the due
+date, trigger, and materialized recurrence basis captured by the evidence
+Session, because those fields determine its concrete output destination.
 
 ## Internal Delegation Executor
 
@@ -554,6 +608,7 @@ interface DelegationInput {
       paths?: string[];
       nodes?: string[];
       writableNodes?: string[];
+      creatableNodeParents?: string[]; // exact direct-child insertion anchors
     };
   };
   budget?: { tokens?: number; wallClockMinutes?: number };
@@ -1834,8 +1889,11 @@ Result behavior:
   tags, saved searches, or checkboxes unless the user clearly asks for those
   structured affordances.
 - Missing normal node tags and fields may be created by the outline application
-  layer. Search-node `field::`, `tag::`, and `target::` operands must reference
-  existing nodes.
+  layer when the Run has writable Schema authority. A create-only Issue Session
+  must reuse active definitions and existing options; the tool rejects the
+  entire outline before mutation if it would implicitly change Schema. Top-level
+  field lines also require write authority for `parent_id`. Search-node
+  `field::`, `tag::`, and `target::` operands must reference existing nodes.
 - Search/view directives, normal tag/field annotations, references,
   descriptions, checkboxes, and field values come through `outline`; standalone
   tag/field definition nodes use `definition`.

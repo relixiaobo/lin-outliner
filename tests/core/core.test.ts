@@ -15,6 +15,8 @@ import {
   SCHEMA_ID,
   SEARCHES_ID,
   TAG_DAY_ID,
+  TAG_WEEK_ID,
+  TAG_YEAR_ID,
   TRASH_ID,
   WORKSPACE_ID,
   defConfigNodeId,
@@ -1492,6 +1494,26 @@ describe('Core', () => {
 
     const childId = mustFocus(core.createNode(nodeId, null, 'Child'));
     expect(() => core.addReference(childId, nodeId, null)).toThrow('cannot create a reference cycle');
+  });
+
+  test('does not reuse same-title ordinary nodes as canonical date hierarchy', () => {
+    const core = Core.new();
+    const ordinaryYear = mustFocus(core.createNode(DAILY_NOTES_ID, null, '2031'));
+    const ordinaryWeek = mustFocus(core.createNode(ordinaryYear, null, 'W06'));
+    const ordinaryDay = mustFocus(core.createNode(ordinaryWeek, null, '2031-02-03'));
+
+    const canonicalDay = mustFocus(core.ensureDateNode(2031, 2, 3));
+    const state = core.state();
+    const canonicalWeek = state.nodes[canonicalDay]!.parentId!;
+    const canonicalYear = state.nodes[canonicalWeek]!.parentId!;
+
+    expect(canonicalDay).not.toBe(ordinaryDay);
+    expect(canonicalWeek).not.toBe(ordinaryWeek);
+    expect(canonicalYear).not.toBe(ordinaryYear);
+    expect(state.nodes[canonicalDay]!.tags).toContain(TAG_DAY_ID);
+    expect(state.nodes[canonicalWeek]!.tags).toContain(TAG_WEEK_ID);
+    expect(state.nodes[canonicalYear]!.tags).toContain(TAG_YEAR_ID);
+    expect(state.nodes[ordinaryDay]!.tags).not.toContain(TAG_DAY_ID);
   });
 
   test('saved search refresh materializes result references by diff', () => {

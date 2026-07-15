@@ -205,7 +205,11 @@ export function isInTrash(index: ProjectionIndex, nodeId: string): boolean {
 
 export function findTagByName(index: ProjectionIndex, tagName: string): NodeProjection | undefined {
   const normalized = tagName.trim().toLowerCase();
-  return index.projection.nodes.find((node) => node.type === 'tagDef' && node.content.text.trim().toLowerCase() === normalized);
+  return index.projection.nodes.find((node) => (
+    node.type === 'tagDef'
+    && !isInTrash(index, node.id)
+    && node.content.text.trim().toLowerCase() === normalized
+  ));
 }
 
 export function indexProjection(projection: DocumentProjection): ProjectionIndex {

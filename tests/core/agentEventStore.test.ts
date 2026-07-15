@@ -1368,7 +1368,14 @@ describe('agent event store', () => {
           verificationAttemptBase: 1,
           verifierGapSignatures: ['missing evidence', 'missing evidence'],
           purpose: 'work',
-          scope: { resources: { paths: ['src/main'] } },
+          scope: {
+            resources: {
+              paths: ['src/main'],
+              nodes: ['node:output'],
+              writableNodes: [],
+              creatableNodeParents: ['node:output'],
+            },
+          },
           budget: { tokens: 1000, spentTokens: 100 },
           trigger: { type: 'parent-run', parentRunId: 'parent-run-1' },
           fingerprint: testFingerprint(),
@@ -1417,7 +1424,14 @@ describe('agent event store', () => {
           verificationRequired: true,
           verificationAttemptBase: 1,
           verifierGapSignatures: ['missing evidence', 'missing evidence'],
-          scope: { resources: { paths: ['src/main'] } },
+          scope: {
+            resources: {
+              paths: ['src/main'],
+              nodes: ['node:output'],
+              writableNodes: [],
+              creatableNodeParents: ['node:output'],
+            },
+          },
           budget: { tokens: 1000, spentTokens: 250 },
           blockedReason: 'Missing evidence',
           latestVerifierGap: 'No tool evidence',

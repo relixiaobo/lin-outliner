@@ -232,7 +232,153 @@ describe('agent issue store', () => {
       expect(preview.status).toBe('blocked');
       expect(preview.validation?.map((entry) => entry.code)).toContain('saved_query_not_supported');
       expect((await store.listReadyIssuesForExecution(110)).map((candidate) => candidate.id))
-        .not.toContain(issue.target.id);
+        .toContain(issue.target.id);
+    });
+  });
+
+  test('binds prepared execution to the Issue revision and request mode', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Prepared Daily Note',
+          output: { type: 'daily-note', datePolicy: 'session-date' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create prepared work.',
+      }, actor, 100);
+      const row = (await store.search({ text: 'Prepared Daily Note' })).rows[0]!;
+      const source: AgentSessionSource = { type: 'runtime-action', actor };
+
+      const preview = await store.startSession({
+        issueId: row.target.id,
+        expectedIssueRevision: row.revision,
+        request: { mode: 'preview' },
+        reason: 'Preview without creating the date node.',
+      }, source, actor, 110, {
+        preparedExecution: {
+          issueRevision: row.revision,
+          mode: 'preview',
+          outputSnapshot: { type: 'daily-note', datePolicy: 'session-date' },
+          warnings: [],
+        },
+      });
+      expect(preview.status).toBe('preview');
+
+      const wrongMode = await store.startSession({
+        issueId: row.target.id,
+        expectedIssueRevision: row.revision,
+        request: { mode: 'request' },
+        reason: 'Reject a preview plan at the execution boundary.',
+      }, source, actor, 111, {
+        preparedExecution: {
+          issueRevision: row.revision,
+          mode: 'preview',
+          outputSnapshot: { type: 'daily-note', datePolicy: 'session-date' },
+          warnings: [],
+        },
+      });
+      expect(wrongMode.validation?.map((entry) => entry.code)).toEqual(expect.arrayContaining([
+        'prepared_execution_mode_mismatch',
+        'daily_note_output_not_supported',
+      ]));
+
+      const started = await store.startSession({
+        issueId: row.target.id,
+        expectedIssueRevision: row.revision,
+        request: { mode: 'request' },
+        reason: 'Start from a concrete prepared destination.',
+      }, source, actor, 112, {
+        preparedExecution: {
+          issueRevision: row.revision,
+          mode: 'request',
+          outputSnapshot: { type: 'create-child-under-node', nodeId: 'node:day' },
+          warnings: [],
+        },
+      });
+      expect(started.status).toBe('applied');
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+      expect((await store.readSession({ agentSessionId: sessionId }))?.agentSession.outputSnapshot).toEqual({
+        type: 'create-child-under-node',
+        nodeId: 'node:day',
+      });
+    });
+  });
+
+  test('records preparation failures as one visible terminal Session', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Broken prepared work',
+          input: { type: 'saved-query', queryId: 'query:missing' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create a legacy unsupported definition.',
+      }, actor, 100, {
+        origin: { type: 'conversation', conversationId: 'conversation:preparation-failure' },
+      });
+      const row = (await store.search({ text: 'Broken prepared work' })).rows[0]!;
+      const failed = await store.recordSessionPreparationFailure({
+        issueId: row.target.id,
+        expectedIssueRevision: row.revision,
+        request: { mode: 'request' },
+        reason: 'Record the failed execution boundary.',
+      }, { type: 'runtime-action', actor }, row.revision, [{
+        path: 'input',
+        code: 'saved_query_not_supported',
+        message: 'Saved query resolution is unavailable.',
+      }], actor, 110);
+
+      expect(failed.status).toBe('blocked');
+      const sessionId = failed.targets.find((target) => target.type === 'agent-session')!.id;
+      const session = (await store.readSession({
+        agentSessionId: sessionId,
+        include: ['activity-summary'],
+      }))!;
+      expect(session.agentSession).toMatchObject({
+        state: 'error',
+        errorMessage: 'Saved query resolution is unavailable.',
+        completedAt: 110,
+      });
+      expect(session.activity).toContainEqual(expect.objectContaining({
+        content: expect.objectContaining({ type: 'agent-error' }),
+      }));
+      expect(await store.listReadyIssuesForExecution(111)).toEqual([]);
+      expect(Object.values((await store.state()).terminalDeliveries)).toHaveLength(1);
+    });
+  });
+
+  test('does not record a stale preparation failure against a newer Issue revision', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: { title: 'Revision-bound preparation failure' },
+        request: { mode: 'request' },
+        reason: 'Create revision-bound work.',
+      }, actor, 100);
+      const row = (await store.search({ text: 'Revision-bound preparation failure' })).rows[0]!;
+      const updated = await store.update({
+        target: { type: 'issue', id: row.target.id, expectedRevision: row.revision },
+        change: { type: 'patch', patch: { description: 'The definition is now valid.' } },
+        request: { mode: 'request' },
+        reason: 'Advance the Issue revision after preparation.',
+      }, actor, 110);
+      expect(updated.status).toBe('applied');
+
+      const failed = await store.recordSessionPreparationFailure({
+        issueId: row.target.id,
+        request: { mode: 'request' },
+        reason: 'Reject the stale preparation result.',
+      }, { type: 'runtime-action', actor }, row.revision, [{
+        code: 'daily_note_resolution_failed',
+        message: 'Stale preparation failure.',
+      }], actor, 120);
+
+      expect(failed.status).toBe('conflict');
+      expect(failed.validation).toContainEqual(expect.objectContaining({ code: 'revision_mismatch' }));
+      expect(Object.values((await store.state()).sessions)).toEqual([]);
+      expect((await store.listReadyIssuesForExecution(121)).map((issue) => issue.id)).toContain(row.target.id);
     });
   });
 
@@ -667,6 +813,11 @@ describe('agent issue store', () => {
       expect(materialized[0].trigger.type).toBe('when-ready');
       expect(materialized[0].confirmation.confirmedBy).toEqual(actor);
       expect(materialized[0].recurrence?.recurringIssueId).toBe(recurring.target.id);
+      expect(materialized[0].recurrence?.timeZone).toBe('Asia/Shanghai');
+      expect(materialized[0].dueDate).toEqual({
+        targetAt: Date.parse('2026-07-07T10:00:00Z'),
+        timeZone: 'Asia/Shanghai',
+      });
       expect(await store.materializeDueRecurringIssues(dueAt, actor)).toEqual([]);
 
       const currentRecurring = (await store.search({ targets: ['recurring-issue'] })).rows[0];
@@ -1661,6 +1812,68 @@ describe('agent issue store', () => {
       expect(open.status.category).toBe('started');
       expect((await store.search({ targets: ['issue'], filter: { needsAttention: true } })).rows)
         .toContainEqual(expect.objectContaining({ target: issue.target }));
+    });
+  });
+
+  test('requires a new Daily Note Session when its date definition changes after preparation', async () => {
+    await withStore(async (store) => {
+      await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Date-fenced Daily Note',
+          trigger: { type: 'scheduled', startAt: 1_000, timeZone: 'UTC' },
+          dueDate: { targetAt: 1_000, timeZone: 'UTC' },
+          output: { type: 'daily-note', datePolicy: 'due-date' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create date-fenced work.',
+      }, actor, 100);
+      const row = (await store.search({ text: 'Date-fenced Daily Note' })).rows[0]!;
+      const started = await store.startSession({
+        issueId: row.target.id,
+        expectedIssueRevision: row.revision,
+        request: { mode: 'request' },
+        reason: 'Start against the original date definition.',
+      }, { type: 'runtime-action', actor }, actor, 110, {
+        preparedExecution: {
+          issueRevision: row.revision,
+          mode: 'request',
+          outputSnapshot: { type: 'create-child-under-node', nodeId: 'node:day-a' },
+          warnings: [],
+        },
+      });
+      const sessionId = started.targets.find((target) => target.type === 'agent-session')!.id;
+      await store.bindSessionExecution(sessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:date-fence',
+        executionId: 'execution:date-fence',
+        startedAt: 120,
+      }, actor, 120);
+      const current = (await store.read({ target: row.target })).issue!;
+      await store.update({
+        target: { type: 'issue', id: current.id, expectedRevision: current.revision },
+        change: {
+          type: 'patch',
+          patch: {
+            dueDate: { targetAt: 2_000, timeZone: 'Asia/Shanghai' },
+            trigger: { type: 'scheduled', startAt: 2_000, timeZone: 'Asia/Shanghai' },
+          },
+        },
+        request: { mode: 'request' },
+        reason: 'Move the concrete Daily Note destination.',
+      }, actor, 130);
+
+      const synced = await store.syncSessionExecution({
+        engine: 'delegation',
+        executionId: 'execution:date-fence',
+        state: 'completed',
+        latestOutput: 'Result for the old date.',
+        completedAt: 140,
+      }, actor, 140);
+
+      expect(synced?.issueBecameCompleted).toBe(false);
+      expect(synced?.session.errorMessage).toContain('dueDate, trigger');
+      expect((await store.read({ target: row.target })).issue?.status.category).not.toBe('completed');
     });
   });
 

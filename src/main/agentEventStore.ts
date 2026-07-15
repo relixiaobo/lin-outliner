@@ -2451,12 +2451,18 @@ function normalizeAgentRunScope(value: unknown): AgentRunScope | undefined {
   const paths = normalizeStoredResourceArray(rawResources, 'paths');
   const nodes = normalizeStoredResourceArray(rawResources, 'nodes');
   const writableNodes = normalizeStoredResourceArray(rawResources, 'writableNodes');
-  const compactResources = docs !== undefined || paths !== undefined || nodes !== undefined || writableNodes !== undefined
+  const creatableNodeParents = normalizeStoredResourceArray(rawResources, 'creatableNodeParents');
+  const compactResources = docs !== undefined
+    || paths !== undefined
+    || nodes !== undefined
+    || writableNodes !== undefined
+    || creatableNodeParents !== undefined
     ? {
         ...(docs !== undefined ? { docs } : {}),
         ...(paths !== undefined ? { paths } : {}),
         ...(nodes !== undefined ? { nodes } : {}),
         ...(writableNodes !== undefined ? { writableNodes } : {}),
+        ...(creatableNodeParents !== undefined ? { creatableNodeParents } : {}),
       }
     : undefined;
   return capabilities?.length || compactResources

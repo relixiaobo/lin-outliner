@@ -178,8 +178,12 @@ describe('agent delegation run policy', () => {
     expect(() => narrowRunScope(parent, { resources: { nodes: ['node:c'] } }))
       .toThrow('Run scope cannot widen nodes: node:c');
 
-    expect(normalizeRunScope({ resources: { nodes: [], writableNodes: [] } })).toEqual({
-      resources: { nodes: [], writableNodes: [] },
+    expect(normalizeRunScope({ resources: {
+      nodes: [],
+      writableNodes: [],
+      creatableNodeParents: [],
+    } })).toEqual({
+      resources: { nodes: [], writableNodes: [], creatableNodeParents: [] },
     });
     expect(narrowRunScope({ resources: { nodes: [] } }, undefined)).toEqual({
       resources: { nodes: [] },
@@ -190,6 +194,38 @@ describe('agent delegation run policy', () => {
       { resources: { nodes: ['node:a'], writableNodes: [] } },
       { resources: { nodes: ['node:a'], writableNodes: ['node:a'] } },
     )).toThrow('Run scope cannot widen writableNodes: node:a');
+    expect(narrowRunScope(
+      {
+        resources: {
+          nodes: ['node:a', 'node:b'],
+          writableNodes: [],
+          creatableNodeParents: ['node:a'],
+        },
+      },
+      {
+        resources: {
+          nodes: ['node:a'],
+          writableNodes: [],
+          creatableNodeParents: ['node:a'],
+        },
+      },
+    )).toEqual({
+      resources: {
+        nodes: ['node:a'],
+        writableNodes: [],
+        creatableNodeParents: ['node:a'],
+      },
+    });
+    expect(() => narrowRunScope(
+      {
+        resources: {
+          nodes: ['node:a', 'node:b'],
+          writableNodes: [],
+          creatableNodeParents: ['node:a'],
+        },
+      },
+      { resources: { nodes: ['node:b'], creatableNodeParents: ['node:b'] } },
+    )).toThrow('Run scope cannot widen creatableNodeParents: node:b');
   });
 
   test('derives allowed tools and verifier-only read scope from capabilities', () => {
@@ -206,6 +242,7 @@ describe('agent delegation run policy', () => {
         paths: ['src'],
         nodes: ['node:a'],
         writableNodes: ['node:a'],
+        creatableNodeParents: ['node:a'],
       },
     })).toEqual({
       capabilities: ['file.read.allowed_file_area', 'web.search'],
@@ -213,6 +250,16 @@ describe('agent delegation run policy', () => {
     });
     expect(verifierRunScope({ resources: { writableNodes: ['node:writable'] } })).toMatchObject({
       resources: { nodes: ['node:writable'] },
+    });
+    expect(verifierRunScope({ resources: { creatableNodeParents: ['node:create-parent'] } }))
+      .toMatchObject({ resources: { nodes: ['node:create-parent'] } });
+    expect(verifierRunScope({
+      resources: {
+        writableNodes: ['node:writable'],
+        creatableNodeParents: ['node:create-parent'],
+      },
+    })).toMatchObject({
+      resources: { nodes: ['node:writable', 'node:create-parent'] },
     });
     expect(verifierAllowedToolNames({ capabilities: ['outline.edit'] })).toEqual([]);
     expect(verifierAllowedToolNames({ capabilities: ['outline.read', 'web.search'] })).toEqual([
@@ -255,5 +302,8 @@ describe('agent delegation run policy', () => {
     expect(formatRunScopeForPrompt({ resources: { nodes: [] } })).toBe('- nodes: none (deny all)');
     expect(formatRunScopeForPrompt({ resources: { nodes: ['node:a'], writableNodes: [] } }))
       .toBe('- nodes: node:a\n- writable nodes: none (deny all)');
+    expect(formatRunScopeForPrompt({
+      resources: { nodes: ['node:a'], writableNodes: [], creatableNodeParents: ['node:a'] },
+    })).toBe('- nodes: node:a\n- writable nodes: none (deny all)\n- creatable node parents: node:a');
   });
 });

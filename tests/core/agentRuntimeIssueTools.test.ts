@@ -1430,9 +1430,16 @@ describe('agent runtime Issue tools', () => {
 
     const { AgentRuntime } = await loadRuntimeModule();
     const sink = createWindowSink();
+    const core = Core.new();
+    const scopeNodeId = core.createNode(
+      core.projection().todayId,
+      null,
+      'Restored scope fixture',
+    ).focus?.nodeId;
+    if (!scopeNodeId) throw new Error('Expected a scope fixture node.');
     const runtime = new AgentRuntime(
       () => sink.window as never,
-      hostFor(Core.new()),
+      hostFor(core),
       {
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
@@ -1481,7 +1488,7 @@ describe('agent runtime Issue tools', () => {
       issueType: 'issue',
       fields: {
         title: 'Verifier amendment fixture',
-        noteNodeIds: ['node:restored-scope'],
+        noteNodeIds: [scopeNodeId],
         completionCriteria: [{ id: 'initial-output', text: 'Return the initial output.', state: 'open' }],
         verificationPolicy: { mode: 'agent-review', requiredVerdict: 'pass' },
         permissionMode: 'attended',
@@ -1519,7 +1526,12 @@ describe('agent runtime Issue tools', () => {
     await waitFor(() => !conversationState.delegationRuntime.hasLiveRun(binding!.executionId));
     const persistedRun = await new AgentEventStore(dataRoot).readRunMetaProjection(binding!.executionId);
     expect(persistedRun?.objective?.scope).toEqual({
-      resources: { nodes: ['node:restored-scope'], writableNodes: [] },
+      capabilities: undefined,
+      resources: {
+        nodes: [scopeNodeId],
+        writableNodes: [],
+        creatableNodeParents: [],
+      },
     });
     expect(persistedRun?.objective?.budget).toBeDefined();
 
