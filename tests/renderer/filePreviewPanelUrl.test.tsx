@@ -234,6 +234,7 @@ function renderUrlPanel(options: {
     lin: {
       initialTranslationLanguage: TranslationLanguage;
       initialUrlPageTranslationPreferences: UrlPageTranslationPreferences;
+      executeUrlPageTranslationGuest: (request: { command: { operation: string } }) => Promise<unknown>;
       invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
       onTranslationLanguageChanged: (listener: (language: TranslationLanguage) => void) => () => void;
       onUrlPageTranslationPreferencesChanged: (listener: (preferences: UrlPageTranslationPreferences) => void) => () => void;
@@ -246,6 +247,14 @@ function renderUrlPanel(options: {
     initialUrlPageTranslationPreferences: options.initialTranslationPreferences ?? {
       translationModel: null,
       autoTranslateUrls: false,
+    },
+    executeUrlPageTranslationGuest: async ({ command }) => {
+      if (command.operation === 'document-language') return 'en';
+      if (command.operation === 'next-batch') {
+        return { blocks: [], preemptRequestId: null, priority: null };
+      }
+      if (command.operation === 'apply') return 0;
+      return null;
     },
     invoke: (command) => Promise.resolve(
       command === 'agent_get_provider_settings'

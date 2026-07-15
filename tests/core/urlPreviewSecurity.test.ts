@@ -22,6 +22,11 @@ const PAGE_TRANSLATION_SRC = readFileSync(
   'utf8',
 );
 
+const TRANSLATION_GUEST_HOST_SRC = readFileSync(
+  join(import.meta.dir, '../../src/main/urlPageTranslationGuest.ts'),
+  'utf8',
+);
+
 describe('URL preview webview security posture', () => {
   test('the main window enables webview only behind attach-time hardening', () => {
     expect(MAIN_SRC).toContain('webviewTag: true');
@@ -70,6 +75,10 @@ describe('URL preview webview security posture', () => {
     expect(TRANSLATION_GUEST_SRC).not.toContain('translation.innerHTML');
     expect(TRANSLATION_GUEST_SRC).not.toContain('ipcRenderer');
     expect(TRANSLATION_GUEST_SRC).not.toContain('preload');
+    expect(TRANSLATION_GUEST_SRC).not.toContain('webview.executeJavaScript(');
+    expect(TRANSLATION_GUEST_HOST_SRC).toContain('executeJavaScriptInIsolatedWorld');
+    expect(TRANSLATION_GUEST_HOST_SRC).toContain("guest.hostWebContents !== sender");
+    expect(TRANSLATION_GUEST_HOST_SRC).toContain("guest.getType() !== 'webview'");
   });
 
   test('the scoped translation shortcut is intercepted by the hardened guest host', () => {

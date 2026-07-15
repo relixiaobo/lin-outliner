@@ -443,15 +443,16 @@ export class UrlPageTranslationController {
       return;
     }
 
+    let insertedCount: number;
     try {
-      await this.runGuest(() => this.guest.apply(response.translations));
+      insertedCount = await this.runGuest(() => this.guest.apply(response.translations));
     } catch {
       await this.failRequest(activeRequest, 'provider-error');
       return;
     }
     if (!this.isActiveRequest(activeRequest)) return;
     this.activeRequests.delete(activeRequest.requestId);
-    if (response.translations.length > 0) this.setHasCompletedTranslation(true);
+    if (insertedCount > 0) this.setHasCompletedTranslation(true);
     for (const translation of response.translations) this.failedIds.delete(translation.id);
     this.pausedForError = this.failedIds.size > 0;
     this.setStatus(

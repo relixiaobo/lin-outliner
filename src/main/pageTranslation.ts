@@ -1,4 +1,5 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
+import type { ErrorReport } from '../core/errorObservability';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
 import {
   URL_PAGE_TRANSLATE_COMMAND,
@@ -73,6 +74,16 @@ export class PageTranslationConfigurationError extends Error {
     super(message);
     this.name = 'PageTranslationConfigurationError';
   }
+}
+
+export function pageTranslationErrorReport(): ErrorReport {
+  return {
+    domain: 'page-translation',
+    severity: 'warn',
+    code: 'page-translation-request-failed',
+    message: 'Page translation request failed.',
+    context: { operation: 'translate-url-preview' },
+  };
 }
 
 class PageTranslationResponseError extends Error {

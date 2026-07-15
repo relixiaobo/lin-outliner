@@ -56,6 +56,10 @@ import {
   LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
   type UrlPageTranslationPreferences,
 } from '../core/urlPageTranslation';
+import {
+  LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL,
+  type UrlPageTranslationGuestRequest,
+} from '../core/urlPageTranslationGuest';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -348,6 +352,8 @@ const api = {
       ipcRenderer.removeListener(LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL, handler);
     };
   },
+  executeUrlPageTranslationGuest: (request: UrlPageTranslationGuestRequest) =>
+    ipcRenderer.invoke(LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL, request) as Promise<unknown>,
   openProviderConfig: (params: { providerId: string; mode: 'configure' | 'custom' }) =>
     ipcRenderer.invoke('lin:open-provider-config', params) as Promise<void>,
   closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,

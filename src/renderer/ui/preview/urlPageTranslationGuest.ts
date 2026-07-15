@@ -6,8 +6,20 @@ import {
   type UrlPageTranslationBlock,
   type UrlPageTranslationItem,
 } from '../../../core/urlPageTranslation';
+import {
+  URL_PAGE_TRANSLATION_RUNTIME_KEY,
+  type UrlPageTranslationGuestActiveBatch,
+  type UrlPageTranslationGuestBatchOptions,
+  type UrlPageTranslationGuestCommand,
+  type UrlPageTranslationGuestLabels,
+} from '../../../core/urlPageTranslationGuest';
 
-export const URL_PAGE_TRANSLATION_RUNTIME_KEY = '__tenonBilingualTranslationV1__';
+export { URL_PAGE_TRANSLATION_RUNTIME_KEY } from '../../../core/urlPageTranslationGuest';
+export type {
+  UrlPageTranslationGuestActiveBatch,
+  UrlPageTranslationGuestBatchOptions,
+  UrlPageTranslationGuestLabels,
+} from '../../../core/urlPageTranslationGuest';
 
 const URL_PAGE_TRANSLATION_DEFAULT_MAX_BLOCKS = 4;
 const URL_PAGE_TRANSLATION_DEFAULT_MAX_CHARS = 4_000;
@@ -100,28 +112,10 @@ html[data-tenon-bilingual-hidden="true"] [data-tenon-bilingual-translation="true
 }
 `;
 
-export interface UrlPageTranslationGuestLabels {
-  retry: string;
-  translating: string;
-}
-
 export interface UrlPageTranslationGuestBatch {
   blocks: UrlPageTranslationBlock[];
   preemptRequestId?: string | null;
   priority: number | null;
-}
-
-export interface UrlPageTranslationGuestActiveBatch {
-  ids: readonly string[];
-  requestId: string;
-}
-
-export interface UrlPageTranslationGuestBatchOptions {
-  activeBatches?: readonly UrlPageTranslationGuestActiveBatch[];
-  maxBlocks?: number;
-  maxChars?: number;
-  retryOnly?: boolean;
-  visibleOnly?: boolean;
 }
 
 export interface UrlPageTranslationGuestBridge {
@@ -130,24 +124,24 @@ export interface UrlPageTranslationGuestBridge {
   setEnabled(enabled: boolean, targetLanguage: TranslationLanguage): Promise<void>;
   nextBatch(options?: UrlPageTranslationGuestBatchOptions): Promise<UrlPageTranslationGuestBatch>;
   release(ids: readonly string[]): Promise<void>;
-  apply(translations: readonly UrlPageTranslationItem[]): Promise<void>;
+  apply(translations: readonly UrlPageTranslationItem[]): Promise<number>;
   fail(ids: readonly string[]): Promise<void>;
   destroy(): Promise<void>;
 }
 
+export type UrlPageTranslationGuestCommandExecutor = (
+  command: UrlPageTranslationGuestCommand,
+) => Promise<unknown>;
+
 export function createUrlPageTranslationGuestBridge(
   webview: Electron.WebviewTag,
+  commandExecutor: UrlPageTranslationGuestCommandExecutor = defaultCommandExecutor(webview),
 ): UrlPageTranslationGuestBridge {
   let cssKey: string | null = null;
 
-  const execute = async <T>(method: string, ...args: unknown[]): Promise<T> => {
-    const source = `(() => {
-      const runtime = window[${JSON.stringify(URL_PAGE_TRANSLATION_RUNTIME_KEY)}];
-      if (!runtime || runtime.version !== 1 || typeof runtime[${JSON.stringify(method)}] !== 'function') return null;
-      return runtime[${JSON.stringify(method)}](...${JSON.stringify(args)});
-    })()`;
-    return await webview.executeJavaScript(source) as T;
-  };
+  const execute = async <T>(command: UrlPageTranslationGuestCommand): Promise<T> => (
+    await commandExecutor(command) as T
+  );
 
   const removeCss = async () => {
     const key = cssKey;
@@ -158,45 +152,69 @@ export function createUrlPageTranslationGuestBridge(
 
   return {
     async documentLanguage() {
-      const raw = await webview.executeJavaScript(
-        'document.documentElement?.getAttribute("lang") ?? null',
-      );
+      const raw = await execute<unknown>({ operation: 'document-language' });
       return typeof raw === 'string' ? raw : null;
     },
     async initialize(targetLanguage, labels) {
       await removeCss();
       cssKey = await webview.insertCSS(URL_PAGE_TRANSLATION_GUEST_CSS);
-      const source = `(${installUrlPageTranslationRuntime.toString()})(window, ${JSON.stringify(URL_PAGE_TRANSLATION_RUNTIME_KEY)}, ${JSON.stringify(targetLanguage)}, ${JSON.stringify(labels)})`;
-      await webview.executeJavaScript(source);
+      await execute({
+        operation: 'initialize',
+        labels,
+        runtimeSource: installUrlPageTranslationRuntime.toString(),
+        targetLanguage,
+      });
     },
     async setEnabled(enabled, targetLanguage) {
-      await execute('setEnabled', enabled, targetLanguage);
+      await execute({ operation: 'set-enabled', enabled, targetLanguage });
     },
     async nextBatch(options = {}) {
-      const raw = await execute<unknown>(
-        'nextBatch',
-        options.maxBlocks ?? URL_PAGE_TRANSLATION_DEFAULT_MAX_BLOCKS,
-        options.maxChars ?? URL_PAGE_TRANSLATION_DEFAULT_MAX_CHARS,
-        URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS,
-        options.retryOnly ?? false,
-        options.visibleOnly ?? false,
-        options.activeBatches ?? [],
+      const maxBlocks = boundedBatchLimit(
+        options.maxBlocks,
+        URL_PAGE_TRANSLATION_DEFAULT_MAX_BLOCKS,
+        URL_PAGE_TRANSLATION_MAX_BLOCKS,
       );
-      return validatedGuestBatch(raw);
+      const maxChars = boundedBatchLimit(
+        options.maxChars,
+        URL_PAGE_TRANSLATION_DEFAULT_MAX_CHARS,
+        URL_PAGE_TRANSLATION_MAX_BATCH_CHARS,
+      );
+      const raw = await execute<unknown>({
+        operation: 'next-batch',
+        options: {
+          activeBatches: options.activeBatches ?? [],
+          maxBlocks,
+          maxChars,
+          retryOnly: options.retryOnly ?? false,
+          visibleOnly: options.visibleOnly ?? false,
+        },
+      });
+      return validatedGuestBatch(raw, maxBlocks, maxChars);
     },
     async release(ids) {
-      await execute('release', ids);
+      await execute({ operation: 'release', ids });
     },
     async apply(translations) {
-      await execute('apply', translations);
+      const inserted = await execute<unknown>({ operation: 'apply', translations });
+      return Number.isInteger(inserted) && (inserted as number) > 0
+        ? Math.min(inserted as number, translations.length)
+        : 0;
     },
     async fail(ids) {
-      await execute('fail', ids);
+      await execute({ operation: 'fail', ids });
     },
     async destroy() {
-      await execute('destroy').catch(() => undefined);
+      await execute({ operation: 'destroy' }).catch(() => undefined);
       await removeCss();
     },
+  };
+}
+
+function defaultCommandExecutor(webview: Electron.WebviewTag): UrlPageTranslationGuestCommandExecutor {
+  return async (command) => {
+    const execute = window.lin?.executeUrlPageTranslationGuest;
+    if (!execute) throw new Error('Tenon URL page translation bridge is unavailable.');
+    return await execute({ webContentsId: webview.getWebContentsId(), command });
   };
 }
 
@@ -258,6 +276,18 @@ export function installUrlPageTranslationRuntime(
   let targetLanguage = initialTargetLanguage;
   let anchorRevision = 0;
   let runtimeActive = true;
+  const scrollKeys = new Set([' ', 'ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp']);
+
+  const invalidateDeferredAnchorCorrection = (): void => {
+    anchorRevision += 1;
+  };
+  const invalidateDeferredAnchorCorrectionForKey = (event: KeyboardEvent): void => {
+    if (scrollKeys.has(event.key)) invalidateDeferredAnchorCorrection();
+  };
+  host.addEventListener('wheel', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
+  host.addEventListener('touchstart', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
+  host.addEventListener('touchmove', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
+  host.addEventListener('keydown', invalidateDeferredAnchorCorrectionForKey, { capture: true });
 
   const normalizeText = (value: string) => value.replace(/\s+/g, ' ').trim();
   const hasReadableText = (value: string) => /[\p{L}\p{N}]/u.test(value);
@@ -371,8 +401,15 @@ export function installUrlPageTranslationRuntime(
         id = `b${nextId++}`;
         elementIds.set(element, id);
       }
+      let existing = records.get(id);
+      if (existing && existing.text !== text) {
+        removeTranslation(existing);
+        records.delete(id);
+        id = `b${nextId++}`;
+        elementIds.set(element, id);
+        existing = undefined;
+      }
       seen.add(id);
-      const existing = records.get(id);
       if (!existing) {
         records.set(id, {
           id,
@@ -388,7 +425,7 @@ export function installUrlPageTranslationRuntime(
         continue;
       }
       existing.element = element;
-      if (existing.text !== text || (existing.translationNode && !existing.translationNode.isConnected)) {
+      if (existing.translationNode && !existing.translationNode.isConnected) {
         removeTranslation(existing);
         existing.text = text;
       }
@@ -578,7 +615,7 @@ export function installUrlPageTranslationRuntime(
       for (const entry of pending) {
         if (firstPriority !== null && entry.priority !== firstPriority) break;
         if (blocks.length >= maxBlocks) break;
-        if (blocks.length > 0 && chars + entry.record.text.length > maxChars) break;
+        if (chars + entry.record.text.length > maxChars) continue;
         entry.record.pending = true;
         entry.record.retryRequested = false;
         blocks.push({ id: entry.record.id, text: entry.record.text });
@@ -603,7 +640,8 @@ export function installUrlPageTranslationRuntime(
         }
       });
     },
-    apply(items: readonly UrlPageTranslationItem[]): void {
+    apply(items: readonly UrlPageTranslationItem[]): number {
+      let inserted = 0;
       withStableAnchor(() => {
         for (const item of items) {
           const record = records.get(item.id);
@@ -622,8 +660,10 @@ export function installUrlPageTranslationRuntime(
           translation.textContent = item.translation;
           record.element.append(translation);
           record.translationNode = translation;
+          inserted += 1;
         }
       });
+      return inserted;
     },
     fail(ids: readonly string[]): void {
       withStableAnchor(() => {
@@ -639,6 +679,10 @@ export function installUrlPageTranslationRuntime(
     },
     destroy(): void {
       observer?.disconnect();
+      host.removeEventListener('wheel', invalidateDeferredAnchorCorrection, { capture: true });
+      host.removeEventListener('touchstart', invalidateDeferredAnchorCorrection, { capture: true });
+      host.removeEventListener('touchmove', invalidateDeferredAnchorCorrection, { capture: true });
+      host.removeEventListener('keydown', invalidateDeferredAnchorCorrectionForKey, { capture: true });
       anchorRevision += 1;
       withStableAnchor(() => {
         for (const record of records.values()) {
@@ -657,7 +701,11 @@ export function installUrlPageTranslationRuntime(
   (host as unknown as Record<string, unknown>)[runtimeKey] = runtime;
 }
 
-function validatedGuestBatch(value: unknown): UrlPageTranslationGuestBatch {
+function validatedGuestBatch(
+  value: unknown,
+  maxBlocks: number,
+  maxChars: number,
+): UrlPageTranslationGuestBatch {
   if (!isRecord(value) || !Array.isArray(value.blocks)) {
     return { blocks: [], preemptRequestId: null, priority: null };
   }
@@ -669,12 +717,12 @@ function validatedGuestBatch(value: unknown): UrlPageTranslationGuestBatch {
     const id = item.id;
     const text = item.text.trim();
     if (!/^[A-Za-z0-9:_-]{1,96}$/.test(id) || ids.has(id)) continue;
-    if (!text || text.length > URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS) continue;
-    if (chars + text.length > URL_PAGE_TRANSLATION_MAX_BATCH_CHARS) break;
+    if (!text || text.length > Math.min(URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS, maxChars)) continue;
+    if (chars + text.length > maxChars) break;
     ids.add(id);
     chars += text.length;
     blocks.push({ id, text });
-    if (blocks.length >= URL_PAGE_TRANSLATION_MAX_BLOCKS) break;
+    if (blocks.length >= maxBlocks) break;
   }
   const priority = typeof value.priority === 'number' && Number.isInteger(value.priority)
     ? value.priority
@@ -684,6 +732,11 @@ function validatedGuestBatch(value: unknown): UrlPageTranslationGuestBatch {
     ? value.preemptRequestId
     : null;
   return { blocks, preemptRequestId, priority };
+}
+
+function boundedBatchLimit(value: number | undefined, fallback: number, maximum: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(maximum, Math.max(1, Math.floor(value)));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

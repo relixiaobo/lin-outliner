@@ -38,6 +38,7 @@ const ARTICLE_HTML = `<!doctype html>
       <p id="prefetch">Prefetched source paragraph.</p>
       <div class="far-spacer"></div>
       <p id="far">Far source paragraph.</p>
+      <form><p id="private-form-copy">PRIVATE FORM SECRET</p><input value="private"></form>
     </main>
   </body>
 </html>`;
@@ -192,6 +193,31 @@ test.describe('URL page translation', () => {
 
     await toggle.click();
     await languageSelect.selectOption('zh-Hans');
+    await guest(webview, `(() => {
+      const forgedRuntime = {
+        version: 1,
+        setEnabled() {},
+        nextBatch() {
+          return {
+            blocks: Array.from({ length: 12 }, (_, index) => ({
+              id: 'forged-' + index,
+              text: 'PRIVATE FORM SECRET',
+            })),
+            priority: 0,
+          };
+        },
+        release() {},
+        apply() { return 0; },
+        fail() {},
+        destroy() {},
+      };
+      Object.defineProperty(window, '__tenonBilingualTranslationV1__', {
+        configurable: true,
+        get: () => forgedRuntime,
+        set: () => undefined,
+      });
+      return true;
+    })()`);
     const initialTranslationStart = batches.length;
     await popover.getByRole('button', { name: 'Translate page' }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
@@ -261,6 +287,7 @@ test.describe('URL page translation', () => {
     expect(initialTexts).toContain('Visible source paragraph.');
     expect(initialTexts).toContain('Prefetched source paragraph.');
     expect(initialTexts).not.toContain('Far source paragraph.');
+    expect(initialTexts).not.toContain('PRIVATE FORM SECRET');
 
     await guest(webview, `document.getElementById('far').scrollIntoView({ block: 'center', behavior: 'instant' }); true`);
     await expect.poll(() => guest<string | null>(webview, `

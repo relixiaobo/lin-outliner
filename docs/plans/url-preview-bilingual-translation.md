@@ -177,7 +177,8 @@ request; ordinary batch completion or failure settles only that batch.
 
 Dynamic page mutations register new eligible blocks, but they are not submitted
 until they enter the same bounded window. Completed blocks are never requested
-again during the page session.
+again during the page session. A source text mutation assigns a fresh block id so
+an older request cannot apply, fail, or release the new text snapshot.
 
 Keep high-frequency viewport coordinates, queues, observers, and translation
 cache in an imperative controller/ref rather than React state. React state owns
@@ -208,7 +209,9 @@ compensate the webview with instant scrolling immediately and over two bounded
 animation frames. Injected translation and status nodes stay out of native
 scroll-anchor selection, so native and manual correction do not compete. This
 keeps the source sentence stationary when a site requests smooth scrolling and
-when cached translations are hidden or shown.
+when cached translations are hidden or shown. Wheel, touch, and scroll-key input
+invalidate deferred frame corrections so a late layout check never reverses the
+reader's own scroll.
 
 Each translation is one inert block immediately after its source. It inherits
 the page's font and current text color, uses a quiet opacity and modest block
@@ -216,6 +219,13 @@ spacing, and does not install links, event handlers, forms, images, or remote
 resources. Tenon's injected nodes and styles use a collision-resistant prefix.
 Reduced-motion users receive no insertion animation; the feature does not need
 motion in the default mode either.
+
+Install and invoke the guest runtime through a main-owned
+`executeJavaScriptInIsolatedWorld` channel. The preload bridge exposes only typed
+translation operations. Main verifies that the target is an HTTP(S) `webview`
+hosted by the requesting main window, validates each operation, and enforces the
+four-block / 4,000-character ceiling again. The remote page's main world cannot
+replace the collector or call it to submit excluded content.
 
 As soon as a block enters a submitted batch, append a small neutral inline
 loader at the end of its source. Its 16px status area and 10px spinner stay

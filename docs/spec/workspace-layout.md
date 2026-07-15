@@ -464,10 +464,14 @@ lowest-priority request, removes its transient loaders, returns those blocks to
 the pending pool, and starts a visible micro-batch without waiting for the
 obsolete provider response. Cancellation is not surfaced as an error. Dynamic
 content joins only after it enters the same window, and successful blocks remain
-cached in memory so back-scrolling does not call the provider again. DOM
-insertion, hide, and restore capture the
+cached in memory so back-scrolling does not call the provider again. When a source
+element's normalized text changes, it receives a fresh block id; responses,
+failures, and releases from the previous text snapshot can no longer affect it.
+DOM insertion, hide, and restore capture the
 first visible source block and compensate its post-write offset immediately and
-across two bounded animation frames. Compensation stays instant on sites that
+across two bounded animation frames. Wheel, touch, or keyboard scroll input
+invalidates any deferred compensation before it can undo the reader's movement.
+Compensation stays instant on sites that
 request smooth scrolling, and injected nodes do not become browser scroll anchors,
 keeping the reader's current sentence stationary through translation growth or
 collapse.
@@ -485,12 +489,20 @@ paragraph in place. The existing localized toast announces each failure wave.
 When the current page window contains no eligible untranslated blocks,
 translation stays enabled in an idle state without showing the completed fill;
 a later eligible block returns the control to loading before its request starts.
+The completed fill appears only after the guest confirms that at least one
+translation node was actually inserted; unchanged output or a detached source does not
+produce a false completed state.
 Disabling, canceling, navigating, or changing the source removes transient
 controls. Reduced-motion mode uses a static progress ring.
 
 The guest collector excludes scripts/styles, code/preformatted content, form
 controls, editable regions, navigation, hidden/inert/`aria-hidden` subtrees, and
-Tenon-injected nodes. Main revalidates the bounded block ids and text before using
+Tenon-injected nodes. Its runtime lives in an Electron isolated world rather than
+the remote page's main world. A dedicated preload IPC operation verifies that the
+target is an HTTP(S) `webview` owned by the requesting main window, rejects more
+than four blocks or 4,000 source characters, and invokes only bounded runtime
+operations. Remote scripts therefore cannot replace the collector or manufacture
+provider requests. Main revalidates the bounded block ids and text before using
 the dynamically followed Agent model or the explicitly selected qualified model.
 An explicit model must still be runnable on its provider and never silently falls
 back to Agent. The response must contain exactly the requested ids;

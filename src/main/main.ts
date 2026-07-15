@@ -51,8 +51,10 @@ import {
   LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
   type UrlPageTranslationPreferences,
 } from '../core/urlPageTranslation';
+import { LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL } from '../core/urlPageTranslationGuest';
 import { handlePreviewCommand } from './previewSource';
-import { PageTranslationService } from './pageTranslation';
+import { PageTranslationService, pageTranslationErrorReport } from './pageTranslation';
+import { executeUrlPageTranslationGuestCommand } from './urlPageTranslationGuest';
 import { setBoundedMapEntry } from './boundedMap';
 import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
 import {
@@ -343,14 +345,7 @@ const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   errorReporter: reportError,
 });
 const pageTranslationService = new PageTranslationService({
-  onError: (error) => reportError({
-    domain: 'page-translation',
-    severity: 'warn',
-    code: 'page-translation-request-failed',
-    message: error instanceof Error ? error.message : String(error),
-    context: { operation: 'translate-url-preview' },
-    error,
-  }),
+  onError: () => reportError(pageTranslationErrorReport()),
 });
 const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [agentLocalFileRoot, agentScratchRoot]);
 
@@ -1472,6 +1467,13 @@ function registerIpc() {
   ipcMain.handle('lin:record-node-access', async (_event, raw: unknown): Promise<void> => {
     if (typeof raw !== 'string' || !raw) return;
     await recordDocumentNodeAccess([raw], 'human');
+  });
+
+  ipcMain.handle(LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL, (event, raw: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('Page translation guest access is only available to the main window.');
+    }
+    return executeUrlPageTranslationGuestCommand(event.sender, raw);
   });
 
   ipcMain.handle('lin:window', (_event, command: string) => {

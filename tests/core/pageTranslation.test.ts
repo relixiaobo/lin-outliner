@@ -2,6 +2,8 @@ import { describe, expect, mock, test } from 'bun:test';
 import {
   URL_PAGE_TRANSLATE_COMMAND,
   URL_PAGE_TRANSLATION_CANCEL_COMMAND,
+  URL_PAGE_TRANSLATION_MAX_BATCH_CHARS,
+  URL_PAGE_TRANSLATION_MAX_BLOCKS,
   type UrlPageTranslationRequest,
 } from '../../src/core/urlPageTranslation';
 
@@ -25,6 +27,7 @@ const {
   PageTranslationConfigurationError,
   PageTranslationService,
   buildPageTranslationPrompts,
+  pageTranslationErrorReport,
   parsePageTranslationResponse,
 } = await import('../../src/main/pageTranslation');
 
@@ -225,6 +228,57 @@ describe('page translation service', () => {
     });
     expect(service.handle(URL_PAGE_TRANSLATE_COMMAND, { ...invalid })).rejects.toThrow('Duplicate');
     expect(called).toBe(false);
+  });
+
+  test('enforces the four-block and 4,000-character request policy in main', async () => {
+    const service = new PageTranslationService({ complete: async () => '[]' });
+    const tooManyBlocks = Array.from({ length: URL_PAGE_TRANSLATION_MAX_BLOCKS + 1 }, (_, index) => ({
+      id: `b${index}`,
+      text: `Block ${index}`,
+    }));
+
+    expect(service.handle(
+      URL_PAGE_TRANSLATE_COMMAND,
+      { ...request({ blocks: tooManyBlocks }) },
+    )).rejects.toThrow('block count');
+    expect(service.handle(
+      URL_PAGE_TRANSLATE_COMMAND,
+      {
+        ...request({
+          blocks: [
+            { id: 'b1', text: 'a'.repeat(URL_PAGE_TRANSLATION_MAX_BATCH_CHARS / 2 + 1) },
+            { id: 'b2', text: 'b'.repeat(URL_PAGE_TRANSLATION_MAX_BATCH_CHARS / 2) },
+          ],
+        }),
+      },
+    )).rejects.toThrow('batch is too large');
+  });
+
+  test('builds a fixed diagnostic report without provider error secrets', async () => {
+    const secret = 'Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz0123456789';
+    const reports: ReturnType<typeof pageTranslationErrorReport>[] = [];
+    const service = new PageTranslationService({
+      complete: async () => {
+        throw new Error(secret);
+      },
+      onError: () => reports.push(pageTranslationErrorReport()),
+    });
+    expect(await service.handle(URL_PAGE_TRANSLATE_COMMAND, { ...request() })).toEqual({
+      ok: false,
+      requestId: 'request:test',
+      error: 'provider-error',
+    });
+    const report = reports[0];
+
+    expect(report).toEqual({
+      domain: 'page-translation',
+      severity: 'warn',
+      code: 'page-translation-request-failed',
+      message: 'Page translation request failed.',
+      context: { operation: 'translate-url-preview' },
+    });
+    expect(JSON.stringify(report)).not.toContain('Authorization');
+    expect(JSON.stringify(report)).not.toContain('sk-');
   });
 
   test('rejects an explicit model that is not provider-qualified', async () => {

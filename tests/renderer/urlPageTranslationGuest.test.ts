@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { parseHTML } from 'linkedom';
 import {
+  createUrlPageTranslationGuestBridge,
   URL_PAGE_TRANSLATION_GUEST_CSS,
   URL_PAGE_TRANSLATION_RUNTIME_KEY,
   installUrlPageTranslationRuntime,
@@ -31,7 +32,7 @@ interface GuestRuntime {
     activeBatches?: readonly UrlPageTranslationGuestActiveBatch[],
   ): UrlPageTranslationGuestBatch;
   release(ids: readonly string[]): void;
-  apply(items: readonly UrlPageTranslationItem[]): void;
+  apply(items: readonly UrlPageTranslationItem[]): number;
   fail(ids: readonly string[]): void;
   destroy(): void;
 }
@@ -142,6 +143,48 @@ describe('URL page translation guest runtime', () => {
     expect(nextBatch(fixture.runtime, { maxBlocks: 1 }).blocks).toHaveLength(1);
   });
 
+  test('routes runtime commands through the isolated guest executor and keeps exact batch bounds', async () => {
+    const commands: string[] = [];
+    let mainWorldExecutions = 0;
+    const webview = {
+      executeJavaScript: async () => {
+        mainWorldExecutions += 1;
+        return null;
+      },
+      getWebContentsId: () => 71,
+      insertCSS: async () => 'css-key',
+      removeInsertedCSS: async () => undefined,
+    } as unknown as Electron.WebviewTag;
+    const bridge = createUrlPageTranslationGuestBridge(webview, async (command) => {
+      commands.push(command.operation);
+      if (command.operation === 'next-batch') {
+        return {
+          blocks: [
+            { id: 'b1', text: 'One' },
+            { id: 'b2', text: 'Two' },
+            { id: 'b3', text: 'Three' },
+          ],
+          priority: 0,
+        };
+      }
+      if (command.operation === 'apply') return 1;
+      return null;
+    });
+
+    await bridge.initialize('zh-Hans', TEST_LABELS);
+    await bridge.setEnabled(true, 'zh-Hans');
+    const batch = await bridge.nextBatch({ maxBlocks: 2, maxChars: 6 });
+    expect(await bridge.apply([{ id: 'b1', translation: '一' }])).toBe(1);
+    await bridge.destroy();
+
+    expect(batch.blocks).toEqual([
+      { id: 'b1', text: 'One' },
+      { id: 'b2', text: 'Two' },
+    ]);
+    expect(commands).toEqual(['initialize', 'set-enabled', 'next-batch', 'apply', 'destroy']);
+    expect(mainWorldExecutions).toBe(0);
+  });
+
   test('inserts model output with textContent and preserves the current reading anchor', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
@@ -176,6 +219,53 @@ describe('URL page translation guest runtime', () => {
     fixture.runtime.setEnabled(true, 'zh-Hans');
     expect(fixture.document.documentElement.hasAttribute('data-tenon-bilingual-hidden')).toBe(false);
     expect(fixture.scrollDeltas).toEqual([30, 12, -30, 30]);
+  });
+
+  test('reports zero insertions when model output is unchanged source text', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const block = nextBatch(fixture.runtime, { maxBlocks: 1 }).blocks[0];
+    if (!block) throw new Error('Missing block');
+
+    expect(fixture.runtime.apply([{ id: block.id, translation: block.text }])).toBe(0);
+    expect(fixture.document.querySelector('[data-tenon-bilingual-translation="true"]')).toBeNull();
+    expect(fixture.document.querySelector('[data-tenon-bilingual-status]')).toBeNull();
+  });
+
+  test('does not let a stale response attach to changed source text', async () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const oldBlock = nextBatch(fixture.runtime, { maxBlocks: 1 }).blocks[0];
+    if (!oldBlock) throw new Error('Missing old block');
+    const source = fixture.document.getElementById('above');
+    const textNode = source?.firstChild;
+    if (!textNode) throw new Error('Missing source text node');
+    textNode.textContent = 'Changed source text';
+    await Promise.resolve();
+
+    const newBlock = nextBatch(fixture.runtime, { maxBlocks: 1 }).blocks[0];
+    expect(newBlock?.text).toBe('Changed source text');
+    expect(newBlock?.id).not.toBe(oldBlock.id);
+    expect(fixture.runtime.apply([{ id: oldBlock.id, translation: 'STALE TRANSLATION' }])).toBe(0);
+    expect(source.querySelector('[data-tenon-bilingual-translation="true"]')).toBeNull();
+    expect(source.querySelector('[data-tenon-bilingual-status="loading"]')).not.toBeNull();
+  });
+
+  test('does not undo user scrolling from a deferred anchor correction', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const block = nextBatch(fixture.runtime, { maxBlocks: 1 }).blocks[0];
+    if (!block) throw new Error('Missing block');
+    fixture.runtime.apply([{ id: block.id, translation: 'Translated above viewport' }]);
+    expect(fixture.scrollDeltas).toEqual([30]);
+
+    const EventCtor = (fixture.window as unknown as { Event: typeof Event }).Event;
+    fixture.window.dispatchEvent(new EventCtor('wheel'));
+    fixture.setScrollY(130);
+    fixture.flushAnimationFrame();
+    fixture.flushAnimationFrame();
+
+    expect(fixture.scrollDeltas).toEqual([30]);
   });
 
   test('prevents a replaced runtime from applying stale frame corrections', () => {

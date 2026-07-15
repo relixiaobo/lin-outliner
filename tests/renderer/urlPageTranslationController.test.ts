@@ -120,6 +120,37 @@ describe('UrlPageTranslationController', () => {
     controller.destroy();
   });
 
+  test('does not report completion when the guest inserts no visible translation', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'Already translated' }], priority: 0 },
+    ]);
+    guest.applyInsertedCount = 0;
+    const completionStates: boolean[] = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'en',
+      guest,
+      pollIntervalMs: 5,
+      onCompletionChange: (completed) => completionStates.push(completed),
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => ({
+        ok: true,
+        requestId: request.requestId,
+        translations: [{ id: 'b1', translation: 'Already translated' }],
+      }),
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => guest.applied.length === 1);
+    await waitFor(() => controller.currentStatus === 'idle');
+
+    expect(controller.hasCompletedTranslations).toBe(false);
+    expect(completionStates).toEqual([]);
+    controller.destroy();
+  });
+
   test('starts three bounded visible batches and applies whichever response finishes first', async () => {
     const guest = new FakeGuest([
       {
@@ -793,7 +824,7 @@ describe('UrlPageTranslationController', () => {
         return { blocks: [], priority: null };
       },
       async release() {},
-      async apply() {},
+      async apply() { return 0; },
       async fail() {},
       async destroy() {
         destroyCount += 1;
@@ -835,6 +866,7 @@ describe('UrlPageTranslationController', () => {
 
 class FakeGuest implements UrlPageTranslationGuestBridge {
   applied: Array<Array<{ id: string; translation: string }>> = [];
+  applyInsertedCount: number | null = null;
   documentLanguageCalls = 0;
   destroyed = 0;
   enabledCalls: Array<[boolean, TranslationLanguage]> = [];
@@ -883,8 +915,9 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
     this.released.push([...ids]);
   }
 
-  async apply(translations: readonly { id: string; translation: string }[]): Promise<void> {
+  async apply(translations: readonly { id: string; translation: string }[]): Promise<number> {
     this.applied.push([...translations]);
+    return this.applyInsertedCount ?? translations.length;
   }
 
   async fail(ids: readonly string[]): Promise<void> {
