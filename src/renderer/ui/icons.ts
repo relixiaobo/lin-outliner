@@ -6,6 +6,7 @@ export const ICON_SIZE = {
   rowChevron: 15,
   rowGlyph: 12,
   tiny: 10,
+  badge: 8,
 } as const;
 
 export {

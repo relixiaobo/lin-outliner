@@ -129,6 +129,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const [translationPopoverOpen, setTranslationPopoverOpen] = useState(false);
   const translationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const translationDismissRefs = useMemo(() => [translationTriggerRef], []);
+  const closeTranslationPopover = useCallback(() => setTranslationPopoverOpen(false), []);
   const handleTranslationError = useCallback((error: 'invalid-response' | 'not-configured' | 'provider-error') => {
     props.onError?.(error === 'not-configured'
       ? previewLabels.translationNotConfigured
@@ -494,7 +495,9 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 <span className="file-preview-translation-icon" aria-hidden="true">
                   <LanguagesIcon size={ICON_SIZE.menu} />
                   {translationCompleted ? (
-                    <CheckIcon className="file-preview-translation-check" size={ICON_SIZE.tiny} />
+                    <span className="file-preview-translation-check">
+                      <CheckIcon size={ICON_SIZE.badge} />
+                    </span>
                   ) : null}
                 </span>
               )}
@@ -507,7 +510,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 language={translationLanguage.language}
                 model={translationPreferences.translationModel}
                 onAutoTranslateChange={translationPreferences.setAutoTranslateUrls}
-                onClose={() => setTranslationPopoverOpen(false)}
+                onClose={closeTranslationPopover}
                 onLanguageChange={translationLanguage.setLanguage}
                 onModelChange={translationPreferences.setTranslationModel}
                 onToggle={() => {
@@ -706,78 +709,81 @@ function UrlTranslationPopover({
   }, []);
 
   return createPortal(
-    <MenuSurface
-      aria-label={labels.translationSettings}
-      className="node-context-menu file-preview-translation-popover"
-      onKeyDown={onKeyDown}
-      onMouseDown={(event) => event.stopPropagation()}
-      ref={popoverRef}
-      role="dialog"
-      style={style}
-    >
-      <label className="file-preview-translation-option-row">
-        <span>{labels.targetLanguage}</span>
-        <SelectControl
-          label={labels.targetLanguage}
-          onChange={(event) => onLanguageChange(event.target.value as TranslationLanguage)}
-          value={language}
-          variant="popup"
-        >
-          {TRANSLATION_LANGUAGES.map((entry) => (
-            <option key={entry.code} value={entry.code}>{entry.nativeName}</option>
-          ))}
-        </SelectControl>
-      </label>
-      <Button
-        aria-pressed={enabled}
-        className="file-preview-translation-command"
-        onClick={onToggle}
-        variant={enabled ? 'secondary' : 'primary'}
+    <>
+      <div aria-hidden="true" className="file-preview-translation-scrim" />
+      <MenuSurface
+        aria-label={labels.translationSettings}
+        className="node-context-menu file-preview-translation-popover"
+        onKeyDown={onKeyDown}
+        onMouseDown={(event) => event.stopPropagation()}
+        ref={popoverRef}
+        role="dialog"
+        style={style}
       >
-        <span className="file-preview-translation-command-label">
-          {enabled ? <HideIcon size={ICON_SIZE.menu} /> : <LanguagesIcon size={ICON_SIZE.menu} />}
-          <span>{enabled ? labels.showOriginal : labels.translatePage}</span>
-        </span>
-        <kbd>{translationShortcutLabel()}</kbd>
-      </Button>
-      <div className="file-preview-translation-divider" role="presentation" />
-      <SwitchControl
-        checked={autoTranslate}
-        className="file-preview-translation-auto-switch"
-        label={labels.autoTranslateWebpages}
-        onCheckedChange={onAutoTranslateChange}
-      >
-        <span>{labels.autoTranslateWebpages}</span>
-        <SwitchMark checked={autoTranslate} />
-      </SwitchControl>
-      <label className="file-preview-translation-option-row">
-        <span>{labels.translationModel}</span>
-        <SelectControl
-          label={labels.translationModel}
-          onChange={(event) => onModelChange(event.target.value || null)}
-          value={model ?? ''}
-          variant="popup"
+        <label className="file-preview-translation-option-row">
+          <span>{labels.targetLanguage}</span>
+          <SelectControl
+            label={labels.targetLanguage}
+            onChange={(event) => onLanguageChange(event.target.value as TranslationLanguage)}
+            value={language}
+            variant="popup"
+          >
+            {TRANSLATION_LANGUAGES.map((entry) => (
+              <option key={entry.code} value={entry.code}>{entry.nativeName}</option>
+            ))}
+          </SelectControl>
+        </label>
+        <Button
+          aria-pressed={enabled}
+          className="file-preview-translation-command"
+          onClick={onToggle}
+          variant={enabled ? 'secondary' : 'primary'}
         >
-          <option value="">{labels.followAgentModel}</option>
-          {model && !modelsLoaded ? (
-            <option value={model}>{translationModelName(model)}</option>
-          ) : null}
-          {model && modelsLoaded && !modelAvailable ? (
-            <option disabled value={model}>
-              {labels.translationModelUnavailable({ model: translationModelName(model) })}
-            </option>
-          ) : null}
-          {!modelsLoaded ? <option disabled>{labels.translationModelsLoading}</option> : null}
-          {modelGroups.map((group) => (
-            <optgroup key={group.providerId} label={translationProviderName(group.providerId)}>
-              {group.models.map((entry) => (
-                <option key={entry.value} value={entry.value}>{entry.label}</option>
-              ))}
-            </optgroup>
-          ))}
-        </SelectControl>
-      </label>
-    </MenuSurface>,
+          <span className="file-preview-translation-command-label">
+            {enabled ? <HideIcon size={ICON_SIZE.menu} /> : <LanguagesIcon size={ICON_SIZE.menu} />}
+            <span>{enabled ? labels.showOriginal : labels.translatePage}</span>
+          </span>
+          <kbd>{translationShortcutLabel()}</kbd>
+        </Button>
+        <div className="file-preview-translation-divider" role="presentation" />
+        <SwitchControl
+          checked={autoTranslate}
+          className="file-preview-translation-auto-switch"
+          label={labels.autoTranslateWebpages}
+          onCheckedChange={onAutoTranslateChange}
+        >
+          <span>{labels.autoTranslateWebpages}</span>
+          <SwitchMark checked={autoTranslate} />
+        </SwitchControl>
+        <label className="file-preview-translation-option-row">
+          <span>{labels.translationModel}</span>
+          <SelectControl
+            label={labels.translationModel}
+            onChange={(event) => onModelChange(event.target.value || null)}
+            value={model ?? ''}
+            variant="popup"
+          >
+            <option value="">{labels.followAgentModel}</option>
+            {model && !modelsLoaded ? (
+              <option value={model}>{translationModelName(model)}</option>
+            ) : null}
+            {model && modelsLoaded && !modelAvailable ? (
+              <option disabled value={model}>
+                {labels.translationModelUnavailable({ model: translationModelName(model) })}
+              </option>
+            ) : null}
+            {!modelsLoaded ? <option disabled>{labels.translationModelsLoading}</option> : null}
+            {modelGroups.map((group) => (
+              <optgroup key={group.providerId} label={translationProviderName(group.providerId)}>
+                {group.models.map((entry) => (
+                  <option key={entry.value} value={entry.value}>{entry.label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </SelectControl>
+        </label>
+      </MenuSurface>
+    </>,
     document.body,
   );
 }

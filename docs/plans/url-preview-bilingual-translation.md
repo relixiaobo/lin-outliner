@@ -56,8 +56,9 @@ and keyboard focus feedback remain distinct. The header button
 exposes popover expansion separately from a dynamic accessible label that reports
 whether translation is on or off. It follows the neutral icon-control states from
 the design system and never adds a rounded-square hover fill. Once at least one
-translation succeeds, a small check overlays the language icon and appears
-whenever that page-local cached translation is visible.
+translation succeeds, a compact circular check badge overlaps the language icon
+and appears whenever that page-local cached translation is visible. Clicking the
+webpage itself closes the popover even though the page runs in a separate webview.
 
 The target-language catalog contains common model-supported languages as stable
 BCP-47 codes and presents each language by its autonym. The default follows the

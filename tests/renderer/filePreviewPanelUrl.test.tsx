@@ -77,6 +77,18 @@ describe('FilePreviewPanel URL preview chrome', () => {
     });
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
 
+    const scrim = rendered.document.querySelector<HTMLElement>('.file-preview-translation-scrim');
+    if (!scrim) throw new Error('Missing translation popover scrim');
+    await act(async () => {
+      scrim.dispatchEvent(new rendered.window.Event('pointerdown', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(rendered.document.querySelector('.file-preview-translation-popover')).toBeNull();
+    await act(async () => {
+      toggle.click();
+      await Promise.resolve();
+    });
+
     const select = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Translate to"]');
     expect(select?.querySelectorAll('option')).toHaveLength(TRANSLATION_LANGUAGES.length);
     expect(select?.textContent).toContain('日本語');
