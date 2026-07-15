@@ -67,6 +67,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Semantic ingest parity (PR #397, codex-2)** — agent-created normal nodes and
+  plain, Markdown, and HTML paste now share one bounded semantic scanner for
+  tags, fields, references, bare URLs, canonical escapes, and rich-text offset
+  remapping. Code spans, links, saved-search operands, and grammar-shaped literal
+  text remain protected, while reversible serialization preserves nested,
+  overlapping, and crossing marks through read/edit round trips. Structured
+  paste now also stays unchanged while pending and after a rejected Core command.
+  **Gate (main):** iterative full-diff review closed all reported correctness,
+  round-trip, and parser-complexity findings; the final pass found no reportable
+  issues. Verified with typecheck, 757 renderer tests, 11 paste E2E tests,
+  linear-time stress probes, and a latest-`main` synthetic merge running 283
+  focused Core and 28 renderer tests. Full Core reached 1488 pass / 3 fail, all
+  from external Presentation skill resource drift.
 - **Persistent URL preview sessions (PR #400, codex-3)** — URL Preview panes now
   share one Tenon-owned persistent website profile across panes and relaunches,
   while remote guests remain sandboxed, Node-free, preload-free, HTTP(S)-only,

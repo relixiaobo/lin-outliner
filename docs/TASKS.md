@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398**) |
-| Codex 2 | `lin-outliner-codex-2/` | `codex-2/semantic-ingest-pipeline` | PR #397 — semantic ingest shared scanner and normal-node parity |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped semantic-ingest-pipeline #397) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped field-value-node-children #394, url-preview-persistent-session #400) |
 | Codex 4 | `lin-outliner-codex-4/` | `codex-4/url-video-bilingual-subtitles` | PR #399 — URL video bilingual subtitles |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -31,11 +31,12 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-15).** Open PR queue: #397
-(`codex-2/semantic-ingest-pipeline`; ready for main review) and #399
+**In flight (2026-07-15).** Open PR queue: #399
 (`codex-4/url-video-bilingual-subtitles`; ready for main review). Recently
-merged: #400 (`codex-3/url-preview-persistent-session`) merged 2026-07-15 after
-main review; see *Recently completed*. #396
+merged: #397 (`codex-2/semantic-ingest-pipeline`) merged 2026-07-15 after
+iterative main review; see *Recently completed*. #400
+(`codex-3/url-preview-persistent-session`) merged 2026-07-15 after main review;
+see *Recently completed*. #396
 (`codex-4/url-preview-bilingual-translation`) merged 2026-07-15 after three
 main review rounds; see *Recently completed*. #398
 (`codex/agent-issue-execution-preflight`) merged 2026-07-15 after two main
@@ -505,6 +506,23 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **semantic-ingest-pipeline**
+  (`codex-2/semantic-ingest-pipeline`, PR #397, codex-2, merged 2026-07-15,
+  plan-track) — agent-created nodes plus plain, Markdown, and HTML paste now use
+  one bounded inline scanner for tags, fields, references, bare URLs, canonical
+  escaping, and rich-text offset remapping. Protected code and link ranges keep
+  grammar-shaped text literal, while reversible serialization preserves nested,
+  overlapping, and crossing marks across read/edit round trips. Structured paste
+  also remains atomic when the owning Core command rejects. **Gate (main):**
+  iterative full-diff review closed all reported correctness, round-trip, and
+  parser-complexity findings; the final pass found no reportable issues. Verified
+  on final head `24dd9855` with typecheck, 757 renderer tests, 11 paste E2E tests,
+  linear-time stress probes, `git diff --check`, and a latest-`main` synthetic
+  merge running 283 focused Core and 28 renderer tests. Full Core reached 1488
+  pass / 3 fail; all three failures come from external Presentation skill
+  resource drift. Plan archived `done`:
+  `docs/plans/archive/semantic-ingest-pipeline.md`.
 
 - **url-preview-persistent-session**
   (`codex-3/url-preview-persistent-session`, PR #400, codex-3, merged
