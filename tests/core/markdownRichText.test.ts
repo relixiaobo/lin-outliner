@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../../src/core/markdownRichText';
+import type { TextMark, TextMarkKind } from '../../src/core/types';
 
 describe('markdown rich text outline bridge', () => {
   test('parses inline markdown marks while preserving node reference markers', () => {
@@ -168,6 +169,54 @@ describe('markdown rich text outline bridge', () => {
     const serialized = richTextToMarkdownReferenceMarkup(content);
     expect(serialized).toBe('**See [https](https://example.com)**[://example.com](https://example.com)');
     expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
+
+  test('round-trips crossing bold and italic ranges without ambiguous star delimiters', () => {
+    const content = {
+      text: 'abcdefghij',
+      marks: [
+        { start: 0, end: 6, type: 'bold' as const },
+        { start: 3, end: 10, type: 'italic' as const },
+      ],
+      inlineRefs: [],
+    };
+
+    const serialized = richTextToMarkdownReferenceMarkup(content);
+    expect(serialized).toBe('**abc*****def**ghij*');
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
+
+  test('round-trips crossing ranges for every supported pair of Markdown mark types', () => {
+    const markTypes: TextMarkKind[] = ['bold', 'italic', 'strike', 'highlight', 'link', 'code'];
+    const failures: Array<{
+      first: TextMarkKind;
+      second: TextMarkKind;
+      serialized: string;
+      parsed: ReturnType<typeof markdownReferenceMarkupToRichText>;
+    }> = [];
+    for (const first of markTypes) {
+      for (const second of markTypes) {
+        if (first === second) continue;
+        const mark = (type: TextMarkKind, start: number, end: number): TextMark => ({
+          start,
+          end,
+          type,
+          ...(type === 'link' ? { attrs: { href: 'https://example.test' } } : {}),
+        });
+        const content = {
+          text: 'abcdefghij',
+          marks: [mark(first, 0, 6), mark(second, 3, 10)],
+          inlineRefs: [],
+        };
+        const serialized = richTextToMarkdownReferenceMarkup(content);
+        const parsed = markdownReferenceMarkupToRichText(serialized);
+        if (JSON.stringify(parsed) !== JSON.stringify(content)) {
+          failures.push({ first, second, serialized, parsed });
+        }
+      }
+    }
+
+    expect(failures).toEqual([]);
   });
 
   test('round-trips link destinations with balanced parentheses', () => {

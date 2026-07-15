@@ -180,10 +180,18 @@ function compareActiveMarkdownMarks(
   left: SerializableMarkdownMark,
   right: SerializableMarkdownMark,
 ): number {
+  if (isStarDelimitedMark(left.mark) && isStarDelimitedMark(right.mark)) {
+    const intervalOrder = right.mark.end - left.mark.end || left.mark.start - right.mark.start;
+    if (intervalOrder !== 0) return intervalOrder;
+  }
   return markdownMarkNestingRank(left.mark.type) - markdownMarkNestingRank(right.mark.type)
     || left.mark.start - right.mark.start
     || right.mark.end - left.mark.end
     || textMarkIdentity(left.mark).localeCompare(textMarkIdentity(right.mark));
+}
+
+function isStarDelimitedMark(mark: TextMark): boolean {
+  return mark.type === 'bold' || mark.type === 'italic';
 }
 
 function subtractRange(

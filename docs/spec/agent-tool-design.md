@@ -1269,8 +1269,9 @@ Rules:
   to its visible label without leaking serializer backslashes into node text.
 - Overlapping Markdown marks remain overlapping rich-text marks. Canonical
   serialization orders equal and nested ranges as properly nested delimiters.
-  At crossing style/link boundaries it closes the inner marks, closes the
-  ending outer mark, and reopens continuing marks; parsing merges adjacent mark
+  At crossing boundaries it selects a legal nesting order, closes ending marks,
+  and reopens continuing marks; later-ending bold/italic ranges become outer so
+  adjacent star delimiters stay unambiguous. Parsing merges adjacent mark
   segments with the same type and attributes. A bold bare URL therefore
   round-trips as `**[https://example.com](https://example.com)**`, while a link
   that extends beyond bold text is split into legal Markdown link segments and
