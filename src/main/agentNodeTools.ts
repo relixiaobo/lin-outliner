@@ -130,8 +130,8 @@ import type {
   OutlinerToolHost,
   ProjectionIndex,
 } from './agentNodeToolTypes';
-import { parseReferenceMarkers, splitFileReferenceMarkers } from '../core/referenceMarkup';
 import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
+import { mergeEquivalentTextMarks, textMarkIdentity } from '../core/textMarks';
 import { isPathInside } from './agentAttachmentMaterialization';
 import {
   inferFieldTypeFromValues,
@@ -1495,6 +1495,7 @@ function fieldResolutionValuesFromEntry(
       valueNodeId: value.id,
       text: value.content.text,
       targetId: value.type === 'reference' ? value.targetId : undefined,
+      hasInlineRefs: value.content.inlineRefs.length > 0,
     }));
 }
 
@@ -2977,7 +2978,8 @@ async function syncOutlineNodeInPlace(
     return [];
   }
   trackMatchedNode(tracker, nodeId);
-  if (richTextOutlineText(current.content) !== node.title) {
+  const titleSuffix = node.description ? ' - ' : node.tags.length > 0 ? ' ' : '';
+  if (richTextOutlineText(current.content, { suffix: titleSuffix }) !== node.title) {
     await host.handle('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(richTextFromOutlineText(node.title)) });
   }
   if ((current.description ?? null) !== (node.description ?? null)) {
@@ -3060,7 +3062,7 @@ async function upsertFieldValues(
   if (misplacedAnnotatedValue?.nodeId) {
     throw new Error(`Annotated field value id is not a value under ${fieldEntryId}: ${misplacedAnnotatedValue.nodeId}`);
   }
-  pushDuplicateKeyWarning('field values', existingValueIds.map((valueId) => outlineValueKeyFromProjection(index, requiredNode(index, valueId))), warnings);
+  pushDuplicateKeyWarning('field values', existingValueIds.map((valueId) => outlineValueKeyFromProjection(requiredNode(index, valueId))), warnings);
   pushDuplicateKeyWarning('desired field values', desiredValues.map(outlineValueKey), warnings);
   if (normalizedField.clear && existingValueIds.length > 0) {
     warnings.push(`Field "${field.name}" was left unchanged because node_edit no longer clears values by omission; use node_delete on value ids.`);
@@ -3072,7 +3074,7 @@ async function upsertFieldValues(
     if (!targetValueId) {
       const key = outlineValueKey(desired);
       const candidates = existingValueIds.filter((valueId) =>
-        !usedExisting.has(valueId) && outlineValueKeyFromProjection(index, requiredNode(index, valueId)) === key);
+        !usedExisting.has(valueId) && outlineValueKeyFromProjection(requiredNode(index, valueId)) === key);
       targetValueId = candidates.length === 1 ? candidates[0] : undefined;
     }
     if (targetValueId) {
@@ -3083,10 +3085,11 @@ async function upsertFieldValues(
         throw new Error(`Annotated field value id cannot be changed to a different value kind: ${targetValueId}`);
       }
       trackMatchedNode(tracker, targetValueId);
-      if (!desired.targetId && richTextOutlineText(current.content) !== desired.text) {
+      const desiredSource = outlineValueSource(desired);
+      if (!desired.targetId && richTextOutlineText(current.content) !== desiredSource) {
         await host.handle('apply_node_text_patch', {
           nodeId: targetValueId,
-          patch: replaceAllRichTextPatch(richTextFromOutlineText(desired.text)),
+          patch: replaceAllRichTextPatch(richTextFromOutlineText(desiredSource)),
         });
       }
       continue;
@@ -3122,7 +3125,7 @@ function validateFieldValueKindUpdates(
       if (!targetValueId) {
         const key = outlineValueKey(desired);
         const candidates = existingValueIds.filter((valueId) =>
-          !usedValueIds.has(valueId) && outlineValueKeyFromProjection(index, requiredNode(index, valueId)) === key);
+          !usedValueIds.has(valueId) && outlineValueKeyFromProjection(requiredNode(index, valueId)) === key);
         targetValueId = candidates.length === 1 ? candidates[0] : undefined;
       }
       if (!targetValueId) continue;
@@ -3164,7 +3167,9 @@ function normalizeDateOutlineValue(fieldName: string, value: OutlineValue): Outl
   if (!normalized) {
     throw new Error(`Invalid date field value for "${fieldName}": ${value.text}. Use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24.`);
   }
-  return normalized === value.text ? value : { ...value, text: normalized };
+  return normalized === value.text
+    ? value
+    : { ...(value.nodeId ? { nodeId: value.nodeId } : {}), text: normalized };
 }
 
 function fieldTypeForEntry(index: ProjectionIndex, fieldEntryId: string): FieldType {
@@ -3175,14 +3180,36 @@ function fieldTypeForEntry(index: ProjectionIndex, fieldEntryId: string): FieldT
   return fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain';
 }
 
-function outlineValueKeyFromProjection(index: ProjectionIndex, node: NodeProjection): string {
+function outlineValueKeyFromProjection(node: NodeProjection): string {
   if (node.type === 'reference') return `reference:${node.targetId ?? ''}`;
-  return `value:${nodeTitle(index, node).trim().toLowerCase()}`;
+  return richTextValueKey(node.content);
 }
 
 function outlineValueKey(value: OutlineValue): string {
   if (value.targetId) return `reference:${value.targetId}`;
-  return `value:${value.text.trim().toLowerCase()}`;
+  return richTextValueKey(richTextFromOutlineText(outlineValueSource(value)));
+}
+
+function richTextValueKey(content: RichText): string {
+  const text = content.text.trim().toLowerCase();
+  const references = [...content.inlineRefs]
+    .sort((left, right) => (
+      left.offset - right.offset
+      || referenceTargetSortKey(left.target).localeCompare(referenceTargetSortKey(right.target))
+    ))
+    .map((ref) => [ref.offset, referenceTargetSortKey(ref.target)]);
+  const marks = mergeEquivalentTextMarks(content.marks)
+    .sort((left, right) => (
+      left.start - right.start
+      || left.end - right.end
+      || textMarkIdentity(left).localeCompare(textMarkIdentity(right))
+    ))
+    .map((mark) => [mark.start, mark.end, textMarkIdentity(mark)]);
+  return `value:${JSON.stringify({ text, references, marks })}`;
+}
+
+function outlineValueSource(value: OutlineValue): string {
+  return value.outlineSource ?? value.text;
 }
 
 function canUpdateValueInPlace(current: NodeProjection, desired: OutlineValue): boolean {
@@ -3773,6 +3800,8 @@ async function setDoneFieldValue(
   field: OutlineField,
   warnings: string[],
 ): Promise<void> {
+  const validation = validateFieldValuesForType(field.name, 'checkbox', fieldResolutionValues(field));
+  if (!validation.ok) throw new Error(validation.error);
   const desired = field.values.at(-1)?.text.trim().toLowerCase();
   if (!desired) {
     warnings.push(`Field "${field.name}" was left unchanged because Done requires true or false.`);
@@ -3787,10 +3816,14 @@ function fieldResolutionMap(index: ProjectionIndex): ReadonlyMap<string, FieldRe
 
 function fieldResolutionValues(field: OutlineField): FieldResolutionValue[] {
   if (field.clear) return [];
-  return field.values.map((value) => ({
-    text: value.text,
-    ...(value.targetId ? { targetId: value.targetId } : {}),
-  }));
+  return field.values.map((value) => {
+    const content = value.targetId ? null : richTextFromOutlineText(outlineValueSource(value));
+    return {
+      text: value.text,
+      ...(value.targetId ? { targetId: value.targetId } : {}),
+      ...(content?.inlineRefs.length ? { hasInlineRefs: true } : {}),
+    };
+  });
 }
 
 function validateOutlineMutationScope(
@@ -3955,7 +3988,7 @@ async function appendFieldValue(
     if (fieldType !== 'plain') throw new Error(`${fieldType} field values cannot store node references.`);
     return [await addReference(host, fieldEntryId, value.targetId, null)];
   }
-  return [await createPlainNode(host, fieldEntryId, null, value.text)];
+  return [await createPlainNode(host, fieldEntryId, null, outlineValueSource(value))];
 }
 
 function appendedChildIds(host: OutlinerToolHost, fieldEntryId: string, before: ReadonlySet<string>): string[] {
@@ -4060,7 +4093,7 @@ function collectLocalFileReferencePaths(document: OutlineDocument): string[] {
 
 function collectFieldLocalFileReferencePaths(field: OutlineField, paths: string[]) {
   collectTextLocalFileReferencePaths(field.name, paths);
-  for (const value of field.values) collectTextLocalFileReferencePaths(value.text, paths);
+  for (const value of field.values) collectTextLocalFileReferencePaths(outlineValueSource(value), paths);
 }
 
 function collectNodeLocalFileReferencePaths(node: OutlineNode, paths: string[]) {
@@ -4068,15 +4101,15 @@ function collectNodeLocalFileReferencePaths(node: OutlineNode, paths: string[]) 
   collectTextLocalFileReferencePaths(node.description ?? '', paths);
   for (const field of node.fields) {
     collectTextLocalFileReferencePaths(field.name, paths);
-    for (const value of field.values) collectTextLocalFileReferencePaths(value.text, paths);
+    for (const value of field.values) collectTextLocalFileReferencePaths(outlineValueSource(value), paths);
   }
   for (const child of node.children) collectNodeLocalFileReferencePaths(child, paths);
 }
 
 function collectTextLocalFileReferencePaths(text: string, paths: string[]) {
   if (!text.includes('[[file:')) return;
-  for (const segment of splitFileReferenceMarkers(text)) {
-    if (segment.type === 'file') paths.push(segment.path);
+  for (const ref of markdownReferenceMarkupToRichText(text).inlineRefs) {
+    if (ref.target.kind === 'local-file') paths.push(ref.target.path);
   }
 }
 
@@ -4173,13 +4206,13 @@ function collectNodeReferenceTargets(node: OutlineNode, targets: ReferenceTarget
 function collectFieldReferenceTargets(field: OutlineField, targets: ReferenceTarget[]) {
   for (const value of field.values) {
     if (value.targetId) targets.push({ kind: 'node', nodeId: value.targetId });
-    collectTextReferenceTargets(value.text, targets);
+    collectTextReferenceTargets(outlineValueSource(value), targets);
   }
 }
 
 function collectTextReferenceTargets(text: string, targets: ReferenceTarget[]) {
   if (!text.includes('[[')) return;
-  for (const marker of parseReferenceMarkers(text)) targets.push(marker.target);
+  for (const ref of markdownReferenceMarkupToRichText(text).inlineRefs) targets.push(ref.target);
 }
 
 function focusFromOutcome(outcome: unknown): string {
@@ -4191,17 +4224,9 @@ function focusFromOutcome(outcome: unknown): string {
 }
 
 function richTextFromOutlineText(text: string): RichText {
-  return text.includes('[[') || hasMarkdownInlineSyntax(text)
-    ? markdownReferenceMarkupToRichText(text)
-    : plainText(text);
+  return markdownReferenceMarkupToRichText(text);
 }
 
-function richTextOutlineText(content: RichText): string {
-  return content.inlineRefs.length > 0 || content.marks.length > 0
-    ? richTextToMarkdownReferenceMarkup(content)
-    : content.text;
-}
-
-function hasMarkdownInlineSyntax(text: string): boolean {
-  return /\[[^\]\n]+\]\([^)]+\)|\*\*[^*\n]+\*\*|~~[^~\n]+~~|==[^=\n]+==|\*[^*\n]+\*|`[^`\n]+`/u.test(text);
+function richTextOutlineText(content: RichText, context: { suffix?: string } = {}): string {
+  return richTextToMarkdownReferenceMarkup(content, context);
 }

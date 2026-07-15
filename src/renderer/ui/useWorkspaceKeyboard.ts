@@ -145,6 +145,7 @@ export function useWorkspaceKeyboard({
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const {
         index: currentIndex,
         rootId: currentRootId,

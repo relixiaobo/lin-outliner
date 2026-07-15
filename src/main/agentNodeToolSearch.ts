@@ -49,6 +49,7 @@ import type {
   ProjectionIndex,
   ResolvedSearchSpec,
 } from './agentNodeToolTypes';
+import { escapeSemanticText } from '../core/semanticIngest/inlineScanner';
 import { asRecord, clampInteger, firstDuplicate } from './agentNodeToolUtils';
 
 const QUERY_LOGICS = new Set<QueryLogic>(['AND', 'OR', 'NOT']);
@@ -732,7 +733,7 @@ function serializeQueryExprOutlineLines(index: ProjectionIndex, query: SearchQue
 
 function operandText(index: ProjectionIndex, operand: SearchQueryOperand): string {
   if (operand.targetId) return nodeReference(index, operand.targetId, operand.text);
-  return operand.text ?? '';
+  return escapeSemanticText(operand.text ?? '');
 }
 
 function nodeReference(index: ProjectionIndex, nodeId: string, label?: string): string {

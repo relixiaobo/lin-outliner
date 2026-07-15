@@ -1,53 +1,24 @@
-import { parseInlineMarkdown } from './markdownPaste';
 import {
   formatChatSourceReferenceMarker,
   formatFileReferenceMarker,
   formatNodeReferenceMarker,
-  parseReferenceMarkers,
 } from './referenceMarkup';
 import type { ReferenceTarget, RichText, TextMark } from './types';
+import { mergeEquivalentTextMarks, textMarkIdentity } from './textMarks';
+import {
+  escapeSemanticTextChar,
+  parseMarkdownReferenceRichText,
+  type SemanticEscapeOptions,
+} from './semanticIngest/inlineScanner';
 
 export function markdownReferenceMarkupToRichText(rawText: string): RichText {
-  const parsed = parseInlineMarkdown(rawText);
-  const markers = parseReferenceMarkers(parsed.text);
-  if (markers.length === 0) return parsed;
-
-  const inlineRefs: RichText['inlineRefs'] = [];
-  let text = '';
-  let cursor = 0;
-  const ranges: Array<{ oldStart: number; oldEnd: number; newStart: number }> = [];
-  for (const marker of markers) {
-    text += parsed.text.slice(cursor, marker.start);
-    const displayName = marker.label || referenceDisplayFallback(marker.target);
-    const newStart = text.length;
-    inlineRefs.push({
-      offset: newStart,
-      target: marker.target,
-      ...(displayName ? { displayName } : {}),
-    });
-    ranges.push({
-      oldStart: marker.start,
-      oldEnd: marker.end,
-      newStart,
-    });
-    cursor = marker.end;
-  }
-  text += parsed.text.slice(cursor);
-
-  return {
-    text,
-    marks: parsed.marks
-      .map((mark) => ({
-        ...mark,
-        start: mapReferenceStrippedOffset(mark.start, ranges),
-        end: mapReferenceStrippedOffset(mark.end, ranges),
-      }))
-      .filter((mark) => mark.end > mark.start),
-    inlineRefs,
-  };
+  return parseMarkdownReferenceRichText(rawText);
 }
 
-export function richTextToMarkdownReferenceMarkup(content: RichText): string {
+export function richTextToMarkdownReferenceMarkup(
+  content: RichText,
+  context: Pick<SemanticEscapeOptions, 'prefix' | 'suffix'> = {},
+): string {
   const insertions = new Map<number, Array<{ text: string; order: number }>>();
   const add = (offset: number, text: string, order: number) => {
     const safeOffset = Math.min(Math.max(0, Math.trunc(offset)), content.text.length);
@@ -65,12 +36,21 @@ export function richTextToMarkdownReferenceMarkup(content: RichText): string {
   for (const ref of refs) {
     add(ref.offset, inlineRefMarker(ref), 10);
   }
-  for (const mark of marksOutsideSkippedRanges(markdownSerializableMarks(content.marks), skippedRanges, content.text.length)) {
-    const delimiters = markDelimiters(mark);
-    if (!delimiters) continue;
-    add(mark.start, delimiters.open, 20);
-    add(mark.end, delimiters.close, -20);
-  }
+  const serializableMarks = mergeEquivalentTextMarks(marksOutsideSkippedRanges(
+    markdownSerializableMarks(content.marks),
+    skippedRanges,
+    content.text.length,
+  )).flatMap((mark) => {
+    const delimiters = markDelimiters(mark, content.text, mark.start, mark.end);
+    return delimiters ? [{ mark }] : [];
+  });
+  addMarkdownMarkTransitions(serializableMarks, content.text, add);
+  const codeRanges = content.marks
+    .filter((mark) => mark.type === 'code')
+    .map((mark) => ({ start: mark.start, end: mark.end }));
+  const linkRanges = content.marks
+    .filter((mark) => mark.type === 'link')
+    .map((mark) => ({ start: mark.start, end: mark.end }));
 
   let out = '';
   for (let index = 0; index <= content.text.length; index += 1) {
@@ -85,24 +65,18 @@ export function richTextToMarkdownReferenceMarkup(content: RichText): string {
       index = skipped.end - 1;
       continue;
     }
-    if (index < content.text.length) out += content.text[index];
+    if (index < content.text.length) {
+      const insideCode = codeRanges.some((range) => index >= range.start && index < range.end);
+      const insideLink = linkRanges.some((range) => index >= range.start && index < range.end);
+      out += insideCode
+        ? content.text[index]
+        : escapeSemanticTextChar(content.text, index, {
+          ...context,
+          escapeBareUrls: !insideLink,
+        });
+    }
   }
   return out;
-}
-
-function mapReferenceStrippedOffset(
-  offset: number,
-  ranges: ReadonlyArray<{ oldStart: number; oldEnd: number; newStart: number }>,
-): number {
-  let delta = 0;
-  for (const range of ranges) {
-    if (offset < range.oldStart) break;
-    if (offset <= range.oldEnd) {
-      return range.newStart;
-    }
-    delta -= range.oldEnd - range.oldStart;
-  }
-  return offset + delta;
 }
 
 function referenceDisplayFallback(target: ReferenceTarget): string {
@@ -135,7 +109,6 @@ function marksOutsideSkippedRanges(
   skippedRanges: ReadonlyArray<{ start: number; end: number }>,
   textLength: number,
 ): TextMark[] {
-  if (skippedRanges.length === 0) return [...marks];
   const normalizedRanges = skippedRanges
     .map((range) => ({
       start: Math.min(Math.max(0, range.start), textLength),
@@ -162,6 +135,94 @@ function marksOutsideSkippedRanges(
   return result;
 }
 
+interface SerializableMarkdownMark {
+  mark: TextMark;
+}
+
+interface SerializableMarkdownSegment {
+  end: number;
+  entry: SerializableMarkdownMark;
+  start: number;
+}
+
+interface MarkdownMarkTransition {
+  closing: SerializableMarkdownSegment[];
+  offset: number;
+  opening: SerializableMarkdownSegment[];
+}
+
+function addMarkdownMarkTransitions(
+  entries: readonly SerializableMarkdownMark[],
+  text: string,
+  add: (offset: number, text: string, order: number) => void,
+): void {
+  const starting = new Map<number, SerializableMarkdownMark[]>();
+  const ending = new Map<number, SerializableMarkdownMark[]>();
+  for (const entry of entries) {
+    starting.set(entry.mark.start, [...(starting.get(entry.mark.start) ?? []), entry]);
+    ending.set(entry.mark.end, [...(ending.get(entry.mark.end) ?? []), entry]);
+  }
+  const boundaries = [...new Set([...starting.keys(), ...ending.keys()])].sort((left, right) => left - right);
+  const active = new Set<SerializableMarkdownMark>();
+  const activeSegments = new Map<SerializableMarkdownMark, SerializableMarkdownSegment>();
+  const transitions: MarkdownMarkTransition[] = [];
+  // Segment ends must be known before code delimiters and padding can be emitted.
+  let current: SerializableMarkdownMark[] = [];
+  for (const offset of boundaries) {
+    for (const entry of ending.get(offset) ?? []) active.delete(entry);
+    for (const entry of starting.get(offset) ?? []) active.add(entry);
+    const target = [...active].sort(compareActiveMarkdownMarks);
+    let shared = 0;
+    while (shared < current.length && current[shared] === target[shared]) shared += 1;
+
+    const closing: SerializableMarkdownSegment[] = [];
+    for (const entry of current.slice(shared).reverse()) {
+      const segment = activeSegments.get(entry);
+      if (!segment) continue;
+      segment.end = offset;
+      activeSegments.delete(entry);
+      closing.push(segment);
+    }
+    const opening = target.slice(shared).map((entry) => {
+      const segment = { entry, start: offset, end: offset };
+      activeSegments.set(entry, segment);
+      return segment;
+    });
+    transitions.push({ offset, closing, opening });
+    current = target;
+  }
+
+  for (const transition of transitions) {
+    const closing = transition.closing.map((segment) => (
+      markDelimiters(segment.entry.mark, text, segment.start, segment.end)?.close ?? ''
+    )).join('');
+    if (closing) add(transition.offset, closing, -1_000);
+
+    const opening = transition.opening.map((segment) => (
+      markDelimiters(segment.entry.mark, text, segment.start, segment.end)?.open ?? ''
+    )).join('');
+    if (opening) add(transition.offset, opening, 1_000);
+  }
+}
+
+function compareActiveMarkdownMarks(
+  left: SerializableMarkdownMark,
+  right: SerializableMarkdownMark,
+): number {
+  if (isStarDelimitedMark(left.mark) && isStarDelimitedMark(right.mark)) {
+    const intervalOrder = right.mark.end - left.mark.end || left.mark.start - right.mark.start;
+    if (intervalOrder !== 0) return intervalOrder;
+  }
+  return markdownMarkNestingRank(left.mark.type) - markdownMarkNestingRank(right.mark.type)
+    || left.mark.start - right.mark.start
+    || right.mark.end - left.mark.end
+    || textMarkIdentity(left.mark).localeCompare(textMarkIdentity(right.mark));
+}
+
+function isStarDelimitedMark(mark: TextMark): boolean {
+  return mark.type === 'bold' || mark.type === 'italic';
+}
+
 function subtractRange(
   segment: { start: number; end: number },
   range: { start: number; end: number },
@@ -173,15 +234,62 @@ function subtractRange(
   return next;
 }
 
-function markDelimiters(mark: TextMark): { open: string; close: string } | null {
+function markDelimiters(
+  mark: TextMark,
+  text: string,
+  start: number,
+  end: number,
+): { open: string; close: string } | null {
   if (mark.type === 'bold') return { open: '**', close: '**' };
   if (mark.type === 'italic') return { open: '*', close: '*' };
   if (mark.type === 'strike') return { open: '~~', close: '~~' };
   if (mark.type === 'highlight') return { open: '==', close: '==' };
-  if (mark.type === 'code') return { open: '`', close: '`' };
+  if (mark.type === 'code') {
+    const delimiter = '`'.repeat(longestBacktickRun(text, start, end) + 1);
+    const segment = text.slice(clampTextOffset(start, text.length), clampTextOffset(end, text.length));
+    const needsPadding = segment.startsWith('`')
+      || segment.endsWith('`')
+      || (segment.startsWith(' ') && segment.endsWith(' ') && /[^ ]/u.test(segment));
+    const padding = needsPadding ? ' ' : '';
+    return { open: `${delimiter}${padding}`, close: `${padding}${delimiter}` };
+  }
   if (mark.type === 'link') {
     const href = typeof mark.attrs?.href === 'string' ? mark.attrs.href : '';
-    return href ? { open: '[', close: `](${href})` } : null;
+    return href ? { open: '[', close: `](${escapeMarkdownLinkDestination(href)})` } : null;
   }
   return null;
+}
+
+function clampTextOffset(offset: number, length: number): number {
+  return Math.min(Math.max(0, Math.trunc(offset)), length);
+}
+
+function longestBacktickRun(text: string, start: number, end: number): number {
+  let longest = 0;
+  let current = 0;
+  const safeStart = Math.min(Math.max(0, Math.trunc(start)), text.length);
+  const safeEnd = Math.min(Math.max(safeStart, Math.trunc(end)), text.length);
+  for (let index = safeStart; index < safeEnd; index += 1) {
+    if (text[index] === '`') {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+  return longest;
+}
+
+function markdownMarkNestingRank(type: TextMark['type']): number {
+  if (type === 'bold') return 0;
+  if (type === 'italic') return 1;
+  if (type === 'strike') return 2;
+  if (type === 'highlight') return 3;
+  if (type === 'link') return 4;
+  if (type === 'code') return 5;
+  return 6;
+}
+
+function escapeMarkdownLinkDestination(href: string): string {
+  return href.replace(/[\\()]/gu, '\\$&');
 }

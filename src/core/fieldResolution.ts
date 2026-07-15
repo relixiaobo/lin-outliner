@@ -29,6 +29,7 @@ export interface FieldResolutionNode {
 export interface FieldResolutionValue {
   text: string;
   targetId?: NodeId;
+  hasInlineRefs?: boolean;
 }
 
 export type FieldWriteTarget =
@@ -113,9 +114,9 @@ export function fieldTypeForFieldEntry(
 }
 
 export function inferFieldTypeFromValues(values: readonly FieldResolutionValue[]): FieldType {
-  const nonEmpty = values.filter((value) => value.targetId || value.text.trim().length > 0);
+  const nonEmpty = values.filter((value) => value.targetId || value.hasInlineRefs || value.text.trim().length > 0);
   if (nonEmpty.length === 0) return 'plain';
-  if (nonEmpty.some((value) => value.targetId)) return 'plain';
+  if (nonEmpty.some((value) => value.targetId || value.hasInlineRefs)) return 'plain';
 
   const texts = nonEmpty.map((value) => value.text.trim());
   if (texts.every((text) => parseDateFieldValue(text))) return 'date';
@@ -131,9 +132,17 @@ export function validateFieldValuesForType(
   fieldType: FieldType,
   values: readonly FieldResolutionValue[],
 ): { ok: true } | { ok: false; error: string; instructions: string } {
-  const nonEmpty = values.filter((value) => value.targetId || value.text.trim().length > 0);
+  const nonEmpty = values.filter((value) => value.targetId || value.hasInlineRefs || value.text.trim().length > 0);
   if (nonEmpty.length === 0) return { ok: true };
   const label = fieldName.trim() || 'Field';
+
+  if (fieldType !== 'plain' && nonEmpty.some((value) => value.hasInlineRefs)) {
+    return {
+      ok: false,
+      error: `Field "${label}" is a ${fieldType} field and cannot store inline reference values.`,
+      instructions: 'Use a plain field for local-file, chat-source, or mixed inline references.',
+    };
+  }
 
   if (fieldType === 'options_from_supertag') {
     if (nonEmpty.every((value) => Boolean(value.targetId))) return { ok: true };

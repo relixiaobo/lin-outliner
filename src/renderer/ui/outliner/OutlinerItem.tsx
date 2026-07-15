@@ -680,7 +680,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
     firstMeta?: PasteRowMeta;
-  }) => {
+  }): Promise<boolean> => {
     // The pristine trailing draft has no core node yet (it materializes on the
     // first committed character), so there is nothing to paste *into*: calling
     // paste_nodes_into_node with its client-proposed id throws "node not found".
@@ -690,7 +690,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       const trees: CreateNodeTree[] = [];
       const firstHasBody = payload.content.text.trim().length > 0
         || payload.content.inlineRefs.length > 0
-        || payload.children.length > 0;
+        || payload.children.length > 0
+        || (payload.firstMeta?.tags?.length ?? 0) > 0
+        || (payload.firstMeta?.fields?.length ?? 0) > 0
+        || payload.firstMeta?.checkbox === true;
       if (firstHasBody) {
         trees.push({
           content: payload.content,
@@ -699,20 +702,20 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         });
       }
       trees.push(...payload.siblingsAfter);
-      if (trees.length > 0) void props.run(() => api.createNodesFromTree(props.parentId, trees));
-      return;
+      return trees.length > 0
+        ? props.run(() => api.createNodesFromTree(props.parentId, trees)).then(() => false)
+        : Promise.resolve(false);
     }
 
-    localDraftSyncRef.current = { nodeId: targetEditId, content: payload.content };
-    draftContentRef.current = payload.content;
-    setDraftContent(payload.content);
-    if (payload.children.length > 0) {
-      props.setUi((prev) => {
-        const expanded = new Set(prev.expanded);
-        expanded.add(props.nodeId);
-        return { ...prev, expanded };
-      });
-    }
+    const applySuccessfulPaste = () => {
+      if (payload.children.length > 0) {
+        props.setUi((prev) => {
+          const expanded = new Set(prev.expanded);
+          expanded.add(props.nodeId);
+          return { ...prev, expanded };
+        });
+      }
+    };
     const pasteIntoNode = () => api.pasteNodesIntoNode(
       props.nodeId,
       payload.content,
@@ -723,11 +726,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (props.draft && !realNode) {
       // A materialize for this draft is already in flight; paste once the row
       // lands in core so its id is no longer missing.
-      pendingTextPatchRef.current = pendingTextPatchRef.current.then(() => props.run(pasteIntoNode));
-      void pendingTextPatchRef.current;
-      return;
+      const pendingPaste = pendingTextPatchRef.current.then(() => (
+        props.run(pasteIntoNode, { beforeApply: applySuccessfulPaste })
+      ));
+      pendingTextPatchRef.current = pendingPaste;
+      return pendingPaste.then((result) => result !== null);
     }
-    void props.run(pasteIntoNode);
+    return props.run(pasteIntoNode, { beforeApply: applySuccessfulPaste })
+      .then((result) => result !== null);
   };
 
   const insertImagesFromAssets = async (assets: AssetMetadata[]) => {

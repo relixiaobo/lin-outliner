@@ -1308,6 +1308,60 @@ Rules:
 - Markdown inline delimiters in ordinary node text create rich-text marks:
   `**bold**`, `*italic*`, `~~strike~~`, `==highlight==`, inline `` `code` ``,
   and `[label](https://example.com)`.
+- Delimiter recognition is canonical: `__bold__`, `_italic_`, and `~strike~`
+  remain literal text. Marked-compatible alternate delimiters do not expand the
+  outline grammar or change existing snake-case and identifier text.
+- Bare `http://`, `https://`, and `www.` URLs in ordinary node text become link
+  marks. `www.` hrefs normalize to `https://`; trailing sentence punctuation and
+  unmatched closing delimiters remain outside the link. Link clicks still use the
+  existing safe external-navigation path and do not expand its scheme allowlist.
+- Explicit Markdown link destinations accept balanced or backslash-escaped
+  parentheses. Canonical serialization escapes destination backslashes and
+  parentheses, so `node_read` output reused by `node_create`, `node_edit`, or
+  `duplicate_id` preserves the complete href.
+- Explicit links cannot nest. When malformed outer link source contains a valid
+  inner link, the scanner materializes the inner link and keeps the enclosing
+  label and destination syntax literal instead of recursively creating
+  overlapping links.
+- Markdown link labels use the same canonical semantic escapes as ordinary
+  text. Parsing decodes escaped punctuation such as `\#`, `\*`, and `\\` back
+  to its visible label without leaking serializer backslashes into node text.
+- Inline code pairs opening and closing backtick runs only when their lengths
+  match on the same line. Backslashes inside code remain literal; empty or
+  unclosed spans remain literal source. An escaped backtick adjacent to an
+  opening delimiter remains a separate literal character. Candidate spans are
+  selected greedily in source order and never overlap, so a run that closes a
+  selected span is not reused as another selected span's opening; tags and fields
+  between consecutive spans remain available for metadata harvesting.
+  Serialization chooses a delimiter longer than every backtick run in each
+  emitted code segment and uses reversible CommonMark-style inner space padding
+  when segment content starts or ends with a backtick or needs its own surrounding
+  spaces preserved.
+- Overlapping Markdown marks remain overlapping rich-text marks. Canonical
+  serialization orders equal and nested ranges as properly nested delimiters.
+  At crossing boundaries it selects a legal nesting order, closes ending marks,
+  and reopens continuing marks; later-ending bold/italic ranges become outer so
+  adjacent star delimiters stay unambiguous. Parsing merges adjacent mark
+  segments with the same type and attributes. A bold bare URL therefore
+  round-trips as `**[https://example.com](https://example.com)**`, while a link
+  that extends beyond bold text is split into legal Markdown link segments and
+  restored as one link mark without corrupting its label or destination.
+- Canonical outline parsing resolves the serializer's delimiter stack
+  deterministically instead of delegating nested emphasis pairing to Marked.
+  This applies at any supported active-mark depth, including style, link,
+  highlight, strike, and code combinations. The deterministic parse commits
+  only when every style delimiter closes; malformed or incomplete input falls
+  back to the lenient Marked path and remains recoverable as literal text. Its
+  dynamic-programming state is keyed by the active delimiter stack, retains the
+  lowest reopen cost for each equivalent state, and has a fixed state ceiling,
+  so repeated ambiguous star runs cannot grow parser work exponentially.
+- Complete Markdown links, inline code, reference markers, bare URLs, and
+  backslash-escaped tokens are protected from tag and field harvesting. A
+  grammar-shaped token in one of those ranges remains literal. Link/code range
+  discovery uses forward indexes rather than rescanning every opening token, and
+  bare-URL trailing delimiters are balanced in one pass. Removing metadata or a
+  materialized reference marker re-merges adjacent marks with the same type and
+  attributes.
 - `- title - description` sets a node description. The first ` - ` separates
   title from description; later ` - ` text stays in the description.
 - Ordinary notes, task details, meeting notes, and explanatory body text should
@@ -1347,6 +1401,10 @@ Rules:
   stored type/config, and values are validated against that type before
   mutation. Plain fields accept text, inline references, whole-row reference
   values, or a mixture.
+- Local-file, chat-source, and mixed inline-reference values are supported only
+  by `plain` fields; every non-plain field rejects them before mutation. Field
+  reconciliation includes inline-reference offsets and canonical target
+  identities, so two zero-visible-text references never overwrite one another.
 - Reused `options` fields use option semantics: text values select an existing
   option by name when present and otherwise collect a local option value; node
   reference values select that exact option node. Reused `options_from_supertag`
@@ -1400,6 +1458,10 @@ Rules:
 - `node_create` materializes supported inline Markdown marks and code fences.
   `node_read` serializes those marks and code blocks back to the same outline
   form so later agent turns can preserve them.
+- `node_read` backslash-escapes grammar-significant literal text, including tag,
+  field, checkbox, search/view, annotation, reference, Markdown-mark, and
+  description-separator shapes. `node_create` and `node_edit` decode those
+  escapes, so read-then-write does not accidentally create semantics.
 
 Runtime compatibility:
 
@@ -2017,6 +2079,10 @@ Outline edit semantics:
   Unmarked field lines resolve through the semantic field write resolver by
   display name; unmarked value lines append values. Omitted fields and values are
   preserved.
+- Unmarked field-value reconciliation compares normalized visible text, inline
+  reference target identities, and canonical rich-text mark ranges, types, and
+  sorted attributes. Values with the same label but different link destinations
+  are distinct and append instead of updating one another in place.
 - Annotated field value ids can update text in place only when the stored value
   kind stays compatible. Changing a plain value into a reference, a reference into
   text, or a reference target is rejected before mutation; delete the old value id

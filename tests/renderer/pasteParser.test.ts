@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { parseHTML } from 'linkedom';
 import {
   detectSingleLineUrl,
   isPlainSingleParagraph,
+  parseClipboardPaste,
   parseInlineMarkdown,
   parseMarkdownBlocks,
   parseOutlinerPaste,
@@ -219,7 +221,14 @@ describe('parseMarkdownBlocks', () => {
 
   test('leaves code/URL colons and mid-word hashes alone', () => {
     expect(parseMarkdownBlocks('run std::cout then visit http://x.com for C#9')).toEqual([
-      { content: { text: 'run std::cout then visit http://x.com for C#9', marks: [], inlineRefs: [] }, children: [] },
+      {
+        content: {
+          text: 'run std::cout then visit http://x.com for C#9',
+          marks: [{ start: 25, end: 37, type: 'link', attrs: { href: 'http://x.com' } }],
+          inlineRefs: [],
+        },
+        children: [],
+      },
     ]);
   });
 
@@ -241,6 +250,23 @@ describe('parseMarkdownBlocks', () => {
     expect(parseMarkdownBlocks('run `see #x now` end')).toEqual([
       {
         content: { text: 'run see #x now end', marks: [{ start: 4, end: 14, type: 'code' }], inlineRefs: [] },
+        children: [],
+      },
+    ]);
+  });
+
+  test('materializes inline references in plain pasted rows', () => {
+    expect(parseMarkdownBlocks('See [[node:Alpha^node-a]]')).toEqual([
+      {
+        content: {
+          text: 'See ',
+          marks: [],
+          inlineRefs: [{
+            offset: 4,
+            target: { kind: 'node', nodeId: 'node-a' },
+            displayName: 'Alpha',
+          }],
+        },
         children: [],
       },
     ]);
@@ -281,6 +307,60 @@ describe('parseMarkdownBlocks', () => {
   });
 });
 
+describe('HTML paste semantics', () => {
+  test('materializes references and task markers while protecting link and code ranges', () => {
+    const previousDOMParser = globalThis.DOMParser;
+    const { window } = parseHTML('<!doctype html><html><body></body></html>');
+    Object.assign(globalThis, { DOMParser: window.DOMParser });
+    try {
+      const trees = parseClipboardPaste(
+        'See Alpha\n- [x] Task\nLinked Code',
+        [
+          '<!doctype html><html><body>',
+          '<p>See [[node:Alpha^node-a]]</p>',
+          '<p>- [x] <strong>Task</strong></p>',
+          '<p><a href="https://example.com">[[node:Linked^node-link]]</a> <code>[[node:Code^node-code]]</code></p>',
+          '</body></html>',
+        ].join(''),
+      );
+
+      expect(trees[0]).toEqual({
+        content: {
+          text: 'See ',
+          marks: [],
+          inlineRefs: [{
+            offset: 4,
+            target: { kind: 'node', nodeId: 'node-a' },
+            displayName: 'Alpha',
+          }],
+        },
+        children: [],
+      });
+      expect(trees[1]).toEqual({
+        content: {
+          text: 'Task',
+          marks: [{ start: 0, end: 4, type: 'bold' }],
+          inlineRefs: [],
+        },
+        children: [],
+        checkbox: true,
+        done: true,
+      });
+      expect(trees[2]?.content).toEqual({
+        text: '[[node:Linked^node-link]] [[node:Code^node-code]]',
+        marks: [
+          { start: 0, end: 25, type: 'link', attrs: { href: 'https://example.com' } },
+          { start: 26, end: 49, type: 'code' },
+        ],
+        inlineRefs: [],
+      });
+    } finally {
+      if (previousDOMParser) Object.assign(globalThis, { DOMParser: previousDOMParser });
+      else delete (globalThis as typeof globalThis & { DOMParser?: typeof DOMParser }).DOMParser;
+    }
+  });
+});
+
 describe('detectSingleLineUrl', () => {
   test('accepts explicit protocols and bare www domains', () => {
     expect(detectSingleLineUrl('https://example.com/path?q=1')).toBe('https://example.com/path?q=1');
@@ -290,6 +370,7 @@ describe('detectSingleLineUrl', () => {
 
   test('rejects ambiguous or multi-token text', () => {
     expect(detectSingleLineUrl('example.com')).toBeNull();
+    expect(detectSingleLineUrl('www.example')).toBeNull();
     expect(detectSingleLineUrl('see https://x.com now')).toBeNull();
     expect(detectSingleLineUrl('hello')).toBeNull();
   });
@@ -301,5 +382,14 @@ describe('isPlainSingleParagraph', () => {
     expect(isPlainSingleParagraph(parseOutlinerPaste('**bold**'))).toBe(false);
     expect(isPlainSingleParagraph(parseOutlinerPaste('line one\nline two'))).toBe(false);
     expect(isPlainSingleParagraph(parseOutlinerPaste('```\ncode\n```'))).toBe(false);
+  });
+
+  test('is false for a single row carrying only semantic metadata', () => {
+    expect(parseOutlinerPaste('#work')).toEqual([
+      { content: { text: '', marks: [], inlineRefs: [] }, children: [], tags: ['work'] },
+    ]);
+    expect(isPlainSingleParagraph(parseOutlinerPaste('#work'))).toBe(false);
+    expect(isPlainSingleParagraph(parseOutlinerPaste('status:: done'))).toBe(false);
+    expect(isPlainSingleParagraph(parseOutlinerPaste('[x]'))).toBe(false);
   });
 });

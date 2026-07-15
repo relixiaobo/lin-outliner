@@ -1,6 +1,12 @@
-import { extractTags, parseCheckboxMarker, removeTagTokens } from '../core/textSyntax';
-import { parseNodeReferenceMarkers, parseReferenceMarkers } from '../core/referenceMarkup';
+import { parseCheckboxMarker } from '../core/textSyntax';
+import { parseNodeReferenceMarkers } from '../core/referenceMarkup';
 import { normalizeCodeLanguage } from '../core/codeLanguages';
+import {
+  decodeSemanticEscapes,
+  markdownInlineProtectedRanges,
+  scanMarkdownInline,
+} from '../core/semanticIngest/inlineScanner';
+import type { SourceSpan } from '../core/semanticIngest/types';
 
 export interface OutlineDocument {
   roots: OutlineNode[];
@@ -32,6 +38,7 @@ export interface OutlineField {
 export interface OutlineValue {
   nodeId?: string;
   text: string;
+  outlineSource?: string;
   targetId?: string;
 }
 
@@ -140,14 +147,17 @@ export function parseLinOutline(
   for (const line of parsedLines) {
     while (stack.length > 0 && stack[stack.length - 1]!.level >= line.level) stack.pop();
     const parent = stack[stack.length - 1];
-    if (annotations === 'forbid' && line.text.includes('%%node:')) {
+    const forbiddenAnnotationIndex = annotations === 'forbid'
+      ? unprotectedIndexOf(line.text, '%%node:')
+      : -1;
+    if (forbiddenAnnotationIndex >= 0) {
       return {
         ok: false,
         error: {
           code: 'invalid_annotation',
           message: 'Node annotations are not allowed in this outline.',
           line: line.line,
-          column: line.column + Math.max(0, line.text.indexOf('%%node:')),
+          column: line.column + forbiddenAnnotationIndex,
         },
       };
     }
@@ -212,11 +222,12 @@ function parseCodeBlockNode(
 
 function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
   let text = input.trim();
-  const search = text.includes('%%search%%');
-  text = text.replace(/%%search%%/g, '').trim();
-  const viewMatch = text.match(/%%view:([a-zA-Z0-9_-]+)%%/);
-  const view = viewMatch?.[1];
-  text = text.replace(/%%view:[a-zA-Z0-9_-]+%%/g, '').trim();
+  const searchDirective = removeUnprotectedLiteral(text, '%%search%%');
+  const search = searchDirective.removed;
+  text = searchDirective.text.trim();
+  const viewDirective = removeViewDirectives(text);
+  const view = viewDirective.view;
+  text = viewDirective.text.trim();
 
   let checked: boolean | null | undefined;
   const checkbox = parseCheckboxMarker(text);
@@ -225,8 +236,13 @@ function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
     text = checkbox.rest.trim();
   }
 
-  const tags = extractTags(maskReferenceMarkers(text)).tags;
-  text = removeTagsOutsideReferenceMarkers(text).trim();
+  const scanned = scanMarkdownInline(text, {
+    metadata: 'tags',
+    linkifyBareUrls: true,
+    references: true,
+  });
+  const tags = scanned.tags.map((tag) => tag.name);
+  text = scanned.source.trim();
 
   const reference = parseReference(text);
   if (reference && reference.full) {
@@ -248,7 +264,7 @@ function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
   return {
     ...(nodeId ? { nodeId } : {}),
     title: titlePart.trim() || '(untitled)',
-    description: descriptionPart?.trim() || null,
+    description: descriptionPart ? decodeSemanticEscapes(descriptionPart.trim()) || null : null,
     tags,
     checked,
     fields: [],
@@ -259,17 +275,18 @@ function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
 }
 
 function parseFieldHeader(text: string): { name: string; value: string } | null {
-  const match = /^(.+?)::\s*(.*)$/.exec(text);
-  if (!match) return null;
-  const name = match[1]!.trim();
+  const separator = unprotectedIndexOf(text, '::');
+  if (separator < 0) return null;
+  const name = decodeSemanticEscapes(text.slice(0, separator).trim());
   if (!name) return null;
-  return { name, value: match[2]?.trim() ?? '' };
+  return { name, value: text.slice(separator + 2).trim() };
 }
 
 function parseOutlineValue(text: string, lineNodeId?: string): OutlineValue {
   const annotated = stripNodeMarker(text.trim());
   const nodeId = lineNodeId ?? annotated.nodeId;
-  const reference = parseReference(annotated.text.trim());
+  const source = annotated.text.trim();
+  const reference = parseReference(source);
   if (reference?.full) {
     return {
       ...(nodeId ? { nodeId } : {}),
@@ -277,9 +294,15 @@ function parseOutlineValue(text: string, lineNodeId?: string): OutlineValue {
       targetId: reference.targetId,
     };
   }
+  const visibleText = scanMarkdownInline(source, {
+    metadata: 'none',
+    linkifyBareUrls: true,
+    references: true,
+  }).content.text;
   return {
     ...(nodeId ? { nodeId } : {}),
-    text: annotated.text.trim(),
+    text: visibleText,
+    ...(source !== visibleText ? { outlineSource: source } : {}),
   };
 }
 
@@ -299,42 +322,56 @@ function parseReference(text: string): { display: string; targetId: string; full
 }
 
 function splitDescription(text: string): [string, string?] {
-  const separator = text.indexOf(' - ');
+  const separator = unprotectedIndexOf(text, ' - ');
   if (separator < 0) return [text];
   return [text.slice(0, separator), text.slice(separator + 3)];
 }
 
-function maskReferenceMarkers(text: string): string {
-  const markers = parseReferenceMarkers(text);
-  if (markers.length === 0) return text;
-  let masked = '';
-  let cursor = 0;
-  for (const marker of markers) {
-    masked += text.slice(cursor, marker.start);
-    masked += ' '.repeat(marker.raw.length);
-    cursor = marker.end;
+function unprotectedIndexOf(
+  text: string,
+  token: string,
+  fromIndex = 0,
+  protectedRanges: readonly SourceSpan[] = markdownInlineProtectedRanges(text),
+): number {
+  let index = text.indexOf(token, fromIndex);
+  while (index >= 0) {
+    const end = index + token.length;
+    if (!protectedRanges.some((range) => index < range.end && range.start < end)) return index;
+    index = text.indexOf(token, index + 1);
   }
-  masked += text.slice(cursor);
-  return masked;
+  return -1;
 }
 
-function removeTagsOutsideReferenceMarkers(text: string): string {
-  const markers = parseReferenceMarkers(text);
-  if (markers.length === 0) return removeTagTokens(text);
-  const placeholders = new Map<string, string>();
-  let protectedText = '';
+function removeUnprotectedLiteral(text: string, token: string): { text: string; removed: boolean } {
+  const protectedRanges = markdownInlineProtectedRanges(text);
+  let output = '';
   let cursor = 0;
-  for (const [index, marker] of markers.entries()) {
-    const placeholder = `__LIN_REFERENCE_MARKER_${index}__`;
-    placeholders.set(placeholder, marker.raw);
-    protectedText += text.slice(cursor, marker.start);
-    protectedText += placeholder;
-    cursor = marker.end;
+  let removed = false;
+  while (cursor < text.length) {
+    const index = unprotectedIndexOf(text, token, cursor, protectedRanges);
+    if (index < 0) break;
+    output += text.slice(cursor, index);
+    cursor = index + token.length;
+    removed = true;
   }
-  protectedText += text.slice(cursor);
-  let next = removeTagTokens(protectedText);
-  for (const [placeholder, marker] of placeholders) {
-    next = next.replace(placeholder, marker);
+  output += text.slice(cursor);
+  return { text: output, removed };
+}
+
+function removeViewDirectives(text: string): { text: string; view?: string } {
+  const pattern = /%%view:([a-zA-Z0-9_-]+)%%/gu;
+  const protectedRanges = markdownInlineProtectedRanges(text);
+  let output = '';
+  let cursor = 0;
+  let view: string | undefined;
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (protectedRanges.some((range) => start < range.end && range.start < end)) continue;
+    output += text.slice(cursor, start);
+    cursor = end;
+    view ??= match[1];
   }
-  return next;
+  output += text.slice(cursor);
+  return { text: output, ...(view ? { view } : {}) };
 }

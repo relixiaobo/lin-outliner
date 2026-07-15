@@ -1,10 +1,10 @@
-import type { CreateNodeTree, ParsedPasteField, RichText, TextMark, TextMarkKind } from './types';
-import {
-  matchTagTokens,
-  parseCheckboxMarker,
-  parseTagTokenMatch,
-} from './textSyntax';
+import type { CreateNodeTree, RichText } from './types';
+import { parseCheckboxMarker } from './textSyntax';
 import { normalizeCodeLanguage } from './codeLanguages';
+import {
+  parseInlineMarkdownWithLinks,
+  scanMarkdownInline,
+} from './semanticIngest/inlineScanner';
 
 export interface ParsedPasteNode {
   text: string;
@@ -65,43 +65,8 @@ export function parsePlainTextOutlinerPaste(text: string): ParsedPasteNode[] {
   return roots;
 }
 
-const INLINE_TOKEN =
-  /\[([^\]\n]+)\]\(([^)\s]+)\)|\*\*([^*\n]+)\*\*|~~([^~\n]+)~~|==([^=\n]+)==|\*([^*\n]+)\*|`([^`\n]+)`/gu;
-
-interface InlineToken {
-  type: TextMarkKind;
-  inner: string;
-  attrs?: Record<string, string>;
-}
-
-function classifyInline(match: RegExpMatchArray): InlineToken {
-  if (match[1] !== undefined) return { type: 'link', inner: match[1], attrs: { href: match[2] ?? '' } };
-  if (match[3] !== undefined) return { type: 'bold', inner: match[3] };
-  if (match[4] !== undefined) return { type: 'strike', inner: match[4] };
-  if (match[5] !== undefined) return { type: 'highlight', inner: match[5] };
-  if (match[6] !== undefined) return { type: 'italic', inner: match[6] };
-  return { type: 'code', inner: match[7] ?? '' };
-}
-
 export function parseInlineMarkdown(rawText: string): RichText {
-  const marks: TextMark[] = [];
-  let text = '';
-  let index = 0;
-  for (const match of rawText.matchAll(INLINE_TOKEN)) {
-    const start = match.index ?? 0;
-    text += rawText.slice(index, start);
-    const token = classifyInline(match);
-    const markStart = text.length;
-    text += token.inner;
-    if (token.inner.length > 0) {
-      const mark: TextMark = { start: markStart, end: text.length, type: token.type };
-      if (token.attrs) mark.attrs = token.attrs;
-      marks.push(mark);
-    }
-    index = start + match[0].length;
-  }
-  text += rawText.slice(index);
-  return { text, marks, inlineRefs: [] };
+  return parseInlineMarkdownWithLinks(rawText);
 }
 
 export function applyHeadingMark(content: RichText): RichText {
@@ -118,113 +83,24 @@ function fenceLanguage(info: string): string {
   return normalizeCodeLanguage(info.trim().split(/\s+/u)[0] ?? '');
 }
 
-const FIELD_START_TOKEN = /(^|\s)([A-Za-z][\w-]*)::[ \t]+/gu;
-
-function harvestProtectedRanges(text: string): Array<[number, number]> {
-  const ranges: Array<[number, number]> = [];
-  for (const match of text.matchAll(INLINE_TOKEN)) {
-    if (match[1] === undefined && match[7] === undefined) continue;
-    const start = match.index ?? 0;
-    ranges.push([start, start + match[0].length]);
-  }
-  return ranges;
-}
-
-function inAnyRange(pos: number, ranges: ReadonlyArray<readonly [number, number]>): boolean {
-  return ranges.some(([start, end]) => pos >= start && pos < end);
-}
-
-function metadataLeadStart(text: string, tokenStart: number): number | null {
-  if (tokenStart === 0) return 0;
-  return /\s/u.test(text[tokenStart - 1] ?? '') ? tokenStart - 1 : null;
-}
-
-function fieldBoundaryStart(match: RegExpMatchArray, protectedRanges: ReadonlyArray<readonly [number, number]>): number | null {
-  const start = match.index ?? 0;
-  const lead = (match[1] ?? '').length;
-  const tokenStart = start + lead;
-  return inAnyRange(tokenStart, protectedRanges) ? null : start;
-}
-
-function tagBoundaryStart(text: string, match: RegExpMatchArray, protectedRanges: ReadonlyArray<readonly [number, number]>): number | null {
-  const tokenStart = match.index ?? 0;
-  if (!parseTagTokenMatch(match) || inAnyRange(tokenStart, protectedRanges)) return null;
-  return metadataLeadStart(text, tokenStart);
-}
-
-function metadataBoundaries(text: string, protectedRanges: ReadonlyArray<readonly [number, number]>): number[] {
-  const boundaries: number[] = [];
-  for (const match of text.matchAll(FIELD_START_TOKEN)) {
-    const start = fieldBoundaryStart(match, protectedRanges);
-    if (start !== null) boundaries.push(start);
-  }
-  for (const match of matchTagTokens(text)) {
-    const start = tagBoundaryStart(text, match, protectedRanges);
-    if (start !== null) boundaries.push(start);
-  }
-  return [...new Set(boundaries)].sort((left, right) => left - right);
-}
-
-function nextMetadataBoundary(boundaries: readonly number[], valueStart: number, fallback: number): number {
-  for (const boundary of boundaries) {
-    if (boundary >= valueStart) return boundary;
-  }
-  return fallback;
-}
-
-function extractTagsAndFields(text: string): { text: string; tags: string[]; fields: ParsedPasteField[] } {
-  const tags: string[] = [];
-  const fields: ParsedPasteField[] = [];
-  const protectedRanges = harvestProtectedRanges(text);
-  const boundaries = metadataBoundaries(text, protectedRanges);
-  const removals: Array<{ start: number; end: number; lead: number }> = [];
-  for (const match of text.matchAll(FIELD_START_TOKEN)) {
-    const start = match.index ?? 0;
-    const lead = (match[1] ?? '').length;
-    const tokenStart = start + lead;
-    if (inAnyRange(tokenStart, protectedRanges)) continue;
-    if (removals.some((removal) => tokenStart >= removal.start && tokenStart < removal.end)) continue;
-    const valueStart = start + match[0].length;
-    const end = nextMetadataBoundary(boundaries, valueStart, text.length);
-    const value = text.slice(valueStart, end).trim();
-    if (!value) continue;
-    fields.push({ name: match[2] ?? '', value });
-    removals.push({ start, end, lead });
-  }
-  for (const match of matchTagTokens(text)) {
-    const tokenStart = match.index ?? 0;
-    const leadStart = metadataLeadStart(text, tokenStart);
-    const parsed = parseTagTokenMatch(match);
-    if (leadStart === null || !parsed || inAnyRange(tokenStart, protectedRanges)) continue;
-    if (removals.some((removal) => tokenStart >= removal.start && tokenStart < removal.end)) continue;
-    tags.push(parsed.name);
-    removals.push({ start: leadStart, end: tokenStart + match[0].length, lead: tokenStart - leadStart });
-  }
-  removals.sort((a, b) => a.start - b.start);
-  let out = '';
-  let cursor = 0;
-  for (const removal of removals) {
-    if (removal.start < cursor) continue;
-    out += text.slice(cursor, removal.start + removal.lead);
-    cursor = removal.end;
-  }
-  out += text.slice(cursor);
-  return { text: out.replace(/\s{2,}/gu, ' ').trim(), tags, fields };
-}
-
 function lineToTree(rawText: string): CreateNodeTree {
   const heading = rawText.match(/^(#{1,6})\s+(.*)$/u);
   let body = heading ? (heading[2] ?? '') : rawText;
   const task = parseCheckboxMarker(body);
   if (task) body = task.rest;
-  const { text, tags, fields } = extractTagsAndFields(body);
-  const parsed = parseInlineMarkdown(text);
+  const scanned = scanMarkdownInline(body, {
+    metadata: 'tags-and-fields',
+    linkifyBareUrls: true,
+    references: true,
+  });
   const tree: CreateNodeTree = {
-    content: heading ? applyHeadingMark(parsed) : parsed,
+    content: heading ? applyHeadingMark(scanned.content) : scanned.content,
     children: [],
   };
-  if (tags.length > 0) tree.tags = tags;
-  if (fields.length > 0) tree.fields = fields;
+  if (scanned.tags.length > 0) tree.tags = scanned.tags.map((tag) => tag.name);
+  if (scanned.fields.length > 0) {
+    tree.fields = scanned.fields.map((field) => ({ name: field.name, value: field.value }));
+  }
   if (task) {
     tree.checkbox = true;
     tree.done = task.checked;

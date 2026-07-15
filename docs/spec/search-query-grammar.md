@@ -40,6 +40,9 @@ Rules:
 - QueryOp names are rule nodes.
 - Rule operands use `field::`, `tag::`, `target::`, `value::`, or `operand::`.
 - `field::`, `tag::`, and `target::` must be exact node references or node ids.
+- `value::` and `operand::` bodies are literal query data. Tag-shaped text such
+  as `value:: #project`, field-shaped text, checkbox markers, and search/view
+  directives are not applied as document metadata or node controls.
 - Date operands use the canonical date field value language:
   `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end` with `/`.
 - JSON object DSL is allowed as an internal/debug shape only. It is not the

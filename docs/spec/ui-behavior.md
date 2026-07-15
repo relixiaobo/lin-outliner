@@ -435,13 +435,26 @@ row; the rest become siblings/children. Behavior parity target is nodex
 | `<br>` inside an HTML block | Split the block's inline run at each `<br>` into sibling rows, not a single space-joined row. |
 | List markers `- * +`, `1.` / `1)`, bullets `• ◦ ▪ ‣ · ●` | Stripped from the start of a line; nesting from indentation is preserved. |
 | Fenced ```` ``` ```` / `~~~` block | Becomes a code-block row with detected language. |
-| Inline Markdown (`**bold**`, `*italic*`, `~~strike~~`, `[label](url)`) | Converted to the corresponding marks. |
+| Inline Markdown (`**bold**`, `*italic*`, `~~strike~~`, `[label](url)`) | Converted to the corresponding marks. Canonical backslash escapes in link labels decode to visible punctuation on paste and serialization round-trip. |
 | Single-line bare URL with a text selection | Wraps the selection as a link. |
+| Bare `http://`, `https://`, or `www.` URL in ordinary pasted text | Becomes a link mark on the URL only. `www.` hrefs normalize to `https://`; sentence punctuation and unmatched closing delimiters stay outside the link. Existing HTML anchors and inline code remain authoritative protected ranges. |
 | GFM task line `- [ ]` / `- [x]` | Becomes a checkbox row (`completedAt` sentinel: `undefined` none, `0` unchecked, timestamp checked) when the marker is alone or followed by whitespace; `[x]title` stays literal text. Merging a task line into an existing **non-empty** row never flips it to checked — only a genuinely empty target row adopts the pasted checkbox state. |
 | `#tag` on a Markdown/plain line | Harvested and applied; unknown tags are auto-created (find-or-create), reusing same-named defs. Guard: start/whitespace before the shared tag token. Bare tags accept Unicode letters/numbers, `_`, and `-`; `[[#tag]]` / `#[[tag]]` are accepted; bracket names accept raw backslashes, and serializers escape `]`, backslash, and newline-style characters as `\]`, `\\`, `\n`, `\r`, and `\t`; bare CSS hex colors such as `#fff` and `#112233` are left literal. |
 | `name:: value` on a Markdown/plain line | Harvested as a field; unknown fields auto-created as `plain`, existing `options` fields smart-select the option. Guard: a double colon **followed by whitespace** (`name:: value`), so `std::cout`, `http://…`, `foo::bar` never match. Field values stop before the next field or shared tag token; bare CSS hex colors do not terminate the field. |
-| `#tag` / `name::` inside a link label, URL, or `` `code` `` span | Left literal — link/code spans are masked out of the metadata scan (so `See [the #section](url)` keeps its label). |
-| Metadata on the HTML paste path | Not harvested — `#tag` / `field::` extraction is scoped to the plain-text / Markdown path; HTML pastes still convert structure. |
+| `#tag` / `name::` inside a link label, URL, `` `code` `` span, reference marker, or backslash-escaped token | Left literal. Protected ranges are excluded before metadata extraction, and removing surrounding metadata remaps marks and inline-reference offsets. |
+| Metadata on the HTML paste path | Harvested through the same scanner as plain text after DOM structure and marks are converted. Existing `<a>` and `<code>` ranges stay literal; metadata outside those ranges is applied to the row. |
+| `[[node:Label^node-id]]` in plain-text or HTML paste | Materialized as an inline node reference, then preflighted by Core before any row or metadata write. Every referenced node must exist outside Trash; one missing or trashed target rejects the entire paste atomically, including first-row merge, descendants, trailing siblings, and yielding bulk paste. The renderer applies its local draft only after that command succeeds, so rejection leaves the edited row unchanged. Local-file and chat-source references keep their own validation rules. |
+| Single-line or metadata-only semantic paste | Uses structured paste whenever parsing adds a link, tag, field, checkbox, reference, node type, or other semantic state. A metadata-only row can update the target row or materialize at a pristine trailing position; only a truly literal unmarked line delegates to native paste. |
+
+While a structured paste command is pending, its target editor is temporarily
+non-editable and rejects additional paste, keyboard, `beforeinput`, and
+document-changing transactions. It applies the captured first-row content only
+after Core succeeds, then restores editability; rejection leaves the local
+content unchanged and also restores editability. This prevents input typed
+during command latency from being overwritten by the successful paste snapshot.
+Handled pending-paste key events remain handled at the workspace boundary, so
+`Undo` and `Redo` cannot escape to global Core commands while the editor is
+frozen.
 
 ## Leading Control Matrix
 
