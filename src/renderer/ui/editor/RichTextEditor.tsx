@@ -102,13 +102,14 @@ interface RichTextEditorProps {
   onFieldTriggerFire?: () => void;
   /** Fired when a bare ``` / ~~~ owns the row, to convert it into a code block. */
   onCodeFenceFire?: () => void;
+  /** Resolves true only when the parsed first-row content should enter this editor. */
   onPasteOutliner?: (payload: {
     content: RichText;
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
     /** Metadata (`#tag` / `field::` / task checkbox) for the first merged block. */
     firstMeta?: PasteRowMeta;
-  }) => void;
+  }) => Promise<boolean>;
   onPasteImage?: (images: PastedImage[]) => void;
   onPasteFiles?: (files: File[]) => void;
   /** A lone remote image URL pasted with no active selection. */
@@ -653,7 +654,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
           // A typed first block (e.g. a code block) can't live inside this
           // ProseMirror row, so keep the row and insert everything after it.
           if (first.type !== undefined) {
-            onPasteOutliner({
+            void onPasteOutliner({
               content: docToRichText(viewInstance.state.doc),
               children: [],
               siblingsAfter: parsed,
@@ -665,7 +666,6 @@ export function RichTextEditor(props: RichTextEditorProps) {
           const before = sliceRichText(current, 0, from);
           const after = sliceRichText(current, to, current.text.length);
           const nextContent = concatRichText(before, first.content, after);
-          setContent(nextContent);
           // Derive the row metadata from the first block itself (it extends
           // PasteRowMeta) so a future PasteRowMeta field can't be silently lost.
           const { content: _content, children: _children, type: _type, codeLanguage: _codeLanguage, ...firstMeta } =
@@ -676,11 +676,13 @@ export function RichTextEditor(props: RichTextEditorProps) {
             delete firstMeta.checkbox;
             delete firstMeta.done;
           }
-          onPasteOutliner({
+          void onPasteOutliner({
             content: nextContent,
             children: first.children,
             siblingsAfter: parsed.slice(1),
             firstMeta,
+          }).then((applyEditorContent) => {
+            if (applyEditorContent && !viewInstance.isDestroyed) setContent(nextContent);
           });
           return true;
         },

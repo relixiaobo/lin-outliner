@@ -1261,6 +1261,9 @@ Rules:
   parentheses. Canonical serialization escapes destination backslashes and
   parentheses, so `node_read` output reused by `node_create`, `node_edit`, or
   `duplicate_id` preserves the complete href.
+- Markdown link labels use the same canonical semantic escapes as ordinary
+  text. Parsing decodes escaped punctuation such as `\#`, `\*`, and `\\` back
+  to its visible label without leaking serializer backslashes into node text.
 - Complete Markdown links, inline code, reference markers, bare URLs, and
   backslash-escaped tokens are protected from tag and field harvesting. A
   grammar-shaped token in one of those ranges remains literal.

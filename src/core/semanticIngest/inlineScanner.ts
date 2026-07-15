@@ -47,7 +47,6 @@ interface InlineToken extends Range {
   type: TextMarkKind;
   inner: string;
   attrs?: Record<string, string>;
-  innerIsDecoded?: boolean;
 }
 
 export interface SemanticEscapeOptions {
@@ -212,7 +211,6 @@ function markdownInlineTokens(input: string): InlineToken[] {
       type: 'link',
       inner: token.text,
       attrs: { href: token.href },
-      innerIsDecoded: true,
     });
   }
   for (const match of input.matchAll(MARKDOWN_INLINE_MARK_TOKEN)) {
@@ -241,7 +239,7 @@ function parseMarkdown(input: string): ParsedMarkdown {
   for (const token of markdownInlineTokens(input)) {
     text += decodeEscapes(input.slice(cursor, token.start), text.length, escapedOffsets);
     const markStart = text.length;
-    if (token.type === 'code' || token.innerIsDecoded) {
+    if (token.type === 'code') {
       text += token.inner;
     } else {
       text += decodeEscapes(token.inner, text.length, escapedOffsets);

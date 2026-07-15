@@ -156,4 +156,22 @@ describe('markdown rich text outline bridge', () => {
     expect(serialized).toBe(String.raw`[download](https://example.com/a_\\folder_\))`);
     expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
   });
+
+  test('round-trips semantic escape characters in Markdown link labels', () => {
+    const text = String.raw`site #literal *stars* C:\path`;
+    const content = {
+      text,
+      marks: [{
+        start: 0,
+        end: text.length,
+        type: 'link' as const,
+        attrs: { href: 'https://example.com' },
+      }],
+      inlineRefs: [],
+    };
+
+    const serialized = richTextToMarkdownReferenceMarkup(content);
+    expect(serialized).toBe(String.raw`[site \#literal \*stars\* C:\\path](https://example.com)`);
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
 });

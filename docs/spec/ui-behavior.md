@@ -435,7 +435,7 @@ row; the rest become siblings/children. Behavior parity target is nodex
 | `<br>` inside an HTML block | Split the block's inline run at each `<br>` into sibling rows, not a single space-joined row. |
 | List markers `- * +`, `1.` / `1)`, bullets `• ◦ ▪ ‣ · ●` | Stripped from the start of a line; nesting from indentation is preserved. |
 | Fenced ```` ``` ```` / `~~~` block | Becomes a code-block row with detected language. |
-| Inline Markdown (`**bold**`, `*italic*`, `~~strike~~`, `[label](url)`) | Converted to the corresponding marks. |
+| Inline Markdown (`**bold**`, `*italic*`, `~~strike~~`, `[label](url)`) | Converted to the corresponding marks. Canonical backslash escapes in link labels decode to visible punctuation on paste and serialization round-trip. |
 | Single-line bare URL with a text selection | Wraps the selection as a link. |
 | Bare `http://`, `https://`, or `www.` URL in ordinary pasted text | Becomes a link mark on the URL only. `www.` hrefs normalize to `https://`; sentence punctuation and unmatched closing delimiters stay outside the link. Existing HTML anchors and inline code remain authoritative protected ranges. |
 | GFM task line `- [ ]` / `- [x]` | Becomes a checkbox row (`completedAt` sentinel: `undefined` none, `0` unchecked, timestamp checked) when the marker is alone or followed by whitespace; `[x]title` stays literal text. Merging a task line into an existing **non-empty** row never flips it to checked — only a genuinely empty target row adopts the pasted checkbox state. |

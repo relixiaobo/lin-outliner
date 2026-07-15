@@ -680,7 +680,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     children: CreateNodeTree[];
     siblingsAfter: CreateNodeTree[];
     firstMeta?: PasteRowMeta;
-  }) => {
+  }): Promise<boolean> => {
     // The pristine trailing draft has no core node yet (it materializes on the
     // first committed character), so there is nothing to paste *into*: calling
     // paste_nodes_into_node with its client-proposed id throws "node not found".
@@ -702,14 +702,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         });
       }
       trees.push(...payload.siblingsAfter);
-      if (trees.length > 0) void props.run(() => api.createNodesFromTree(props.parentId, trees));
-      return;
+      return trees.length > 0
+        ? props.run(() => api.createNodesFromTree(props.parentId, trees)).then(() => false)
+        : Promise.resolve(false);
     }
 
-    const applyLocalPaste = () => {
-      localDraftSyncRef.current = { nodeId: targetEditId, content: payload.content };
-      draftContentRef.current = payload.content;
-      setDraftContent(payload.content);
+    const applySuccessfulPaste = () => {
       if (payload.children.length > 0) {
         props.setUi((prev) => {
           const expanded = new Set(prev.expanded);
@@ -728,13 +726,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (props.draft && !realNode) {
       // A materialize for this draft is already in flight; paste once the row
       // lands in core so its id is no longer missing.
-      pendingTextPatchRef.current = pendingTextPatchRef.current.then(() => (
-        props.run(pasteIntoNode, { beforeApply: applyLocalPaste })
+      const pendingPaste = pendingTextPatchRef.current.then(() => (
+        props.run(pasteIntoNode, { beforeApply: applySuccessfulPaste })
       ));
-      void pendingTextPatchRef.current;
-      return;
+      pendingTextPatchRef.current = pendingPaste;
+      return pendingPaste.then((result) => result !== null);
     }
-    void props.run(pasteIntoNode, { beforeApply: applyLocalPaste });
+    return props.run(pasteIntoNode, { beforeApply: applySuccessfulPaste })
+      .then((result) => result !== null);
   };
 
   const insertImagesFromAssets = async (assets: AssetMetadata[]) => {
