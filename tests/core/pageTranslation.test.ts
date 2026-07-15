@@ -125,6 +125,46 @@ describe('page translation service', () => {
     expect(observedSignal?.aborted).toBe(true);
   });
 
+  test('supersedes an in-flight request before starting the next request in the same session', async () => {
+    const signals: AbortSignal[] = [];
+    const service = new PageTranslationService({
+      complete: async ({ signal, userPrompt }) => {
+        signals.push(signal);
+        const payload = JSON.parse(userPrompt) as { blocks: Array<{ id: string }> };
+        if (signals.length === 1) {
+          return await new Promise<string>((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+          });
+        }
+        return JSON.stringify(payload.blocks.map((block) => ({
+          id: block.id,
+          translation: 'Visible translation',
+        })));
+      },
+    });
+    const first = service.handle(URL_PAGE_TRANSLATE_COMMAND, {
+      ...request({ requestId: 'request:first', blocks: [{ id: 'b1', text: 'Old prefetch' }] }),
+    });
+    await Promise.resolve();
+
+    const second = service.handle(URL_PAGE_TRANSLATE_COMMAND, {
+      ...request({ requestId: 'request:second', blocks: [{ id: 'b2', text: 'Now visible' }] }),
+    });
+
+    expect(await first).toEqual({
+      ok: false,
+      requestId: 'request:first',
+      error: 'cancelled',
+    });
+    expect(await second).toEqual({
+      ok: true,
+      requestId: 'request:second',
+      translations: [{ id: 'b2', translation: 'Visible translation' }],
+    });
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+  });
+
   test('rejects duplicate input ids before invoking a model', async () => {
     let called = false;
     const service = new PageTranslationService({

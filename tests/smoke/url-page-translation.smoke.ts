@@ -41,6 +41,7 @@ test.describe('URL page translation', () => {
   const batches: TranslationBatch[] = [];
   const requestedModels: string[] = [];
   let failNextRequest = false;
+  let responseDelayMs = 250;
 
   test.beforeAll(async () => {
     server = createServer(async (request, response) => {
@@ -74,7 +75,8 @@ test.describe('URL page translation', () => {
               id: block.id,
               translation: `ZH: ${block.text}`,
             })));
-        await new Promise((resolve) => setTimeout(resolve, 250));
+        await new Promise((resolve) => setTimeout(resolve, responseDelayMs));
+        if (response.destroyed || response.writableEnded) return;
         const id = 'chatcmpl-translation-smoke';
         response.writeHead(200, {
           'cache-control': 'no-cache',
@@ -310,6 +312,42 @@ test.describe('URL page translation', () => {
     await expect(toggle).toHaveAttribute('data-translation-completed', 'true');
     await popover.getByRole('button', { name: 'Show original' }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
+
+    const preemptionStart = batches.length;
+    responseDelayMs = 1_200;
+    await smoke.window.evaluate((url) => {
+      window.dispatchEvent(new CustomEvent('lin:preview-target-open', {
+        detail: {
+          target: { kind: 'url', label: 'Translation preemption article', url },
+        },
+      }));
+    }, `${origin}/article?preempt`);
+    await expect.poll(() => guestOrNull<string>(webview, 'window.location.search')).toBe('?preempt');
+    await expect.poll(() => guestOrNull<string>(webview, 'document.readyState')).toBe('complete');
+    await guest(webview, `document.getElementById('far').scrollIntoView({ block: 'center', behavior: 'instant' }); true`);
+
+    await toggle.click();
+    await popover.getByRole('button', { name: 'Translate page' }).click();
+    await expect.poll(() => batches.length).toBeGreaterThan(preemptionStart);
+    expect(batches[preemptionStart]?.blocks.map((block) => block.text))
+      .toContain('Far source paragraph.');
+
+    const upwardScrollStartedAt = Date.now();
+    await guest(webview, `document.getElementById('heading').scrollIntoView({ block: 'start', behavior: 'instant' }); true`);
+    await expect.poll(() => batches.slice(preemptionStart + 1).some((batch) => (
+      batch.blocks.some((block) => block.text === 'Article heading')
+    ))).toBe(true);
+    expect(Date.now() - upwardScrollStartedAt).toBeLessThan(700);
+    expect(await guest(webview, `
+      document.querySelector('#far [data-tenon-bilingual-status]') === null
+    `)).toBe(true);
+    await expect.poll(() => guest<string | null>(webview, `
+      document.querySelector('#heading [data-tenon-bilingual-translation="true"]')?.textContent ?? null
+    `)).toBe('ZH: Article heading');
+    expect(await guest(webview, `
+      document.querySelector('#far [data-tenon-bilingual-translation="true"]')?.textContent ?? null
+    `)).toBeNull();
+    responseDelayMs = 250;
 
     await smoke.window.evaluate((url) => {
       window.dispatchEvent(new CustomEvent('lin:preview-target-open', {

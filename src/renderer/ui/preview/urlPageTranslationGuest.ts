@@ -9,6 +9,11 @@ import {
 
 export const URL_PAGE_TRANSLATION_RUNTIME_KEY = '__tenonBilingualTranslationV1__';
 
+const URL_PAGE_TRANSLATION_VISIBLE_MAX_BLOCKS = 4;
+const URL_PAGE_TRANSLATION_VISIBLE_MAX_CHARS = 4_000;
+const URL_PAGE_TRANSLATION_PREFETCH_MAX_BLOCKS = 8;
+const URL_PAGE_TRANSLATION_PREFETCH_MAX_CHARS = 8_000;
+
 export const URL_PAGE_TRANSLATION_GUEST_CSS = `
 [data-tenon-bilingual-translation="true"] {
   display: block !important;
@@ -103,6 +108,7 @@ export interface UrlPageTranslationGuestLabels {
 }
 
 export interface UrlPageTranslationGuestBatch {
+  activePriority?: number | null;
   blocks: UrlPageTranslationBlock[];
   priority: number | null;
 }
@@ -111,7 +117,8 @@ export interface UrlPageTranslationGuestBridge {
   documentLanguage(): Promise<string | null>;
   initialize(targetLanguage: TranslationLanguage, labels: UrlPageTranslationGuestLabels): Promise<void>;
   setEnabled(enabled: boolean, targetLanguage: TranslationLanguage): Promise<void>;
-  nextBatch(retryOnly?: boolean): Promise<UrlPageTranslationGuestBatch>;
+  nextBatch(retryOnly?: boolean, activeIds?: readonly string[]): Promise<UrlPageTranslationGuestBatch>;
+  release(ids: readonly string[]): Promise<void>;
   apply(translations: readonly UrlPageTranslationItem[]): Promise<void>;
   fail(ids: readonly string[]): Promise<void>;
   destroy(): Promise<void>;
@@ -154,15 +161,21 @@ export function createUrlPageTranslationGuestBridge(
     async setEnabled(enabled, targetLanguage) {
       await execute('setEnabled', enabled, targetLanguage);
     },
-    async nextBatch(retryOnly = false) {
+    async nextBatch(retryOnly = false, activeIds = []) {
       const raw = await execute<unknown>(
         'nextBatch',
-        URL_PAGE_TRANSLATION_MAX_BLOCKS,
-        URL_PAGE_TRANSLATION_MAX_BATCH_CHARS,
+        URL_PAGE_TRANSLATION_VISIBLE_MAX_BLOCKS,
+        URL_PAGE_TRANSLATION_VISIBLE_MAX_CHARS,
+        URL_PAGE_TRANSLATION_PREFETCH_MAX_BLOCKS,
+        URL_PAGE_TRANSLATION_PREFETCH_MAX_CHARS,
         URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS,
         retryOnly,
+        activeIds,
       );
       return validatedGuestBatch(raw);
+    },
+    async release(ids) {
+      await execute('release', ids);
     },
     async apply(translations) {
       await execute('apply', translations);
@@ -231,7 +244,7 @@ export function installUrlPageTranslationRuntime(
   let dirty = true;
   let scanCount = 0;
   let lastScrollTop = doc.scrollingElement?.scrollTop ?? host.scrollY;
-  let direction: 'down' | 'up' = 'down';
+  let direction: 'down' | 'neutral' | 'up' = 'neutral';
   let targetLanguage = initialTargetLanguage;
   let anchorRevision = 0;
   let runtimeActive = true;
@@ -396,8 +409,10 @@ export function installUrlPageTranslationRuntime(
   ): void => {
     if (!runtimeActive || revision !== anchorRevision || !anchor.element.isConnected) return;
     const delta = anchor.element.getBoundingClientRect().top - anchor.top;
-    if (Math.abs(delta) <= 0.5) return;
-    host.scrollBy({ behavior: 'instant', left: 0, top: delta });
+    if (Math.abs(delta) > 0.5) {
+      host.scrollBy({ behavior: 'instant', left: 0, top: delta });
+    }
+    lastScrollTop = doc.scrollingElement?.scrollTop ?? host.scrollY;
   };
 
   const withStableAnchor = (mutate: () => void): void => {
@@ -416,21 +431,25 @@ export function installUrlPageTranslationRuntime(
 
   const priorityForRect = (rect: DOMRect, viewportHeight: number): number | null => {
     if (rect.bottom > 0 && rect.top < viewportHeight) return 0;
-    if (direction === 'down') {
+    if (direction === 'neutral') {
+      if (rect.bottom <= 0 && rect.bottom > -viewportHeight * 2) return 1;
       if (rect.top >= viewportHeight && rect.top < viewportHeight * 3) return 1;
-      if (rect.bottom <= 0 && rect.bottom > -viewportHeight * 0.5) return 2;
       return null;
     }
-    if (rect.bottom <= 0 && rect.bottom > -viewportHeight * 2) return 1;
-    if (rect.top >= viewportHeight && rect.top < viewportHeight * 1.5) return 2;
+    if (direction === 'down') {
+      if (rect.top >= viewportHeight && rect.top < viewportHeight * 5) return 1;
+      if (rect.bottom <= 0 && rect.bottom > -viewportHeight) return 2;
+      return null;
+    }
+    if (rect.bottom <= 0 && rect.bottom > -viewportHeight * 4) return 1;
+    if (rect.top >= viewportHeight && rect.top < viewportHeight * 2) return 2;
     return null;
   };
 
   const distanceForRect = (rect: DOMRect, viewportHeight: number): number => {
     if (rect.bottom > 0 && rect.top < viewportHeight) return Math.max(0, rect.top);
-    return direction === 'down'
-      ? Math.max(0, rect.top - viewportHeight)
-      : Math.max(0, -rect.bottom);
+    if (rect.bottom <= 0) return Math.max(0, -rect.bottom);
+    return Math.max(0, rect.top - viewportHeight);
   };
 
   const MutationObserverCtor = constructors.MutationObserver;
@@ -487,12 +506,15 @@ export function installUrlPageTranslationRuntime(
       dirty = true;
     },
     nextBatch(
-      maxBlocks: number,
-      maxChars: number,
+      visibleMaxBlocks: number,
+      visibleMaxChars: number,
+      prefetchMaxBlocks: number,
+      prefetchMaxChars: number,
       maxBlockChars: number,
       retryOnly = false,
+      activeIds: readonly string[] = [],
     ): UrlPageTranslationGuestBatch {
-      if (!enabled) return { blocks: [], priority: null };
+      if (!enabled) return { activePriority: null, blocks: [], priority: null };
       scanCount += 1;
       if (dirty || scanCount % 10 === 0) discover();
 
@@ -502,7 +524,16 @@ export function installUrlPageTranslationRuntime(
       lastScrollTop = scrollTop;
       const viewportHeight = Math.max(1, host.innerHeight);
 
-      const pending = [...records.values()]
+      let activePriority: number | null = null;
+      for (const id of activeIds) {
+        const record = records.get(id);
+        if (!record?.element.isConnected) continue;
+        const priority = priorityForRect(record.element.getBoundingClientRect(), viewportHeight);
+        if (priority === null) continue;
+        activePriority = activePriority === null ? priority : Math.min(activePriority, priority);
+      }
+
+      let pending = [...records.values()]
         .filter((record) => !record.completed && !record.pending)
         .filter((record) => retryOnly ? record.retryRequested : !record.failed && !record.retryRequested)
         .filter((record) => record.text.length <= maxBlockChars && isRendered(record.element))
@@ -517,11 +548,21 @@ export function installUrlPageTranslationRuntime(
         .filter((entry): entry is typeof entry & { priority: number } => entry.priority !== null)
         .sort((left, right) => left.priority - right.priority || left.distance - right.distance);
 
+      if (activeIds.length > 0) {
+        if (activePriority === 0) return { activePriority, blocks: [], priority: null };
+        pending = pending.filter((entry) => entry.priority === 0);
+      }
+
+      const candidatePriority = pending[0]?.priority ?? null;
+      const maxBlocks = candidatePriority === 0 ? visibleMaxBlocks : prefetchMaxBlocks;
+      const maxChars = candidatePriority === 0 ? visibleMaxChars : prefetchMaxChars;
+
       const blocks: UrlPageTranslationBlock[] = [];
       const selected: RecordEntry[] = [];
       let chars = 0;
       let firstPriority: number | null = null;
       for (const entry of pending) {
+        if (firstPriority !== null && entry.priority !== firstPriority) break;
         if (blocks.length >= maxBlocks) break;
         if (blocks.length > 0 && chars + entry.record.text.length > maxChars) break;
         entry.record.pending = true;
@@ -536,7 +577,17 @@ export function installUrlPageTranslationRuntime(
           for (const record of selected) showStatus(record, 'loading');
         });
       }
-      return { blocks, priority: firstPriority };
+      return { activePriority, blocks, priority: firstPriority };
+    },
+    release(ids: readonly string[]): void {
+      withStableAnchor(() => {
+        for (const id of ids) {
+          const record = records.get(id);
+          if (!record || record.completed) continue;
+          record.pending = false;
+          removeStatus(record);
+        }
+      });
     },
     apply(items: readonly UrlPageTranslationItem[]): void {
       withStableAnchor(() => {
@@ -593,7 +644,9 @@ export function installUrlPageTranslationRuntime(
 }
 
 function validatedGuestBatch(value: unknown): UrlPageTranslationGuestBatch {
-  if (!isRecord(value) || !Array.isArray(value.blocks)) return { blocks: [], priority: null };
+  if (!isRecord(value) || !Array.isArray(value.blocks)) {
+    return { activePriority: null, blocks: [], priority: null };
+  }
   const blocks: UrlPageTranslationBlock[] = [];
   const ids = new Set<string>();
   let chars = 0;
@@ -612,7 +665,10 @@ function validatedGuestBatch(value: unknown): UrlPageTranslationGuestBatch {
   const priority = typeof value.priority === 'number' && Number.isInteger(value.priority)
     ? value.priority
     : null;
-  return { blocks, priority };
+  const activePriority = typeof value.activePriority === 'number' && Number.isInteger(value.activePriority)
+    ? value.activePriority
+    : null;
+  return { activePriority, blocks, priority };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

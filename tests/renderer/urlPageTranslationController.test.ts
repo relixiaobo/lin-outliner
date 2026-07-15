@@ -351,6 +351,57 @@ describe('UrlPageTranslationController', () => {
     controller.destroy();
   });
 
+  test('preempts an offscreen request when a new visible batch appears', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'Old prefetch' }], priority: 1 },
+      { blocks: [{ id: 'b2', text: 'Now visible' }], priority: 0 },
+    ]);
+    const errors: string[] = [];
+    const requests: UrlPageTranslationRequest[] = [];
+    let resolveFirst: ((response: UrlPageTranslationResponse) => void) | null = null;
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onError: (error) => errors.push(error),
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        if (requests.length === 1) {
+          return await new Promise<UrlPageTranslationResponse>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return {
+          ok: true,
+          requestId: request.requestId,
+          translations: [{ id: 'b2', translation: 'Visible translation' }],
+        };
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => guest.applied.length === 1);
+
+    expect(requests.map((request) => request.blocks[0]?.id)).toEqual(['b1', 'b2']);
+    expect(requests[1]?.sessionId).toBe(requests[0]?.sessionId);
+    expect(guest.released).toEqual([['b1']]);
+    expect(guest.nextBatchActiveIds).toContainEqual(['b1']);
+    expect(guest.applied).toEqual([[{ id: 'b2', translation: 'Visible translation' }]]);
+    expect(errors).toEqual([]);
+
+    resolveFirst?.({
+      ok: true,
+      requestId: requests[0]!.requestId,
+      translations: [{ id: 'b1', translation: 'Obsolete translation' }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(guest.applied).toHaveLength(1);
+    controller.destroy();
+  });
+
   test('keeps a failed block retryable until the user explicitly retries it', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
@@ -591,6 +642,7 @@ describe('UrlPageTranslationController', () => {
       async nextBatch() {
         return { blocks: [], priority: null };
       },
+      async release() {},
       async apply() {},
       async fail() {},
       async destroy() {
@@ -637,7 +689,9 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
   destroyed = 0;
   enabledCalls: Array<[boolean, TranslationLanguage]> = [];
   failed: string[][] = [];
+  nextBatchActiveIds: string[][] = [];
   nextBatchCalls: boolean[] = [];
+  released: string[][] = [];
 
   constructor(
     private readonly batches: UrlPageTranslationGuestBatch[],
@@ -659,9 +713,17 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
     this.enabledCalls.push([enabled, targetLanguage]);
   }
 
-  async nextBatch(retryOnly = false): Promise<UrlPageTranslationGuestBatch> {
+  async nextBatch(
+    retryOnly = false,
+    activeIds: readonly string[] = [],
+  ): Promise<UrlPageTranslationGuestBatch> {
     this.nextBatchCalls.push(retryOnly);
+    this.nextBatchActiveIds.push([...activeIds]);
     return this.batches.shift() ?? { blocks: [], priority: null };
+  }
+
+  async release(ids: readonly string[]): Promise<void> {
+    this.released.push([...ids]);
   }
 
   async apply(translations: readonly { id: string; translation: string }[]): Promise<void> {

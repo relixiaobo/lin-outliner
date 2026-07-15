@@ -15,7 +15,7 @@ import {
   type UrlPageTranslationGuestBridge,
 } from './urlPageTranslationGuest';
 
-const DEFAULT_POLL_INTERVAL_MS = 400;
+const DEFAULT_POLL_INTERVAL_MS = 120;
 const DEFAULT_GUEST_LABELS: UrlPageTranslationGuestLabels = {
   retry: 'Retry translation',
   translating: 'Translating',
@@ -39,12 +39,19 @@ interface UrlPageTranslationControllerOptions {
   cancel?: (sessionId: string) => Promise<unknown>;
 }
 
+interface ActivePageTranslationRequest {
+  generation: number;
+  ids: string[];
+  requestId: string;
+}
+
 export class UrlPageTranslationController {
   private readonly guest: UrlPageTranslationGuestBridge;
   private readonly pollIntervalMs: number;
   private readonly translate: (request: UrlPageTranslationRequest) => Promise<UrlPageTranslationResponse>;
   private readonly cancel: (sessionId: string) => Promise<unknown>;
   private autoActivated = false;
+  private activeRequest: ActivePageTranslationRequest | null = null;
   private autoTranslate: boolean;
   private destroyed = false;
   private domReady = false;
@@ -54,7 +61,6 @@ export class UrlPageTranslationController {
   private guestQueue: Promise<void> = Promise.resolve();
   private hasCompletedTranslation = false;
   private initialized = false;
-  private inFlightGeneration: number | null = null;
   private manualSuppressed = false;
   private model: string | null;
   private pausedForError = false;
@@ -144,7 +150,7 @@ export class UrlPageTranslationController {
     void this.cancel(this.sessionId).catch(() => undefined);
     this.sessionId = nextId('session');
     this.initialized = false;
-    this.inFlightGeneration = null;
+    this.activeRequest = null;
     this.pausedForError = false;
     this.failedIds.clear();
     this.setHasCompletedTranslation(false);
@@ -178,7 +184,7 @@ export class UrlPageTranslationController {
     if (this.initialized) {
       void this.runGuest(() => this.guest.setEnabled(false, this.targetLanguage)).catch(() => undefined);
     }
-    this.inFlightGeneration = null;
+    this.activeRequest = null;
     this.failedIds.clear();
     this.setStatus('off');
   }
@@ -188,6 +194,7 @@ export class UrlPageTranslationController {
     this.destroyed = true;
     this.enabled = false;
     this.autoActivated = false;
+    this.activeRequest = null;
     this.generation += 1;
     this.clearTimer();
     this.webview.removeEventListener('did-start-navigation', this.handleDidStartNavigation);
@@ -213,7 +220,7 @@ export class UrlPageTranslationController {
     this.autoActivated = false;
     this.pausedForError = false;
     this.initialized = false;
-    this.inFlightGeneration = null;
+    this.activeRequest = null;
     this.manualSuppressed = false;
     this.failedIds.clear();
     this.setHasCompletedTranslation(false);
@@ -280,72 +287,125 @@ export class UrlPageTranslationController {
   }
 
   private async tick(generation: number): Promise<void> {
-    if (!this.isCurrent(generation) || this.inFlightGeneration === generation) return;
-    let ids: string[] = [];
+    if (!this.isCurrent(generation)) return;
+    const previousRequest = this.activeRequest;
     try {
-      const batch = await this.runGuest(() => this.guest.nextBatch(this.pausedForError));
+      const batch = await this.runGuest(() => (
+        this.guest.nextBatch(this.pausedForError, previousRequest?.ids ?? [])
+      ));
       if (!this.isCurrent(generation)) return;
       if (batch.blocks.length === 0) {
-        if (this.status === 'starting') {
+        if (!this.activeRequest && this.status === 'starting') {
           this.setStatus(this.hasCompletedTranslation ? 'on' : 'idle');
         }
         this.scheduleTick(this.pollIntervalMs, generation);
         return;
       }
 
-      ids = batch.blocks.map((block) => block.id);
+      if (previousRequest && this.activeRequest === previousRequest) {
+        this.activeRequest = null;
+        await this.runGuest(() => this.guest.release(previousRequest.ids));
+        if (!this.isCurrent(generation)) return;
+      }
+
       if (this.status === 'idle') this.setStatus('starting');
-      this.inFlightGeneration = generation;
       const requestId = nextId('request');
-      const response = await this.translate({
+      const activeRequest: ActivePageTranslationRequest = {
+        generation,
+        ids: batch.blocks.map((block) => block.id),
+        requestId,
+      };
+      this.activeRequest = activeRequest;
+      const response = this.translate({
         sessionId: this.sessionId,
         requestId,
         targetLanguage: this.targetLanguage,
         ...(this.model ? { model: this.model } : {}),
         blocks: batch.blocks,
       });
-      if (!this.isCurrent(generation)) return;
-      if (response.requestId !== requestId) {
-        await this.runGuest(() => this.guest.fail(ids));
-        this.trackFailed(ids);
-        this.pauseWithError('invalid-response');
-        return;
-      }
-      if (!response.ok) {
-        if (response.error === 'cancelled') return;
-        await this.runGuest(() => this.guest.fail(ids));
-        this.trackFailed(ids);
-        this.pauseWithError(response.error);
-        return;
-      }
-
-      await this.runGuest(() => this.guest.apply(response.translations));
-      if (!this.isCurrent(generation)) return;
-      if (response.translations.length > 0) this.setHasCompletedTranslation(true);
-      for (const translation of response.translations) this.failedIds.delete(translation.id);
-      this.pausedForError = this.failedIds.size > 0;
-      this.setStatus(
-        this.pausedForError ? 'error' : this.hasCompletedTranslation ? 'on' : 'idle',
-      );
-      this.scheduleTick(this.pausedForError ? this.pollIntervalMs : 0, generation);
+      void this.finishRequest(activeRequest, response);
+      this.scheduleTick(this.pollIntervalMs, generation);
     } catch {
       if (!this.isCurrent(generation)) return;
-      if (ids.length > 0) {
-        await this.runGuest(() => this.guest.fail(ids)).catch(() => undefined);
-      }
-      this.trackFailed(ids);
-      this.pauseWithError('provider-error');
-    } finally {
-      if (this.inFlightGeneration === generation) this.inFlightGeneration = null;
+      this.failBeforeRequest('provider-error');
     }
+  }
+
+  private async finishRequest(
+    activeRequest: ActivePageTranslationRequest,
+    responsePromise: Promise<UrlPageTranslationResponse>,
+  ): Promise<void> {
+    let response: UrlPageTranslationResponse;
+    try {
+      response = await responsePromise;
+    } catch {
+      await this.failRequest(activeRequest, 'provider-error');
+      return;
+    }
+    if (!this.isActiveRequest(activeRequest)) return;
+
+    if (response.requestId !== activeRequest.requestId) {
+      await this.failRequest(activeRequest, 'invalid-response');
+      return;
+    }
+    if (!response.ok) {
+      if (response.error === 'cancelled') {
+        await this.runGuest(() => this.guest.release(activeRequest.ids)).catch(() => undefined);
+        if (!this.isActiveRequest(activeRequest)) return;
+        this.activeRequest = null;
+        this.scheduleTick(0, activeRequest.generation);
+        return;
+      }
+      await this.failRequest(activeRequest, response.error);
+      return;
+    }
+
+    try {
+      await this.runGuest(() => this.guest.apply(response.translations));
+    } catch {
+      await this.failRequest(activeRequest, 'provider-error');
+      return;
+    }
+    if (!this.isActiveRequest(activeRequest)) return;
+    this.activeRequest = null;
+    if (response.translations.length > 0) this.setHasCompletedTranslation(true);
+    for (const translation of response.translations) this.failedIds.delete(translation.id);
+    this.pausedForError = this.failedIds.size > 0;
+    this.setStatus(
+      this.pausedForError ? 'error' : this.hasCompletedTranslation ? 'on' : 'idle',
+    );
+    this.scheduleTick(this.pausedForError ? this.pollIntervalMs : 0, activeRequest.generation);
+  }
+
+  private async failRequest(
+    activeRequest: ActivePageTranslationRequest,
+    error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>,
+  ): Promise<void> {
+    if (!this.isActiveRequest(activeRequest)) return;
+    await this.runGuest(() => this.guest.fail(activeRequest.ids)).catch(() => undefined);
+    if (!this.isActiveRequest(activeRequest)) return;
+    this.activeRequest = null;
+    this.trackFailed(activeRequest.ids);
+    this.pauseWithError(error);
+  }
+
+  private isActiveRequest(activeRequest: ActivePageTranslationRequest): boolean {
+    return (
+      this.isCurrent(activeRequest.generation)
+      && this.activeRequest === activeRequest
+    );
   }
 
   private failBeforeRequest(error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>): void {
     this.enabled = false;
     this.autoActivated = false;
+    this.activeRequest = null;
     this.pausedForError = false;
     this.generation += 1;
     this.clearTimer();
+    const cancelledSessionId = this.sessionId;
+    this.sessionId = nextId('session');
+    void this.cancel(cancelledSessionId).catch(() => undefined);
     this.failedIds.clear();
     if (this.initialized) {
       void this.runGuest(() => this.guest.setEnabled(false, this.targetLanguage)).catch(() => undefined);

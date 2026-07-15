@@ -14,16 +14,25 @@ const TEST_LABELS: UrlPageTranslationGuestLabels = {
   retry: 'Retry translation',
   translating: 'Translating',
 };
+const VISIBLE_MAX_BLOCKS = 4;
+const VISIBLE_MAX_CHARS = 4_000;
+const PREFETCH_MAX_BLOCKS = 8;
+const PREFETCH_MAX_CHARS = 8_000;
+const MAX_BLOCK_CHARS = 6_000;
 
 interface GuestRuntime {
   version: 1;
   setEnabled(enabled: boolean, targetLanguage: TranslationLanguage): void;
   nextBatch(
-    maxBlocks: number,
-    maxChars: number,
+    visibleMaxBlocks: number,
+    visibleMaxChars: number,
+    prefetchMaxBlocks: number,
+    prefetchMaxChars: number,
     maxBlockChars: number,
     retryOnly?: boolean,
+    activeIds?: readonly string[],
   ): UrlPageTranslationGuestBatch;
+  release(ids: readonly string[]): void;
   apply(items: readonly UrlPageTranslationItem[]): void;
   fail(ids: readonly string[]): void;
   destroy(): void;
@@ -56,12 +65,21 @@ describe('URL page translation guest runtime', () => {
     const runtime = fixture.runtime;
     runtime.setEnabled(true, 'zh-Hans');
 
-    const batch = runtime.nextBatch(12, 12_000, 6_000);
-    const texts = batch.blocks.map((block) => block.text);
+    const visibleBatch = nextBatch(runtime);
+    const visibleTexts = visibleBatch.blocks.map((block) => block.text);
 
-    expect(batch.priority).toBe(0);
-    expect(texts).toContain('Above the viewport');
-    expect(texts).toContain('Current paragraph');
+    expect(visibleBatch.priority).toBe(0);
+    expect(visibleTexts).toContain('Above the viewport');
+    expect(visibleTexts).toContain('Current paragraph');
+    expect(visibleTexts).not.toContain('Prefetched paragraph');
+    runtime.apply(visibleBatch.blocks.map((block) => ({
+      id: block.id,
+      translation: `Translated: ${block.text}`,
+    })));
+
+    const prefetchBatch = nextBatch(runtime);
+    const texts = [...visibleTexts, ...prefetchBatch.blocks.map((block) => block.text)];
+    expect(prefetchBatch.priority).toBe(1);
     expect(texts).toContain('Prefetched paragraph');
     expect(texts).toContain('Recently passed paragraph');
     expect(texts).not.toContain('Far away paragraph');
@@ -71,29 +89,49 @@ describe('URL page translation guest runtime', () => {
     expect(texts).not.toContain('Already translated content');
     expect(fixture.document.querySelector('#target-language [data-tenon-bilingual-status]')).toBeNull();
     expect(fixture.document.querySelectorAll('[data-tenon-bilingual-status="loading"]').length)
-      .toBe(batch.blocks.length);
+      .toBe(prefetchBatch.blocks.length);
   });
 
   test('skips blocks whose nearest declared language matches the selected target', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'en');
 
-    const texts = fixture.runtime.nextBatch(12, 12_000, 6_000).blocks.map((block) => block.text);
+    const texts = nextBatch(fixture.runtime).blocks.map((block) => block.text);
     expect(texts).toEqual(['Already translated content']);
     expect(fixture.document.querySelector('#current [data-tenon-bilingual-status]')).toBeNull();
+  });
+
+  test('returns newly visible earlier blocks while a downward request is still pending', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    fixture.setScrollY(800);
+
+    const downwardBatch = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 });
+    expect(downwardBatch.blocks.map((block) => block.text)).toEqual(['Prefetched paragraph']);
+
+    fixture.setScrollY(0);
+    const upwardBatch = nextBatch(fixture.runtime, {
+      activeIds: downwardBatch.blocks.map((block) => block.id),
+    });
+
+    expect(upwardBatch.activePriority).toBe(2);
+    expect(upwardBatch.priority).toBe(0);
+    expect(upwardBatch.blocks.map((block) => block.text)).toContain('Current paragraph');
+    fixture.runtime.release(downwardBatch.blocks.map((block) => block.id));
+    expect(fixture.document.querySelector('#ahead [data-tenon-bilingual-status]')).toBeNull();
   });
 
   test('runs from its serialized function body without renderer closures', () => {
     const fixture = createFixture({ serialized: true });
     fixture.runtime.setEnabled(true, 'zh-Hans');
 
-    expect(fixture.runtime.nextBatch(1, 12_000, 6_000).blocks).toHaveLength(1);
+    expect(nextBatch(fixture.runtime, { visibleMaxBlocks: 1 }).blocks).toHaveLength(1);
   });
 
   test('inserts model output with textContent and preserves the current reading anchor', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const batch = fixture.runtime.nextBatch(1, 12_000, 6_000);
+    const batch = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 });
     const above = batch.blocks.find((block) => block.text === 'Above the viewport');
     if (!above) throw new Error('Missing above-viewport block');
 
@@ -129,7 +167,7 @@ describe('URL page translation guest runtime', () => {
   test('prevents a replaced runtime from applying stale frame corrections', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const batch = fixture.runtime.nextBatch(1, 12_000, 6_000);
+    const batch = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 });
     const above = batch.blocks.find((block) => block.text === 'Above the viewport');
     if (!above) throw new Error('Missing above-viewport block');
     fixture.runtime.apply([{ id: above.id, translation: 'Translated above viewport' }]);
@@ -152,7 +190,7 @@ describe('URL page translation guest runtime', () => {
   test('changes a failed loader into a retry control and retries only after it is clicked', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const first = fixture.runtime.nextBatch(1, 12_000, 6_000);
+    const first = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 });
     expect(first.blocks).toHaveLength(1);
     const loading = fixture.document.querySelector<HTMLButtonElement>('[data-tenon-bilingual-status="loading"]');
     expect(loading?.disabled).toBe(true);
@@ -162,19 +200,19 @@ describe('URL page translation guest runtime', () => {
     const retry = fixture.document.querySelector<HTMLButtonElement>('[data-tenon-bilingual-status="error"]');
     expect(retry?.disabled).toBe(false);
     expect(retry?.getAttribute('aria-label')).toBe('Retry translation');
-    expect(fixture.runtime.nextBatch(1, 12_000, 6_000, true).blocks).toEqual([]);
+    expect(nextBatch(fixture.runtime, { retryOnly: true, visibleMaxBlocks: 1 }).blocks).toEqual([]);
 
     retry?.click();
 
     expect(retry?.getAttribute('data-tenon-bilingual-status')).toBe('loading');
-    const retried = fixture.runtime.nextBatch(1, 12_000, 6_000, true);
+    const retried = nextBatch(fixture.runtime, { retryOnly: true, visibleMaxBlocks: 1 });
     expect(retried.blocks[0]?.id).toBe(first.blocks[0]?.id);
   });
 
   test('removes transient status controls when translation is disabled', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const block = fixture.runtime.nextBatch(1, 12_000, 6_000).blocks[0];
+    const block = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 }).blocks[0];
     if (!block) throw new Error('Missing block');
     fixture.runtime.fail([block.id]);
 
@@ -186,7 +224,7 @@ describe('URL page translation guest runtime', () => {
   test('removes injected state when the preview is destroyed', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const block = fixture.runtime.nextBatch(1, 12_000, 6_000).blocks[0];
+    const block = nextBatch(fixture.runtime, { visibleMaxBlocks: 1 }).blocks[0];
     if (!block) throw new Error('Missing block');
     fixture.runtime.apply([{ id: block.id, translation: '译文' }]);
 
@@ -196,6 +234,26 @@ describe('URL page translation guest runtime', () => {
     expect((fixture.window as unknown as Record<string, unknown>)[URL_PAGE_TRANSLATION_RUNTIME_KEY]).toBeUndefined();
   });
 });
+
+function nextBatch(
+  runtime: GuestRuntime,
+  options: {
+    activeIds?: readonly string[];
+    prefetchMaxBlocks?: number;
+    retryOnly?: boolean;
+    visibleMaxBlocks?: number;
+  } = {},
+): UrlPageTranslationGuestBatch {
+  return runtime.nextBatch(
+    options.visibleMaxBlocks ?? VISIBLE_MAX_BLOCKS,
+    VISIBLE_MAX_CHARS,
+    options.prefetchMaxBlocks ?? PREFETCH_MAX_BLOCKS,
+    PREFETCH_MAX_CHARS,
+    MAX_BLOCK_CHARS,
+    options.retryOnly ?? false,
+    options.activeIds ?? [],
+  );
+}
 
 function cssRuleBody(css: string, selector: string): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -210,6 +268,7 @@ function createFixture(options: { serialized?: boolean } = {}): {
   runtime: GuestRuntime;
   scrollBehaviors: ScrollBehavior[];
   scrollDeltas: number[];
+  setScrollY: (value: number) => void;
   shiftCurrentAnchor: (delta: number) => void;
   window: Window;
 } {
@@ -257,11 +316,11 @@ function createFixture(options: { serialized?: boolean } = {}): {
       - testWindow.scrollY;
     return rect(top, top + 40);
   });
-  setRect(document, 'ahead', () => rect(800, 850));
-  setRect(document, 'far', () => rect(1_900, 1_950));
-  setRect(document, 'form', () => rect(200, 240));
-  setRect(document, 'editable', () => rect(260, 300));
-  setRect(document, 'target-language', () => rect(320, 360));
+  setRect(document, 'ahead', () => rect(800 - testWindow.scrollY, 850 - testWindow.scrollY));
+  setRect(document, 'far', () => rect(1_900 - testWindow.scrollY, 1_950 - testWindow.scrollY));
+  setRect(document, 'form', () => rect(200 - testWindow.scrollY, 240 - testWindow.scrollY));
+  setRect(document, 'editable', () => rect(260 - testWindow.scrollY, 300 - testWindow.scrollY));
+  setRect(document, 'target-language', () => rect(320 - testWindow.scrollY, 360 - testWindow.scrollY));
 
   const scrollDeltas: number[] = [];
   const scrollBehaviors: ScrollBehavior[] = [];
@@ -301,6 +360,9 @@ function createFixture(options: { serialized?: boolean } = {}): {
     runtime,
     scrollBehaviors,
     scrollDeltas,
+    setScrollY: (value) => {
+      testWindow.scrollY = value;
+    },
     shiftCurrentAnchor: (delta) => {
       currentAnchorShift += delta;
     },

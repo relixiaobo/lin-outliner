@@ -108,7 +108,7 @@ The control has five observable states:
    active without unresolved failures.
 5. **Partial error**: completed translations stay readable, the original text
    stays intact, and each failed source block replaces its loader with a focused,
-   clickable error control. The completion check remains if an earlier block
+   clickable error control. The completed header fill remains if an earlier block
    succeeded. Clicking the error retries only that block. Tenon's existing
    dismissible error toast still announces the failure wave.
 
@@ -145,21 +145,53 @@ inserted with `textContent`; model-produced HTML is never parsed or executed.
 When enabled, prioritize work in this order:
 
 1. blocks intersecting the current viewport;
-2. blocks up to roughly two viewports ahead in the current scroll direction;
-3. blocks up to roughly half a viewport behind.
+2. blocks ahead in the current scroll direction;
+3. a smaller buffer behind the current scroll direction.
 
-Blocks outside that window stay unsent. Batch adjacent pending blocks under
-bounded block and character limits. Use limited concurrency so prefetch cannot
-flood a provider; a newly visible block always outranks queued prefetch work.
-Fast scrolling discards obsolete queued batches and rebuilds priority around
-the new viewport. Dynamic page mutations register new eligible blocks, but
-they are not submitted until they enter the same window.
+Each paragraph remains an independently cached/status-tracked block, but model
+requests use bounded micro-batches rather than one request per paragraph. A
+foreground batch contains at most four visible blocks or roughly 4,000 source
+characters. A background batch contains at most eight adjacent prefetch blocks
+or roughly 8,000 source characters. The model response still settles one whole
+micro-batch atomically; completed micro-batches render as soon as they return.
+
+Before a meaningful scroll direction is known, prefetch approximately two
+viewports above and below the activation point. Once direction is known, keep a
+buffer of approximately four viewports ahead and one viewport behind. Direction
+detection and priority are symmetric for upward and downward reading, including
+when translation begins in the middle of an article. Blocks outside that window
+stay unsent, so the feature never degrades into eager whole-page translation.
+
+Keep at most one model request active per page. While it is active, probe the
+viewport on a short bounded interval. If a newly visible untranslated block is
+not covered by that request, invalidate the old request, remove its transient
+loaders, return its blocks to the pending pool, and start a foreground batch
+without waiting for the old provider response. A prefetch request that now
+covers the visible block may finish instead of being restarted. Cancellation is
+not an error and never leaves a permanent loading state. Fast scrolling therefore
+discards obsolete work and rebuilds priority around the current viewport while
+preserving the single-request provider limit.
+
+Dynamic page mutations register new eligible blocks, but they are not submitted
+until they enter the same bounded window. Completed blocks are never requested
+again during the page session.
 
 Keep high-frequency viewport coordinates, queues, observers, and translation
 cache in an imperative controller/ref rather than React state. React state owns
 only the header control's observable status. Scroll listeners, where needed,
 are passive; observer and handler subscriptions are stable for the mounted
 webview.
+
+Observable scheduling acceptance:
+
+- A newly visible eligible block shows translated content or its loader within
+  200ms, even when an obsolete offscreen request is still awaiting the model.
+- Starting in the middle and scrolling upward schedules earlier untranslated
+  blocks with the same priority as scrolling downward schedules later blocks.
+- Preemption produces neither an error state nor a stranded loader, and released
+  blocks remain eligible when the reader returns.
+- No scheduler path exceeds the bounded viewport window or starts a second model
+  request for the same page.
 
 ### Scroll anchoring and DOM presentation
 
@@ -221,7 +253,7 @@ the source page.
   user to select or configure a model. After configuration, activating a block's
   error control retries only that block.
 - No eligible visible text: remain enabled in Idle and wait for later eligible
-  content; do not show the completion check or treat an image-only viewport or
+  content; do not show the completed fill or treat an image-only viewport or
   same-language blocks as a failure.
 - Provider or parse failure: preserve successful translations and report one
   localized toast for the current failure wave. Do not retry automatically;

@@ -446,13 +446,22 @@ suppression and evaluates the new page again. Changing the target also re-runs
 the language rule for an auto-activated page and turns translation off when the
 new target matches the document language.
 
-Translation is viewport-driven rather than an eager whole-page request. The
-guest runtime selects visible readable blocks first, then approximately two
-viewports ahead in the current scroll direction and half a viewport behind.
-Blocks outside that window are not sent. Adjacent blocks are submitted in bounded
-batches with one active request per pane; dynamic content joins only after it
-enters the same window. Successful blocks remain cached in memory so back-scrolling
-does not call the provider again. DOM insertion, hide, and restore capture the
+Translation is viewport-driven rather than an eager whole-page request. Visible
+content uses foreground micro-batches of at most four blocks or roughly 4,000
+source characters; background prefetch uses at most eight blocks or roughly
+8,000 characters. Before direction is known, the guest runtime prefetches about
+two viewports above and below the activation point. It then keeps about four
+viewports ahead and one behind the observed reading direction, with symmetric
+upward and downward behavior. Blocks outside that window are not sent.
+
+Each pane keeps one active model request. A 120ms scheduling probe continues
+while that request is pending. When a newly visible eligible block is not covered
+by the active request, the controller invalidates the offscreen work, removes its
+transient loaders, returns those blocks to the pending pool, and starts a visible
+micro-batch without waiting for the obsolete provider response. Cancellation is
+not surfaced as an error. Dynamic content joins only after it enters the same
+window, and successful blocks remain cached in memory so back-scrolling does not
+call the provider again. DOM insertion, hide, and restore capture the
 first visible source block and compensate its post-write offset immediately and
 across two bounded animation frames. Compensation stays instant on sites that
 request smooth scrolling, and injected nodes do not become browser scroll anchors,
@@ -470,7 +479,7 @@ normal scheduling pauses and polls only for an explicit retry; this includes a
 missing provider/model, so the user can configure one and retry the affected
 paragraph in place. The existing localized toast announces each failure wave.
 When the current page window contains no eligible untranslated blocks,
-translation stays enabled in an idle state without showing the completion check;
+translation stays enabled in an idle state without showing the completed fill;
 a later eligible block returns the control to loading before its request starts.
 Disabling, canceling, navigating, or changing the source removes transient
 controls. Reduced-motion mode uses a static progress ring.
