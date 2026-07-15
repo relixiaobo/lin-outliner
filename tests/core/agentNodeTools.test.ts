@@ -1560,6 +1560,36 @@ describe('agent node tools', () => {
     expect(core.state().nodes[clonedChildId]!.content.text).toBe('Child');
   });
 
+  test('node_create duplicate_id preserves a URL with balanced parentheses', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- https://example.com/a_(b)',
+    });
+    expect(created.ok).toBe(true);
+    const sourceId = created.data!.createdRootIds[0]!;
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      duplicate_id: sourceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const cloneId = duplicated.data!.createdRootIds[0]!;
+    expect(core.state().nodes[cloneId]!.content).toEqual(core.state().nodes[sourceId]!.content);
+    expect(core.state().nodes[cloneId]!.content).toEqual({
+      text: 'https://example.com/a_(b)',
+      marks: [{
+        start: 0,
+        end: 25,
+        type: 'link',
+        attrs: { href: 'https://example.com/a_(b)' },
+      }],
+      inlineRefs: [],
+    });
+  });
+
   test('node_create persists saved search nodes with executable conditions', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

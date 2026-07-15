@@ -45,6 +45,18 @@ function showsCheckbox(core: Core, nodeId: string): boolean {
   return nodeShowsCheckbox(byId, core.state().nodes[nodeId]);
 }
 
+function inlineNodeReference(targetId: string, displayName = 'Target'): RichText {
+  return {
+    text: displayName,
+    marks: [],
+    inlineRefs: [{
+      offset: 0,
+      target: { kind: 'node', nodeId: targetId },
+      displayName,
+    }],
+  };
+}
+
 describe('Core', () => {
   test('initializes Recents as a saved search node', () => {
     const core = Core.new();
@@ -290,6 +302,35 @@ describe('Core', () => {
     });
   });
 
+  test('rejects missing pasted node references before creating any tree roots', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const childrenBefore = [...core.state().nodes[today].children];
+
+    expect(() => core.createNodesFromTree(today, [
+      { content: plainText('Would otherwise be created'), children: [] },
+      { content: inlineNodeReference('node:does-not-exist', 'Missing'), children: [] },
+    ])).toThrow('node not found: node:does-not-exist');
+
+    expect(core.state().nodes[today].children).toEqual(childrenBefore);
+    expect(Object.values(core.state().nodes).some((node) => (
+      node.content.text === 'Would otherwise be created'
+    ))).toBe(false);
+  });
+
+  test('creates pasted inline references to active nodes', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Reference target'));
+
+    const created = mustFocus(core.createNodesFromTree(today, [{
+      content: inlineNodeReference(target, 'Reference target'),
+      children: [],
+    }]));
+
+    expect(core.state().nodes[created].content).toEqual(inlineNodeReference(target, 'Reference target'));
+  });
+
   test('materializes tree node descriptions with the created nodes', () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -370,6 +411,24 @@ describe('Core', () => {
     expect(undo.count).toBe(1);
     expect(undo.undone?.[0]?.affectedNodeIds).toContain(rootId);
     expect(core.state().nodes[rootId]).toBeUndefined();
+  });
+
+  test('preflights yielding tree references before committing any chunk', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const childrenBefore = [...core.state().nodes[today].children];
+
+    await expect(core.createNodesFromTreeYieldingFocus(today, [
+      { content: plainText('First chunk'), children: [] },
+      { content: inlineNodeReference('node:missing-from-bulk-paste', 'Missing'), children: [] },
+    ], {
+      yieldEveryNodes: 1,
+      commitEveryNodes: 1,
+      yield: async () => {},
+    })).rejects.toThrow('node not found: node:missing-from-bulk-paste');
+
+    expect(core.state().nodes[today].children).toEqual(childrenBefore);
+    expect(Object.values(core.state().nodes).some((node) => node.content.text === 'First chunk')).toBe(false);
   });
 
   test('materializes a codeBlock tree node with its language', () => {
@@ -1395,6 +1454,26 @@ describe('Core', () => {
     expect(core.state().nodes[current].content.text).toBe('Current');
     expect(core.state().nodes[current].children).toEqual([]);
     expect(core.state().nodes[today].children).toEqual([current, next]);
+  });
+
+  test('rejects a pasted reference to Trash without changing the existing row', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Archived target'));
+    const current = mustFocus(core.createNode(today, null, 'Current'));
+    core.trashNode(target);
+    const todayChildrenBefore = [...core.state().nodes[today].children];
+
+    expect(() => core.pasteNodesIntoNode(
+      current,
+      inlineNodeReference(target, 'Archived target'),
+      [{ content: plainText('Would otherwise be a child'), children: [] }],
+      [],
+    )).toThrow(`reference target is in Trash: ${target}`);
+
+    expect(core.state().nodes[current].content).toEqual(plainText('Current'));
+    expect(core.state().nodes[current].children).toEqual([]);
+    expect(core.state().nodes[today].children).toEqual(todayChildrenBefore);
   });
 
   test('batch move preserves sibling block order', () => {

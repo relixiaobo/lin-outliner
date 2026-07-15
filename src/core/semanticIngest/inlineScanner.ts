@@ -1,3 +1,4 @@
+import { Lexer } from 'marked';
 import { parseReferenceMarkers } from '../referenceMarkup';
 import {
   matchTagTokens,
@@ -14,8 +15,8 @@ import type {
   TagDraft,
 } from './types';
 
-const MARKDOWN_INLINE_TOKEN =
-  /\[([^\]\n]+)\]\(([^)\s]+)\)|\*\*([^*\n]+)\*\*|~~([^~\n]+)~~|==([^=\n]+)==|\*([^*\n]+)\*|`([^`\n]+)`/gu;
+const MARKDOWN_INLINE_MARK_TOKEN =
+  /\*\*([^*\n]+)\*\*|~~([^~\n]+)~~|==([^=\n]+)==|\*([^*\n]+)\*|`([^`\n]+)`/gu;
 const FIELD_START_TOKEN = /(^|\s)([A-Za-z][\w-]*)::[ \t]+/gu;
 const BARE_URL_TOKEN = new RegExp(String.raw`(?:https?:\/\/|www\.)[^\s<>"'\u0060]+`, 'giu');
 const ASCII_WORD = /[A-Za-z0-9_]/u;
@@ -42,10 +43,11 @@ interface ParsedMarkdown {
   escapedOffsets: Set<number>;
 }
 
-interface InlineToken {
+interface InlineToken extends Range {
   type: TextMarkKind;
   inner: string;
   attrs?: Record<string, string>;
+  innerIsDecoded?: boolean;
 }
 
 export interface SemanticEscapeOptions {
@@ -187,13 +189,48 @@ function contextualSlice(
   return output;
 }
 
-function classifyInline(match: RegExpMatchArray): InlineToken {
-  if (match[1] !== undefined) return { type: 'link', inner: match[1], attrs: { href: match[2] ?? '' } };
-  if (match[3] !== undefined) return { type: 'bold', inner: match[3] };
-  if (match[4] !== undefined) return { type: 'strike', inner: match[4] };
-  if (match[5] !== undefined) return { type: 'highlight', inner: match[5] };
-  if (match[6] !== undefined) return { type: 'italic', inner: match[6] };
-  return { type: 'code', inner: match[7] ?? '' };
+function classifyInlineMark(match: RegExpMatchArray, start: number): InlineToken {
+  const range = { start, end: start + match[0].length };
+  if (match[1] !== undefined) return { ...range, type: 'bold', inner: match[1] };
+  if (match[2] !== undefined) return { ...range, type: 'strike', inner: match[2] };
+  if (match[3] !== undefined) return { ...range, type: 'highlight', inner: match[3] };
+  if (match[4] !== undefined) return { ...range, type: 'italic', inner: match[4] };
+  return { ...range, type: 'code', inner: match[5] ?? '' };
+}
+
+function markdownInlineTokens(input: string): InlineToken[] {
+  const candidates: InlineToken[] = [];
+  let offset = 0;
+  for (const token of Lexer.lexInline(input)) {
+    const start = offset;
+    offset += token.raw.length;
+    if (token.type !== 'link' || !token.raw.startsWith('[') || !token.href) continue;
+    if (isEscapedSemanticAt(input, start)) continue;
+    candidates.push({
+      start,
+      end: offset,
+      type: 'link',
+      inner: token.text,
+      attrs: { href: token.href },
+      innerIsDecoded: true,
+    });
+  }
+  for (const match of input.matchAll(MARKDOWN_INLINE_MARK_TOKEN)) {
+    const start = match.index ?? 0;
+    if (isEscapedSemanticAt(input, start)) continue;
+    candidates.push(classifyInlineMark(match, start));
+  }
+
+  const accepted: InlineToken[] = [];
+  for (const candidate of candidates.sort((left, right) => (
+    left.start - right.start
+    || (left.type === 'link' ? -1 : right.type === 'link' ? 1 : 0)
+    || right.end - left.end
+  ))) {
+    const previous = accepted[accepted.length - 1];
+    if (!previous || !rangesOverlap(previous, candidate)) accepted.push(candidate);
+  }
+  return accepted;
 }
 
 function parseMarkdown(input: string): ParsedMarkdown {
@@ -201,13 +238,10 @@ function parseMarkdown(input: string): ParsedMarkdown {
   const escapedOffsets = new Set<number>();
   let text = '';
   let cursor = 0;
-  for (const match of input.matchAll(MARKDOWN_INLINE_TOKEN)) {
-    const start = match.index ?? 0;
-    if (isEscapedSemanticAt(input, start)) continue;
-    text += decodeEscapes(input.slice(cursor, start), text.length, escapedOffsets);
-    const token = classifyInline(match);
+  for (const token of markdownInlineTokens(input)) {
+    text += decodeEscapes(input.slice(cursor, token.start), text.length, escapedOffsets);
     const markStart = text.length;
-    if (token.type === 'code') {
+    if (token.type === 'code' || token.innerIsDecoded) {
       text += token.inner;
     } else {
       text += decodeEscapes(token.inner, text.length, escapedOffsets);
@@ -220,7 +254,7 @@ function parseMarkdown(input: string): ParsedMarkdown {
         ...(token.attrs ? { attrs: token.attrs } : {}),
       });
     }
-    cursor = start + match[0].length;
+    cursor = token.end;
   }
   text += decodeEscapes(input.slice(cursor), text.length, escapedOffsets);
   return { content: { text, marks, inlineRefs: [] }, escapedOffsets };
@@ -279,12 +313,8 @@ function materializeReferenceMarkers(content: RichText, escapedOffsets: Readonly
 
 export function markdownInlineProtectedRanges(text: string): SourceSpan[] {
   const ranges: Range[] = [];
-  for (const match of text.matchAll(MARKDOWN_INLINE_TOKEN)) {
-    const start = match.index ?? 0;
-    if (isEscapedSemanticAt(text, start)) continue;
-    if (match[1] !== undefined || match[7] !== undefined) {
-      ranges.push({ start, end: start + match[0].length });
-    }
+  for (const token of markdownInlineTokens(text)) {
+    if (token.type === 'link' || token.type === 'code') ranges.push(token);
   }
   for (const marker of parseReferenceMarkers(text)) {
     if (!isEscapedSemanticAt(text, marker.start)) ranges.push({ start: marker.start, end: marker.end });

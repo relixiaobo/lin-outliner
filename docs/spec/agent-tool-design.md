@@ -1257,6 +1257,10 @@ Rules:
   marks. `www.` hrefs normalize to `https://`; trailing sentence punctuation and
   unmatched closing delimiters remain outside the link. Link clicks still use the
   existing safe external-navigation path and do not expand its scheme allowlist.
+- Explicit Markdown link destinations accept balanced or backslash-escaped
+  parentheses. Canonical serialization escapes destination backslashes and
+  parentheses, so `node_read` output reused by `node_create`, `node_edit`, or
+  `duplicate_id` preserves the complete href.
 - Complete Markdown links, inline code, reference markers, bare URLs, and
   backslash-escaped tokens are protected from tag and field harvesting. A
   grammar-shaped token in one of those ranges remains literal.

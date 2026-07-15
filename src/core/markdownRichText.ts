@@ -151,7 +151,11 @@ function markDelimiters(mark: TextMark): { open: string; close: string } | null 
   if (mark.type === 'code') return { open: '`', close: '`' };
   if (mark.type === 'link') {
     const href = typeof mark.attrs?.href === 'string' ? mark.attrs.href : '';
-    return href ? { open: '[', close: `](${href})` } : null;
+    return href ? { open: '[', close: `](${escapeMarkdownLinkDestination(href)})` } : null;
   }
   return null;
+}
+
+function escapeMarkdownLinkDestination(href: string): string {
+  return href.replace(/[\\()]/gu, '\\$&');
 }

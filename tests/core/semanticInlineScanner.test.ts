@@ -25,6 +25,30 @@ describe('semantic inline scanner', () => {
     });
   });
 
+  test('parses an explicit Markdown link with balanced destination parentheses', () => {
+    const source = '[site](https://example.com/a_(b))';
+
+    expect(scanMarkdownInline(source, {
+      metadata: 'tags-and-fields',
+      linkifyBareUrls: true,
+      references: true,
+    })).toEqual({
+      source,
+      content: {
+        text: 'site',
+        marks: [{
+          start: 0,
+          end: 4,
+          type: 'link',
+          attrs: { href: 'https://example.com/a_(b)' },
+        }],
+        inlineRefs: [],
+      },
+      fields: [],
+      tags: [],
+    });
+  });
+
   test('uses existing rich-text marks as protected ranges and remaps offsets', () => {
     expect(scanRichTextInline({
       text: 'See #linked then #work status:: done',

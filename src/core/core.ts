@@ -647,6 +647,7 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
+      assertCreateNodeTreeReferencesAvailable(state, nodes);
       const context = this.createTreeMaterializeContext(state);
       let lastCreatedId: string | undefined;
       for (const node of nodes) {
@@ -674,6 +675,7 @@ export class Core {
     return this.mutateAsyncFocus(async () => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
+      assertCreateNodeTreeReferencesAvailable(state, nodes);
       const context = this.createTreeMaterializeContext(state);
       const total = countCreateNodeTrees(nodes);
       const yieldContext: TreeYieldContext = {
@@ -783,6 +785,9 @@ export class Core {
       ensureNodeEditable(state, nodeId);
       const parentId = state.nodes[nodeId]?.parentId;
       if (!parentId) throw CoreError.noParent();
+      assertRichTextReferencesAvailable(state, content);
+      assertCreateNodeTreeReferencesAvailable(state, children);
+      assertCreateNodeTreeReferencesAvailable(state, siblingsAfter);
       const siblingIndex = (childIndex(state, parentId, nodeId) ?? 0) + 1;
       const node = clone(requiredNode(state, nodeId));
       node.content = clone(content);
@@ -4287,6 +4292,29 @@ function isDescendant(state: DocumentState, nodeId: string, ancestorId: string) 
 
 function isInTrash(state: DocumentState, nodeId: string) {
   return nodeId === TRASH_ID || isDescendant(state, nodeId, TRASH_ID);
+}
+
+function assertRichTextReferencesAvailable(state: DocumentState, content: RichText): void {
+  for (const ref of content.inlineRefs) {
+    const targetId = inlineRefNodeId(ref);
+    if (!targetId) continue;
+    if (!state.nodes[targetId]) throw CoreError.nodeNotFound(targetId);
+    if (isInTrash(state, targetId)) {
+      throw CoreError.invalidOperation(`reference target is in Trash: ${targetId}`);
+    }
+  }
+}
+
+function assertCreateNodeTreeReferencesAvailable(
+  state: DocumentState,
+  nodes: readonly CreateNodeTree[],
+): void {
+  const pending = [...nodes];
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    assertRichTextReferencesAvailable(state, node.content);
+    for (const child of node.children) pending.push(child);
+  }
 }
 
 function isActiveTagDefinition(state: DocumentState, nodeId: string) {

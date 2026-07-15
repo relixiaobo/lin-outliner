@@ -122,4 +122,38 @@ describe('markdown rich text outline bridge', () => {
     expect(serialized).toBe('[https://example.com](https://example.com)');
     expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
   });
+
+  test('round-trips link destinations with balanced parentheses', () => {
+    const content = {
+      text: 'https://example.com/a_(b)',
+      marks: [{
+        start: 0,
+        end: 25,
+        type: 'link' as const,
+        attrs: { href: 'https://example.com/a_(b)' },
+      }],
+      inlineRefs: [],
+    };
+
+    const serialized = richTextToMarkdownReferenceMarkup(content);
+    expect(serialized).toBe(String.raw`[https://example.com/a_(b)](https://example.com/a_\(b\))`);
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
+
+  test('round-trips escaped closing parentheses and backslashes in link destinations', () => {
+    const content = {
+      text: 'download',
+      marks: [{
+        start: 0,
+        end: 8,
+        type: 'link' as const,
+        attrs: { href: String.raw`https://example.com/a_\folder_)` },
+      }],
+      inlineRefs: [],
+    };
+
+    const serialized = richTextToMarkdownReferenceMarkup(content);
+    expect(serialized).toBe(String.raw`[download](https://example.com/a_\\folder_\))`);
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
 });

@@ -706,16 +706,18 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       return;
     }
 
-    localDraftSyncRef.current = { nodeId: targetEditId, content: payload.content };
-    draftContentRef.current = payload.content;
-    setDraftContent(payload.content);
-    if (payload.children.length > 0) {
-      props.setUi((prev) => {
-        const expanded = new Set(prev.expanded);
-        expanded.add(props.nodeId);
-        return { ...prev, expanded };
-      });
-    }
+    const applyLocalPaste = () => {
+      localDraftSyncRef.current = { nodeId: targetEditId, content: payload.content };
+      draftContentRef.current = payload.content;
+      setDraftContent(payload.content);
+      if (payload.children.length > 0) {
+        props.setUi((prev) => {
+          const expanded = new Set(prev.expanded);
+          expanded.add(props.nodeId);
+          return { ...prev, expanded };
+        });
+      }
+    };
     const pasteIntoNode = () => api.pasteNodesIntoNode(
       props.nodeId,
       payload.content,
@@ -726,11 +728,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (props.draft && !realNode) {
       // A materialize for this draft is already in flight; paste once the row
       // lands in core so its id is no longer missing.
-      pendingTextPatchRef.current = pendingTextPatchRef.current.then(() => props.run(pasteIntoNode));
+      pendingTextPatchRef.current = pendingTextPatchRef.current.then(() => (
+        props.run(pasteIntoNode, { beforeApply: applyLocalPaste })
+      ));
       void pendingTextPatchRef.current;
       return;
     }
-    void props.run(pasteIntoNode);
+    void props.run(pasteIntoNode, { beforeApply: applyLocalPaste });
   };
 
   const insertImagesFromAssets = async (assets: AssetMetadata[]) => {
