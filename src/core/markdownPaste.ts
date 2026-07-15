@@ -91,7 +91,7 @@ function lineToTree(rawText: string): CreateNodeTree {
   const scanned = scanMarkdownInline(body, {
     metadata: 'tags-and-fields',
     linkifyBareUrls: true,
-    references: false,
+    references: true,
   });
   const tree: CreateNodeTree = {
     content: heading ? applyHeadingMark(scanned.content) : scanned.content,

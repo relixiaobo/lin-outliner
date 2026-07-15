@@ -132,6 +132,43 @@ test.describe('paste format support', () => {
     }).toEqual({ tags: ['work'], fields: [{ name: 'Status', values: ['done'] }] });
   });
 
+  test('materializes an inline reference from plain pasted text', async ({ page }) => {
+    await selectEditorContents(page, ids.alpha);
+    await pasteRich(page, { plain: `See [[node:Beta^${ids.beta}]]` });
+
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.inlineRefs.length).toBe(1);
+    const alpha = await nodeById(page, ids.alpha);
+    expect(alpha?.content).toEqual({
+      text: 'See ',
+      marks: [],
+      inlineRefs: [{
+        offset: 4,
+        target: { kind: 'node', nodeId: ids.beta },
+        displayName: 'Beta',
+      }],
+    });
+  });
+
+  test('materializes HTML references and task markers with rich body marks', async ({ page }) => {
+    await selectEditorContents(page, ids.alpha);
+    await pasteRich(page, {
+      plain: `See Beta\n- [x] Task`,
+      html: `<p>See [[node:Beta^${ids.beta}]]</p><p>- [x] <strong>Task</strong></p>`,
+    });
+
+    await expect.poll(async () => (await nodeById(page, ids.alpha))?.content.inlineRefs.length).toBe(1);
+    const alpha = await nodeById(page, ids.alpha);
+    expect(alpha?.content.inlineRefs).toEqual([{
+      offset: 4,
+      target: { kind: 'node', nodeId: ids.beta },
+      displayName: 'Beta',
+    }]);
+    await expect.poll(async () => (await siblingNodeAfter(page, ids.alpha))?.content.text).toBe('Task');
+    const task = await siblingNodeAfter(page, ids.alpha);
+    expect(task?.content.marks).toEqual([{ start: 0, end: 4, type: 'bold' }]);
+    expect(task?.completedAt).toBeGreaterThan(0);
+  });
+
   test('splits a <br>-separated block into one row per line', async ({ page }) => {
     await selectEditorContents(page, ids.alpha);
     // Gmail / Apple Notes / many contenteditable sources wrap soft line breaks

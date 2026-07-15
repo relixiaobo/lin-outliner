@@ -49,10 +49,7 @@ import type {
   ProjectionIndex,
   ResolvedSearchSpec,
 } from './agentNodeToolTypes';
-import {
-  decodeSemanticEscapes,
-  escapeSemanticText,
-} from '../core/semanticIngest/inlineScanner';
+import { escapeSemanticText } from '../core/semanticIngest/inlineScanner';
 import { asRecord, clampInteger, firstDuplicate } from './agentNodeToolUtils';
 
 const QUERY_LOGICS = new Set<QueryLogic>(['AND', 'OR', 'NOT']);
@@ -667,8 +664,7 @@ function valueOperandsFromRule(index: ProjectionIndex, node: OutlineNode): Searc
   const values = [...valuesForField(node, 'value'), ...valuesForField(node, 'operand')];
   const operands: SearchQueryOperand[] = [];
   for (const value of values) {
-    const rawText = value.text.trim();
-    const text = value.targetId ? rawText : decodeSemanticEscapes(rawText);
+    const text = value.text.trim();
     if (value.targetId) {
       const target = index.nodes.get(value.targetId);
       if (!target) {

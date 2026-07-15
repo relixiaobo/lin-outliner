@@ -10,6 +10,7 @@ import type {
   InlineScanOptions,
   MarkdownInlineScanResult,
   RichTextInlineScanResult,
+  SourceSpan,
   TagDraft,
 } from './types';
 
@@ -47,12 +48,18 @@ interface InlineToken {
   attrs?: Record<string, string>;
 }
 
+export interface SemanticEscapeOptions {
+  escapeBareUrls?: boolean;
+  prefix?: string;
+  suffix?: string;
+}
+
 export function scanMarkdownInline(
   input: string,
   options: InlineScanOptions = {},
 ): MarkdownInlineScanResult {
   const metadata = options.metadata ?? 'none';
-  const extraction = extractMetadata(input, metadata, markdownProtectedRanges(input));
+  const extraction = extractMetadata(input, metadata, markdownInlineProtectedRanges(input));
   const source = removeTextRanges(input, extraction.removals);
   const parsed = parseMarkdown(source);
   const withLinks = options.linkifyBareUrls === false
@@ -71,7 +78,7 @@ export function scanMarkdownInline(
 
 export function scanRichTextInline(
   input: RichText,
-  options: Omit<InlineScanOptions, 'references'> = {},
+  options: InlineScanOptions = {},
 ): RichTextInlineScanResult {
   const protectedRanges = richTextMetadataProtectedRanges(input);
   const extraction = extractMetadata(input.text, options.metadata ?? 'none', protectedRanges);
@@ -85,8 +92,14 @@ export function scanRichTextInline(
     .filter((range) => !positionInRanges(range.start, literalRanges));
   const decoded = removeRichTextRanges(withoutMetadata, escapeRemovals);
   const escapedOffsets = mappedRemovalStarts(escapeRemovals);
+  const withLinks = options.linkifyBareUrls === false
+    ? decoded
+    : linkifyBareUrls(decoded, escapedOffsets);
+  const content = options.references
+    ? materializeReferenceMarkers(withLinks, escapedOffsets)
+    : withLinks;
   return {
-    content: options.linkifyBareUrls === false ? decoded : linkifyBareUrls(decoded, escapedOffsets),
+    content,
     tags: extraction.tags,
     fields: extraction.fields,
   };
@@ -96,7 +109,7 @@ export function parseInlineMarkdownWithLinks(input: string): RichText {
   return scanMarkdownInline(input, {
     metadata: 'none',
     linkifyBareUrls: true,
-    references: false,
+    references: true,
   }).content;
 }
 
@@ -117,28 +130,32 @@ export function isEscapedSemanticAt(text: string, index: number): boolean {
 export function escapeSemanticTextChar(
   text: string,
   index: number,
-  options: { escapeBareUrls?: boolean } = {},
+  options: SemanticEscapeOptions = {},
 ): string {
   const char = text[index] ?? '';
   if (!char) return '';
-  const previous = text[index - 1] ?? '';
-  const next = text[index + 1] ?? '';
+  const previous = contextualSlice(text, index - 1, index, options);
+  const next = contextualSlice(text, index + 1, index + 2, options);
   if (ESCAPABLE.has(char) && char !== ':' && char !== '-' && char !== '.') return `\\${char}`;
-  if (options.escapeBareUrls !== false && char === ':' && isHttpSchemeSeparator(text, index)) return '\\:';
+  if (
+    options.escapeBareUrls !== false
+    && char === ':'
+    && isHttpSchemeSeparator(text, index, options)
+  ) return '\\:';
   if (char === ':' && (previous === ':' || next === ':')) return '\\:';
   if (
     options.escapeBareUrls !== false
     && char === '.'
-    && text.slice(Math.max(0, index - 3), index).toLowerCase() === 'www'
+    && contextualSlice(text, index - 3, index, options).toLowerCase() === 'www'
   ) return '\\.';
   if (char === '-' && WHITESPACE.test(previous) && WHITESPACE.test(next)) return '\\-';
   return char;
 }
 
-export function escapeSemanticText(text: string): string {
+export function escapeSemanticText(text: string, options: SemanticEscapeOptions = {}): string {
   let output = '';
   for (let index = 0; index < text.length; index += 1) {
-    output += escapeSemanticTextChar(text, index);
+    output += escapeSemanticTextChar(text, index, options);
   }
   return output;
 }
@@ -147,10 +164,27 @@ export function decodeSemanticEscapes(text: string): string {
   return decodeEscapes(text, 0, new Set());
 }
 
-function isHttpSchemeSeparator(text: string, index: number): boolean {
-  if (text.slice(index, index + 3) !== '://') return false;
-  const prefix = text.slice(Math.max(0, index - 5), index).toLowerCase();
+function isHttpSchemeSeparator(text: string, index: number, options: SemanticEscapeOptions): boolean {
+  if (contextualSlice(text, index, index + 3, options) !== '://') return false;
+  const prefix = contextualSlice(text, index - 5, index, options).toLowerCase();
   return prefix.endsWith('http') || prefix.endsWith('https');
+}
+
+function contextualSlice(
+  text: string,
+  start: number,
+  end: number,
+  options: Pick<SemanticEscapeOptions, 'prefix' | 'suffix'>,
+): string {
+  const prefix = options.prefix ?? '';
+  const suffix = options.suffix ?? '';
+  let output = '';
+  for (let index = start; index < end; index += 1) {
+    if (index < 0) output += prefix[prefix.length + index] ?? '';
+    else if (index >= text.length) output += suffix[index - text.length] ?? '';
+    else output += text[index] ?? '';
+  }
+  return output;
 }
 
 function classifyInline(match: RegExpMatchArray): InlineToken {
@@ -230,11 +264,20 @@ function materializeReferenceMarkers(content: RichText, escapedOffsets: Readonly
     removals.push({ start: marker.start, end: marker.end });
     removedLength += marker.end - marker.start;
   }
-  const stripped = removeRichTextRanges(content, removals);
-  return { ...stripped, inlineRefs };
+  const normalizedRemovals = normalizeRanges(removals);
+  const stripped = removeRichTextRanges(content, normalizedRemovals);
+  const existingInlineRefs = content.inlineRefs.map((ref) => ({
+    ...ref,
+    offset: remapOffsetAfterRemovals(ref.offset, content.text.length, normalizedRemovals),
+  }));
+  return {
+    ...stripped,
+    inlineRefs: [...existingInlineRefs, ...inlineRefs]
+      .sort((left, right) => left.offset - right.offset),
+  };
 }
 
-function markdownProtectedRanges(text: string): Range[] {
+export function markdownInlineProtectedRanges(text: string): SourceSpan[] {
   const ranges: Range[] = [];
   for (const match of text.matchAll(MARKDOWN_INLINE_TOKEN)) {
     const start = match.index ?? 0;
@@ -554,6 +597,19 @@ function rangesOverlap(left: Range, right: Range): boolean {
 
 function clampOffset(value: number, length: number): number {
   return Math.min(Math.max(0, Math.trunc(value)), length);
+}
+
+function remapOffsetAfterRemovals(offset: number, length: number, ranges: readonly Range[]): number {
+  const safeOffset = clampOffset(offset, length);
+  let removedBefore = 0;
+  for (const range of ranges) {
+    const start = clampOffset(range.start, length);
+    const end = clampOffset(range.end, length);
+    if (safeOffset <= start) break;
+    removedBefore += Math.max(0, Math.min(safeOffset, end) - start);
+    if (safeOffset < end) break;
+  }
+  return safeOffset - removedBefore;
 }
 
 function mappedRemovalStarts(removals: readonly Range[]): Set<number> {

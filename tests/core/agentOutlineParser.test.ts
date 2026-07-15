@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../../src/core/markdownRichText';
+import { escapeSemanticText } from '../../src/core/semanticIngest/inlineScanner';
 import { parseLinOutline } from '../../src/main/agentOutlineParser';
 
 describe('agent outline parser', () => {
@@ -111,6 +113,72 @@ describe('agent outline parser', () => {
       name: 'Status:: label',
       values: [{ text: 'Open' }],
     });
+  });
+
+  test('keeps strict structure syntax literal inside shared protected ranges', () => {
+    const linked = '[Foo:: Bar - details %%node:literal%% %%search%% %%view:table%%](https://example.com)';
+    const parsed = parseLinOutline([
+      '- `Status:: open`',
+      '- `%%search%% %%view:table%%`',
+      `- ${linked}`,
+      '- [[node:Foo:: Bar^node-a]]',
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.fields).toEqual([]);
+    expect(parsed.document.roots[0]).toMatchObject({
+      title: '`Status:: open`',
+      description: null,
+      search: false,
+    });
+    expect(parsed.document.roots[1]).toMatchObject({
+      title: '`%%search%% %%view:table%%`',
+      search: false,
+      view: undefined,
+    });
+    expect(parsed.document.roots[2]).toMatchObject({
+      title: linked,
+      description: null,
+      search: false,
+      view: undefined,
+    });
+    expect(parsed.document.roots[3]).toMatchObject({
+      title: 'Foo:: Bar',
+      referenceTargetId: 'node-a',
+    });
+  });
+
+  test('canonical escaping round-trips generated field and description boundaries', () => {
+    const alphabet = ['A', ':', '-', '#', '%', '\\', '[', ']', '*'];
+    const fieldNames = [
+      ...alphabet,
+      ...alphabet.flatMap((left) => alphabet.map((right) => `${left}${right}`)),
+    ];
+    for (const name of fieldNames) {
+      const parsed = parseLinOutline(`- ${escapeSemanticText(name, { suffix: '::' })}:: value`);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) continue;
+      expect(parsed.document.fields[0]?.name).toBe(name);
+      expect(parsed.document.fields[0]?.values[0]?.text).toBe('value');
+    }
+
+    const titles = ['Ends -', 'A::', '#tag', '%%search%%', '[x]', String.raw`C:\path`];
+    for (const title of titles) {
+      const source = richTextToMarkdownReferenceMarkup({
+        text: title,
+        marks: [],
+        inlineRefs: [],
+      }, { suffix: ' - ' });
+      const parsed = parseLinOutline(`- ${source} - details`);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) continue;
+      const root = parsed.document.roots[0]!;
+      expect(markdownReferenceMarkupToRichText(root.title).text).toBe(title);
+      expect(root.description).toBe('details');
+      expect(root.tags).toEqual([]);
+      expect(root.search).toBe(false);
+    }
   });
 
   test('requires checkbox markers to be separated from body text', () => {

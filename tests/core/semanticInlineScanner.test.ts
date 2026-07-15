@@ -89,6 +89,60 @@ describe('semantic inline scanner', () => {
     });
   });
 
+  test('materializes rich-text references while preserving existing refs and protected marks', () => {
+    const marker = '[[node:One^node-one]]';
+    const text = `${marker} tail`;
+    const scanned = scanRichTextInline({
+      text,
+      marks: [],
+      inlineRefs: [
+        {
+          offset: 0,
+          target: { kind: 'node', nodeId: 'node-prefix' },
+          displayName: 'Prefix',
+        },
+        {
+          offset: text.length,
+          target: { kind: 'node', nodeId: 'node-existing' },
+          displayName: 'Existing',
+        },
+      ],
+    }, {
+      metadata: 'none',
+      linkifyBareUrls: true,
+      references: true,
+    });
+
+    expect(scanned.content).toEqual({
+      text: ' tail',
+      marks: [],
+      inlineRefs: [
+        { offset: 0, target: { kind: 'node', nodeId: 'node-prefix' }, displayName: 'Prefix' },
+        { offset: 0, target: { kind: 'node', nodeId: 'node-one' }, displayName: 'One' },
+        { offset: 5, target: { kind: 'node', nodeId: 'node-existing' }, displayName: 'Existing' },
+      ],
+    });
+
+    const linked = '[[node:Linked^node-linked]]';
+    const code = '[[node:Code^node-code]]';
+    const protectedText = `${linked} ${code}`;
+    expect(scanRichTextInline({
+      text: protectedText,
+      marks: [
+        { start: 0, end: linked.length, type: 'link', attrs: { href: 'https://example.com' } },
+        { start: linked.length + 1, end: protectedText.length, type: 'code' },
+      ],
+      inlineRefs: [],
+    }, { metadata: 'none', references: true }).content).toEqual({
+      text: protectedText,
+      marks: [
+        { start: 0, end: linked.length, type: 'link', attrs: { href: 'https://example.com' } },
+        { start: linked.length + 1, end: protectedText.length, type: 'code' },
+      ],
+      inlineRefs: [],
+    });
+  });
+
   test('excludes sentence punctuation while preserving balanced URL delimiters', () => {
     const scanned = scanMarkdownInline(
       'See https://example.com/a_(b)). Then www.example.com\u3002',

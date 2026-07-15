@@ -7,13 +7,17 @@ import type { ReferenceTarget, RichText, TextMark } from './types';
 import {
   escapeSemanticTextChar,
   parseMarkdownReferenceRichText,
+  type SemanticEscapeOptions,
 } from './semanticIngest/inlineScanner';
 
 export function markdownReferenceMarkupToRichText(rawText: string): RichText {
   return parseMarkdownReferenceRichText(rawText);
 }
 
-export function richTextToMarkdownReferenceMarkup(content: RichText): string {
+export function richTextToMarkdownReferenceMarkup(
+  content: RichText,
+  context: Pick<SemanticEscapeOptions, 'prefix' | 'suffix'> = {},
+): string {
   const insertions = new Map<number, Array<{ text: string; order: number }>>();
   const add = (offset: number, text: string, order: number) => {
     const safeOffset = Math.min(Math.max(0, Math.trunc(offset)), content.text.length);
@@ -62,7 +66,10 @@ export function richTextToMarkdownReferenceMarkup(content: RichText): string {
       const insideLink = linkRanges.some((range) => index >= range.start && index < range.end);
       out += insideCode
         ? content.text[index]
-        : escapeSemanticTextChar(content.text, index, { escapeBareUrls: !insideLink });
+        : escapeSemanticTextChar(content.text, index, {
+          ...context,
+          escapeBareUrls: !insideLink,
+        });
     }
   }
   return out;

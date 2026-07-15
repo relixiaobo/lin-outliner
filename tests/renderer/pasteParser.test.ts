@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { parseHTML } from 'linkedom';
 import {
   detectSingleLineUrl,
   isPlainSingleParagraph,
+  parseClipboardPaste,
   parseInlineMarkdown,
   parseMarkdownBlocks,
   parseOutlinerPaste,
@@ -253,6 +255,23 @@ describe('parseMarkdownBlocks', () => {
     ]);
   });
 
+  test('materializes inline references in plain pasted rows', () => {
+    expect(parseMarkdownBlocks('See [[node:Alpha^node-a]]')).toEqual([
+      {
+        content: {
+          text: 'See ',
+          marks: [],
+          inlineRefs: [{
+            offset: 4,
+            target: { kind: 'node', nodeId: 'node-a' },
+            displayName: 'Alpha',
+          }],
+        },
+        children: [],
+      },
+    ]);
+  });
+
   test('converts GFM task-list markers into checkbox rows', () => {
     expect(parseMarkdownBlocks('- [x] shipped\n- [ ] pending\n- [x]\n- plain')).toEqual([
       { content: { text: 'shipped', marks: [], inlineRefs: [] }, children: [], checkbox: true, done: true },
@@ -285,6 +304,60 @@ describe('parseMarkdownBlocks', () => {
         children: [],
       },
     ]);
+  });
+});
+
+describe('HTML paste semantics', () => {
+  test('materializes references and task markers while protecting link and code ranges', () => {
+    const previousDOMParser = globalThis.DOMParser;
+    const { window } = parseHTML('<!doctype html><html><body></body></html>');
+    Object.assign(globalThis, { DOMParser: window.DOMParser });
+    try {
+      const trees = parseClipboardPaste(
+        'See Alpha\n- [x] Task\nLinked Code',
+        [
+          '<!doctype html><html><body>',
+          '<p>See [[node:Alpha^node-a]]</p>',
+          '<p>- [x] <strong>Task</strong></p>',
+          '<p><a href="https://example.com">[[node:Linked^node-link]]</a> <code>[[node:Code^node-code]]</code></p>',
+          '</body></html>',
+        ].join(''),
+      );
+
+      expect(trees[0]).toEqual({
+        content: {
+          text: 'See ',
+          marks: [],
+          inlineRefs: [{
+            offset: 4,
+            target: { kind: 'node', nodeId: 'node-a' },
+            displayName: 'Alpha',
+          }],
+        },
+        children: [],
+      });
+      expect(trees[1]).toEqual({
+        content: {
+          text: 'Task',
+          marks: [{ start: 0, end: 4, type: 'bold' }],
+          inlineRefs: [],
+        },
+        children: [],
+        checkbox: true,
+        done: true,
+      });
+      expect(trees[2]?.content).toEqual({
+        text: '[[node:Linked^node-link]] [[node:Code^node-code]]',
+        marks: [
+          { start: 0, end: 25, type: 'link', attrs: { href: 'https://example.com' } },
+          { start: 26, end: 49, type: 'code' },
+        ],
+        inlineRefs: [],
+      });
+    } finally {
+      if (previousDOMParser) Object.assign(globalThis, { DOMParser: previousDOMParser });
+      else delete (globalThis as typeof globalThis & { DOMParser?: typeof DOMParser }).DOMParser;
+    }
   });
 });
 

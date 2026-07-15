@@ -1143,6 +1143,61 @@ describe('agent node tools', () => {
     ]);
   });
 
+  test('node_read round-trips URL field values and serializer boundary characters through unchanged edit', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Ends -'));
+    core.updateNodeDescription(root, 'details');
+    const plainEntry = mustFocus(core.createInlineField(root, null, 'Foo:', 'url'));
+    const plainValue = mustFocus(core.createNode(plainEntry, null, 'https://plain.example'));
+    const linkedEntry = mustFocus(core.createInlineField(root, null, 'Linked URL', 'url'));
+    const linkedText = 'https://linked.example';
+    const linkedValue = mustFocus(core.createRichTextContentNode(linkedEntry, null, {
+      text: linkedText,
+      marks: [{ start: 0, end: linkedText.length, type: 'link', attrs: { href: linkedText } }],
+      inlineRefs: [],
+    }));
+
+    const read = await executeTool<{ items: Array<{ outline?: string; revision: string }> }>(core, 'node_read', {
+      node_id: root,
+      depth: 0,
+    });
+    const outline = read.data!.items[0]!.outline!;
+    expect(outline).toContain(String.raw`Ends \- - details`);
+    expect(outline).toContain(String.raw`Foo\::: https\://plain.example`);
+    expect(outline).toContain('[https://linked.example](https://linked.example)');
+
+    const handled: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const baseHost = hostFor(core);
+    const edited = await executeTool<{ status: 'updated' | 'unchanged' }>(core, 'node_edit', {
+      node_id: root,
+      old_string: '*',
+      new_string: outline,
+      expected_revision: read.data!.items[0]!.revision,
+    }, undefined, {
+      handle: async (command, args = {}, meta = {}) => {
+        handled.push({ command, args });
+        return baseHost.handle(command, args, meta);
+      },
+    });
+
+    expect(edited.ok).toBe(true);
+    expect(handled).toEqual([]);
+    expect(core.state().nodes[root]!.content).toEqual({ text: 'Ends -', marks: [], inlineRefs: [] });
+    expect(core.state().nodes[root]!.description).toBe('details');
+    expect(core.state().nodes[core.state().nodes[plainEntry]!.fieldDefId!]!.content.text).toBe('Foo:');
+    expect(core.state().nodes[plainValue]!.content).toEqual({
+      text: 'https://plain.example',
+      marks: [],
+      inlineRefs: [],
+    });
+    expect(core.state().nodes[linkedValue]!.content).toEqual({
+      text: linkedText,
+      marks: [{ start: 0, end: linkedText.length, type: 'link', attrs: { href: linkedText } }],
+      inlineRefs: [],
+    });
+  });
+
   test('saved-search operands keep tag annotation and URL-shaped text literal', async () => {
     const core = Core.new();
     const literal = '#project %%node:literal%% https://example.com';

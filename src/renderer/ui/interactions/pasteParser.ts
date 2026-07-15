@@ -7,6 +7,8 @@ import {
   type ParsedPasteNode,
 } from '../../../core/markdownPaste';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
+import { sliceRichText } from '../editor/richTextCodec';
+import { parseCheckboxMarker } from '../../../core/textSyntax';
 import {
   scanMarkdownInline,
   scanRichTextInline,
@@ -241,12 +243,32 @@ function htmlToTrees(html: string): CreateNodeTree[] {
   return roots.map(applyHtmlSemantics);
 }
 
+function htmlTask(content: RichText): { checked: boolean; content: RichText } | null {
+  const listPrefix = /^(?:[-*+]|\d+[.)]|[•◦▪‣·●])\s+/u.exec(content.text)?.[0] ?? '';
+  const task = parseCheckboxMarker(content.text.slice(listPrefix.length));
+  if (!task) return null;
+  const bodyStart = content.text.length - task.rest.length;
+  const markerStart = listPrefix.length;
+  const markerIsProtected = content.marks.some((mark) => (
+    (mark.type === 'link' || mark.type === 'code')
+    && mark.start < bodyStart
+    && markerStart < mark.end
+  ));
+  if (markerIsProtected) return null;
+  return {
+    checked: task.checked,
+    content: sliceRichText(content, bodyStart, content.text.length),
+  };
+}
+
 function applyHtmlSemantics(tree: CreateNodeTree): CreateNodeTree {
   const children = tree.children.map(applyHtmlSemantics);
   if (tree.type === 'codeBlock') return { ...tree, children };
-  const scanned = scanRichTextInline(tree.content, {
+  const task = htmlTask(tree.content);
+  const scanned = scanRichTextInline(task?.content ?? tree.content, {
     metadata: 'tags-and-fields',
     linkifyBareUrls: true,
+    references: true,
   });
   const tags = [...(tree.tags ?? []), ...scanned.tags.map((tag) => tag.name)];
   const fields = [
@@ -257,6 +279,7 @@ function applyHtmlSemantics(tree: CreateNodeTree): CreateNodeTree {
     ...tree,
     content: scanned.content,
     children,
+    ...(task ? { checkbox: true, done: task.checked } : {}),
     ...(tags.length > 0 ? { tags: [...new Set(tags)] } : {}),
     ...(fields.length > 0 ? { fields } : {}),
   };

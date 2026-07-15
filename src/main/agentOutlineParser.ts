@@ -3,9 +3,10 @@ import { parseNodeReferenceMarkers } from '../core/referenceMarkup';
 import { normalizeCodeLanguage } from '../core/codeLanguages';
 import {
   decodeSemanticEscapes,
-  isEscapedSemanticAt,
+  markdownInlineProtectedRanges,
   scanMarkdownInline,
 } from '../core/semanticIngest/inlineScanner';
+import type { SourceSpan } from '../core/semanticIngest/types';
 
 export interface OutlineDocument {
   roots: OutlineNode[];
@@ -37,6 +38,7 @@ export interface OutlineField {
 export interface OutlineValue {
   nodeId?: string;
   text: string;
+  outlineSource?: string;
   targetId?: string;
 }
 
@@ -146,7 +148,7 @@ export function parseLinOutline(
     while (stack.length > 0 && stack[stack.length - 1]!.level >= line.level) stack.pop();
     const parent = stack[stack.length - 1];
     const forbiddenAnnotationIndex = annotations === 'forbid'
-      ? unescapedIndexOf(line.text, '%%node:')
+      ? unprotectedIndexOf(line.text, '%%node:')
       : -1;
     if (forbiddenAnnotationIndex >= 0) {
       return {
@@ -220,7 +222,7 @@ function parseCodeBlockNode(
 
 function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
   let text = input.trim();
-  const searchDirective = removeUnescapedLiteral(text, '%%search%%');
+  const searchDirective = removeUnprotectedLiteral(text, '%%search%%');
   const search = searchDirective.removed;
   text = searchDirective.text.trim();
   const viewDirective = removeViewDirectives(text);
@@ -273,7 +275,7 @@ function parseOutlineNode(input: string, nodeId?: string): OutlineNode {
 }
 
 function parseFieldHeader(text: string): { name: string; value: string } | null {
-  const separator = unescapedIndexOf(text, '::');
+  const separator = unprotectedIndexOf(text, '::');
   if (separator < 0) return null;
   const name = decodeSemanticEscapes(text.slice(0, separator).trim());
   if (!name) return null;
@@ -283,7 +285,8 @@ function parseFieldHeader(text: string): { name: string; value: string } | null 
 function parseOutlineValue(text: string, lineNodeId?: string): OutlineValue {
   const annotated = stripNodeMarker(text.trim());
   const nodeId = lineNodeId ?? annotated.nodeId;
-  const reference = parseReference(annotated.text.trim());
+  const source = annotated.text.trim();
+  const reference = parseReference(source);
   if (reference?.full) {
     return {
       ...(nodeId ? { nodeId } : {}),
@@ -291,9 +294,15 @@ function parseOutlineValue(text: string, lineNodeId?: string): OutlineValue {
       targetId: reference.targetId,
     };
   }
+  const visibleText = scanMarkdownInline(source, {
+    metadata: 'none',
+    linkifyBareUrls: true,
+    references: true,
+  }).content.text;
   return {
     ...(nodeId ? { nodeId } : {}),
-    text: annotated.text.trim(),
+    text: visibleText,
+    ...(source !== visibleText ? { outlineSource: source } : {}),
   };
 }
 
@@ -313,26 +322,33 @@ function parseReference(text: string): { display: string; targetId: string; full
 }
 
 function splitDescription(text: string): [string, string?] {
-  const separator = unescapedIndexOf(text, ' - ');
+  const separator = unprotectedIndexOf(text, ' - ');
   if (separator < 0) return [text];
   return [text.slice(0, separator), text.slice(separator + 3)];
 }
 
-function unescapedIndexOf(text: string, token: string, fromIndex = 0): number {
+function unprotectedIndexOf(
+  text: string,
+  token: string,
+  fromIndex = 0,
+  protectedRanges: readonly SourceSpan[] = markdownInlineProtectedRanges(text),
+): number {
   let index = text.indexOf(token, fromIndex);
   while (index >= 0) {
-    if (!isEscapedSemanticAt(text, index)) return index;
-    index = text.indexOf(token, index + token.length);
+    const end = index + token.length;
+    if (!protectedRanges.some((range) => index < range.end && range.start < end)) return index;
+    index = text.indexOf(token, index + 1);
   }
   return -1;
 }
 
-function removeUnescapedLiteral(text: string, token: string): { text: string; removed: boolean } {
+function removeUnprotectedLiteral(text: string, token: string): { text: string; removed: boolean } {
+  const protectedRanges = markdownInlineProtectedRanges(text);
   let output = '';
   let cursor = 0;
   let removed = false;
   while (cursor < text.length) {
-    const index = unescapedIndexOf(text, token, cursor);
+    const index = unprotectedIndexOf(text, token, cursor, protectedRanges);
     if (index < 0) break;
     output += text.slice(cursor, index);
     cursor = index + token.length;
@@ -344,14 +360,16 @@ function removeUnescapedLiteral(text: string, token: string): { text: string; re
 
 function removeViewDirectives(text: string): { text: string; view?: string } {
   const pattern = /%%view:([a-zA-Z0-9_-]+)%%/gu;
+  const protectedRanges = markdownInlineProtectedRanges(text);
   let output = '';
   let cursor = 0;
   let view: string | undefined;
   for (const match of text.matchAll(pattern)) {
     const start = match.index ?? 0;
-    if (isEscapedSemanticAt(text, start)) continue;
+    const end = start + match[0].length;
+    if (protectedRanges.some((range) => start < range.end && range.start < end)) continue;
     output += text.slice(cursor, start);
-    cursor = start + match[0].length;
+    cursor = end;
     view ??= match[1];
   }
   output += text.slice(cursor);

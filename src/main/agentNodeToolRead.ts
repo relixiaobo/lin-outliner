@@ -8,7 +8,6 @@ import {
   nodeKind,
   nodeTitle,
   normalChildIds,
-  nodeContentText,
   parentRef,
   referenceText,
   requiredNode,
@@ -17,6 +16,7 @@ import {
 } from './agentNodeToolProjection';
 import { searchQueryOutlineLines, searchViewModeOf } from './agentNodeToolSearch';
 import { escapeSemanticText } from '../core/semanticIngest/inlineScanner';
+import { richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
 import type {
   ChildrenPage,
   NodeChildSummary,
@@ -190,7 +190,7 @@ function serializeAnnotatedOutlineNode(
   const lines = [`${indent}- ${nodeMarker(nodeId)}${outlineNodeText(index, node)}`];
   for (const field of fieldReads(index, node, includeDeleted)) {
     const fieldIndent = '  '.repeat(level + 1);
-    lines.push(`${fieldIndent}- ${nodeMarker(field.fieldEntryId)}${escapeSemanticText(field.name)}::`);
+    lines.push(`${fieldIndent}- ${nodeMarker(field.fieldEntryId)}${escapeSemanticText(field.name, { suffix: '::' })}::`);
     for (const value of field.values) {
       const marker = value.valueNodeId ? nodeMarker(value.valueNodeId) : '';
       lines.push(`${fieldIndent}  - ${marker}${value.text}`);
@@ -245,11 +245,11 @@ function serializeOutlineNode(
   for (const field of fieldReads(index, node, includeDeleted)) {
     const fieldIndent = '  '.repeat(level + 1);
     if (field.values.length === 0) {
-      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name)}::`);
+      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name, { suffix: '::' })}::`);
     } else if (field.values.length === 1) {
-      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name)}:: ${field.values[0]!.text}`);
+      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name, { suffix: '::' })}:: ${field.values[0]!.text}`);
     } else {
-      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name)}::`);
+      lines.push(`${fieldIndent}- ${escapeSemanticText(field.name, { suffix: '::' })}::`);
       for (const value of field.values) lines.push(`${fieldIndent}  - ${value.text}`);
     }
   }
@@ -274,9 +274,14 @@ function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
   if (viewMode) parts.push(`%%view:${viewMode}%%`);
   if (nodeIsDone(node)) parts.push('[x]');
   else if (nodeShowsCheckbox(index.nodes, node)) parts.push('[ ]');
-  parts.push((referenceText(index, node) ?? nodeContentText(node)) || '(untitled)');
+  const tags = tagLabels(index, node);
+  const titleSuffix = node.description ? ' - ' : tags.length > 0 ? ' ' : '';
+  parts.push((
+    referenceText(index, node)
+    ?? richTextToMarkdownReferenceMarkup(node.content, { suffix: titleSuffix })
+  ) || '(untitled)');
   if (node.description) parts.push(`- ${escapeSemanticText(node.description)}`);
-  parts.push(...tagLabels(index, node));
+  parts.push(...tags);
   return parts.join(' ').trim();
 }
 
