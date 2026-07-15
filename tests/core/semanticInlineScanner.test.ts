@@ -36,6 +36,37 @@ describe('semantic inline scanner', () => {
     });
   });
 
+  test('protects link metadata nested inside canonical style marks', () => {
+    expect(scanMarkdownInline(
+      '*See **[site #literal](https://example.com)** now* #work',
+      { metadata: 'tags', linkifyBareUrls: true, references: true },
+    )).toEqual({
+      source: '*See **[site #literal](https://example.com)** now*',
+      content: {
+        text: 'See site #literal now',
+        marks: [
+          { start: 0, end: 21, type: 'italic' },
+          { start: 4, end: 17, type: 'bold' },
+          { start: 4, end: 17, type: 'link', attrs: { href: 'https://example.com' } },
+        ],
+        inlineRefs: [],
+      },
+      fields: [],
+      tags: [{ name: 'work', source: { start: 51, end: 56 } }],
+    });
+  });
+
+  test('keeps unclosed canonical marks literal through the Marked fallback', () => {
+    expect(scanMarkdownInline(
+      'Keep **open and ==hot',
+      { metadata: 'none', linkifyBareUrls: true, references: true },
+    ).content).toEqual({
+      text: 'Keep **open and ==hot',
+      marks: [],
+      inlineRefs: [],
+    });
+  });
+
   test('linkifies a bare URL inside an existing rich-text mark without dropping either mark', () => {
     const text = 'https://example.com';
 

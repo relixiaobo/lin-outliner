@@ -219,6 +219,68 @@ describe('markdown rich text outline bridge', () => {
     expect(failures).toEqual([]);
   });
 
+  test('round-trips canonical serialization with three simultaneously active marks', () => {
+    const source = '*See **https**://example.com*';
+    const parsed = markdownReferenceMarkupToRichText(source);
+    const serialized = richTextToMarkdownReferenceMarkup(parsed);
+
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(parsed);
+  });
+
+  test('round-trips three or more distinct Markdown mark types across nested and crossing ranges', () => {
+    const markTypes: TextMarkKind[] = ['bold', 'italic', 'strike', 'highlight', 'link', 'code'];
+    const rangePatterns = [
+      [[0, 10], [2, 10], [2, 6]],
+      [[0, 10], [2, 8], [4, 6]],
+      [[0, 6], [2, 8], [4, 10]],
+      [[0, 10], [0, 8], [2, 8]],
+      [[0, 10], [2, 8], [4, 8]],
+      [[0, 10], [2, 10], [2, 8], [4, 6]],
+      [[0, 10], [1, 9], [2, 8], [3, 7]],
+      [[0, 7], [1, 8], [2, 9], [3, 10]],
+      [[0, 10], [0, 10], [0, 10], [0, 10]],
+      [[0, 10], [2, 8], [2, 8], [4, 6]],
+      [[0, 10], [1, 10], [2, 9], [3, 8], [4, 7]],
+      [[0, 10], [1, 10], [2, 9], [3, 8], [4, 7], [5, 6]],
+    ] as const satisfies ReadonlyArray<ReadonlyArray<readonly [number, number]>>;
+    const nestingRank = (type: TextMarkKind): number => markTypes.indexOf(type);
+    const failures: Array<{
+      types: TextMarkKind[];
+      ranges: typeof rangePatterns[number];
+      serialized: string;
+      parsed: ReturnType<typeof markdownReferenceMarkupToRichText>;
+    }> = [];
+    for (const ranges of rangePatterns) {
+      const visit = (types: TextMarkKind[]): void => {
+        if (types.length < ranges.length) {
+          for (const type of markTypes) {
+            if (!types.includes(type)) visit([...types, type]);
+          }
+          return;
+        }
+        const marks = types.map((type, index): TextMark => ({
+          start: ranges[index]![0],
+          end: ranges[index]![1],
+          type,
+          ...(type === 'link' ? { attrs: { href: 'https://example.test' } } : {}),
+        })).sort((left, right) => (
+          left.start - right.start
+          || right.end - left.end
+          || nestingRank(left.type) - nestingRank(right.type)
+        ));
+        const content = { text: 'abcdefghij', marks, inlineRefs: [] };
+        const serialized = richTextToMarkdownReferenceMarkup(content);
+        const parsed = markdownReferenceMarkupToRichText(serialized);
+        if (JSON.stringify(parsed) !== JSON.stringify(content) && failures.length < 10) {
+          failures.push({ types, ranges, serialized, parsed });
+        }
+      };
+      visit([]);
+    }
+
+    expect(failures).toEqual([]);
+  });
+
   test('round-trips link destinations with balanced parentheses', () => {
     const content = {
       text: 'https://example.com/a_(b)',
@@ -234,6 +296,14 @@ describe('markdown rich text outline bridge', () => {
     const serialized = richTextToMarkdownReferenceMarkup(content);
     expect(serialized).toBe(String.raw`[https://example.com/a_(b)](https://example.com/a_\(b\))`);
     expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
+
+  test('keeps optional Markdown link titles out of the href', () => {
+    expect(markdownReferenceMarkupToRichText('[site](https://example.com "Docs")')).toEqual({
+      text: 'site',
+      marks: [{ start: 0, end: 4, type: 'link', attrs: { href: 'https://example.com' } }],
+      inlineRefs: [],
+    });
   });
 
   test('round-trips escaped closing parentheses and backslashes in link destinations', () => {

@@ -6,6 +6,7 @@ import {
 } from '../textSyntax';
 import { mergeEquivalentTextMarks } from '../textMarks';
 import type { InlineRef, ReferenceTarget, RichText, TextMark, TextMarkKind } from '../types';
+import { canonicalMarkdownProtectedRanges, parseCanonicalMarkdown } from './canonicalMarkdown';
 import type {
   InlineFieldToken,
   InlineMetadataMode,
@@ -251,6 +252,12 @@ function markdownInlineTokens(input: string): InlineToken[] {
 }
 
 function parseMarkdown(input: string): ParsedMarkdown {
+  // Serializer transitions are deterministic even when CommonMark's rule-of-three pairs stars differently.
+  return parseCanonicalMarkdown(input, ESCAPABLE, parseMarkdown) ?? parseMarkedMarkdown(input);
+}
+
+
+function parseMarkedMarkdown(input: string): ParsedMarkdown {
   const marks: TextMark[] = [];
   const escapedOffsets = new Set<number>();
   let text = '';
@@ -368,9 +375,7 @@ function materializeReferenceMarkers(content: RichText, escapedOffsets: Readonly
 
 export function markdownInlineProtectedRanges(text: string): SourceSpan[] {
   const ranges: Range[] = [];
-  for (const token of markdownInlineTokens(text)) {
-    if (token.type === 'link' || token.type === 'code') ranges.push(token);
-  }
+  ranges.push(...canonicalMarkdownProtectedRanges(text));
   for (const marker of parseReferenceMarkers(text)) {
     if (!isEscapedSemanticAt(text, marker.start)) ranges.push({ start: marker.start, end: marker.end });
   }
@@ -378,6 +383,7 @@ export function markdownInlineProtectedRanges(text: string): SourceSpan[] {
   ranges.push(...bareUrlRanges(text));
   return normalizeRanges(ranges);
 }
+
 
 function richTextMetadataProtectedRanges(content: RichText): Range[] {
   return normalizeRanges([

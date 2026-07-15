@@ -1732,6 +1732,26 @@ describe('agent node tools', () => {
       .toBe('**See [https](https://example.com)**[://example.com](https://example.com)');
   });
 
+  test('node_create duplicate_id preserves three simultaneously active marks', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- *See **https**://example.com*',
+    });
+    expect(created.ok).toBe(true);
+    const sourceId = created.data!.createdRootIds[0]!;
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      duplicate_id: sourceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const cloneId = duplicated.data!.createdRootIds[0]!;
+    expect(core.state().nodes[cloneId]!.content).toEqual(core.state().nodes[sourceId]!.content);
+  });
+
   test('node_create persists saved search nodes with executable conditions', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

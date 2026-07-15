@@ -1276,6 +1276,12 @@ Rules:
   round-trips as `**[https://example.com](https://example.com)**`, while a link
   that extends beyond bold text is split into legal Markdown link segments and
   restored as one link mark without corrupting its label or destination.
+- Canonical outline parsing resolves the serializer's delimiter stack
+  deterministically instead of delegating nested emphasis pairing to Marked.
+  This applies at any supported active-mark depth, including style, link,
+  highlight, strike, and code combinations. The deterministic parse commits
+  only when every style delimiter closes; malformed or incomplete input falls
+  back to the lenient Marked path and remains recoverable as literal text.
 - Complete Markdown links, inline code, reference markers, bare URLs, and
   backslash-escaped tokens are protected from tag and field harvesting. A
   grammar-shaped token in one of those ranges remains literal.
