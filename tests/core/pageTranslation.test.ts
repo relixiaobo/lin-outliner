@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import {
+  URL_CAPTION_TRANSLATION_MAX_BLOCKS,
   URL_PAGE_TRANSLATE_COMMAND,
   URL_PAGE_TRANSLATION_CANCEL_COMMAND,
   URL_PAGE_TRANSLATION_MAX_BATCH_CHARS,
@@ -254,6 +255,41 @@ describe('page translation service', () => {
     )).rejects.toThrow('batch is too large');
   });
 
+  test('allows a bounded sixteen-cue caption batch without widening page batches', async () => {
+    let completed = 0;
+    const service = new PageTranslationService({
+      complete: async ({ userPrompt }) => {
+        completed += 1;
+        const payload = JSON.parse(userPrompt) as { blocks: Array<{ id: string; text: string }> };
+        return JSON.stringify(payload.blocks.map((block) => ({
+          id: block.id,
+          translation: `Translated ${block.text}`,
+        })));
+      },
+    });
+    const cues = Array.from({ length: URL_CAPTION_TRANSLATION_MAX_BLOCKS }, (_, index) => ({
+      id: `c1:${index}`,
+      text: `Cue ${index}`,
+    }));
+
+    const response = await service.handle(URL_PAGE_TRANSLATE_COMMAND, {
+      ...request({ contentKind: 'caption', blocks: cues }),
+    });
+    expect(response.ok).toBe(true);
+    expect(response.ok ? response.translations : []).toHaveLength(URL_CAPTION_TRANSLATION_MAX_BLOCKS);
+    expect(completed).toBe(1);
+
+    expect(service.handle(URL_PAGE_TRANSLATE_COMMAND, {
+      ...request({
+        contentKind: 'caption',
+        blocks: [...cues, { id: 'c1:extra', text: 'Extra cue' }],
+      }),
+    })).rejects.toThrow('block count');
+    expect(service.handle(URL_PAGE_TRANSLATE_COMMAND, {
+      ...request({ contentKind: 'page', blocks: cues }),
+    })).rejects.toThrow('block count');
+  });
+
   test('builds a fixed diagnostic report without provider error secrets', async () => {
     const secret = 'Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz0123456789';
     const reports: ReturnType<typeof pageTranslationErrorReport>[] = [];
@@ -299,5 +335,19 @@ describe('page translation prompt', () => {
       .toContain('Simplified Chinese');
     expect(buildPageTranslationPrompts('ja', [{ id: 'b1', text: 'Hello' }]).userPrompt)
       .toContain('Japanese');
+  });
+
+  test('uses adjacent cues as context while requiring one result per caption id', () => {
+    const prompt = buildPageTranslationPrompts('zh-Hans', [
+      { id: 'c1:0', text: 'The agentic' },
+      { id: 'c1:1', text: 'loop continues.' },
+    ], 'caption');
+
+    expect(prompt.systemPrompt).toContain('adjacent subtitle cues');
+    expect(prompt.systemPrompt).toContain('every cue separately');
+    expect(JSON.parse(prompt.userPrompt)).toMatchObject({
+      contentKind: 'caption',
+      targetLanguage: 'Simplified Chinese',
+    });
   });
 });

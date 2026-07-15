@@ -211,6 +211,8 @@ describe('UrlPageTranslationController', () => {
       { maxBlocks: 4, maxChars: 4_000, visibleOnly: false },
       { maxBlocks: 4, maxChars: 4_000, visibleOnly: false },
     ]);
+    expect(guest.nextBatchCalls.slice(0, 3).map((call) => call.captionMaxBlocks))
+      .toEqual([6, 6, 6]);
 
     const second = requests[1]!;
     resolveRequests[1]?.({
@@ -237,6 +239,60 @@ describe('UrlPageTranslationController', () => {
       });
     }
     await waitFor(() => guest.applied.length === 3);
+    controller.destroy();
+  });
+
+  test('shares the three-request ceiling between caption and page batches', async () => {
+    const guest = new FakeGuest([
+      {
+        contentKind: 'caption',
+        blocks: Array.from({ length: 6 }, (_, index) => ({ id: `c1:${index}`, text: `Cue ${index}` })),
+        priority: 0,
+      },
+      {
+        contentKind: 'page',
+        blocks: [{ id: 'b1', text: 'Visible paragraph' }],
+        priority: 0,
+      },
+      {
+        contentKind: 'caption',
+        blocks: Array.from({ length: 16 }, (_, index) => ({ id: `c1:${index + 6}`, text: `Cue ${index + 6}` })),
+        priority: 1,
+      },
+      {
+        contentKind: 'page',
+        blocks: [{ id: 'b2', text: 'Must wait' }],
+        priority: 0,
+      },
+    ]);
+    const requests: UrlPageTranslationRequest[] = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        return await new Promise<UrlPageTranslationResponse>(() => undefined);
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => requests.length === 3);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(requests).toHaveLength(3);
+    expect(requests.map((request) => request.contentKind)).toEqual(['caption', 'page', 'caption']);
+    expect(requests.map((request) => request.blocks.length)).toEqual([6, 1, 16]);
+    expect(guest.nextBatchCalls[0]).toMatchObject({
+      captionMaxBlocks: 6,
+      captionMaxChars: 1_500,
+      maxBlocks: 2,
+      maxChars: 2_000,
+    });
     controller.destroy();
   });
 
@@ -338,6 +394,38 @@ describe('UrlPageTranslationController', () => {
     controller.destroy();
   });
 
+  test('automatically translates a differing caption inside a same-language page shell', async () => {
+    const guest = new FakeGuest([
+      { contentKind: 'caption', blocks: [{ id: 'c1:0', text: 'English cue' }], priority: 0 },
+    ], 'zh-Hans', 'en');
+    const requests: UrlPageTranslationRequest[] = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      autoTranslate: true,
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        return {
+          ok: true,
+          requestId: request.requestId,
+          translations: [{ id: 'c1:0', translation: '中文字幕' }],
+        };
+      },
+    });
+
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => requests.length === 1);
+
+    expect(guest.captionLanguageCalls).toBe(1);
+    expect(requests[0]?.contentKind).toBe('caption');
+    expect(controller.currentStatus).toBe('on');
+    controller.destroy();
+  });
+
   test('turns an auto-activated page off when the target changes to its declared language', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
@@ -420,6 +508,36 @@ describe('UrlPageTranslationController', () => {
 
     expect(controller.currentStatus).toBe('on');
     expect(guest.enabledCalls.at(-1)).toEqual([true, 'zh-Hans']);
+    controller.destroy();
+  });
+
+  test('cleans up caption detection when automatic translation is disabled during initialization', async () => {
+    const guest = new FakeGuest([], 'zh-Hans', 'en');
+    let initializationStarted = false;
+    let finishInitialization: (() => void) | null = null;
+    guest.initialize = async () => {
+      initializationStarted = true;
+      await new Promise<void>((resolve) => {
+        finishInitialization = resolve;
+      });
+    };
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      autoTranslate: true,
+      targetLanguage: 'zh-Hans',
+      guest,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+    });
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => initializationStarted);
+
+    controller.setAutoTranslate(false);
+    finishInitialization?.();
+    await waitFor(() => guest.destroyed === 1);
+
+    expect(guest.captionLanguageCalls).toBe(0);
+    expect(controller.currentStatus).toBe('off');
     controller.destroy();
   });
 
@@ -806,6 +924,58 @@ describe('UrlPageTranslationController', () => {
     controller.destroy();
   });
 
+  test('restarts an enabled translation after a YouTube in-page video change but ignores hash changes', async () => {
+    const webview = fakeWebview();
+    Object.defineProperties(webview, {
+      getURL: { value: () => 'https://www.youtube.com/watch?v=video-one' },
+      isLoadingMainFrame: { value: () => false },
+    });
+    const guest = new FakeGuest([
+      { contentKind: 'caption', blocks: [{ id: 'c1:0', text: 'First video' }], priority: 0 },
+    ]);
+    const requests: UrlPageTranslationRequest[] = [];
+    const cancelled: string[] = [];
+    const controller = new UrlPageTranslationController(webview, {
+      targetLanguage: 'zh-Hans',
+      guest,
+      maxConcurrentRequests: 1,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async (sessionId) => {
+        cancelled.push(sessionId);
+      },
+      translate: async (request) => {
+        requests.push(request);
+        if (requests.length === 1) return await new Promise<UrlPageTranslationResponse>(() => undefined);
+        return {
+          ok: true,
+          requestId: request.requestId,
+          translations: [{ id: 'c2:0', translation: '第二个视频' }],
+        };
+      },
+    });
+
+    controller.enable();
+    await waitFor(() => requests.length === 1);
+    dispatchInPageNavigation(webview, 'https://www.youtube.com/watch?v=video-two');
+    guest.queueBatch({
+      contentKind: 'caption',
+      blocks: [{ id: 'c2:0', text: 'Second video' }],
+      priority: 0,
+    });
+    await waitFor(() => requests.length === 2);
+
+    expect(cancelled).toContain(requests[0]!.sessionId);
+    expect(requests[1]?.blocks[0]?.text).toBe('Second video');
+    expect(controller.currentStatus).toBe('on');
+    const destroyed = guest.destroyed;
+    dispatchInPageNavigation(webview, 'https://www.youtube.com/watch?v=video-two#comments');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(guest.destroyed).toBe(destroyed);
+    controller.destroy();
+  });
+
   test('serializes guest teardown before restarting the latest selected language', async () => {
     const operations: string[] = [];
     let destroyCount = 0;
@@ -867,6 +1037,7 @@ describe('UrlPageTranslationController', () => {
 class FakeGuest implements UrlPageTranslationGuestBridge {
   applied: Array<Array<{ id: string; translation: string }>> = [];
   applyInsertedCount: number | null = null;
+  captionLanguageCalls = 0;
   documentLanguageCalls = 0;
   destroyed = 0;
   enabledCalls: Array<[boolean, TranslationLanguage]> = [];
@@ -881,6 +1052,7 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
       | ((options: UrlPageTranslationGuestBatchOptions) => UrlPageTranslationGuestBatch)
     >,
     public declaredLanguage: string | null = 'en',
+    public declaredCaptionLanguage: string | null = null,
   ) {}
 
   queueBatch(batch: UrlPageTranslationGuestBatch): void {
@@ -890,6 +1062,11 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
   async documentLanguage(): Promise<string | null> {
     this.documentLanguageCalls += 1;
     return this.declaredLanguage;
+  }
+
+  async captionLanguage(): Promise<string | null> {
+    this.captionLanguageCalls += 1;
+    return this.declaredCaptionLanguage;
   }
 
   async initialize(): Promise<void> {}
@@ -936,6 +1113,15 @@ function fakeWebview(): Electron.WebviewTag {
 function dispatch(controller: UrlPageTranslationController, type: string): void {
   const webview = (controller as unknown as { webview: Electron.WebviewTag }).webview;
   webview.dispatchEvent(new window.Event(type));
+}
+
+function dispatchInPageNavigation(webview: Electron.WebviewTag, url: string): void {
+  const event = new window.Event('did-navigate-in-page');
+  Object.defineProperties(event, {
+    isMainFrame: { value: true },
+    url: { value: url },
+  });
+  webview.dispatchEvent(event);
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

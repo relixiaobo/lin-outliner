@@ -138,7 +138,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
     });
 
     const command = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-command');
-    expect(command?.textContent).toContain('Translate page');
+    expect(command?.textContent).toContain('Translate');
     expect(command?.querySelector('svg')).not.toBeNull();
     expect(command?.classList.contains('button-primary')).toBe(true);
     expect(command?.nextElementSibling?.classList.contains('file-preview-translation-divider')).toBe(true);
