@@ -1124,7 +1124,7 @@ function createFixture(options: { serialized?: boolean } = {}): {
   const animationFrames: FrameRequestCallback[] = [];
   let currentAnchorShift = 0;
   Object.defineProperties(testWindow, {
-    innerHeight: { configurable: true, value: 600 },
+    innerHeight: { configurable: true, value: 600, writable: true },
     requestAnimationFrame: {
       configurable: true,
       writable: true,
