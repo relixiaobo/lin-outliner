@@ -4,13 +4,25 @@ import {
   URL_PAGE_TRANSLATION_RUNTIME_KEY,
   installUrlPageTranslationRuntime,
   type UrlPageTranslationGuestBatch,
+  type UrlPageTranslationGuestLabels,
 } from '../../src/renderer/ui/preview/urlPageTranslationGuest';
 import type { UrlPageTranslationItem } from '../../src/core/urlPageTranslation';
+import type { TranslationLanguage } from '../../src/core/translationLanguage';
+
+const TEST_LABELS: UrlPageTranslationGuestLabels = {
+  retry: 'Retry translation',
+  translating: 'Translating',
+};
 
 interface GuestRuntime {
   version: 1;
-  setEnabled(enabled: boolean, targetLocale: 'en' | 'zh-Hans'): void;
-  nextBatch(maxBlocks: number, maxChars: number, maxBlockChars: number): UrlPageTranslationGuestBatch;
+  setEnabled(enabled: boolean, targetLanguage: TranslationLanguage): void;
+  nextBatch(
+    maxBlocks: number,
+    maxChars: number,
+    maxBlockChars: number,
+    retryOnly?: boolean,
+  ): UrlPageTranslationGuestBatch;
   apply(items: readonly UrlPageTranslationItem[]): void;
   fail(ids: readonly string[]): void;
   destroy(): void;
@@ -35,6 +47,18 @@ describe('URL page translation guest runtime', () => {
     expect(texts).not.toContain('const secret = 1');
     expect(texts).not.toContain('Password label');
     expect(texts).not.toContain('Already translated content');
+    expect(fixture.document.querySelector('#target-language [data-tenon-bilingual-status]')).toBeNull();
+    expect(fixture.document.querySelectorAll('[data-tenon-bilingual-status="loading"]').length)
+      .toBe(batch.blocks.length);
+  });
+
+  test('skips blocks whose nearest declared language matches the selected target', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'en');
+
+    const texts = fixture.runtime.nextBatch(12, 12_000, 6_000).blocks.map((block) => block.text);
+    expect(texts).toEqual(['Already translated content']);
+    expect(fixture.document.querySelector('#current [data-tenon-bilingual-status]')).toBeNull();
   });
 
   test('runs from its serialized function body without renderer closures', () => {
@@ -47,7 +71,7 @@ describe('URL page translation guest runtime', () => {
   test('inserts model output with textContent and preserves the current reading anchor', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
-    const batch = fixture.runtime.nextBatch(12, 12_000, 6_000);
+    const batch = fixture.runtime.nextBatch(1, 12_000, 6_000);
     const above = batch.blocks.find((block) => block.text === 'Above the viewport');
     if (!above) throw new Error('Missing above-viewport block');
 
@@ -60,6 +84,7 @@ describe('URL page translation guest runtime', () => {
     expect(translation?.textContent).toBe('<img src=x onerror=alert(1)> 视口上方');
     expect(translation?.querySelector('img')).toBeNull();
     expect(translation?.getAttribute('lang')).toBe('zh-Hans');
+    expect(fixture.document.querySelector('[data-tenon-bilingual-status]')).toBeNull();
     expect(fixture.scrollDeltas).toEqual([30]);
 
     fixture.runtime.setEnabled(false, 'zh-Hans');
@@ -71,23 +96,38 @@ describe('URL page translation guest runtime', () => {
     expect(fixture.scrollDeltas).toEqual([30, -30, 30]);
   });
 
-  test('keeps failed blocks paused until the user turns translation off and on', () => {
+  test('changes a failed loader into a retry control and retries only after it is clicked', () => {
     const fixture = createFixture();
     fixture.runtime.setEnabled(true, 'zh-Hans');
     const first = fixture.runtime.nextBatch(1, 12_000, 6_000);
     expect(first.blocks).toHaveLength(1);
-    fixture.runtime.fail(first.blocks.map((block) => block.id));
+    const loading = fixture.document.querySelector<HTMLButtonElement>('[data-tenon-bilingual-status="loading"]');
+    expect(loading?.disabled).toBe(true);
+    expect(loading?.getAttribute('aria-label')).toBe('Translating');
 
-    const second = fixture.runtime.nextBatch(1, 12_000, 6_000);
-    expect(second.blocks[0]?.id).not.toBe(first.blocks[0]?.id);
+    fixture.runtime.fail(first.blocks.map((block) => block.id));
+    const retry = fixture.document.querySelector<HTMLButtonElement>('[data-tenon-bilingual-status="error"]');
+    expect(retry?.disabled).toBe(false);
+    expect(retry?.getAttribute('aria-label')).toBe('Retry translation');
+    expect(fixture.runtime.nextBatch(1, 12_000, 6_000, true).blocks).toEqual([]);
+
+    retry?.click();
+
+    expect(retry?.getAttribute('data-tenon-bilingual-status')).toBe('loading');
+    const retried = fixture.runtime.nextBatch(1, 12_000, 6_000, true);
+    expect(retried.blocks[0]?.id).toBe(first.blocks[0]?.id);
+  });
+
+  test('removes transient status controls when translation is disabled', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const block = fixture.runtime.nextBatch(1, 12_000, 6_000).blocks[0];
+    if (!block) throw new Error('Missing block');
+    fixture.runtime.fail([block.id]);
 
     fixture.runtime.setEnabled(false, 'zh-Hans');
-    fixture.runtime.setEnabled(true, 'zh-Hans');
-    const retried = collectUntil(
-      fixture.runtime,
-      (block) => block.id === first.blocks[0]?.id,
-    );
-    expect(retried?.id).toBe(first.blocks[0]?.id);
+
+    expect(fixture.document.querySelector('[data-tenon-bilingual-status]')).toBeNull();
   });
 
   test('removes injected state when the preview is destroyed', () => {
@@ -110,7 +150,7 @@ function createFixture(options: { serialized?: boolean } = {}): {
   scrollDeltas: number[];
   window: Window;
 } {
-  const { document, window } = parseHTML(`<!doctype html><html><body><main>
+  const { document, window } = parseHTML(`<!doctype html><html lang="en"><body><main>
     <p id="behind">Recently passed paragraph</p>
     <p id="above">Above the viewport</p>
     <p id="current">Current paragraph</p>
@@ -154,12 +194,18 @@ function createFixture(options: { serialized?: boolean } = {}): {
     const install = new Function(
       'host',
       'runtimeKey',
-      'targetLocale',
-      `return (${installUrlPageTranslationRuntime.toString()})(host, runtimeKey, targetLocale);`,
-    ) as (host: Window, runtimeKey: string, targetLocale: string) => void;
-    install(testWindow, URL_PAGE_TRANSLATION_RUNTIME_KEY, 'zh-Hans');
+      'targetLanguage',
+      'labels',
+      `return (${installUrlPageTranslationRuntime.toString()})(host, runtimeKey, targetLanguage, labels);`,
+    ) as (
+      host: Window,
+      runtimeKey: string,
+      targetLanguage: TranslationLanguage,
+      labels: UrlPageTranslationGuestLabels,
+    ) => void;
+    install(testWindow, URL_PAGE_TRANSLATION_RUNTIME_KEY, 'zh-Hans', TEST_LABELS);
   } else {
-    installUrlPageTranslationRuntime(testWindow, URL_PAGE_TRANSLATION_RUNTIME_KEY, 'zh-Hans');
+    installUrlPageTranslationRuntime(testWindow, URL_PAGE_TRANSLATION_RUNTIME_KEY, 'zh-Hans', TEST_LABELS);
   }
   const runtime = testWindow[URL_PAGE_TRANSLATION_RUNTIME_KEY] as GuestRuntime;
   return { document, runtime, scrollDeltas, window: testWindow };
@@ -183,14 +229,4 @@ function rect(top: number, bottom: number): DOMRect {
     y: top,
     toJSON: () => ({}),
   };
-}
-
-function collectUntil(runtime: GuestRuntime, predicate: (block: { id: string }) => boolean) {
-  for (let index = 0; index < 10; index += 1) {
-    const block = runtime.nextBatch(1, 12_000, 6_000).blocks[0];
-    if (!block) return undefined;
-    if (predicate(block)) return block;
-    runtime.fail([block.id]);
-  }
-  return undefined;
 }

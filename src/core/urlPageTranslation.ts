@@ -1,7 +1,8 @@
-import type { Locale } from './locale';
+import type { TranslationLanguage } from './translationLanguage';
 
 export const URL_PAGE_TRANSLATE_COMMAND = 'url_page_translate_blocks';
 export const URL_PAGE_TRANSLATION_CANCEL_COMMAND = 'url_page_translation_cancel';
+export const LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL = 'lin:url-page-translation-shortcut';
 
 export const URL_PAGE_TRANSLATION_MAX_ACTIVE_SESSIONS = 8;
 export const URL_PAGE_TRANSLATION_MAX_BLOCKS = 12;
@@ -22,7 +23,7 @@ export interface UrlPageTranslationBlock {
 export interface UrlPageTranslationRequest {
   sessionId: string;
   requestId: string;
-  targetLocale: Locale;
+  targetLanguage: TranslationLanguage;
   blocks: UrlPageTranslationBlock[];
 }
 
@@ -55,21 +56,6 @@ export type UrlPageTranslationResponse =
 
 export interface UrlPageTranslationCancelResponse {
   cancelled: boolean;
-}
-
-export function resolveUrlPageTranslationTargetLocale(
-  preferredLocale: Locale,
-  declaredLanguage: string | null | undefined,
-): Locale {
-  const language = declaredLanguage?.trim().toLowerCase() ?? '';
-  const declaredLocale = language === 'en' || language.startsWith('en-')
-    ? 'en'
-    : language === 'zh' || language.startsWith('zh-')
-      ? 'zh-Hans'
-      : null;
-
-  if (declaredLocale !== preferredLocale) return preferredLocale;
-  return preferredLocale === 'en' ? 'zh-Hans' : 'en';
 }
 
 export function isUrlPageTranslationCommand(command: string): command is UrlPageTranslationCommand {

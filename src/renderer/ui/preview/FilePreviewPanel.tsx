@@ -11,14 +11,16 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import type { PreviewTarget } from '../../../core/preview';
+import { TRANSLATION_LANGUAGES, type TranslationLanguage } from '../../../core/translationLanguage';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
-import { useI18n, useT } from '../../i18n/I18nProvider';
+import { useT } from '../../i18n/I18nProvider';
 import { type DocumentIndex, type UiState } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
 import {
   AddChildIcon,
+  CheckIcon,
   FolderIcon,
   ICON_SIZE,
   LanguagesIcon,
@@ -34,6 +36,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
+import { SelectControl } from '../primitives/SelectControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import { useMenuKeyboard, type MenuInitialFocus } from '../primitives/useMenuKeyboard';
@@ -61,10 +64,13 @@ import {
   type UrlPreviewPageMetadata,
 } from './previewRenderers';
 import { useUrlPageTranslation } from './useUrlPageTranslation';
+import { useTranslationLanguagePreference } from './translationLanguagePreference';
+import type { UrlPageTranslationStatus } from './urlPageTranslationController';
 
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
 
 interface FilePreviewPanelProps {
+  activePanel: boolean;
   canGoBack: boolean;
   dragId: NodeId | null;
   initialScrollTop?: number;
@@ -101,7 +107,7 @@ interface LooseBreadcrumbSegment {
  * breadcrumb, preview hero, and optional children outline.
  */
 export function FilePreviewPanel(props: FilePreviewPanelProps) {
-  const { locale, t } = useI18n();
+  const t = useT();
   const previewLabels = t.shell.filePreview;
   const attachmentLabels = t.outliner.field.attachment;
   const state = usePreviewSource(props.target);
@@ -111,6 +117,10 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const fileRoot = readerMode ? null : boundFileNode;
   const nodeTarget = boundFileNode ? fileNodeTarget(boundFileNode) : null;
   const looseUrlPreview = !readerMode && !boundFileNode && props.target.kind === 'url';
+  const translationLanguage = useTranslationLanguagePreference();
+  const [translationPopoverOpen, setTranslationPopoverOpen] = useState(false);
+  const translationTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const translationDismissRefs = useMemo(() => [translationTriggerRef], []);
   const handleTranslationError = useCallback((error: 'invalid-response' | 'not-configured' | 'provider-error') => {
     props.onError?.(error === 'not-configured'
       ? previewLabels.translationNotConfigured
@@ -118,9 +128,21 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   }, [previewLabels.translationFailed, previewLabels.translationNotConfigured, props.onError]);
   const urlTranslation = useUrlPageTranslation({
     active: looseUrlPreview,
-    targetLocale: locale,
+    labels: {
+      retry: previewLabels.retryBlockTranslation,
+      translating: previewLabels.translatingBlock,
+    },
+    shortcutActive: props.activePanel,
+    targetLanguage: translationLanguage.language,
     onError: handleTranslationError,
   });
+  const translationEnabled = urlTranslation.status !== 'off';
+  const translationStatusLabel = urlTranslation.status === 'off'
+    ? previewLabels.translationOff
+    : urlTranslation.status === 'starting'
+      ? previewLabels.translatingBlock
+      : previewLabels.translationOn;
+  const translationControlLabel = `${previewLabels.translationSettings}: ${translationStatusLabel}`;
   const previewTitle = state.status === 'ready'
     ? sourceTitle(state.source)
     : props.target.label ?? targetTitleFallback(props.target);
@@ -164,6 +186,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   useEffect(() => {
     if (!looseUrlPreview) {
       setUrlPageMetadata({});
+      setTranslationPopoverOpen(false);
       return;
     }
     setUrlPageMetadata({ title });
@@ -437,18 +460,48 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 {displayTitle}
               </span>
             </span>
-            <IconButton
-              aria-pressed={urlTranslation.status !== 'off'}
+            <ButtonControl
+              aria-expanded={translationPopoverOpen}
+              aria-haspopup="dialog"
+              aria-label={translationControlLabel}
               className={`file-preview-reader-actions file-preview-translation-toggle ${urlTranslation.status === 'starting' ? 'is-starting' : ''}`}
-              icon={urlTranslation.status === 'starting' ? LoaderIcon : LanguagesIcon}
-              label={urlTranslation.status === 'off'
-                ? previewLabels.translatePage
-                : urlTranslation.status === 'starting'
-                  ? previewLabels.stopTranslation
-                  : previewLabels.hideTranslation}
-              onClick={urlTranslation.toggle}
-              variant="panel"
-            />
+              data-translation-enabled={translationEnabled}
+              onClick={(event) => {
+                event.stopPropagation();
+                setTranslationPopoverOpen((open) => !open);
+              }}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              ref={translationTriggerRef}
+              title={`${translationControlLabel} (${translationShortcutLabel()})`}
+            >
+              {urlTranslation.status === 'starting' ? (
+                <LoaderIcon size={ICON_SIZE.menu} />
+              ) : (
+                <span className="file-preview-translation-icon" aria-hidden="true">
+                  <LanguagesIcon size={ICON_SIZE.menu} />
+                  {translationEnabled ? (
+                    <CheckIcon className="file-preview-translation-check" size={ICON_SIZE.tiny} />
+                  ) : null}
+                </span>
+              )}
+            </ButtonControl>
+            {translationPopoverOpen ? (
+              <UrlTranslationPopover
+                anchorRef={translationTriggerRef}
+                dismissIgnoreRefs={translationDismissRefs}
+                language={translationLanguage.language}
+                onClose={() => setTranslationPopoverOpen(false)}
+                onLanguageChange={translationLanguage.setLanguage}
+                onToggle={() => {
+                  urlTranslation.toggle();
+                  setTranslationPopoverOpen(false);
+                }}
+                status={urlTranslation.status}
+              />
+            ) : null}
             {looseUrlOpenAction ? (
               <FilePreviewHeaderMenu
                 actions={[{
@@ -571,6 +624,79 @@ function collapsePathSegments(path: string): LooseBreadcrumbSegment[] {
     ? [segments[0], '...', ...segments.slice(-3)]
     : segments;
   return visible.map((label, index) => ({ key: `${index}:${label}`, label }));
+}
+
+function UrlTranslationPopover({
+  anchorRef,
+  dismissIgnoreRefs,
+  language,
+  onClose,
+  onLanguageChange,
+  onToggle,
+  status,
+}: {
+  anchorRef: RefObject<HTMLElement | null>;
+  dismissIgnoreRefs: Array<RefObject<HTMLElement | null>>;
+  language: TranslationLanguage;
+  onClose: () => void;
+  onLanguageChange: (language: TranslationLanguage) => void;
+  onToggle: () => void;
+  status: UrlPageTranslationStatus;
+}) {
+  const labels = useT().shell.filePreview;
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const style = useAnchoredOverlay(popoverRef, {
+    anchorRef,
+    maxHeight: 360,
+    placement: 'bottom-end',
+    width: 288,
+  });
+  useDismissibleOverlay(popoverRef, onClose, { escape: false, ignoreRefs: dismissIgnoreRefs });
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: popoverRef,
+    onClose,
+    kind: 'dialog',
+    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
+    initialFocus: 'auto',
+  });
+  const enabled = status !== 'off';
+
+  return createPortal(
+    <MenuSurface
+      aria-label={labels.translationSettings}
+      className="node-context-menu file-preview-translation-popover"
+      onKeyDown={onKeyDown}
+      onMouseDown={(event) => event.stopPropagation()}
+      ref={popoverRef}
+      role="dialog"
+      style={style}
+    >
+      <label className="file-preview-translation-language-row">
+        <span>{labels.targetLanguage}</span>
+        <SelectControl
+          label={labels.targetLanguage}
+          onChange={(event) => onLanguageChange(event.target.value as TranslationLanguage)}
+          value={language}
+          variant="popup"
+        >
+          {TRANSLATION_LANGUAGES.map((entry) => (
+            <option key={entry.code} value={entry.code}>{entry.nativeName}</option>
+          ))}
+        </SelectControl>
+      </label>
+      <ButtonControl className="file-preview-translation-command" onClick={onToggle}>
+        <span>{enabled ? labels.showOriginal : labels.translatePage}</span>
+        <kbd>{translationShortcutLabel()}</kbd>
+      </ButtonControl>
+    </MenuSurface>,
+    document.body,
+  );
+}
+
+function translationShortcutLabel(): string {
+  return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/u.test(navigator.platform)
+    ? '⌥A'
+    : 'Alt+A';
 }
 
 function previewTargetFallbackKey(target: PreviewTarget): string {

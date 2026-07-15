@@ -57,12 +57,91 @@
 .file-preview-reader-actions:hover,
 .file-preview-reader-actions:focus-visible,
 .file-preview-reader-actions[aria-expanded='true'],
-.file-preview-translation-toggle[aria-pressed='true'] {
+.file-preview-translation-toggle[data-translation-enabled='true'] {
   color: var(--text-primary);
 }
 
 .file-preview-translation-toggle.is-starting > svg {
   animation: file-preview-translation-spin var(--motion-spin-cycle) linear infinite;
+}
+
+.file-preview-translation-icon {
+  position: relative;
+  display: inline-flex;
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+  align-items: center;
+  justify-content: center;
+}
+
+.file-preview-translation-check {
+  position: absolute;
+  right: calc(0px - var(--space-3));
+  bottom: calc(0px - var(--space-1));
+  color: var(--text-primary);
+  pointer-events: none;
+}
+
+.file-preview-translation-popover {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.file-preview-translation-language-row {
+  display: flex;
+  min-width: 0;
+  min-height: calc(var(--control-size-md) + var(--space-3));
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  padding: 0 var(--space-2);
+}
+
+.file-preview-translation-language-row .select-popup {
+  min-width: 0;
+  max-width: 150px;
+}
+
+.file-preview-translation-language-row > span:first-child {
+  white-space: nowrap;
+}
+
+.file-preview-translation-command {
+  display: flex;
+  width: 100%;
+  min-height: calc(var(--control-size-md) + var(--space-3));
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  padding: 0 var(--space-2);
+  text-align: left;
+}
+
+.file-preview-translation-command:hover,
+.file-preview-translation-command:focus-visible {
+  background: var(--fill-1);
+}
+
+.file-preview-translation-command:active {
+  background: var(--fill-4);
+}
+
+.file-preview-translation-command kbd {
+  color: var(--text-tertiary);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
 }
 
 @keyframes file-preview-translation-spin {

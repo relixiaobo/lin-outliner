@@ -400,20 +400,23 @@ Source authority stays source-specific:
   the pane must not show a file-preview loading overlay before the webview starts.
 
 URL previews also expose one neutral `Languages` icon immediately before the
-header actions menu. Translation is explicit opt-in and defaults off. Enabling it
-keeps the remote page as the reading surface and inserts an inert plain-text
-translation after each eligible source block; disabling it hides translations
-without discarding the current page's in-memory cache. A navigation, reload,
-locale change, pane close, or webview replacement cancels pending work and resets
-the control to off.
+header actions menu. It opens a compact target-language popover; an active
+translation adds a check to the header icon, while the trigger's accessible name
+reports the translation state independently from popover expansion. Translation
+is explicit opt-in and defaults off. Enabling it keeps the remote page as the
+reading surface and inserts an inert plain-text translation after each eligible source block;
+disabling it hides translations without discarding the current page's in-memory
+cache. `Option+A` on macOS and `Alt+A` elsewhere toggles translation only for the
+active URL preview, including while its webview has focus. A navigation, reload,
+target-language change, pane close, or webview replacement cancels pending work
+and resets the control to off.
 
-The target defaults to Tenon's effective UI locale. If the page root declares
-that same language, or the body does when the root declaration is absent, the
-target automatically switches to the other supported locale: English pages
-translate to Simplified Chinese under an English UI, and Chinese pages translate
-to English under a Simplified Chinese UI. Pages that declare another language,
-or no language, continue to target the UI locale. Descendant blocks whose nearest
-declared language already matches the effective target are excluded.
+The common target-language catalog is independent of Tenon's display locales
+and uses language autonyms. Until the user chooses a target it follows Tenon's
+effective UI locale; an explicit choice is remembered across pages and launches.
+Descendant blocks whose nearest declared language already matches the selected
+target are excluded without showing progress or calling the provider. Source
+language otherwise remains automatic.
 
 Translation is viewport-driven rather than an eager whole-page request. The
 guest runtime selects visible readable blocks first, then approximately two
@@ -424,6 +427,18 @@ enters the same window. Successful blocks remain cached in memory so back-scroll
 does not call the provider again. DOM insertion, hide, and restore capture the
 first visible source block and compensate its post-write offset, keeping the
 reader's current sentence anchored.
+
+Every block entering a submitted batch immediately shows a small inline loading
+control at the end of its source. Success removes it as the translation appears;
+failure changes it into a keyboard-accessible error control whose activation
+retries only that block. The retry control keeps at least a 16px hit area and
+neutral hover, pressed, and keyboard-focus feedback. While any failures remain,
+normal scheduling pauses and polls only for an explicit retry; this includes a
+missing provider/model, so the user can configure one and retry the affected
+paragraph in place. The existing localized toast announces each failure wave.
+Disabling, canceling, navigating,
+or changing the source removes transient controls. Reduced-motion mode uses a
+static progress ring.
 
 The guest collector excludes scripts/styles, code/preformatted content, form
 controls, editable regions, navigation, hidden/inert/`aria-hidden` subtrees, and

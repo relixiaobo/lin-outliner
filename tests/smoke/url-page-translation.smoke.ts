@@ -38,10 +38,11 @@ test.describe('URL page translation', () => {
   let origin = '';
   let smoke: SmokeApp;
   const batches: TranslationBatch[] = [];
+  let failNextRequest = false;
 
   test.beforeAll(async () => {
     server = createServer(async (request, response) => {
-      if (request.method === 'GET' && request.url === '/article') {
+      if (request.method === 'GET' && request.url?.startsWith('/article')) {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         response.end(ARTICLE_HTML);
         return;
@@ -54,10 +55,15 @@ test.describe('URL page translation', () => {
         const userMessage = [...(body.messages ?? [])].reverse().find((message) => message.role === 'user');
         const payload = JSON.parse(messageText(userMessage?.content)) as TranslationBatch;
         batches.push(payload);
-        const translation = JSON.stringify(payload.blocks.map((block) => ({
-          id: block.id,
-          translation: `ZH: ${block.text}`,
-        })));
+        const shouldFail = failNextRequest;
+        failNextRequest = false;
+        const translation = shouldFail
+          ? 'invalid translation response'
+          : JSON.stringify(payload.blocks.map((block) => ({
+              id: block.id,
+              translation: `ZH: ${block.text}`,
+            })));
+        await new Promise((resolve) => setTimeout(resolve, 250));
         const id = 'chatcmpl-translation-smoke';
         response.writeHead(200, {
           'cache-control': 'no-cache',
@@ -123,16 +129,56 @@ test.describe('URL page translation', () => {
 
     const webview = smoke.window.locator('webview.file-preview-url-webview');
     const toggle = smoke.window.locator('.file-preview-translation-toggle');
+    const popover = smoke.window.locator('.file-preview-translation-popover');
+    const visualDir = process.env.LIN_TRANSLATION_VISUAL_DIR;
     await expect(webview).toBeAttached();
     await expect.poll(() => guest<string>(webview, 'document.readyState')).toBe('complete');
-    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
     expect(batches).toHaveLength(0);
 
     await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(popover).toBeVisible();
+    const languageSelect = popover.getByLabel('Target language');
+    await expect(languageSelect).toHaveValue('en');
+    await popover.getByRole('button', { name: 'Translate page' }).click();
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
+    await smoke.window.waitForTimeout(600);
+    expect(batches).toHaveLength(0);
+    expect(await guest<number>(webview, `
+      document.querySelectorAll('[data-tenon-bilingual-status]').length
+    `)).toBe(0);
+
+    await toggle.click();
+    await popover.getByRole('button', { name: 'Show original' }).click();
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
+
+    await toggle.click();
+    await languageSelect.selectOption('zh-Hans');
+    await popover.getByRole('button', { name: 'Translate page' }).click();
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
+    await expect.poll(() => guest<number>(webview, `
+      document.querySelectorAll('[data-tenon-bilingual-status="loading"]').length
+    `)).toBeGreaterThan(0);
+    if (visualDir) {
+      await smoke.window.screenshot({ path: `${visualDir}/url-translation-loading.png` });
+    }
     await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-translation="true"]').length
     `)).toBeGreaterThanOrEqual(2);
+    expect(await guest<number>(webview, `
+      document.querySelectorAll('[data-tenon-bilingual-status]').length
+    `)).toBe(0);
+
+    if (visualDir) {
+      await captureTranslationVisual(smoke.window, toggle, popover, visualDir, 'light');
+      await captureTranslationVisual(smoke.window, toggle, popover, visualDir, 'dark');
+      await smoke.window.emulateMedia({ colorScheme: 'no-preference' });
+      await smoke.window.evaluate(async () => {
+        await (window as unknown as {
+          lin: { setTheme: (theme: 'system') => Promise<void> };
+        }).lin.setTheme('system');
+      });
+    }
 
     const initialTexts = batches.flatMap((batch) => batch.blocks.map((block) => block.text));
     expect(batches.every((batch) => batch.targetLanguage === 'Simplified Chinese')).toBe(true);
@@ -149,7 +195,8 @@ test.describe('URL page translation', () => {
 
     const completedRequestCount = batches.length;
     await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await popover.getByRole('button', { name: 'Show original' }).click();
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
     expect(await guest(webview, `document.documentElement.getAttribute('data-tenon-bilingual-hidden')`))
       .toBe('true');
     expect(await guest(webview, `
@@ -157,7 +204,9 @@ test.describe('URL page translation', () => {
     `)).toBeGreaterThanOrEqual(3);
 
     await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(languageSelect).toHaveValue('zh-Hans');
+    await popover.getByRole('button', { name: 'Translate page' }).click();
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
     await expect.poll(() => guest(webview, `
       document.documentElement.hasAttribute('data-tenon-bilingual-hidden')
     `)).toBe(false);
@@ -165,10 +214,75 @@ test.describe('URL page translation', () => {
     expect(batches).toHaveLength(completedRequestCount);
 
     await webview.evaluate((element) => (element as Electron.WebviewTag).reload());
-    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
     await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-translation="true"]').length
     `)).toBe(0);
+
+    await smoke.window.evaluate((url) => {
+      window.dispatchEvent(new CustomEvent('lin:preview-target-open', {
+        detail: {
+          target: { kind: 'url', label: 'Translation failure article', url },
+        },
+      }));
+    }, `${origin}/article?failure`);
+    await expect.poll(() => guest<string>(webview, 'window.location.search')).toBe('?failure');
+    await expect.poll(() => guest<string>(webview, 'document.readyState')).toBe('complete');
+
+    failNextRequest = true;
+    await toggle.click();
+    await popover.getByRole('button', { name: 'Translate page' }).click();
+    await expect.poll(() => guest<number>(webview, `
+      document.querySelectorAll('[data-tenon-bilingual-status="error"]').length
+    `)).toBeGreaterThan(0);
+    const retryMetrics = await guest<{ cursor: string; height: number; width: number }>(webview, `(() => {
+      const retry = document.querySelector('[data-tenon-bilingual-status="error"]');
+      if (!retry) return { cursor: '', height: 0, width: 0 };
+      const rect = retry.getBoundingClientRect();
+      return {
+        cursor: getComputedStyle(retry).cursor,
+        height: rect.height,
+        width: rect.width,
+      };
+    })()`);
+    expect(retryMetrics.width).toBeGreaterThanOrEqual(16);
+    expect(retryMetrics.height).toBeGreaterThanOrEqual(16);
+    expect(retryMetrics.cursor).toBe('default');
+    if (visualDir) {
+      await guest(webview, `
+        document.querySelector('[data-tenon-bilingual-status="error"]')?.scrollIntoView({ block: 'center' });
+        true
+      `);
+      await expect.poll(() => guest<boolean>(webview, `(() => {
+        const retry = document.querySelector('[data-tenon-bilingual-status="error"]');
+        if (!retry) return false;
+        const rect = retry.getBoundingClientRect();
+        return rect.bottom > 0 && rect.top < window.innerHeight;
+      })()`)).toBe(true);
+      await smoke.window.waitForTimeout(100);
+      await smoke.window.screenshot({ path: `${visualDir}/url-translation-error.png` });
+    }
+    const failedRequestCount = batches.length;
+    const failedBlockCount = await guest<number>(webview, `
+      document.querySelectorAll('[data-tenon-bilingual-status="error"]').length
+    `);
+    await smoke.window.waitForTimeout(600);
+    expect(batches).toHaveLength(failedRequestCount);
+
+    const retriedSourceId = await guest<string>(webview, `(() => {
+      const retry = document.querySelector('[data-tenon-bilingual-status="error"]');
+      const sourceId = retry?.parentElement?.id ?? '';
+      retry?.click();
+      return sourceId;
+    })()`);
+    expect(retriedSourceId).not.toBe('');
+    await expect.poll(() => guest<string | null>(webview, `
+      document.querySelector('#${retriedSourceId} [data-tenon-bilingual-translation="true"]')?.textContent ?? null
+    `)).not.toBeNull();
+    expect(batches.at(-1)?.blocks).toHaveLength(1);
+    expect(await guest<number>(webview, `
+      document.querySelectorAll('[data-tenon-bilingual-status="error"]').length
+    `)).toBe(failedBlockCount - 1);
   });
 });
 
@@ -184,6 +298,29 @@ async function configureTranslationProvider(page: Page, baseUrl: string): Promis
     await lin.invoke('agent_set_provider_api_key', { providerId, apiKey: 'smoke-key' });
     await lin.invoke('agent_set_active_provider', { providerId });
   }, { baseUrl });
+}
+
+async function captureTranslationVisual(
+  page: Page,
+  toggle: ReturnType<Page['locator']>,
+  popover: ReturnType<Page['locator']>,
+  directory: string,
+  theme: 'dark' | 'light',
+): Promise<void> {
+  await page.emulateMedia({ colorScheme: theme });
+  await page.evaluate(async (nextTheme) => {
+    await (window as unknown as {
+      lin: { setTheme: (theme: 'dark' | 'light') => Promise<void> };
+    }).lin.setTheme(nextTheme);
+  }, theme);
+  await expect.poll(() => page.evaluate(() => (
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+  ))).toBe(theme === 'dark');
+  await toggle.click();
+  await expect(popover).toBeVisible();
+  await page.screenshot({ path: `${directory}/url-translation-${theme}.png` });
+  await toggle.click();
+  await expect(popover).toBeHidden();
 }
 
 async function findMainWindow(smokeApp: SmokeApp): Promise<Page> {

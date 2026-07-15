@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { parseHTML } from 'linkedom';
-import type { Locale } from '../../src/core/locale';
+import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { UrlPageTranslationResponse } from '../../src/core/urlPageTranslation';
 import {
   UrlPageTranslationController,
@@ -33,7 +33,7 @@ describe('UrlPageTranslationController', () => {
     const statuses: UrlPageTranslationStatus[] = [];
     const requests: string[] = [];
     const controller = new UrlPageTranslationController(fakeWebview(), {
-      targetLocale: 'zh-Hans',
+      targetLanguage: 'zh-Hans',
       guest,
       pollIntervalMs: 5,
       onError: () => undefined,
@@ -60,19 +60,19 @@ describe('UrlPageTranslationController', () => {
     controller.destroy();
   });
 
-  test('uses the guest-resolved target when the page language matches the UI locale', async () => {
+  test('uses the selected target language independently of the UI locale', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
-    ], 'zh-Hans');
-    const targets: Locale[] = [];
+    ]);
+    const targets: TranslationLanguage[] = [];
     const controller = new UrlPageTranslationController(fakeWebview(), {
-      targetLocale: 'en',
+      targetLanguage: 'ja',
       guest,
       onError: () => undefined,
       onStatusChange: () => undefined,
       cancel: async () => undefined,
       translate: async (request) => {
-        targets.push(request.targetLocale);
+        targets.push(request.targetLanguage);
         return {
           ok: true,
           requestId: request.requestId,
@@ -85,37 +85,54 @@ describe('UrlPageTranslationController', () => {
     dispatch(controller, 'dom-ready');
     await waitFor(() => guest.applied.length === 1);
 
-    expect(targets).toEqual(['zh-Hans']);
-    expect(guest.enabledCalls[0]).toEqual([true, 'zh-Hans']);
+    expect(targets).toEqual(['ja']);
+    expect(guest.enabledCalls[0]).toEqual([true, 'ja']);
     controller.destroy();
   });
 
-  test('turns back off and reports a stable error when no model is configured', async () => {
+  test('keeps a failed block retryable until the user explicitly retries it', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
     ]);
     const errors: string[] = [];
+    const statuses: UrlPageTranslationStatus[] = [];
+    let configured = false;
     const controller = new UrlPageTranslationController(fakeWebview(), {
-      targetLocale: 'zh-Hans',
+      targetLanguage: 'zh-Hans',
       guest,
+      pollIntervalMs: 5,
       onError: (error) => errors.push(error),
-      onStatusChange: () => undefined,
+      onStatusChange: (status) => statuses.push(status),
       cancel: async () => undefined,
-      translate: async (request): Promise<UrlPageTranslationResponse> => ({
-        ok: false,
-        requestId: request.requestId,
-        error: 'not-configured',
-      }),
+      translate: async (request): Promise<UrlPageTranslationResponse> => configured
+        ? {
+            ok: true,
+            requestId: request.requestId,
+            translations: [{ id: 'b1', translation: '你好' }],
+          }
+        : {
+            ok: false,
+            requestId: request.requestId,
+            error: 'not-configured',
+          },
     });
 
     controller.enable();
     dispatch(controller, 'dom-ready');
-    await waitFor(() => errors.length === 1);
+    await waitFor(() => guest.nextBatchCalls.length >= 2);
 
     expect(errors).toEqual(['not-configured']);
-    expect(controller.currentStatus).toBe('off');
+    expect(controller.currentStatus).toBe('error');
     expect(guest.failed).toEqual([['b1']]);
-    expect(guest.enabledCalls.at(-1)).toEqual([false, 'zh-Hans']);
+    expect(guest.nextBatchCalls.slice(1).every(Boolean)).toBe(true);
+    expect(guest.enabledCalls).toEqual([[true, 'zh-Hans']]);
+
+    configured = true;
+    guest.queueBatch({ blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 });
+    await waitFor(() => guest.applied.length === 1);
+
+    expect(controller.currentStatus).toBe('on');
+    expect(statuses).toEqual(['starting', 'error', 'on']);
     controller.destroy();
   });
 
@@ -127,7 +144,7 @@ describe('UrlPageTranslationController', () => {
     let activeRequestId = '';
     const cancelled: string[] = [];
     const controller = new UrlPageTranslationController(fakeWebview(), {
-      targetLocale: 'zh-Hans',
+      targetLanguage: 'zh-Hans',
       guest,
       onError: () => undefined,
       onStatusChange: () => undefined,
@@ -163,7 +180,7 @@ describe('UrlPageTranslationController', () => {
     const sessions: string[] = [];
     let resolveFirst: ((response: UrlPageTranslationResponse) => void) | null = null;
     const controller = new UrlPageTranslationController(fakeWebview(), {
-      targetLocale: 'zh-Hans',
+      targetLanguage: 'zh-Hans',
       guest,
       pollIntervalMs: 5,
       onError: () => undefined,
@@ -200,7 +217,7 @@ describe('UrlPageTranslationController', () => {
     const webview = fakeWebview();
     const guest = new FakeGuest([]);
     const controller = new UrlPageTranslationController(webview, {
-      targetLocale: 'zh-Hans',
+      targetLanguage: 'zh-Hans',
       guest,
       onError: () => undefined,
       onStatusChange: () => undefined,
@@ -218,7 +235,61 @@ describe('UrlPageTranslationController', () => {
     webview.dispatchEvent(navigation);
 
     expect(controller.currentStatus).toBe('off');
+    await waitFor(() => guest.destroyed > 0);
     expect(guest.destroyed).toBeGreaterThan(0);
+    controller.destroy();
+  });
+
+  test('serializes guest teardown before restarting the latest selected language', async () => {
+    const operations: string[] = [];
+    let destroyCount = 0;
+    let releaseFirstDestroy: (() => void) | null = null;
+    const guest: UrlPageTranslationGuestBridge = {
+      async initialize(targetLanguage) {
+        operations.push(`initialize:${targetLanguage}`);
+      },
+      async setEnabled(enabled, targetLanguage) {
+        operations.push(`enabled:${enabled}:${targetLanguage}`);
+      },
+      async nextBatch() {
+        return { blocks: [], priority: null };
+      },
+      async apply() {},
+      async fail() {},
+      async destroy() {
+        destroyCount += 1;
+        const current = destroyCount;
+        operations.push(`destroy:${current}:start`);
+        if (current === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirstDestroy = resolve;
+          });
+        }
+        operations.push(`destroy:${current}:end`);
+      },
+    };
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+    });
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => operations.includes('enabled:true:zh-Hans'));
+
+    controller.setTargetLanguage('ja');
+    await waitFor(() => operations.includes('destroy:1:start'));
+    controller.setTargetLanguage('fr');
+    expect(operations).not.toContain('initialize:ja');
+    expect(operations).not.toContain('initialize:fr');
+
+    releaseFirstDestroy?.();
+    await waitFor(() => operations.includes('enabled:true:fr'));
+
+    expect(operations).not.toContain('initialize:ja');
+    expect(operations.indexOf('destroy:2:end')).toBeLessThan(operations.indexOf('initialize:fr'));
     controller.destroy();
   });
 });
@@ -226,23 +297,24 @@ describe('UrlPageTranslationController', () => {
 class FakeGuest implements UrlPageTranslationGuestBridge {
   applied: Array<Array<{ id: string; translation: string }>> = [];
   destroyed = 0;
-  enabledCalls: Array<[boolean, 'en' | 'zh-Hans']> = [];
+  enabledCalls: Array<[boolean, TranslationLanguage]> = [];
   failed: string[][] = [];
+  nextBatchCalls: boolean[] = [];
 
-  constructor(
-    private readonly batches: UrlPageTranslationGuestBatch[],
-    private readonly initializedTargetLocale?: Locale,
-  ) {}
+  constructor(private readonly batches: UrlPageTranslationGuestBatch[]) {}
 
-  async initialize(preferredLocale: Locale): Promise<Locale> {
-    return this.initializedTargetLocale ?? preferredLocale;
+  queueBatch(batch: UrlPageTranslationGuestBatch): void {
+    this.batches.push(batch);
   }
 
-  async setEnabled(enabled: boolean, targetLocale: 'en' | 'zh-Hans'): Promise<void> {
-    this.enabledCalls.push([enabled, targetLocale]);
+  async initialize(): Promise<void> {}
+
+  async setEnabled(enabled: boolean, targetLanguage: TranslationLanguage): Promise<void> {
+    this.enabledCalls.push([enabled, targetLanguage]);
   }
 
-  async nextBatch(): Promise<UrlPageTranslationGuestBatch> {
+  async nextBatch(retryOnly = false): Promise<UrlPageTranslationGuestBatch> {
+    this.nextBatchCalls.push(retryOnly);
     return this.batches.shift() ?? { blocks: [], priority: null };
   }
 

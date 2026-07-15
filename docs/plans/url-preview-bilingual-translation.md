@@ -7,8 +7,8 @@ fully working webpage reader rather than standalone groundwork.
 
 ## Goal
 
-- Let a user turn bilingual translation on and off from one icon control in the
-  URL preview header.
+- Let a user choose a common target language and turn bilingual translation on
+  and off from the URL preview header or the scoped keyboard shortcut.
 - Preserve the webpage and place a plain-text translation directly after each
   eligible source block.
 - Translate the visible viewport first, prefetch a small reading window, and
@@ -17,6 +17,8 @@ fully working webpage reader rather than standalone groundwork.
   creating a conversation, Agent Run, memory entry, or persisted transcript.
 - Keep reading position stable while translations are inserted, hidden, or
   restored from cache.
+- Show progress and recoverable failure at the source block being translated,
+  rather than only in remote header chrome.
 - Send page text to the configured provider only after the user explicitly
   enables translation.
 
@@ -28,10 +30,10 @@ fully working webpage reader rather than standalone groundwork.
   model; scanned PDFs additionally need OCR.
 - Translation for source code, delimited data, directories, images, audio, or
   video.
-- A target-language setting. The first version targets the effective Tenon UI
-  locale (`en` or `zh-Hans`), except when the page declares that same language;
-  in that case it automatically targets the other supported language so the
-  result remains bilingual.
+- Manual source-language selection. Source language follows the nearest valid
+  page `lang` declaration when present and otherwise remains model-detected.
+- A user-configurable shortcut. The first version uses `Option+A` on macOS and
+  `Alt+A` elsewhere, scoped to the active URL preview.
 - Persistent or cross-page translation caches, translation history, glossary
   management, provider selection, or usage accounting UI.
 - Reader extraction, browser-extension integration, authenticated-browser
@@ -42,26 +44,44 @@ fully working webpage reader rather than standalone groundwork.
 ### Header control and states
 
 Place a `Languages` icon button immediately before the existing URL-preview
-actions menu. It is an icon-only panel control with a tooltip and
-`aria-pressed`; it follows the neutral icon-control states from the design
-system and never adds a rounded-square hover fill.
+actions menu. It opens a compact anchored translation popover containing a
+native target-language selector and one Translate page / Show original command.
+The button exposes popover expansion separately from a dynamic accessible label
+that reports whether translation is on or off. It follows the neutral icon-control
+states from the design system and never adds a rounded-square hover fill. While
+translation is active, a small check overlays the language icon so state remains
+visible after the popover closes.
+
+The target-language catalog contains common model-supported languages as stable
+BCP-47 codes and presents each language by its autonym. The default follows the
+effective Tenon UI language until the user explicitly chooses a target. An
+explicit choice persists in app preferences and becomes the default for later
+pages and launches. Changing target while translation is active cancels the old
+request, clears the old target's page-local results, and immediately starts the
+same page in the new target.
+
+`Option+A` on macOS and `Alt+A` elsewhere runs the same toggle command for the
+active URL-preview panel, including while focus is inside its webview. It never
+registers a system-global shortcut and does nothing when the active panel is not
+a URL preview. The shortcut appears in the control tooltip and popover action.
 
 The control has four observable states:
 
 1. **Off**: no page text is collected or sent.
-2. **Starting**: visible blocks are being discovered and the first request is
-   pending; the control remains operable so the user can cancel.
+2. **Starting**: visible blocks are being discovered and each submitted source
+   block shows an inline loading indicator; the control remains operable so the
+   user can cancel.
 3. **On**: translations are visible and the viewport scheduler remains active.
 4. **Partial error**: completed translations stay readable, the original text
-   stays intact, and Tenon's existing dismissible error toast explains that
-   some visible content could not be translated. Toggling off and on retries
-   missing blocks when they re-enter the priority window.
+   stays intact, and each failed source block replaces its loader with a focused,
+   clickable error control. Clicking it retries only that block. Tenon's existing
+   dismissible error toast still announces the failure wave.
 
-Turning translation off hides injected translations, stops queued work, and
-cancels in-flight requests. Turning it on again restores cached translations
-without another model call and resumes missing work. A top-level navigation,
-reload, target-locale change, pane close, or webview replacement cancels the
-session and clears its in-memory cache.
+Turning translation off hides injected translations, removes transient loading
+and error controls, stops queued work, and cancels in-flight requests. Turning
+it on again restores cached translations without another model call and resumes
+missing work. A top-level navigation, reload, target-language change, pane close,
+or webview replacement cancels the session and clears its in-memory cache.
 
 ### Eligible content and privacy boundary
 
@@ -74,9 +94,10 @@ order.
 Never collect content inside `script`, `style`, `noscript`, `pre`, `code`,
 form controls, editable regions, hidden/inert/`aria-hidden` subtrees, or
 Tenon-injected translation nodes. Ignore empty and punctuation-only blocks, plus
-blocks whose nearest declared `lang` already matches the target language. The
-main process revalidates request counts, ids, and bounded text lengths before any
-provider call.
+blocks whose nearest declared `lang` already matches the selected target
+language. Same-language blocks create no loading indicator and no provider
+request. The main process revalidates request counts, ids, and bounded text
+lengths before any provider call.
 
 The provider receives only the eligible blocks that enter the active viewport
 window. Translation results are accepted only for requested ids and are
@@ -118,6 +139,15 @@ resources. Tenon's injected nodes and styles use a collision-resistant prefix.
 Reduced-motion users receive no insertion animation; the feature does not need
 motion in the default mode either.
 
+As soon as a block enters a submitted batch, append a small neutral inline
+loader at the end of its source. Success removes that loader as the inert
+translation is inserted. A provider or parse failure replaces it with a compact
+error control; activating the control changes it back to loading and retries
+only that record. Cancel, disable, navigation, source mutation, and destruction
+remove transient controls. Reduced-motion mode renders a static progress ring
+instead of animation. Loader/error DOM mutations participate in the same anchor
+compensation as translation insertion.
+
 ### Model request boundary
 
 Add a main-owned page-translation service behind the existing generic preload
@@ -140,12 +170,14 @@ the source page.
 
 ### Error and lifecycle behavior
 
-- No configured provider/model: remain Off and show a localized error directing
-  the user to Agent settings.
+- No configured provider/model: keep submitted blocks in the recoverable error
+  state and show a localized error directing the user to Agent settings. After
+  configuration, activating a block's error control retries only that block.
 - No eligible visible text: remain On and wait for later eligible content; do
-  not treat an image-only viewport as a failure.
+  not treat an image-only viewport or same-language blocks as a failure.
 - Provider or parse failure: preserve successful translations and report one
-  localized toast for the current failure wave; do not loop automatically.
+  localized toast for the current failure wave. Do not retry automatically;
+  poll only for an explicit failed-block retry while paused.
 - Navigation/reload/close/disable: cancel active work, invalidate late results,
   disconnect observers, and remove or hide injected nodes as appropriate.
 - A source block whose text changes invalidates only that block's cached
@@ -159,12 +191,17 @@ translation lifecycle, and unchanged URL-preview sandbox posture.
 
 ## Open questions
 
-None. The target locale, viewport-driven scheduling, in-memory-only cache,
-Neva-model ownership, and format boundary are ratified.
+None. The common target-language catalog, UI-language default, remembered
+explicit choice, scoped shortcut, block-local recovery, viewport-driven
+scheduling, in-memory-only cache, Neva-model ownership, and format boundary are
+ratified.
 
 ## Files
 
 - `src/core/urlPageTranslation.ts`
+- a focused core translation-language catalog
+- `src/main/appPreferences.ts` and `src/preload/index.ts` for the remembered
+  target preference
 - `src/main/agentModelResolution.ts`, `src/main/agentRuntime.ts`, and a focused
   main-process page-translation module
 - `src/main/main.ts`
@@ -174,7 +211,8 @@ Neva-model ownership, and format boundary are ratified.
 - focused URL translation controller/script modules under
   `src/renderer/ui/preview/`
 - `src/renderer/ui/WorkspaceCanvas.tsx` and `src/renderer/ui/App.tsx` for the
-  existing error-toast path
+  active-panel shortcut scope and existing error-toast path
+- `src/renderer/ui/interactions/shortcutRegistry.ts`
 - `src/renderer/ui/icons.ts`
 - file-preview/breadcrumb styles and English/Simplified Chinese messages
 - focused core/main, renderer, security, and Playwright tests
@@ -183,8 +221,9 @@ Neva-model ownership, and format boundary are ratified.
 - `docs/spec/agent-pi-mono-implementation.md`
 - this plan
 
-No dependency, document command/protocol, persisted data, `docs/TASKS.md`, or
-`CHANGELOG.md` change is required.
+No dependency, document command/protocol, `docs/TASKS.md`, or `CHANGELOG.md`
+change is required. App preferences gain one optional target-language field;
+older preference files remain valid by defaulting it to no explicit choice.
 
 ## Risks
 
@@ -193,6 +232,11 @@ No dependency, document command/protocol, persisted data, `docs/TASKS.md`, or
   fixture coverage across article, nested-list, table, and lazy-content shapes.
 - Injecting translations changes layout. Anchor compensation must cover result
   insertion, toggle hide/show, partial batches, and cached restoration.
+- Inline progress/error controls must survive arbitrary page CSS, remain
+  keyboard accessible, avoid becoming translation candidates themselves, and
+  never trigger the page's own form/navigation behavior.
+- The shortcut must work in both the host renderer and URL webview without
+  intercepting `Option+A` outside the active URL preview.
 - Page text is sent to a third-party provider. Explicit opt-in, sensitive
   element exclusions, bounded viewport collection, and no persistence are
   trust-critical behavior.
@@ -206,20 +250,17 @@ No dependency, document command/protocol, persisted data, `docs/TASKS.md`, or
 
 ## Collision check
 
-- PR #395 modifies Agent stream retry lifecycle, `agentRuntime.ts`, the pi-mono
-  spec, and the same i18n files. It lands first; this branch rebases onto its
-  merged result before becoming ready. Translation is a non-conversation
-  `completeSimple` utility request and does not emit the PR's runtime retry row.
-- PR #394 modifies outliner field rows and `ui-behavior.md`. The spec addition is
-  in the file-preview section and should merge independently; no renderer or
-  behavior ownership overlaps.
+- GitHub currently reports no other open PR touching app preferences, preload,
+  shortcut registration, URL preview chrome, or the translation guest runtime.
 - `browser-extension-integration` remains record-only. This feature operates
   solely inside the existing hardened URL preview.
-- Result: ordered behind #395; no unresolved scope collision.
+- Result: PR #396 is the only live claim in this area; no unresolved scope
+  collision.
 
 ## Checklist
 
-- [ ] Add the localized header toggle and observable translation states.
+- [ ] Add the localized target-language popover, remembered preference, scoped
+  shortcut, checked icon state, and observable translation states.
 - [ ] Discover eligible content without collecting sensitive or executable
   page regions.
 - [ ] Schedule visible blocks first with directional prefetch and bounded
@@ -228,6 +269,8 @@ No dependency, document command/protocol, persisted data, `docs/TASKS.md`, or
 - [ ] Preserve scroll anchoring across insert, hide, show, and cache restore.
 - [ ] Add the cancelable, validated main-process model request path.
 - [ ] Insert only requested plain-text results and reject malformed output.
+- [ ] Add block-local loading, error, and click-to-retry controls with reduced
+  motion and keyboard coverage.
 - [ ] Cover navigation, reload, pane close, locale change, cancellation, no
   model, partial failure, and dynamic-content lifecycle.
 - [ ] Preserve the URL webview security guard and add targeted regressions.

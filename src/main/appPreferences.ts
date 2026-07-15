@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, type Locale } from '../core/locale';
+import { isTranslationLanguage, type TranslationLanguage } from '../core/translationLanguage';
 import { writeJsonFileSync } from './jsonFileStore';
 
 // Persist app-level UI preferences across launches (stored in userData, which is
@@ -15,6 +16,9 @@ interface PersistedAppPreferences {
   // null = no explicit pick yet → the main process falls back to the OS locale
   // (resolveSystemLocale) on first run; a concrete value pins the language.
   language: Locale | null;
+  // null follows the effective UI language until the user explicitly chooses a
+  // webpage translation target.
+  translationLanguage: TranslationLanguage | null;
   // Opt-in OS (Electron) notifications for off-floor task delivery. Default off —
   // the durable in-app delivery is always on; the OS banner is the user-enabled
   // escalation layer (A3-respecting).
@@ -24,6 +28,7 @@ interface PersistedAppPreferences {
 const DEFAULTS: PersistedAppPreferences = {
   theme: 'system',
   language: null,
+  translationLanguage: null,
   osNotificationsEnabled: false,
 };
 
@@ -41,6 +46,9 @@ export function loadAppPreferences(): PersistedAppPreferences {
     loaded = {
       theme: isThemeMode(parsed.theme) ? parsed.theme : DEFAULTS.theme,
       language: isLocale(parsed.language) ? parsed.language : DEFAULTS.language,
+      translationLanguage: isTranslationLanguage(parsed.translationLanguage)
+        ? parsed.translationLanguage
+        : DEFAULTS.translationLanguage,
       osNotificationsEnabled: parsed.osNotificationsEnabled === true,
     };
   } catch {
@@ -57,6 +65,10 @@ export function saveThemePreference(theme: ThemeMode): void {
 
 export function saveLanguagePreference(language: Locale): void {
   savePreferences({ language });
+}
+
+export function saveTranslationLanguagePreference(translationLanguage: TranslationLanguage): void {
+  savePreferences({ translationLanguage });
 }
 
 export function saveOsNotificationsPreference(enabled: boolean): void {

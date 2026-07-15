@@ -24,6 +24,11 @@ import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import type { ThemeMode } from '../core/theme';
 import { DEFAULT_LOCALE, isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, type Locale } from '../core/locale';
 import {
+  isTranslationLanguage,
+  LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL,
+  type TranslationLanguage,
+} from '../core/translationLanguage';
+import {
   LAUNCHER_CONTEXT_CHANNEL,
   LAUNCHER_NAVIGATE_TO_NODE_CHANNEL,
   LAUNCHER_SHOWN_CHANNEL,
@@ -45,6 +50,7 @@ import {
   type DiagnosticsActionResult,
   type ErrorReport,
 } from '../core/errorObservability';
+import { LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL } from '../core/urlPageTranslation';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -207,6 +213,15 @@ function readInitialLanguage(): Locale {
   }
 }
 
+function readInitialTranslationLanguage(): TranslationLanguage {
+  try {
+    const value = ipcRenderer.sendSync('lin:get-translation-language-sync');
+    return isTranslationLanguage(value) ? value : DEFAULT_LOCALE;
+  } catch {
+    return DEFAULT_LOCALE;
+  }
+}
+
 const api = {
   // Which OS window material the main process applied, so the renderer can make
   // its chrome surfaces translucent only when there's a material behind them.
@@ -283,6 +298,27 @@ const api = {
     ipcRenderer.on(LIN_LANGUAGE_CHANGED_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(LIN_LANGUAGE_CHANGED_CHANNEL, handler);
+    };
+  },
+  initialTranslationLanguage: readInitialTranslationLanguage(),
+  setTranslationLanguage: (language: TranslationLanguage) =>
+    ipcRenderer.invoke('lin:set-translation-language', language) as Promise<void>,
+  onTranslationLanguageChanged: (listener: (language: TranslationLanguage) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, language: TranslationLanguage) => listener(language);
+    ipcRenderer.on(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, handler);
+    };
+  },
+  onUrlPageTranslationShortcut: (listener: (webContentsId: number) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, webContentsId: unknown) => {
+      if (typeof webContentsId === 'number' && Number.isInteger(webContentsId) && webContentsId > 0) {
+        listener(webContentsId);
+      }
+    };
+    ipcRenderer.on(LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL, handler);
     };
   },
   openProviderConfig: (params: { providerId: string; mode: 'configure' | 'custom' }) =>

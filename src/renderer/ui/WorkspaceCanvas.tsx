@@ -89,6 +89,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
               />
             ) : panel.type === 'workspace' && panel.view.kind === 'file-preview' ? (
               <FilePreviewPanel
+                activePanel={props.activePanelId === panel.id}
                 panelId={panel.id}
                 canGoBack={Boolean(panel.backStack.length)}
                 dragId={props.dragId}

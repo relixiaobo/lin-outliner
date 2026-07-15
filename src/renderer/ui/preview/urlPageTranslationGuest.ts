@@ -1,9 +1,8 @@
-import type { Locale } from '../../../core/locale';
+import type { TranslationLanguage } from '../../../core/translationLanguage';
 import {
   URL_PAGE_TRANSLATION_MAX_BATCH_CHARS,
   URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS,
   URL_PAGE_TRANSLATION_MAX_BLOCKS,
-  resolveUrlPageTranslationTargetLocale,
   type UrlPageTranslationBlock,
   type UrlPageTranslationItem,
 } from '../../../core/urlPageTranslation';
@@ -33,12 +32,73 @@ const TRANSLATION_CSS = `
 html[data-tenon-bilingual-hidden="true"] [data-tenon-bilingual-translation="true"] {
   display: none !important;
 }
+[data-tenon-bilingual-status] {
+  all: unset !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  width: max(1em, 16px) !important;
+  height: max(1em, 16px) !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline-start: 0.35em !important;
+  border: 0 !important;
+  border-radius: 50% !important;
+  background: transparent !important;
+  color: currentColor !important;
+  cursor: default !important;
+  font: 700 0.72em/1 system-ui, sans-serif !important;
+  opacity: 0.52 !important;
+  vertical-align: 0.05em !important;
+}
+[data-tenon-bilingual-status="loading"]::before {
+  box-sizing: border-box !important;
+  width: 0.72em !important;
+  height: 0.72em !important;
+  border: 0.11em solid currentColor !important;
+  border-inline-end-color: transparent !important;
+  border-radius: 50% !important;
+  animation: tenon-bilingual-spin 0.8s linear infinite !important;
+  content: "" !important;
+}
+[data-tenon-bilingual-status="error"] {
+  border: 0.1em solid currentColor !important;
+  opacity: 0.78 !important;
+}
+[data-tenon-bilingual-status="error"]:hover {
+  opacity: 0.92 !important;
+}
+[data-tenon-bilingual-status="error"]:active {
+  border-width: 0.14em !important;
+  opacity: 1 !important;
+}
+[data-tenon-bilingual-status="error"]::before {
+  content: "!" !important;
+}
+[data-tenon-bilingual-status="error"]:focus-visible {
+  outline: 0.12em solid currentColor !important;
+  outline-offset: 0.12em !important;
+  opacity: 1 !important;
+}
+@keyframes tenon-bilingual-spin {
+  to { transform: rotate(1turn); }
+}
 @media (prefers-contrast: more) {
-  [data-tenon-bilingual-translation="true"] {
+  [data-tenon-bilingual-translation="true"],
+  [data-tenon-bilingual-status] {
     opacity: 1 !important;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  [data-tenon-bilingual-status="loading"]::before {
+    animation: none !important;
+  }
+}
 `;
+
+export interface UrlPageTranslationGuestLabels {
+  retry: string;
+  translating: string;
+}
 
 export interface UrlPageTranslationGuestBatch {
   blocks: UrlPageTranslationBlock[];
@@ -46,9 +106,9 @@ export interface UrlPageTranslationGuestBatch {
 }
 
 export interface UrlPageTranslationGuestBridge {
-  initialize(preferredLocale: Locale): Promise<Locale>;
-  setEnabled(enabled: boolean, targetLocale: Locale): Promise<void>;
-  nextBatch(): Promise<UrlPageTranslationGuestBatch>;
+  initialize(targetLanguage: TranslationLanguage, labels: UrlPageTranslationGuestLabels): Promise<void>;
+  setEnabled(enabled: boolean, targetLanguage: TranslationLanguage): Promise<void>;
+  nextBatch(retryOnly?: boolean): Promise<UrlPageTranslationGuestBatch>;
   apply(translations: readonly UrlPageTranslationItem[]): Promise<void>;
   fail(ids: readonly string[]): Promise<void>;
   destroy(): Promise<void>;
@@ -76,31 +136,22 @@ export function createUrlPageTranslationGuestBridge(
   };
 
   return {
-    async initialize(preferredLocale) {
+    async initialize(targetLanguage, labels) {
       await removeCss();
       cssKey = await webview.insertCSS(TRANSLATION_CSS);
-      const declaredLanguage = await webview.executeJavaScript(`(() => {
-        const rootLanguage = document.documentElement?.lang?.trim();
-        if (rootLanguage) return rootLanguage;
-        return document.body?.lang?.trim() ?? '';
-      })()`);
-      const targetLocale = resolveUrlPageTranslationTargetLocale(
-        preferredLocale,
-        typeof declaredLanguage === 'string' ? declaredLanguage : '',
-      );
-      const source = `(${installUrlPageTranslationRuntime.toString()})(window, ${JSON.stringify(URL_PAGE_TRANSLATION_RUNTIME_KEY)}, ${JSON.stringify(targetLocale)})`;
+      const source = `(${installUrlPageTranslationRuntime.toString()})(window, ${JSON.stringify(URL_PAGE_TRANSLATION_RUNTIME_KEY)}, ${JSON.stringify(targetLanguage)}, ${JSON.stringify(labels)})`;
       await webview.executeJavaScript(source);
-      return targetLocale;
     },
-    async setEnabled(enabled, targetLocale) {
-      await execute('setEnabled', enabled, targetLocale);
+    async setEnabled(enabled, targetLanguage) {
+      await execute('setEnabled', enabled, targetLanguage);
     },
-    async nextBatch() {
+    async nextBatch(retryOnly = false) {
       const raw = await execute<unknown>(
         'nextBatch',
         URL_PAGE_TRANSLATION_MAX_BLOCKS,
         URL_PAGE_TRANSLATION_MAX_BATCH_CHARS,
         URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS,
+        retryOnly,
       );
       return validatedGuestBatch(raw);
     },
@@ -124,7 +175,8 @@ export function createUrlPageTranslationGuestBridge(
 export function installUrlPageTranslationRuntime(
   host: Window,
   runtimeKey: string,
-  initialTargetLocale: Locale,
+  initialTargetLanguage: TranslationLanguage,
+  labels: UrlPageTranslationGuestLabels,
 ): void {
   const doc = host.document;
   const constructors = host as unknown as {
@@ -133,6 +185,7 @@ export function installUrlPageTranslationRuntime(
     NodeFilter: typeof NodeFilter;
   };
   const translationAttribute = 'data-tenon-bilingual-translation';
+  const statusAttribute = 'data-tenon-bilingual-status';
   const hiddenAttribute = 'data-tenon-bilingual-hidden';
   const candidateSelector = [
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
@@ -145,6 +198,7 @@ export function installUrlPageTranslationRuntime(
     'input', 'textarea', 'select', 'option', 'button', 'form', 'nav',
     '[role="button"]', '[role="textbox"]', '[role="navigation"]',
     `[${translationAttribute}]`,
+    `[${statusAttribute}]`,
   ].join(',');
   type RecordEntry = {
     id: string;
@@ -153,6 +207,8 @@ export function installUrlPageTranslationRuntime(
     completed: boolean;
     failed: boolean;
     pending: boolean;
+    retryRequested: boolean;
+    statusNode: HTMLButtonElement | null;
     translationNode: HTMLElement | null;
   };
 
@@ -167,16 +223,32 @@ export function installUrlPageTranslationRuntime(
   let scanCount = 0;
   let lastScrollTop = doc.scrollingElement?.scrollTop ?? host.scrollY;
   let direction: 'down' | 'up' = 'down';
-  let targetLocale = initialTargetLocale;
+  let targetLanguage = initialTargetLanguage;
 
   const normalizeText = (value: string) => value.replace(/\s+/g, ' ').trim();
   const hasReadableText = (value: string) => /[\p{L}\p{N}]/u.test(value);
 
   const isDeclaredTargetLanguage = (element: HTMLElement): boolean => {
-    const declared = element.closest('[lang]')?.getAttribute('lang')?.trim().toLowerCase();
+    const declared = element.closest('[lang]')?.getAttribute('lang')?.trim().replaceAll('_', '-').toLowerCase();
     if (!declared) return false;
-    const targetPrefix = targetLocale === 'zh-Hans' ? 'zh' : 'en';
-    return declared === targetPrefix || declared.startsWith(`${targetPrefix}-`);
+    if (targetLanguage === 'zh-Hans') {
+      return declared === 'zh'
+        || declared.startsWith('zh-hans')
+        || declared.startsWith('zh-cn')
+        || declared.startsWith('zh-sg');
+    }
+    if (targetLanguage === 'zh-Hant') {
+      return declared.startsWith('zh-hant')
+        || declared.startsWith('zh-tw')
+        || declared.startsWith('zh-hk')
+        || declared.startsWith('zh-mo');
+    }
+    const primary = declared.split('-')[0];
+    if (targetLanguage === 'nb') return primary === 'nb' || primary === 'no';
+    if (targetLanguage === 'fil') return primary === 'fil' || primary === 'tl';
+    if (targetLanguage === 'he') return primary === 'he' || primary === 'iw';
+    if (targetLanguage === 'id') return primary === 'id' || primary === 'in';
+    return primary === targetLanguage.toLowerCase();
   };
 
   const isExcluded = (element: Element): boolean => {
@@ -212,9 +284,41 @@ export function installUrlPageTranslationRuntime(
     return rect.width > 0 && rect.height > 0;
   };
 
+  const removeStatus = (record: RecordEntry): void => {
+    record.statusNode?.remove();
+    record.statusNode = null;
+    record.retryRequested = false;
+  };
+
+  const showStatus = (record: RecordEntry, state: 'error' | 'loading'): void => {
+    let status = record.statusNode;
+    if (!status?.isConnected) {
+      status = doc.createElement('button');
+      status.type = 'button';
+      status.setAttribute(statusAttribute, state);
+      status.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!enabled || !record.failed) return;
+        withStableAnchor(() => {
+          record.failed = false;
+          record.retryRequested = true;
+          showStatus(record, 'loading');
+        });
+      });
+      record.element.append(status);
+      record.statusNode = status;
+    }
+    status.setAttribute(statusAttribute, state);
+    status.disabled = state === 'loading';
+    status.setAttribute('aria-label', state === 'loading' ? labels.translating : labels.retry);
+    status.title = state === 'loading' ? labels.translating : labels.retry;
+  };
+
   const removeTranslation = (record: RecordEntry): void => {
     record.translationNode?.remove();
     record.translationNode = null;
+    removeStatus(record);
     record.completed = false;
     record.failed = false;
     record.pending = false;
@@ -243,6 +347,8 @@ export function installUrlPageTranslationRuntime(
           completed: false,
           failed: false,
           pending: false,
+          retryRequested: false,
+          statusNode: null,
           translationNode: null,
         });
         continue;
@@ -256,6 +362,7 @@ export function installUrlPageTranslationRuntime(
     for (const [id, record] of records) {
       if (seen.has(id) && record.element.isConnected) continue;
       record.translationNode?.remove();
+      removeStatus(record);
       records.delete(id);
     }
     dirty = false;
@@ -307,11 +414,12 @@ export function installUrlPageTranslationRuntime(
           const target = mutation.target instanceof constructors.Element
             ? mutation.target
             : (mutation.target as Node & { parentElement?: Element | null }).parentElement;
-          if (target?.closest(`[${translationAttribute}]`)) return false;
+          if (target?.closest(`[${translationAttribute}], [${statusAttribute}]`)) return false;
           if (mutation.type !== 'childList') return true;
           const changed = [...mutation.addedNodes, ...mutation.removedNodes];
           return changed.some((node) => (
-            !(node instanceof constructors.Element) || !node.matches(`[${translationAttribute}]`)
+            !(node instanceof constructors.Element)
+              || !node.matches(`[${translationAttribute}], [${statusAttribute}]`)
           ));
         });
         if (relevant) dirty = true;
@@ -321,16 +429,20 @@ export function installUrlPageTranslationRuntime(
 
   const runtime = {
     version: 1,
-    setEnabled(nextEnabled: boolean, nextTargetLocale: Locale): void {
-      const localeChanged = targetLocale !== nextTargetLocale;
-      targetLocale = nextTargetLocale;
-      if (localeChanged) {
+    setEnabled(nextEnabled: boolean, nextTargetLanguage: TranslationLanguage): void {
+      const languageChanged = targetLanguage !== nextTargetLanguage;
+      targetLanguage = nextTargetLanguage;
+      if (languageChanged) {
         withStableAnchor(() => {
           for (const record of records.values()) removeTranslation(record);
         });
       }
       if (nextEnabled && !enabled) {
-        for (const record of records.values()) record.failed = false;
+        for (const record of records.values()) {
+          record.failed = false;
+          record.retryRequested = false;
+          removeStatus(record);
+        }
       }
       enabled = nextEnabled;
       withStableAnchor(() => {
@@ -338,11 +450,22 @@ export function installUrlPageTranslationRuntime(
         else doc.documentElement.setAttribute(hiddenAttribute, 'true');
       });
       if (!enabled) {
-        for (const record of records.values()) record.pending = false;
+        withStableAnchor(() => {
+          for (const record of records.values()) {
+            record.pending = false;
+            record.failed = false;
+            removeStatus(record);
+          }
+        });
       }
       dirty = true;
     },
-    nextBatch(maxBlocks: number, maxChars: number, maxBlockChars: number): UrlPageTranslationGuestBatch {
+    nextBatch(
+      maxBlocks: number,
+      maxChars: number,
+      maxBlockChars: number,
+      retryOnly = false,
+    ): UrlPageTranslationGuestBatch {
       if (!enabled) return { blocks: [], priority: null };
       scanCount += 1;
       if (dirty || scanCount % 10 === 0) discover();
@@ -354,13 +477,14 @@ export function installUrlPageTranslationRuntime(
       const viewportHeight = Math.max(1, host.innerHeight);
 
       const pending = [...records.values()]
-        .filter((record) => !record.completed && !record.failed && !record.pending)
+        .filter((record) => !record.completed && !record.pending)
+        .filter((record) => retryOnly ? record.retryRequested : !record.failed && !record.retryRequested)
         .filter((record) => record.text.length <= maxBlockChars && isRendered(record.element))
         .map((record) => {
           const rect = record.element.getBoundingClientRect();
           return {
             record,
-            priority: priorityForRect(rect, viewportHeight),
+            priority: retryOnly ? 0 : priorityForRect(rect, viewportHeight),
             distance: distanceForRect(rect, viewportHeight),
           };
         })
@@ -368,15 +492,23 @@ export function installUrlPageTranslationRuntime(
         .sort((left, right) => left.priority - right.priority || left.distance - right.distance);
 
       const blocks: UrlPageTranslationBlock[] = [];
+      const selected: RecordEntry[] = [];
       let chars = 0;
       let firstPriority: number | null = null;
       for (const entry of pending) {
         if (blocks.length >= maxBlocks) break;
         if (blocks.length > 0 && chars + entry.record.text.length > maxChars) break;
         entry.record.pending = true;
+        entry.record.retryRequested = false;
         blocks.push({ id: entry.record.id, text: entry.record.text });
+        selected.push(entry.record);
         chars += entry.record.text.length;
         firstPriority ??= entry.priority;
+      }
+      if (selected.length > 0) {
+        withStableAnchor(() => {
+          for (const record of selected) showStatus(record, 'loading');
+        });
       }
       return { blocks, priority: firstPriority };
     },
@@ -387,13 +519,15 @@ export function installUrlPageTranslationRuntime(
           if (!record || !record.element.isConnected) continue;
           record.pending = false;
           record.failed = false;
+          record.retryRequested = false;
           record.completed = true;
+          removeStatus(record);
           record.translationNode?.remove();
           record.translationNode = null;
           if (normalizeText(item.translation) === record.text) continue;
           const translation = doc.createElement('span');
           translation.setAttribute(translationAttribute, 'true');
-          translation.setAttribute('lang', targetLocale);
+          translation.setAttribute('lang', targetLanguage);
           translation.textContent = item.translation;
           record.element.append(translation);
           record.translationNode = translation;
@@ -401,17 +535,24 @@ export function installUrlPageTranslationRuntime(
       });
     },
     fail(ids: readonly string[]): void {
-      for (const id of ids) {
-        const record = records.get(id);
-        if (!record) continue;
-        record.pending = false;
-        record.failed = true;
-      }
+      withStableAnchor(() => {
+        for (const id of ids) {
+          const record = records.get(id);
+          if (!record) continue;
+          record.pending = false;
+          record.retryRequested = false;
+          record.failed = true;
+          showStatus(record, 'error');
+        }
+      });
     },
     destroy(): void {
       observer?.disconnect();
       withStableAnchor(() => {
-        for (const record of records.values()) record.translationNode?.remove();
+        for (const record of records.values()) {
+          record.translationNode?.remove();
+          removeStatus(record);
+        }
         doc.documentElement.removeAttribute(hiddenAttribute);
       });
       records.clear();

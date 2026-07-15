@@ -23,6 +23,7 @@ const {
   saveLanguagePreference,
   saveOsNotificationsPreference,
   saveThemePreference,
+  saveTranslationLanguagePreference,
 } = await import('../../src/main/appPreferences');
 
 beforeEach(async () => {
@@ -38,13 +39,15 @@ describe('app preferences persistence', () => {
   test('keeps sync reads and sync atomic writes byte-compatible', async () => {
     saveThemePreference('dark');
     saveLanguagePreference('zh-Hans');
+    saveTranslationLanguagePreference('ja');
     saveOsNotificationsPreference(true);
 
     const raw = await readFile(path.join(userData, 'app-preferences.json'), 'utf8');
-    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","osNotificationsEnabled":true}');
+    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","translationLanguage":"ja","osNotificationsEnabled":true}');
     expect(loadAppPreferences()).toEqual({
       theme: 'dark',
       language: 'zh-Hans',
+      translationLanguage: 'ja',
       osNotificationsEnabled: true,
     });
   });

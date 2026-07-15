@@ -72,6 +72,13 @@ describe('URL preview webview security posture', () => {
     expect(TRANSLATION_GUEST_SRC).not.toContain('preload');
   });
 
+  test('the scoped translation shortcut is intercepted by the hardened guest host', () => {
+    expect(MAIN_SRC).toContain("webContents.on('before-input-event'");
+    expect(MAIN_SRC).toContain("input.code === 'KeyA'");
+    expect(MAIN_SRC).toContain('LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL');
+    expect(MAIN_SRC).toContain('contents.send(LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL, webContents.id)');
+  });
+
   test('translation validates bounded blocks and exact response ids in main', () => {
     expect(PAGE_TRANSLATION_SRC).toContain('URL_PAGE_TRANSLATION_MAX_BLOCKS');
     expect(PAGE_TRANSLATION_SRC).toContain('URL_PAGE_TRANSLATION_MAX_BATCH_CHARS');

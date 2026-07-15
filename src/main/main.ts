@@ -44,7 +44,10 @@ import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTyp
 import type { AgentSessionReadInput, IssueReadInput, IssueSearchInput } from '../core/agentIssue';
 import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
 import { normalizePreviewHttpUrl } from '../core/preview';
-import { isUrlPageTranslationCommand } from '../core/urlPageTranslation';
+import {
+  isUrlPageTranslationCommand,
+  LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
+} from '../core/urlPageTranslation';
 import { handlePreviewCommand } from './previewSource';
 import { PageTranslationService } from './pageTranslation';
 import { setBoundedMapEntry } from './boundedMap';
@@ -111,9 +114,15 @@ import {
   saveLanguagePreference,
   saveOsNotificationsPreference,
   saveThemePreference,
+  saveTranslationLanguagePreference,
 } from './appPreferences';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, resolveSystemLocale, type Locale } from '../core/locale';
+import {
+  isTranslationLanguage,
+  LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL,
+  type TranslationLanguage,
+} from '../core/translationLanguage';
 import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
 import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
@@ -552,6 +561,20 @@ function hardenWebContents(contents: Electron.WebContents) {
     };
     webContents.on('will-navigate', guardWebviewNavigation);
     webContents.on('will-redirect', guardWebviewNavigation);
+    webContents.on('before-input-event', (event, input) => {
+      const isTranslationShortcut = input.type === 'keyDown'
+        && !input.isAutoRepeat
+        && input.alt
+        && !input.control
+        && !input.meta
+        && !input.shift
+        && (input.code === 'KeyA' || input.key.toLowerCase() === 'a');
+      if (!isTranslationShortcut) return;
+      event.preventDefault();
+      if (!contents.isDestroyed()) {
+        contents.send(LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL, webContents.id);
+      }
+    });
   });
 }
 
@@ -671,6 +694,10 @@ let cachedLocale: Locale | null = null;
 function effectiveLocale(): Locale {
   cachedLocale ??= loadAppPreferences().language ?? resolveSystemLocale(app.getLocale());
   return cachedLocale;
+}
+
+function effectiveTranslationLanguage(): TranslationLanguage {
+  return loadAppPreferences().translationLanguage ?? effectiveLocale();
 }
 
 // Standard application menu (A2b). macOS gets the conventional App / Edit / View
@@ -1627,6 +1654,16 @@ function registerIpc() {
   ipcMain.on('lin:get-language-sync', (event) => {
     event.returnValue = effectiveLocale();
   });
+  ipcMain.on('lin:get-translation-language-sync', (event) => {
+    event.returnValue = effectiveTranslationLanguage();
+  });
+  ipcMain.handle('lin:set-translation-language', (_event, raw: unknown): void => {
+    if (!isTranslationLanguage(raw)) return;
+    saveTranslationLanguagePreference(raw);
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, raw);
+    }
+  });
   ipcMain.handle('lin:set-language', (_event, raw: unknown): void => {
     if (!isLocale(raw)) return;
     saveLanguagePreference(raw); // best-effort persistence (see appPreferences.ts)
@@ -1637,6 +1674,9 @@ function registerIpc() {
     cachedLocale = raw;
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send(LIN_LANGUAGE_CHANGED_CHANNEL, raw);
+      if (loadAppPreferences().translationLanguage === null) {
+        window.webContents.send(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, raw);
+      }
     }
     Menu.setApplicationMenu(buildApplicationMenu());
     // Open windows localize their native title bar once at construction; their content
