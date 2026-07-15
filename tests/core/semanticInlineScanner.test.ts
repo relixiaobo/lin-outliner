@@ -176,6 +176,69 @@ describe('semantic inline scanner', () => {
     });
   });
 
+  test('protects metadata inside multi-backtick code spans', () => {
+    expect(scanMarkdownInline(
+      '``#literal status:: open ` tick`` #work',
+      { metadata: 'tags-and-fields', linkifyBareUrls: true, references: true },
+    )).toEqual({
+      source: '``#literal status:: open ` tick``',
+      content: {
+        text: '#literal status:: open ` tick',
+        marks: [{ start: 0, end: 29, type: 'code' }],
+        inlineRefs: [],
+      },
+      fields: [],
+      tags: [{ name: 'work', source: { start: 34, end: 39 } }],
+    });
+  });
+
+  test('merges equivalent marks after materializing inline references', () => {
+    expect(scanMarkdownInline(
+      '**a[[node:Alpha^node-alpha]]b**',
+      { metadata: 'none', linkifyBareUrls: true, references: true },
+    ).content).toEqual({
+      text: 'ab',
+      marks: [{ start: 0, end: 2, type: 'bold' }],
+      inlineRefs: [{ offset: 1, target: { kind: 'node', nodeId: 'node-alpha' }, displayName: 'Alpha' }],
+    });
+  });
+
+  test('keeps malformed Markdown and trailing URL delimiters within linear-time bounds', () => {
+    const unmatchedBrackets = '['.repeat(32_000);
+    let startedAt = performance.now();
+    expect(scanMarkdownInline(
+      unmatchedBrackets,
+      { metadata: 'none', linkifyBareUrls: false, references: false },
+    ).content.text).toBe(unmatchedBrackets);
+    const bracketElapsedMs = performance.now() - startedAt;
+
+    const nestedInvalidLinks = `${'[x]('.repeat(4_000)}bad title${')'.repeat(4_000)}`;
+    startedAt = performance.now();
+    expect(scanMarkdownInline(
+      nestedInvalidLinks,
+      { metadata: 'none', linkifyBareUrls: false, references: false },
+    ).content.text).toBe(nestedInvalidLinks);
+    const invalidLinkElapsedMs = performance.now() - startedAt;
+
+    const longUrl = `https://example.com/${'a'.repeat(16_000)}${')'.repeat(16_000)}`;
+    startedAt = performance.now();
+    const scannedUrl = scanMarkdownInline(
+      longUrl,
+      { metadata: 'none', linkifyBareUrls: true, references: false },
+    ).content;
+    const urlElapsedMs = performance.now() - startedAt;
+
+    expect(scannedUrl.marks).toEqual([{
+      start: 0,
+      end: 16_020,
+      type: 'link',
+      attrs: { href: `https://example.com/${'a'.repeat(16_000)}` },
+    }]);
+    expect(bracketElapsedMs).toBeLessThan(1_000);
+    expect(invalidLinkElapsedMs).toBeLessThan(1_000);
+    expect(urlElapsedMs).toBeLessThan(1_000);
+  });
+
   test('materializes rich-text references while preserving existing refs and protected marks', () => {
     const marker = '[[node:One^node-one]]';
     const text = `${marker} tail`;

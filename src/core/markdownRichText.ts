@@ -41,7 +41,7 @@ export function richTextToMarkdownReferenceMarkup(
     skippedRanges,
     content.text.length,
   )).flatMap((mark) => {
-    const delimiters = markDelimiters(mark);
+    const delimiters = markDelimiters(mark, content.text);
     return delimiters ? [{ mark, delimiters }] : [];
   });
   addMarkdownMarkTransitions(serializableMarks, add);
@@ -205,17 +205,36 @@ function subtractRange(
   return next;
 }
 
-function markDelimiters(mark: TextMark): { open: string; close: string } | null {
+function markDelimiters(mark: TextMark, text: string): { open: string; close: string } | null {
   if (mark.type === 'bold') return { open: '**', close: '**' };
   if (mark.type === 'italic') return { open: '*', close: '*' };
   if (mark.type === 'strike') return { open: '~~', close: '~~' };
   if (mark.type === 'highlight') return { open: '==', close: '==' };
-  if (mark.type === 'code') return { open: '`', close: '`' };
+  if (mark.type === 'code') {
+    const delimiter = '`'.repeat(longestBacktickRun(text, mark.start, mark.end) + 1);
+    return { open: delimiter, close: delimiter };
+  }
   if (mark.type === 'link') {
     const href = typeof mark.attrs?.href === 'string' ? mark.attrs.href : '';
     return href ? { open: '[', close: `](${escapeMarkdownLinkDestination(href)})` } : null;
   }
   return null;
+}
+
+function longestBacktickRun(text: string, start: number, end: number): number {
+  let longest = 0;
+  let current = 0;
+  const safeStart = Math.min(Math.max(0, Math.trunc(start)), text.length);
+  const safeEnd = Math.min(Math.max(safeStart, Math.trunc(end)), text.length);
+  for (let index = safeStart; index < safeEnd; index += 1) {
+    if (text[index] === '`') {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+  return longest;
 }
 
 function markdownMarkNestingRank(type: TextMark['type']): number {

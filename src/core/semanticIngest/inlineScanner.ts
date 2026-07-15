@@ -368,6 +368,7 @@ function materializeReferenceMarkers(content: RichText, escapedOffsets: Readonly
   }));
   return {
     ...stripped,
+    marks: mergeEquivalentTextMarks(stripped.marks).sort(compareMarkdownMarks),
     inlineRefs: [...existingInlineRefs, ...inlineRefs]
       .sort((left, right) => left.offset - right.offset),
   };
@@ -539,21 +540,25 @@ function bareUrlRanges(text: string): Range[] {
     const start = match.index ?? 0;
     if (start > 0 && ASCII_WORD.test(text[start - 1] ?? '')) continue;
     let end = start + match[0].length;
+    const delimiterBalance = urlDelimiterBalance(match[0]);
     while (end > start) {
       const char = text[end - 1] ?? '';
       if (TRAILING_URL_PUNCTUATION.has(char)) {
         end -= 1;
         continue;
       }
-      if (char === ')' && unmatchedClosing(text.slice(start, end), '(', ')')) {
+      if (char === ')' && delimiterBalance.parentheses < 0) {
+        delimiterBalance.parentheses += 1;
         end -= 1;
         continue;
       }
-      if (char === ']' && unmatchedClosing(text.slice(start, end), '[', ']')) {
+      if (char === ']' && delimiterBalance.brackets < 0) {
+        delimiterBalance.brackets += 1;
         end -= 1;
         continue;
       }
-      if (char === '}' && unmatchedClosing(text.slice(start, end), '{', '}')) {
+      if (char === '}' && delimiterBalance.braces < 0) {
+        delimiterBalance.braces += 1;
         end -= 1;
         continue;
       }
@@ -569,13 +574,17 @@ function isSupportedBareUrlText(value: string): boolean {
   return /^https?:\/\/\S+$/iu.test(value);
 }
 
-function unmatchedClosing(value: string, open: string, close: string): boolean {
-  let balance = 0;
+function urlDelimiterBalance(value: string): { braces: number; brackets: number; parentheses: number } {
+  const balance = { braces: 0, brackets: 0, parentheses: 0 };
   for (const char of value) {
-    if (char === open) balance += 1;
-    else if (char === close) balance -= 1;
+    if (char === '(') balance.parentheses += 1;
+    else if (char === ')') balance.parentheses -= 1;
+    else if (char === '[') balance.brackets += 1;
+    else if (char === ']') balance.brackets -= 1;
+    else if (char === '{') balance.braces += 1;
+    else if (char === '}') balance.braces -= 1;
   }
-  return balance < 0;
+  return balance;
 }
 
 function removeTextRanges(text: string, ranges: readonly Range[]): string {

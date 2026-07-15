@@ -104,6 +104,33 @@ describe('markdown rich text outline bridge', () => {
     expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
   });
 
+  test('pairs code spans by backtick run length and keeps backslashes literal', () => {
+    expect(markdownReferenceMarkupToRichText('`C:\\`')).toEqual({
+      text: 'C:\\',
+      marks: [{ start: 0, end: 3, type: 'code' }],
+      inlineRefs: [],
+    });
+    expect(markdownReferenceMarkupToRichText('``')).toEqual({
+      text: '``',
+      marks: [],
+      inlineRefs: [],
+    });
+    expect(markdownReferenceMarkupToRichText('``open')).toEqual({
+      text: '``open',
+      marks: [],
+      inlineRefs: [],
+    });
+
+    const content = {
+      text: 'code ` tick',
+      marks: [{ start: 0, end: 11, type: 'code' as const }],
+      inlineRefs: [],
+    };
+    const serialized = richTextToMarkdownReferenceMarkup(content);
+    expect(serialized).toBe('``code ` tick``');
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
+  });
+
   test('materializes bare URLs as link marks without double-linking protected ranges', () => {
     expect(markdownReferenceMarkupToRichText(
       'Visit https://example.com/docs, [site](https://linked.example), and `https://code.example`.',
@@ -281,6 +308,16 @@ describe('markdown rich text outline bridge', () => {
     expect(failures).toEqual([]);
   });
 
+  test('keeps repeated bold-italic segments within a bounded parse time', () => {
+    const source = Array.from({ length: 40 }, () => '***a*** x').join(' ');
+    const startedAt = performance.now();
+    const parsed = markdownReferenceMarkupToRichText(source);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(parsed.marks).toHaveLength(80);
+    expect(elapsedMs).toBeLessThan(1_000);
+  });
+
   test('round-trips link destinations with balanced parentheses', () => {
     const content = {
       text: 'https://example.com/a_(b)',
@@ -302,6 +339,26 @@ describe('markdown rich text outline bridge', () => {
     expect(markdownReferenceMarkupToRichText('[site](https://example.com "Docs")')).toEqual({
       text: 'site',
       marks: [{ start: 0, end: 4, type: 'link', attrs: { href: 'https://example.com' } }],
+      inlineRefs: [],
+    });
+    expect(markdownReferenceMarkupToRichText('[site](https://example.com "Docs (archived)")')).toEqual({
+      text: 'site',
+      marks: [{ start: 0, end: 4, type: 'link', attrs: { href: 'https://example.com' } }],
+      inlineRefs: [],
+    });
+    expect(markdownReferenceMarkupToRichText('[site](https://example.com (Archived))')).toEqual({
+      text: 'site',
+      marks: [{ start: 0, end: 4, type: 'link', attrs: { href: 'https://example.com' } }],
+      inlineRefs: [],
+    });
+    expect(markdownReferenceMarkupToRichText('[x](url "unclosed) [site](https://example.com)')).toEqual({
+      text: '[x](url "unclosed) site',
+      marks: [{ start: 19, end: 23, type: 'link', attrs: { href: 'https://example.com' } }],
+      inlineRefs: [],
+    });
+    expect(markdownReferenceMarkupToRichText('[x](bad [site](https://example.com))')).toEqual({
+      text: '[x](bad site)',
+      marks: [{ start: 8, end: 12, type: 'link', attrs: { href: 'https://example.com' } }],
       inlineRefs: [],
     });
   });

@@ -1,4 +1,3 @@
-import { Lexer } from 'marked';
 import { mergeEquivalentTextMarks } from '../textMarks';
 import type { RichText, TextMark, TextMarkKind } from '../types';
 
@@ -37,6 +36,30 @@ interface MarkdownLinkMatch {
   label: string;
 }
 
+interface MarkdownCodeSpan {
+  contentEnd: number;
+  contentStart: number;
+  end: number;
+}
+
+interface MarkdownLexemes {
+  codeSpans: Map<number, MarkdownCodeSpan>;
+  links: Map<number, MarkdownLinkMatch>;
+  protectedRanges: SourceRange[];
+}
+
+interface MarkdownLinkIndex {
+  angleInvalidPrefix: Uint32Array;
+  lineBreakPrefix: Uint32Array;
+  nextNonWhitespace: Int32Array;
+  nextUnescapedGreaterThan: Int32Array;
+  nextUnescapedWhitespace: Int32Array;
+  previousNonWhitespace: Int32Array;
+  quotePairs: ReadonlyMap<number, number>;
+}
+
+const MAX_CANONICAL_MARKDOWN_STATES = 64;
+
 const STAR_OPEN_SEQUENCES: readonly (readonly MarkdownStyleMarkKind[])[] = [
   [],
   ['italic'],
@@ -50,6 +73,7 @@ export function parseCanonicalMarkdown(
   escapable: ReadonlySet<string>,
   parseNested: NestedMarkdownParser,
 ): CanonicalMarkdownParseResult | null {
+  const lexemes = scanMarkdownLexemes(input);
   let states: CanonicalMarkdownState[] = [{ stack: [], history: null, reopenCost: 0 }];
   const escapedOffsets = new Set<number>();
   let text = '';
@@ -64,7 +88,7 @@ export function parseCanonicalMarkdown(
     }
 
     if (char === '[') {
-      const link = parseMarkdownLinkAt(input, index);
+      const link = lexemes.links.get(index);
       if (link) {
         const nested = parseNested(link.label);
         const markStart = text.length;
@@ -92,10 +116,10 @@ export function parseCanonicalMarkdown(
     }
 
     if (char === '`') {
-      const end = findClosingBacktick(input, index + 1);
-      if (end >= 0) {
+      const codeSpan = lexemes.codeSpans.get(index);
+      if (codeSpan) {
         const markStart = text.length;
-        text += input.slice(index + 1, end);
+        text += input.slice(codeSpan.contentStart, codeSpan.contentEnd);
         if (text.length > markStart) {
           states = states.map((state) => ({
             ...state,
@@ -104,7 +128,7 @@ export function parseCanonicalMarkdown(
             ]),
           }));
         }
-        index = end + 1;
+        index = codeSpan.end;
         continue;
       }
     }
@@ -143,31 +167,7 @@ export function parseCanonicalMarkdown(
 }
 
 export function canonicalMarkdownProtectedRanges(text: string): SourceRange[] {
-  const ranges: SourceRange[] = [];
-  for (let index = 0; index < text.length;) {
-    if (isEscapedAt(text, index)) {
-      index += 1;
-      continue;
-    }
-    if (text[index] === '[') {
-      const link = parseMarkdownLinkAt(text, index);
-      if (link) {
-        ranges.push({ start: index, end: link.end });
-        index = link.end;
-        continue;
-      }
-    }
-    if (text[index] === '`') {
-      const end = findClosingBacktick(text, index + 1);
-      if (end >= 0) {
-        ranges.push({ start: index, end: end + 1 });
-        index = end + 1;
-        continue;
-      }
-    }
-    index += 1;
-  }
-  return ranges;
+  return scanMarkdownLexemes(text).protectedRanges;
 }
 
 function transitionStarRun(
@@ -239,15 +239,17 @@ function transitionDelimitedStyle(
 }
 
 function dedupeMarkdownStates(states: readonly CanonicalMarkdownState[]): CanonicalMarkdownState[] {
-  const deduped = new Map<string, Map<MarkdownMarkHistory | null, CanonicalMarkdownState>>();
+  // Future transitions depend only on the active stack; equivalent histories
+  // normalize to the same adjacent mark ranges, so retain the cheapest path.
+  const deduped = new Map<string, CanonicalMarkdownState>();
   for (const state of states) {
     const key = markdownStackKey(state.stack);
-    const histories = deduped.get(key) ?? new Map<MarkdownMarkHistory | null, CanonicalMarkdownState>();
-    const existing = histories.get(state.history);
-    if (!existing || state.reopenCost < existing.reopenCost) histories.set(state.history, state);
-    deduped.set(key, histories);
+    const existing = deduped.get(key);
+    if (!existing || state.reopenCost < existing.reopenCost) deduped.set(key, state);
   }
-  return [...deduped.values()].flatMap((histories) => [...histories.values()]);
+  return [...deduped.values()]
+    .sort((left, right) => left.reopenCost - right.reopenCost)
+    .slice(0, MAX_CANONICAL_MARKDOWN_STATES);
 }
 
 function markdownStackKey(stack: readonly MarkdownStyleFrame[]): string {
@@ -282,49 +284,322 @@ function starDelimiterLength(type: MarkdownStyleMarkKind): number {
   return type === 'bold' ? 2 : type === 'italic' ? 1 : 0;
 }
 
-function findClosingBacktick(input: string, start: number): number {
-  for (let index = start; index < input.length; index += 1) {
-    if (input[index] === '\n') return -1;
-    if (input[index] === '`' && !isEscapedAt(input, index)) return index;
-  }
-  return -1;
+function scanMarkdownLexemes(input: string): MarkdownLexemes {
+  const escaped = escapedCharacterMask(input);
+  const codeSpans = scanMarkdownCodeSpans(input, escaped);
+  const links = scanMarkdownLinks(input, escaped, codeSpans);
+  const protectedRanges = [
+    ...[...codeSpans.entries()].map(([start, span]) => ({ start, end: span.end })),
+    ...[...links.entries()].map(([start, link]) => ({ start, end: link.end })),
+  ].sort((left, right) => left.start - right.start || left.end - right.end);
+  return { codeSpans, links, protectedRanges };
 }
 
-function parseMarkdownLinkAt(input: string, start: number): MarkdownLinkMatch | null {
-  let labelDepth = 0;
-  let labelEnd = -1;
-  for (let index = start + 1; index < input.length; index += 1) {
+function escapedCharacterMask(input: string): Uint8Array {
+  const escaped = new Uint8Array(input.length);
+  let backslashRun = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    if (input[index] === '\\') {
+      backslashRun += 1;
+      continue;
+    }
+    if (backslashRun % 2 === 1) escaped[index] = 1;
+    backslashRun = 0;
+  }
+  return escaped;
+}
+
+function scanMarkdownCodeSpans(
+  input: string,
+  escaped: Uint8Array,
+): Map<number, MarkdownCodeSpan> {
+  const nextRunWithLength = new Map<number, { end: number; start: number }>();
+  const previousRunByLength = new Map<number, { end: number; start: number }>();
+  for (let index = 0; index < input.length;) {
+    if (input[index] === '\n') {
+      previousRunByLength.clear();
+      index += 1;
+      continue;
+    }
+    if (input[index] !== '`') {
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    while (input[end] === '`') end += 1;
+    const run = { start: index, end };
+    const previous = previousRunByLength.get(end - index);
+    if (previous) nextRunWithLength.set(previous.start, run);
+    previousRunByLength.set(end - index, run);
+    index = end;
+  }
+
+  const spans = new Map<number, MarkdownCodeSpan>();
+  for (let index = 0; index < input.length;) {
+    if (input[index] !== '`') {
+      index += 1;
+      continue;
+    }
+    let openingEnd = index + 1;
+    while (input[openingEnd] === '`') openingEnd += 1;
+    const closing = nextRunWithLength.get(index);
+    if (escaped[index] === 0 && closing && openingEnd < closing.start) {
+      spans.set(index, {
+        contentStart: openingEnd,
+        contentEnd: closing.start,
+        end: closing.end,
+      });
+      index = closing.end;
+      continue;
+    }
+    index = openingEnd;
+  }
+  return spans;
+}
+
+function scanMarkdownLinks(
+  input: string,
+  escaped: Uint8Array,
+  codeSpans: ReadonlyMap<number, MarkdownCodeSpan>,
+): Map<number, MarkdownLinkMatch> {
+  if (!input.includes('](')) return new Map();
+  const linkIndex = buildMarkdownLinkIndex(input, escaped, codeSpans);
+  const parenthesisPairs = scanParenthesisPairs(input, escaped, codeSpans, linkIndex);
+  const links = new Map<number, MarkdownLinkMatch>();
+  const labelStack: number[] = [];
+  for (let index = 0; index < input.length;) {
+    const codeSpan = codeSpans.get(index);
+    if (codeSpan) {
+      index = codeSpan.end;
+      continue;
+    }
     const char = input[index] ?? '';
-    if (char === '\\') {
+    if (escaped[index] !== 0) {
       index += 1;
       continue;
     }
     if (char === '[') {
-      labelDepth += 1;
+      labelStack.push(index);
+      index += 1;
       continue;
     }
-    if (char !== ']') continue;
-    if (labelDepth > 0) {
-      labelDepth -= 1;
+    if (char !== ']') {
+      index += 1;
       continue;
     }
-    if (input[index + 1] === '(') labelEnd = index;
-    break;
+    const labelStart = labelStack.pop();
+    const destinationStart = index + 1;
+    const destinationEnd = parenthesisPairs.get(destinationStart);
+    if (labelStart === undefined || destinationEnd === undefined) {
+      index += 1;
+      continue;
+    }
+    const href = parseMarkdownLinkDestination(
+      input,
+      destinationStart + 1,
+      destinationEnd,
+      linkIndex,
+      parenthesisPairs,
+    );
+    if (href !== null) {
+      links.set(labelStart, {
+        end: destinationEnd + 1,
+        href,
+        label: input.slice(labelStart + 1, index),
+      });
+      index = destinationEnd + 1;
+      continue;
+    }
+    index += 1;
   }
-  if (labelEnd < 0) return null;
-  const token = Lexer.lexInline(input.slice(start))[0];
-  if (token?.type !== 'link' || !token.href || !token.raw.startsWith('[')) return null;
+  return links;
+}
+
+function scanParenthesisPairs(
+  input: string,
+  escaped: Uint8Array,
+  codeSpans: ReadonlyMap<number, MarkdownCodeSpan>,
+  linkIndex: MarkdownLinkIndex,
+): Map<number, number> {
+  const pairs = new Map<number, number>();
+  const stack: Array<{ linkDestination: boolean; start: number }> = [];
+  for (let index = 0; index < input.length;) {
+    const codeSpan = codeSpans.get(index);
+    if (codeSpan) {
+      index = codeSpan.end;
+      continue;
+    }
+    if (escaped[index] !== 0) {
+      index += 1;
+      continue;
+    }
+    const char = input[index] ?? '';
+    const top = stack[stack.length - 1];
+    if (
+      top?.linkDestination
+      && (char === '"' || char === "'")
+      && /\s/u.test(input[index - 1] ?? '')
+    ) {
+      const quoteEnd = linkIndex.quotePairs.get(index);
+      if (
+        quoteEnd !== undefined
+        && input[linkIndex.nextNonWhitespace[quoteEnd + 1]] === ')'
+      ) {
+        index = quoteEnd + 1;
+        continue;
+      }
+    }
+    if (char === '(') {
+      stack.push({
+        start: index,
+        linkDestination: input[index - 1] === ']' && escaped[index - 1] === 0,
+      });
+    } else if (char === ')') {
+      const opening = stack.pop();
+      if (opening) pairs.set(opening.start, index);
+    }
+    index += 1;
+  }
+  return pairs;
+}
+
+function buildMarkdownLinkIndex(
+  input: string,
+  escaped: Uint8Array,
+  codeSpans: ReadonlyMap<number, MarkdownCodeSpan>,
+): MarkdownLinkIndex {
+  const length = input.length;
+  const angleInvalidPrefix = new Uint32Array(length + 1);
+  const lineBreakPrefix = new Uint32Array(length + 1);
+  const nextNonWhitespace = new Int32Array(length + 1);
+  const nextUnescapedGreaterThan = new Int32Array(length + 1);
+  const nextUnescapedWhitespace = new Int32Array(length + 1);
+  const previousNonWhitespace = new Int32Array(length + 1);
+  nextNonWhitespace.fill(length);
+  nextUnescapedGreaterThan.fill(length);
+  nextUnescapedWhitespace.fill(length);
+  previousNonWhitespace.fill(-1);
+
+  let previous = -1;
+  for (let index = 0; index < length; index += 1) {
+    const char = input[index] ?? '';
+    const whitespace = /\s/u.test(char);
+    angleInvalidPrefix[index + 1] = (angleInvalidPrefix[index] ?? 0)
+      + (whitespace || char === '<' || char === '>' ? 1 : 0);
+    lineBreakPrefix[index + 1] = (lineBreakPrefix[index] ?? 0)
+      + (char === '\n' || char === '\r' ? 1 : 0);
+    if (!whitespace) previous = index;
+    previousNonWhitespace[index] = previous;
+  }
+  previousNonWhitespace[length] = previous;
+
+  let nextNonWhitespaceOffset = length;
+  let nextUnescapedGreaterThanOffset = length;
+  let nextUnescapedWhitespaceOffset = length;
+  for (let index = length - 1; index >= 0; index -= 1) {
+    const char = input[index] ?? '';
+    const whitespace = /\s/u.test(char);
+    if (!whitespace) nextNonWhitespaceOffset = index;
+    if (escaped[index] === 0 && char === '>') nextUnescapedGreaterThanOffset = index;
+    if (escaped[index] === 0 && whitespace) nextUnescapedWhitespaceOffset = index;
+    nextNonWhitespace[index] = nextNonWhitespaceOffset;
+    nextUnescapedGreaterThan[index] = nextUnescapedGreaterThanOffset;
+    nextUnescapedWhitespace[index] = nextUnescapedWhitespaceOffset;
+  }
+
   return {
-    end: start + token.raw.length,
-    href: token.href,
-    label: input.slice(start + 1, labelEnd),
+    angleInvalidPrefix,
+    lineBreakPrefix,
+    nextNonWhitespace,
+    nextUnescapedGreaterThan,
+    nextUnescapedWhitespace,
+    previousNonWhitespace,
+    quotePairs: scanQuotePairs(input, escaped, codeSpans),
   };
 }
 
-function isEscapedAt(text: string, index: number): boolean {
-  let slashes = 0;
-  for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) slashes += 1;
-  return slashes % 2 === 1;
+function scanQuotePairs(
+  input: string,
+  escaped: Uint8Array,
+  codeSpans: ReadonlyMap<number, MarkdownCodeSpan>,
+): Map<number, number> {
+  const pairs = new Map<number, number>();
+  const previousByQuote = new Map<'"' | "'", number>();
+  for (let index = 0; index < input.length;) {
+    const codeSpan = codeSpans.get(index);
+    if (codeSpan) {
+      index = codeSpan.end;
+      continue;
+    }
+    const char = input[index] ?? '';
+    if (char === '\n') {
+      previousByQuote.clear();
+      index += 1;
+      continue;
+    }
+    if ((char !== '"' && char !== "'") || escaped[index] !== 0) {
+      index += 1;
+      continue;
+    }
+    const previous = previousByQuote.get(char);
+    if (previous !== undefined) pairs.set(previous, index);
+    previousByQuote.set(char, index);
+    index += 1;
+  }
+  return pairs;
+}
+
+function parseMarkdownLinkDestination(
+  input: string,
+  start: number,
+  end: number,
+  linkIndex: MarkdownLinkIndex,
+  parenthesisPairs: ReadonlyMap<number, number>,
+): string | null {
+  if (
+    start >= end
+    || (linkIndex.lineBreakPrefix[end] ?? 0) !== (linkIndex.lineBreakPrefix[start] ?? 0)
+  ) return null;
+  const valueStart = linkIndex.nextNonWhitespace[start] ?? input.length;
+  const lastValueOffset = linkIndex.previousNonWhitespace[end - 1] ?? -1;
+  if (valueStart >= end || lastValueOffset < valueStart) return null;
+  const valueEnd = lastValueOffset + 1;
+
+  let destinationStart = valueStart;
+  let destinationEnd: number;
+  let remainderStart: number;
+  if (input[valueStart] === '<') {
+    destinationStart += 1;
+    destinationEnd = linkIndex.nextUnescapedGreaterThan[destinationStart] ?? input.length;
+    if (
+      destinationEnd >= valueEnd
+      || destinationEnd === destinationStart
+      || (linkIndex.angleInvalidPrefix[destinationEnd] ?? 0)
+        !== (linkIndex.angleInvalidPrefix[destinationStart] ?? 0)
+    ) return null;
+    const nextValue = linkIndex.nextNonWhitespace[destinationEnd + 1] ?? input.length;
+    remainderStart = nextValue < valueEnd ? nextValue : valueEnd;
+  } else {
+    const whitespace = linkIndex.nextUnescapedWhitespace[valueStart] ?? input.length;
+    destinationEnd = Math.min(whitespace, valueEnd);
+    if (destinationEnd === destinationStart) return null;
+    const nextValue = linkIndex.nextNonWhitespace[whitespace] ?? input.length;
+    remainderStart = whitespace < valueEnd && nextValue < valueEnd ? nextValue : valueEnd;
+  }
+
+  if (remainderStart < valueEnd) {
+    const quote = input[remainderStart] ?? '';
+    const validTitle = quote === '('
+      ? parenthesisPairs.get(remainderStart) === valueEnd - 1
+      : (quote === '"' || quote === "'")
+        && linkIndex.quotePairs.get(remainderStart) === valueEnd - 1;
+    if (!validTitle) return null;
+  }
+  return decodeMarkdownLinkDestination(input.slice(destinationStart, destinationEnd));
+}
+
+function decodeMarkdownLinkDestination(value: string): string {
+  return value.replace(/\\([\\()])/gu, '$1');
 }
 
 function compareMarkdownMarks(left: TextMark, right: TextMark): number {

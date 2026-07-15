@@ -1267,6 +1267,10 @@ Rules:
 - Markdown link labels use the same canonical semantic escapes as ordinary
   text. Parsing decodes escaped punctuation such as `\#`, `\*`, and `\\` back
   to its visible label without leaking serializer backslashes into node text.
+- Inline code pairs opening and closing backtick runs only when their lengths
+  match on the same line. Backslashes inside code remain literal; empty or
+  unclosed spans remain literal source. Serialization chooses a delimiter longer
+  than every backtick run in the marked text.
 - Overlapping Markdown marks remain overlapping rich-text marks. Canonical
   serialization orders equal and nested ranges as properly nested delimiters.
   At crossing boundaries it selects a legal nesting order, closes ending marks,
@@ -1281,10 +1285,17 @@ Rules:
   This applies at any supported active-mark depth, including style, link,
   highlight, strike, and code combinations. The deterministic parse commits
   only when every style delimiter closes; malformed or incomplete input falls
-  back to the lenient Marked path and remains recoverable as literal text.
+  back to the lenient Marked path and remains recoverable as literal text. Its
+  dynamic-programming state is keyed by the active delimiter stack, retains the
+  lowest reopen cost for each equivalent state, and has a fixed state ceiling,
+  so repeated ambiguous star runs cannot grow parser work exponentially.
 - Complete Markdown links, inline code, reference markers, bare URLs, and
   backslash-escaped tokens are protected from tag and field harvesting. A
-  grammar-shaped token in one of those ranges remains literal.
+  grammar-shaped token in one of those ranges remains literal. Link/code range
+  discovery uses forward indexes rather than rescanning every opening token, and
+  bare-URL trailing delimiters are balanced in one pass. Removing metadata or a
+  materialized reference marker re-merges adjacent marks with the same type and
+  attributes.
 - `- title - description` sets a node description. The first ` - ` separates
   title from description; later ` - ` text stays in the description.
 - Ordinary notes, task details, meeting notes, and explanatory body text should
