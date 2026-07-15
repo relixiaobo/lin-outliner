@@ -54,11 +54,11 @@ notifications, raw clipboard reads, and every unknown permission.
 
 The existing explicit **Open in browser** menu remains an escape hatch. Website
 GET popup/new-window requests no longer open the system browser implicitly:
-main validates the target and navigates the requesting Preview guest in place
-while still returning `deny` from `setWindowOpenHandler`. Unsupported schemes,
-POST popups, and malformed targets stay blocked. This keeps A3's child-window
-denial and one visible web surface; popup flows that require an opener are not a
-claimed capability.
+the webview forwards the request to main, which validates the target and
+navigates the requesting Preview guest in place while still returning `deny`
+from `setWindowOpenHandler`. Unsupported schemes, POST popups, and malformed
+targets stay blocked. This keeps A3's child-window denial and one visible web
+surface; popup flows that require an opener are not a claimed capability.
 
 ### Clear Website Data
 
@@ -85,6 +85,7 @@ implemented by this PR.
 
 ## Files And Ownership
 
+- Shared contract: `src/core/urlPreviewSession.ts`.
 - Session/runtime: `src/main/urlPreviewSession.ts`, `src/main/main.ts`.
 - Bridge and UI: `src/preload/index.ts`, `src/renderer/ui/agent/AgentSettingsView.tsx`,
   URL Preview renderer code, Settings styles, and English/Chinese messages.
@@ -96,8 +97,8 @@ implemented by this PR.
   `docs/plans/browser-extension-integration.md` where their external-browser
   assumptions conflict with the ratified product boundary.
 
-No infrastructure-ownership or core protocol file is required. The main agent
-will add the board and changelog entries at merge.
+No infrastructure-ownership file or document command protocol is changed. The
+main agent will add the board and changelog entries at merge.
 
 ## Risks
 

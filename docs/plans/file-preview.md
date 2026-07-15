@@ -42,10 +42,11 @@ follow-up.
 - **Replacing inline block rendering**: `ImageRow` and `AttachmentRow` keep
   rendering files inside the outline. This plan is the destination opened from
   those rows.
-- **An agent-control browser**: ordinary remote URLs open in a hardened preview
-  webview only. Browser automation, capture/control sessions, cookies, uploads,
-  network interception, and logged-in browser state belong to the browser-control
-  plan.
+- **Agent control of the webview**: ordinary remote URLs open in the same hardened
+  Preview surface and now share its persistent website session. Browser
+  automation, uploads, capture, DOM observation, and network interception remain
+  separately gated by the browser-control plan; they must reuse Preview rather
+  than create a second browser UI or external profile.
 - **Embeds**: YouTube/Twitter iframes and other live embed cards are separate
   (`embed-strategy.md`). Reader-mode article extraction is not an embed.
 - **High-fidelity Office rendering**: docx/xlsx/pptx are best-effort
@@ -297,6 +298,10 @@ paths:
 - Shipped loose URL previews normalize `https?://` targets and render them in a
   sandboxed preview webview. "Open original" uses `shell.openExternal` after URL
   validation.
+- URL Preview owns one persistent Tenon profile shared across panes and launches.
+  Users sign in directly in Preview; Chrome/Chromium profile, cookie, password,
+  history, extension, and tab import are not supported. Settings owns the one
+  clear-all website-data action.
 - Optional static reader extraction, if later desired, would add main fetch /
   defuddle / DOMPurify / remote-image policy work as its own complete PR.
 
@@ -337,7 +342,8 @@ paths:
 - `launcher-provider-expansion`: captures need preview/open-original for
   `OriginalResourceRef`. This plan should be the shared destination.
 - `browser-extension-integration` / `agent-browser-control`: remote rich capture
-  and browser automation are separate from the passive URL preview webview.
+  and browser automation are separate capabilities over the same visible URL
+  Preview webview and persistent session.
 - `embed-strategy`: live embeds stay separate from URL preview.
 
 ## Open Questions
