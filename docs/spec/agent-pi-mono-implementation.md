@@ -463,12 +463,17 @@ change does not strip per-message model metadata.
 
 ### Non-conversation utility completion
 
-Main-process product utilities may use the configured language model without
+Main-process product utilities may use a configured language model without
 fabricating a hidden conversation or Agent Run. URL-preview translation is the
-first such consumer. It resolves Neva's explicit model over the active provider
-connection through the same `agentModelResolution.ts` helpers as AgentRuntime,
-then calls `piCompleteSimple` with no tools and the model's lowest supported
-reasoning level (`off` is represented by omitting the reasoning option).
+first such consumer. Its default `Follow Agent` mode resolves Neva's current
+model over the active provider connection at request time through the same
+`agentModelResolution.ts` helpers as AgentRuntime. A remembered explicit
+provider-qualified translation model instead resolves strictly against that
+provider's current enabled and authenticated runtime configuration; an
+unavailable choice returns a recoverable configuration error and never silently
+falls back to Neva. The utility then calls `piCompleteSimple` with no tools and
+the resolved model's lowest supported reasoning level (`off` is represented by
+omitting the reasoning option).
 
 This path is deliberately non-durable: it emits no Agent event, transcript,
 memory, debug Run, or runtime retry row. Each request has an ephemeral session id,

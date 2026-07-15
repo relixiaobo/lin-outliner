@@ -149,6 +149,208 @@ describe('UrlPageTranslationController', () => {
     controller.destroy();
   });
 
+  test('automatically translates a page with a valid differing top-level language', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
+    ], 'en-US');
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      autoTranslate: true,
+      targetLanguage: 'zh-Hans',
+      guest,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => ({
+        ok: true,
+        requestId: request.requestId,
+        translations: [{ id: 'b1', translation: '你好' }],
+      }),
+    });
+
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => guest.applied.length === 1);
+
+    expect(guest.documentLanguageCalls).toBe(1);
+    expect(controller.currentStatus).toBe('on');
+    controller.destroy();
+  });
+
+  test('turns an auto-activated page off when the target changes to its declared language', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
+    ], 'en-US');
+    let requests = 0;
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      autoTranslate: true,
+      targetLanguage: 'zh-Hans',
+      guest,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests += 1;
+        return {
+          ok: true,
+          requestId: request.requestId,
+          translations: [{ id: 'b1', translation: '你好' }],
+        };
+      },
+    });
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => controller.currentStatus === 'on');
+
+    controller.setTargetLanguage('en');
+    await waitFor(() => guest.documentLanguageCalls >= 2);
+
+    expect(controller.currentStatus).toBe('off');
+    expect(controller.hasCompletedTranslations).toBe(false);
+    expect(requests).toBe(1);
+    controller.destroy();
+  });
+
+  test('keeps same-language, missing-language, and invalid-language pages manual', async () => {
+    for (const declaredLanguage of ['zh-CN', null, 'not_a_language']) {
+      const guest = new FakeGuest([
+        { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
+      ], declaredLanguage);
+      const controller = new UrlPageTranslationController(fakeWebview(), {
+        autoTranslate: true,
+        targetLanguage: 'zh-Hans',
+        guest,
+        onError: () => undefined,
+        onStatusChange: () => undefined,
+        cancel: async () => undefined,
+      });
+
+      dispatch(controller, 'dom-ready');
+      await waitFor(() => guest.documentLanguageCalls === 1);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(controller.currentStatus).toBe('off');
+      expect(guest.nextBatchCalls).toEqual([]);
+      controller.destroy();
+    }
+  });
+
+  test('checks the current page when auto translation is enabled and does not hide it when disabled', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
+    ], 'en');
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => ({
+        ok: true,
+        requestId: request.requestId,
+        translations: [{ id: 'b1', translation: '你好' }],
+      }),
+    });
+    dispatch(controller, 'dom-ready');
+    expect(controller.currentStatus).toBe('off');
+
+    controller.setAutoTranslate(true);
+    await waitFor(() => controller.currentStatus === 'on');
+    controller.setAutoTranslate(false);
+
+    expect(controller.currentStatus).toBe('on');
+    expect(guest.enabledCalls.at(-1)).toEqual([true, 'zh-Hans']);
+    controller.destroy();
+  });
+
+  test('suppresses auto translation after manual hide until the next top-level navigation', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'First page' }], priority: 0 },
+    ], 'en');
+    let requests = 0;
+    const webview = fakeWebview();
+    const controller = new UrlPageTranslationController(webview, {
+      autoTranslate: true,
+      targetLanguage: 'zh-Hans',
+      guest,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests += 1;
+        return {
+          ok: true,
+          requestId: request.requestId,
+          translations: [{ id: request.blocks[0]!.id, translation: '译文' }],
+        };
+      },
+    });
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => requests === 1);
+    controller.disable();
+
+    dispatch(controller, 'dom-ready');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(requests).toBe(1);
+
+    guest.queueBatch({ blocks: [{ id: 'b2', text: 'Second page' }], priority: 0 });
+    const navigation = new window.Event('did-start-navigation');
+    Object.defineProperties(navigation, {
+      isInPlace: { value: false },
+      isMainFrame: { value: true },
+    });
+    webview.dispatchEvent(navigation);
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => requests === 2);
+
+    expect(controller.currentStatus).toBe('on');
+    controller.destroy();
+  });
+
+  test('cancels, clears, and restarts the visible work when the translation model changes', async () => {
+    const guest = new FakeGuest([
+      { blocks: [{ id: 'b1', text: 'First' }], priority: 0 },
+      { blocks: [{ id: 'b2', text: 'Second' }], priority: 0 },
+    ]);
+    const models: Array<string | undefined> = [];
+    const sessions: string[] = [];
+    const cancelled: string[] = [];
+    let resolveFirst: ((response: UrlPageTranslationResponse) => void) | null = null;
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async (sessionId) => {
+        cancelled.push(sessionId);
+      },
+      translate: async (request) => {
+        models.push(request.model);
+        sessions.push(request.sessionId);
+        if (models.length === 1) {
+          return await new Promise<UrlPageTranslationResponse>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return {
+          ok: true,
+          requestId: request.requestId,
+          translations: [{ id: 'b2', translation: '第二' }],
+        };
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => models.length === 1);
+    controller.setTranslationModel('openai/gpt-4.1-mini');
+    await waitFor(() => models.length === 2);
+
+    expect(models).toEqual([undefined, 'openai/gpt-4.1-mini']);
+    expect(sessions[1]).not.toBe(sessions[0]);
+    expect(cancelled).toEqual([sessions[0]!]);
+    expect(guest.destroyed).toBeGreaterThan(0);
+    resolveFirst?.({ ok: false, requestId: 'obsolete', error: 'cancelled' });
+    controller.destroy();
+  });
+
   test('keeps a failed block retryable until the user explicitly retries it', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },
@@ -377,6 +579,9 @@ describe('UrlPageTranslationController', () => {
     let destroyCount = 0;
     let releaseFirstDestroy: (() => void) | null = null;
     const guest: UrlPageTranslationGuestBridge = {
+      async documentLanguage() {
+        return 'en';
+      },
       async initialize(targetLanguage) {
         operations.push(`initialize:${targetLanguage}`);
       },
@@ -428,15 +633,24 @@ describe('UrlPageTranslationController', () => {
 
 class FakeGuest implements UrlPageTranslationGuestBridge {
   applied: Array<Array<{ id: string; translation: string }>> = [];
+  documentLanguageCalls = 0;
   destroyed = 0;
   enabledCalls: Array<[boolean, TranslationLanguage]> = [];
   failed: string[][] = [];
   nextBatchCalls: boolean[] = [];
 
-  constructor(private readonly batches: UrlPageTranslationGuestBatch[]) {}
+  constructor(
+    private readonly batches: UrlPageTranslationGuestBatch[],
+    public declaredLanguage: string | null = 'en',
+  ) {}
 
   queueBatch(batch: UrlPageTranslationGuestBatch): void {
     this.batches.push(batch);
+  }
+
+  async documentLanguage(): Promise<string | null> {
+    this.documentLanguageCalls += 1;
+    return this.declaredLanguage;
   }
 
   async initialize(): Promise<void> {}

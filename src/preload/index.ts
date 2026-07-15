@@ -50,7 +50,12 @@ import {
   type DiagnosticsActionResult,
   type ErrorReport,
 } from '../core/errorObservability';
-import { LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL } from '../core/urlPageTranslation';
+import {
+  isUrlPageTranslationPreferences,
+  LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL,
+  LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
+  type UrlPageTranslationPreferences,
+} from '../core/urlPageTranslation';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -222,6 +227,16 @@ function readInitialTranslationLanguage(): TranslationLanguage {
   }
 }
 
+function readInitialUrlPageTranslationPreferences(): UrlPageTranslationPreferences {
+  try {
+    const value = ipcRenderer.sendSync('lin:get-url-page-translation-preferences-sync');
+    if (isUrlPageTranslationPreferences(value)) return value;
+  } catch {
+    // Fall through to the opt-in defaults.
+  }
+  return { translationModel: null, autoTranslateUrls: false };
+}
+
 const api = {
   // Which OS window material the main process applied, so the renderer can make
   // its chrome surfaces translucent only when there's a material behind them.
@@ -308,6 +323,18 @@ const api = {
     ipcRenderer.on(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, handler);
+    };
+  },
+  initialUrlPageTranslationPreferences: readInitialUrlPageTranslationPreferences(),
+  setUrlPageTranslationPreferences: (preferences: UrlPageTranslationPreferences) =>
+    ipcRenderer.invoke('lin:set-url-page-translation-preferences', preferences) as Promise<UrlPageTranslationPreferences>,
+  onUrlPageTranslationPreferencesChanged: (listener: (preferences: UrlPageTranslationPreferences) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, preferences: unknown) => {
+      if (isUrlPageTranslationPreferences(preferences)) listener(preferences);
+    };
+    ipcRenderer.on(LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL, handler);
     };
   },
   onUrlPageTranslationShortcut: (listener: (webContentsId: number) => void) => {

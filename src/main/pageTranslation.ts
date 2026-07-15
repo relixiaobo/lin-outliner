@@ -1,4 +1,5 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
+import { parseProviderQualifiedModel } from '../core/agentModelId';
 import {
   URL_PAGE_TRANSLATE_COMMAND,
   URL_PAGE_TRANSLATION_CANCEL_COMMAND,
@@ -8,6 +9,7 @@ import {
   URL_PAGE_TRANSLATION_MAX_BLOCKS,
   URL_PAGE_TRANSLATION_MAX_OUTPUT_CHARS,
   URL_PAGE_TRANSLATION_MAX_TRANSLATION_CHARS,
+  isUrlPageTranslationModel,
   type UrlPageTranslationBlock,
   type UrlPageTranslationCancelRequest,
   type UrlPageTranslationCancelResponse,
@@ -30,9 +32,15 @@ import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
   getBuiltInAgentProfile,
+  getProviderRuntimeConfig,
   providerStreamOptionsFromRuntimeSettings,
 } from './agentSettings';
-import { lowestThinkingLevel, resolveAgentModel, resolveProviderModel } from './agentModelResolution';
+import {
+  lowestThinkingLevel,
+  resolveAgentModel,
+  resolveAgentModelOverride,
+  resolveProviderModel,
+} from './agentModelResolution';
 import { customOpenAIResponsesPayloadProfileOption } from './openAIResponsesCompat';
 import { piCompleteSimple, piExternalProviderId } from './piModels';
 
@@ -45,6 +53,7 @@ interface PageTranslationCompletionInput {
   sessionId: string;
   signal: AbortSignal;
   maxTokens: number;
+  model?: string;
 }
 
 type PageTranslationComplete = (input: PageTranslationCompletionInput) => Promise<string>;
@@ -126,6 +135,7 @@ export class PageTranslationService {
         sessionId: request.sessionId,
         signal: controller.signal,
         maxTokens: PAGE_TRANSLATION_MAX_TOKENS,
+        ...(request.model ? { model: request.model } : {}),
       });
       throwIfAborted(controller.signal);
       return {
@@ -216,25 +226,11 @@ async function completePageTranslationWithConfiguredModel(
   input: PageTranslationCompletionInput,
 ): Promise<string> {
   throwIfAborted(input.signal);
-  const providerConfig = await getActiveProviderRuntimeConfig();
+  const resolved = input.model
+    ? await resolveExplicitTranslationModel(input.model)
+    : await resolveFollowAgentTranslationModel();
   throwIfAborted(input.signal);
-  if (!providerConfig) {
-    throw new PageTranslationConfigurationError('No enabled agent provider is configured.');
-  }
-
-  const definition = createTenonAssistantAgentDefinition();
-  const agentId = agentDefinitionAgentId(definition);
-  const profile = await getBuiltInAgentProfile(agentId);
-  let model: Model<Api>;
-  try {
-    model = resolveAgentModel(
-      profile.model ?? definition.model,
-      providerConfig,
-      () => tryResolveProviderModel(providerConfig),
-    );
-  } catch (error) {
-    throw new PageTranslationConfigurationError(error instanceof Error ? error.message : String(error));
-  }
+  const { model, providerConfig } = resolved;
 
   const runtimeSettings = await getAgentRuntimeSettings();
   const reasoning = lowestThinkingLevel(model);
@@ -264,6 +260,52 @@ async function completePageTranslationWithConfiguredModel(
   return text;
 }
 
+async function resolveFollowAgentTranslationModel(): Promise<{
+  model: Model<Api>;
+  providerConfig: NonNullable<Awaited<ReturnType<typeof getActiveProviderRuntimeConfig>>>;
+}> {
+  const providerConfig = await getActiveProviderRuntimeConfig();
+  if (!providerConfig) {
+    throw new PageTranslationConfigurationError('No enabled agent provider is configured.');
+  }
+  const definition = createTenonAssistantAgentDefinition();
+  const agentId = agentDefinitionAgentId(definition);
+  const profile = await getBuiltInAgentProfile(agentId);
+  try {
+    return {
+      model: resolveAgentModel(
+        profile.model ?? definition.model,
+        providerConfig,
+        () => tryResolveProviderModel(providerConfig),
+      ),
+      providerConfig,
+    };
+  } catch (error) {
+    throw configurationError(error);
+  }
+}
+
+async function resolveExplicitTranslationModel(qualifiedModel: string): Promise<{
+  model: Model<Api>;
+  providerConfig: NonNullable<Awaited<ReturnType<typeof getProviderRuntimeConfig>>>;
+}> {
+  const selection = parseProviderQualifiedModel(qualifiedModel, () => false);
+  if (!selection) throw new PageTranslationConfigurationError('Translation model must include its provider.');
+  const providerConfig = await getProviderRuntimeConfig(selection.providerId, selection.modelId);
+  if (!providerConfig) {
+    throw new PageTranslationConfigurationError(`Translation model is unavailable: ${qualifiedModel}`);
+  }
+  try {
+    const model = resolveAgentModelOverride(selection.modelId, providerConfig);
+    if (!model) {
+      throw new Error(`Translation model is unavailable: ${qualifiedModel}`);
+    }
+    return { model, providerConfig };
+  } catch (error) {
+    throw configurationError(error);
+  }
+}
+
 function validateTranslationRequest(args: Record<string, unknown>): UrlPageTranslationRequest {
   const sessionId = validateId(args.sessionId, 'sessionId');
   const requestId = validateId(args.requestId, 'requestId');
@@ -289,7 +331,14 @@ function validateTranslationRequest(args: Record<string, unknown>): UrlPageTrans
   if (totalChars > URL_PAGE_TRANSLATION_MAX_BATCH_CHARS) {
     throw new Error('Page translation batch is too large.');
   }
-  return { sessionId, requestId, targetLanguage: args.targetLanguage, blocks };
+  const model = validateOptionalModel(args.model);
+  return {
+    sessionId,
+    requestId,
+    targetLanguage: args.targetLanguage,
+    ...(model ? { model } : {}),
+    blocks,
+  };
 }
 
 function validateCancelRequest(args: Record<string, unknown>): UrlPageTranslationCancelRequest {
@@ -309,6 +358,19 @@ function tryResolveProviderModel(providerConfig: Parameters<typeof resolveProvid
   } catch {
     return null;
   }
+}
+
+function validateOptionalModel(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isUrlPageTranslationModel(value)) {
+    throw new Error('Invalid page translation model; it must include its provider.');
+  }
+  return value;
+}
+
+function configurationError(error: unknown): PageTranslationConfigurationError {
+  if (error instanceof PageTranslationConfigurationError) return error;
+  return new PageTranslationConfigurationError(error instanceof Error ? error.message : String(error));
 }
 
 function unwrapJsonFence(raw: string): string {

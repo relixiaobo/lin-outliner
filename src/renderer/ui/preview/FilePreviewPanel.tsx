@@ -10,10 +10,11 @@ import {
   type SetStateAction,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import type { PreviewTarget } from '../../../core/preview';
 import { TRANSLATION_LANGUAGES, type TranslationLanguage } from '../../../core/translationLanguage';
 import { api } from '../../api/client';
-import type { NodeId } from '../../api/types';
+import type { AgentProviderSettingsView, NodeId } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import { type DocumentIndex, type UiState } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
@@ -22,6 +23,7 @@ import {
   AddChildIcon,
   CheckIcon,
   FolderIcon,
+  HideIcon,
   ICON_SIZE,
   LanguagesIcon,
   LibraryIcon,
@@ -37,6 +39,8 @@ import { IconButton } from '../primitives/IconButton';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { SelectControl } from '../primitives/SelectControl';
+import { SwitchControl } from '../primitives/SwitchControl';
+import { SwitchMark } from '../primitives/SwitchMark';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import { useMenuKeyboard, type MenuInitialFocus } from '../primitives/useMenuKeyboard';
@@ -65,7 +69,9 @@ import {
 } from './previewRenderers';
 import { useUrlPageTranslation } from './useUrlPageTranslation';
 import { useTranslationLanguagePreference } from './translationLanguagePreference';
+import { useUrlPageTranslationPreferences } from './urlPageTranslationPreferences';
 import type { UrlPageTranslationStatus } from './urlPageTranslationController';
+import { isProviderUsable } from '../agent/providerUsability';
 
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
 
@@ -118,6 +124,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const nodeTarget = boundFileNode ? fileNodeTarget(boundFileNode) : null;
   const looseUrlPreview = !readerMode && !boundFileNode && props.target.kind === 'url';
   const translationLanguage = useTranslationLanguagePreference();
+  const translationPreferences = useUrlPageTranslationPreferences();
   const [translationPopoverOpen, setTranslationPopoverOpen] = useState(false);
   const translationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const translationDismissRefs = useMemo(() => [translationTriggerRef], []);
@@ -128,11 +135,13 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   }, [previewLabels.translationFailed, previewLabels.translationNotConfigured, props.onError]);
   const urlTranslation = useUrlPageTranslation({
     active: looseUrlPreview,
+    autoTranslate: translationPreferences.autoTranslateUrls,
     labels: {
       retry: previewLabels.retryBlockTranslation,
       translating: previewLabels.translatingBlock,
     },
     shortcutActive: props.activePanel,
+    model: translationPreferences.translationModel,
     targetLanguage: translationLanguage.language,
     onError: handleTranslationError,
   });
@@ -492,10 +501,14 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
             {translationPopoverOpen ? (
               <UrlTranslationPopover
                 anchorRef={translationTriggerRef}
+                autoTranslate={translationPreferences.autoTranslateUrls}
                 dismissIgnoreRefs={translationDismissRefs}
                 language={translationLanguage.language}
+                model={translationPreferences.translationModel}
+                onAutoTranslateChange={translationPreferences.setAutoTranslateUrls}
                 onClose={() => setTranslationPopoverOpen(false)}
                 onLanguageChange={translationLanguage.setLanguage}
+                onModelChange={translationPreferences.setTranslationModel}
                 onToggle={() => {
                   urlTranslation.toggle();
                   setTranslationPopoverOpen(false);
@@ -629,22 +642,32 @@ function collapsePathSegments(path: string): LooseBreadcrumbSegment[] {
 
 function UrlTranslationPopover({
   anchorRef,
+  autoTranslate,
   dismissIgnoreRefs,
   language,
+  model,
+  onAutoTranslateChange,
   onClose,
   onLanguageChange,
+  onModelChange,
   onToggle,
   status,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
+  autoTranslate: boolean;
   dismissIgnoreRefs: Array<RefObject<HTMLElement | null>>;
   language: TranslationLanguage;
+  model: string | null;
+  onAutoTranslateChange: (enabled: boolean) => void;
   onClose: () => void;
   onLanguageChange: (language: TranslationLanguage) => void;
+  onModelChange: (model: string | null) => void;
   onToggle: () => void;
   status: UrlPageTranslationStatus;
 }) {
   const labels = useT().shell.filePreview;
+  const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
   const style = useAnchoredOverlay(popoverRef, {
     anchorRef,
@@ -661,6 +684,25 @@ function UrlTranslationPopover({
     initialFocus: 'auto',
   });
   const enabled = status !== 'off';
+  const modelGroups = translationModelGroups(providerSettings);
+  const modelAvailable = model === null || modelGroups.some((group) => (
+    group.models.some((entry) => entry.value === model)
+  ));
+
+  useEffect(() => {
+    let active = true;
+    void api.agentGetProviderSettings()
+      .then((settings) => {
+        if (active) setProviderSettings(settings);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setModelsLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return createPortal(
     <MenuSurface
@@ -672,7 +714,7 @@ function UrlTranslationPopover({
       role="dialog"
       style={style}
     >
-      <label className="file-preview-translation-language-row">
+      <label className="file-preview-translation-option-row">
         <span>{labels.targetLanguage}</span>
         <SelectControl
           label={labels.targetLanguage}
@@ -685,13 +727,95 @@ function UrlTranslationPopover({
           ))}
         </SelectControl>
       </label>
-      <ButtonControl className="file-preview-translation-command" onClick={onToggle}>
-        <span>{enabled ? labels.showOriginal : labels.translatePage}</span>
+      <label className="file-preview-translation-option-row">
+        <span>{labels.translationModel}</span>
+        <SelectControl
+          label={labels.translationModel}
+          onChange={(event) => onModelChange(event.target.value || null)}
+          value={model ?? ''}
+          variant="popup"
+        >
+          <option value="">{labels.followAgentModel}</option>
+          {model && !modelsLoaded ? (
+            <option value={model}>{translationModelName(model)}</option>
+          ) : null}
+          {model && modelsLoaded && !modelAvailable ? (
+            <option disabled value={model}>
+              {labels.translationModelUnavailable({ model: translationModelName(model) })}
+            </option>
+          ) : null}
+          {!modelsLoaded ? <option disabled>{labels.translationModelsLoading}</option> : null}
+          {modelGroups.map((group) => (
+            <optgroup key={group.providerId} label={translationProviderName(group.providerId)}>
+              {group.models.map((entry) => (
+                <option key={entry.value} value={entry.value}>{entry.label}</option>
+              ))}
+            </optgroup>
+          ))}
+        </SelectControl>
+      </label>
+      <SwitchControl
+        checked={autoTranslate}
+        className="file-preview-translation-auto-switch"
+        label={labels.autoTranslateWebpages}
+        onCheckedChange={onAutoTranslateChange}
+      >
+        <span>{labels.autoTranslateWebpages}</span>
+        <SwitchMark checked={autoTranslate} />
+      </SwitchControl>
+      <ButtonControl aria-pressed={enabled} className="file-preview-translation-command" onClick={onToggle}>
+        <span className="file-preview-translation-command-label">
+          {enabled ? <HideIcon size={ICON_SIZE.menu} /> : <LanguagesIcon size={ICON_SIZE.menu} />}
+          <span>{enabled ? labels.showOriginal : labels.translatePage}</span>
+        </span>
         <kbd>{translationShortcutLabel()}</kbd>
       </ButtonControl>
     </MenuSurface>,
     document.body,
   );
+}
+
+interface TranslationModelGroup {
+  providerId: string;
+  models: Array<{ label: string; value: string }>;
+}
+
+function translationModelGroups(settings: AgentProviderSettingsView | null): TranslationModelGroup[] {
+  if (!settings) return [];
+  const providers = [...settings.providers].sort((left, right) => {
+    if (left.providerId === settings.activeProviderId) return -1;
+    if (right.providerId === settings.activeProviderId) return 1;
+    return left.providerId.localeCompare(right.providerId);
+  });
+  return providers.flatMap((provider) => {
+    if (!isProviderUsable(settings, provider)) return [];
+    const models = settings.availableProviders
+      .find((entry) => entry.providerId === provider.providerId)
+      ?.models.map((model) => ({
+        label: model.name,
+        value: composeProviderQualifiedModel(provider.providerId, model.id),
+      })) ?? [];
+    return models.length > 0 ? [{ providerId: provider.providerId, models }] : [];
+  });
+}
+
+function translationModelName(model: string): string {
+  const separator = model.indexOf('/');
+  return separator >= 0 ? model.slice(separator + 1) : model;
+}
+
+function translationProviderName(providerId: string): string {
+  const tokens: Record<string, string> = {
+    ai: 'AI',
+    api: 'API',
+    github: 'GitHub',
+    openai: 'OpenAI',
+  };
+  return providerId
+    .split(/[-_]/u)
+    .filter(Boolean)
+    .map((part) => tokens[part] ?? `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
 }
 
 function translationShortcutLabel(): string {

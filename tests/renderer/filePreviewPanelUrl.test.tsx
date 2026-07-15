@@ -3,15 +3,18 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { NodeProjection } from '../../src/core/types';
+import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
 import type { PreviewResolveSourceResult } from '../../src/core/preview';
 import { TRANSLATION_LANGUAGES, type TranslationLanguage } from '../../src/core/translationLanguage';
 import type { DocumentIndex, UiState } from '../../src/renderer/state/document';
 import { FilePreviewPanel } from '../../src/renderer/ui/preview/FilePreviewPanel';
+import { resetUrlPageTranslationPreferencesForTests } from '../../src/renderer/ui/preview/urlPageTranslationPreferences';
 
 const mounted: Array<{ cleanup: () => void }> = [];
 
 afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
+  resetUrlPageTranslationPreferencesForTests();
 });
 
 describe('FilePreviewPanel URL preview chrome', () => {
@@ -70,7 +73,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
 
     await act(async () => {
       toggle.click();
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10));
     });
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
 
@@ -85,8 +88,45 @@ describe('FilePreviewPanel URL preview chrome', () => {
     });
     expect(rendered.savedLanguages).toEqual(['ja']);
 
+    const modelSelect = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Model"]');
+    expect(modelSelect?.textContent).toContain('Follow Agent');
+    expect(modelSelect?.textContent).toContain('GPT-4.1 mini');
+    expect(modelSelect?.querySelector('optgroup')?.getAttribute('label')).toBe('OpenAI');
+    if (!modelSelect) throw new Error('Missing translation-model select');
+    await act(async () => {
+      Object.defineProperty(modelSelect, 'value', { configurable: true, value: 'openai/gpt-4.1-mini' });
+      modelSelect.dispatchEvent(new rendered.window.Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      Object.defineProperty(modelSelect, 'value', { configurable: true, value: '' });
+      modelSelect.dispatchEvent(new rendered.window.Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(rendered.savedTranslationPreferences.at(-1)).toEqual({
+      translationModel: null,
+      autoTranslateUrls: false,
+    });
+    await act(async () => {
+      Object.defineProperty(modelSelect, 'value', { configurable: true, value: 'openai/gpt-4.1-mini' });
+      modelSelect.dispatchEvent(new rendered.window.Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const autoSwitch = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-auto-switch');
+    expect(autoSwitch?.getAttribute('aria-checked')).toBe('false');
+    await act(async () => {
+      autoSwitch?.click();
+      await Promise.resolve();
+    });
+    expect(rendered.savedTranslationPreferences.at(-1)).toEqual({
+      translationModel: 'openai/gpt-4.1-mini',
+      autoTranslateUrls: true,
+    });
+
     const command = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-command');
     expect(command?.textContent).toContain('Translate page');
+    expect(command?.querySelector('svg')).not.toBeNull();
     await act(async () => {
       command?.click();
       webview.dispatchEvent(new rendered.window.Event('dom-ready'));
@@ -113,6 +153,29 @@ describe('FilePreviewPanel URL preview chrome', () => {
     expect(toggle.querySelector('.file-preview-translation-check')).toBeNull();
   });
 
+  test('keeps an unavailable explicit model visible and requires another selection', async () => {
+    const rendered = renderUrlPanel({
+      initialTranslationPreferences: {
+        translationModel: 'anthropic/claude-retired',
+        autoTranslateUrls: false,
+      },
+    });
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
+    if (!toggle) throw new Error('Missing URL translation control');
+
+    await act(async () => {
+      toggle.click();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    const modelSelect = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Model"]');
+    const unavailable = [...(modelSelect?.querySelectorAll('option') ?? [])]
+      .find((option) => option.textContent?.includes('claude-retired'));
+    expect(unavailable?.hasAttribute('disabled')).toBe(true);
+    expect(unavailable?.textContent).toContain('unavailable');
+    expect(modelSelect?.textContent).toContain('Follow Agent');
+  });
+
   test('routes a webview shortcut only to the matching active URL panel', async () => {
     const rendered = renderUrlPanel();
     const toggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
@@ -131,31 +194,49 @@ describe('FilePreviewPanel URL preview chrome', () => {
       await Promise.resolve();
     });
     expect(toggle.getAttribute('data-translation-enabled')).toBe('true');
+    expect(rendered.savedTranslationPreferences).toEqual([]);
   });
 });
 
-function renderUrlPanel(): {
+function renderUrlPanel(options: {
+  initialTranslationPreferences?: UrlPageTranslationPreferences;
+  providerSettings?: unknown;
+} = {}): {
   document: Document;
   savedLanguages: TranslationLanguage[];
+  savedTranslationPreferences: UrlPageTranslationPreferences[];
   sendWebviewShortcut: (webContentsId: number) => void;
   window: Window;
 } {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
   const savedLanguages: TranslationLanguage[] = [];
+  const savedTranslationPreferences: UrlPageTranslationPreferences[] = [];
   let shortcutListener: ((webContentsId: number) => void) | null = null;
   (window as unknown as {
     lin: {
       initialTranslationLanguage: TranslationLanguage;
-      invoke: (command: string, args?: Record<string, unknown>) => Promise<PreviewResolveSourceResult>;
+      initialUrlPageTranslationPreferences: UrlPageTranslationPreferences;
+      invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
       onTranslationLanguageChanged: (listener: (language: TranslationLanguage) => void) => () => void;
+      onUrlPageTranslationPreferencesChanged: (listener: (preferences: UrlPageTranslationPreferences) => void) => () => void;
       onUrlPageTranslationShortcut: (listener: (webContentsId: number) => void) => () => void;
       setTranslationLanguage: (language: TranslationLanguage) => Promise<void>;
+      setUrlPageTranslationPreferences: (preferences: UrlPageTranslationPreferences) => Promise<UrlPageTranslationPreferences>;
     };
   }).lin = {
     initialTranslationLanguage: 'en',
-    invoke: () => Promise.resolve({ source: null }),
+    initialUrlPageTranslationPreferences: options.initialTranslationPreferences ?? {
+      translationModel: null,
+      autoTranslateUrls: false,
+    },
+    invoke: (command) => Promise.resolve(
+      command === 'agent_get_provider_settings'
+        ? options.providerSettings ?? translationProviderSettingsFixture()
+        : { source: null } satisfies PreviewResolveSourceResult,
+    ),
     onTranslationLanguageChanged: () => () => undefined,
+    onUrlPageTranslationPreferencesChanged: () => () => undefined,
     onUrlPageTranslationShortcut: (listener) => {
       shortcutListener = listener;
       return () => {
@@ -164,6 +245,10 @@ function renderUrlPanel(): {
     },
     setTranslationLanguage: async (language) => {
       savedLanguages.push(language);
+    },
+    setUrlPageTranslationPreferences: async (preferences) => {
+      savedTranslationPreferences.push(preferences);
+      return preferences;
     },
   };
   const container = document.getElementById('root');
@@ -198,8 +283,37 @@ function renderUrlPanel(): {
   return {
     document,
     savedLanguages,
+    savedTranslationPreferences,
     sendWebviewShortcut: (webContentsId) => shortcutListener?.(webContentsId),
     window,
+  };
+}
+
+function translationProviderSettingsFixture(): unknown {
+  return {
+    activeProviderId: 'openai',
+    providers: [{
+      providerId: 'openai',
+      enabled: true,
+      hasApiKey: true,
+      auth: { authKind: 'api-key', credentialed: true },
+    }],
+    availableProviders: [{
+      providerId: 'openai',
+      authKind: 'api-key',
+      hasEnvApiKey: false,
+      envKeyNames: [],
+      models: [{
+        id: 'gpt-4.1-mini',
+        name: 'GPT-4.1 mini',
+        reasoning: false,
+        supportedThinkingLevels: [],
+        contextWindow: 1_000_000,
+        maxTokens: 32_768,
+      }],
+    }],
+    agent: {},
+    imageGeneration: {},
   };
 }
 

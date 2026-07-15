@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
   isTranslationLanguage,
+  isValidLanguageTag,
   languageTagMatchesTranslationLanguage,
   TRANSLATION_LANGUAGES,
 } from '../../src/core/translationLanguage';
+import {
+  isUrlPageTranslationModel,
+  isUrlPageTranslationPreferences,
+} from '../../src/core/urlPageTranslation';
 
 describe('URL page translation languages', () => {
   test('exposes a broad, unique catalog of common target languages', () => {
@@ -27,5 +32,23 @@ describe('URL page translation languages', () => {
     expect(languageTagMatchesTranslationLanguage('tl-PH', 'fil')).toBe(true);
     expect(languageTagMatchesTranslationLanguage('iw-IL', 'he')).toBe(true);
     expect(languageTagMatchesTranslationLanguage(null, 'en')).toBe(false);
+  });
+
+  test('accepts only non-empty structurally valid top-level language tags', () => {
+    expect(isValidLanguageTag('en-US')).toBe(true);
+    expect(isValidLanguageTag('zh-Hant-HK')).toBe(true);
+    expect(isValidLanguageTag('')).toBe(false);
+    expect(isValidLanguageTag('not_a_language')).toBe(false);
+  });
+});
+
+describe('URL page translation preferences', () => {
+  test('accepts only provider-qualified explicit models', () => {
+    expect(isUrlPageTranslationModel('openai/gpt-4.1-mini')).toBe(true);
+    expect(isUrlPageTranslationModel('gpt-4.1-mini')).toBe(false);
+    expect(isUrlPageTranslationPreferences({
+      translationModel: null,
+      autoTranslateUrls: false,
+    })).toBe(true);
   });
 });

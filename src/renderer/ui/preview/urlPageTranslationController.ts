@@ -1,4 +1,8 @@
-import type { TranslationLanguage } from '../../../core/translationLanguage';
+import {
+  isValidLanguageTag,
+  languageTagMatchesTranslationLanguage,
+  type TranslationLanguage,
+} from '../../../core/translationLanguage';
 import type {
   UrlPageTranslationFailureCode,
   UrlPageTranslationRequest,
@@ -22,6 +26,8 @@ let fallbackId = 1;
 export type UrlPageTranslationStatus = 'error' | 'idle' | 'off' | 'on' | 'starting';
 
 interface UrlPageTranslationControllerOptions {
+  autoTranslate?: boolean;
+  model?: string | null;
   targetLanguage: TranslationLanguage;
   onCompletionChange?: (completed: boolean) => void;
   onError: (error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>) => void;
@@ -38,6 +44,8 @@ export class UrlPageTranslationController {
   private readonly pollIntervalMs: number;
   private readonly translate: (request: UrlPageTranslationRequest) => Promise<UrlPageTranslationResponse>;
   private readonly cancel: (sessionId: string) => Promise<unknown>;
+  private autoActivated = false;
+  private autoTranslate: boolean;
   private destroyed = false;
   private domReady = false;
   private enabled = false;
@@ -47,6 +55,8 @@ export class UrlPageTranslationController {
   private hasCompletedTranslation = false;
   private initialized = false;
   private inFlightGeneration: number | null = null;
+  private manualSuppressed = false;
+  private model: string | null;
   private pausedForError = false;
   private sessionId = nextId('session');
   private status: UrlPageTranslationStatus = 'off';
@@ -61,10 +71,13 @@ export class UrlPageTranslationController {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.translate = options.translate ?? api.translateUrlPageBlocks;
     this.cancel = options.cancel ?? api.cancelUrlPageTranslation;
+    this.autoTranslate = options.autoTranslate ?? false;
+    this.model = options.model ?? null;
     this.targetLanguage = options.targetLanguage;
     this.domReady = webviewIsReady(webview);
     webview.addEventListener('did-start-navigation', this.handleDidStartNavigation);
     webview.addEventListener('dom-ready', this.handleDomReady);
+    if (this.autoTranslate && this.domReady) void this.evaluateAutoTranslation(this.generation);
   }
 
   get currentStatus(): UrlPageTranslationStatus {
@@ -81,7 +94,30 @@ export class UrlPageTranslationController {
   }
 
   enable(): void {
+    this.manualSuppressed = false;
+    this.startTranslation(false);
+  }
+
+  setAutoTranslate(autoTranslate: boolean): void {
+    if (this.destroyed || this.autoTranslate === autoTranslate) return;
+    this.autoTranslate = autoTranslate;
+    if (!autoTranslate) {
+      this.autoActivated = false;
+      return;
+    }
+    this.manualSuppressed = false;
+    if (this.domReady && !this.enabled) void this.evaluateAutoTranslation(this.generation);
+  }
+
+  setTranslationModel(model: string | null): void {
+    if (this.destroyed || this.model === model) return;
+    this.model = model;
+    this.resetForConfigurationChange();
+  }
+
+  private startTranslation(automatic: boolean): void {
     if (this.destroyed || this.enabled) return;
+    this.autoActivated = automatic;
     this.enabled = true;
     this.pausedForError = false;
     this.generation += 1;
@@ -91,8 +127,17 @@ export class UrlPageTranslationController {
 
   setTargetLanguage(targetLanguage: TranslationLanguage): void {
     if (this.destroyed || this.targetLanguage === targetLanguage) return;
-    const shouldRestart = this.enabled;
+    const reevaluateAuto = this.enabled && this.autoActivated && this.autoTranslate;
     this.targetLanguage = targetLanguage;
+    this.resetForConfigurationChange(reevaluateAuto);
+  }
+
+  private resetForConfigurationChange(reevaluateAuto = false): void {
+    const shouldRestart = this.enabled && !reevaluateAuto;
+    if (reevaluateAuto) {
+      this.enabled = false;
+      this.autoActivated = false;
+    }
     this.generation += 1;
     const generation = this.generation;
     this.clearTimer();
@@ -105,7 +150,12 @@ export class UrlPageTranslationController {
     this.setHasCompletedTranslation(false);
     const resetGuest = this.runGuest(() => this.guest.destroy()).catch(() => undefined);
     if (!shouldRestart) {
-      void resetGuest;
+      if (reevaluateAuto) this.setStatus('off');
+      void resetGuest.then(() => {
+        if (this.autoTranslate && !this.manualSuppressed && this.domReady) {
+          void this.evaluateAutoTranslation(generation);
+        }
+      });
       return;
     }
     this.setStatus('starting');
@@ -116,6 +166,8 @@ export class UrlPageTranslationController {
 
   disable(): void {
     if (this.destroyed) return;
+    this.manualSuppressed = true;
+    this.autoActivated = false;
     this.enabled = false;
     this.pausedForError = false;
     this.generation += 1;
@@ -135,6 +187,7 @@ export class UrlPageTranslationController {
     if (this.destroyed) return;
     this.destroyed = true;
     this.enabled = false;
+    this.autoActivated = false;
     this.generation += 1;
     this.clearTimer();
     this.webview.removeEventListener('did-start-navigation', this.handleDidStartNavigation);
@@ -147,6 +200,9 @@ export class UrlPageTranslationController {
     if (this.destroyed) return;
     this.domReady = true;
     if (this.enabled) void this.startGuest(this.generation);
+    else if (this.autoTranslate && !this.manualSuppressed) {
+      void this.evaluateAutoTranslation(this.generation);
+    }
   };
 
   private readonly handleDidStartNavigation = (event: Electron.DidStartNavigationEvent) => {
@@ -154,9 +210,11 @@ export class UrlPageTranslationController {
     if (this.destroyed) return;
     this.domReady = false;
     this.enabled = false;
+    this.autoActivated = false;
     this.pausedForError = false;
     this.initialized = false;
     this.inFlightGeneration = null;
+    this.manualSuppressed = false;
     this.failedIds.clear();
     this.setHasCompletedTranslation(false);
     this.generation += 1;
@@ -166,6 +224,33 @@ export class UrlPageTranslationController {
     this.sessionId = nextId('session');
     this.setStatus('off');
   };
+
+  private async evaluateAutoTranslation(generation: number): Promise<void> {
+    if (!this.isAutoEvaluationCurrent(generation)) return;
+    try {
+      const declaredLanguage = await this.runGuest(() => this.guest.documentLanguage());
+      if (!this.isAutoEvaluationCurrent(generation)) return;
+      if (
+        isValidLanguageTag(declaredLanguage)
+        && !languageTagMatchesTranslationLanguage(declaredLanguage, this.targetLanguage)
+      ) {
+        this.startTranslation(true);
+      }
+    } catch {
+      // Missing or unreadable document metadata leaves automatic translation idle.
+    }
+  }
+
+  private isAutoEvaluationCurrent(generation: number): boolean {
+    return (
+      !this.destroyed
+      && this.domReady
+      && !this.enabled
+      && this.autoTranslate
+      && !this.manualSuppressed
+      && this.generation === generation
+    );
+  }
 
   private async startGuest(generation: number): Promise<void> {
     try {
@@ -216,6 +301,7 @@ export class UrlPageTranslationController {
         sessionId: this.sessionId,
         requestId,
         targetLanguage: this.targetLanguage,
+        ...(this.model ? { model: this.model } : {}),
         blocks: batch.blocks,
       });
       if (!this.isCurrent(generation)) return;
@@ -256,6 +342,7 @@ export class UrlPageTranslationController {
 
   private failBeforeRequest(error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>): void {
     this.enabled = false;
+    this.autoActivated = false;
     this.pausedForError = false;
     this.generation += 1;
     this.clearTimer();

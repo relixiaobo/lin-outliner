@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, type Locale } from '../core/locale';
 import { isTranslationLanguage, type TranslationLanguage } from '../core/translationLanguage';
+import {
+  isUrlPageTranslationModel,
+  type UrlPageTranslationPreferences,
+} from '../core/urlPageTranslation';
 import { writeJsonFileSync } from './jsonFileStore';
 
 // Persist app-level UI preferences across launches (stored in userData, which is
@@ -19,6 +23,10 @@ interface PersistedAppPreferences {
   // null follows the effective UI language until the user explicitly chooses a
   // webpage translation target.
   translationLanguage: TranslationLanguage | null;
+  // null dynamically follows the model selected by the built-in Agent.
+  translationModel: string | null;
+  // Automatic URL translation is an explicit global opt-in.
+  autoTranslateUrls: boolean;
   // Opt-in OS (Electron) notifications for off-floor task delivery. Default off —
   // the durable in-app delivery is always on; the OS banner is the user-enabled
   // escalation layer (A3-respecting).
@@ -29,6 +37,8 @@ const DEFAULTS: PersistedAppPreferences = {
   theme: 'system',
   language: null,
   translationLanguage: null,
+  translationModel: null,
+  autoTranslateUrls: false,
   osNotificationsEnabled: false,
 };
 
@@ -49,6 +59,8 @@ export function loadAppPreferences(): PersistedAppPreferences {
       translationLanguage: isTranslationLanguage(parsed.translationLanguage)
         ? parsed.translationLanguage
         : DEFAULTS.translationLanguage,
+      translationModel: normalizeTranslationModel(parsed.translationModel),
+      autoTranslateUrls: parsed.autoTranslateUrls === true,
       osNotificationsEnabled: parsed.osNotificationsEnabled === true,
     };
   } catch {
@@ -71,6 +83,10 @@ export function saveTranslationLanguagePreference(translationLanguage: Translati
   savePreferences({ translationLanguage });
 }
 
+export function saveUrlPageTranslationPreferences(preferences: UrlPageTranslationPreferences): void {
+  savePreferences(preferences);
+}
+
 export function saveOsNotificationsPreference(enabled: boolean): void {
   savePreferences({ osNotificationsEnabled: enabled });
 }
@@ -90,4 +106,8 @@ function savePreferences(patch: Partial<PersistedAppPreferences>): void {
   } catch {
     // ignore — see note above
   }
+}
+
+function normalizeTranslationModel(value: unknown): string | null {
+  return isUrlPageTranslationModel(value) ? value : null;
 }

@@ -13,14 +13,16 @@ fully working webpage reader rather than standalone groundwork.
   eligible source block.
 - Translate the visible viewport first, prefetch a small reading window, and
   never submit the entire page eagerly.
-- Use Neva's currently configured model and provider connection without
-  creating a conversation, Agent Run, memory entry, or persisted transcript.
+- Default to the model currently selected by Neva, while allowing a cheaper
+  enabled model to be chosen and remembered specifically for translation.
+- Optionally translate newly navigated pages automatically when their valid
+  top-level language differs from the target language.
 - Keep reading position stable while translations are inserted, hidden, or
   restored from cache.
 - Show progress and recoverable failure at the source block being translated,
   rather than only in remote header chrome.
-- Send page text to the configured provider only after the user explicitly
-  enables translation.
+- Send page text to a configured provider only after the user manually enables
+  translation or explicitly opts into automatic translation.
 
 ## Non-goals
 
@@ -35,7 +37,7 @@ fully working webpage reader rather than standalone groundwork.
 - A user-configurable shortcut. The first version uses `Option+A` on macOS and
   `Alt+A` elsewhere, scoped to the active URL preview.
 - Persistent or cross-page translation caches, translation history, glossary
-  management, provider selection, or usage accounting UI.
+  management, provider configuration, or usage accounting UI.
 - Reader extraction, browser-extension integration, authenticated-browser
   control, or weakening the URL webview's sandbox.
 
@@ -44,21 +46,46 @@ fully working webpage reader rather than standalone groundwork.
 ### Header control and states
 
 Place a `Languages` icon button immediately before the existing URL-preview
-actions menu. It opens a compact anchored translation popover containing a
-native target-language selector and one Translate page / Show original command.
-The button exposes popover expansion separately from a dynamic accessible label
-that reports whether translation is on or off. It follows the neutral icon-control
-states from the design system and never adds a rounded-square hover fill. Once
-at least one translation succeeds, a small check overlays the language icon and
-appears whenever that page-local cached translation is visible.
+actions menu. It opens a compact anchored translation popover containing target
+language and model selectors, an automatic-translation switch, and one full-width
+Translate page / Show original command. The command uses the matching semantic
+show/hide icon, a stable neutral fill, and distinct hover, pressed, and keyboard
+focus feedback so it reads as the popover's primary action. The header button
+exposes popover expansion separately from a dynamic accessible label that reports
+whether translation is on or off. It follows the neutral icon-control states from
+the design system and never adds a rounded-square hover fill. Once at least one
+translation succeeds, a small check overlays the language icon and appears
+whenever that page-local cached translation is visible.
 
 The target-language catalog contains common model-supported languages as stable
 BCP-47 codes and presents each language by its autonym. The default follows the
 effective Tenon UI language until the user explicitly chooses a target. An
 explicit choice persists in app preferences and becomes the default for later
 pages and launches. Changing target while translation is active cancels the old
-request, clears the old target's page-local results, and immediately starts the
-same page in the new target.
+request and clears the old target's page-local results. Manual translation then
+restarts immediately; an auto-activated page re-evaluates its top-level language
+and stays off when the new target now matches.
+
+The model selector defaults to `Follow Agent`. That mode resolves Neva's current
+model at request time, so later Agent model changes apply without a separate
+translation setting. Its other options are the enabled, authenticated, runnable
+models from Agent provider settings, grouped by provider. A provider-qualified
+explicit choice persists globally. Choosing `Follow Agent` clears that override.
+If an explicit model later becomes unavailable, the selector keeps showing it as
+unavailable and translation reports a recoverable configuration error; it never
+silently falls back. Changing model during translation cancels the active request,
+clears all page-local translation state, and immediately translates the current
+viewport again with the newly selected model.
+
+Automatic translation defaults off and persists globally. Turning it on checks
+the current page immediately and enables translation only when the document has
+a valid top-level `<html lang>` that differs from the target language. A missing,
+empty, or invalid top-level language stays manual; descendant language metadata
+continues to filter individual blocks. Turning the switch off does not hide
+translations already visible. Manually choosing Show original suppresses automatic
+translation for only the current page. The next top-level navigation clears that
+suppression and evaluates the new page again. The keyboard shortcut toggles only
+the current page and never changes the automatic-translation preference.
 
 `Option+A` on macOS and `Alt+A` elsewhere runs the same toggle command for the
 active URL-preview panel, including while focus is inside its webview. It never
@@ -84,8 +111,10 @@ The control has five observable states:
 Turning translation off hides injected translations, removes transient loading
 and error controls, stops queued work, and cancels in-flight requests. Turning
 it on again restores cached translations without another model call and resumes
-missing work. A top-level navigation, reload, target-language change, pane close,
-or webview replacement cancels the session and clears its in-memory cache.
+missing work. A top-level navigation or reload cancels the session, clears its
+in-memory cache, and re-evaluates automatic translation after DOM readiness. A
+target-language or model change, pane close, or webview replacement also cancels
+the session and clears its in-memory cache.
 
 ### Eligible content and privacy boundary
 
@@ -158,15 +187,20 @@ compensation as translation insertion.
 
 Add a main-owned page-translation service behind the existing generic preload
 invoke bridge. The renderer sends a request/session id, effective target locale,
-and a bounded list of `{ id, text }` blocks. A separate cancellation command
-aborts the active provider request for that session.
+an optional provider-qualified explicit model, and a bounded list of
+`{ id, text }` blocks. A separate cancellation command aborts the active provider
+request for that session.
 
-The service resolves the same effective model as Neva: the profile's explicit
-model over the active provider connection, falling back to the provider's
-ranked default. It uses the lowest reasoning level supported by that model and
-no tools. Extract/reuse the existing configured-model completion path so custom
-endpoints, OAuth/stored credentials, request options, abort handling, and
-OpenAI Responses compatibility behavior do not fork.
+Without an explicit model, the service resolves the same effective model as Neva:
+the profile's current model over the active provider connection, falling back to
+that provider's ranked default. With an explicit model, it strictly resolves the
+qualified provider and model against that provider's current enabled, authenticated,
+runnable runtime configuration. An unavailable explicit choice returns
+`not-configured`; it does not consult the Agent model. The service uses the lowest
+reasoning level supported by the resolved model and no tools. Extract/reuse the
+existing configured-model completion path so custom endpoints, OAuth/stored
+credentials, request options, abort handling, and OpenAI Responses compatibility
+behavior do not fork.
 
 The prompt treats source blocks as untrusted data, asks for one JSON result per
 requested id, and forbids instructions from the page from changing the task.
@@ -176,9 +210,10 @@ the source page.
 
 ### Error and lifecycle behavior
 
-- No configured provider/model: keep submitted blocks in the recoverable error
-  state and show a localized error directing the user to Agent settings. After
-  configuration, activating a block's error control retries only that block.
+- No configured provider/model, or an unavailable explicit model: keep submitted
+  blocks in the recoverable error state and show a localized error directing the
+  user to select or configure a model. After configuration, activating a block's
+  error control retries only that block.
 - No eligible visible text: remain enabled in Idle and wait for later eligible
   content; do not show the completion check or treat an image-only viewport or
   same-language blocks as a failure.
@@ -192,23 +227,24 @@ the source page.
 
 ### Specification
 
-Update the current-behavior specs with the header control, explicit-send privacy
-boundary, viewport/prefetch contract, scroll anchoring, model ownership,
+Update the current-behavior specs with the header control, manual/automatic send
+privacy boundary, viewport/prefetch contract, scroll anchoring, model ownership,
 translation lifecycle, and unchanged URL-preview sandbox posture.
 
 ## Open questions
 
 None. The common target-language catalog, UI-language default, remembered
-explicit choice, scoped shortcut, block-local recovery, viewport-driven
-scheduling, in-memory-only cache, Neva-model ownership, and format boundary are
-ratified.
+explicit target/model choices, dynamic `Follow Agent` default, strict unavailable
+model behavior, opt-in automatic translation rules, scoped shortcut, block-local
+recovery, viewport-driven scheduling, in-memory-only cache, and format boundary
+are ratified.
 
 ## Files
 
 - `src/core/urlPageTranslation.ts`
 - a focused core translation-language catalog
 - `src/main/appPreferences.ts` and `src/preload/index.ts` for the remembered
-  target preference
+  target, translation-model override, and automatic-translation preferences
 - `src/main/agentModelResolution.ts`, `src/main/agentRuntime.ts`, and a focused
   main-process page-translation module
 - `src/main/main.ts`
@@ -229,8 +265,10 @@ ratified.
 - this plan
 
 No dependency, document command/protocol, `docs/TASKS.md`, or `CHANGELOG.md`
-change is required. App preferences gain one optional target-language field;
-older preference files remain valid by defaulting it to no explicit choice.
+change is required. App preferences gain optional target-language and
+provider-qualified model fields plus an automatic-translation boolean; older
+preference files remain valid by defaulting to UI language, `Follow Agent`, and
+automatic translation off.
 
 ## Risks
 
@@ -244,9 +282,15 @@ older preference files remain valid by defaulting it to no explicit choice.
   never trigger the page's own form/navigation behavior.
 - The shortcut must work in both the host renderer and URL webview without
   intercepting `Option+A` outside the active URL preview.
-- Page text is sent to a third-party provider. Explicit opt-in, sensitive
-  element exclusions, bounded viewport collection, and no persistence are
-  trust-critical behavior.
+- Page text is sent to a third-party provider. Manual activation or an explicitly
+  enabled automatic-translation preference, sensitive element exclusions,
+  bounded viewport collection, and no persistence are trust-critical behavior.
+- Provider catalogs and credentials can change after a model is selected. The
+  explicit qualified model must remain visible but fail closed when it is no
+  longer runnable, while `Follow Agent` must continue resolving dynamically.
+- Page language metadata is author-controlled and sometimes absent. Automatic
+  translation therefore accepts only a valid top-level language tag and never
+  substitutes model detection for the opt-in gate.
 - A fast scroll can otherwise spend tokens on stale offscreen work. Queue
   reprioritization and cancellation must be deterministic and tested.
 - Model JSON can be malformed or prompt-injected by page content. Exact id
@@ -259,6 +303,8 @@ older preference files remain valid by defaulting it to no explicit choice.
 
 - GitHub currently reports no other open PR touching app preferences, preload,
   shortcut registration, URL preview chrome, or the translation guest runtime.
+- PR #397 also updates `docs/spec/ui-behavior.md`, but in a separate semantic
+  ingest section with no line-level or behavioral overlap.
 - `browser-extension-integration` remains record-only. This feature operates
   solely inside the existing hardened URL preview.
 - Result: PR #396 is the only live claim in this area; no unresolved scope
@@ -266,15 +312,16 @@ older preference files remain valid by defaulting it to no explicit choice.
 
 ## Checklist
 
-- [ ] Add the localized target-language popover, remembered preference, scoped
-  shortcut, checked icon state, and observable translation states.
+- [ ] Add the localized target/model popover, remembered preferences, automatic
+  translation switch, scoped shortcut, checked icon state, and observable states.
 - [ ] Discover eligible content without collecting sensitive or executable
   page regions.
 - [ ] Schedule visible blocks first with directional prefetch and bounded
   batching.
 - [ ] Cache translated blocks in memory and invalidate changed source text.
 - [ ] Preserve scroll anchoring across insert, hide, show, and cache restore.
-- [ ] Add the cancelable, validated main-process model request path.
+- [ ] Add the cancelable, validated main-process model request path with dynamic
+  Agent following and strict explicit-model resolution.
 - [ ] Insert only requested plain-text results and reject malformed output.
 - [ ] Add block-local loading, error, and click-to-retry controls with reduced
   motion and keyboard coverage.

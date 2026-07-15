@@ -88,8 +88,10 @@
   gap: var(--space-2);
 }
 
-.file-preview-translation-language-row {
+.file-preview-translation-option-row,
+.file-preview-translation-auto-switch {
   display: flex;
+  width: 100%;
   min-width: 0;
   min-height: calc(var(--control-size-md) + var(--space-3));
   align-items: center;
@@ -101,13 +103,25 @@
   padding: 0 var(--space-2);
 }
 
-.file-preview-translation-language-row .select-popup {
+.file-preview-translation-option-row .select-popup {
   min-width: 0;
-  max-width: 150px;
+  max-width: 164px;
 }
 
-.file-preview-translation-language-row > span:first-child {
+.file-preview-translation-option-row > span:first-child {
   white-space: nowrap;
+}
+
+.file-preview-translation-auto-switch {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: var(--font-family-sans);
+  text-align: left;
+}
+
+.file-preview-translation-auto-switch:hover .switch-mark:not(.checked) {
+  background: color-mix(in srgb, var(--text-primary) 18%, transparent);
 }
 
 .file-preview-translation-command {
@@ -119,7 +133,7 @@
   gap: var(--space-3);
   border: 0;
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--fill-2);
   color: var(--text-primary);
   font-family: var(--font-family-sans);
   font-size: var(--font-ui-sm);
@@ -130,7 +144,7 @@
 
 .file-preview-translation-command:hover,
 .file-preview-translation-command:focus-visible {
-  background: var(--fill-1);
+  background: var(--fill-3);
 }
 
 .file-preview-translation-command:active {
@@ -142,6 +156,17 @@
   font-family: var(--font-family-sans);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
+}
+
+.file-preview-translation-command-label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.file-preview-translation-command-label > svg {
+  flex: 0 0 auto;
 }
 
 @keyframes file-preview-translation-spin {

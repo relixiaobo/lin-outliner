@@ -98,3 +98,13 @@ export function languageTagMatchesTranslationLanguage(
   if (targetLanguage === 'id') return primary === 'id' || primary === 'in';
   return primary === targetLanguage.toLowerCase();
 }
+
+export function isValidLanguageTag(value: string | null | undefined): value is string {
+  const tag = value?.trim() ?? '';
+  if (!tag) return false;
+  try {
+    return Intl.getCanonicalLocales(tag).length === 1;
+  } catch {
+    return false;
+  }
+}

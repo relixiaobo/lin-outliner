@@ -38,6 +38,7 @@ test.describe('URL page translation', () => {
   let origin = '';
   let smoke: SmokeApp;
   const batches: TranslationBatch[] = [];
+  const requestedModels: string[] = [];
   let failNextRequest = false;
 
   test.beforeAll(async () => {
@@ -45,6 +46,14 @@ test.describe('URL page translation', () => {
       if (request.method === 'GET' && request.url?.startsWith('/article')) {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         response.end(ARTICLE_HTML);
+        return;
+      }
+      if (request.method === 'GET' && request.url === '/v1/models') {
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify({
+          object: 'list',
+          data: [{ id: 'llama-3.1-8b-instant', object: 'model', created: 1, owned_by: 'groq' }],
+        }));
         return;
       }
       if (request.method === 'POST' && request.url === '/v1/chat/completions') {
@@ -55,6 +64,7 @@ test.describe('URL page translation', () => {
         const userMessage = [...(body.messages ?? [])].reverse().find((message) => message.role === 'user');
         const payload = JSON.parse(messageText(userMessage?.content)) as TranslationBatch;
         batches.push(payload);
+        requestedModels.push(body.model ?? '');
         const shouldFail = failNextRequest;
         failNextRequest = false;
         const translation = shouldFail
@@ -139,7 +149,10 @@ test.describe('URL page translation', () => {
     await toggle.click();
     await expect(popover).toBeVisible();
     const languageSelect = popover.getByLabel('Target language');
+    const modelSelect = popover.getByLabel('Model');
     await expect(languageSelect).toHaveValue('en');
+    await expect(modelSelect).toHaveValue('');
+    await expect(modelSelect.locator('option[value="groq/llama-3.1-8b-instant"]')).toHaveCount(1);
     await popover.getByRole('button', { name: 'Translate page' }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
     await smoke.window.waitForTimeout(600);
@@ -205,6 +218,20 @@ test.describe('URL page translation', () => {
       });
     }
 
+    const followAgentRequestCount = batches.length;
+    await toggle.click();
+    await expect(popover).toBeVisible();
+    await modelSelect.selectOption('groq/llama-3.1-8b-instant');
+    await expect(modelSelect).toHaveValue('groq/llama-3.1-8b-instant');
+    await expect.poll(() => batches.length).toBeGreaterThan(followAgentRequestCount);
+    await expect.poll(() => requestedModels.slice(followAgentRequestCount)).toContain('llama-3.1-8b-instant');
+    await expect.poll(() => guest<number>(webview, `
+      document.querySelectorAll('[data-tenon-bilingual-translation="true"]').length
+    `)).toBeGreaterThanOrEqual(2);
+    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(1);
+    await toggle.click();
+    await expect(popover).toBeHidden();
+
     const initialTexts = batches.flatMap((batch) => batch.blocks.map((block) => block.text));
     expect(batches.every((batch) => batch.targetLanguage === 'Simplified Chinese')).toBe(true);
     expect(initialTexts).toContain('Visible source paragraph.');
@@ -245,6 +272,22 @@ test.describe('URL page translation', () => {
     await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-translation="true"]').length
     `)).toBe(0);
+
+    await toggle.click();
+    await expect(popover).toBeVisible();
+    await expect(modelSelect).toHaveValue('groq/llama-3.1-8b-instant');
+    const autoTranslate = popover.getByRole('switch', { name: 'Translate webpages automatically' });
+    await expect(autoTranslate).toHaveAttribute('aria-checked', 'false');
+    await autoTranslate.click();
+    await expect(autoTranslate).toHaveAttribute('aria-checked', 'true');
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
+    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(1);
+    await autoTranslate.click();
+    await expect(autoTranslate).toHaveAttribute('aria-checked', 'false');
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
+    await expect(toggle.locator('.file-preview-translation-check')).toHaveCount(1);
+    await popover.getByRole('button', { name: 'Show original' }).click();
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
 
     await smoke.window.evaluate((url) => {
       window.dispatchEvent(new CustomEvent('lin:preview-target-open', {
@@ -318,7 +361,7 @@ async function configureTranslationProvider(page: Page, baseUrl: string): Promis
     const lin = (window as unknown as {
       lin: { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
     }).lin;
-    const providerId = 'translation-smoke';
+    const providerId = 'groq';
     await lin.invoke('agent_upsert_provider_config', {
       provider: { providerId, baseUrl, enabled: true },
     });

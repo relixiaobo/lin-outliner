@@ -36,6 +36,7 @@ const {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
   getProviderSettings,
+  getProviderRuntimeConfig,
   reconcileProviderConfig,
   setActiveProvider,
   updateImageGenerationSettings,
@@ -174,6 +175,30 @@ describe('provider config startup reconcile (Part A)', () => {
       providerId: 'anthropic',
       enabled: true,
     });
+  });
+
+  test('resolves an explicit provider strictly without falling back to the active provider', async () => {
+    await setProviderApiKey('openai', 'sk-openai');
+    await setProviderApiKey('anthropic', 'sk-anthropic');
+    await upsertProviderConfig({ providerId: 'openai', enabled: true });
+    await upsertProviderConfig({ providerId: 'anthropic', enabled: true });
+    await setActiveProvider('openai');
+
+    expect(await getProviderRuntimeConfig('anthropic')).toMatchObject({
+      providerId: 'anthropic',
+      enabled: true,
+    });
+    const anthropicModel = (await getProviderSettings()).availableProviders
+      .find((provider) => provider.providerId === 'anthropic')?.models[0]?.id;
+    if (!anthropicModel) throw new Error('Missing Anthropic catalog model');
+    expect(await getProviderRuntimeConfig('anthropic', anthropicModel)).toMatchObject({
+      providerId: 'anthropic',
+    });
+    expect(await getProviderRuntimeConfig('anthropic', 'retired-model')).toBeNull();
+
+    await upsertProviderConfig({ providerId: 'anthropic', enabled: false });
+    expect(await getProviderRuntimeConfig('anthropic')).toBeNull();
+    expect(await getActiveProviderRuntimeConfig()).toMatchObject({ providerId: 'openai' });
   });
 
   test('a disabled provider cannot be set active', async () => {

@@ -106,6 +106,7 @@ export interface UrlPageTranslationGuestBatch {
 }
 
 export interface UrlPageTranslationGuestBridge {
+  documentLanguage(): Promise<string | null>;
   initialize(targetLanguage: TranslationLanguage, labels: UrlPageTranslationGuestLabels): Promise<void>;
   setEnabled(enabled: boolean, targetLanguage: TranslationLanguage): Promise<void>;
   nextBatch(retryOnly?: boolean): Promise<UrlPageTranslationGuestBatch>;
@@ -136,6 +137,12 @@ export function createUrlPageTranslationGuestBridge(
   };
 
   return {
+    async documentLanguage() {
+      const raw = await webview.executeJavaScript(
+        'document.documentElement?.getAttribute("lang") ?? null',
+      );
+      return typeof raw === 'string' ? raw : null;
+    },
     async initialize(targetLanguage, labels) {
       await removeCss();
       cssKey = await webview.insertCSS(URL_PAGE_TRANSLATION_GUEST_CSS);

@@ -400,17 +400,20 @@ Source authority stays source-specific:
   the pane must not show a file-preview loading overlay before the webview starts.
 
 URL previews also expose one neutral `Languages` icon immediately before the
-header actions menu. It opens a compact target-language popover; at least one
+header actions menu. It opens a compact popover with target-language and model
+selectors, an automatic-translation switch, and a filled full-width Translate
+page / Show original command with the matching semantic icon. At least one
 completed translation adds a check to the header icon, while the trigger's
 accessible name reports the translation state independently from popover
-expansion. Translation is explicit opt-in and defaults off. Enabling it keeps the
-remote page as the reading surface and inserts an inert plain-text translation
-after each eligible source block; disabling it hides translations without
-discarding the current page's in-memory cache. `Option+A` on macOS and `Alt+A`
-elsewhere toggles translation only for the
-active URL preview, including while its webview has focus. A navigation, reload,
-target-language change, pane close, or webview replacement cancels pending work
-and resets the control to off.
+expansion. Manual translation and automatic translation both default off.
+Enabling translation keeps the remote page as the reading surface and inserts an
+inert plain-text translation after each eligible source block; disabling it hides
+translations without discarding the current page's in-memory cache. `Option+A`
+on macOS and `Alt+A` elsewhere toggles translation only for the active URL
+preview, including while its webview has focus, and never changes the automatic
+preference. Navigation and reload cancel pending work, clear page-local cache,
+and re-evaluate automatic translation; target/model change, pane close, or
+webview replacement also cancels pending work and clears page-local cache.
 
 The common target-language catalog is independent of Tenon's display locales
 and uses language autonyms. Until the user chooses a target it follows Tenon's
@@ -418,6 +421,25 @@ effective UI locale; an explicit choice is remembered across pages and launches.
 Descendant blocks whose nearest declared language already matches the selected
 target are excluded without showing progress or calling the provider. Source
 language otherwise remains automatic.
+
+The translation model defaults to `Follow Agent`, which resolves Neva's current
+model dynamically for every request. The selector otherwise lists enabled,
+authenticated, runnable models grouped by provider and persists a
+provider-qualified explicit choice globally. Returning to `Follow Agent` clears
+that override. If an explicit model becomes unavailable, it remains identified
+as unavailable and requests fail with a recoverable configuration error instead
+of silently falling back. Changing model while translation is on cancels the
+active request, clears page-local results, and retranslates the current viewport.
+
+Automatic translation is a globally remembered opt-in switch. Turning it on
+immediately checks the current document and translates only when a valid
+top-level `<html lang>` differs from the target. Missing, empty, or invalid
+top-level language metadata leaves the page manual. Turning the switch off does
+not hide visible translations. Manually choosing Show original suppresses auto
+translation for only the current page; the next top-level navigation clears the
+suppression and evaluates the new page again. Changing the target also re-runs
+the language rule for an auto-activated page and turns translation off when the
+new target matches the document language.
 
 Translation is viewport-driven rather than an eager whole-page request. The
 guest runtime selects visible readable blocks first, then approximately two
@@ -448,7 +470,9 @@ controls. Reduced-motion mode uses a static progress ring.
 The guest collector excludes scripts/styles, code/preformatted content, form
 controls, editable regions, navigation, hidden/inert/`aria-hidden` subtrees, and
 Tenon-injected nodes. Main revalidates the bounded block ids and text before using
-Neva's configured model. The response must contain exactly the requested ids;
+the dynamically followed Agent model or the explicitly selected qualified model.
+An explicit model must still be runnable on its provider and never silently falls
+back to Agent. The response must contain exactly the requested ids;
 translations enter the page through `textContent`, never model-produced HTML.
 The guest still has no preload, Node integration, permissions, popup capability,
 or non-HTTP navigation. Translation does not weaken the URL-preview security

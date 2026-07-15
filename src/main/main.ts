@@ -46,7 +46,10 @@ import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../
 import { normalizePreviewHttpUrl } from '../core/preview';
 import {
   isUrlPageTranslationCommand,
+  isUrlPageTranslationPreferences,
+  LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL,
   LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
+  type UrlPageTranslationPreferences,
 } from '../core/urlPageTranslation';
 import { handlePreviewCommand } from './previewSource';
 import { PageTranslationService } from './pageTranslation';
@@ -115,6 +118,7 @@ import {
   saveOsNotificationsPreference,
   saveThemePreference,
   saveTranslationLanguagePreference,
+  saveUrlPageTranslationPreferences,
 } from './appPreferences';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, resolveSystemLocale, type Locale } from '../core/locale';
@@ -698,6 +702,11 @@ function effectiveLocale(): Locale {
 
 function effectiveTranslationLanguage(): TranslationLanguage {
   return loadAppPreferences().translationLanguage ?? effectiveLocale();
+}
+
+function urlPageTranslationPreferences(): UrlPageTranslationPreferences {
+  const { translationModel, autoTranslateUrls } = loadAppPreferences();
+  return { translationModel, autoTranslateUrls };
 }
 
 // Standard application menu (A2b). macOS gets the conventional App / Edit / View
@@ -1657,12 +1666,23 @@ function registerIpc() {
   ipcMain.on('lin:get-translation-language-sync', (event) => {
     event.returnValue = effectiveTranslationLanguage();
   });
+  ipcMain.on('lin:get-url-page-translation-preferences-sync', (event) => {
+    event.returnValue = urlPageTranslationPreferences();
+  });
   ipcMain.handle('lin:set-translation-language', (_event, raw: unknown): void => {
     if (!isTranslationLanguage(raw)) return;
     saveTranslationLanguagePreference(raw);
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, raw);
     }
+  });
+  ipcMain.handle('lin:set-url-page-translation-preferences', (_event, raw: unknown): UrlPageTranslationPreferences => {
+    if (!isUrlPageTranslationPreferences(raw)) return urlPageTranslationPreferences();
+    saveUrlPageTranslationPreferences(raw);
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL, raw);
+    }
+    return raw;
   });
   ipcMain.handle('lin:set-language', (_event, raw: unknown): void => {
     if (!isLocale(raw)) return;

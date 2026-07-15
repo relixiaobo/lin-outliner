@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -24,6 +24,7 @@ const {
   saveOsNotificationsPreference,
   saveThemePreference,
   saveTranslationLanguagePreference,
+  saveUrlPageTranslationPreferences,
 } = await import('../../src/main/appPreferences');
 
 beforeEach(async () => {
@@ -40,15 +41,34 @@ describe('app preferences persistence', () => {
     saveThemePreference('dark');
     saveLanguagePreference('zh-Hans');
     saveTranslationLanguagePreference('ja');
+    saveUrlPageTranslationPreferences({
+      translationModel: 'openai/gpt-4.1-mini',
+      autoTranslateUrls: true,
+    });
     saveOsNotificationsPreference(true);
 
     const raw = await readFile(path.join(userData, 'app-preferences.json'), 'utf8');
-    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","translationLanguage":"ja","osNotificationsEnabled":true}');
+    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","translationLanguage":"ja","translationModel":"openai/gpt-4.1-mini","autoTranslateUrls":true,"osNotificationsEnabled":true}');
     expect(loadAppPreferences()).toEqual({
       theme: 'dark',
       language: 'zh-Hans',
       translationLanguage: 'ja',
+      translationModel: 'openai/gpt-4.1-mini',
+      autoTranslateUrls: true,
       osNotificationsEnabled: true,
+    });
+  });
+
+  test('defaults older files to Follow Agent with automatic translation off', async () => {
+    await writeFile(
+      path.join(userData, 'app-preferences.json'),
+      '{"theme":"system","language":null,"translationLanguage":null,"osNotificationsEnabled":false}',
+    );
+    resetAppPreferencesForTests();
+
+    expect(loadAppPreferences()).toMatchObject({
+      translationModel: null,
+      autoTranslateUrls: false,
     });
   });
 });

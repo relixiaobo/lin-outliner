@@ -10,7 +10,9 @@ import { subscribeUrlPageTranslationShortcut } from './urlPageTranslationShortcu
 
 interface UseUrlPageTranslationOptions {
   active: boolean;
+  autoTranslate: boolean;
   labels: UrlPageTranslationGuestLabels;
+  model: string | null;
   shortcutActive: boolean;
   targetLanguage: TranslationLanguage;
   onError: (error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>) => void;
@@ -18,7 +20,9 @@ interface UseUrlPageTranslationOptions {
 
 export function useUrlPageTranslation({
   active,
+  autoTranslate,
   labels,
+  model,
   shortcutActive,
   targetLanguage,
   onError,
@@ -33,10 +37,14 @@ export function useUrlPageTranslation({
   const controllerRef = useRef<UrlPageTranslationController | null>(null);
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
   const activeRef = useRef(active);
+  const autoTranslateRef = useRef(autoTranslate);
+  const modelRef = useRef(model);
   const shortcutActiveRef = useRef(shortcutActive);
   const targetLanguageRef = useRef(targetLanguage);
   const onErrorRef = useRef(onError);
   activeRef.current = active;
+  autoTranslateRef.current = autoTranslate;
+  modelRef.current = model;
   shortcutActiveRef.current = shortcutActive;
   targetLanguageRef.current = targetLanguage;
   onErrorRef.current = onError;
@@ -49,6 +57,8 @@ export function useUrlPageTranslation({
     setStatus('off');
     if (!active || !webview) return;
     controllerRef.current = new UrlPageTranslationController(webview, {
+      autoTranslate: autoTranslateRef.current,
+      model: modelRef.current,
       targetLanguage: targetLanguageRef.current,
       labels,
       onCompletionChange: setCompleted,
@@ -60,6 +70,14 @@ export function useUrlPageTranslation({
   useEffect(() => {
     controllerRef.current?.setTargetLanguage(targetLanguage);
   }, [targetLanguage]);
+
+  useEffect(() => {
+    controllerRef.current?.setTranslationModel(model);
+  }, [model]);
+
+  useEffect(() => {
+    controllerRef.current?.setAutoTranslate(autoTranslate);
+  }, [autoTranslate]);
 
   useEffect(() => () => {
     controllerRef.current?.destroy();
