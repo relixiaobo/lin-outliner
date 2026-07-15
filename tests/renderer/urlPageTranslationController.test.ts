@@ -296,6 +296,198 @@ describe('UrlPageTranslationController', () => {
     controller.destroy();
   });
 
+  test('resets caption-only completion and returns to loading for a new caption revision', async () => {
+    const guest = new FakeGuest([{
+      blocks: [{ id: 'c1:0', text: 'First track' }],
+      captionRevision: 1,
+      contentKind: 'caption',
+      priority: 0,
+    }]);
+    const completionStates: boolean[] = [];
+    const requests: UrlPageTranslationRequest[] = [];
+    let resolveSecond: ((response: UrlPageTranslationResponse) => void) | null = null;
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onCompletionChange: (completed) => completionStates.push(completed),
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        if (requests.length === 2) {
+          return await new Promise<UrlPageTranslationResponse>((resolve) => {
+            resolveSecond = resolve;
+          });
+        }
+        return {
+          ok: true,
+          requestId: request.requestId,
+          translations: [{ id: 'c1:0', translation: '第一条轨道' }],
+        };
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => controller.currentStatus === 'on');
+    guest.queueBatch({
+      blocks: [{ id: 'c2:0', text: 'Second track' }],
+      captionRevision: 2,
+      contentKind: 'caption',
+      priority: 0,
+    });
+    await waitFor(() => requests.length === 2);
+
+    expect(controller.currentStatus).toBe('starting');
+    expect(controller.hasCompletedTranslations).toBe(false);
+    expect(completionStates).toEqual([true, false]);
+
+    resolveSecond?.({
+      ok: true,
+      requestId: requests[1]!.requestId,
+      translations: [{ id: 'c2:0', translation: '第二条轨道' }],
+    });
+    await waitFor(() => controller.currentStatus === 'on');
+    expect(completionStates).toEqual([true, false, true]);
+    controller.destroy();
+  });
+
+  test('keeps page completion visible while a new caption revision is translating', async () => {
+    const guest = new FakeGuest([{
+      blocks: [{ id: 'b1', text: 'Visible page' }],
+      captionRevision: 1,
+      contentKind: 'page',
+      priority: 0,
+    }]);
+    const completionStates: boolean[] = [];
+    const requests: UrlPageTranslationRequest[] = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onCompletionChange: (completed) => completionStates.push(completed),
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        if (request.contentKind === 'caption') {
+          return await new Promise<UrlPageTranslationResponse>(() => undefined);
+        }
+        return {
+          ok: true,
+          requestId: request.requestId,
+          translations: [{ id: 'b1', translation: '可见页面' }],
+        };
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => controller.currentStatus === 'on');
+    guest.queueBatch({
+      blocks: [{ id: 'c2:0', text: 'New caption track' }],
+      captionRevision: 2,
+      contentKind: 'caption',
+      priority: 0,
+    });
+    await waitFor(() => requests.some((request) => request.contentKind === 'caption'));
+
+    expect(controller.currentStatus).toBe('on');
+    expect(controller.hasCompletedTranslations).toBe(true);
+    expect(completionStates).toEqual([true]);
+    controller.destroy();
+  });
+
+  test('clears an old caption failure when the guest reports a new revision', async () => {
+    const guest = new FakeGuest([{
+      blocks: [{ id: 'c1:0', text: 'Broken track' }],
+      captionRevision: 1,
+      contentKind: 'caption',
+      priority: 0,
+    }]);
+    const requests: UrlPageTranslationRequest[] = [];
+    let resolveSecond: ((response: UrlPageTranslationResponse) => void) | null = null;
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        if (requests.length === 1) {
+          return { ok: false, requestId: request.requestId, error: 'provider-error' };
+        }
+        return await new Promise<UrlPageTranslationResponse>((resolve) => {
+          resolveSecond = resolve;
+        });
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => controller.currentStatus === 'error');
+    guest.queueBatch({ blocks: [], captionRevision: 2, contentKind: 'page', priority: null });
+    guest.queueBatch({
+      blocks: [{ id: 'c2:0', text: 'Replacement track' }],
+      captionRevision: 2,
+      contentKind: 'caption',
+      priority: 0,
+    });
+    await waitFor(() => requests.length === 2);
+
+    expect(controller.currentStatus).toBe('starting');
+    expect(guest.nextBatchCalls.some((call) => call.retryOnly)).toBe(true);
+    resolveSecond?.({
+      ok: true,
+      requestId: requests[1]!.requestId,
+      translations: [{ id: 'c2:0', translation: '替换轨道' }],
+    });
+    await waitFor(() => controller.currentStatus === 'on');
+    controller.destroy();
+  });
+
+  test('does not let a page prefetch consume the first visible page budget', async () => {
+    const guest = new FakeGuest([
+      { blocks: [], priority: null },
+      { blocks: [{ id: 'b1', text: 'Prefetch' }], priority: 1 },
+      { blocks: [{ id: 'b2', text: 'Now visible' }], priority: 0 },
+    ]);
+    const requests: UrlPageTranslationRequest[] = [];
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      maxConcurrentRequests: 2,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        return await new Promise<UrlPageTranslationResponse>(() => undefined);
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => requests.length === 2);
+
+    expect(guest.nextBatchCalls.slice(0, 3).map((call) => ({
+      maxBlocks: call.maxBlocks,
+      maxChars: call.maxChars,
+      visibleOnly: call.visibleOnly,
+    }))).toEqual([
+      { maxBlocks: 2, maxChars: 2_000, visibleOnly: true },
+      { maxBlocks: 4, maxChars: 4_000, visibleOnly: false },
+      { maxBlocks: 2, maxChars: 2_000, visibleOnly: true },
+    ]);
+    controller.destroy();
+  });
+
   test('reports one failure wave when concurrent batches fail together', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'First' }], priority: 0 },
@@ -991,7 +1183,7 @@ describe('UrlPageTranslationController', () => {
         operations.push(`enabled:${enabled}:${targetLanguage}`);
       },
       async nextBatch() {
-        return { blocks: [], priority: null };
+        return { blocks: [], captionRevision: 0, priority: null };
       },
       async release() {},
       async apply() { return 0; },
@@ -1034,6 +1226,10 @@ describe('UrlPageTranslationController', () => {
   });
 });
 
+type FakeGuestBatch = Omit<UrlPageTranslationGuestBatch, 'captionRevision'> & {
+  captionRevision?: number;
+};
+
 class FakeGuest implements UrlPageTranslationGuestBridge {
   applied: Array<Array<{ id: string; translation: string }>> = [];
   applyInsertedCount: number | null = null;
@@ -1045,17 +1241,18 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
   nextBatchActiveBatches: Array<Array<{ ids: string[]; requestId: string }>> = [];
   nextBatchCalls: UrlPageTranslationGuestBatchOptions[] = [];
   released: string[][] = [];
+  private latestCaptionRevision = 0;
 
   constructor(
     private readonly batches: Array<
-      | UrlPageTranslationGuestBatch
-      | ((options: UrlPageTranslationGuestBatchOptions) => UrlPageTranslationGuestBatch)
+      | FakeGuestBatch
+      | ((options: UrlPageTranslationGuestBatchOptions) => FakeGuestBatch)
     >,
     public declaredLanguage: string | null = 'en',
     public declaredCaptionLanguage: string | null = null,
   ) {}
 
-  queueBatch(batch: UrlPageTranslationGuestBatch): void {
+  queueBatch(batch: FakeGuestBatch): void {
     this.batches.push(batch);
   }
 
@@ -1083,9 +1280,11 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
     this.nextBatchCalls.push({ ...options, activeBatches });
     this.nextBatchActiveBatches.push(activeBatches);
     const batch = this.batches.shift();
-    return typeof batch === 'function'
+    const resolved = typeof batch === 'function'
       ? batch(options)
       : batch ?? { blocks: [], priority: null };
+    this.latestCaptionRevision = resolved.captionRevision ?? this.latestCaptionRevision;
+    return { ...resolved, captionRevision: this.latestCaptionRevision };
   }
 
   async release(ids: readonly string[]): Promise<void> {

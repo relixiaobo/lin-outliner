@@ -71,7 +71,7 @@ function commandSource(command: UrlPageTranslationGuestCommand): string {
       return runtimeMethodSource('nextBatch', [
         maxBlocks,
         maxChars,
-        Math.min(URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS, maxChars),
+        URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS,
         command.options.retryOnly ?? false,
         command.options.visibleOnly ?? false,
         command.options.activeBatches ?? [],

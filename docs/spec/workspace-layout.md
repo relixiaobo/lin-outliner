@@ -449,7 +449,9 @@ new target matches the document language.
 Translation is viewport-driven rather than an eager whole-page request. Visible
 content starts with a latency-oriented batch of at most two blocks or roughly
 2,000 source characters; later visible and prefetch batches contain at most four
-blocks or roughly 4,000 characters. Before direction is known, the guest runtime
+blocks or roughly 4,000 characters. Page prefetch does not consume that initial
+visible budget; the first priority-zero page batch still uses the `2 / 2,000`
+limit even when prefetch work started first. Before direction is known, the guest runtime
 prefetches about two viewports above and below the activation point. It then keeps
 about four viewports ahead and one behind the observed reading direction, with
 symmetric upward and downward behavior. Blocks outside that window are not sent.
@@ -527,12 +529,16 @@ forever.
 The isolated runtime first uses the standards `TextTrack` / `VTTCue` path. It
 selects an active, default, or unambiguous finite `captions` / `subtitles` track,
 clones its source cues into one removable Tenon-owned text track, and replaces
-each clone with source plus translation as results arrive. The original track
+each clone with source plus translation as results arrive while preserving the
+source cue's native line, position, alignment, size, and related layout fields. The original track
 mode is restored by Show original or teardown, and the synthetic track is
 removed rather than accumulating in the site's caption menu across target/model
 changes. This path covers Video.js players such as Frontend Masters. A source
-track replacement creates fresh cue ids, so responses from the previous video
-or track cannot attach to it.
+track replacement creates a fresh caption revision and cue ids, so responses,
+completion, and failures from the previous video or track cannot attach to it.
+Moving playback to another media element restores the previous element's source
+track mode; selecting another track on the same element preserves the user's new
+track choice instead of re-enabling the old one.
 
 YouTube watch pages use a bounded site adapter because their displayed captions
 are not a standards text track. The isolated runtime reads
@@ -545,17 +551,23 @@ player-selected caption-track change; changing tracks creates fresh cue ids so
 old model output cannot attach. Tenon's overlay replaces the site's caption
 presentation only while translation is visible, stays clear of visible player
 controls, settles near the lower edge after controls auto-hide, and follows
-player fullscreen; disabling translation restores the site presentation. If
+player fullscreen; it hides and stops scheduling caption work while YouTube's
+player reports an ad, then resumes after the ad. Disabling translation restores
+the site presentation. A valid player response with no caption tracks is
+negative-cached for that video until video or track discovery changes. If
 YouTube's cached caption URL is no longer readable, the guest toggles the site's
 CC control once and restores its prior state after the player emits a fresh
-bounded URL.
+bounded URL; repeated metadata or timed-text failures use video/track-keyed
+exponential backoff rather than downloading again every polling interval.
 Non-hash in-page video navigation cancels old requests and restarts an enabled
 manual translation, or re-evaluates automatic translation, without requiring
 another `dom-ready` event.
 
 Caption scheduling follows playback time. The first current batch is at most six
-cues / roughly 1,500 source characters; later batches are at most sixteen cues /
-4,000 characters. The runtime keeps about 30 seconds in the immediate tier,
+cues with a soft budget of roughly 1,500 source characters; one indivisible cue
+may exceed that soft budget but remains subject to the trusted 4,000-character
+per-cue hard limit. Later batches are at most sixteen cues / 4,000 characters.
+The runtime keeps about 30 seconds in the immediate tier,
 prefetches up to 90 seconds ahead (at most two minutes at faster playback), and
 keeps a 15-second buffer behind. Seeking promotes the new current window and can
 preempt an obsolete off-window request. Completed cues remain cached for the

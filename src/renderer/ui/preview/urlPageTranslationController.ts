@@ -53,6 +53,7 @@ interface UrlPageTranslationControllerOptions {
 }
 
 interface ActivePageTranslationRequest {
+  captionRevision: number;
   contentKind: 'caption' | 'page';
   generation: number;
   ids: string[];
@@ -60,6 +61,11 @@ interface ActivePageTranslationRequest {
   requestId: string;
   sequence: number;
   sessionId: string;
+}
+
+interface FailedPageTranslationBlock {
+  captionRevision: number;
+  contentKind: 'caption' | 'page';
 }
 
 export class UrlPageTranslationController {
@@ -75,17 +81,20 @@ export class UrlPageTranslationController {
   private destroyed = false;
   private domReady = false;
   private enabled = false;
-  private readonly failedIds = new Set<string>();
+  private readonly failedIds = new Map<string, FailedPageTranslationBlock>();
   private generation = 0;
   private guestQueue: Promise<void> = Promise.resolve();
-  private hasCompletedTranslation = false;
+  private completedCaptionRevision: number | null = null;
+  private hasCompletedPageTranslation = false;
   private hasStartedCaptionBatch = false;
-  private hasStartedPageBatch = false;
+  private hasStartedVisiblePageBatch = false;
   private initialized = false;
+  private lastReportedCompletion = false;
   private manualSuppressed = false;
   private model: string | null;
   private pageIdentity: string;
   private pausedForError = false;
+  private observedCaptionRevision: number | null = null;
   private requestSequence = 0;
   private status: UrlPageTranslationStatus = 'off';
   private targetLanguage: TranslationLanguage;
@@ -120,7 +129,10 @@ export class UrlPageTranslationController {
   }
 
   get hasCompletedTranslations(): boolean {
-    return this.hasCompletedTranslation;
+    return this.hasCompletedPageTranslation || (
+      this.completedCaptionRevision !== null
+      && this.completedCaptionRevision === this.observedCaptionRevision
+    );
   }
 
   toggle(): void {
@@ -163,7 +175,7 @@ export class UrlPageTranslationController {
     this.enabled = true;
     this.pausedForError = false;
     this.hasStartedCaptionBatch = false;
-    this.hasStartedPageBatch = false;
+    this.hasStartedVisiblePageBatch = false;
     this.generation += 1;
     this.setStatus('starting');
     if (this.domReady) void this.startGuest(this.generation);
@@ -190,9 +202,9 @@ export class UrlPageTranslationController {
     this.initialized = false;
     this.pausedForError = false;
     this.hasStartedCaptionBatch = false;
-    this.hasStartedPageBatch = false;
+    this.hasStartedVisiblePageBatch = false;
     this.failedIds.clear();
-    this.setHasCompletedTranslation(false);
+    this.resetCompletionState();
     const resetGuest = this.runGuest(() => this.guest.destroy()).catch(() => undefined);
     if (!shouldRestart) {
       if (reevaluateAuto) this.setStatus('off');
@@ -265,10 +277,10 @@ export class UrlPageTranslationController {
     this.initialized = false;
     this.cancelAllActiveRequests();
     this.hasStartedCaptionBatch = false;
-    this.hasStartedPageBatch = false;
+    this.hasStartedVisiblePageBatch = false;
     this.manualSuppressed = false;
     this.failedIds.clear();
-    this.setHasCompletedTranslation(false);
+    this.resetCompletionState();
     this.generation += 1;
     this.clearTimer();
     this.clearAutoTimer();
@@ -299,9 +311,9 @@ export class UrlPageTranslationController {
     this.clearAutoTimer();
     this.cancelAllActiveRequests();
     this.hasStartedCaptionBatch = false;
-    this.hasStartedPageBatch = false;
+    this.hasStartedVisiblePageBatch = false;
     this.failedIds.clear();
-    this.setHasCompletedTranslation(false);
+    this.resetCompletionState();
     const resetGuest = this.runGuest(() => this.guest.destroy()).catch(() => undefined);
     if (shouldRestart) {
       this.enabled = true;
@@ -399,7 +411,7 @@ export class UrlPageTranslationController {
         this.isCurrent(generation)
         && this.activeRequests.size < this.maxConcurrentRequests
       ) {
-        const batch = await this.nextAvailableBatch();
+        const batch = await this.nextAvailableBatch(generation);
         if (!this.isCurrent(generation)) return;
         if (batch.blocks.length === 0) break;
         this.startRequest(batch, generation);
@@ -412,7 +424,7 @@ export class UrlPageTranslationController {
       }
 
       if (this.activeRequests.size === 0 && this.status === 'starting') {
-        this.setStatus(this.hasCompletedTranslation ? 'on' : 'idle');
+        this.setStatus(this.hasCompletedTranslations ? 'on' : 'idle');
       }
     } catch {
       if (!this.isCurrent(generation)) return;
@@ -421,11 +433,11 @@ export class UrlPageTranslationController {
     if (this.isCurrent(generation)) this.scheduleTick(this.pollIntervalMs, generation);
   }
 
-  private async nextAvailableBatch(): Promise<UrlPageTranslationGuestBatch> {
+  private async nextAvailableBatch(generation: number): Promise<UrlPageTranslationGuestBatch> {
     const activePrefetchRequests = [...this.activeRequests.values()]
       .filter((request) => request.priority > 0)
       .length;
-    if (!this.hasStartedPageBatch && !this.pausedForError) {
+    if (!this.hasStartedVisiblePageBatch && !this.pausedForError) {
       const firstVisible = await this.runGuest(() => this.guest.nextBatch({
         captionMaxBlocks: this.hasStartedCaptionBatch
           ? STANDARD_CAPTION_MAX_BLOCKS
@@ -437,6 +449,7 @@ export class UrlPageTranslationController {
         maxChars: FIRST_VISIBLE_MAX_CHARS,
         visibleOnly: true,
       }));
+      this.observeGuestBatch(firstVisible, generation);
       if (firstVisible.blocks.length > 0) {
         this.markBatchStarted(firstVisible);
         return firstVisible;
@@ -456,6 +469,7 @@ export class UrlPageTranslationController {
       retryOnly: this.pausedForError,
       visibleOnly: !this.pausedForError && activePrefetchRequests >= MAX_PREFETCH_REQUESTS,
     }));
+    this.observeGuestBatch(batch, generation);
     if (batch.blocks.length > 0) this.markBatchStarted(batch);
     return batch;
   }
@@ -478,6 +492,7 @@ export class UrlPageTranslationController {
         : FIRST_CAPTION_MAX_CHARS,
       visibleOnly: true,
     }));
+    this.observeGuestBatch(batch, generation);
     if (!this.isCurrent(generation) || batch.blocks.length === 0) return false;
 
     const preempted = batch.preemptRequestId
@@ -506,6 +521,7 @@ export class UrlPageTranslationController {
     if (this.status === 'idle') this.setStatus('starting');
     const requestId = nextId('request');
     const activeRequest: ActivePageTranslationRequest = {
+      captionRevision: batch.captionRevision,
       contentKind: batch.contentKind ?? 'page',
       generation,
       ids: batch.blocks.map((block) => block.id),
@@ -528,7 +544,7 @@ export class UrlPageTranslationController {
 
   private markBatchStarted(batch: UrlPageTranslationGuestBatch): void {
     if ((batch.contentKind ?? 'page') === 'caption') this.hasStartedCaptionBatch = true;
-    else this.hasStartedPageBatch = true;
+    else if (batch.priority === 0) this.hasStartedVisiblePageBatch = true;
   }
 
   private async finishRequest(
@@ -569,13 +585,13 @@ export class UrlPageTranslationController {
     }
     if (!this.isActiveRequest(activeRequest)) return;
     this.activeRequests.delete(activeRequest.requestId);
-    if (insertedCount > 0) this.setHasCompletedTranslation(true);
+    if (insertedCount > 0) this.markRequestCompleted(activeRequest);
     for (const translation of response.translations) this.failedIds.delete(translation.id);
     this.pausedForError = this.failedIds.size > 0;
     this.setStatus(
       this.pausedForError
         ? 'error'
-        : this.hasCompletedTranslation
+        : this.hasCompletedTranslations
           ? 'on'
           : this.activeRequests.size > 0
             ? 'starting'
@@ -592,7 +608,7 @@ export class UrlPageTranslationController {
     await this.runGuest(() => this.guest.fail(activeRequest.ids)).catch(() => undefined);
     if (!this.isActiveRequest(activeRequest)) return;
     this.activeRequests.delete(activeRequest.requestId);
-    this.trackFailed(activeRequest.ids);
+    this.trackFailed(activeRequest);
     this.pauseWithError(error);
   }
 
@@ -637,8 +653,61 @@ export class UrlPageTranslationController {
     }
   }
 
-  private trackFailed(ids: readonly string[]): void {
-    for (const id of ids) this.failedIds.add(id);
+  private observeGuestBatch(batch: UrlPageTranslationGuestBatch, generation: number): void {
+    if (!this.isCurrent(generation) || this.observedCaptionRevision === batch.captionRevision) return;
+    const previousRevision = this.observedCaptionRevision;
+    this.observedCaptionRevision = batch.captionRevision;
+    if (previousRevision === null) return;
+
+    this.completedCaptionRevision = null;
+    this.hasStartedCaptionBatch = false;
+    for (const request of [...this.activeRequests.values()]) {
+      if (request.contentKind !== 'caption' || request.captionRevision === batch.captionRevision) continue;
+      this.activeRequests.delete(request.requestId);
+      void this.cancel(request.sessionId).catch(() => undefined);
+    }
+    for (const [id, failure] of this.failedIds) {
+      if (
+        failure.contentKind === 'caption'
+        && failure.captionRevision !== batch.captionRevision
+      ) this.failedIds.delete(id);
+    }
+    this.pausedForError = this.failedIds.size > 0;
+    this.emitCompletionChange();
+    this.setStatus(
+      this.pausedForError
+        ? 'error'
+        : this.hasCompletedTranslations
+          ? 'on'
+          : batch.blocks.length > 0 || this.activeRequests.size > 0
+            ? 'starting'
+            : 'idle',
+    );
+  }
+
+  private markRequestCompleted(request: ActivePageTranslationRequest): void {
+    if (request.contentKind === 'page') {
+      this.hasCompletedPageTranslation = true;
+    } else if (request.captionRevision === this.observedCaptionRevision) {
+      this.completedCaptionRevision = request.captionRevision;
+    }
+    this.emitCompletionChange();
+  }
+
+  private resetCompletionState(): void {
+    this.hasCompletedPageTranslation = false;
+    this.completedCaptionRevision = null;
+    this.observedCaptionRevision = null;
+    this.emitCompletionChange();
+  }
+
+  private trackFailed(request: ActivePageTranslationRequest): void {
+    for (const id of request.ids) {
+      this.failedIds.set(id, {
+        captionRevision: request.captionRevision,
+        contentKind: request.contentKind,
+      });
+    }
   }
 
   private runGuest<T>(operation: () => Promise<T>): Promise<T> {
@@ -657,9 +726,10 @@ export class UrlPageTranslationController {
     this.options.onStatusChange(status);
   }
 
-  private setHasCompletedTranslation(completed: boolean): void {
-    if (this.hasCompletedTranslation === completed) return;
-    this.hasCompletedTranslation = completed;
+  private emitCompletionChange(): void {
+    const completed = this.hasCompletedTranslations;
+    if (this.lastReportedCompletion === completed) return;
+    this.lastReportedCompletion = completed;
     this.options.onCompletionChange?.(completed);
   }
 

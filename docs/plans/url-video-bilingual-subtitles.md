@@ -120,8 +120,10 @@ Priority order is:
 3. caption prefetch ahead of playback;
 4. page prefetch and a small caption buffer behind playback.
 
-The initial caption request contains at most six cues or roughly 1,500 source
-characters. Later caption batches contain at most sixteen cues or 4,000 source
+The initial caption request contains at most six cues with a soft budget of
+roughly 1,500 source characters. One indivisible cue may exceed that soft budget
+but remains bounded by the trusted 4,000-character per-cue limit. Later caption
+batches contain at most sixteen cues or 4,000 source
 characters. The runtime fills approximately 90 seconds ahead and 15 seconds
 behind, scaled upward for playback speed and capped at two minutes. It requests
 no cue outside that moving window.

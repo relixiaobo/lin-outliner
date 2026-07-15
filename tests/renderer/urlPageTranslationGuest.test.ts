@@ -19,7 +19,7 @@ const TEST_LABELS: UrlPageTranslationGuestLabels = {
 };
 const MAX_BLOCKS = 4;
 const MAX_CHARS = 4_000;
-const MAX_BLOCK_CHARS = 6_000;
+const MAX_BLOCK_CHARS = 4_000;
 const MAX_CAPTION_BLOCKS = 16;
 const MAX_CAPTION_CHARS = 4_000;
 
@@ -83,10 +83,15 @@ describe('URL page translation guest runtime', () => {
       URL_PAGE_TRANSLATION_GUEST_CSS,
       '.html5-video-player.ytp-autohide > [data-tenon-bilingual-caption-overlay="youtube"]',
     );
+    const adRule = cssRuleBody(
+      URL_PAGE_TRANSLATION_GUEST_CSS,
+      '.html5-video-player.ad-showing > [data-tenon-bilingual-caption-overlay="youtube"]',
+    );
 
     expect(overlayRule).toContain('bottom: max(72px, 12%) !important;');
     expect(youtubeRule).toContain('transition: bottom 160ms ease-out !important;');
     expect(autoHideRule).toContain('bottom: max(20px, 4%) !important;');
+    expect(adRule).toContain('display: none !important;');
     expect(URL_PAGE_TRANSLATION_GUEST_CSS).toContain(`
   [data-tenon-bilingual-caption-overlay="youtube"] {
     transition: none !important;
@@ -250,6 +255,31 @@ describe('URL page translation guest runtime', () => {
       .toBe('Source caption\n&lt;img src=x onerror=alert(1)> &amp; translated');
   });
 
+  test('preserves native cue layout when translated text replaces the generated cue', () => {
+    const fixture = createFixture();
+    const caption = addCaptionVideo(fixture.document, fixture.window, {
+      language: 'en',
+      cues: [{ startTime: 0, endTime: 8, text: 'Positioned source caption' }],
+    });
+    const sourceCue = caption.source.cues?.[0];
+    if (!sourceCue) throw new Error('Missing source cue');
+    sourceCue.align = 'start';
+    sourceCue.line = 0;
+    sourceCue.position = 24;
+    sourceCue.size = 62;
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const batch = nextBatch(fixture.runtime);
+
+    fixture.runtime.apply([{ id: batch.blocks[0]!.id, translation: '定位后的译文' }]);
+
+    expect(caption.bilingual().cues?.[0]).toMatchObject({
+      align: 'start',
+      line: 0,
+      position: 24,
+      size: 62,
+    });
+  });
+
   test('does not translate a caption track that already matches the target language', () => {
     const fixture = createFixture();
     const caption = addCaptionVideo(fixture.document, fixture.window, {
@@ -285,6 +315,29 @@ describe('URL page translation guest runtime', () => {
     expect(caption.bilingual().mode).toBe('disabled');
   });
 
+  test('restores the previous source track when playback moves to another video', () => {
+    const fixture = createFixture();
+    const first = addCaptionVideo(fixture.document, fixture.window, {
+      language: 'en',
+      cues: [{ startTime: 0, endTime: 8, text: 'First video caption' }],
+    });
+    const second = addCaptionVideo(fixture.document, fixture.window, {
+      language: 'en',
+      cues: [{ startTime: 0, endTime: 8, text: 'Second video caption' }],
+    });
+    Object.defineProperty(second.media, 'paused', { configurable: true, value: true, writable: true });
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    expect(nextBatch(fixture.runtime).blocks[0]?.text).toBe('First video caption');
+    expect(first.source.mode).toBe('hidden');
+
+    Object.defineProperty(first.media, 'paused', { configurable: true, value: true, writable: true });
+    Object.defineProperty(second.media, 'paused', { configurable: true, value: false, writable: true });
+    expect(nextBatch(fixture.runtime).blocks[0]?.text).toBe('Second video caption');
+
+    expect(first.source.mode).toBe('showing');
+    expect(second.source.mode).toBe('hidden');
+  });
+
   test('sends selected caption cues to the model in playback order', () => {
     const fixture = createFixture();
     const caption = addCaptionVideo(fixture.document, fixture.window, {
@@ -303,6 +356,24 @@ describe('URL page translation guest runtime', () => {
       'Current cue',
       'Upcoming cue',
     ]);
+  });
+
+  test('allows one long current cue through the first soft caption budget', () => {
+    const fixture = createFixture();
+    const longCue = `Long cue ${'x'.repeat(1_592)}`;
+    addCaptionVideo(fixture.document, fixture.window, {
+      language: 'en',
+      cues: [{ startTime: 0, endTime: 8, text: longCue }],
+    });
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+
+    const captionBatch = nextBatch(fixture.runtime, { captionMaxChars: 1_500, visibleOnly: true });
+    expect(captionBatch.contentKind).toBe('caption');
+    expect(captionBatch.blocks.map((block) => block.text)).toEqual([longCue]);
+
+    const pageBatch = nextBatch(fixture.runtime, { captionMaxChars: 1_500, visibleOnly: true });
+    expect(pageBatch.contentKind).toBe('page');
+    expect(pageBatch.blocks.length).toBeGreaterThan(0);
   });
 
   test('bounds caption prefetch by playback time and preempts it after a seek', () => {
@@ -353,6 +424,7 @@ describe('URL page translation guest runtime', () => {
     const newBatch = nextBatch(fixture.runtime);
     expect(newBatch.blocks[0]?.text).toBe('New track cue');
     expect(newBatch.blocks[0]?.id).not.toBe(oldBatch.blocks[0]?.id);
+    expect(newBatch.captionRevision).toBeGreaterThan(oldBatch.captionRevision);
     expect(fixture.runtime.apply([{
       id: oldBatch.blocks[0]!.id,
       translation: 'STALE CAPTION',
@@ -473,6 +545,54 @@ describe('URL page translation guest runtime', () => {
     expect(fixture.document.documentElement.hasAttribute('data-tenon-bilingual-youtube-captions')).toBe(false);
   });
 
+  test('hides and pauses bilingual YouTube captions during an ad', async () => {
+    const fixture = createFixture();
+    const timedTextUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en';
+    setWindowLocation(fixture.window, 'https://www.youtube.com/watch?v=video123');
+    const player = fixture.document.createElement('div');
+    player.id = 'movie_player';
+    player.className = 'html5-video-player';
+    fixture.document.body.append(player);
+    const youtube = addCaptionVideo(fixture.document, fixture.window, { player, cues: [], language: null });
+    const script = fixture.document.createElement('script');
+    script.textContent = `var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: { videoId: 'video123' },
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [{ baseUrl: timedTextUrl, languageCode: 'en' }],
+        },
+      },
+    })};`;
+    fixture.document.head.append(script);
+    setWindowFetch(fixture.window, async () => new Response(JSON.stringify({
+      events: [
+        { tStartMs: 0, dDurationMs: 10_000, segs: [{ utf8: 'Current YouTube cue' }] },
+        { tStartMs: 60_000, dDurationMs: 10_000, segs: [{ utf8: 'Prefetched YouTube cue' }] },
+      ],
+    }), { status: 200 }));
+
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const current = await waitForCaptionBatch(fixture.runtime);
+    fixture.runtime.apply(current.blocks.map((block) => ({ id: block.id, translation: `T ${block.text}` })));
+    const overlay = player.querySelector<HTMLElement>('[data-tenon-bilingual-caption-overlay="youtube"]');
+    expect(overlay?.hidden).toBe(false);
+
+    player.classList.add('ad-showing');
+    youtube.media.dispatchEvent(new (fixture.window as unknown as { Event: typeof Event }).Event('timeupdate'));
+    expect(overlay?.hidden).toBe(true);
+    for (let index = 0; index < 3; index += 1) {
+      const batch = nextBatch(fixture.runtime);
+      expect(batch.blocks.map((block) => block.text)).not.toContain('Prefetched YouTube cue');
+      fixture.runtime.apply(batch.blocks.map((block) => ({ id: block.id, translation: `T ${block.text}` })));
+    }
+
+    player.classList.remove('ad-showing');
+    youtube.media.dispatchEvent(new (fixture.window as unknown as { Event: typeof Event }).Event('timeupdate'));
+    expect(overlay?.hidden).toBe(false);
+    expect((await waitForCaptionBatch(fixture.runtime)).blocks.map((block) => block.text))
+      .toEqual(['Prefetched YouTube cue']);
+  });
+
   test('uses YouTube default caption metadata for same-language exclusion', async () => {
     const fixture = createFixture();
     setWindowLocation(fixture.window, 'https://www.youtube.com/watch?v=video123');
@@ -526,6 +646,49 @@ describe('URL page translation guest runtime', () => {
     expect(captionStates).toEqual(['false', 'true']);
     expect(captionButton.getAttribute('aria-pressed')).toBe('true');
     restorePerformance();
+  });
+
+  test('exponentially backs off an unreadable YouTube caption URL', async () => {
+    const fixture = createFixture();
+    const timedTextUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en&pot=expired';
+    setWindowLocation(fixture.window, 'https://www.youtube.com/watch?v=video123');
+    addCaptionVideo(fixture.document, fixture.window, { cues: [], language: null });
+    const script = fixture.document.createElement('script');
+    script.textContent = `var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: { videoId: 'video123' },
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [{ baseUrl: timedTextUrl, languageCode: 'en' }],
+        },
+      },
+    })};`;
+    fixture.document.head.append(script);
+    let fetchCount = 0;
+    setWindowFetch(fixture.window, async () => {
+      fetchCount += 1;
+      return new Response('', { status: 200 });
+    });
+    expect(await fixture.runtime.captionLanguage()).toBe('en');
+    const originalDateNow = Date.now;
+    let now = originalDateNow();
+    Date.now = () => now;
+    try {
+      fixture.runtime.setEnabled(true, 'zh-Hans');
+      await waitForCount(() => fetchCount, 2);
+
+      now += 5_001;
+      nextBatch(fixture.runtime);
+      await waitForCount(() => fetchCount, 4);
+
+      now += 5_001;
+      nextBatch(fixture.runtime);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(fetchCount).toBe(4);
+    } finally {
+      Date.now = originalDateNow;
+      fixture.runtime.destroy();
+      setWindowLocation(fixture.window, 'https://example.com/');
+    }
   });
 
   test('invalidates YouTube results when the player requests a different caption track', async () => {
@@ -603,11 +766,14 @@ describe('URL page translation guest runtime', () => {
     expect(new URL(fetched[0]!).origin).toBe('https://www.youtube.com');
   });
 
-  test('backs off repeated watch fetches when a YouTube video has no captions', async () => {
+  test('negative-caches a confirmed captionless YouTube video beyond the old retry window', async () => {
     const fixture = createFixture();
     setWindowLocation(fixture.window, 'https://www.youtube.com/watch?v=video123');
     addCaptionVideo(fixture.document, fixture.window, { cues: [], language: null });
-    const playerResponse = { videoDetails: { videoId: 'video123' } };
+    const playerResponse = {
+      playabilityStatus: { status: 'OK' },
+      videoDetails: { videoId: 'video123' },
+    };
     const fetched: string[] = [];
     setWindowFetch(fixture.window, async (url) => {
       fetched.push(String(url));
@@ -616,11 +782,20 @@ describe('URL page translation guest runtime', () => {
         { status: 200 },
       );
     });
-
-    expect(await fixture.runtime.captionLanguage()).toBeNull();
-    expect(await fixture.runtime.captionLanguage()).toBeNull();
-    expect(await fixture.runtime.captionLanguage()).toBeNull();
-    expect(fetched).toHaveLength(1);
+    const originalDateNow = Date.now;
+    let now = originalDateNow();
+    Date.now = () => now;
+    try {
+      expect(await fixture.runtime.captionLanguage()).toBeNull();
+      now += 120_000;
+      expect(await fixture.runtime.captionLanguage()).toBeNull();
+      expect(await fixture.runtime.captionLanguage()).toBeNull();
+      expect(fetched).toHaveLength(1);
+    } finally {
+      Date.now = originalDateNow;
+      fixture.runtime.destroy();
+      setWindowLocation(fixture.window, 'https://example.com/');
+    }
   });
 
   test('keeps a second prefetch batch out when the controller requests visible-only work', () => {
@@ -706,6 +881,36 @@ describe('URL page translation guest runtime', () => {
     ]);
     expect(commands).toEqual(['initialize', 'set-enabled', 'next-batch', 'apply', 'destroy']);
     expect(mainWorldExecutions).toBe(0);
+  });
+
+  test('validates one long caption against the hard block limit instead of the soft first budget', async () => {
+    const longCue = 'x'.repeat(1_600);
+    const webview = {
+      getWebContentsId: () => 71,
+      insertCSS: async () => 'css-key',
+      removeInsertedCSS: async () => undefined,
+    } as unknown as Electron.WebviewTag;
+    const bridge = createUrlPageTranslationGuestBridge(webview, async (command) => (
+      command.operation === 'next-batch'
+        ? {
+            blocks: [
+              { id: 'c7:0', text: longCue },
+              { id: 'c7:1', text: 'must not join the oversized cue' },
+            ],
+            captionRevision: 7,
+            contentKind: 'caption',
+            priority: 0,
+          }
+        : null
+    ));
+
+    const batch = await bridge.nextBatch({ captionMaxBlocks: 6, captionMaxChars: 1_500 });
+
+    expect(batch).toMatchObject({
+      blocks: [{ id: 'c7:0', text: longCue }],
+      captionRevision: 7,
+      contentKind: 'caption',
+    });
   });
 
   test('inserts model output with textContent and preserves the current reading anchor', () => {
@@ -866,6 +1071,7 @@ function nextBatch(
   runtime: GuestRuntime,
   options: {
     activeBatches?: readonly UrlPageTranslationGuestActiveBatch[];
+    captionMaxChars?: number;
     maxBlocks?: number;
     retryOnly?: boolean;
     visibleOnly?: boolean;
@@ -879,7 +1085,7 @@ function nextBatch(
     options.visibleOnly ?? false,
     options.activeBatches ?? [],
     MAX_CAPTION_BLOCKS,
-    MAX_CAPTION_CHARS,
+    options.captionMaxChars ?? MAX_CAPTION_CHARS,
   );
 }
 
@@ -1174,4 +1380,12 @@ async function waitForCaptionBatch(runtime: GuestRuntime): Promise<UrlPageTransl
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error('Timed out waiting for caption batch');
+}
+
+async function waitForCount(read: () => number, expected: number): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (read() >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Timed out waiting for count ${expected}`);
 }
