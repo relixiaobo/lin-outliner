@@ -25,6 +25,27 @@ describe('semantic inline scanner', () => {
     });
   });
 
+  test('linkifies a bare URL inside an existing rich-text mark without dropping either mark', () => {
+    const text = 'https://example.com';
+
+    expect(scanRichTextInline({
+      text,
+      marks: [{ start: 0, end: text.length, type: 'bold' }],
+      inlineRefs: [],
+    }, {
+      metadata: 'none',
+      linkifyBareUrls: true,
+      references: true,
+    }).content).toEqual({
+      text,
+      marks: [
+        { start: 0, end: text.length, type: 'bold' },
+        { start: 0, end: text.length, type: 'link', attrs: { href: text } },
+      ],
+      inlineRefs: [],
+    });
+  });
+
   test('parses an explicit Markdown link with balanced destination parentheses', () => {
     const source = '[site](https://example.com/a_(b))';
 

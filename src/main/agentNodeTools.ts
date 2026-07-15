@@ -1487,6 +1487,7 @@ function fieldResolutionValuesFromEntry(
       valueNodeId: value.id,
       text: value.content.text,
       targetId: value.type === 'reference' ? value.targetId : undefined,
+      hasInlineRefs: value.content.inlineRefs.length > 0,
     }));
 }
 
@@ -3145,12 +3146,25 @@ function fieldTypeForEntry(index: ProjectionIndex, fieldEntryId: string): FieldT
 
 function outlineValueKeyFromProjection(node: NodeProjection): string {
   if (node.type === 'reference') return `reference:${node.targetId ?? ''}`;
-  return `value:${node.content.text.trim().toLowerCase()}`;
+  return richTextValueKey(node.content);
 }
 
 function outlineValueKey(value: OutlineValue): string {
   if (value.targetId) return `reference:${value.targetId}`;
-  return `value:${value.text.trim().toLowerCase()}`;
+  return richTextValueKey(richTextFromOutlineText(outlineValueSource(value)));
+}
+
+function richTextValueKey(content: RichText): string {
+  const text = content.text.trim().toLowerCase();
+  if (content.inlineRefs.length === 0) return `value:${text}`;
+  const references = [...content.inlineRefs]
+    .sort((left, right) => (
+      left.offset - right.offset
+      || referenceTargetSortKey(left.target).localeCompare(referenceTargetSortKey(right.target))
+    ))
+    .map((ref) => `${ref.offset}:${referenceTargetSortKey(ref.target)}`)
+    .join('|');
+  return `inline-value:${text}:${references}`;
 }
 
 function outlineValueSource(value: OutlineValue): string {
@@ -3718,6 +3732,8 @@ async function setDoneFieldValue(
   field: OutlineField,
   warnings: string[],
 ): Promise<void> {
+  const validation = validateFieldValuesForType(field.name, 'checkbox', fieldResolutionValues(field));
+  if (!validation.ok) throw new Error(validation.error);
   const desired = field.values.at(-1)?.text.trim().toLowerCase();
   if (!desired) {
     warnings.push(`Field "${field.name}" was left unchanged because Done requires true or false.`);
@@ -3732,10 +3748,14 @@ function fieldResolutionMap(index: ProjectionIndex): ReadonlyMap<string, FieldRe
 
 function fieldResolutionValues(field: OutlineField): FieldResolutionValue[] {
   if (field.clear) return [];
-  return field.values.map((value) => ({
-    text: value.text,
-    ...(value.targetId ? { targetId: value.targetId } : {}),
-  }));
+  return field.values.map((value) => {
+    const content = value.targetId ? null : richTextFromOutlineText(outlineValueSource(value));
+    return {
+      text: value.text,
+      ...(value.targetId ? { targetId: value.targetId } : {}),
+      ...(content?.inlineRefs.length ? { hasInlineRefs: true } : {}),
+    };
+  });
 }
 
 async function createField(

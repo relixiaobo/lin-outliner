@@ -11,6 +11,7 @@ import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from 
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 import { formatChatSourceReferenceMarker, formatFileReferenceMarker, formatNodeReferenceMarker, splitChatSourceReferenceMarkers, splitFileReferenceMarkers } from '../../src/core/referenceMarkup';
+import { richTextToMarkdownReferenceMarkup } from '../../src/core/markdownRichText';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -1002,6 +1003,65 @@ describe('agent node tools', () => {
     ]);
   });
 
+  test('node_create appends distinct pure inline-reference field values by target identity', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-field-refs-'));
+    try {
+      const core = Core.new();
+      const today = core.projection().todayId;
+      const record = mustFocus(core.createNode(today, null, 'Record'));
+      const entry = mustFocus(core.createInlineField(record, null, 'Attachments', 'plain'));
+      const firstPath = path.join(localRoot, 'a.txt');
+      const secondPath = path.join(localRoot, 'b.txt');
+
+      const first = await executeTool(core, 'node_create', {
+        parent_id: record,
+        outline: `- Attachments:: ${formatFileReferenceMarker('a.txt', firstPath)}`,
+      }, { localFileRoot: localRoot });
+      expect(first.ok).toBe(true);
+      const firstValueId = core.state().nodes[entry]!.children[0]!;
+
+      const second = await executeTool(core, 'node_create', {
+        parent_id: record,
+        outline: `- Attachments:: ${formatFileReferenceMarker('b.txt', secondPath)}`,
+      }, { localFileRoot: localRoot });
+      expect(second.ok).toBe(true);
+
+      const valueIds = core.state().nodes[entry]!.children;
+      expect(valueIds).toHaveLength(2);
+      expect(valueIds[0]).toBe(firstValueId);
+      expect(valueIds.map((valueId) => core.state().nodes[valueId]!.content.inlineRefs[0]?.target)).toEqual([
+        { kind: 'local-file', path: firstPath, entryKind: 'file' },
+        { kind: 'local-file', path: secondPath, entryKind: 'file' },
+      ]);
+    } finally {
+      await rm(localRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('node_create rejects pure inline references for typed fields before mutation', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-typed-field-ref-'));
+    try {
+      const core = Core.new();
+      const today = core.projection().todayId;
+      const seed = mustFocus(core.createNode(today, null, 'Seed'));
+      mustFocus(core.createInlineField(seed, null, 'Score', 'number'));
+      const record = mustFocus(core.createNode(today, null, 'Record'));
+      const marker = formatFileReferenceMarker('score.txt', path.join(localRoot, 'score.txt'));
+
+      const result = await executeTool(core, 'node_create', {
+        parent_id: record,
+        outline: `- Score:: ${marker}`,
+      }, { localFileRoot: localRoot });
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.message).toContain('number field');
+      expect(result.error?.message).toContain('inline reference values');
+      expect(core.state().nodes[record]!.children).toEqual([]);
+    } finally {
+      await rm(localRoot, { recursive: true, force: true });
+    }
+  });
+
   test('node_create does not match empty draft fields as the Field placeholder name', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -1588,6 +1648,28 @@ describe('agent node tools', () => {
       }],
       inlineRefs: [],
     });
+  });
+
+  test('node_create duplicate_id preserves overlapping bold and link marks', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- **https://example.com**',
+    });
+    expect(created.ok).toBe(true);
+    const sourceId = created.data!.createdRootIds[0]!;
+
+    const duplicated = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      duplicate_id: sourceId,
+    });
+
+    expect(duplicated.ok).toBe(true);
+    const cloneId = duplicated.data!.createdRootIds[0]!;
+    expect(core.state().nodes[cloneId]!.content).toEqual(core.state().nodes[sourceId]!.content);
+    expect(richTextToMarkdownReferenceMarkup(core.state().nodes[cloneId]!.content))
+      .toBe('**[https://example.com](https://example.com)**');
   });
 
   test('node_create persists saved search nodes with executable conditions', async () => {

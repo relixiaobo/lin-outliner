@@ -452,6 +452,9 @@ document-changing transactions. It applies the captured first-row content only
 after Core succeeds, then restores editability; rejection leaves the local
 content unchanged and also restores editability. This prevents input typed
 during command latency from being overwritten by the successful paste snapshot.
+Handled pending-paste key events remain handled at the workspace boundary, so
+`Undo` and `Redo` cannot escape to global Core commands while the editor is
+frozen.
 
 ## Leading Control Matrix
 

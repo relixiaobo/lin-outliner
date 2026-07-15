@@ -203,15 +203,30 @@ function markdownInlineTokens(input: string): InlineToken[] {
   for (const token of Lexer.lexInline(input)) {
     const start = offset;
     offset += token.raw.length;
-    if (token.type !== 'link' || !token.raw.startsWith('[') || !token.href) continue;
     if (isEscapedSemanticAt(input, start)) continue;
-    candidates.push({
-      start,
-      end: offset,
-      type: 'link',
-      inner: token.text,
-      attrs: { href: token.href },
-    });
+    if (token.type === 'link' && token.raw.startsWith('[') && token.href) {
+      candidates.push({
+        start,
+        end: offset,
+        type: 'link',
+        inner: token.text,
+        attrs: { href: token.href },
+      });
+      continue;
+    }
+    if (token.type === 'strong' || token.type === 'em' || token.type === 'del') {
+      const type: TextMarkKind = token.type === 'strong'
+        ? 'bold'
+        : token.type === 'em'
+          ? 'italic'
+          : 'strike';
+      candidates.push({
+        start,
+        end: offset,
+        type,
+        inner: token.text,
+      });
+    }
   }
   for (const match of input.matchAll(MARKDOWN_INLINE_MARK_TOKEN)) {
     const start = match.index ?? 0;
@@ -242,9 +257,24 @@ function parseMarkdown(input: string): ParsedMarkdown {
     if (token.type === 'code') {
       text += token.inner;
     } else {
-      text += decodeEscapes(token.inner, text.length, escapedOffsets);
+      const nested = parseMarkdown(token.inner);
+      text += nested.content.text;
+      for (const offset of nested.escapedOffsets) escapedOffsets.add(markStart + offset);
+      if (text.length > markStart) {
+        marks.push({
+          start: markStart,
+          end: text.length,
+          type: token.type,
+          ...(token.attrs ? { attrs: token.attrs } : {}),
+        });
+        marks.push(...nested.content.marks.map((mark) => ({
+          ...mark,
+          start: markStart + mark.start,
+          end: markStart + mark.end,
+        })));
+      }
     }
-    if (text.length > markStart) {
+    if (token.type === 'code' && text.length > markStart) {
       marks.push({
         start: markStart,
         end: text.length,
@@ -255,7 +285,24 @@ function parseMarkdown(input: string): ParsedMarkdown {
     cursor = token.end;
   }
   text += decodeEscapes(input.slice(cursor), text.length, escapedOffsets);
+  marks.sort(compareMarkdownMarks);
   return { content: { text, marks, inlineRefs: [] }, escapedOffsets };
+}
+
+function compareMarkdownMarks(left: TextMark, right: TextMark): number {
+  return left.start - right.start
+    || right.end - left.end
+    || markdownMarkNestingRank(left.type) - markdownMarkNestingRank(right.type);
+}
+
+function markdownMarkNestingRank(type: TextMarkKind): number {
+  if (type === 'bold') return 0;
+  if (type === 'italic') return 1;
+  if (type === 'strike') return 2;
+  if (type === 'highlight') return 3;
+  if (type === 'link') return 4;
+  if (type === 'code') return 5;
+  return 6;
 }
 
 function decodeEscapes(input: string, outputStart: number, escapedOffsets: Set<number>): string {
@@ -455,7 +502,7 @@ function linkifyBareUrls(
       attrs: { href: /^www\./iu.test(display) ? `https://${display}` : display },
     });
   }
-  marks.sort((left, right) => left.start - right.start || right.end - left.end);
+  marks.sort(compareMarkdownMarks);
   return { ...content, marks };
 }
 

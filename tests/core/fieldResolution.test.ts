@@ -28,4 +28,16 @@ describe('field value type resolution', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.instructions).toContain('plain field');
   });
+
+  test('non-node inline references force plain inference and fail typed validation', () => {
+    const values = [{ text: '', hasInlineRefs: true }];
+
+    expect(inferFieldTypeFromValues(values)).toBe('plain');
+    expect(validateFieldValuesForType('Attachment', 'plain', values)).toEqual({ ok: true });
+    for (const fieldType of ['number', 'options', 'options_from_supertag'] as const) {
+      const result = validateFieldValuesForType('Attachment', fieldType, values);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('inline reference values');
+    }
+  });
 });

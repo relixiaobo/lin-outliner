@@ -35,11 +35,33 @@ export function richTextToMarkdownReferenceMarkup(
   for (const ref of refs) {
     add(ref.offset, inlineRefMarker(ref), 10);
   }
-  for (const mark of marksOutsideSkippedRanges(markdownSerializableMarks(content.marks), skippedRanges, content.text.length)) {
+  const serializableMarks = mergeAdjacentMarkdownMarks(marksOutsideSkippedRanges(
+    markdownSerializableMarks(content.marks),
+    skippedRanges,
+    content.text.length,
+  )).flatMap((mark) => {
     const delimiters = markDelimiters(mark);
-    if (!delimiters) continue;
-    add(mark.start, delimiters.open, 20);
-    add(mark.end, delimiters.close, -20);
+    return delimiters ? [{ mark, delimiters }] : [];
+  });
+  const openingOffsets = new Map<number, typeof serializableMarks>();
+  const closingOffsets = new Map<number, typeof serializableMarks>();
+  for (const entry of serializableMarks) {
+    openingOffsets.set(entry.mark.start, [...(openingOffsets.get(entry.mark.start) ?? []), entry]);
+    closingOffsets.set(entry.mark.end, [...(closingOffsets.get(entry.mark.end) ?? []), entry]);
+  }
+  for (const [offset, entries] of closingOffsets) {
+    entries.sort((left, right) => (
+      right.mark.start - left.mark.start
+      || markdownMarkNestingRank(right.mark.type) - markdownMarkNestingRank(left.mark.type)
+    ));
+    entries.forEach((entry, index) => add(offset, entry.delimiters.close, -1_000 + index));
+  }
+  for (const [offset, entries] of openingOffsets) {
+    entries.sort((left, right) => (
+      right.mark.end - left.mark.end
+      || markdownMarkNestingRank(left.mark.type) - markdownMarkNestingRank(right.mark.type)
+    ));
+    entries.forEach((entry, index) => add(offset, entry.delimiters.open, 1_000 + index));
   }
   const codeRanges = content.marks
     .filter((mark) => mark.type === 'code')
@@ -100,6 +122,33 @@ function markdownSerializableMarks(marks: readonly TextMark[]): TextMark[] {
   return withoutHeading;
 }
 
+function mergeAdjacentMarkdownMarks(marks: readonly TextMark[]): TextMark[] {
+  const grouped = [...marks].sort((left, right) => (
+    markdownMarkIdentity(left).localeCompare(markdownMarkIdentity(right))
+    || left.start - right.start
+    || left.end - right.end
+  ));
+  const merged: TextMark[] = [];
+  for (const mark of grouped) {
+    const previous = merged[merged.length - 1];
+    if (
+      previous
+      && markdownMarkIdentity(previous) === markdownMarkIdentity(mark)
+      && mark.start <= previous.end
+    ) {
+      previous.end = Math.max(previous.end, mark.end);
+      continue;
+    }
+    merged.push({ ...mark });
+  }
+  return merged;
+}
+
+function markdownMarkIdentity(mark: TextMark): string {
+  const attrs = Object.entries(mark.attrs ?? {}).sort(([left], [right]) => left.localeCompare(right));
+  return `${mark.type}:${JSON.stringify(attrs)}`;
+}
+
 function marksOutsideSkippedRanges(
   marks: readonly TextMark[],
   skippedRanges: ReadonlyArray<{ start: number; end: number }>,
@@ -154,6 +203,16 @@ function markDelimiters(mark: TextMark): { open: string; close: string } | null 
     return href ? { open: '[', close: `](${escapeMarkdownLinkDestination(href)})` } : null;
   }
   return null;
+}
+
+function markdownMarkNestingRank(type: TextMark['type']): number {
+  if (type === 'bold') return 0;
+  if (type === 'italic') return 1;
+  if (type === 'strike') return 2;
+  if (type === 'highlight') return 3;
+  if (type === 'link') return 4;
+  if (type === 'code') return 5;
+  return 6;
 }
 
 function escapeMarkdownLinkDestination(href: string): string {

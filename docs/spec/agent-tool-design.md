@@ -1264,6 +1264,10 @@ Rules:
 - Markdown link labels use the same canonical semantic escapes as ordinary
   text. Parsing decodes escaped punctuation such as `\#`, `\*`, and `\\` back
   to its visible label without leaking serializer backslashes into node text.
+- Overlapping Markdown marks remain overlapping rich-text marks. Canonical
+  serialization orders equal and nested ranges as properly nested delimiters,
+  so a bold bare URL round-trips as `**[https://example.com](https://example.com)**`
+  without corrupting either its visible text or link destination.
 - Complete Markdown links, inline code, reference markers, bare URLs, and
   backslash-escaped tokens are protected from tag and field harvesting. A
   grammar-shaped token in one of those ranges remains literal.
@@ -1306,6 +1310,10 @@ Rules:
   stored type/config, and values are validated against that type before
   mutation. Plain fields accept text, inline references, whole-row reference
   values, or a mixture.
+- Local-file, chat-source, and mixed inline-reference values are supported only
+  by `plain` fields; every non-plain field rejects them before mutation. Field
+  reconciliation includes inline-reference offsets and canonical target
+  identities, so two zero-visible-text references never overwrite one another.
 - Reused `options` fields use option semantics: text values select an existing
   option by name when present and otherwise collect a local option value; node
   reference values select that exact option node. Reused `options_from_supertag`

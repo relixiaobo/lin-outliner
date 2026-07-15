@@ -123,6 +123,22 @@ describe('markdown rich text outline bridge', () => {
     expect(markdownReferenceMarkupToRichText(serialized)).toEqual(content);
   });
 
+  test('round-trips a bare URL covered by an overlapping Markdown mark', () => {
+    const parsed = markdownReferenceMarkupToRichText('**https://example.com**');
+    expect(parsed).toEqual({
+      text: 'https://example.com',
+      marks: [
+        { start: 0, end: 19, type: 'bold' },
+        { start: 0, end: 19, type: 'link', attrs: { href: 'https://example.com' } },
+      ],
+      inlineRefs: [],
+    });
+
+    const serialized = richTextToMarkdownReferenceMarkup(parsed);
+    expect(serialized).toBe('**[https://example.com](https://example.com)**');
+    expect(markdownReferenceMarkupToRichText(serialized)).toEqual(parsed);
+  });
+
   test('round-trips link destinations with balanced parentheses', () => {
     const content = {
       text: 'https://example.com/a_(b)',
