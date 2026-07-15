@@ -399,6 +399,120 @@ Source authority stays source-specific:
   resolution is synchronous in the renderer because the source is the URL itself;
   the pane must not show a file-preview loading overlay before the webview starts.
 
+URL previews also expose one neutral `Languages` icon immediately before the
+header actions menu. It opens a compact, task-first popover: target language and
+the full-width Translate page / Show original command come first; a separator
+then groups the globally remembered automatic-translation and model preferences.
+Translate page uses the shared high-contrast neutral primary-button treatment,
+while the active page's Show original reversal uses the quieter secondary-button
+treatment. Both commands retain the matching semantic icon and shortcut. At
+least one completed translation gives the stable header language glyph a subtle
+circular selected fill without compositing a second glyph into its small slot.
+The trigger's accessible name reports the translation state independently from
+popover expansion. Clicking either host chrome or the webpage webview closes the
+popover. Manual translation and automatic translation both default off.
+Enabling translation keeps the remote page as the reading surface and inserts an
+inert plain-text translation after each eligible source block; disabling it hides
+translations without discarding the current page's in-memory cache. `Option+A`
+on macOS and `Alt+A` elsewhere toggles translation only for the active URL
+preview, including while its webview has focus, and never changes the automatic
+preference. Navigation and reload cancel pending work, clear page-local cache,
+and re-evaluate automatic translation; target/model change, pane close, or
+webview replacement also cancels pending work and clears page-local cache.
+
+The common target-language catalog is independent of Tenon's display locales
+and uses language autonyms. Until the user chooses a target it follows Tenon's
+effective UI locale; an explicit choice is remembered across pages and launches.
+Descendant blocks whose nearest declared language already matches the selected
+target are excluded without showing progress or calling the provider. Source
+language otherwise remains automatic.
+
+The translation model defaults to `Follow Agent`, which resolves Neva's current
+model dynamically for every request. The selector otherwise lists enabled,
+authenticated, runnable models grouped by provider and persists a
+provider-qualified explicit choice globally. Returning to `Follow Agent` clears
+that override. If an explicit model becomes unavailable, it remains identified
+as unavailable and requests fail with a recoverable configuration error instead
+of silently falling back. Changing model while translation is on cancels the
+active request, clears page-local results, and retranslates the current viewport.
+
+Automatic translation is a globally remembered opt-in switch. Turning it on
+immediately checks the current document and translates only when a valid
+top-level `<html lang>` differs from the target. Missing, empty, or invalid
+top-level language metadata leaves the page manual. Turning the switch off does
+not hide visible translations. Manually choosing Show original suppresses auto
+translation for only the current page; the next top-level navigation clears the
+suppression and evaluates the new page again. Changing the target also re-runs
+the language rule for an auto-activated page and turns translation off when the
+new target matches the document language.
+
+Translation is viewport-driven rather than an eager whole-page request. Visible
+content starts with a latency-oriented batch of at most two blocks or roughly
+2,000 source characters; later visible and prefetch batches contain at most four
+blocks or roughly 4,000 characters. Before direction is known, the guest runtime
+prefetches about two viewports above and below the activation point. It then keeps
+about four viewports ahead and one behind the observed reading direction, with
+symmetric upward and downward behavior. Blocks outside that window are not sent.
+
+Each pane keeps at most three active model requests and at most one prefetch
+request. Free capacity always takes visible work first, so a dense initial
+viewport starts `2 / 4 / 4` blocks without waiting for an earlier response.
+Micro-batches settle independently and render in response order. A 120ms
+scheduling probe continues while translation is enabled. When all slots are full
+and new visible work appears, the controller invalidates only an offscreen
+lowest-priority request, removes its transient loaders, returns those blocks to
+the pending pool, and starts a visible micro-batch without waiting for the
+obsolete provider response. Cancellation is not surfaced as an error. Dynamic
+content joins only after it enters the same window, and successful blocks remain
+cached in memory so back-scrolling does not call the provider again. When a source
+element's normalized text changes, it receives a fresh block id; responses,
+failures, and releases from the previous text snapshot can no longer affect it.
+DOM insertion, hide, and restore capture the
+first visible source block and compensate its post-write offset immediately and
+across two bounded animation frames. Wheel, touch, keyboard input, or any viewport
+scroll that does not match Tenon's own instant compensation (including a native
+scrollbar drag) invalidates deferred compensation before it can undo the reader's
+movement.
+Compensation stays instant on sites that
+request smooth scrolling, and injected nodes do not become browser scroll anchors,
+keeping the reader's current sentence stationary through translation growth or
+collapse.
+
+Every block entering a submitted batch immediately shows a small inline loading
+control at the end of its source. The control keeps a fixed 16px status area and
+10px spinner across page typography, so headings do not enlarge it. Success
+removes it as the translation appears; failure changes it into a
+keyboard-accessible error control whose activation retries only that block. The
+retry control keeps at least a 16px hit area and
+neutral hover, pressed, and keyboard-focus feedback. While any failures remain,
+normal scheduling pauses and polls only for an explicit retry; this includes a
+missing provider/model, so the user can configure one and retry the affected
+paragraph in place. The existing localized toast announces each failure wave.
+When the current page window contains no eligible untranslated blocks,
+translation stays enabled in an idle state without showing the completed fill;
+a later eligible block returns the control to loading before its request starts.
+The completed fill appears only after the guest confirms that at least one
+translation node was actually inserted; unchanged output or a detached source does not
+produce a false completed state.
+Disabling, canceling, navigating, or changing the source removes transient
+controls. Reduced-motion mode uses a static progress ring.
+
+The guest collector excludes scripts/styles, code/preformatted content, form
+controls, editable regions, navigation, hidden/inert/`aria-hidden` subtrees, and
+Tenon-injected nodes. Its runtime lives in an Electron isolated world rather than
+the remote page's main world. A dedicated preload IPC operation verifies that the
+target is an HTTP(S) `webview` owned by the requesting main window, rejects more
+than four blocks or 4,000 source characters, and invokes only bounded runtime
+operations. Remote scripts therefore cannot replace the collector or manufacture
+provider requests. Main revalidates the bounded block ids and text before using
+the dynamically followed Agent model or the explicitly selected qualified model.
+An explicit model must still be runnable on its provider and never silently falls
+back to Agent. The response must contain exactly the requested ids;
+translations enter the page through `textContent`, never model-produced HTML.
+The guest still has no preload, Node integration, permissions, popup capability,
+or non-HTTP navigation. Translation does not weaken the URL-preview security
+posture or add a guest-to-main IPC channel.
+
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the
 scroll viewport and is fitted to the available width, with no page-nav or zoom

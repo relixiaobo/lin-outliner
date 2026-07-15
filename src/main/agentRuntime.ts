@@ -10,7 +10,6 @@ import {
   // pi-ai's own vocabulary: per-"session" provider resources, keyed by our conversation id.
   cleanupSessionResources as cleanupPiConversationResources,
   createAssistantMessageEventStream,
-  getSupportedThinkingLevels,
   isContextOverflow,
 } from '@earendil-works/pi-ai';
 import type {
@@ -211,18 +210,13 @@ import {
   getProviderSettings,
   setBuiltInAgentProfile,
   providerStreamOptionsFromRuntimeSettings,
-  rankedModels,
   DEFAULT_DREAM_SCHEDULE,
   type AgentProviderRuntimeConfig,
   type StoredBuiltInAgentProfile,
 } from './agentSettings';
 import {
-  createOpenAICompatibleModel,
-  ensurePiCustomProvider,
   piCompleteSimple,
   piExternalProviderId,
-  piFindModel,
-  piProviders,
   piStreamSimple,
 } from './piModels';
 import {
@@ -234,8 +228,6 @@ import {
 import {
   type AgentImageGenerationRuntime,
 } from './agentImageGenerationTool';
-import { parseProviderQualifiedModel } from '../core/agentModelId';
-import { isLocalGatewayProviderId } from '../core/localGatewayProviders';
 import {
   appendAgentToolPermissionGrant,
   appendAgentToolPermissionSoftBlockAllow,
@@ -323,8 +315,6 @@ import {
   type AgentRuntimeContextEventInput,
 } from './agentRuntimeContext';
 import type { ErrorReport, ErrorReportContext } from '../core/errorObservability';
-import { defaultThinkingLevelFor } from '../core/agentReasoning';
-import { AGENT_REASONING_LADDER } from '../core/types';
 import type {
   AgentDefinition,
   AgentConversation,
@@ -337,6 +327,13 @@ import type {
   AssetMetadata,
   DocumentProjection,
 } from '../core/types';
+import {
+  defaultThinkingLevel,
+  resolveAgentModelEffort,
+  resolveAgentModelOverride,
+  resolveProviderModel,
+  resolveSkillEffortOverride,
+} from './agentModelResolution';
 import {
   ASK_USER_QUESTION_TOOL_NAME,
   askUserQuestionToolResult,
@@ -6450,7 +6447,7 @@ export class AgentRuntime {
   }
 
   private resolveProviderModel(providerConfig: AgentProviderRuntimeConfig) {
-    return this.options.providerModelResolver?.(providerConfig) ?? resolveModel(providerConfig);
+    return this.options.providerModelResolver?.(providerConfig) ?? resolveProviderModel(providerConfig);
   }
 
   /**
@@ -8930,7 +8927,7 @@ function createConfiguredAgent(
   } = {},
   onPayload?: (payload: unknown, model: Model<any>) => unknown | undefined | Promise<unknown | undefined>,
 ) {
-  const model = options.model ?? resolveModel(providerConfig);
+  const model = options.model ?? resolveProviderModel(providerConfig);
   const localFileRoot = options.localFileRoot;
   const skillRuntime = options.skillRuntime;
   let syncedLocalPermissionRootSignature = '';
@@ -9240,11 +9237,6 @@ function createConfiguredAgent(
   return agent;
 }
 
-// `AGENT_REASONING_LEVELS` membership derives from the single shared ordered ladder
-// in core (`AGENT_REASONING_LADDER`); the default level + nearest-level coercion are
-// shared with the renderer via `core/agentReasoning`.
-const AGENT_REASONING_LEVELS = new Set<AgentReasoningLevel>(AGENT_REASONING_LADDER);
-
 function resolveSkillTurnUpdate(
   effect: SkillTurnEffect | null,
   providerConfig: AgentProviderRuntimeConfig,
@@ -9273,147 +9265,7 @@ function resolveSkillModelOverride(
 ): Model<Api> {
   const requested = modelInput.trim();
   if (!requested || requested === 'inherit' || requested === currentModel.id) return currentModel;
-  return resolveModelOverride(requested, providerConfig) ?? currentModel;
-}
-
-/**
- * Resolve a model-selection string against a provider CONNECTION. Accepts a bare
- * model id or a `providerId/modelId` (or `providerId:modelId`) qualifier. Returns a
- * catalog model when the id is known, an OpenAI-compatible model for the
- * connection's custom endpoint, or null when nothing matches (the caller decides
- * the fallback). The provider connection no longer carries a model, so this is the
- * single place a model string becomes a `Model`.
- */
-function resolveModelOverride(
-  requested: string,
-  providerConfig: AgentProviderRuntimeConfig,
-): Model<Api> | null {
-  const parsed = parseProviderQualifiedModel(requested, isKnownProviderId);
-  const providerId = parsed?.providerId ?? providerConfig.providerId;
-  const modelId = parsed?.modelId ?? requested;
-  const knownModel = findKnownModel(providerId, modelId);
-  if (providerId === providerConfig.providerId && providerConfig.baseUrl) {
-    return createCustomEndpointModel(providerConfig, modelId, knownModel);
-  }
-  if (knownModel) return knownModel;
-  return null;
-}
-
-/**
- * The default catalog model for a provider connection — the first after the shared
- * ranking sort (`rankedModels`), with the connection's base URL applied. Null for a
- * custom endpoint with no catalog (where the agent profile must name the model).
- */
-function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<Api> | null {
-  if (config.modelId) {
-    const configured = findKnownModel(config.providerId, config.modelId);
-    if (configured) return configured;
-  }
-  const first = rankedModels(config.providerId)[0];
-  if (config.baseUrl) {
-    const modelId = config.modelId ?? first?.id ?? '__tenon_openai_compatible_probe__';
-    return createCustomEndpointModel(config, modelId, first);
-  }
-  if (!first) return null;
-  return first;
-}
-
-/**
- * The model a provider connection runs by default when no agent profile names one.
- * Throws (rather than returns null) for the utility callers — compaction, dream,
- * roster display — that always need a concrete model.
- */
-function resolveModel(config: AgentProviderRuntimeConfig): Model<Api> {
-  const model = resolveProviderCatalogModel(config);
-  if (model) return model;
-  if (config.baseUrl) {
-    throw new Error(`No catalog model for custom provider ${config.providerId}; set a model on the agent profile.`);
-  }
-  throw new Error(`model not found for provider ${config.providerId}`);
-}
-
-/**
- * The model a model-selection string resolves to. `fallback` is a THUNK for the
- * provider connection's default model (resolved by the caller through the injectable
- * `resolveProviderModel` seam, so tests and custom resolvers are honored); it is
- * invoked lazily — only an empty/`inherit` selection (or an unresolvable explicit
- * one) needs it, so an explicit, resolvable model never triggers the catalog sort.
- */
-function resolveAgentModel(
-  modelInput: string | undefined,
-  config: AgentProviderRuntimeConfig,
-  fallback: () => Model<Api> | null,
-): Model<Api> {
-  const requested = modelInput?.trim();
-  if (!requested || requested === 'inherit') {
-    const resolved = fallback();
-    if (resolved) return resolved;
-    throw new Error('No model is configured for this agent. Set a default model in the agent profile.');
-  }
-  const resolved = resolveModelOverride(requested, config);
-  if (resolved) return resolved;
-  const fell = fallback();
-  if (fell) return fell;
-  throw new Error(`Model not found for provider ${config.providerId}: ${requested}`);
-}
-
-/**
- * The default thinking level an agent runs at when its profile sets no effort:
- * `medium` coerced to the model's nearest supported level (shared with the renderer
- * via `core/agentReasoning`; a non-reasoning model supporting only `off` stays `off`).
- */
-function defaultThinkingLevel(model: Model<Api>): AgentReasoningLevel {
-  const supported = getSupportedThinkingLevels(model);
-  return defaultThinkingLevelFor(supported);
-}
-
-function createCustomEndpointModel(
-  config: AgentProviderRuntimeConfig,
-  modelId: string,
-  catalogModel?: Model<Api> | null,
-): Model<Api> {
-  ensurePiCustomProvider({ ...config, modelId, catalogModel });
-  return createOpenAICompatibleModel({ ...config, modelId, catalogModel });
-}
-
-/**
- * Resolve the effective model + thinking level an agent runs with, from its
- * profile's model/effort selection over a provider connection. The single seam the
- * runtime uses now that the provider connection owns neither. `fallback` is a thunk
- * for the connection's default model (see `resolveAgentModel`).
- */
-function resolveAgentModelEffort(
-  modelInput: string | undefined,
-  effortInput: string | undefined,
-  config: AgentProviderRuntimeConfig,
-  fallback: () => Model<Api> | null,
-): { model: Model<Api>; thinkingLevel: AgentReasoningLevel } {
-  const model = resolveAgentModel(modelInput, config, fallback);
-  const thinkingLevel = effortInput
-    ? resolveSkillEffortOverride(effortInput, model, defaultThinkingLevel(model))
-    : defaultThinkingLevel(model);
-  return { model, thinkingLevel };
-}
-
-let knownProviderIdsCache: Set<string> | null = null;
-function isKnownProviderId(providerId: string): boolean {
-  if (isLocalGatewayProviderId(providerId)) return true;
-  if (!knownProviderIdsCache) knownProviderIdsCache = new Set(piProviders());
-  return knownProviderIdsCache.has(providerId);
-}
-
-function resolveSkillEffortOverride(
-  effortInput: string,
-  model: Model<Api>,
-  currentThinkingLevel: AgentReasoningLevel,
-): AgentReasoningLevel {
-  const requested = effortInput.trim().toLowerCase();
-  if (!AGENT_REASONING_LEVELS.has(requested as AgentReasoningLevel)) return currentThinkingLevel;
-  const level = requested as AgentReasoningLevel;
-  const supported = getSupportedThinkingLevels(model);
-  if (supported.includes(level)) return level;
-  if (supported.includes('off')) return 'off';
-  return supported[0] ?? currentThinkingLevel;
+  return resolveAgentModelOverride(requested, providerConfig) ?? currentModel;
 }
 
 const NOTIFICATION_BODY_MAX_LENGTH = 280;
@@ -9757,14 +9609,6 @@ function createConfigurationErrorAgent(conversationId: string, message: string, 
     // pi-agent-core AgentOptions field — the lib's own name.
     sessionId: conversationId,
   });
-}
-
-function findKnownModel(providerId: string, modelId: string): Model<Api> | null {
-  try {
-    return piFindModel(providerId, modelId);
-  } catch {
-    return null;
-  }
 }
 
 function createConfigurationErrorStreamFn(messageText: string): StreamFn {

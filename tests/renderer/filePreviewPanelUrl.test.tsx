@@ -3,14 +3,18 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { NodeProjection } from '../../src/core/types';
+import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
 import type { PreviewResolveSourceResult } from '../../src/core/preview';
+import { TRANSLATION_LANGUAGES, type TranslationLanguage } from '../../src/core/translationLanguage';
 import type { DocumentIndex, UiState } from '../../src/renderer/state/document';
 import { FilePreviewPanel } from '../../src/renderer/ui/preview/FilePreviewPanel';
+import { resetUrlPageTranslationPreferencesForTests } from '../../src/renderer/ui/preview/urlPageTranslationPreferences';
 
 const mounted: Array<{ cleanup: () => void }> = [];
 
 afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
+  resetUrlPageTranslationPreferencesForTests();
 });
 
 describe('FilePreviewPanel URL preview chrome', () => {
@@ -27,6 +31,11 @@ describe('FilePreviewPanel URL preview chrome', () => {
     expect(rendered.document.querySelector('.panel-title-file-heading')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-message')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-url-webview')?.getAttribute('src')).toBe('https://example.com/docs');
+    const translationToggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
+    expect(translationToggle?.getAttribute('aria-label')).toBe('Translation settings: Translation off');
+    expect(translationToggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(translationToggle?.hasAttribute('aria-pressed')).toBe(false);
+    expect(translationToggle?.getAttribute('data-translation-enabled')).toBe('false');
   });
 
   test('updates the breadcrumb from webview page title and favicon events', async () => {
@@ -54,17 +63,219 @@ describe('FilePreviewPanel URL preview chrome', () => {
     const favicon = rendered.document.querySelector<HTMLImageElement>('.file-preview-url-favicon');
     expect(favicon?.getAttribute('src')).toBe('https://github.githubassets.com/favicons/favicon.svg');
   });
+
+  test('opens the target-language popover, remembers a selection, and does not check an untranslated page', async () => {
+    const rendered = renderUrlPanel();
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
+    const webview = rendered.document.querySelector('.file-preview-url-webview') as Electron.WebviewTag | null;
+    if (!toggle || !webview) throw new Error('Missing URL translation controls');
+    installReadyWebview(webview);
+
+    await act(async () => {
+      toggle.click();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+    const scrim = rendered.document.querySelector<HTMLElement>('.file-preview-translation-scrim');
+    if (!scrim) throw new Error('Missing translation popover scrim');
+    await act(async () => {
+      scrim.dispatchEvent(new rendered.window.Event('pointerdown', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(rendered.document.querySelector('.file-preview-translation-popover')).toBeNull();
+    await act(async () => {
+      toggle.click();
+      await Promise.resolve();
+    });
+
+    const select = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Translate to"]');
+    expect(select?.querySelectorAll('option')).toHaveLength(TRANSLATION_LANGUAGES.length);
+    expect(select?.textContent).toContain('日本語');
+    if (!select) throw new Error('Missing target-language select');
+    await act(async () => {
+      Object.defineProperty(select, 'value', { configurable: true, value: 'ja' });
+      select.dispatchEvent(new rendered.window.Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(rendered.savedLanguages).toEqual(['ja']);
+
+    const modelSelect = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Model"]');
+    expect(modelSelect?.textContent).toContain('Agent model');
+    expect(modelSelect?.textContent).toContain('GPT-4.1 mini');
+    expect(modelSelect?.querySelector('optgroup')?.getAttribute('label')).toBe('OpenAI');
+    if (!modelSelect) throw new Error('Missing translation-model select');
+    await act(async () => {
+      Object.defineProperty(modelSelect, 'value', { configurable: true, value: 'openai/gpt-4.1-mini' });
+      modelSelect.dispatchEvent(new rendered.window.Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      Object.defineProperty(modelSelect, 'value', { configurable: true, value: '' });
+      modelSelect.dispatchEvent(new rendered.window.Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(rendered.savedTranslationPreferences.at(-1)).toEqual({
+      translationModel: null,
+      autoTranslateUrls: false,
+    });
+    await act(async () => {
+      Object.defineProperty(modelSelect, 'value', { configurable: true, value: 'openai/gpt-4.1-mini' });
+      modelSelect.dispatchEvent(new rendered.window.Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const autoSwitch = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-auto-switch');
+    if (!autoSwitch) throw new Error('Missing automatic-translation switch');
+    expect(autoSwitch?.getAttribute('aria-checked')).toBe('false');
+    await act(async () => {
+      autoSwitch?.click();
+      await Promise.resolve();
+    });
+    expect(rendered.savedTranslationPreferences.at(-1)).toEqual({
+      translationModel: 'openai/gpt-4.1-mini',
+      autoTranslateUrls: true,
+    });
+
+    const command = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-command');
+    expect(command?.textContent).toContain('Translate page');
+    expect(command?.querySelector('svg')).not.toBeNull();
+    expect(command?.classList.contains('button-primary')).toBe(true);
+    expect(command?.nextElementSibling?.classList.contains('file-preview-translation-divider')).toBe(true);
+    expect(command?.nextElementSibling?.nextElementSibling).toBe(autoSwitch);
+    await act(async () => {
+      command?.click();
+      webview.dispatchEvent(new rendered.window.Event('dom-ready'));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(toggle.getAttribute('data-translation-enabled')).toBe('true');
+    expect(toggle.getAttribute('data-translation-completed')).toBe('false');
+    expect(toggle.getAttribute('aria-label')).toStartWith('Translation settings:');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+    await act(async () => {
+      toggle.click();
+      await Promise.resolve();
+    });
+    const disableCommand = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-command');
+    expect(disableCommand?.textContent).toContain('Show original');
+    expect(disableCommand?.classList.contains('button-secondary')).toBe(true);
+    await act(async () => {
+      disableCommand?.click();
+      await Promise.resolve();
+    });
+    expect(toggle.getAttribute('data-translation-enabled')).toBe('false');
+    expect(toggle.getAttribute('data-translation-completed')).toBe('false');
+    expect(toggle.getAttribute('aria-label')).toBe('Translation settings: Translation off');
+  });
+
+  test('keeps an unavailable explicit model visible and requires another selection', async () => {
+    const rendered = renderUrlPanel({
+      initialTranslationPreferences: {
+        translationModel: 'anthropic/claude-retired',
+        autoTranslateUrls: false,
+      },
+    });
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
+    if (!toggle) throw new Error('Missing URL translation control');
+
+    await act(async () => {
+      toggle.click();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    const modelSelect = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Model"]');
+    const unavailable = [...(modelSelect?.querySelectorAll('option') ?? [])]
+      .find((option) => option.textContent?.includes('claude-retired'));
+    expect(unavailable?.hasAttribute('disabled')).toBe(true);
+    expect(unavailable?.textContent).toContain('unavailable');
+    expect(modelSelect?.textContent).toContain('Agent model');
+  });
+
+  test('routes a webview shortcut only to the matching active URL panel', async () => {
+    const rendered = renderUrlPanel();
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
+    const webview = rendered.document.querySelector('.file-preview-url-webview') as Electron.WebviewTag | null;
+    if (!toggle || !webview) throw new Error('Missing URL translation controls');
+    webview.getWebContentsId = () => 71;
+
+    await act(async () => {
+      rendered.sendWebviewShortcut(99);
+      await Promise.resolve();
+    });
+    expect(toggle.getAttribute('data-translation-enabled')).toBe('false');
+
+    await act(async () => {
+      rendered.sendWebviewShortcut(71);
+      await Promise.resolve();
+    });
+    expect(toggle.getAttribute('data-translation-enabled')).toBe('true');
+    expect(rendered.savedTranslationPreferences).toEqual([]);
+  });
 });
 
-function renderUrlPanel(): { document: Document; window: Window } {
+function renderUrlPanel(options: {
+  initialTranslationPreferences?: UrlPageTranslationPreferences;
+  providerSettings?: unknown;
+} = {}): {
+  document: Document;
+  savedLanguages: TranslationLanguage[];
+  savedTranslationPreferences: UrlPageTranslationPreferences[];
+  sendWebviewShortcut: (webContentsId: number) => void;
+  window: Window;
+} {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
+  const savedLanguages: TranslationLanguage[] = [];
+  const savedTranslationPreferences: UrlPageTranslationPreferences[] = [];
+  let shortcutListener: ((webContentsId: number) => void) | null = null;
   (window as unknown as {
     lin: {
-      invoke: (command: string, args?: Record<string, unknown>) => Promise<PreviewResolveSourceResult>;
+      initialTranslationLanguage: TranslationLanguage;
+      initialUrlPageTranslationPreferences: UrlPageTranslationPreferences;
+      executeUrlPageTranslationGuest: (request: { command: { operation: string } }) => Promise<unknown>;
+      invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+      onTranslationLanguageChanged: (listener: (language: TranslationLanguage) => void) => () => void;
+      onUrlPageTranslationPreferencesChanged: (listener: (preferences: UrlPageTranslationPreferences) => void) => () => void;
+      onUrlPageTranslationShortcut: (listener: (webContentsId: number) => void) => () => void;
+      setTranslationLanguage: (language: TranslationLanguage) => Promise<void>;
+      setUrlPageTranslationPreferences: (preferences: UrlPageTranslationPreferences) => Promise<UrlPageTranslationPreferences>;
     };
   }).lin = {
-    invoke: () => Promise.resolve({ source: null }),
+    initialTranslationLanguage: 'en',
+    initialUrlPageTranslationPreferences: options.initialTranslationPreferences ?? {
+      translationModel: null,
+      autoTranslateUrls: false,
+    },
+    executeUrlPageTranslationGuest: async ({ command }) => {
+      if (command.operation === 'document-language') return 'en';
+      if (command.operation === 'next-batch') {
+        return { blocks: [], preemptRequestId: null, priority: null };
+      }
+      if (command.operation === 'apply') return 0;
+      return null;
+    },
+    invoke: (command) => Promise.resolve(
+      command === 'agent_get_provider_settings'
+        ? options.providerSettings ?? translationProviderSettingsFixture()
+        : { source: null } satisfies PreviewResolveSourceResult,
+    ),
+    onTranslationLanguageChanged: () => () => undefined,
+    onUrlPageTranslationPreferencesChanged: () => () => undefined,
+    onUrlPageTranslationShortcut: (listener) => {
+      shortcutListener = listener;
+      return () => {
+        if (shortcutListener === listener) shortcutListener = null;
+      };
+    },
+    setTranslationLanguage: async (language) => {
+      savedLanguages.push(language);
+    },
+    setUrlPageTranslationPreferences: async (preferences) => {
+      savedTranslationPreferences.push(preferences);
+      return preferences;
+    },
   };
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
@@ -72,6 +283,7 @@ function renderUrlPanel(): { document: Document; window: Window } {
   act(() => {
     root.render(
       <FilePreviewPanel
+        activePanel
         canGoBack={false}
         dragId={null}
         index={emptyIndex()}
@@ -94,7 +306,52 @@ function renderUrlPanel(): { document: Document; window: Window } {
     );
   });
   mounted.push({ cleanup: () => act(() => root.unmount()) });
-  return { document, window };
+  return {
+    document,
+    savedLanguages,
+    savedTranslationPreferences,
+    sendWebviewShortcut: (webContentsId) => shortcutListener?.(webContentsId),
+    window,
+  };
+}
+
+function translationProviderSettingsFixture(): unknown {
+  return {
+    activeProviderId: 'openai',
+    providers: [{
+      providerId: 'openai',
+      enabled: true,
+      hasApiKey: true,
+      auth: { authKind: 'api-key', credentialed: true },
+    }],
+    availableProviders: [{
+      providerId: 'openai',
+      authKind: 'api-key',
+      hasEnvApiKey: false,
+      envKeyNames: [],
+      models: [{
+        id: 'gpt-4.1-mini',
+        name: 'GPT-4.1 mini',
+        reasoning: false,
+        supportedThinkingLevels: [],
+        contextWindow: 1_000_000,
+        maxTokens: 32_768,
+      }],
+    }],
+    agent: {},
+    imageGeneration: {},
+  };
+}
+
+function installReadyWebview(webview: Electron.WebviewTag): void {
+  webview.getURL = () => 'https://example.com/docs';
+  webview.isLoadingMainFrame = () => false;
+  webview.getWebContentsId = () => 71;
+  webview.insertCSS = async () => 'translation-css';
+  webview.removeInsertedCSS = async () => undefined;
+  webview.executeJavaScript = async (source: string) => (
+    source.includes('"nextBatch"') ? { blocks: [], priority: null } : null
+  );
 }
 
 function emptyIndex(): DocumentIndex {

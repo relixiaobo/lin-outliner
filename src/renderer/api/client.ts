@@ -68,6 +68,13 @@ import type {
   PreviewResolveSourceResult,
   PreviewTarget,
 } from '../../core/preview';
+import {
+  URL_PAGE_TRANSLATE_COMMAND,
+  URL_PAGE_TRANSLATION_CANCEL_COMMAND,
+  type UrlPageTranslationCancelResponse,
+  type UrlPageTranslationRequest,
+  type UrlPageTranslationResponse,
+} from '../../core/urlPageTranslation';
 
 function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   if (window.lin) return window.lin.invoke<T>(name, args);
@@ -169,6 +176,10 @@ export const api = {
   revealAsset: (id: string) => command<{ revealed: boolean }>('reveal_asset', { id }),
   copyAssetFile: (id: string) => command<{ copied: boolean }>('copy_asset_file', { id }),
   openExternalUrl: (url: string) => command<{ opened: boolean }>('open_external_url', { url }),
+  translateUrlPageBlocks: (request: UrlPageTranslationRequest) =>
+    command<UrlPageTranslationResponse>(URL_PAGE_TRANSLATE_COMMAND, { ...request }),
+  cancelUrlPageTranslation: (sessionId: string) =>
+    command<UrlPageTranslationCancelResponse>(URL_PAGE_TRANSLATION_CANCEL_COMMAND, { sessionId }),
   resolvePreviewSource: (target: PreviewTarget) =>
     command<PreviewResolveSourceResult>('preview_resolve_source', { target }),
   readPreviewText: (target: PreviewTarget) =>

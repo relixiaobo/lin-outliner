@@ -20,6 +20,7 @@ interface WorkspaceCanvasProps {
   isNodePinned: (nodeId: NodeId) => boolean;
   onActivatePanel: (panel: WorkspacePanelState) => void;
   onClosePanel: (panelId: string) => void;
+  onError: (message: string) => void;
   onNavigatePanelBack: (panelId: string) => void;
   onNavigatePanelPreview: (panelId: string, target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onNavigatePanelRoot: (panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => void;
@@ -88,6 +89,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
               />
             ) : panel.type === 'workspace' && panel.view.kind === 'file-preview' ? (
               <FilePreviewPanel
+                activePanel={props.activePanelId === panel.id}
                 panelId={panel.id}
                 canGoBack={Boolean(panel.backStack.length)}
                 dragId={props.dragId}
@@ -98,6 +100,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 initialScrollTop={panel.view.scrollTop}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
                 onClose={() => props.onClosePanel(panel.id)}
+                onError={props.onError}
                 onOpenTarget={(target, options) => props.onNavigatePanelPreview(panel.id, target, options)}
                 onRoot={(nodeId, options) => props.onNavigatePanelRoot(panel.id, nodeId, options)}
                 onScrollPositionChange={(scrollTop) => props.onPanelScrollPositionChange(panel.id, scrollTop)}

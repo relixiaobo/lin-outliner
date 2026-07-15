@@ -1464,6 +1464,8 @@ describe('row interaction resolvers', () => {
     expect(matchesShortcutEvent(keyboard('BracketLeft', { metaKey: true }), 'global.nav_back')).toBe(false);
     expect(matchesShortcutEvent(keyboard('ArrowLeft', { altKey: true }), 'global.nav_back')).toBe(true);
     expect(matchesShortcutEvent(keyboard('ArrowRight', { altKey: true }), 'global.nav_forward')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('a', { altKey: true }), 'global.toggle_page_translation')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('å', { altKey: true, code: 'KeyA' }), 'global.toggle_page_translation')).toBe(true);
     expect(matchesShortcutEvent(keyboard('i', { ctrlKey: true }), 'trailing.description')).toBe(true);
     expect(matchesShortcutEvent(keyboard('i', { metaKey: true }), 'trailing.description')).toBe(false);
   });

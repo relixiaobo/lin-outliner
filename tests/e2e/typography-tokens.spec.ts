@@ -60,6 +60,7 @@ const reducedMotionRuleFiles = new Map([
   ['src/renderer/styles/feedback-state.css', 'Loading spinner becomes a static loading state.'],
   ['src/renderer/styles/agent-message.css', 'Working dots become a static working state.'],
   ['src/renderer/styles/outliner.css', 'Command run spinner becomes a static processing state.'],
+  ['src/renderer/styles/file-preview.css', 'URL translation header spinner becomes a static loading state.'],
 ]);
 const reducedTransparencyRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central material fallback token layer.'],

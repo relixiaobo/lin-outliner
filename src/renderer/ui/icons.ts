@@ -67,6 +67,7 @@ export {
   EyeOff as HideIcon,
   Italic as ItalicIcon,
   KeyRound as PasswordIcon,
+  Languages as LanguagesIcon,
   Library as LibraryIcon,
   Link as UrlIcon,
   ListFilter as FilterIcon,

@@ -44,7 +44,17 @@ import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTyp
 import type { AgentSessionReadInput, IssueReadInput, IssueSearchInput } from '../core/agentIssue';
 import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
 import { normalizePreviewHttpUrl } from '../core/preview';
+import {
+  isUrlPageTranslationCommand,
+  isUrlPageTranslationPreferences,
+  LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL,
+  LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
+  type UrlPageTranslationPreferences,
+} from '../core/urlPageTranslation';
+import { LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL } from '../core/urlPageTranslationGuest';
 import { handlePreviewCommand } from './previewSource';
+import { PageTranslationService, pageTranslationErrorReport } from './pageTranslation';
+import { executeUrlPageTranslationGuestCommand } from './urlPageTranslationGuest';
 import { setBoundedMapEntry } from './boundedMap';
 import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
 import {
@@ -109,9 +119,16 @@ import {
   saveLanguagePreference,
   saveOsNotificationsPreference,
   saveThemePreference,
+  saveTranslationLanguagePreference,
+  saveUrlPageTranslationPreferences,
 } from './appPreferences';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, resolveSystemLocale, type Locale } from '../core/locale';
+import {
+  isTranslationLanguage,
+  LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL,
+  type TranslationLanguage,
+} from '../core/translationLanguage';
 import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
 import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
@@ -327,6 +344,9 @@ const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   dreamMemoryExtractionEnabled: true,
   errorReporter: reportError,
 });
+const pageTranslationService = new PageTranslationService({
+  onError: () => reportError(pageTranslationErrorReport()),
+});
 const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [agentLocalFileRoot, agentScratchRoot]);
 
 documentService.onProjectionChanged((event) => {
@@ -540,6 +560,20 @@ function hardenWebContents(contents: Electron.WebContents) {
     };
     webContents.on('will-navigate', guardWebviewNavigation);
     webContents.on('will-redirect', guardWebviewNavigation);
+    webContents.on('before-input-event', (event, input) => {
+      const isTranslationShortcut = input.type === 'keyDown'
+        && !input.isAutoRepeat
+        && input.alt
+        && !input.control
+        && !input.meta
+        && !input.shift
+        && (input.code === 'KeyA' || input.key.toLowerCase() === 'a');
+      if (!isTranslationShortcut) return;
+      event.preventDefault();
+      if (!contents.isDestroyed()) {
+        contents.send(LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL, webContents.id);
+      }
+    });
   });
 }
 
@@ -659,6 +693,15 @@ let cachedLocale: Locale | null = null;
 function effectiveLocale(): Locale {
   cachedLocale ??= loadAppPreferences().language ?? resolveSystemLocale(app.getLocale());
   return cachedLocale;
+}
+
+function effectiveTranslationLanguage(): TranslationLanguage {
+  return loadAppPreferences().translationLanguage ?? effectiveLocale();
+}
+
+function urlPageTranslationPreferences(): UrlPageTranslationPreferences {
+  const { translationModel, autoTranslateUrls } = loadAppPreferences();
+  return { translationModel, autoTranslateUrls };
 }
 
 // Standard application menu (A2b). macOS gets the conventional App / Edit / View
@@ -878,8 +921,10 @@ function createWindow() {
   }
 
   mainWindow.on('closed', () => {
+    pageTranslationService.dispose();
     mainWindow = null;
   });
+  mainWindow.webContents.on('did-start-loading', () => pageTranslationService.dispose());
   mainWindow.webContents.once('did-finish-load', () => {
     agentRuntime.ready();
   });
@@ -1389,6 +1434,12 @@ function registerIpc() {
     const dispatch = () => {
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
       if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
+      if (isUrlPageTranslationCommand(command)) {
+        if (!mainWindow || event.sender !== mainWindow.webContents) {
+          throw new Error('Page translation is only available to the main window.');
+        }
+        return pageTranslationService.handle(command, args ?? {});
+      }
       if (isPreviewCommand(command)) {
         return handlePreviewCommand(command, args ?? {}, {
           agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
@@ -1416,6 +1467,13 @@ function registerIpc() {
   ipcMain.handle('lin:record-node-access', async (_event, raw: unknown): Promise<void> => {
     if (typeof raw !== 'string' || !raw) return;
     await recordDocumentNodeAccess([raw], 'human');
+  });
+
+  ipcMain.handle(LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL, (event, raw: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('Page translation guest access is only available to the main window.');
+    }
+    return executeUrlPageTranslationGuestCommand(event.sender, raw);
   });
 
   ipcMain.handle('lin:window', (_event, command: string) => {
@@ -1607,6 +1665,27 @@ function registerIpc() {
   ipcMain.on('lin:get-language-sync', (event) => {
     event.returnValue = effectiveLocale();
   });
+  ipcMain.on('lin:get-translation-language-sync', (event) => {
+    event.returnValue = effectiveTranslationLanguage();
+  });
+  ipcMain.on('lin:get-url-page-translation-preferences-sync', (event) => {
+    event.returnValue = urlPageTranslationPreferences();
+  });
+  ipcMain.handle('lin:set-translation-language', (_event, raw: unknown): void => {
+    if (!isTranslationLanguage(raw)) return;
+    saveTranslationLanguagePreference(raw);
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, raw);
+    }
+  });
+  ipcMain.handle('lin:set-url-page-translation-preferences', (_event, raw: unknown): UrlPageTranslationPreferences => {
+    if (!isUrlPageTranslationPreferences(raw)) return urlPageTranslationPreferences();
+    saveUrlPageTranslationPreferences(raw);
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL, raw);
+    }
+    return raw;
+  });
   ipcMain.handle('lin:set-language', (_event, raw: unknown): void => {
     if (!isLocale(raw)) return;
     saveLanguagePreference(raw); // best-effort persistence (see appPreferences.ts)
@@ -1617,6 +1696,9 @@ function registerIpc() {
     cachedLocale = raw;
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send(LIN_LANGUAGE_CHANGED_CHANNEL, raw);
+      if (loadAppPreferences().translationLanguage === null) {
+        window.webContents.send(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, raw);
+      }
     }
     Menu.setApplicationMenu(buildApplicationMenu());
     // Open windows localize their native title bar once at construction; their content
@@ -2924,6 +3006,7 @@ if (!app.requestSingleInstanceLock()) {
     // We force-exit below (app.exit bypasses will-quit), so do the on-quit cleanup
     // here: release the global hotkey(s).
     unregisterLauncherHotkeys();
+    pageTranslationService.dispose();
     // Settle in-flight writes, then exit. We force-exit instead of re-issuing
     // app.quit(): after preventDefault() cancels the OS ⌘Q terminate, Electron's
     // graceful re-quit lingers for seconds before the process actually exits, so ⌘Q

@@ -226,6 +226,33 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
   return { ...active };
 }
 
+/** Resolve one specific provider without falling back to another configured row. */
+export async function getProviderRuntimeConfig(
+  providerIdInput: string,
+  modelIdInput?: string,
+): Promise<AgentProviderRuntimeConfig | null> {
+  const providerId = normalizeProviderId(providerIdInput);
+  const modelId = modelIdInput?.trim();
+  if (modelIdInput !== undefined && !modelId) return null;
+  const file = await readProviderFile();
+  const secrets = await readSecretFileSafe();
+  const provider = await findUsableProvider(
+    file.providers.filter((candidate) => candidate.providerId === providerId),
+    secrets,
+  ) ?? null;
+  if (!provider) return null;
+  if (modelId) {
+    const catalog = (await getAvailableProviders(file.providers))
+      .find((candidate) => candidate.providerId === providerId);
+    if (!catalog?.models.some((model) => model.id === modelId)) return null;
+  }
+  const localGatewayProvider = localGatewayProviderDefinition(provider.providerId);
+  if (localGatewayProvider?.adapter === 'cc-switch-codex') {
+    return resolveCcSwitchRuntimeConfig(localGatewayProvider, provider);
+  }
+  return { ...provider };
+}
+
 /**
  * The settings-owned editable overlay for the built-in assistant (Neva). Built-in
  * definitions are code, so the user's edits (display name, persona, model/effort,
