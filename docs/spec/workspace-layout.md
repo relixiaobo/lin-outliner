@@ -543,10 +543,12 @@ player. A latest matching Resource Timing entry, validated against that same
 origin/path/video policy and retained only in the isolated guest, identifies a
 player-selected caption-track change; changing tracks creates fresh cue ids so
 old model output cannot attach. Tenon's overlay replaces the site's caption
-presentation only while translation is visible and follows player fullscreen;
-disabling translation restores the site presentation. If YouTube's cached
-caption URL is no longer readable, the guest toggles the site's CC control once
-and restores its prior state after the player emits a fresh bounded URL.
+presentation only while translation is visible, stays clear of visible player
+controls, settles near the lower edge after controls auto-hide, and follows
+player fullscreen; disabling translation restores the site presentation. If
+YouTube's cached caption URL is no longer readable, the guest toggles the site's
+CC control once and restores its prior state after the player emits a fresh
+bounded URL.
 Non-hash in-page video navigation cancels old requests and restarts an enabled
 manual translation, or re-evaluates automatic translation, without requiring
 another `dom-ready` event.

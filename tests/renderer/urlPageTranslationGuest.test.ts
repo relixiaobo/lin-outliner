@@ -70,6 +70,30 @@ describe('URL page translation guest runtime', () => {
     expect(statusRule).toContain('overflow-anchor: none !important;');
   });
 
+  test('lowers YouTube captions after the player controls auto-hide', () => {
+    const overlayRule = cssRuleBody(
+      URL_PAGE_TRANSLATION_GUEST_CSS,
+      '[data-tenon-bilingual-caption-overlay]',
+    );
+    const youtubeRule = cssRuleBody(
+      URL_PAGE_TRANSLATION_GUEST_CSS,
+      '[data-tenon-bilingual-caption-overlay="youtube"]',
+    );
+    const autoHideRule = cssRuleBody(
+      URL_PAGE_TRANSLATION_GUEST_CSS,
+      '.html5-video-player.ytp-autohide > [data-tenon-bilingual-caption-overlay="youtube"]',
+    );
+
+    expect(overlayRule).toContain('bottom: max(72px, 12%) !important;');
+    expect(youtubeRule).toContain('transition: bottom 160ms ease-out !important;');
+    expect(autoHideRule).toContain('bottom: max(20px, 4%) !important;');
+    expect(URL_PAGE_TRANSLATION_GUEST_CSS).toContain(`
+  [data-tenon-bilingual-caption-overlay="youtube"] {
+    transition: none !important;
+  }
+`);
+  });
+
   test('collects only visible and nearby readable blocks and excludes sensitive regions', () => {
     const fixture = createFixture();
     const runtime = fixture.runtime;
