@@ -1313,7 +1313,7 @@ test.describe('outliner trigger parity', () => {
     await expect.poll(() => fieldSeparatorOpacity(page, fieldId, '::after')).toBe('1');
   });
 
-  test('adjacent field rows do not double-draw their shared separator', async ({ page }) => {
+  test('each adjacent field row reveals both separators on hover or focus', async ({ page }) => {
     await trailingEditor(page).click();
     await page.keyboard.type('>');
     const firstFieldId = await lastTodayChildId(page);
@@ -1324,11 +1324,23 @@ test.describe('outliner trigger parity', () => {
     const secondFieldId = await lastTodayChildId(page);
     if (!secondFieldId || secondFieldId === firstFieldId) throw new Error('missing second field');
 
+    await expect.poll(() => fieldSeparatorContent(page, firstFieldId, '::after')).toBe('""');
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::before')).toBe('0');
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::after')).toBe('0');
+
     await row(page, firstFieldId).hover();
     await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::before')).toBe('1');
-    await expect.poll(() => fieldSeparatorContent(page, firstFieldId, '::after')).toBe('none');
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::after')).toBe('1');
+    await expect.poll(() => fieldSeparatorOpacity(page, secondFieldId, '::before')).toBe('0');
+    await expect.poll(() => fieldSeparatorOpacity(page, secondFieldId, '::after')).toBe('0');
+
+    await row(page, firstFieldId).locator('.field-name-input').focus();
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::before')).toBe('1');
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::after')).toBe('1');
 
     await row(page, secondFieldId).hover();
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::before')).toBe('0');
+    await expect.poll(() => fieldSeparatorOpacity(page, firstFieldId, '::after')).toBe('0');
     await expect.poll(() => fieldSeparatorOpacity(page, secondFieldId, '::before')).toBe('1');
     await expect.poll(() => fieldSeparatorOpacity(page, secondFieldId, '::after')).toBe('1');
   });
@@ -1461,9 +1473,14 @@ test.describe('outliner trigger parity', () => {
       type: 'fieldEntry',
     });
     await expect(row(page, valueId).locator('.field-name-input')).toBeFocused();
+
+    await page.keyboard.press('Escape');
+    await expect(rowBody(page, valueId)).toHaveClass(/selected/);
+    await page.keyboard.press('Shift+Tab');
+    await expect.poll(async () => (await nodeById(page, valueId))?.parentId).toBe(fieldId);
   });
 
-  test('checkbox field values use the shared checkbox mark', async ({ page }) => {
+  test('checkbox field values use the shared mark and row keyboard contract', async ({ page }) => {
     await invokeMockCommand(page, 'create_inline_field', {
       parentId: ids.today,
       index: null,
@@ -1500,10 +1517,70 @@ test.describe('outliner trigger parity', () => {
 
     await checkbox.click();
     await expect(mark).toHaveClass(/checked/);
+    let valueId = '';
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
-      return projection.nodes.find((node) => node.parentId === fieldId)?.content.text;
+      const value = projection.nodes.find((node) => node.parentId === fieldId);
+      valueId = value?.id ?? '';
+      return value?.content.text;
     }).toBe('true');
+
+    const valueRow = rowBody(page, valueId);
+    const storedCheckbox = valueRow.getByRole('checkbox');
+    await expect(storedCheckbox).toBeFocused();
+    await expect(valueRow.locator(':scope > .row-leading')).toHaveCount(1);
+
+    await page.keyboard.press('Escape');
+    await expect(valueRow).toHaveClass(/selected/);
+    await expect(storedCheckbox).not.toBeFocused();
+
+    await storedCheckbox.focus();
+    await page.keyboard.press('Shift+ArrowDown');
+    await expect(valueRow).toHaveClass(/selected/);
+
+    const childrenBeforeNextField = await todayChildren(page);
+    await invokeMockCommand(page, 'create_inline_field', {
+      parentId: ids.today,
+      index: null,
+      name: 'Next field',
+      fieldType: 'plain',
+    });
+    let nextFieldId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const nextField = projection.nodes.find((node) => (
+        node.parentId === ids.today
+        && node.type === 'fieldEntry'
+        && !childrenBeforeNextField.includes(node.id)
+      ));
+      nextFieldId = nextField?.id ?? '';
+      return nextFieldId;
+    }).not.toBe('');
+
+    await storedCheckbox.focus();
+    await page.keyboard.press('ArrowUp');
+    await expect(row(page, fieldId).locator('.field-name-input')).toBeFocused();
+
+    await storedCheckbox.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(row(page, nextFieldId).locator('.field-name-input')).toBeFocused();
+    await expect(trailingEditor(page, fieldId)).toHaveCount(0);
+
+    await valueRow.hover();
+    await valueRow.locator(':scope > .row-leading > .row-chevron-button').click();
+    const childDraft = trailingEditor(page, valueId);
+    await expect(childDraft).toBeFocused();
+    await childDraft.type('Boolean detail');
+
+    let childId = '';
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const child = projection.nodes.find((node) => node.parentId === valueId);
+      childId = child?.id ?? '';
+      return child?.content.text;
+    }).toBe('Boolean detail');
+    await expect(row(page, childId)).toBeVisible();
+    await expect(storedCheckbox).toHaveAttribute('aria-checked', 'true');
   });
 
 });

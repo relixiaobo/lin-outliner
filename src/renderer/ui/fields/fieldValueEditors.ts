@@ -8,14 +8,11 @@ import type { FieldValueConstraints } from './fieldValueValidation';
 // is always an editable row that materializes through the injected field create
 // command (IME-safe). Field types only add ADDITIVE layers on top of that row —
 // an overlay trigger (date picker / options popover), a non-blocking validation
-// hint, a link affordance — never a separate editing mode. The lone exception is
-// the whole-field control below (checkbox; date until its row form lands).
+// hint, a link affordance — never a separate editing mode. Checkbox uses a
+// whole-field control only while empty; its stored boolean uses a standard row.
 export interface FieldValueEditorDescriptor {
   interaction: FieldValueInteraction;
-  // Renders as a dedicated whole-field control instead of an editable row.
-  // checkbox is inherently a single boolean toggle; date keeps its control until
-  // the Space-triggered row overlay replaces it. number/url/email are editable
-  // rows with additive validation / link layers.
+  // Provides a dedicated control while the field has no stored value row.
   isWholeFieldControl: boolean;
   // The value text is validated non-blockingly (a hint, never a rejection).
   validates: boolean;
@@ -27,9 +24,8 @@ export function fieldValueEditor(fieldType: FieldType | undefined): FieldValueEd
   const interaction = fieldTypeInteraction(fieldType);
   return {
     interaction,
-    // checkbox is the only genuine whole-field control: a single boolean toggle
-    // with no editable text. date is an editable row whose picker is summoned
-    // additively (Space / a calendar trigger), so it is NOT a whole-field control.
+    // Checkbox needs an empty-state toggle; once stored, OutlinerItem renders the
+    // same toggle inside a normal expandable value row.
     isWholeFieldControl: interaction === 'checkbox',
     validates: interaction === 'numberInput'
       || interaction === 'urlLink'

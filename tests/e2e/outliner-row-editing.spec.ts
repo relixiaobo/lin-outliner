@@ -187,6 +187,77 @@ async function expectNoRowTextReplay(page: Page) {
   })).toEqual([]);
 }
 
+async function createFieldValueChildrenFixture(page: Page) {
+  const result = await page.evaluate(async (ids) => {
+    const win = window as Window & {
+      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+    };
+    const field = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_inline_field', {
+      parentId: ids.today,
+      index: 1,
+      name: 'Notes',
+      fieldType: 'plain',
+    });
+    const entryId = field?.focus?.nodeId ?? '';
+    const first = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_node', {
+      parentId: entryId,
+      index: null,
+      text: 'First value',
+    });
+    const second = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_node', {
+      parentId: entryId,
+      index: null,
+      text: 'Second value',
+    });
+    return {
+      entryId,
+      firstValueId: first?.focus?.nodeId ?? '',
+      secondValueId: second?.focus?.nodeId ?? '',
+    };
+  }, ids);
+  await emitCurrentProjection(page);
+  return result;
+}
+
+async function createFieldReferenceChildrenFixture(page: Page) {
+  const result = await page.evaluate(async (ids) => {
+    const win = window as Window & {
+      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+    };
+    const target = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_node', {
+      parentId: ids.library,
+      index: null,
+      text: 'Referenced value',
+    });
+    const targetId = target?.focus?.nodeId ?? '';
+    const child = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_node', {
+      parentId: targetId,
+      index: null,
+      text: 'Referenced child',
+    });
+    const field = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_inline_field', {
+      parentId: ids.today,
+      index: 1,
+      name: 'Source',
+      fieldType: 'plain',
+    });
+    const entryId = field?.focus?.nodeId ?? '';
+    const reference = await win.lin?.invoke<{ focus?: { nodeId: string } }>('add_reference', {
+      parentId: entryId,
+      targetId,
+      index: null,
+    });
+    return {
+      childId: child?.focus?.nodeId ?? '',
+      entryId,
+      referenceId: reference?.focus?.nodeId ?? '',
+      targetId,
+    };
+  }, ids);
+  await emitCurrentProjection(page);
+  return result;
+}
+
 test.describe('outliner row editing parity', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
@@ -241,6 +312,121 @@ test.describe('outliner row editing parity', () => {
 
     expect(colors.created).toBe(colors.alpha);
     expect(colors.created).not.toBe(colors.trailing);
+  });
+
+  test('field value disclosure creates an ordinary child scope', async ({ page }) => {
+    const { firstValueId } = await createFieldValueChildrenFixture(page);
+    const valueRow = rowBody(page, firstValueId);
+    const chevron = valueRow.locator(':scope > .row-leading > .row-chevron-button');
+
+    await valueRow.hover();
+    await expect.poll(() => chevron.evaluate((element) => Number(getComputedStyle(element).opacity))).toBeGreaterThan(0.9);
+    await chevron.click();
+
+    const childDraft = trailingEditor(page, firstValueId);
+    await expect(childDraft).toBeFocused();
+    await childDraft.type('Nested child');
+
+    let childId = '';
+    await expect.poll(async () => {
+      const value = await nodeById(page, firstValueId);
+      childId = value?.children[0] ?? '';
+      return childId ? await nodeById(page, childId) : null;
+    }).toMatchObject({
+      parentId: firstValueId,
+      content: { text: 'Nested child' },
+    });
+
+    await expect(rowEditor(page, childId)).toBeFocused();
+    await expect(row(page, firstValueId).locator(':scope > .indent-guide')).toHaveCount(1);
+
+    await chevron.click({ force: true });
+    await expect(row(page, childId)).toHaveCount(0);
+    await chevron.click({ force: true });
+    await expect(row(page, childId)).toBeVisible();
+  });
+
+  test('ArrowDown from an empty field-value child draft focuses the next field', async ({ page }) => {
+    const { secondValueId } = await createFieldValueChildrenFixture(page);
+    const followingEntryId = await page.evaluate(async (ids) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      const field = await win.lin?.invoke<{ focus?: { nodeId: string } }>('create_inline_field', {
+        parentId: ids.today,
+        index: 2,
+        name: 'Following field',
+        fieldType: 'plain',
+      });
+      return field?.focus?.nodeId ?? '';
+    }, ids);
+    await emitCurrentProjection(page);
+
+    const valueRow = rowBody(page, secondValueId);
+    await valueRow.hover();
+    await valueRow.locator(':scope > .row-leading > .row-chevron-button').click();
+
+    const childDraft = trailingEditor(page, secondValueId);
+    await expect(childDraft).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+
+    await expect(row(page, followingEntryId).locator('.field-name-input')).toBeFocused();
+    await expect(trailingEditor(page)).not.toBeFocused();
+  });
+
+  test('field value Tab indents under the previous value and Shift+Tab promotes it back', async ({ page }) => {
+    const { entryId, firstValueId, secondValueId } = await createFieldValueChildrenFixture(page);
+
+    await placeCursor(page, secondValueId, 'end');
+    await page.keyboard.press('Tab');
+
+    await expect.poll(async () => (await nodeById(page, secondValueId))?.parentId).toBe(firstValueId);
+    await expect.poll(async () => (await nodeById(page, firstValueId))?.children).toEqual([secondValueId]);
+    await expect(rowEditor(page, secondValueId)).toBeFocused();
+    await expect(row(page, firstValueId)).toHaveClass(/expanded/);
+
+    await page.keyboard.press('Shift+Tab');
+
+    await expect.poll(async () => (await nodeById(page, secondValueId))?.parentId).toBe(entryId);
+    await expect.poll(async () => (await nodeById(page, entryId))?.children).toEqual([firstValueId, secondValueId]);
+    await expect(rowEditor(page, secondValueId)).toBeFocused();
+
+    await page.keyboard.press('Shift+Tab');
+    await expect.poll(async () => (await nodeById(page, secondValueId))?.parentId).toBe(entryId);
+  });
+
+  test('Tab materializes a buffered field value before indenting it', async ({ page }) => {
+    const { entryId, secondValueId } = await createFieldValueChildrenFixture(page);
+
+    await placeCursor(page, secondValueId, 'end');
+    await page.keyboard.press('Enter');
+    const valueDraft = trailingEditor(page, entryId);
+    await expect(valueDraft).toBeFocused();
+    await valueDraft.type('Buffered child');
+    await page.keyboard.press('Tab');
+
+    let childId = '';
+    await expect.poll(async () => {
+      const secondValue = await nodeById(page, secondValueId);
+      childId = secondValue?.children[0] ?? '';
+      return childId ? await nodeById(page, childId) : null;
+    }).toMatchObject({
+      parentId: secondValueId,
+      content: { text: 'Buffered child' },
+    });
+    await expect(rowEditor(page, childId)).toBeFocused();
+  });
+
+  test('reference field values expand the referenced node children', async ({ page }) => {
+    const { childId, referenceId } = await createFieldReferenceChildrenFixture(page);
+    const referenceRow = rowBody(page, referenceId);
+    const chevron = referenceRow.locator(':scope > .row-leading > .row-chevron-button');
+
+    await referenceRow.hover();
+    await chevron.click();
+
+    await expect(row(page, childId)).toBeVisible();
+    await expect(row(page, referenceId)).toHaveClass(/expanded/);
   });
 
   test('Enter at the start of an expanded parent creates a previous sibling without reparenting the subtree', async ({ page }) => {

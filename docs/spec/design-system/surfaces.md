@@ -116,7 +116,12 @@ and [patterns.md → File Preview Flow](./patterns.md#file-preview-flow).
 **Fields in the outliner.** `>` in an empty row converts that row into a field row
 in place. Trailing field creation appends a field row at the trailing position.
 Field name `Enter` creates a sibling node; it does not jump into the value child.
-Field values may contain nested field rows like normal outliner children.
+The field entry itself is not expandable because its direct children are the
+values rendered in its value column. Each stored value is an ordinary expandable
+node: it uses the shared leading disclosure grid, may contain ordinary child rows
+or nested field rows, and keeps those descendants inside the value column. An
+empty checkbox field uses a standalone toggle; once stored, its boolean value uses
+the same row geometry and renders that toggle in place of editable text.
 
 ### References
 
@@ -139,8 +144,10 @@ Inline node/file/directory/image mentions are owned by
 ### Fields And Definition Configuration
 
 Field entries are ordinary outliner rows in document order. Field row layout uses
-`FieldEntryGrid` for name/value/description slots. Field row separators reveal on
-hover or focus instead of staying permanently heavy.
+`FieldEntryGrid` for name/value/description slots. Every active field row reveals
+both its top and bottom separators on hover or focus, including rows in the middle
+of a contiguous field group; the separators otherwise stay hidden. Pointer hover
+takes precedence over focus on a different field so a shared edge is painted once.
 
 Field type glyphs use normal row icon sizing. Checkbox field type glyphs do not
 use `CheckboxMark`; checkbox field values do. Boolean field values use

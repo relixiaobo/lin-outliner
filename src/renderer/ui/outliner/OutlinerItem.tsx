@@ -36,7 +36,7 @@ import {
   replaceRichTextRangeWithText,
   richTextEquals,
 } from '../editor/richTextCodec';
-import { expandIndentTargets, indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
+import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
 import { selectVisibleRowsState } from '../interactions/selectionActions';
 import { ingestPastedImages, shouldConvertRowToImage, type PastedImage } from '../interactions/imagePaste';
@@ -79,6 +79,7 @@ import { fileNodeIconKind, fileNodeTitle, isFileNode } from '../preview/fileNode
 import { FileNodeImage } from '../preview/FileNodeImage';
 import { FilePreviewBody } from '../preview/FilePreviewBody';
 import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
+import { CheckboxFieldControl } from './CheckboxFieldControl';
 import { CodeBlockRow } from './CodeBlockRow';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -304,6 +305,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // value against an existing pool option in one shot, instead of per keystroke.
   const fieldValueDraft = Boolean(props.fieldValue) && props.draft === true && !realNode;
   const fieldDescriptor = props.fieldValue?.descriptor;
+  const checkboxFieldValue = Boolean(
+    props.fieldValue
+    && fieldDescriptor?.isWholeFieldControl
+    && realNode,
+  );
   // An options field's draft shows the additive options overlay and treats free
   // text as the filter query, so #/@// and the code fence are plain text there.
   const optionPickerDraft = fieldValueDraft && fieldDescriptor?.interaction === 'optionPicker';
@@ -412,7 +418,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // A file node renders its editor visually hidden (the sr-only keyboard anchor), so
   // the inline tag slot inside that editor would be invisible. File rows render
   // their tags in the read-only filename row instead; code rows keep the sibling bar.
-  const useInlineTagSlot = isPlainTextRow && !fileNodeRow;
+  const useInlineTagSlot = isPlainTextRow && !fileNodeRow && !checkboxFieldValue;
   const inlineTagSlotRef = useRef<HTMLSpanElement | null>(null);
   if (useInlineTagSlot && hasTags && inlineTagSlotRef.current === null) {
     const el = document.createElement('span');
@@ -1561,10 +1567,23 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
 
   const handleTab = async (shiftKey: boolean, cursorOffset: number) => {
-    // Field values are a flat list: a field's children ARE its values, so a value
-    // can never be indented under another value (that would make a grandchild of
-    // the field). Tab is inert in the field-value context.
-    if (props.fieldValue) return;
+    const indentUnder = async (targetParentId: NodeId) => {
+      await props.run(() => api.indentNode(props.nodeId), {
+        applyFocus: false,
+        beforeApply: () => {
+          animateOutlinerRowMovementAfterNextCommit();
+          props.setUi((prev) => {
+            const expanded = new Set(prev.expanded);
+            expanded.add(targetParentId);
+            return requestFocusState(
+              { ...prev, expanded },
+              rowFocusTarget(props.nodeId, null, props.panelId),
+              cursorAtOffset(cursorOffset),
+            );
+          });
+        },
+      });
+    };
     if (props.draft && !realNode) {
       // Structural keys RELOCATE the empty trailing draft instead of materializing
       // a node: it stays a draft and nothing is created until the user types
@@ -1582,6 +1601,18 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         );
         const indentTarget = previousDraftSiblingId(siblingRows, props.draftAfterId ?? null);
         if (!indentTarget) return; // no previous sibling to nest under
+        const buffered = draftContentRef.current;
+        const hasBufferedValue = Boolean(props.fieldValue)
+          && (buffered.text.trim().length > 0 || buffered.inlineRefs.length > 0);
+        if (hasBufferedValue) {
+          // Field-value drafts buffer text until commit. Materialize the value
+          // before indenting so Tab never discards the buffered text when the
+          // direct-value draft is replaced by the target's ordinary child draft.
+          materializeDraft();
+          await pendingTextPatchRef.current;
+          await indentUnder(indentTarget);
+          return;
+        }
         props.setUi((prev) => {
           const expanded = new Set(prev.expanded);
           expanded.add(indentTarget);
@@ -1614,20 +1645,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!shiftKey) {
       const targetParentId = indentTargetParentId(props.nodeId, props.index.byId);
       if (!targetParentId) return;
-      await props.run(() => api.indentNode(props.nodeId), {
-        applyFocus: false,
-        beforeApply: () => {
-          animateOutlinerRowMovementAfterNextCommit();
-          props.setUi((prev) => {
-            const expanded = expandIndentTargets(prev.expanded, [props.nodeId], props.index.byId);
-            return requestFocusState(
-              { ...prev, expanded },
-              rowFocusTarget(props.nodeId, null, props.panelId),
-              cursorAtOffset(cursorOffset),
-            );
-          });
-        },
-      });
+      await indentUnder(targetParentId);
       return;
     }
     if (props.parentId === props.rootId) return;
@@ -1893,10 +1911,26 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // no button (avoids a redundant icon beside the placeholder).
   const showDateTrigger = dateFieldValue && Boolean(realNode);
 
-  // The row's text editor for ordinary nodes. Non-image file nodes mount a
-  // separate read-only title editor below; image file nodes use a hidden anchor
-  // because the visible row content is the image itself.
-  const rowEditorElement = isCodeBlock ? (
+  // The row's primary focus surface. A stored checkbox keeps its boolean control
+  // inside the ordinary row; other values use the shared text/code editors.
+  const rowEditorElement = checkboxFieldValue && props.fieldValue && realNode ? (
+    <CheckboxFieldControl
+      entryId={props.fieldValue.entryId}
+      run={props.run}
+      valueNode={realNode}
+      focusTarget={editorFocusTarget}
+      focusRequest={props.ui.focusRequest}
+      onFocus={row.updateSelection}
+      onFocusRequestConsumed={(request) => {
+        props.setUi((prev) => clearFocusRequestState(prev, request));
+      }}
+      onTab={(shiftKey) => void handleTab(shiftKey, 0)}
+      onArrowUpAtStart={() => row.moveFocus(-1)}
+      onArrowDownAtEnd={() => row.moveFocus(1)}
+      onShiftArrow={() => selectRow(props.nodeId, 'global')}
+      onEscape={() => selectRow(props.nodeId, 'global')}
+    />
+  ) : isCodeBlock ? (
     <CodeBlockRow
       nodeId={props.nodeId}
       text={draftContent.text}
@@ -2376,7 +2410,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     >
 
       {!props.flat && row.expanded && (
-        <IndentGuide onToggleChildren={row.toggleDirectChildrenExpansion} />
+        <IndentGuide
+          reference={referenceLikeRow}
+          onToggleChildren={row.toggleDirectChildrenExpansion}
+        />
       )}
 
       {nonImageFileRow && row.expanded && (
@@ -2461,7 +2498,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         />
       )}
 
-      {!props.flat && row.expanded && !props.fieldValue && (
+      {!props.flat && row.expanded && (
         // role="group" owns the nested treeitems under this row, completing the
         // ARIA tree nesting (treeitem → group → treeitems). A non-image file row's
         // expansion also opens its inline preview above this group, but its children

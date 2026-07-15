@@ -61,8 +61,9 @@ keyboard or pointer change should be checked against this matrix.
 - The root scope always renders a trailing input so typing can continue at the
   end of the page.
 - Field entries are ordinary outline rows with field-specific value rendering.
-  Their separators stay hidden until the row is hovered or focus is inside its
-  field name/value area.
+  Each entry's top and bottom separators stay hidden until that row is hovered or
+  focus is inside its field name/value area, including entries in the middle of a
+  contiguous field group.
 
 ## Row State Model
 
@@ -115,7 +116,7 @@ keyboard or pointer change should be checked against this matrix.
 | Empty `Backspace` when parent has no children | Collapse the parent and focus it. |
 | Empty `Backspace` when parent has children | Focus the last visible child. |
 | `ArrowUp` | Focus the last visible child above the trailing row. |
-| `ArrowDown` at panel boundary | Navigate out only if the parent view supplies that callback. |
+| `ArrowDown` | Focus the next visible row after the draft's structural position. At the panel boundary, navigate out only if the parent view supplies that callback. |
 | `#`, `@`, `/`, `>` | Create the matching trigger/field row and open its menu. |
 
 The live `#` tag trigger stays active only while the query after `#` contains
@@ -139,8 +140,8 @@ instead of reusing the trashed one.
 | `Backspace` at start of field name | Delete the field row through the same selection-delete path used for selected rows. Focus the previous visible row at end; if there is no previous row, focus the next visible row at start or the panel trailing draft when the field row was the only body row. |
 | `Mod+A` in field name/value | First press selects the text in that control/editor. A second consecutive `Mod+A` while the editor text is fully selected leaves edit mode and selects every visible row in the panel selection scope. Empty controls have no text-selection step, so `Mod+A` can select visible rows immediately. |
 | `>` in field value content/trailing input | Create a nested field entry inside the field value scope. |
-| `Tab` / `Shift+Tab` | Same structural indentation rules as content rows. |
-| `ArrowUp` / `ArrowDown` | Move through visible outline rows. |
+| `Tab` / `Shift+Tab` | Stored values use normal structural indentation within the field boundary. Tab may move a direct value under its previous direct sibling; Shift+Tab may promote an ordinary descendant into a direct value. A direct value cannot Shift+Tab out of its owning field entry. |
+| `ArrowUp` / `ArrowDown` | Move through visible outline rows across field boundaries. Auto-hidden field-value drafts are skipped rather than revealed by navigation; already-visible expanded-child drafts and the panel trailing draft remain navigation targets. |
 | `Escape` | Close the reuse popover if open, else leave edit mode and select the field row. |
 
 A reused **system field** (Created, Last edited, Done, Done time, Tags,
@@ -187,10 +188,18 @@ done). Owner and Day are on-node fields only; they are not (yet) selectable in
 view sort/filter/group, so the protocol-surface `ViewSystemField` union is
 unchanged.
 
-A **field entry row is never expandable**: its children *are* its value(s),
-rendered in the value column, so there is no leaf-expand chevron and no separate
-child scope to open. (Individual value rows inside the value column are likewise
-not expandable.)
+A **field entry row is never expandable**: its direct children *are* its
+value(s), rendered in the value column, so the entry has no separate child scope
+to open. Each stored value is still an ordinary expandable node. Its descendants
+render below it inside the value column, use normal node commands, and are not
+interpreted as additional values of the field. A leaf value's chevron opens an
+empty ordinary child draft. A direct value keeps field-aware add/remove cleanup;
+deeper descendants use ordinary node creation and deletion. An empty checkbox
+field shows its standalone toggle before a value node exists; after the toggle
+creates a stored boolean, that value uses the same expandable row with the
+checkbox as its primary control. The control replaces only the text editor:
+Escape, Arrow navigation, Shift+Arrow selection, and Tab structure keys retain
+the ordinary row behavior.
 
 A typed field value that fails its type's format check shows a trailing warning
 icon; the message is revealed on hover, never as always-on inline text.
@@ -405,7 +414,7 @@ implicit previous/next body rows for text editing commands.
 | Printable key on selected row | Append that character and enter edit mode. |
 | `Shift+ArrowUp/Down` | Extend visible row selection. |
 | `Mod+A` | Select every selectable row in the current panel scope, including stored field value rows. |
-| `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection mode, selected rows, and selection anchor. Tab applies only to contiguous selected runs whose first row has an unselected previous sibling; a selected run at the start of its parent is a no-op, so later selected rows never become children of earlier selected rows. Shift+Tab never moves rows above the current panel root; panel-root rows are a no-op. Shift+Tab collapses any previous parent emptied by the move so the moved rows stay adjacent to their old parent. Visible rows that change position during the structural move use a short transform-only movement animation; `prefers-reduced-motion: reduce` disables it. Field value rows are excluded from structural indent/outdent because they may not leave their owning field entry. |
+| `Tab` / `Shift+Tab` | Batch indent/outdent selected root rows and preserve selection mode, selected rows, and selection anchor. Tab applies only to contiguous selected runs whose first row has an unselected previous sibling; a selected run at the start of its parent is a no-op, so later selected rows never become children of earlier selected rows. Direct field values may Tab under a previous direct value. Shift+Tab never moves rows above the current panel root or a direct value above its owning field entry; those boundary rows are a no-op. Ordinary descendants below a value may Shift+Tab into the field entry, promoting them to direct values. Shift+Tab collapses any previous parent emptied by the move so the moved rows stay adjacent to their old parent. Visible rows that change position during the structural move use a short transform-only movement animation; `prefers-reduced-motion: reduce` disables it. |
 | `Backspace` / `Delete` | Remove selected root rows by selectable-row policy: ordinary rows trash normally, stored field value rows route through `remove_field_value`, and synthetic `sysref:*` rows no-op. A single ref-clicked ordinary reference deletes the reference row itself; a ref-clicked reference-valued field child still routes through field-value removal. |
 
 ## Paste And Clipboard Conversion Matrix

@@ -37,7 +37,6 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     expandedHiddenFields: props.ui.expandedHiddenFields,
   });
   const empty = rows.length === 0;
-  const singleValueNode = rows.length === 1 ? props.index.byId.get(rows[0].id) : undefined;
   const optionFieldConfig = props.optionField
     ? projectFieldConfig(props.index.byId, props.optionField)
     : undefined;
@@ -76,12 +75,14 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     ), { applyFocus: false })
   );
 
-  // Only checkbox renders as a dedicated whole-field control; everything else
-  // (plain / options / date / number / url / email) is an editable row through
-  // OutlinerView, with field types layering additive overlays (date picker,
-  // options popover) / validation hints / link affordances on top (see
-  // FieldValueEditorDescriptor).
-  const canUseWholeFieldControl = Boolean(props.optionField && descriptor.isWholeFieldControl);
+  // An empty checkbox field needs a toggle even though there is no stored value
+  // row yet. Once toggled, its value is rendered by OutlinerView like every other
+  // stored value so it gains disclosure, ordinary children, and structural keys.
+  const showEmptyWholeFieldControl = Boolean(
+    props.optionField
+    && descriptor.isWholeFieldControl
+    && empty,
+  );
 
   // Everything is a node: the value area always offers a trailing draft as the
   // uniform entry point for the next value (shown when empty or when nav focuses
@@ -110,11 +111,10 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
       data-field-value
       aria-label={empty ? props.placeholder : tf.fieldValueAriaLabel}
     >
-      {canUseWholeFieldControl && props.optionField ? (
+      {showEmptyWholeFieldControl ? (
         <CheckboxFieldControl
           entryId={props.entryId}
           run={props.run}
-          valueNode={singleValueNode}
         />
       ) : (
         <OutlinerView

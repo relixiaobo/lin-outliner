@@ -67,6 +67,23 @@ export function idsAllowedForStructuralBatch(params: {
   });
 }
 
+export function idsAllowedForStructuralIndentBatch(params: {
+  ids: readonly NodeId[];
+  panelRootId: NodeId;
+  byId: Map<NodeId, NodeProjection>;
+  rowMap?: ReadonlyMap<NodeId, SelectableRow>;
+}): NodeId[] {
+  return params.ids.filter((id) => {
+    const row = resolveSelectableRow({
+      id,
+      panelRootId: params.panelRootId,
+      byId: params.byId,
+      rowMap: params.rowMap,
+    });
+    return Boolean(row?.mutable);
+  });
+}
+
 export function idsAllowedForStructuralOutdentBatch(params: {
   ids: readonly NodeId[];
   panelRootId: NodeId;

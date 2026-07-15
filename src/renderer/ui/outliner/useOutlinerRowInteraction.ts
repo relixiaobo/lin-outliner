@@ -14,7 +14,7 @@ import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { OUTLINER_NODE_DRAG_MIME, resolveOutlinerDropBatchMove } from '../interactions/dragDrop';
 import { flattenVisibleRows, isRowExpanded } from '../../state/document';
-import { buildSelectableRows } from '../../state/selectableRows';
+import { buildSelectableRows, selectableRowAfterDraft } from '../../state/selectableRows';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
 import {
   resolveRowPointerSelectAction,
@@ -167,12 +167,12 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
   }, [childParentId, expanded, hasChildren, panelId, parentId, rowId, setUi]);
 
   const moveFocus = useCallback((direction: 1 | -1) => {
-    const scopeShowsTrailingInput = (scopeParentId: NodeId) => scopeParentId === rootId;
+    const liveUi = uiRef.current;
 
     // Down from an expanded row with no materialized children focuses the trailing
     // child draft so a first child can be typed before leaving the row. File rows
-    // follow the same rule; their inline preview sits above the normal children group.
-    if (direction === 1 && expanded) {
+    // follow the same rule; this draft is already visible in the expanded scope.
+    if (direction === 1 && liveUi.expanded.has(rowId)) {
       const childRows = buildOutlinerRows(byId.get(childParentId), byId);
       if (childRows.length === 0) {
         setUi((prev) => requestFocusState(prev, focusTarget(childParentId, childParentId, panelId, 'trailing'), cursorEnd()));
@@ -180,44 +180,53 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
       }
     }
 
-    if (direction === 1) {
-      const siblingRows = buildOutlinerRows(byId.get(parentId), byId);
-      if (
-        siblingRows[siblingRows.length - 1]?.id === rowId
-        && scopeShowsTrailingInput(parentId)
-      ) {
-        setUi((prev) => requestFocusState(prev, focusTarget(parentId, parentId, panelId, 'trailing'), cursorEnd()));
-        return;
-      }
-    }
-
-    const liveUi = uiRef.current;
-    const rows = flattenVisibleRows(rootId, byId, liveUi.expanded, liveUi.expandedHiddenFields);
-    const at = rows.indexOf(rowId);
-    const nextId = rows[at + direction];
-    if (!nextId) {
-      if (direction === 1) {
-        if (scopeShowsTrailingInput(parentId)) {
-          setUi((prev) => requestFocusState(prev, focusTarget(parentId, parentId, panelId, 'trailing'), cursorEnd()));
-          return;
-        }
+    // Field values render in nested views, but keyboard navigation follows the
+    // panel's visible selectable order so it can cross field boundaries. Hidden
+    // auto-drafts are intentionally absent from this list and must not appear just
+    // because ArrowDown was pressed.
+    const rows = buildSelectableRows(selectionRootId, byId, {
+      expanded: liveUi.expanded,
+      expandedHiddenFields: liveUi.expandedHiddenFields,
+    });
+    const at = rows.findIndex((candidate) => candidate.id === rowId);
+    const nextRow = draft && direction === 1
+      ? selectableRowAfterDraft(selectionRootId, byId, {
+        expanded: liveUi.expanded,
+        expandedHiddenFields: liveUi.expandedHiddenFields,
+      }, {
+        parentId,
+        afterId: draftAfterId ?? null,
+      }) ?? undefined
+      : at >= 0 ? rows[at + direction] : undefined;
+    if (!nextRow) {
+      const panelRoot = byId.get(selectionRootId);
+      if (direction === 1 && panelRoot && panelRoot.type !== 'search') {
+        setUi((prev) => requestFocusState(
+          prev,
+          focusTarget(selectionRootId, selectionRootId, panelId, 'trailing'),
+          cursorEnd(),
+        ));
       }
       return;
     }
-    const nextNode = byId.get(nextId);
+    const nextNode = byId.get(nextRow.id);
+    const nextParentId = nextRow.parentId ?? nextNode?.parentId ?? null;
     setUi((prev) => requestFocusState(
       prev,
-      rowFocusTarget(nextId, nextNode?.parentId ?? null, panelId),
+      nextNode?.type === 'fieldEntry'
+        ? focusTarget(nextRow.id, nextParentId, panelId, 'field-name')
+        : rowFocusTarget(nextRow.id, nextParentId, panelId),
       direction === 1 ? cursorStart() : cursorEnd(),
     ));
   }, [
     byId,
     childParentId,
-    expanded,
+    draft,
+    draftAfterId,
     panelId,
     parentId,
-    rootId,
     rowId,
+    selectionRootId,
     setUi,
     uiRef,
   ]);

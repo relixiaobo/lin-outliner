@@ -329,16 +329,31 @@ test.describe('outliner field row visual parity', () => {
       const firstValueLeading = element
         .querySelector('.field-value-outliner > .row-wrap:first-child > .row > .row-leading')
         ?.getBoundingClientRect();
-      if (!leading || !name || !firstValueLeading) throw new Error('missing field alignment target');
+      const firstValueRow = element.querySelector('.field-value-outliner > .row-wrap:first-child > .row');
+      const firstValueChevron = firstValueRow?.querySelector('.row-chevron-button')?.getBoundingClientRect();
+      const firstValueBullet = firstValueRow?.querySelector('.row-bullet-button')?.getBoundingClientRect();
+      const firstValueContent = firstValueRow?.querySelector('.row-content-line')?.getBoundingClientRect();
+      if (!leading || !name || !firstValueLeading || !firstValueRow || !firstValueChevron || !firstValueBullet || !firstValueContent) {
+        throw new Error('missing field alignment target');
+      }
+      const firstValueRowRect = firstValueRow.getBoundingClientRect();
       return {
         leadingTop: leading.top,
         nameTop: name.top,
         firstValueLeadingTop: firstValueLeading.top,
+        firstValueLeadingWidth: firstValueLeading.width,
+        firstValueChevronLeft: firstValueChevron.left - firstValueRowRect.left,
+        firstValueBulletLeft: firstValueBullet.left - firstValueRowRect.left,
+        firstValueContentLeft: firstValueContent.left - firstValueRowRect.left,
       };
     });
 
     expectClose(metrics.nameTop, metrics.leadingTop, 1);
     expectClose(metrics.nameTop, metrics.firstValueLeadingTop, 1);
+    expectClose(metrics.firstValueLeadingWidth, 42);
+    expectClose(metrics.firstValueChevronLeft, 0);
+    expectClose(metrics.firstValueBulletLeft, 19);
+    expectClose(metrics.firstValueContentLeft, 42);
   });
 });
 

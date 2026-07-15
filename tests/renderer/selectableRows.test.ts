@@ -6,6 +6,7 @@ import {
   buildSelectableRows,
   resolveSelectableReferenceTargetId,
   selectableChildParentId,
+  selectableRowAfterDraft,
 } from '../../src/renderer/state/selectableRows';
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
@@ -100,6 +101,97 @@ describe('buildSelectableRows', () => {
       panelRootId: 'entry',
       kind: 'fieldValue',
     });
+  });
+
+  test('classifies a direct nested field entry by its owning field-value boundary', () => {
+    const byId = byIdOf([
+      node('root', { children: ['entry'] }),
+      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['nested-entry'] }),
+      node('nested-entry', {
+        parentId: 'entry',
+        type: 'fieldEntry',
+        children: ['nested-value'],
+      }),
+      node('nested-value', { parentId: 'nested-entry' }),
+    ]);
+
+    const rows = buildSelectableRows('root', byId, { expanded: new Set() });
+
+    expect(rowIds(rows)).toEqual(['entry', 'nested-entry', 'nested-value']);
+    expect(rows[1]).toMatchObject({
+      id: 'nested-entry',
+      parentId: 'entry',
+      kind: 'fieldValue',
+      actionPolicy: { delete: 'field-value-remove' },
+    });
+    expect(rows[2]).toMatchObject({
+      id: 'nested-value',
+      parentId: 'nested-entry',
+      kind: 'fieldValue',
+    });
+  });
+
+  test('treats expanded field value descendants as ordinary content rows', () => {
+    const byId = byIdOf([
+      node('root', { children: ['entry'] }),
+      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
+      node('value', { parentId: 'entry', children: ['child'] }),
+      node('child', { parentId: 'value', children: ['grandchild'] }),
+      node('grandchild', { parentId: 'child' }),
+    ]);
+
+    const rows = buildSelectableRows('root', byId, {
+      expanded: new Set(['value', 'child']),
+    });
+
+    expect(rowIds(rows)).toEqual(['entry', 'value', 'child', 'grandchild']);
+    expect(rows[1]).toMatchObject({
+      id: 'value',
+      kind: 'fieldValue',
+      parentId: 'entry',
+      actionPolicy: { delete: 'field-value-remove' },
+    });
+    expect(rows[2]).toMatchObject({
+      id: 'child',
+      kind: 'content',
+      parentId: 'value',
+      actionPolicy: { delete: 'node-trash' },
+    });
+    expect(rows[3]).toMatchObject({
+      id: 'grandchild',
+      kind: 'content',
+      parentId: 'child',
+    });
+  });
+
+  test('resumes after an empty field-value child draft at the next field', () => {
+    const byId = byIdOf([
+      node('root', { children: ['entry-a', 'entry-b'] }),
+      node('entry-a', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
+      node('value', { parentId: 'entry-a' }),
+      node('entry-b', { parentId: 'root', type: 'fieldEntry' }),
+    ]);
+    const options = { expanded: new Set<NodeId>(['value']) };
+
+    expect(selectableRowAfterDraft('root', byId, options, {
+      parentId: 'value',
+      afterId: null,
+    })?.id).toBe('entry-b');
+  });
+
+  test('resumes after the visible subtree of a relocated draft anchor', () => {
+    const byId = byIdOf([
+      node('root', { children: ['first', 'second'] }),
+      node('first', { parentId: 'root', children: ['child'] }),
+      node('child', { parentId: 'first' }),
+      node('second', { parentId: 'root' }),
+    ]);
+    const options = { expanded: new Set<NodeId>(['first']) };
+
+    expect(selectableRowAfterDraft('root', byId, options, {
+      parentId: 'root',
+      afterId: 'first',
+    })?.id).toBe('second');
   });
 
   test('marks synthetic system reference values as read-only presentation rows', () => {
