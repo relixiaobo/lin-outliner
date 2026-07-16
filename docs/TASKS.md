@@ -24,7 +24,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398, sync-readiness-foundation Units 1–2 #402/#404**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped semantic-ingest-pipeline #397) |
 | Codex 3 | `lin-outliner-codex-3/` | `codex-3/agent-capability-permissions` | PR #401 ready for main review |
-| Codex 4 | `lin-outliner-codex-4/` | `codex-4/epub-bilingual-translation` | PR #403 ready for main review |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
@@ -32,10 +32,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-16).** Open PR queue: #401
-(`codex-3/agent-capability-permissions`) and #403
-(`codex-4/epub-bilingual-translation`), both ready for main review. Recently
-merged: #404 (`codex/asset-content-integrity`) merged 2026-07-16 after four main
-review passes; see *Recently completed*. #402
+(`codex-3/agent-capability-permissions`), ready for main review. Recently merged:
+#403 (`codex-4/epub-bilingual-translation`) merged 2026-07-16 after two main
+review passes; see *Recently completed*. #404 (`codex/asset-content-integrity`)
+merged 2026-07-16 after four main review passes; see *Recently completed*. #402
 (`codex/sync-readiness-foundation`) merged 2026-07-16 after two main review
 rounds; see *Recently completed*. #399
 (`codex-4/url-video-bilingual-subtitles`) merged 2026-07-16 after two main
@@ -523,6 +523,25 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **epub-bilingual-translation**
+  (`codex-4/epub-bilingual-translation`, PR #403, codex-4, merged 2026-07-16,
+  plan-track) — reflowable EPUB readers now share the URL Preview translation
+  controls, target/model preferences, paragraph-local loading and retry states,
+  viewport-first scheduling, bounded predictive prefetch, and inert bilingual
+  output. Local-book automatic translation remains a separate remembered opt-in,
+  lazy section remounts restore valid in-session translations, and asset or
+  trusted-local EPUB packages stream through opaque range-capable preview tokens
+  up to the 128 MiB compressed-package limit. **Gate (main):** the first review
+  found two state-reconciliation defects: stale DOM failure records could clear
+  the provider-configuration latch, and EPUB completion could remain set after
+  its last valid translation disappeared. Codex-4 fixed both with independent
+  latch state, derived completion accounting, and focused regressions; the final
+  pass found no reportable issues. Verified on final head `5c810e8f` and the
+  latest-`main` merge result with typecheck, 66 focused and 891 full renderer
+  tests, 45 focused Core tests, 36 asset/preview tests, four EPUB E2E cases, the
+  real-Electron EPUB stream smoke, `docs:check`, and diff check. Plan archived
+  `done`: `docs/plans/archive/epub-bilingual-translation.md`.
 
 - **sync-readiness-foundation Unit 2** (`codex/asset-content-integrity`, PR
   #404, codex, merged 2026-07-16, plan-track) — every Outliner asset sidecar is

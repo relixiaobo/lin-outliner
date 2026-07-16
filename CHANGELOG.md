@@ -67,6 +67,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **EPUB bilingual translation (PR #403, codex-4)** — reflowable EPUB file
+  panels and dedicated readers now use the shared target language, translation
+  model, status control, shortcut, paragraph-local retry, viewport-first
+  scheduling, and bounded predictive prefetch. Local-book automatic translation
+  remains a separate opt-in from website consent; valid translations survive
+  lazy section remounts while stale, removed, or target-language records are
+  rejected. Asset and trusted-local EPUB packages now load through opaque,
+  range-capable preview tokens up to a 128 MiB compressed-package limit.
+  **Gate (main):** two review rounds closed configuration-latch and completion
+  reconciliation defects. Verified with typecheck, 66 focused and 891 full
+  renderer tests, focused Core and asset/preview suites, four EPUB E2E cases,
+  the real-Electron stream smoke, docs check, and diff check.
 - **Asset content integrity (PR #404, codex)** — every Outliner asset sidecar is
   now schema-versioned with exact byte length and lowercase SHA-256 across
   buffer ingest, path ingest, and generated PDF thumbnails. Stable logical
