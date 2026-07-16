@@ -1,10 +1,10 @@
 import {
+  decodeImportBlobMeta,
   LoroDoc,
   LoroList,
   LoroText,
   UndoManager,
   VersionVector,
-  type ImportStatus,
   type LoroMap,
   type LoroTree,
   type LoroTreeNode,
@@ -37,7 +37,14 @@ export interface SharedLoroDocumentState {
 
 export interface LoroDocumentInit {
   shared?: SharedLoroDocumentState;
+  pendingUpdates?: readonly string[];
   peerId?: string;
+}
+
+export interface LoroImportResult {
+  acceptedOperations: boolean;
+  hasPendingUpdates: boolean;
+  persistenceChanged: boolean;
 }
 
 const LORO_TREE_NAME = 'nodes';
@@ -138,6 +145,9 @@ export class LoroOutlinerDocument {
   private stateCacheNodes: Record<string, Node> | null = null;
   private statePatch = new Set<string>();
   private stateDirtyFull = false;
+  // Snapshots omit causally pending operations, so retain their source blobs
+  // until the document oplog covers every operation encoded in each blob.
+  private pendingUpdates = new Map<string, Uint8Array>();
 
   constructor(init: LoroDocumentInit = {}) {
     this.doc = new LoroDoc();
@@ -155,6 +165,11 @@ export class LoroOutlinerDocument {
     });
     this.tree = this.doc.getTree(LORO_TREE_NAME);
     if (init.shared?.snapshot) this.doc.import(decodeBase64(init.shared.snapshot));
+    if (init.pendingUpdates?.length) {
+      const updates = uniqueEncodedUpdates(init.pendingUpdates.map(decodeBase64));
+      this.doc.importBatch([...updates.values()]);
+      this.pendingUpdates = retainUnappliedUpdates(updates, this.doc);
+    }
     this.rebuildMappings();
     this.undoManager = this.createUndoManager(UNDO_EXCLUDED_ORIGIN_PREFIXES);
     this.aiUndoManager = this.createUndoManager(AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES);
@@ -197,12 +212,37 @@ export class LoroOutlinerDocument {
     }
   }
 
-  importUpdates(updates: readonly Uint8Array[]): ImportStatus | undefined {
-    if (updates.length === 0) return undefined;
+  importUpdates(updates: readonly Uint8Array[]): LoroImportResult {
+    if (updates.length === 0) {
+      return {
+        acceptedOperations: false,
+        hasPendingUpdates: this.pendingUpdates.size > 0,
+        persistenceChanged: false,
+      };
+    }
+    const candidates = new Map(this.pendingUpdates);
+    for (const [encoded, update] of uniqueEncodedUpdates(updates)) candidates.set(encoded, update);
     const status = this.doc.importBatch(updates.map((update) => update.slice()));
-    this.clearRedo();
-    this.invalidateWholeTree();
-    return status;
+    const acceptedOperations = status.success.size > 0;
+    const previousPendingKeys = new Set(this.pendingUpdates.keys());
+    this.pendingUpdates = retainUnappliedUpdates(candidates, this.doc);
+    if (acceptedOperations) {
+      this.clearRedo();
+      this.invalidateWholeTree();
+    }
+    return {
+      acceptedOperations,
+      hasPendingUpdates: this.pendingUpdates.size > 0,
+      persistenceChanged: acceptedOperations || !sameKeys(previousPendingKeys, this.pendingUpdates),
+    };
+  }
+
+  pendingUpdateState(): string[] {
+    return [...this.pendingUpdates.keys()].sort();
+  }
+
+  pendingLocalTransactionLength(): number {
+    return this.doc.getPendingTxnLength();
   }
 
   subscribeLocalUpdates(listener: (update: Uint8Array) => void): () => void {
@@ -624,6 +664,45 @@ function encodeBase64(bytes: Uint8Array) {
 
 function decodeBase64(value: string) {
   return new Uint8Array(Buffer.from(value, 'base64'));
+}
+
+function uniqueEncodedUpdates(updates: Iterable<Uint8Array>): Map<string, Uint8Array> {
+  const unique = new Map<string, Uint8Array>();
+  for (const update of updates) {
+    const stored = update.slice();
+    unique.set(encodeBase64(stored), stored);
+  }
+  return unique;
+}
+
+function retainUnappliedUpdates(
+  candidates: ReadonlyMap<string, Uint8Array>,
+  doc: LoroDoc,
+): Map<string, Uint8Array> {
+  const version = doc.oplogVersion();
+  try {
+    return new Map([...candidates].filter(([, update]) => updateContainsUnappliedOperations(update, version)));
+  } finally {
+    version.free();
+  }
+}
+
+function updateContainsUnappliedOperations(update: Uint8Array, version: VersionVector): boolean {
+  const metadata = decodeImportBlobMeta(update, false);
+  try {
+    for (const [peerId, end] of metadata.partialEndVersionVector.toJSON()) {
+      const start = metadata.partialStartVersionVector.get(peerId) ?? 0;
+      if (end > start && (version.get(peerId) ?? 0) < end) return true;
+    }
+    return false;
+  } finally {
+    metadata.partialStartVersionVector.free();
+    metadata.partialEndVersionVector.free();
+  }
+}
+
+function sameKeys(left: ReadonlySet<string>, right: ReadonlyMap<string, unknown>): boolean {
+  return left.size === right.size && [...left].every((key) => right.has(key));
 }
 
 function readString(value: unknown): string | undefined {

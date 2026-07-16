@@ -18,12 +18,7 @@ import {
   type OperationHistoryScope,
   type OperationStackState,
 } from './operationJournal';
-import {
-  createPersistenceId,
-  isLoroPeerId,
-  isPersistenceId,
-  loroPeerIdForReplica,
-} from './persistenceIdentity';
+import { createPersistenceId, isPersistenceId } from './persistenceIdentity';
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
 import { DONE_FIELD, systemFieldLabel } from './systemFields';
@@ -147,6 +142,12 @@ export interface CoreRevisionDelta {
   requiresFullSearchRebuild: boolean;
 }
 
+export interface CoreReplicationImportResult extends CoreRevisionDelta {
+  acceptedOperations: boolean;
+  hasPendingUpdates: boolean;
+  persistenceChanged: boolean;
+}
+
 interface TemplateFieldRef {
   fieldDefId: NodeId;
   templateOriginId: NodeId;
@@ -184,7 +185,7 @@ export interface WorkspaceSharedState {
 export interface WorkspaceReplicaState {
   installationId: string;
   replicaId: string;
-  loroPeerId: string;
+  loroPendingUpdates: string[];
   operationHistory: OperationHistoryEntry[];
 }
 
@@ -265,13 +266,13 @@ export class Core {
 
     const reuseLocalReplica = initial.local?.installationId === installationId;
     const replicaId = reuseLocalReplica ? initial.local!.replicaId : createPersistenceId();
-    const loroPeerId = reuseLocalReplica ? initial.local!.loroPeerId : loroPeerIdForReplica(replicaId);
+    const pendingUpdates = reuseLocalReplica ? initial.local!.loroPendingUpdates : undefined;
 
     this.installationIdValue = installationId;
     this.workspaceIdValue = initial.shared?.workspaceId ?? createPersistenceId();
     this.documentIdValue = initial.shared?.documentId ?? createPersistenceId();
     this.replicaIdValue = replicaId;
-    this.loro = new LoroOutlinerDocument({ shared: initial.shared?.document, peerId: loroPeerId });
+    this.loro = new LoroOutlinerDocument({ shared: initial.shared?.document, pendingUpdates });
     this.history = new OperationJournal(reuseLocalReplica ? initial.local!.operationHistory : undefined);
     if (initial.shared && !reuseLocalReplica) this.initialPersistRequired = true;
 
@@ -288,12 +289,16 @@ export class Core {
       if (!sameJson(existing, normalized)) {
         this.loro.commit(SYSTEM_COMMIT_ORIGIN);
         this.initialPersistRequired = true;
-      } else {
+      } else if (this.loro.pendingLocalTransactionLength() > 0) {
         // System reconciliation writes through generic node serializers, which
         // can produce CRDT operations even when the materialized state is
         // unchanged. Re-open the shared snapshot so those no-op operations do
         // not become hidden dependencies of the replica's first real update.
-        this.loro = new LoroOutlinerDocument({ shared: initial.shared!.document, peerId: loroPeerId });
+        this.loro = new LoroOutlinerDocument({
+          shared: initial.shared!.document,
+          pendingUpdates,
+          peerId: this.loro.peerId(),
+        });
       }
     }
 
@@ -342,7 +347,7 @@ export class Core {
       local: {
         installationId: this.installationIdValue,
         replicaId: this.replicaIdValue,
-        loroPeerId: this.loro.peerId(),
+        loroPendingUpdates: this.loro.pendingUpdateState(),
         operationHistory: this.history.entriesForSerialization(500),
       },
     };
@@ -363,7 +368,7 @@ export class Core {
       workspaceId: this.workspaceIdValue,
       documentId: this.documentIdValue,
       replicaId: this.replicaIdValue,
-      loroPeerId: this.loro.peerId(),
+      loroSessionPeerId: this.loro.peerId(),
     };
   }
 
@@ -379,20 +384,22 @@ export class Core {
     return this.loro.subscribeLocalUpdates(listener);
   }
 
-  applyReplicationUpdates(updates: readonly Uint8Array[]): CoreRevisionDelta {
+  applyReplicationUpdates(updates: readonly Uint8Array[]): CoreReplicationImportResult {
     if (this.activeTransaction) throw CoreError.invalidOperation('cannot import replication updates during a transaction');
-    if (updates.length === 0) return this.unchangedRevisionDelta();
     const before = this.loro.materializeState();
-    this.loro.importUpdates(updates);
+    const importResult = this.loro.importUpdates(updates);
     const after = this.loro.materializeState();
     const changedNodeIds = changedNodeIdsBetweenStates(before, after);
     this.loro.clearTouchedNodeIds();
-    if (changedNodeIds.length === 0) return this.unchangedRevisionDelta();
-    this.invalidateProjectionCache();
-    this.stateValue = after;
-    this.bumpRevision(changedNodeIds, true);
-    this.verifyCaches();
-    return this.revisionDelta();
+    let revisionDelta = this.unchangedRevisionDelta();
+    if (changedNodeIds.length > 0) {
+      this.invalidateProjectionCache();
+      this.stateValue = after;
+      this.bumpRevision(changedNodeIds, true);
+      this.verifyCaches();
+      revisionDelta = this.revisionDelta();
+    }
+    return { ...revisionDelta, ...importResult };
   }
 
   private unchangedRevisionDelta(): CoreRevisionDelta {
@@ -3920,8 +3927,8 @@ function assertWorkspaceReplicaState(value: unknown): asserts value is Workspace
     !isRecord(value)
     || !isPersistenceId(value.installationId)
     || !isPersistenceId(value.replicaId)
-    || !isLoroPeerId(value.loroPeerId)
-    || value.loroPeerId !== loroPeerIdForReplica(value.replicaId)
+    || !Array.isArray(value.loroPendingUpdates)
+    || !value.loroPendingUpdates.every((update) => typeof update === 'string' && update.length > 0)
     || !Array.isArray(value.operationHistory)
     || !value.operationHistory.every(isOperationHistoryEntry)
   ) {

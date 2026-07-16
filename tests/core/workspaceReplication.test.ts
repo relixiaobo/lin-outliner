@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { VersionVector } from 'loro-crdt';
+import { LoroDoc, VersionVector } from 'loro-crdt';
 import { Core, type WorkspacePersistenceEnvelopeV3 } from '../../src/core/core';
 import { plainText, replaceAllRichTextPatch } from '../../src/core/types';
 
@@ -55,7 +55,7 @@ describe('workspace replication persistence', () => {
       documentId: shared.documentId,
     });
     expect(left.persistenceIdentity().replicaId).not.toBe(right.persistenceIdentity().replicaId);
-    expect(left.persistenceIdentity().loroPeerId).not.toBe(right.persistenceIdentity().loroPeerId);
+    expect(left.persistenceIdentity().loroSessionPeerId).not.toBe(right.persistenceIdentity().loroSessionPeerId);
     expect(Object.keys(shared.document).sort()).toEqual(['kind', 'schemaVersion', 'snapshot']);
     expect(left.requiresInitialPersist()).toBe(true);
     expect(right.requiresInitialPersist()).toBe(true);
@@ -69,7 +69,14 @@ describe('workspace replication persistence', () => {
     expect(envelope.local.operationHistory.length).toBeGreaterThan(0);
 
     const reloaded = Core.fromState(envelope, { installationId });
-    expect(reloaded.persistenceIdentity()).toEqual(original.persistenceIdentity());
+    expect(reloaded.persistenceIdentity()).toMatchObject({
+      installationId,
+      workspaceId: original.persistenceIdentity().workspaceId,
+      documentId: original.persistenceIdentity().documentId,
+      replicaId: original.persistenceIdentity().replicaId,
+    });
+    expect(reloaded.persistenceIdentity().loroSessionPeerId)
+      .not.toBe(original.persistenceIdentity().loroSessionPeerId);
     expect(persisted(reloaded).local.operationHistory).toEqual(envelope.local.operationHistory);
 
     const copiedInstallationId = newInstallationId();
@@ -80,9 +87,59 @@ describe('workspace replication persistence', () => {
       documentId: envelope.shared.documentId,
     });
     expect(copied.persistenceIdentity().replicaId).not.toBe(envelope.local.replicaId);
-    expect(copied.persistenceIdentity().loroPeerId).not.toBe(envelope.local.loroPeerId);
+    expect(copied.persistenceIdentity().loroSessionPeerId)
+      .not.toBe(original.persistenceIdentity().loroSessionPeerId);
     expect(persisted(copied).local.operationHistory).toEqual([]);
     expect(copied.requiresInitialPersist()).toBe(true);
+  });
+
+  test('uses distinct session peers when a complete userData snapshot is cloned', () => {
+    const installationId = newInstallationId();
+    const original = Core.new({ installationId });
+    const envelope = persisted(original);
+    const left = Core.fromState(structuredClone(envelope), { installationId });
+    const right = Core.fromState(structuredClone(envelope), { installationId });
+    const baseVersion = left.replicationVersionVector();
+
+    expect(left.persistenceIdentity().replicaId).toBe(right.persistenceIdentity().replicaId);
+    expect(left.persistenceIdentity().loroSessionPeerId)
+      .not.toBe(right.persistenceIdentity().loroSessionPeerId);
+
+    const leftNodeId = focusedNodeId(left.createNode(left.projection().todayId, null, 'Left clone row'));
+    const rightNodeId = focusedNodeId(right.createNode(right.projection().todayId, null, 'Right clone row'));
+    const leftUpdate = left.exportReplicationUpdate(baseVersion);
+    const rightUpdate = right.exportReplicationUpdate(baseVersion);
+    left.applyReplicationUpdates([rightUpdate]);
+    right.applyReplicationUpdates([leftUpdate]);
+
+    expectConverged(left, right);
+    expect(left.state().nodes[leftNodeId]?.content.text).toBe('Left clone row');
+    expect(left.state().nodes[rightNodeId]?.content.text).toBe('Right clone row');
+  });
+
+  test('does not reuse operation ids after restoring an older workspace snapshot', () => {
+    const installationId = newInstallationId();
+    const writer = Core.new({ installationId });
+    const staleEnvelope = persisted(writer);
+    const receiver = Core.fromSharedState(staleEnvelope.shared, { installationId: newInstallationId() });
+    const initialVersion = writer.replicationVersionVector();
+
+    const firstNodeId = focusedNodeId(writer.createNode(writer.projection().todayId, null, 'Before restore'));
+    receiver.applyReplicationUpdates([writer.exportReplicationUpdate(initialVersion)]);
+    expect(receiver.state().nodes[firstNodeId]).toBeDefined();
+
+    const restored = Core.fromState(staleEnvelope, { installationId });
+    expect(restored.persistenceIdentity().loroSessionPeerId)
+      .not.toBe(writer.persistenceIdentity().loroSessionPeerId);
+    const restoredBase = restored.replicationVersionVector();
+    const secondNodeId = focusedNodeId(restored.createNode(restored.projection().todayId, null, 'After restore'));
+    const received = receiver.applyReplicationUpdates([restored.exportReplicationUpdate(restoredBase)]);
+
+    expect(received.acceptedOperations).toBe(true);
+    expect(receiver.state().nodes[secondNodeId]?.content.text).toBe('After restore');
+    const restoredVersion = restored.replicationVersionVector();
+    restored.applyReplicationUpdates([receiver.exportReplicationUpdate(restoredVersion)]);
+    expectConverged(restored, receiver);
   });
 
   test('converges command-driven edits made concurrently by two offline replicas', () => {
@@ -139,6 +196,9 @@ describe('workspace replication persistence', () => {
       revision: duplicated.revision(),
       changedNodeIds: [],
       requiresFullSearchRebuild: false,
+      acceptedOperations: false,
+      hasPendingUpdates: false,
+      persistenceChanged: false,
     });
 
     const paginated = Core.fromSharedState(shared, { installationId: newInstallationId() });
@@ -149,6 +209,110 @@ describe('workspace replication persistence', () => {
     for (const replica of [ordered, reversed, duplicated, paginated]) {
       expectConverged(source, replica);
     }
+  });
+
+  test('preserves redo when an imported update is a duplicate', () => {
+    const seed = Core.new({ installationId: newInstallationId() });
+    const shared = seed.exportSharedState();
+    const source = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const target = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const sourceVersion = source.replicationVersionVector();
+    focusedNodeId(source.createNode(source.projection().todayId, null, 'Remote row'));
+    const remoteUpdate = source.exportReplicationUpdate(sourceVersion);
+    target.applyReplicationUpdates([remoteUpdate]);
+
+    const localNodeId = focusedNodeId(target.createNode(target.projection().todayId, null, 'Redo row'));
+    target.undo();
+    expect(target.operationHistory({ action: 'list', origin: 'all' }).canRedo).toBe(true);
+
+    const duplicate = target.applyReplicationUpdates([remoteUpdate]);
+    expect(duplicate).toMatchObject({
+      acceptedOperations: false,
+      hasPendingUpdates: false,
+      persistenceChanged: false,
+      changedNodeIds: [],
+    });
+    expect(target.operationHistory({ action: 'list', origin: 'all' }).canRedo).toBe(true);
+    target.redo();
+    expect(target.state().nodes[localNodeId]?.content.text).toBe('Redo row');
+  });
+
+  test('marks accepted losing operations as persistence changes', () => {
+    const seed = Core.new({ installationId: newInstallationId() });
+    const sharedNodeId = focusedNodeId(seed.createNode(seed.projection().todayId, null, 'Shared row'));
+    const shared = seed.exportSharedState();
+    const left = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const right = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const leftBase = left.replicationVersionVector();
+    const rightBase = right.replicationVersionVector();
+
+    left.updateNodeDescription(sharedNodeId, 'Left description');
+    right.updateNodeDescription(sharedNodeId, 'Right description');
+    const intoLeft = left.applyReplicationUpdates([right.exportReplicationUpdate(rightBase)]);
+    const intoRight = right.applyReplicationUpdates([left.exportReplicationUpdate(leftBase)]);
+    const losingImport = [intoLeft, intoRight].find((result) => result.changedNodeIds.length === 0);
+
+    expect(losingImport).toMatchObject({
+      acceptedOperations: true,
+      hasPendingUpdates: false,
+      persistenceChanged: true,
+      changedNodeIds: [],
+      requiresFullSearchRebuild: false,
+    });
+    expectConverged(left, right);
+  });
+
+  test('persists dependency-pending updates across reload', () => {
+    const seed = Core.new({ installationId: newInstallationId() });
+    const shared = seed.exportSharedState();
+    const source = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    let cursor = source.replicationVersionVector();
+    const firstNodeId = focusedNodeId(source.createNode(source.projection().todayId, null, 'First page'));
+    const firstPage = source.exportReplicationUpdate(cursor);
+    cursor = source.replicationVersionVector();
+    const secondNodeId = focusedNodeId(source.createNode(source.projection().todayId, null, 'Second page'));
+    const secondPage = source.exportReplicationUpdate(cursor);
+
+    const target = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const pendingResult = target.applyReplicationUpdates([secondPage]);
+    expect(pendingResult).toMatchObject({
+      acceptedOperations: false,
+      hasPendingUpdates: true,
+      persistenceChanged: true,
+      changedNodeIds: [],
+    });
+    expect(target.applyReplicationUpdates([secondPage])).toMatchObject({
+      acceptedOperations: false,
+      hasPendingUpdates: true,
+      persistenceChanged: false,
+      changedNodeIds: [],
+    });
+
+    const unrelated = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const unrelatedBase = unrelated.replicationVersionVector();
+    focusedNodeId(unrelated.createNode(unrelated.projection().todayId, null, 'Unrelated page'));
+    const unrelatedUpdate = unrelated.exportReplicationUpdate(unrelatedBase);
+    expect(target.applyReplicationUpdates([unrelatedUpdate])).toMatchObject({
+      acceptedOperations: true,
+      hasPendingUpdates: true,
+      persistenceChanged: true,
+    });
+    source.applyReplicationUpdates([unrelatedUpdate]);
+    const pendingEnvelope = persisted(target);
+    expect(pendingEnvelope.local.loroPendingUpdates).toHaveLength(1);
+
+    const restored = Core.fromState(pendingEnvelope, {
+      installationId: target.persistenceIdentity().installationId,
+    });
+    expect(persisted(restored).local.loroPendingUpdates).toHaveLength(1);
+    const resolved = restored.applyReplicationUpdates([firstPage]);
+    expect(resolved.acceptedOperations).toBe(true);
+    expect(resolved.hasPendingUpdates).toBe(false);
+    expect(resolved.persistenceChanged).toBe(true);
+    expect(persisted(restored).local.loroPendingUpdates).toEqual([]);
+    expect(restored.state().nodes[firstNodeId]?.content.text).toBe('First page');
+    expect(restored.state().nodes[secondNodeId]?.content.text).toBe('Second page');
+    expectConverged(source, restored);
   });
 
   test('does not echo imported updates through the local-update subscription', () => {
@@ -171,7 +335,7 @@ describe('workspace replication persistence', () => {
     unsubscribe();
   });
 
-  test('restarts both replicas, keeps their peers, and continues converging', () => {
+  test('restarts both replicas with fresh peers and continues converging', () => {
     const seed = Core.new({ installationId: newInstallationId() });
     const shared = seed.exportSharedState();
     const left = Core.fromSharedState(shared, { installationId: newInstallationId() });
@@ -182,12 +346,12 @@ describe('workspace replication persistence', () => {
     right.applyReplicationUpdates([left.exportReplicationUpdate(initialVersion)]);
     expectConverged(left, right);
 
-    const leftPeerId = left.persistenceIdentity().loroPeerId;
-    const rightPeerId = right.persistenceIdentity().loroPeerId;
+    const leftPeerId = left.persistenceIdentity().loroSessionPeerId;
+    const rightPeerId = right.persistenceIdentity().loroSessionPeerId;
     const restartedLeft = reload(left);
     const restartedRight = reload(right);
-    expect(restartedLeft.persistenceIdentity().loroPeerId).toBe(leftPeerId);
-    expect(restartedRight.persistenceIdentity().loroPeerId).toBe(rightPeerId);
+    expect(restartedLeft.persistenceIdentity().loroSessionPeerId).not.toBe(leftPeerId);
+    expect(restartedRight.persistenceIdentity().loroSessionPeerId).not.toBe(rightPeerId);
     const leftVersion = restartedLeft.replicationVersionVector();
     const rightVersion = restartedRight.replicationVersionVector();
 
@@ -201,6 +365,27 @@ describe('workspace replication persistence', () => {
     expectConverged(restartedLeft, restartedRight);
   });
 
+  test('imports an already-normalized snapshot only once during reload', () => {
+    const core = Core.new({ installationId: newInstallationId() });
+    focusedNodeId(core.createNode(core.projection().todayId, null, 'Persisted row'));
+    const envelope = persisted(core);
+    const originalImport = LoroDoc.prototype.import;
+    let importCount = 0;
+    LoroDoc.prototype.import = function importSnapshot(update: Uint8Array) {
+      importCount += 1;
+      return originalImport.call(this, update);
+    };
+    try {
+      const restored = Core.fromState(envelope, {
+        installationId: core.persistenceIdentity().installationId,
+      });
+      expect(restored.state()).toEqual(core.state());
+      expect(importCount).toBe(1);
+    } finally {
+      LoroDoc.prototype.import = originalImport;
+    }
+  });
+
   test('strictly rejects the retired v2 format and malformed v3 local state', () => {
     const core = Core.new({ installationId: newInstallationId() });
     const envelope = persisted(core);
@@ -208,14 +393,15 @@ describe('workspace replication persistence', () => {
       kind: 'loro-document',
       schemaVersion: 2,
       snapshot: envelope.shared.document.snapshot,
-      peerId: envelope.local.loroPeerId,
+      peerId: core.persistenceIdentity().loroSessionPeerId,
       operationHistory: [],
     };
     expect(() => Core.deserializeState(JSON.stringify(retired))).toThrow('invalid Tenon workspace state');
 
-    const mismatchedPeer = structuredClone(envelope);
-    mismatchedPeer.local.loroPeerId = mismatchedPeer.local.loroPeerId === '0' ? '1' : '0';
-    expect(() => Core.deserializeState(JSON.stringify(mismatchedPeer))).toThrow('invalid local workspace replica state');
+    const malformedPendingUpdates = structuredClone(envelope);
+    malformedPendingUpdates.local.loroPendingUpdates = [42 as unknown as string];
+    expect(() => Core.deserializeState(JSON.stringify(malformedPendingUpdates)))
+      .toThrow('invalid local workspace replica state');
 
     const malformedHistory = structuredClone(envelope) as WorkspacePersistenceEnvelopeV3;
     malformedHistory.local.operationHistory = [{

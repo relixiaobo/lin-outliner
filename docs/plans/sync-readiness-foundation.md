@@ -85,7 +85,7 @@ commands; the renderer never receives replica credentials or raw sync records.
 | `workspaceId` | durable data and future authorization boundary | yes |
 | `documentId` | one Loro document | yes |
 | `replicaId` | one local copy of one document | no |
-| `loroPeerId` | Loro operation author for that replica | no |
+| Loro peer id | one Core editing session | no, never persisted |
 | future `userId` / `deviceId` | account/server authorization | not created now |
 
 The structural `WORKSPACE_ID = 'workspace'` node constant is not a globally
@@ -101,34 +101,52 @@ interface WorkspacePersistenceEnvelopeV3 {
   local: {
     installationId: string;
     replicaId: string;
-    loroPeerId: string;
+    loroPendingUpdates: string[];
     operationHistory: OperationHistoryEntry[];
   };
 }
 ```
 
 Persist `installationId` separately under `userData`; repeat it in the local
-section as that section's ownership marker. Shared state never designates the
-active replica's Loro peer id, although historical peer ids are intrinsic to the
-operation ids inside a Loro snapshot. Local reload restores its peer; bootstrap
-from shared state always mints fresh replica and peer ids. Shared import cannot
-replace local identity, undo history, secrets, paths, permissions, or UI state.
+section as that section's ownership marker. It identifies a `userData` tree, not
+physical hardware, so a complete copied tree can contain the same installation
+and replica ids. Shared state never designates the active Loro peer id, although
+historical peer ids are intrinsic to operation ids inside a snapshot. Every
+Core session uses a fresh random peer, including normal reload, cloned
+`userData`, and rollback to an older envelope. This prevents two writers from
+reusing the same `{peer, counter}` operation ids. Bootstrap from shared state
+also mints a fresh replica. Shared import cannot replace local identity, undo
+history, secrets, paths, permissions, or UI state.
+
+The local section persists base64 Loro update blobs only while their end
+versions remain outside the document oplog. These blobs preserve updates that
+Loro keeps pending for missing causal dependencies because a snapshot does not
+include them. They are replayed on reload and removed after the dependencies
+arrive. They are not a transport outbox or acknowledgement mechanism.
 
 ### Loro Replication Kernel
 
 `LoroOutlinerDocument` gains cohesive operations to export a shared snapshot
 without a separate active-peer field, read a version vector, export an update
 from a version vector, import update batches, subscribe to committed
-local updates, and invalidate all mappings/caches after import.
+local updates, and distinguish accepted operations, pending dependencies,
+persistence changes, and visible document changes. Duplicate and pending-only
+imports preserve redo and materialized caches. An accepted conflict-losing
+operation still marks persistence dirty. Normal reload imports its snapshot
+once; a second import occurs only when no-op reconciliation actually created a
+pending transaction that must be discarded.
 
 The complete acceptance harness uses two isolated persisted replicas and an
 in-memory relay. It proves:
 
-- shared bootstrap creates distinct replica and peer ids;
+- shared bootstrap creates distinct replica and session peer ids;
+- cloned `userData` and restored old envelopes cannot reuse operation ids;
 - concurrent command-driven edits converge after normal, reversed, duplicate,
   and paginated delivery;
+- dependency-pending pages survive serialize/reload and later converge;
 - remote imports are not echoed as local updates; and
-- both replicas restart, edit again, exchange updates, and still converge.
+- both replicas restart with fresh peers, edit again, exchange updates, and
+  still converge.
 
 The app remains local-only. `DocumentService` uses the new envelope but starts no
 queue or network loop. A future sync plan adds a system-owned Core command for
@@ -233,7 +251,8 @@ remote-import command. No unit changes dependencies, build config,
 
 - **Premature abstraction:** allow only contracts exercised by local persistence,
   integrity, tombstones, or convergence tests.
-- **Peer collision:** enforce shared/local separation and fresh-peer clone tests.
+- **Peer collision:** use a fresh peer per Core session and cover cloned
+  `userData` plus stale-envelope restoration.
 - **Atomicity:** keep one workspace envelope; store installation identity
   separately because its lifecycle is independent.
 - **Issue regression:** replay existing behavior fixtures before deleting the
@@ -260,7 +279,8 @@ remote-import command. No unit changes dependencies, build config,
 - [ ] Add shared/local identities and the atomic v3 envelope; remove the old
   reader.
 - [ ] Add snapshot, version-vector, update, import, and local-update primitives.
-- [ ] Prove two-replica convergence, restart, no echo, and fresh-peer bootstrap.
+- [ ] Prove two-replica convergence, restart, no echo, pending-update durability,
+  and fresh session peers.
 - [ ] Update architecture docs; run typecheck, core tests, and docs check.
 
 ### Unit 2: Asset content integrity
