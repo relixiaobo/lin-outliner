@@ -67,6 +67,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **URL video bilingual subtitles (PR #399, codex-4)** — URL Preview translation
+  now includes prerecorded standards-based and YouTube captions in the existing
+  language, model, shortcut, automatic-translation, and three-request session.
+  Original captions stay visible while bounded playback-window batches add
+  translated lines; seeking, track changes, ads, disable/re-enable, stale loads,
+  and inaccessible or same-target captions preserve page and player state.
+  Timed-text origins and response sizes remain bounded inside the sandboxed guest,
+  and model output is inserted only as text. **Gate (main):** two review rounds
+  closed all reported lifecycle, cue-layout, design-system, and specification
+  consistency findings; the final pass found no reportable issues. Verified with
+  typecheck, 45 focused guest tests, 829 renderer tests, 27 focused Core/security
+  tests, raw-colour and diff guards, and a latest-`main` synthetic merge with 838
+  renderer tests.
 - **Semantic ingest parity (PR #397, codex-2)** — agent-created normal nodes and
   plain, Markdown, and HTML paste now share one bounded semantic scanner for
   tags, fields, references, bare URLs, canonical escapes, and rich-text offset

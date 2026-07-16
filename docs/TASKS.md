@@ -24,17 +24,18 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped semantic-ingest-pipeline #397) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped field-value-node-children #394, url-preview-persistent-session #400) |
-| Codex 4 | `lin-outliner-codex-4/` | `codex-4/url-video-bilingual-subtitles` | PR #399 — URL video bilingual subtitles |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-15).** Open PR queue: #399
-(`codex-4/url-video-bilingual-subtitles`; ready for main review). Recently
-merged: #397 (`codex-2/semantic-ingest-pipeline`) merged 2026-07-15 after
-iterative main review; see *Recently completed*. #400
+**In flight (2026-07-16).** Open PR queue: none. Recently merged: #399
+(`codex-4/url-video-bilingual-subtitles`) merged 2026-07-16 after two main
+review rounds; see *Recently completed*. #397
+(`codex-2/semantic-ingest-pipeline`) merged 2026-07-15 after iterative main
+review; see *Recently completed*. #400
 (`codex-3/url-preview-persistent-session`) merged 2026-07-15 after main review;
 see *Recently completed*. #396
 (`codex-4/url-preview-bilingual-translation`) merged 2026-07-15 after three
@@ -506,6 +507,24 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **url-video-bilingual-subtitles**
+  (`codex-4/url-video-bilingual-subtitles`, PR #399, codex-4, merged
+  2026-07-16, plan-track) — URL Preview translation now includes prerecorded
+  standards-based and YouTube captions in the existing language, model,
+  shortcut, automatic-translation, and three-request session. Original captions
+  remain visible while bounded playback-window batches add translated lines;
+  track changes, seeking, ads, disable/re-enable, stale loads, and inaccessible
+  or same-target captions preserve the page and player state. Remote content
+  remains sandboxed, timed-text URLs and response sizes are bounded, and model
+  output is inserted only as text. **Gate (main):** two review rounds closed all
+  reported lifecycle, cue-layout, design-system, and specification-consistency
+  findings; the final pass found no reportable issues. Verified on final head
+  `e576b8ee` with typecheck, 45 focused guest tests, 829 renderer tests, 27
+  focused Core/security tests, raw-colour and diff guards, plus a latest-`main`
+  synthetic merge with 838 renderer tests. The design-system check retains only
+  `main`'s pre-existing `AgentMarkdown.tsx` native-control count mismatch. Plan
+  archived `done`: `docs/plans/archive/url-video-bilingual-subtitles.md`.
 
 - **semantic-ingest-pipeline**
   (`codex-2/semantic-ingest-pipeline`, PR #397, codex-2, merged 2026-07-15,
