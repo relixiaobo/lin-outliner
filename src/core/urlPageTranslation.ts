@@ -6,8 +6,10 @@ export const URL_PAGE_TRANSLATION_CANCEL_COMMAND = 'url_page_translation_cancel'
 export const LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL = 'lin:url-page-translation-shortcut';
 export const LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL = 'lin:url-page-translation-preferences-changed';
 
-export const URL_PAGE_TRANSLATION_MAX_ACTIVE_SESSIONS = 8;
-export const URL_PAGE_TRANSLATION_MAX_BLOCKS = 4;
+export const URL_PAGE_TRANSLATION_MAX_ACTIVE_BATCHES = 6;
+// The workspace supports four panes, each with one bounded translation pool.
+export const URL_PAGE_TRANSLATION_MAX_ACTIVE_SESSIONS = URL_PAGE_TRANSLATION_MAX_ACTIVE_BATCHES * 4;
+export const URL_PAGE_TRANSLATION_MAX_BLOCKS = 16;
 export const URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS = 4_000;
 export const URL_PAGE_TRANSLATION_MAX_BATCH_CHARS = 4_000;
 export const URL_CAPTION_TRANSLATION_MAX_BLOCKS = 16;

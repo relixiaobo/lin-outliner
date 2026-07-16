@@ -32,6 +32,7 @@ import { agentDefinitionAgentId } from './agentDelegationIdentity';
 import { createTenonAssistantAgentDefinition } from './agentDelegation';
 import { assistantMessageText } from './agentCompaction';
 import { awaitWithAbort, isAbortError, throwIfAborted } from './agentAwaitWithAbort';
+import { isRetryableResponsesRequestError } from './agentStreamAbort';
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
@@ -50,6 +51,13 @@ import { piCompleteSimple, piExternalProviderId } from './piModels';
 
 const ID_PATTERN = /^[A-Za-z0-9:_-]{1,96}$/;
 const PAGE_TRANSLATION_MAX_TOKENS = 8_192;
+const PAGE_TRANSLATION_MAX_RETRIES = 2;
+const PAGE_TRANSLATION_RETRY_INITIAL_DELAY_MS = 200;
+const PAGE_TRANSLATION_RETRY_JITTER = 0.1;
+const PAGE_TRANSLATION_MAX_RETRY_AFTER_MS = 10_000;
+const PROVIDER_STATUS_PATTERN = /\b(?:API error \(|HTTP(?: error)?(?: status)?(?: code)?[ :=]*|status(?: code)?[ :=]+)(\d{3})\b/i;
+const PROVIDER_CONFIGURATION_MESSAGE_PATTERN = /(?:\b(?:invalid|unknown|unavailable|unsupported)\s+model\b|\bmodel\b.{0,80}\b(?:does not exist|not found|not supported|unavailable)\b)/i;
+const RETRYABLE_PROVIDER_MESSAGE_PATTERN = /\b(?:overloaded|rate limit|service unavailable|temporarily unavailable|too many requests)\b/i;
 
 interface PageTranslationCompletionInput {
   systemPrompt: string;
@@ -65,6 +73,7 @@ type PageTranslationComplete = (input: PageTranslationCompletionInput) => Promis
 interface PageTranslationServiceOptions {
   complete?: PageTranslationComplete;
   onError?: (error: unknown) => void;
+  retryDelayMs?: (retryCount: number, error: unknown) => number;
 }
 
 interface ActiveTranslationRequest {
@@ -100,9 +109,13 @@ class PageTranslationResponseError extends Error {
 export class PageTranslationService {
   private readonly active = new Map<string, ActiveTranslationRequest>();
   private readonly complete: PageTranslationComplete;
+  private readonly retryDelayMs: (retryCount: number, error: unknown) => number;
 
   constructor(private readonly options: PageTranslationServiceOptions = {}) {
     this.complete = options.complete ?? completePageTranslationWithConfiguredModel;
+    this.retryDelayMs = options.retryDelayMs ?? ((retryCount, error) => (
+      pageTranslationRetryDelayMs(retryCount, Math.random, providerRetryAfterMs(error))
+    ));
   }
 
   async handle(
@@ -148,13 +161,14 @@ export class PageTranslationService {
         request.blocks,
         request.contentKind ?? 'page',
       );
-      const output = await this.complete({
+      const completionInput: PageTranslationCompletionInput = {
         ...prompts,
         sessionId: request.sessionId,
         signal: controller.signal,
         maxTokens: PAGE_TRANSLATION_MAX_TOKENS,
         ...(request.model ? { model: request.model } : {}),
-      });
+      };
+      const output = await this.completeWithRetries(completionInput);
       throwIfAborted(controller.signal);
       return {
         ok: true,
@@ -179,6 +193,43 @@ export class PageTranslationService {
       if (current?.requestId === request.requestId) this.active.delete(request.sessionId);
     }
   }
+
+  private async completeWithRetries(input: PageTranslationCompletionInput): Promise<string> {
+    for (let retryCount = 0; ; retryCount += 1) {
+      try {
+        return await this.complete(input);
+      } catch (error) {
+        throwIfAborted(input.signal);
+        if (error instanceof PageTranslationConfigurationError || error instanceof PageTranslationResponseError) {
+          throw error;
+        }
+        const status = providerStatus(error);
+        if (isProviderConfigurationError(error, status)) {
+          throw new PageTranslationConfigurationError('The selected translation provider or model is unavailable.');
+        }
+        if (retryCount >= PAGE_TRANSLATION_MAX_RETRIES || !isRetryablePageTranslationError(error, status)) {
+          throw error;
+        }
+        const delayMs = this.retryDelayMs(retryCount + 1, error);
+        await waitForAbortableDelay(delayMs, input.signal);
+        throwIfAborted(input.signal);
+      }
+    }
+  }
+}
+
+export function pageTranslationRetryDelayMs(
+  retryCount: number,
+  random: () => number = Math.random,
+  retryAfterMs: number | null = null,
+): number {
+  const exponent = Math.max(0, Math.floor(retryCount) - 1);
+  const baseDelay = PAGE_TRANSLATION_RETRY_INITIAL_DELAY_MS * (2 ** exponent);
+  const jitter = 1 - PAGE_TRANSLATION_RETRY_JITTER + random() * PAGE_TRANSLATION_RETRY_JITTER * 2;
+  const backoff = Math.round(baseDelay * jitter);
+  return retryAfterMs === null
+    ? backoff
+    : Math.max(backoff, Math.min(PAGE_TRANSLATION_MAX_RETRY_AFTER_MS, retryAfterMs));
 }
 
 export function buildPageTranslationPrompts(
@@ -433,6 +484,74 @@ function unwrapJsonFence(raw: string): string {
 
 function failure(requestId: string, error: UrlPageTranslationFailureCode): UrlPageTranslationResponse {
   return { ok: false, requestId, error };
+}
+
+function isRetryablePageTranslationError(error: unknown, status = providerStatus(error)): boolean {
+  if (status === 408 || status === 429 || (status !== null && status >= 500 && status <= 599)) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : undefined;
+  return isRetryableResponsesRequestError(message)
+    || Boolean(message && RETRYABLE_PROVIDER_MESSAGE_PATTERN.test(message));
+}
+
+function isProviderConfigurationError(error: unknown, status: number | null): boolean {
+  if (status === 401 || status === 402 || status === 403 || status === 404) return true;
+  const message = error instanceof Error ? error.message : '';
+  return PROVIDER_CONFIGURATION_MESSAGE_PATTERN.test(message);
+}
+
+function providerStatus(error: unknown): number | null {
+  if (isRecord(error)) {
+    const response = isRecord(error.response) ? error.response : null;
+    const structured = error.status ?? error.statusCode ?? response?.status ?? response?.statusCode;
+    if (Number.isInteger(structured) && (structured as number) >= 100 && (structured as number) <= 599) {
+      return structured as number;
+    }
+  }
+  const message = error instanceof Error ? error.message : '';
+  const match = PROVIDER_STATUS_PATTERN.exec(message);
+  return match ? Number(match[1]) : null;
+}
+
+function providerRetryAfterMs(error: unknown): number | null {
+  if (!isRecord(error)) return null;
+  const direct = error.retryAfterMs;
+  if (typeof direct === 'number' && Number.isFinite(direct) && direct >= 0) return direct;
+  const headers = readProviderHeaders(error);
+  const raw = headers?.get('retry-after');
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000;
+  const date = Date.parse(raw);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
+}
+
+function readProviderHeaders(error: Record<string, unknown>): { get(name: string): string | null } | null {
+  const direct = error.headers;
+  if (direct && typeof (direct as { get?: unknown }).get === 'function') {
+    return direct as { get(name: string): string | null };
+  }
+  const response = error.response;
+  if (!isRecord(response)) return null;
+  const nested = response.headers;
+  return nested && typeof (nested as { get?: unknown }).get === 'function'
+    ? nested as { get(name: string): string | null }
+    : null;
+}
+
+async function waitForAbortableDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted || delayMs <= 0) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, delayMs);
+    function finish() {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    }
+    signal.addEventListener('abort', finish, { once: true });
+    if (signal.aborted) finish();
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

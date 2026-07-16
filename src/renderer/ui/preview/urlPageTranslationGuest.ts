@@ -28,7 +28,7 @@ export type {
   UrlPageTranslationGuestLabels,
 } from '../../../core/urlPageTranslationGuest';
 
-const URL_PAGE_TRANSLATION_DEFAULT_MAX_BLOCKS = 4;
+const URL_PAGE_TRANSLATION_DEFAULT_MAX_BLOCKS = URL_PAGE_TRANSLATION_MAX_BLOCKS;
 const URL_PAGE_TRANSLATION_DEFAULT_MAX_CHARS = 4_000;
 const URL_CAPTION_TRANSLATION_DEFAULT_MAX_BLOCKS = 16;
 const URL_CAPTION_TRANSLATION_DEFAULT_MAX_CHARS = 4_000;
@@ -193,8 +193,10 @@ export interface UrlPageTranslationGuestBatch {
   blocks: UrlPageTranslationBlock[];
   captionRevision: number;
   contentKind?: Exclude<UrlPageTranslationContentKind, 'document'>;
+  hasActiveFailures: boolean;
   preemptRequestId?: string | null;
   priority: number | null;
+  workRevision: number;
 }
 
 export interface UrlPageTranslationGuestBridge {
@@ -203,6 +205,7 @@ export interface UrlPageTranslationGuestBridge {
   initialize(targetLanguage: TranslationLanguage, labels: UrlPageTranslationGuestLabels): Promise<void>;
   setEnabled(enabled: boolean, targetLanguage: TranslationLanguage): Promise<void>;
   nextBatch(options?: UrlPageTranslationGuestBatchOptions): Promise<UrlPageTranslationGuestBatch>;
+  waitForWork?(afterRevision: number, timeoutMs: number): Promise<number>;
   release(ids: readonly string[]): Promise<void>;
   apply(translations: readonly UrlPageTranslationItem[]): Promise<number>;
   fail(ids: readonly string[]): Promise<void>;
@@ -273,14 +276,17 @@ export function createUrlPageTranslationGuestBridge(
         URL_CAPTION_TRANSLATION_DEFAULT_MAX_CHARS,
         URL_CAPTION_TRANSLATION_MAX_BATCH_CHARS,
       );
+      const estimatedLatencyMs = boundedBatchLimit(options.estimatedLatencyMs, 1_500, 60_000);
       const raw = await execute<unknown>({
         operation: 'next-batch',
         options: {
           activeBatches: options.activeBatches ?? [],
           captionMaxBlocks,
           captionMaxChars,
+          estimatedLatencyMs,
           maxBlocks,
           maxChars,
+          queueVisible: options.queueVisible ?? false,
           retryOnly: options.retryOnly ?? false,
           visibleOnly: options.visibleOnly ?? false,
         },
@@ -291,6 +297,10 @@ export function createUrlPageTranslationGuestBridge(
         maxBlocks,
         maxChars,
       });
+    },
+    async waitForWork(afterRevision, timeoutMs) {
+      const raw = await execute<unknown>({ operation: 'wait-for-work', afterRevision, timeoutMs });
+      return Number.isSafeInteger(raw) && (raw as number) >= 0 ? raw as number : afterRevision;
     },
     async release(ids) {
       await execute({ operation: 'release', ids });
@@ -368,6 +378,7 @@ export function installUrlPageTranslationRuntime(
     completed: boolean;
     failed: boolean;
     pending: boolean;
+    queued: boolean;
     retryRequested: boolean;
     statusNode: HTMLButtonElement | null;
     translationNode: HTMLElement | null;
@@ -427,6 +438,8 @@ export function installUrlPageTranslationRuntime(
   let dirty = true;
   let scanCount = 0;
   let lastScrollTop = readScrollTop();
+  let lastScrollAt = Date.now();
+  let scrollVelocityViewportsPerMs = 0;
   let direction: 'down' | 'neutral' | 'up' = 'neutral';
   let targetLanguage = initialTargetLanguage;
   let anchorRevision = 0;
@@ -449,7 +462,24 @@ export function installUrlPageTranslationRuntime(
   let youtubeCaptionRestoreButton: HTMLButtonElement | null = null;
   let youtubeCaptionRestorePressed: boolean | null = null;
   let youtubeCaptionRestoreTimer: number | null = null;
+  let workRevision = 0;
+  const workWaiters = new Set<{
+    resolve: (revision: number) => void;
+    timer: ReturnType<typeof host.setTimeout>;
+  }>();
   const scrollKeys = new Set([' ', 'ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp']);
+
+  const resolveWorkWaiter = (
+    waiter: { resolve: (revision: number) => void; timer: ReturnType<typeof host.setTimeout> },
+  ): void => {
+    host.clearTimeout(waiter.timer);
+    workWaiters.delete(waiter);
+    waiter.resolve(workRevision);
+  };
+  const signalWorkAvailable = (): void => {
+    workRevision = workRevision >= 2_147_483_647 ? 1 : workRevision + 1;
+    for (const waiter of [...workWaiters]) resolveWorkWaiter(waiter);
+  };
 
   const invalidateDeferredAnchorCorrection = (): void => {
     expectedAnchorScrollTop = null;
@@ -462,7 +492,22 @@ export function installUrlPageTranslationRuntime(
     if (applyingAnchorScroll) return;
     const scrollTop = readScrollTop();
     if (expectedAnchorScrollTop !== null && Math.abs(scrollTop - expectedAnchorScrollTop) <= 1) return;
+    const delta = scrollTop - lastScrollTop;
+    if (Math.abs(delta) >= 2) {
+      const now = Date.now();
+      const elapsed = Math.max(1, now - lastScrollAt);
+      const viewportHeight = Math.max(1, host.innerHeight);
+      const nextDirection = delta > 0 ? 'down' : 'up';
+      const sample = Math.min(0.02, Math.abs(delta) / viewportHeight / elapsed);
+      scrollVelocityViewportsPerMs = direction === nextDirection
+        ? scrollVelocityViewportsPerMs * 0.65 + sample * 0.35
+        : sample;
+      direction = nextDirection;
+      lastScrollAt = now;
+      lastScrollTop = scrollTop;
+    }
     invalidateDeferredAnchorCorrection();
+    signalWorkAvailable();
   };
   host.addEventListener('wheel', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
   host.addEventListener('touchstart', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
@@ -554,9 +599,11 @@ export function installUrlPageTranslationRuntime(
         if (!enabled || !record.failed) return;
         withStableAnchor(() => {
           record.failed = false;
+          record.queued = true;
           record.retryRequested = true;
           showStatus(record, 'loading');
         });
+        signalWorkAvailable();
       });
       record.element.append(status);
       record.statusNode = status;
@@ -574,6 +621,7 @@ export function installUrlPageTranslationRuntime(
     record.completed = false;
     record.failed = false;
     record.pending = false;
+    record.queued = false;
   };
 
   const discover = (): void => {
@@ -606,6 +654,7 @@ export function installUrlPageTranslationRuntime(
           completed: false,
           failed: false,
           pending: false,
+          queued: false,
           retryRequested: false,
           statusNode: null,
           translationNode: null,
@@ -674,21 +723,33 @@ export function installUrlPageTranslationRuntime(
     });
   };
 
-  const priorityForRect = (rect: DOMRect, viewportHeight: number): number | null => {
+  const priorityForRect = (
+    rect: DOMRect,
+    viewportHeight: number,
+    aheadViewports: number,
+  ): number | null => {
     if (rect.bottom > 0 && rect.top < viewportHeight) return 0;
     if (direction === 'neutral') {
-      if (rect.bottom <= 0 && rect.bottom > -viewportHeight * 2) return 1;
-      if (rect.top >= viewportHeight && rect.top < viewportHeight * 3) return 1;
+      if (rect.bottom <= 0 && rect.bottom > -viewportHeight * aheadViewports) return 1;
+      if (rect.top >= viewportHeight && rect.top < viewportHeight * (aheadViewports + 1)) return 1;
       return null;
     }
     if (direction === 'down') {
-      if (rect.top >= viewportHeight && rect.top < viewportHeight * 5) return 1;
+      if (rect.top >= viewportHeight && rect.top < viewportHeight * (aheadViewports + 1)) return 1;
       if (rect.bottom <= 0 && rect.bottom > -viewportHeight) return 2;
       return null;
     }
-    if (rect.bottom <= 0 && rect.bottom > -viewportHeight * 4) return 1;
+    if (rect.bottom <= 0 && rect.bottom > -viewportHeight * aheadViewports) return 1;
     if (rect.top >= viewportHeight && rect.top < viewportHeight * 2) return 2;
     return null;
+  };
+
+  const lookaheadViewports = (estimatedLatencyMs: number): number => {
+    const velocity = Date.now() - lastScrollAt > 2_000 ? 0 : scrollVelocityViewportsPerMs;
+    const latency = Number.isFinite(estimatedLatencyMs)
+      ? Math.max(0, Math.min(30_000, estimatedLatencyMs))
+      : 1_500;
+    return Math.max(3, Math.min(8, Math.ceil(velocity * (latency + 2_000))));
   };
 
   const distanceForRect = (rect: DOMRect, viewportHeight: number): number => {
@@ -802,8 +863,8 @@ export function installUrlPageTranslationRuntime(
   const clearCaptionState = (restoreSource = true): void => {
     const state = captionState;
     if (!state) return;
-    state.media.removeEventListener('timeupdate', renderCurrentCaption);
-    state.media.removeEventListener('seeked', renderCurrentCaption);
+    state.media.removeEventListener('timeupdate', handleCaptionTimeUpdate);
+    state.media.removeEventListener('seeked', handleCaptionSeeked);
     setCaptionPresentationEnabled(state, false, restoreSource);
     clearGeneratedCues(state);
     state.bilingualElement?.remove();
@@ -853,6 +914,7 @@ export function installUrlPageTranslationRuntime(
         record.retryRequested = true;
       }
       renderCurrentCaption();
+      signalWorkAvailable();
     });
     overlay.append(source, translation, status);
     player.append(overlay);
@@ -924,6 +986,17 @@ export function installUrlPageTranslationRuntime(
     overlay.hidden = state.adapter === 'standard'
       ? !(hasFailure || hasRetrying || record?.pending || record?.retryRequested)
       : false;
+  }
+
+  function handleCaptionTimeUpdate(): void {
+    const previousRecordId = captionState?.currentRecordId ?? null;
+    renderCurrentCaption();
+    if ((captionState?.currentRecordId ?? null) !== previousRecordId) signalWorkAvailable();
+  }
+
+  function handleCaptionSeeked(): void {
+    renderCurrentCaption();
+    signalWorkAvailable();
   }
 
   const createNativeCue = (
@@ -999,6 +1072,7 @@ export function installUrlPageTranslationRuntime(
   ): Map<string, CaptionRecord> => {
     const records = new Map<string, CaptionRecord>();
     const revision = ++captionRevision;
+    signalWorkAvailable();
     for (let index = 0; index < snapshots.length; index += 1) {
       const snapshot = snapshots[index];
       if (!snapshot) continue;
@@ -1129,8 +1203,8 @@ export function installUrlPageTranslationRuntime(
         sourceSignature: '',
         sourceTrack,
       };
-      media.addEventListener('timeupdate', renderCurrentCaption);
-      media.addEventListener('seeked', renderCurrentCaption);
+      media.addEventListener('timeupdate', handleCaptionTimeUpdate);
+      media.addEventListener('seeked', handleCaptionSeeked);
     }
     const state = captionState;
     if (!state || state.adapter !== 'standard') return false;
@@ -1707,8 +1781,8 @@ export function installUrlPageTranslationRuntime(
       sourceSignature: metadata.url,
       sourceTrack: null,
     };
-    media.addEventListener('timeupdate', renderCurrentCaption);
-    media.addEventListener('seeked', renderCurrentCaption);
+    media.addEventListener('timeupdate', handleCaptionTimeUpdate);
+    media.addEventListener('seeked', handleCaptionSeeked);
     setCaptionPresentationEnabled(captionState, enabled);
     renderCurrentCaption();
   };
@@ -1768,6 +1842,11 @@ export function installUrlPageTranslationRuntime(
     Math.abs(record.startTime - Math.max(0, media.currentTime || 0))
   );
 
+  const hasActiveFailures = (): boolean => (
+    [...records.values()].some((record) => record.failed)
+    || Boolean(captionState && [...captionState.records.values()].some((record) => record.failed))
+  );
+
   const MutationObserverCtor = constructors.MutationObserver;
   const observer = typeof MutationObserverCtor === 'function'
     ? new MutationObserverCtor((mutations: MutationRecord[]) => {
@@ -1783,7 +1862,10 @@ export function installUrlPageTranslationRuntime(
               || !node.matches(ownedSelector)
           ));
         });
-        if (relevant) dirty = true;
+        if (relevant) {
+          dirty = true;
+          signalWorkAvailable();
+        }
       })
     : null;
   observer?.observe(doc.documentElement, { childList: true, characterData: true, subtree: true });
@@ -1815,6 +1897,7 @@ export function installUrlPageTranslationRuntime(
       if (nextEnabled && !enabled) {
         for (const record of records.values()) {
           record.failed = false;
+          record.queued = false;
           record.retryRequested = false;
           removeStatus(record);
         }
@@ -1828,6 +1911,7 @@ export function installUrlPageTranslationRuntime(
         withStableAnchor(() => {
           for (const record of records.values()) {
             record.pending = false;
+            record.queued = false;
             record.failed = false;
             removeStatus(record);
           }
@@ -1845,6 +1929,7 @@ export function installUrlPageTranslationRuntime(
         renderCurrentCaption();
       }
       dirty = true;
+      signalWorkAvailable();
     },
     nextBatch(
       maxBlocks: number,
@@ -1855,14 +1940,18 @@ export function installUrlPageTranslationRuntime(
       activeBatches: readonly { ids: readonly string[]; requestId: string }[] = [],
       captionMaxBlocks = 16,
       captionMaxChars = 4_000,
+      estimatedLatencyMs = 1_500,
+      queueVisible = false,
     ): UrlPageTranslationGuestBatch {
       if (!enabled) {
         return {
           blocks: [],
           captionRevision,
           contentKind: 'page',
+          hasActiveFailures: false,
           preemptRequestId: null,
           priority: null,
+          workRevision,
         };
       }
       scanCount += 1;
@@ -1874,38 +1963,65 @@ export function installUrlPageTranslationRuntime(
       else if (scrollTop < lastScrollTop - 2) direction = 'up';
       lastScrollTop = scrollTop;
       const viewportHeight = Math.max(1, host.innerHeight);
+      const aheadViewports = lookaheadViewports(estimatedLatencyMs);
+
+      if (queueVisible && !retryOnly) {
+        withStableAnchor(() => {
+          for (const record of records.values()) {
+            if (record.completed || record.pending || record.failed || record.retryRequested) continue;
+            const shouldQueue = isRendered(record.element)
+              && record.text.length <= maxBlockChars
+              && priorityForRect(record.element.getBoundingClientRect(), viewportHeight, aheadViewports) === 0;
+            if (record.queued === shouldQueue) continue;
+            record.queued = shouldQueue;
+            if (shouldQueue) showStatus(record, 'loading');
+            else removeStatus(record);
+          }
+        });
+      }
 
       let preemptRequestId: string | null = null;
+      let preemptDistance = -1;
       for (const activeBatch of activeBatches) {
-        let activePriority: number | null = null;
+        let activeDistance = Infinity;
         for (const id of activeBatch.ids) {
           const record = records.get(id);
           const captionRecord = captionState?.records.get(id);
           const priority = record?.element.isConnected
-            ? priorityForRect(record.element.getBoundingClientRect(), viewportHeight)
+            ? priorityForRect(record.element.getBoundingClientRect(), viewportHeight, aheadViewports)
             : captionRecord
               && captionState
               && !(captionState.adapter === 'youtube' && youtubeAdShowing())
               ? captionPriority(captionRecord, captionState.media)
               : null;
-          if (priority === null) continue;
-          activePriority = activePriority === null ? priority : Math.min(activePriority, priority);
+          if (priority === 0) {
+            activeDistance = -1;
+            break;
+          }
+          const distance = record?.element.isConnected
+            ? distanceForRect(record.element.getBoundingClientRect(), viewportHeight)
+            : captionRecord && captionState
+              ? captionDistance(captionRecord, captionState.media)
+              : Infinity;
+          activeDistance = Math.min(activeDistance, distance);
         }
-        if (activePriority !== 0) {
+        if (activeDistance > preemptDistance) {
           preemptRequestId = activeBatch.requestId;
-          break;
+          preemptDistance = activeDistance;
         }
       }
 
       let pagePending = [...records.values()]
         .filter((record) => !record.completed && !record.pending)
-        .filter((record) => retryOnly ? record.retryRequested : !record.failed && !record.retryRequested)
+        .filter((record) => retryOnly ? record.retryRequested : !record.failed || record.retryRequested)
         .filter((record) => record.text.length <= maxBlockChars && isRendered(record.element))
         .map((record) => {
           const rect = record.element.getBoundingClientRect();
           return {
             record,
-            priority: retryOnly ? 0 : priorityForRect(rect, viewportHeight),
+            priority: record.retryRequested || retryOnly
+              ? 0
+              : priorityForRect(rect, viewportHeight, aheadViewports),
             distance: distanceForRect(rect, viewportHeight),
           };
         })
@@ -1937,8 +2053,10 @@ export function installUrlPageTranslationRuntime(
             blocks: [],
             captionRevision,
             contentKind: 'page',
+            hasActiveFailures: hasActiveFailures(),
             preemptRequestId: null,
             priority: null,
+            workRevision,
           };
         }
         pagePending = pagePending.filter((entry) => entry.priority === 0);
@@ -1974,6 +2092,7 @@ export function installUrlPageTranslationRuntime(
           && entry.record.text.length <= maxBlockChars;
         if (exceedsSoftLimit && !allowSingleLongCaption) continue;
         entry.record.pending = true;
+        if (contentKind === 'page') (entry.record as RecordEntry).queued = false;
         entry.record.retryRequested = false;
         blocks.push({ id: entry.record.id, text: entry.record.text });
         if (contentKind === 'caption') selectedCaptions.push(entry.record as CaptionRecord);
@@ -1987,13 +2106,40 @@ export function installUrlPageTranslationRuntime(
           (startTimes.get(left.id) ?? 0) - (startTimes.get(right.id) ?? 0)
         ));
       }
+      if (contentKind === 'page' && blocks.length > 1) {
+        const tops = new Map(selectedPage.map((record) => [
+          record.id,
+          record.element.getBoundingClientRect().top,
+        ]));
+        blocks.sort((left, right) => (tops.get(left.id) ?? 0) - (tops.get(right.id) ?? 0));
+      }
       if (selectedPage.length > 0) {
         withStableAnchor(() => {
           for (const record of selectedPage) showStatus(record, 'loading');
         });
       }
       if (selectedCaptions.length > 0) renderCurrentCaption();
-      return { blocks, captionRevision, contentKind, preemptRequestId, priority: firstPriority };
+      return {
+        blocks,
+        captionRevision,
+        contentKind,
+        hasActiveFailures: hasActiveFailures(),
+        preemptRequestId,
+        priority: firstPriority,
+        workRevision,
+      };
+    },
+    waitForWork(afterRevision: number, timeoutMs: number): Promise<number> {
+      if (!runtimeActive || workRevision !== afterRevision) return Promise.resolve(workRevision);
+      return new Promise<number>((resolve) => {
+        const waiter = {
+          resolve,
+          timer: 0 as unknown as ReturnType<typeof host.setTimeout>,
+        };
+        waiter.timer = host.setTimeout(() => resolveWorkWaiter(waiter), Math.max(1, timeoutMs));
+        workWaiters.add(waiter);
+        if (!runtimeActive || workRevision !== afterRevision) resolveWorkWaiter(waiter);
+      });
     },
     release(ids: readonly string[]): void {
       withStableAnchor(() => {
@@ -2001,6 +2147,8 @@ export function installUrlPageTranslationRuntime(
           const record = records.get(id);
           if (!record || record.completed) continue;
           record.pending = false;
+          record.queued = false;
+          record.failed = false;
           removeStatus(record);
         }
       });
@@ -2008,6 +2156,7 @@ export function installUrlPageTranslationRuntime(
         const record = captionState?.records.get(id);
         if (!record || record.completed) continue;
         record.pending = false;
+        record.failed = false;
         if (record.retrying) record.retryRequested = true;
       }
       renderCurrentCaption();
@@ -2019,6 +2168,7 @@ export function installUrlPageTranslationRuntime(
           const record = records.get(item.id);
           if (!record || !record.element.isConnected) continue;
           record.pending = false;
+          record.queued = false;
           record.failed = false;
           record.retryRequested = false;
           record.completed = true;
@@ -2058,6 +2208,7 @@ export function installUrlPageTranslationRuntime(
           const record = records.get(id);
           if (!record) continue;
           record.pending = false;
+          record.queued = false;
           record.retryRequested = false;
           record.failed = true;
           showStatus(record, 'error');
@@ -2089,6 +2240,7 @@ export function installUrlPageTranslationRuntime(
         doc.documentElement.removeAttribute(hiddenAttribute);
       });
       runtimeActive = false;
+      signalWorkAvailable();
       youtubeLoadRevision += 1;
       restoreYoutubeCaptionToggle();
       clearCaptionState();
@@ -2116,8 +2268,10 @@ function validatedGuestBatch(
       blocks: [],
       captionRevision: 0,
       contentKind: 'page',
+      hasActiveFailures: false,
       preemptRequestId: null,
       priority: null,
+      workRevision: 0,
     };
   }
   const contentKind: UrlPageTranslationContentKind = value.contentKind === 'caption' ? 'caption' : 'page';
@@ -2154,7 +2308,19 @@ function validatedGuestBatch(
     && /^[A-Za-z0-9:_-]{1,96}$/.test(value.preemptRequestId)
     ? value.preemptRequestId
     : null;
-  return { blocks, captionRevision, contentKind, preemptRequestId, priority };
+  const hasActiveFailures = value.hasActiveFailures === true;
+  const workRevision = Number.isSafeInteger(value.workRevision) && (value.workRevision as number) >= 0
+    ? value.workRevision as number
+    : 0;
+  return {
+    blocks,
+    captionRevision,
+    contentKind,
+    hasActiveFailures,
+    preemptRequestId,
+    priority,
+    workRevision,
+  };
 }
 
 function boundedBatchLimit(value: number | undefined, fallback: number, maximum: number): number {

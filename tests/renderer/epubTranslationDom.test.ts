@@ -40,6 +40,32 @@ describe('EPUB translation DOM adapter', () => {
     fixture.cleanup();
   });
 
+  test('marks the complete EPUB viewport loading before request-sized batches drain it', () => {
+    const chapter = chapterDocumentFromMarkup(`
+      <p id="first">First visible paragraph</p>
+      <p id="second">Second visible paragraph</p>
+      <p id="third">Third visible paragraph</p>
+    `);
+    const fixture = createFixture(chapter, (document) => {
+      setRect(document, 'first', () => rect(20, 60));
+      setRect(document, 'second', () => rect(80, 120));
+      setRect(document, 'third', () => rect(140, 180));
+    });
+    fixture.adapter.setEnabled(true);
+
+    const first = fixture.adapter.nextBatch({
+      maxBlocks: 1,
+      maxChars: 2_000,
+      queueVisible: true,
+      visibleOnly: true,
+    });
+
+    expect(first.blocks).toHaveLength(1);
+    expect(fixture.chapter.querySelectorAll('[data-tenon-epub-translation-status="loading"]'))
+      .toHaveLength(3);
+    fixture.cleanup();
+  });
+
   test('collects nested semantic structures once while preserving direct parent text', () => {
     const chapter = chapterDocumentFromMarkup(`
       <ul><li id="parent-item">Parent item<p id="nested-item">Nested item</p></li></ul>
@@ -125,6 +151,33 @@ describe('EPUB translation DOM adapter', () => {
 
     longFixture.cleanup();
     tierFixture.cleanup();
+  });
+
+  test('preempts the farthest non-visible EPUB batch', () => {
+    const fixture = createFixture();
+    fixture.adapter.setEnabled(true);
+    const visible = fixture.adapter.nextBatch({ maxBlocks: 8, maxChars: 2_000, visibleOnly: true });
+    fixture.adapter.apply(visible.blocks.map(({ id }) => ({ id, translation: `T ${id}` })));
+    const behind = fixture.adapter.nextBatch({ maxBlocks: 1, maxChars: 4_000 });
+    const ahead = fixture.adapter.nextBatch({ maxBlocks: 1, maxChars: 4_000 });
+    expect(behind.blocks[0]?.text).toBe('Earlier paragraph');
+    expect(ahead.blocks[0]?.text).toBe('Upcoming paragraph');
+
+    fixture.scrollRoot.scrollTop = 1_500;
+    fixture.scrollRoot.dispatchEvent(new fixture.window.Event('scroll'));
+    const replacement = fixture.adapter.nextBatch({
+      activeBatches: [
+        { ids: ahead.blocks.map(({ id }) => id), requestId: 'request:ahead' },
+        { ids: behind.blocks.map(({ id }) => id), requestId: 'request:behind' },
+      ],
+      maxBlocks: 8,
+      maxChars: 2_000,
+      visibleOnly: true,
+    });
+
+    expect(replacement.blocks.map(({ text }) => text)).toContain('Far paragraph');
+    expect(replacement.preemptRequestId).toBe('request:behind');
+    fixture.cleanup();
   });
 
   test('sends upward batches in document order', () => {
@@ -282,6 +335,23 @@ describe('EPUB translation DOM adapter', () => {
     expect(fixture.chapter.querySelector('[data-tenon-epub-translation-status="loading"]')).not.toBeNull();
     fixture.adapter.apply(retried.blocks.map(({ id }) => ({ id, translation: 'Recovered translation' })));
     expect(fixture.adapter.failedRecordIds()).toEqual([]);
+    fixture.cleanup();
+  });
+
+  test('returns a released failed EPUB block to normal scheduling', () => {
+    const fixture = createFixture();
+    fixture.adapter.setEnabled(true);
+    const first = fixture.adapter.nextBatch({ maxBlocks: 1, maxChars: 2_000, visibleOnly: true });
+    const id = first.blocks[0]?.id;
+    if (!id) throw new Error('Missing EPUB block');
+    fixture.adapter.fail([id]);
+
+    fixture.adapter.release([id]);
+
+    expect(fixture.adapter.failedRecordIds()).toEqual([]);
+    expect(fixture.chapter.querySelector('[data-tenon-epub-translation-status]')).toBeNull();
+    expect(fixture.adapter.nextBatch({ maxBlocks: 1, maxChars: 2_000, visibleOnly: true }).blocks[0]?.id)
+      .toBe(id);
     fixture.cleanup();
   });
 

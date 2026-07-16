@@ -77,8 +77,12 @@ function commandSource(command: UrlPageTranslationGuestCommand): string {
         command.options.activeBatches ?? [],
         captionMaxBlocks,
         captionMaxChars,
+        command.options.estimatedLatencyMs,
+        command.options.queueVisible ?? false,
       ]);
     }
+    case 'wait-for-work':
+      return runtimeMethodSource('waitForWork', [command.afterRevision, command.timeoutMs]);
     case 'release':
       return runtimeMethodSource('release', [command.ids]);
     case 'apply':

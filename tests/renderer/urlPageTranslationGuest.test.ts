@@ -36,7 +36,10 @@ interface GuestRuntime {
     activeBatches?: readonly UrlPageTranslationGuestActiveBatch[],
     captionMaxBlocks?: number,
     captionMaxChars?: number,
+    estimatedLatencyMs?: number,
+    queueVisible?: boolean,
   ): UrlPageTranslationGuestBatch;
+  waitForWork(afterRevision: number, timeoutMs: number): Promise<number>;
   release(ids: readonly string[]): void;
   apply(items: readonly UrlPageTranslationItem[]): number;
   fail(ids: readonly string[]): void;
@@ -133,6 +136,64 @@ describe('URL page translation guest runtime', () => {
     expect(fixture.document.querySelector('#target-language [data-tenon-bilingual-status]')).toBeNull();
     expect(fixture.document.querySelectorAll('[data-tenon-bilingual-status="loading"]').length)
       .toBe(prefetchBatch.blocks.length);
+  });
+
+  test('marks the complete visible viewport loading before request-sized batches drain it', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+
+    const first = nextBatch(fixture.runtime, { maxBlocks: 1, queueVisible: true, visibleOnly: true });
+
+    expect(first.blocks).toHaveLength(1);
+    expect(fixture.document.querySelectorAll('[data-tenon-bilingual-status="loading"]')).toHaveLength(2);
+  });
+
+  test('does not leave an untranslatable oversized visible block loading', () => {
+    const fixture = createFixture();
+    const current = fixture.document.getElementById('current');
+    if (!current) throw new Error('Missing current paragraph');
+    current.textContent = 'x'.repeat(MAX_BLOCK_CHARS + 1);
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+
+    nextBatch(fixture.runtime, { maxBlocks: 1, queueVisible: true, visibleOnly: true });
+
+    expect(current.querySelector('[data-tenon-bilingual-status]')).toBeNull();
+  });
+
+  test('resolves a bounded work wait when the viewport changes', async () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const revision = nextBatch(fixture.runtime, { visibleOnly: true }).workRevision;
+    const waiting = fixture.runtime.waitForWork(revision, 1_000);
+
+    fixture.setScrollY(300);
+    fixture.dispatchScroll();
+
+    expect(await waiting).toBeGreaterThan(revision);
+  });
+
+  test('wakes scheduling when caption playback crosses a cue or seeks', async () => {
+    const fixture = createFixture();
+    const caption = addCaptionVideo(fixture.document, fixture.window, {
+      language: 'en',
+      cues: [
+        { startTime: 0, endTime: 8, text: 'First cue' },
+        { startTime: 8, endTime: 16, text: 'Second cue' },
+      ],
+    });
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const EventCtor = (fixture.window as unknown as { Event: typeof Event }).Event;
+    const revision = nextBatch(fixture.runtime).workRevision;
+    const cueWait = fixture.runtime.waitForWork(revision, 1_000);
+
+    caption.media.currentTime = 9;
+    caption.media.dispatchEvent(new EventCtor('timeupdate'));
+    const cueRevision = await cueWait;
+
+    expect(cueRevision).toBeGreaterThan(revision);
+    const seekWait = fixture.runtime.waitForWork(cueRevision, 1_000);
+    caption.media.dispatchEvent(new EventCtor('seeked'));
+    expect(await seekWait).toBeGreaterThan(cueRevision);
   });
 
   test('skips blocks whose nearest declared language matches the selected target', () => {
@@ -980,6 +1041,56 @@ describe('URL page translation guest runtime', () => {
     expect(fixture.document.querySelector('#ahead [data-tenon-bilingual-status]')).toBeNull();
   });
 
+  test('sends upward page batches in document order', () => {
+    const fixture = createFixture();
+    const earliest = fixture.document.createElement('p');
+    earliest.id = 'earliest';
+    earliest.textContent = 'Earliest paragraph';
+    fixture.document.getElementById('behind')?.before(earliest);
+    setRect(fixture.document, 'earliest', () => rect(-400, -350));
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const visible = nextBatch(fixture.runtime, { visibleOnly: true });
+    fixture.runtime.apply(visible.blocks.map(({ id }) => ({ id, translation: `T ${id}` })));
+    fixture.setScrollY(10);
+    fixture.dispatchScroll();
+    fixture.setScrollY(0);
+    fixture.dispatchScroll();
+
+    const upward = nextBatch(fixture.runtime, { maxBlocks: 2 });
+
+    expect(upward.priority).toBe(1);
+    expect(upward.blocks.map(({ text }) => text)).toEqual([
+      'Earliest paragraph',
+      'Recently passed paragraph',
+    ]);
+  });
+
+  test('preempts the farthest non-visible page batch', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const visible = nextBatch(fixture.runtime, { maxBlocks: 8, visibleOnly: true });
+    fixture.runtime.apply(visible.blocks.map(({ id }) => ({ id, translation: `T ${id}` })));
+    const firstPrefetch = nextBatch(fixture.runtime, { maxBlocks: 1 });
+    const secondPrefetch = nextBatch(fixture.runtime, { maxBlocks: 1 });
+    const behind = [firstPrefetch, secondPrefetch]
+      .find((batch) => batch.blocks[0]?.text === 'Recently passed paragraph');
+    const ahead = [firstPrefetch, secondPrefetch]
+      .find((batch) => batch.blocks[0]?.text === 'Prefetched paragraph');
+    if (!behind || !ahead) throw new Error('Missing directional prefetch batches');
+
+    fixture.setScrollY(2_100);
+    fixture.dispatchScroll();
+    const replacement = nextBatch(fixture.runtime, {
+      activeBatches: [
+        { ids: ahead.blocks.map(({ id }) => id), requestId: 'request:ahead' },
+        { ids: behind.blocks.map(({ id }) => id), requestId: 'request:behind' },
+      ],
+    });
+
+    expect(replacement.blocks.map(({ text }) => text)).toContain('Far away paragraph');
+    expect(replacement.preemptRequestId).toBe('request:behind');
+  });
+
   test('runs from its serialized function body without renderer closures', () => {
     const fixture = createFixture({ serialized: true });
     fixture.runtime.setEnabled(true, 'zh-Hans');
@@ -1178,13 +1289,48 @@ describe('URL page translation guest runtime', () => {
     const retry = fixture.document.querySelector<HTMLButtonElement>('[data-tenon-bilingual-status="error"]');
     expect(retry?.disabled).toBe(false);
     expect(retry?.getAttribute('aria-label')).toBe('Retry translation');
-    expect(nextBatch(fixture.runtime, { maxBlocks: 1, retryOnly: true }).blocks).toEqual([]);
+    const failedBatch = nextBatch(fixture.runtime, { maxBlocks: 1, retryOnly: true });
+    expect(failedBatch.blocks).toEqual([]);
+    expect(failedBatch.hasActiveFailures).toBe(true);
 
     retry?.click();
 
     expect(retry?.getAttribute('data-tenon-bilingual-status')).toBe('loading');
     const retried = nextBatch(fixture.runtime, { maxBlocks: 1, retryOnly: true });
     expect(retried.blocks[0]?.id).toBe(first.blocks[0]?.id);
+    expect(retried.hasActiveFailures).toBe(false);
+  });
+
+  test('returns a released failed block to normal scheduling without a hidden failure', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const first = nextBatch(fixture.runtime, { maxBlocks: 1 });
+    const id = first.blocks[0]?.id;
+    if (!id) throw new Error('Missing block');
+    fixture.runtime.fail([id]);
+
+    fixture.runtime.release([id]);
+
+    expect(fixture.document.querySelector('[data-tenon-bilingual-status]')).toBeNull();
+    const rescheduled = nextBatch(fixture.runtime, { maxBlocks: 1 });
+    expect(rescheduled.blocks[0]?.id).toBe(id);
+    expect(rescheduled.hasActiveFailures).toBe(false);
+  });
+
+  test('reconciles failure state after the remote page removes a failed block', () => {
+    const fixture = createFixture();
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const first = nextBatch(fixture.runtime, { maxBlocks: 1 });
+    fixture.runtime.fail(first.blocks.map(({ id }) => id));
+    expect(nextBatch(fixture.runtime, { retryOnly: true }).hasActiveFailures).toBe(true);
+
+    fixture.document.querySelector('[data-tenon-bilingual-status="error"]')?.parentElement?.remove();
+    let reconciled = nextBatch(fixture.runtime, { retryOnly: true });
+    for (let index = 0; index < 10 && reconciled.hasActiveFailures; index += 1) {
+      reconciled = nextBatch(fixture.runtime, { retryOnly: true });
+    }
+
+    expect(reconciled.hasActiveFailures).toBe(false);
   });
 
   test('removes transient status controls when translation is disabled', () => {
@@ -1219,6 +1365,7 @@ function nextBatch(
     activeBatches?: readonly UrlPageTranslationGuestActiveBatch[];
     captionMaxChars?: number;
     maxBlocks?: number;
+    queueVisible?: boolean;
     retryOnly?: boolean;
     visibleOnly?: boolean;
   } = {},
@@ -1232,6 +1379,8 @@ function nextBatch(
     options.activeBatches ?? [],
     MAX_CAPTION_BLOCKS,
     options.captionMaxChars ?? MAX_CAPTION_CHARS,
+    1_500,
+    options.queueVisible ?? false,
   );
 }
 
@@ -1299,7 +1448,7 @@ function createFixture(options: { serialized?: boolean } = {}): {
     return rect(top, top + 40);
   });
   setRect(document, 'ahead', () => rect(800 - testWindow.scrollY, 850 - testWindow.scrollY));
-  setRect(document, 'far', () => rect(1_900 - testWindow.scrollY, 1_950 - testWindow.scrollY));
+  setRect(document, 'far', () => rect(2_600 - testWindow.scrollY, 2_650 - testWindow.scrollY));
   setRect(document, 'form', () => rect(200 - testWindow.scrollY, 240 - testWindow.scrollY));
   setRect(document, 'editable', () => rect(260 - testWindow.scrollY, 300 - testWindow.scrollY));
   setRect(document, 'target-language', () => rect(320 - testWindow.scrollY, 360 - testWindow.scrollY));

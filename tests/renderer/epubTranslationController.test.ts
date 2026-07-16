@@ -109,11 +109,14 @@ describe('EpubTranslationController', () => {
     controller.destroy();
   });
 
-  test('starts 2 / 4 / 4 visible batches and applies responses in completion order', async () => {
+  test('uses the shared six-request pool for visible work and applies responses in completion order', async () => {
     const surface = new FakeSurface([
-      batch(['One', 'Two'], 0),
-      batch(['Three', 'Four', 'Five', 'Six'], 0),
-      batch(['Seven', 'Eight', 'Nine', 'Ten'], 0),
+      batch(['One'], 0),
+      batch(['Two'], 0),
+      batch(['Three'], 0),
+      batch(['Four'], 0),
+      batch(['Five'], 0),
+      batch(['Six'], 0),
     ]);
     const pending: Array<{
       request: UrlPageTranslationRequest;
@@ -129,21 +132,27 @@ describe('EpubTranslationController', () => {
     });
 
     controller.enable();
-    await waitFor(() => pending.length === 3);
-    expect(pending.map(({ request }) => request.blocks.length)).toEqual([2, 4, 4]);
+    await waitFor(() => pending.length === 6);
+    expect(pending.map(({ request }) => request.blocks.length)).toEqual([1, 1, 1, 1, 1, 1]);
     expect(pending.every(({ request }) => request.contentKind === 'document')).toBe(true);
-    expect(surface.nextBatchCalls.slice(0, 3).map(({ maxBlocks }) => maxBlocks)).toEqual([2, 4, 4]);
+    expect(surface.nextBatchCalls.slice(0, 6).map(({ maxBlocks }) => maxBlocks)).toEqual([8, 8, 8, 8, 8, 8]);
+    expect(surface.nextBatchCalls.slice(0, 6).map(({ queueVisible }) => queueVisible))
+      .toEqual([true, false, false, false, false, false]);
+    expect(surface.nextBatchCalls.slice(0, 6).every(({ visibleOnly }) => visibleOnly === true)).toBe(true);
 
-    pending[2]?.resolve(success(pending[2].request));
+    pending[5]?.resolve(success(pending[5].request));
     await waitFor(() => surface.applied.length === 1);
     pending[0]?.resolve(success(pending[0].request));
     await waitFor(() => surface.applied.length === 2);
-    pending[1]?.resolve(success(pending[1].request));
-    await waitFor(() => surface.applied.length === 3);
+    for (let index = 1; index < 5; index += 1) pending[index]?.resolve(success(pending[index].request));
+    await waitFor(() => surface.applied.length === 6);
     expect(surface.applied.map((items) => items[0]?.translation)).toEqual([
-      'Translated Seven',
+      'Translated Six',
       'Translated One',
+      'Translated Two',
       'Translated Three',
+      'Translated Four',
+      'Translated Five',
     ]);
     expect(controller.currentStatus).toBe('on');
     controller.destroy();
@@ -166,6 +175,7 @@ describe('EpubTranslationController', () => {
     let releaseCancellation: (() => void) | null = null;
     const controller = new EpubTranslationController(surface, {
       targetLanguage: 'zh-Hans',
+      maxConcurrentRequests: 3,
       pollIntervalMs: 5,
       cancel: async (sessionId) => {
         cancelled.push(sessionId);
@@ -270,6 +280,106 @@ describe('EpubTranslationController', () => {
     controller.destroy();
   });
 
+  test('continues unrelated scheduling after a terminal batch failure', async () => {
+    const surface = new FakeSurface([
+      batch(['Fails'], 0),
+      batch(['Succeeds'], 0),
+      batch(['Continues'], 1),
+    ]);
+    const requests: UrlPageTranslationRequest[] = [];
+    const controller = new EpubTranslationController(surface, {
+      targetLanguage: 'zh-Hans',
+      pollIntervalMs: 5,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        if (request.blocks[0]?.text === 'Fails') {
+          return { ok: false, requestId: request.requestId, error: 'provider-error' };
+        }
+        return success(request);
+      },
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+    });
+
+    controller.enable();
+    await waitFor(() => surface.applied.length === 2);
+    expect(requests.map(({ blocks }) => blocks[0]?.text)).toEqual(['Fails', 'Succeeds', 'Continues']);
+    expect(surface.failed).toHaveLength(1);
+    expect(controller.currentStatus).toBe('error');
+    controller.destroy();
+  });
+
+  test('keeps unrelated work blocked until an explicit configuration retry succeeds', async () => {
+    const surface = new FakeSurface([batch(['Needs configuration'], 0)]);
+    const requests: UrlPageTranslationRequest[] = [];
+    let configured = false;
+    let resolveRetry: ((response: UrlPageTranslationResponse) => void) | null = null;
+    const controller = new EpubTranslationController(surface, {
+      targetLanguage: 'zh-Hans',
+      pollIntervalMs: 5,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        if (!configured) {
+          return { ok: false, requestId: request.requestId, error: 'not-configured' };
+        }
+        if (request.blocks[0]?.text === 'Needs configuration') {
+          return await new Promise((resolve) => { resolveRetry = resolve; });
+        }
+        return success(request);
+      },
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+    });
+
+    controller.enable();
+    await waitFor(() => controller.currentStatus === 'error');
+    configured = true;
+    surface.activeFailedIds.clear();
+    surface.enqueue({ ...batch(['Needs configuration'], 0), requiresRetry: true });
+    surface.enqueue({ ...batch(['Must wait for recovery'], 0), requiresRetry: false });
+    surface.wake();
+    await waitFor(() => requests.length === 2);
+    await delay(20);
+    expect(requests).toHaveLength(2);
+
+    const retryRequest = requests[1]!;
+    resolveRetry?.(success(retryRequest));
+    await waitFor(() => requests.length === 3);
+    expect(requests.map(({ blocks }) => blocks[0]?.text)).toEqual([
+      'Needs configuration',
+      'Needs configuration',
+      'Must wait for recovery',
+    ]);
+    controller.destroy();
+  });
+
+  test('wakes immediately when a new EPUB section or scroll makes work available', async () => {
+    const surface = new FakeSurface([]);
+    const requests: UrlPageTranslationRequest[] = [];
+    const controller = new EpubTranslationController(surface, {
+      targetLanguage: 'zh-Hans',
+      pollIntervalMs: 1_000,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        return success(request);
+      },
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+    });
+    controller.enable();
+    await waitFor(() => controller.currentStatus === 'idle');
+
+    surface.enqueue(batch(['Newly visible'], 0));
+    surface.wake();
+
+    await waitFor(() => requests.length === 1);
+    expect(requests[0]?.blocks[0]?.text).toBe('Newly visible');
+    controller.destroy();
+  });
+
   test('ignores a late response after target-language reset', async () => {
     const surface = new FakeSurface([batch(['Old text'], 0)]);
     let resolveRequest: ((response: UrlPageTranslationResponse) => void) | null = null;
@@ -300,7 +410,8 @@ describe('EpubTranslationController', () => {
   });
 });
 
-type FakeBatch = EpubTranslationBatch | ((options: EpubTranslationBatchOptions) => EpubTranslationBatch);
+type FakeBatch = (EpubTranslationBatch & { requiresRetry?: boolean })
+  | ((options: EpubTranslationBatchOptions) => EpubTranslationBatch & { requiresRetry?: boolean });
 
 class FakeSurface implements EpubTranslationSurface {
   activeFailedIds = new Set<string>();
@@ -312,6 +423,7 @@ class FakeSurface implements EpubTranslationSurface {
   nextBatchCalls: EpubTranslationBatchOptions[] = [];
   released: string[][] = [];
   resetTargets: string[] = [];
+  private workAvailableHandler: () => void = () => undefined;
 
   constructor(private readonly batches: FakeBatch[]) {}
 
@@ -341,10 +453,17 @@ class FakeSurface implements EpubTranslationSurface {
 
   nextBatch(options: EpubTranslationBatchOptions): EpubTranslationBatch {
     this.nextBatchCalls.push(options);
-    const next = this.batches.shift();
-    return typeof next === 'function'
+    const batchIndex = this.batches.findIndex((entry) => (
+      typeof entry === 'function'
+      || entry.requiresRetry === undefined
+      || entry.requiresRetry === (options.retryOnly ?? false)
+    ));
+    const next = batchIndex >= 0 ? this.batches.splice(batchIndex, 1)[0] : undefined;
+    const resolved = typeof next === 'function'
       ? next(options)
       : next ?? { blocks: [], priority: null };
+    const { requiresRetry: _requiresRetry, ...batch } = resolved;
+    return batch;
   }
 
   release(ids: readonly string[]): void {
@@ -358,6 +477,14 @@ class FakeSurface implements EpubTranslationSurface {
 
   setEnabled(enabled: boolean): void {
     this.enabledStates.push(enabled);
+  }
+
+  setWorkAvailableHandler(handler: () => void): void {
+    this.workAvailableHandler = handler;
+  }
+
+  wake(): void {
+    this.workAvailableHandler();
   }
 }
 

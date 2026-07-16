@@ -470,29 +470,35 @@ the suppression and evaluates the new page again. Changing the target also
 re-runs the language rule for an auto-activated page and turns translation off
 only when neither valid language signal differs from the target.
 
-Translation is viewport-driven rather than an eager whole-page request. Visible
-content starts with a latency-oriented batch of at most two blocks or roughly
-2,000 source characters; later visible and prefetch batches contain at most four
-blocks or roughly 4,000 characters. Page prefetch does not consume that initial
-visible budget; the first priority-zero page batch still uses the `2 / 2,000`
-limit even when prefetch work started first. Before direction is known, the guest runtime
-prefetches about two viewports above and below the activation point. It then keeps
-about four viewports ahead and one behind the observed reading direction, with
-symmetric upward and downward behavior. Blocks outside that window are not sent.
+Translation is viewport-driven rather than an eager whole-page request. The
+complete visible viewport is the coverage unit: every eligible visible block is
+immediately translated, queued/loading, or an explicit local error even when the
+request pool cannot submit it in the first batch. Visible batches favor latency
+and contain at most eight blocks or roughly 2,000 source characters. Prefetch
+batches favor throughput and contain at most sixteen blocks or 4,000 characters,
+so adjacent short passages use the available character budget and context.
 
-Each pane keeps at most three active model requests and at most one prefetch
-request. Free capacity always takes visible work first, so a dense initial
-viewport starts `2 / 4 / 4` blocks without waiting for an earlier response.
-Micro-batches settle independently and render in response order. A 120ms
-scheduling probe continues while translation is enabled. When all slots are full
-and new visible work appears, the controller invalidates only an offscreen
-lowest-priority request, removes its transient loaders, returns those blocks to
-the pending pool, and starts a visible micro-batch without waiting for the
-obsolete provider response. Cancellation is not surfaced as an error. Dynamic
-content joins only after it enters the same window, and successful blocks remain
-cached in memory so back-scrolling does not call the provider again. When a source
-element's normalized text changes, it receives a fresh block id; responses,
-failures, and releases from the previous text snapshot can no longer affect it.
+The lookahead is derived from smoothed viewport velocity and recent high request
+latency plus a safety margin. It has a stationary floor of about three viewports
+and a ceiling of eight; before direction is known the floor is symmetric, then
+the larger window follows the reading direction with a smaller opposite buffer.
+Blocks outside that bounded window are not sent.
+
+Each pane has one shared, work-conserving pool with a six-request ceiling and no
+reserved visible/prefetch slots. Visible work may use the whole pool and always
+drains before prefetch; when the pool is full it replaces only the farthest batch
+that no longer contains visible content. Batches settle independently and render
+in response order. Main's safety ceiling covers the workspace's four-pane maximum,
+so one pane cannot make another pane's valid pool requests fail. Scroll, relevant
+DOM mutation, caption change, and retry increment a monotonic isolated-world work
+revision. A trusted, timeout-bounded
+wait wakes the host immediately; its one-second timeout is only a recovery probe.
+The remote page cannot choose blocks or provider inputs through that signal.
+Cancellation is not surfaced as an error. Dynamic content joins only after it
+enters the same bounded window, and successful blocks remain cached in memory so
+back-scrolling does not call the provider again. When a source element's
+normalized text changes, it receives a fresh block id; responses, failures, and
+releases from the previous text snapshot can no longer affect it.
 DOM insertion, hide, and restore capture the
 first visible source block and compensate its post-write offset immediately and
 across two bounded animation frames. Wheel, touch, keyboard input, or any viewport
@@ -504,16 +510,22 @@ request smooth scrolling, and injected nodes do not become browser scroll anchor
 keeping the reader's current sentence stationary through translation growth or
 collapse.
 
-Every block entering a submitted batch immediately shows a small inline loading
-control at the end of its source. The control keeps a fixed 16px status area and
+Every eligible block in the visible viewport immediately shows a small inline
+loading control at the end of its source, including queued blocks waiting for a
+request slot. The control keeps a fixed 16px status area and
 10px spinner across page typography, so headings do not enlarge it. Success
 removes it as the translation appears; failure changes it into a
 keyboard-accessible error control whose activation retries only that block. The
 retry control keeps at least a 16px hit area and
-neutral hover, pressed, and keyboard-focus feedback. While any failures remain,
-normal scheduling pauses and polls only for an explicit retry; this includes a
-missing provider/model, so the user can configure one and retry the affected
-paragraph in place. The existing localized toast announces each failure wave.
+neutral hover, pressed, and keyboard-focus feedback. Transport failures, rate
+limits, and provider `5xx` responses retry at most twice while the loader remains
+visible, using abortable 200/400ms exponential backoff with jitter and a bounded
+`Retry-After`. Authentication and unavailable-model failures do not retry.
+Exhausted failures remain local and never pause unrelated visible or prefetch
+work; a provider failure temporarily reduces new concurrency until a success.
+Configuration failure blocks only new provider work until configuration changes
+or the user retries an affected paragraph. The existing localized toast
+announces each terminal failure wave.
 When the current page window contains no eligible untranslated blocks,
 translation stays enabled in an idle state without showing the completed fill;
 a later eligible block returns the control to loading before its request starts.
@@ -528,7 +540,8 @@ controls, editable regions, navigation, hidden/inert/`aria-hidden` subtrees, and
 Tenon-injected nodes. Its runtime lives in an Electron isolated world rather than
 the remote page's main world. A dedicated preload IPC operation verifies that the
 target is an HTTP(S) `webview` owned by the requesting main window, rejects more
-than four blocks or 4,000 source characters, and invokes only bounded runtime
+than sixteen blocks or 4,000 source characters, rejects more than six active
+batches, and invokes only bounded runtime
 operations. Remote scripts therefore cannot replace the collector or manufacture
 provider requests. Main revalidates the bounded block ids and text before using
 the dynamically followed Agent model or the explicitly selected qualified model.
@@ -542,7 +555,7 @@ a guest-to-main IPC channel.
 
 Prerecorded video captions participate in that same URL-translation session.
 The target language, `Follow Agent` or explicit model, automatic-translation
-preference, shortcut, three-request pane budget, and Show original command are
+preference, shortcut, six-request shared pane pool, and Show original command are
 shared with page blocks; there is no second subtitle settings system. Automatic
 translation activates when either the valid page language or a detected caption
 language differs from the target, so an English video can translate inside a
@@ -635,15 +648,16 @@ then section-root language, then validated book metadata; target-language record
 receive no loader or provider request.
 
 EPUB scheduling follows the reader scrollport without loading the full spine.
-The first visible probe accepts at most two blocks / 2,000 source characters;
-later batches accept at most four blocks / 4,000 characters. A batch contains a
-single priority tier and is sent in document reading order even while the user is
-scrolling upward. At most three requests run concurrently and at most one is
-prefetch; newly visible work can replace only obsolete off-window work. Before
-direction is known the window covers about two viewports in both directions;
-afterward it keeps about four viewports ahead and one behind. Only sections
-mounted by the existing EPUB lazy reader can participate, so translation never
-forces the whole book to load or submit.
+It uses the same complete-viewport queue, eight-block / 2,000-character visible
+batches, sixteen-block / 4,000-character prefetch batches, six-request shared
+pool, latency/velocity lookahead, local failure recovery, and visible-work
+preemption as URL pages. A batch contains one priority tier and is sent in
+document reading order even while the user scrolls upward. Scroll, section
+registration, relevant mutation, and retry wake the local controller directly.
+While translation is enabled, lazy section mounting expands from its ordinary
+800px margin to the scheduler's maximum eight-reader-screen window; it returns
+to the ordinary margin when translation is hidden, keeps already visited
+sections mounted, and never loads or submits the whole spine.
 
 EPUB loading, retry, insertion, hide/show, and stale-record cleanup use the same
 bounded scroll-anchor correction as webpage translation. Immediate and delayed

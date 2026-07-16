@@ -14,14 +14,14 @@ import {
   type EpubTranslationBatch,
   type EpubTranslationSurface,
 } from './epubTranslationDom';
+import {
+  PREFETCH_TRANSLATION_BATCH_LIMITS,
+  PREVIEW_TRANSLATION_MAX_CONCURRENT_REQUESTS,
+  PreviewTranslationLatencyTracker,
+  VISIBLE_TRANSLATION_BATCH_LIMITS,
+} from './previewTranslationScheduling';
 
-const DEFAULT_POLL_INTERVAL_MS = 120;
-const DEFAULT_MAX_CONCURRENT_REQUESTS = 3;
-const FIRST_VISIBLE_MAX_BLOCKS = 2;
-const FIRST_VISIBLE_MAX_CHARS = 2_000;
-const STANDARD_BATCH_MAX_BLOCKS = 4;
-const STANDARD_BATCH_MAX_CHARS = 4_000;
-const MAX_PREFETCH_REQUESTS = 1;
+const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const AUTO_EVALUATION_INTERVAL_MS = 1_000;
 
 let fallbackId = 1;
@@ -46,6 +46,7 @@ interface ActiveEpubTranslationRequest {
   requestId: string;
   sequence: number;
   sessionId: string;
+  startedAt: number;
 }
 
 export class EpubTranslationController {
@@ -60,17 +61,19 @@ export class EpubTranslationController {
   private enabled = false;
   private readonly failedIds = new Set<string>();
   private generation = 0;
-  private hasStartedVisibleBatch = false;
+  private blockedForConfiguration = false;
+  private currentConcurrencyLimit: number;
+  private readonly latency = new PreviewTranslationLatencyTracker();
   private readonly maxConcurrentRequests: number;
   private manualSuppressed = false;
   private model: string | null;
-  private pausedForError = false;
   private readonly pollIntervalMs: number;
   private requestSequence = 0;
   private status: UrlPageTranslationStatus = 'off';
   private targetLanguage: TranslationLanguage;
   private timer: number | null = null;
   private tickQueue: Promise<void> = Promise.resolve();
+  private workSignalPending = false;
   private readonly translate: (request: UrlPageTranslationRequest) => Promise<UrlPageTranslationResponse>;
 
   constructor(
@@ -80,14 +83,19 @@ export class EpubTranslationController {
     this.autoTranslate = options.autoTranslate ?? false;
     this.cancel = options.cancel ?? api.cancelUrlPageTranslation;
     this.maxConcurrentRequests = Math.min(
-      DEFAULT_MAX_CONCURRENT_REQUESTS,
-      Math.max(1, Math.floor(options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS)),
+      PREVIEW_TRANSLATION_MAX_CONCURRENT_REQUESTS,
+      Math.max(1, Math.floor(options.maxConcurrentRequests ?? PREVIEW_TRANSLATION_MAX_CONCURRENT_REQUESTS)),
     );
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.model = options.model ?? null;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.targetLanguage = options.targetLanguage;
     this.translate = options.translate ?? api.translateUrlPageBlocks;
     this.surface.reset(this.targetLanguage);
+    this.surface.setWorkAvailableHandler(() => {
+      this.workSignalPending = true;
+      this.scheduleTick(0, this.generation);
+    });
     if (this.autoTranslate) this.evaluateAutoTranslation(this.generation);
   }
 
@@ -115,8 +123,10 @@ export class EpubTranslationController {
     this.manualSuppressed = true;
     this.autoActivated = false;
     this.enabled = false;
-    this.pausedForError = false;
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.generation += 1;
+    this.workSignalPending = false;
     this.clearTimer();
     this.clearAutoTimer();
     this.cancelAllActiveRequests();
@@ -155,9 +165,11 @@ export class EpubTranslationController {
     this.destroyed = true;
     this.enabled = false;
     this.generation += 1;
+    this.workSignalPending = false;
     this.clearTimer();
     this.clearAutoTimer();
     this.cancelAllActiveRequests();
+    this.surface.setWorkAvailableHandler(() => undefined);
     this.surface.setEnabled(false);
   }
 
@@ -166,9 +178,10 @@ export class EpubTranslationController {
     this.clearAutoTimer();
     this.autoActivated = automatic;
     this.enabled = true;
-    this.pausedForError = false;
-    this.hasStartedVisibleBatch = false;
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.generation += 1;
+    this.workSignalPending = false;
     this.surface.setEnabled(true);
     this.setStatus('starting');
     this.scheduleTick(0, this.generation);
@@ -179,13 +192,14 @@ export class EpubTranslationController {
     this.enabled = false;
     if (reevaluateAuto) this.autoActivated = false;
     this.generation += 1;
+    this.workSignalPending = false;
     const generation = this.generation;
     this.clearTimer();
     this.clearAutoTimer();
     this.cancelAllActiveRequests();
     this.failedIds.clear();
-    this.pausedForError = false;
-    this.hasStartedVisibleBatch = false;
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.setCompleted(false);
     this.surface.setEnabled(false);
     this.surface.reset(this.targetLanguage);
@@ -248,17 +262,43 @@ export class EpubTranslationController {
 
   private async tick(generation: number): Promise<void> {
     if (!this.isCurrent(generation)) return;
+    this.workSignalPending = false;
     try {
-      if (this.pausedForError) this.reconcileFailedRecords();
-      while (this.isCurrent(generation) && this.activeRequests.size < this.maxConcurrentRequests) {
-        const batch = this.nextAvailableBatch();
+      this.reconcileFailedRecords();
+      if (this.blockedForConfiguration) {
+        const retry = this.surface.nextBatch({
+          ...VISIBLE_TRANSLATION_BATCH_LIMITS,
+          estimatedLatencyMs: this.latency.estimateMs,
+          retryOnly: true,
+        });
+        if (retry.blocks.length > 0) {
+          if (this.failedIds.size === 0 && this.status === 'error') {
+            this.setStatus(this.completed ? 'on' : 'starting');
+          }
+          this.startRequest(retry, generation);
+        } else if (this.failedIds.size === 0 && this.activeRequests.size === 0) {
+          this.blockedForConfiguration = false;
+          this.currentConcurrencyLimit = this.maxConcurrentRequests;
+          this.setStatus(this.completed ? 'on' : this.activeRequests.size > 0 ? 'starting' : 'idle');
+        }
+      }
+      let queueVisible = true;
+      while (
+        this.isCurrent(generation)
+        && !this.blockedForConfiguration
+        && this.activeRequests.size < this.currentConcurrencyLimit
+      ) {
+        const batch = this.nextAvailableBatch(queueVisible);
+        queueVisible = false;
         if (batch.blocks.length === 0) break;
         this.startRequest(batch, generation);
       }
 
-      if (!this.pausedForError && this.activeRequests.size >= this.maxConcurrentRequests) {
-        for (let index = 0; index < this.maxConcurrentRequests; index += 1) {
-          if (!await this.preemptForVisibleBatch(generation)) break;
+      if (!this.blockedForConfiguration && this.activeRequests.size >= this.currentConcurrencyLimit) {
+        for (let index = 0; index < this.currentConcurrencyLimit; index += 1) {
+          const preempted = await this.preemptForVisibleBatch(generation, queueVisible);
+          queueVisible = false;
+          if (!preempted) break;
         }
       }
 
@@ -269,43 +309,33 @@ export class EpubTranslationController {
       this.failBeforeRequest('provider-error');
       return;
     }
-    if (this.isCurrent(generation)) this.scheduleTick(this.pollIntervalMs, generation);
-  }
-
-  private nextAvailableBatch(): EpubTranslationBatch {
-    const activePrefetchRequests = [...this.activeRequests.values()]
-      .filter((request) => request.priority > 0)
-      .length;
-    if (!this.hasStartedVisibleBatch && !this.pausedForError) {
-      const firstVisible = this.surface.nextBatch({
-        maxBlocks: FIRST_VISIBLE_MAX_BLOCKS,
-        maxChars: FIRST_VISIBLE_MAX_CHARS,
-        visibleOnly: true,
-      });
-      if (firstVisible.blocks.length > 0) {
-        this.markBatchStarted(firstVisible);
-        return firstVisible;
-      }
-      if (activePrefetchRequests >= MAX_PREFETCH_REQUESTS) return firstVisible;
+    if (this.isCurrent(generation)) {
+      this.scheduleTick(this.workSignalPending ? 0 : this.pollIntervalMs, generation);
     }
-
-    const batch = this.surface.nextBatch({
-      maxBlocks: STANDARD_BATCH_MAX_BLOCKS,
-      maxChars: STANDARD_BATCH_MAX_CHARS,
-      retryOnly: this.pausedForError,
-      visibleOnly: !this.pausedForError && activePrefetchRequests >= MAX_PREFETCH_REQUESTS,
-    });
-    if (batch.blocks.length > 0) this.markBatchStarted(batch);
-    return batch;
   }
 
-  private async preemptForVisibleBatch(generation: number): Promise<boolean> {
+  private nextAvailableBatch(queueVisible: boolean): EpubTranslationBatch {
+    const visible = this.surface.nextBatch({
+      ...VISIBLE_TRANSLATION_BATCH_LIMITS,
+      estimatedLatencyMs: this.latency.estimateMs,
+      queueVisible,
+      visibleOnly: true,
+    });
+    if (visible.blocks.length > 0) return visible;
+    return this.surface.nextBatch({
+      ...PREFETCH_TRANSLATION_BATCH_LIMITS,
+      estimatedLatencyMs: this.latency.estimateMs,
+    });
+  }
+
+  private async preemptForVisibleBatch(generation: number, queueVisible: boolean): Promise<boolean> {
     const candidates = [...this.activeRequests.values()]
       .sort((left, right) => right.priority - left.priority || left.sequence - right.sequence);
     const batch = this.surface.nextBatch({
       activeBatches: candidates.map(({ ids, requestId }) => ({ ids, requestId })),
-      maxBlocks: STANDARD_BATCH_MAX_BLOCKS,
-      maxChars: STANDARD_BATCH_MAX_CHARS,
+      ...VISIBLE_TRANSLATION_BATCH_LIMITS,
+      estimatedLatencyMs: this.latency.estimateMs,
+      queueVisible,
       visibleOnly: true,
     });
     if (!this.isCurrent(generation) || batch.blocks.length === 0) return false;
@@ -318,12 +348,11 @@ export class EpubTranslationController {
       this.surface.release(preempted.ids);
       await this.cancel(preempted.sessionId).catch(() => undefined);
       if (!this.isCurrent(generation)) return false;
-    } else if (this.activeRequests.size >= this.maxConcurrentRequests) {
+    } else if (this.activeRequests.size >= this.currentConcurrencyLimit) {
       this.surface.release(batch.blocks.map(({ id }) => id));
       return false;
     }
 
-    this.markBatchStarted(batch);
     this.startRequest(batch, generation);
     return true;
   }
@@ -339,6 +368,7 @@ export class EpubTranslationController {
       requestId,
       sequence: this.requestSequence++,
       sessionId: nextId('session'),
+      startedAt: Date.now(),
     };
     this.activeRequests.set(requestId, activeRequest);
     const response = this.translate({
@@ -350,10 +380,6 @@ export class EpubTranslationController {
       blocks: batch.blocks,
     });
     void this.finishRequest(activeRequest, response);
-  }
-
-  private markBatchStarted(batch: EpubTranslationBatch): void {
-    if (batch.priority === 0) this.hasStartedVisibleBatch = true;
   }
 
   private async finishRequest(
@@ -368,6 +394,7 @@ export class EpubTranslationController {
       return;
     }
     if (!this.isActiveRequest(activeRequest)) return;
+    this.latency.record(Date.now() - activeRequest.startedAt);
     if (response.requestId !== activeRequest.requestId) {
       this.failRequest(activeRequest, 'invalid-response');
       return;
@@ -393,11 +420,12 @@ export class EpubTranslationController {
     }
     if (!this.isActiveRequest(activeRequest)) return;
     this.activeRequests.delete(activeRequest.requestId);
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     if (insertedCount > 0) this.setCompleted(true);
     for (const { id } of response.translations) this.failedIds.delete(id);
-    this.pausedForError = this.failedIds.size > 0;
     this.setStatus(
-      this.pausedForError
+      this.failedIds.size > 0
         ? 'error'
         : this.completed
           ? 'on'
@@ -405,7 +433,7 @@ export class EpubTranslationController {
             ? 'starting'
             : 'idle',
     );
-    this.scheduleTick(this.pausedForError ? this.pollIntervalMs : 0, activeRequest.generation);
+    this.scheduleTick(0, activeRequest.generation);
   }
 
   private failRequest(
@@ -413,6 +441,7 @@ export class EpubTranslationController {
     error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>,
   ): void {
     if (!this.isActiveRequest(activeRequest)) return;
+    const shouldNotify = this.failedIds.size === 0;
     const failedIds = this.surface.fail(activeRequest.ids);
     if (!this.isActiveRequest(activeRequest)) return;
     this.activeRequests.delete(activeRequest.requestId);
@@ -421,13 +450,22 @@ export class EpubTranslationController {
       return;
     }
     for (const id of failedIds) this.failedIds.add(id);
-    this.pauseWithError(error);
+    if (error === 'not-configured') {
+      this.blockedForConfiguration = true;
+      this.cancelOtherRequests();
+    } else {
+      this.currentConcurrencyLimit = 1;
+    }
+    this.setStatus('error');
+    if (shouldNotify) this.options.onError(error);
+    this.scheduleTick(error === 'not-configured' ? 0 : this.pollIntervalMs, activeRequest.generation);
   }
 
   private failBeforeRequest(error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>): void {
     this.enabled = false;
     this.autoActivated = false;
-    this.pausedForError = false;
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.generation += 1;
     this.clearTimer();
     this.cancelAllActiveRequests();
@@ -437,22 +475,21 @@ export class EpubTranslationController {
     this.options.onError(error);
   }
 
-  private pauseWithError(error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>): void {
-    const shouldNotify = !this.pausedForError;
-    this.pausedForError = true;
-    this.clearTimer();
-    this.setStatus('error');
-    if (shouldNotify) this.options.onError(error);
-    this.scheduleTick(this.pollIntervalMs, this.generation);
-  }
-
   private reconcileFailedRecords(): void {
     const currentFailedIds = this.surface.failedRecordIds();
     this.failedIds.clear();
     for (const id of currentFailedIds) this.failedIds.add(id);
-    if (this.failedIds.size > 0) return;
-    this.pausedForError = false;
-    this.setStatus(this.completed ? 'on' : 'starting');
+    if (this.failedIds.size === 0 && this.status === 'error' && !this.blockedForConfiguration) {
+      this.setStatus(this.completed ? 'on' : this.activeRequests.size > 0 ? 'starting' : 'idle');
+    }
+  }
+
+  private cancelOtherRequests(): void {
+    for (const request of [...this.activeRequests.values()]) {
+      this.activeRequests.delete(request.requestId);
+      this.surface.release(request.ids);
+      void this.cancel(request.sessionId).catch(() => undefined);
+    }
   }
 
   private isActiveRequest(activeRequest: ActiveEpubTranslationRequest): boolean {

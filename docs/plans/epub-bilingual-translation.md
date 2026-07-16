@@ -129,7 +129,8 @@ sixteen blocks or 4,000 characters. Contiguous short passages therefore share
 context without making the current screen wait for one large response. The
 main-owned validator enforces the same sixteen-block and character ceilings,
 and the isolated URL guest may describe at most six active batches to trusted
-host code.
+host code. The main service's global safety ceiling covers one complete pool for
+each of the workspace's four possible panes.
 
 The lookahead is time-based rather than a fixed block or viewport count. Each
 surface tracks smoothed reading direction and viewport velocity; the controller
@@ -165,6 +166,8 @@ configuration failures do not retry.
 After automatic retries are exhausted, only that batch becomes an accessible
 local error. Other active and queued batches continue; an offscreen failure can
 never freeze the document. Clicking an error prioritizes only that failed work.
+If a failed source disappears, the trusted surface reconciles the header state
+instead of retaining an orphaned error.
 Successful requests restore normal pool capacity, while terminal provider
 failures temporarily reduce new concurrency so a broad outage cannot turn the
 whole lookahead window into errors. Configuration failures block new provider

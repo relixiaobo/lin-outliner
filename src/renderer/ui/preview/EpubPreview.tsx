@@ -11,6 +11,7 @@ import {
   type EpubReadingPosition,
 } from './readingPositionStore';
 import { EpubTranslationDomAdapter } from './epubTranslationDom';
+import { PREVIEW_TRANSLATION_MAX_LOOKAHEAD_VIEWPORTS } from './previewTranslationScheduling';
 
 type EpubState =
   | { status: 'loading' }
@@ -247,6 +248,7 @@ function EpubReader({
   // effect waits on this so it only locks once the layout above the target is final.
   const measuredSectionsRef = useRef(new Map<number, number>());
   const [state, setState] = useState<EpubReaderState>({ status: 'loading' });
+  const [lazyRootMargin, setLazyRootMargin] = useState(EPUB_LAZY_ROOT_MARGIN);
   const [outlineLayoutVersion, setOutlineLayoutVersion] = useState(0);
   const restoredFullSessionRef = useRef(0);
   const fullSessionRef = useRef(0);
@@ -367,6 +369,17 @@ function EpubReader({
     const surface = new EpubTranslationDomAdapter({
       bookLanguages: epubBookLanguages(translationBook),
       labels: translationLabelsRef.current,
+      onEnabledChange: (enabled) => {
+        if (!enabled) {
+          setLazyRootMargin(EPUB_LAZY_ROOT_MARGIN);
+          return;
+        }
+        const viewportHeight = Math.max(
+          1,
+          scrollRoot.getBoundingClientRect().height || EPUB_READER_MAX_BLOCK_SIZE,
+        );
+        setLazyRootMargin(`${PREVIEW_TRANSLATION_MAX_LOOKAHEAD_VIEWPORTS * viewportHeight}px 0px`);
+      },
       onShortcut: () => false,
       scrollRoot,
     });
@@ -467,6 +480,7 @@ function EpubReader({
             section={section}
             sectionIndex={index}
             sectionNumber={number}
+            lazyRootMargin={lazyRootMargin}
           />
         )) : null}
       </div>
@@ -494,9 +508,11 @@ function EpubSectionFrame({
   section,
   sectionIndex,
   sectionNumber,
+  lazyRootMargin,
 }: {
   book: EpubBook;
   displayMode: PreviewRendererProps['displayMode'];
+  lazyRootMargin: string;
   name: string;
   onNavigate: (href: string) => void;
   onSectionLayout: (sectionIndex: number, height: number | null) => void;
@@ -533,6 +549,7 @@ function EpubSectionFrame({
     if (visible) return undefined;
     const element = wrapperRef.current;
     if (!element) return undefined;
+    const scrollRoot = scrollRootRef.current ?? null;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {
@@ -540,11 +557,14 @@ function EpubSectionFrame({
           observer.disconnect();
         }
       },
-      { root: scrollRootRef.current ?? null, rootMargin: EPUB_LAZY_ROOT_MARGIN },
+      {
+        root: scrollRoot,
+        rootMargin: lazyRootMargin,
+      },
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [scrollRootRef, visible]);
+  }, [lazyRootMargin, scrollRootRef, visible]);
 
   // `onLoad` only records that the document is available; the single setup effect below
   // owns running `setupEpubDocument`. Driving setup from both the load event and a state
