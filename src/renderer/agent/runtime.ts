@@ -5,7 +5,6 @@ import { DEFAULT_GENERAL_CHANNEL_ID } from '../../core/agentChannel';
 import type {
   AgentConversationMessage,
   AgentApprovalRequestView,
-  AgentApprovalResolutionScope,
   AgentMessageAttachmentInput,
   AgentMessageBranchState,
   AgentProviderRetryEvent,
@@ -713,7 +712,6 @@ export interface AgentRuntimeClient {
     conversationId: string,
     requestId: string,
     approved: boolean,
-    scope?: AgentApprovalResolutionScope,
   ) => Promise<{ resolved: boolean }>;
   resolveUserQuestion: (
     conversationId: string,
@@ -770,7 +768,6 @@ export interface LinAgentRuntimeView {
   resolveApproval: (
     requestId: string,
     approved: boolean,
-    scope?: AgentApprovalResolutionScope,
   ) => Promise<boolean>;
   resolveUserQuestion: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
   stop: () => void;
@@ -797,8 +794,8 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
   clearFollowUp: (conversationId) => api.agentClearFollowUp(conversationId),
   steerConversation: (conversationId, message) => api.agentSteerConversation(conversationId, message),
   clearSteer: (conversationId) => api.agentClearSteer(conversationId),
-  resolveApproval: (conversationId, requestId, approved, scope = 'once') =>
-    api.agentResolveApproval(conversationId, requestId, approved, scope),
+  resolveApproval: (conversationId, requestId, approved) =>
+    api.agentResolveApproval(conversationId, requestId, approved),
   resolveUserQuestion: (conversationId, requestId, result) =>
     api.agentResolveUserQuestion(conversationId, requestId, result),
   stopRun: (conversationId, runId) => api.agentStopRun(conversationId, runId),
@@ -1068,11 +1065,10 @@ export class AgentRuntimeStore {
   resolveApproval = async (
     requestId: string,
     approved: boolean,
-    scope: AgentApprovalResolutionScope = 'once',
   ) => {
     if (!this.conversationId) return false;
     try {
-      const result = await this.client.resolveApproval(this.conversationId, requestId, approved, scope);
+      const result = await this.client.resolveApproval(this.conversationId, requestId, approved);
       if (result.resolved && this.pendingApprovals.has(requestId)) {
         this.removePendingApproval(requestId);
         this.publish();
@@ -1252,6 +1248,7 @@ export class AgentRuntimeStore {
     this.error = conversation.renderProjection.errorMessage;
     this.providerRetries.clear();
     this.clearPendingApprovalState();
+    for (const approval of conversation.pendingApprovals ?? []) this.addPendingApproval(approval);
     if (conversation.pendingUserQuestion) this.addPendingUserQuestion(conversation.pendingUserQuestion);
     this.conversationPreferenceStore?.writeLastConversationId(conversation.conversationId);
     this.publish();

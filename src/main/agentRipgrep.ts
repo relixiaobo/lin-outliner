@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process';
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildAgentToolPathValue, pathSegments } from './agentToolPath';
+import { getAgentProcessExecutor } from './agentProcessExecutor';
 
 export type RipgrepMode = 'env' | 'bundled' | 'system';
 
@@ -126,22 +126,26 @@ function spawnProbe(command: string, args: string[]): Promise<{
   timedOut: boolean;
 }> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const executor = getAgentProcessExecutor();
+    void executor.spawn({
+      command,
+      args,
+      cwd: process.cwd(),
       env: { ...process.env, PATH: buildAgentToolPathValue() },
-      shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
-    });
+      detached: process.platform !== 'win32',
+    }).then((child) => {
     let stdout = '';
     let stderr = '';
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
+      executor.terminate(child, 'SIGTERM');
     }, RIPGREP_PROBE_TIMEOUT_MS);
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => { stdout += chunk; });
+    child.stderr?.on('data', (chunk: string) => { stderr += chunk; });
     child.once('error', (error) => {
       clearTimeout(timer);
       resolve({ stdout, stderr, exitCode: null, error, timedOut });
@@ -149,6 +153,15 @@ function spawnProbe(command: string, args: string[]): Promise<{
     child.once('close', (code) => {
       clearTimeout(timer);
       resolve({ stdout, stderr, exitCode: code, timedOut });
+    });
+    }, (error: unknown) => {
+      resolve({
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+        error: error instanceof Error ? error : new Error(String(error)),
+        timedOut: false,
+      });
     });
   });
 }

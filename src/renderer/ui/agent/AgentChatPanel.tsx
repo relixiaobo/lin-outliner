@@ -23,7 +23,6 @@ import type {
 import type {
   AgentAuthoringInput,
   AgentDefinitionView,
-  AgentApprovalResolutionScope,
   AgentProviderSettingsView,
   AgentConversationListMeta,
   AgentSlashCommandView,
@@ -1384,9 +1383,8 @@ export function AgentChatPanel({
   const handleResolveApproval = useCallback(async (
     requestId: string,
     approved: boolean,
-    scope: AgentApprovalResolutionScope = 'once',
   ) => {
-    return await resolveApproval(requestId, approved, scope);
+    return await resolveApproval(requestId, approved);
   }, [resolveApproval]);
 
   async function refreshAfterSettingsChange() {

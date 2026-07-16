@@ -17,9 +17,10 @@ skill.
 `/skillify` is a user- and model-invocable workflow for creating or updating
 local skills through normal file tools. Its Skillify v2 body analyzes the current
 conversation, chooses a Tenon skill path, drafts a complete `SKILL.md` or focused
-update diff, previews it in the assistant message, and confirms through
-`ask_user_question` when that interaction is available. Its `when_to_use` gates
-it to explicit user save/update requests, so a conversational "save this as a
+update diff, and writes directly when the explicit request and conversation
+determine the contract. It asks only for a missing identity, storage target,
+trigger, or behavior choice that cannot be inferred. Its `when_to_use` gates it
+to explicit user save/update requests, so a conversational "save this as a
 skill" routes through curated guidance instead of ad-hoc file writes. The
 runtime also treats explicit natural-language authoring requests such as "save
 this as a skill" or "update the import skill with this workflow" as direct
@@ -57,11 +58,14 @@ read/search calls, and a compact evidence-backed report.
 `/data-cleanup` is a user- and model-invocable resource-backed workflow for
 cleaning external note/data exports into Tenon's import shape before any
 document write. It is source-agnostic at the skill level: the model profiles the
-source, explains fidelity tradeoffs, asks for destination/approval when needed,
-and runs deterministic scripts for known formats. Supported write routes emit
+source, explains fidelity tradeoffs, and runs deterministic scripts for known
+formats. It infers destination and
+fidelity from the request and asks only when a material choice remains
+unresolved. Supported write routes emit
 Import Pack v1, validate schema and coverage, generate a compact preview with
 `tenon-import preview`, and run `tenon-import commit` with the returned preview
-id after user approval. Tana JSON is the first deterministic write route. Roam
+id without a second confirmation when the original request authorized import.
+Tana JSON is the first deterministic write route. Roam
 EDN backups are currently profile-only: the skill can inspect counts and
 samples, but must not write Roam data until a deterministic Roam adapter emits a
 valid Import Pack.
@@ -280,8 +284,9 @@ Slash skills use the same loader and apply the same `allowed-tools`, `model`,
 and `effort` metadata. `/clear` and `/compact` are built-in runtime commands and
 are handled before slash skill resolution. `/skillify` is a built-in skill that
 is both user- and model-invocable; it uses ordinary `file_write` / `file_edit`
-only after preview and confirmation, and the skills it writes are available
-immediately. Explicit natural-language save/update/fix skill requests are
+after resolving any genuinely missing contract input, and the skills it writes
+are available immediately without a second confirmation. Explicit natural-
+language save/update/fix skill requests are
 normalized to the same direct `/skillify` prompt path, so they work even when
 automatic skill listing is disabled, but only while slash skills are enabled.
 `/research` is also both user- and model-invocable; its `allowed-tools` are only
@@ -342,10 +347,9 @@ invocation gates are explicit frontmatter/settings gates such as
 path-conditional activation. A skill's `allowed-tools` still only adds
 run-scoped preapproval metadata; the global permission floor remains above it.
 
-There is no in-flow `skill_trust` approval card. Settings → Skills may still
-record or clear an `acceptedHash` for management/audit visibility, and the
-Security page can list accepted skill hashes under **Accepted Skills**, separate
-from action-mode exceptions. `agent_accept_skill` records
+Skill invocation never opens a trust approval card. Settings → Skills may still
+record or clear an `acceptedHash` for management/audit visibility.
+`agent_accept_skill` records
 `acceptedHash = contentHash`; `agent_revoke_skill_acceptance` clears it. Accept
 carries the `expectedHash` the renderer/runtime displayed and is refused on
 mismatch, so an agent write landing between render and click can never be
@@ -398,8 +402,8 @@ are supplemental references for safety, recovery, provenance, and curation.
 - path-conditional activation and dynamic nested skill discovery;
 - post-compact restoration of invoked skill content;
 - Skillify-style authoring through ordinary `file_write` / `file_edit`, with
-  preview and confirmation carried by instructions rather than a dedicated skill
-  CRUD tool.
+  direct writes for explicit, fully determined requests and clarification only
+  for missing contract input rather than a dedicated skill CRUD tool.
 - a built-in `/research` skill implemented as a current-agent isolated Run
   whose declared read tools are filtered through the read-only catalog.
 
@@ -408,26 +412,24 @@ instead of cc-2.1's `.claude/skills` and `Skill` tool name. This is a product
 namespace choice, not a behavioral difference.
 
 Agent-managed skill edits follow cc-2.1's smaller tool surface:
-`skillify`-style workflows plus ordinary file write/edit tools after review and
-confirmation. Lin adds skill-path validation, rollback metadata, provenance, and
-hot reload instead of a separate model-facing skill CRUD tool family.
+`skillify`-style workflows plus ordinary file write/edit tools after the contract
+is determined. Lin adds skill-path validation, rollback metadata, provenance,
+and hot reload instead of a separate model-facing skill CRUD tool family.
 
 Skillify v2 is intentionally Tenon-native rather than a direct namespace copy:
 it writes only `.agents/skills/<skill-name>/SKILL.md`, does not emit `name`
-frontmatter, separates the tools used to author a skill from the future
-skill's `allowed-tools`, and previews broad preapproval, execution mode,
-storage target, and trust state before writing. For an existing skill it reads
-the current `SKILL.md` first and prefers a focused `file_edit` patch. Saving a
-skill is not acceptance for automatic model use; agent-written and
-project-source skills remain slash-invocable immediately and model-invocable
-only after exact-byte acceptance.
+frontmatter, and separates the tools used to author a skill from the future
+skill's `allowed-tools`. For an existing skill it reads the current `SKILL.md`
+first and prefers a focused `file_edit` patch. Agent-written and project-source
+skills are ratified by default; exact-byte acceptance remains optional
+management/audit metadata rather than an invocation gate.
 
 `/research` borrows cc-2.1 Explore's read-only boundary discipline without
 borrowing its agent-shaped product grammar. cc-2.1 makes Explore safe by
 restricting the agent catalog with `disallowedTools`; Lin keeps generic research
 as a skill of the current agent, then applies catalog narrowing at
 fork spawn. `allowed-tools` remains the same preapproval mechanism on both sides:
-it reduces prompts for expected read calls but is not the safety boundary.
+it satisfies a restricted Run's tool ceiling but is not the safety boundary.
 
 ## Compatibility Decisions
 
@@ -453,12 +455,12 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
-| `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, previews the complete file or focused update diff, confirms through the instruction-layer `ask_user_question` path when available, and writes with existing file write/edit tools. |
+| `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, writes directly with existing file tools when the request determines the contract, and asks only for missing identity, storage, trigger, or behavior choices. |
 | `research` | Supported as a built-in user- and model-invocable `execution: isolated` workflow with no `agent` override. It starts an isolated sub-run of the current agent, filters its declared read tools through the `AgentToolActionKind` read-only catalog, and returns a compact findings/evidence report. |
 | `data-cleanup` | Supported as a Tenon-owned resource-backed built-in. It profiles local exports, runs deterministic adapters for known sources through `tenon-import`, emits Import Pack v1, validates coverage, produces an API-backed preview id, and uses `tenon-import commit` as the only bulk document write path. Tana JSON is supported as the first write route; Roam EDN is profile-only until a deterministic adapter is added. |
 | `data-analysis`, `document`, `feed-processing`, `pdf`, `presentation`, `spreadsheet` | Supported as immutable resource-backed built-ins sourced from enabled `linlab-skills` folders and staged into the packaged app. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, JSON, RSS, Atom, JSON Feed, OPML, and source tables are handled as input/output routes rather than skill identities. `/presentation` keeps explicit PowerPoint/PPTX requests on the PPTX route: missing PPTX libraries or office automation should be installed/enabled when allowed, and HTML/PDF/hand-authored OOXML are lower-fidelity fallbacks that require an explained blocker. `/document` includes archetype/form-factor guidance plus DOCX/Markdown semantic QA, and explicit Word/DOCX requests stay on the DOCX route before Markdown/plain-text/PDF or hand-authored WordprocessingML fallbacks. `/pdf` keeps PDF-native operations on fixed-layout structural/render/OCR/form/redaction routes while preferring editable source changes when source exists. `/feed-processing` keeps subscription-content processing on source-list, feed-window, bad-feed, full-text-ledger, and feed-content-pack routes while leaving outliner/document/email writes to downstream consumers. `/spreadsheet` keeps workbook/formula/modeling work on spreadsheet-native routes and preserves formulas, validation, named ranges, tables, and source-first generation artifacts. `/data-analysis` keeps dependency-backed pandas/DuckDB/script workflows explicit. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
-| Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
+| Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` only preapprove tools for a restricted Run. |
 
 ## Compaction
 
@@ -641,8 +643,9 @@ Intentional omissions:
 
 The user-facing default policy is the default-allow delegated-operator model
 described in `agent-tool-permissions.md`: ordinary work runs, hard redlines are
-denied, and built-in or user soft blocks require an explicit exception. Agent
-definitions and skills cannot widen above that global policy.
+blocked directly, missing local roots request one persistent folder capability,
+and explicit user blocks reject without an exception card. Agent definitions and
+skills cannot widen above that global policy.
 
 Agent settings expose only a narrow delegation sandbox:
 

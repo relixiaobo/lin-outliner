@@ -1,6 +1,5 @@
 import { coerceString, parseBoolean } from '../core/agentMarkdown';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
@@ -8,7 +7,6 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import type { AgentMessage, TextContent, UserMessage } from '../core/agentTypes';
 import type { SkillDefinition } from '../core/types';
@@ -29,6 +27,7 @@ import {
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
+import { runAgentToolProcess } from './agentToolProcess';
 
 export const SKILL_TOOL_NAME = 'skill';
 
@@ -41,7 +40,6 @@ const MIN_NON_EMPTY_DESCRIPTION_CHARS = 20;
 const POST_COMPACT_MAX_TOKENS_PER_SKILL = 5_000;
 const POST_COMPACT_SKILLS_TOKEN_BUDGET = 25_000;
 const SKILL_LISTING_STATE_MARKER = 'The following skills have already been listed to the agent in this session:';
-const execFile = promisify(execFileCallback);
 const requireForElectron = createRequire(import.meta.url);
 const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
   name: 'skillify',
@@ -81,13 +79,13 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - Prefer narrow read/search rules. Keep writes, bash, external actions, and irreversible operations out of preapproval unless the workflow requires them and the rule can be narrow.',
     '   - Flag broad `allowed-tools` in the preview summary.',
     '',
-    '6. Preview and confirm before writing.',
-    '   - Show the complete `SKILL.md` for creation, or a focused diff for updates.',
-    '   - Include a short review summary: storage target, slash invocation form, model invocation state, future `allowed-tools`, inline or isolated execution, and trust state.',
-    '   - Ask "Save this skill?" with Save, revise, or cancel choices through `ask_user_question` when available. File permission only answers whether a write may happen; Skillify confirmation answers whether the reusable process is right.',
+    '6. Resolve ambiguity, then write.',
+    '   - When the explicit request and conversation determine the skill contract, write it directly without a second confirmation.',
+    '   - Ask only for a missing identity, storage target, trigger, or behavioral choice that cannot be inferred. Do not ask merely because the skill is persistent or agent-authored.',
+    '   - For materially ambiguous requests, show the complete `SKILL.md` or a focused update diff only when that preview is needed to obtain the missing decision.',
     '',
     '7. Write, report, and explain trust.',
-    '   - Use `file_write` or `file_edit` only after confirmation. The file-tool gateway validates skill content, records rollback metadata in tool details, and hot-reloads the skill registry.',
+    '   - Use `file_write` or `file_edit` after the contract is determined. The file-tool gateway validates skill content, records rollback metadata in tool details, and hot-reloads the skill registry.',
     '   - After writing, report the exact path and how to invoke it as `/<skill-name> ...`.',
     '   - Agent-written skills and workspace skills are available immediately: slash invocation works immediately, and model-invocable skills can appear in the automatic listing without a separate trust prompt.',
     '   - If validation fails, repair the draft and show the corrected preview again when the change is material.',
@@ -2369,10 +2367,20 @@ async function directoryExists(dir: string): Promise<boolean> {
 async function isGitIgnored(root: string, candidate: string): Promise<boolean> {
   const relative = path.relative(root, candidate);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return false;
-  try {
-    await execFile('git', ['-C', root, 'check-ignore', '-q', '--', normalizePathForPrompt(relative)]);
-    return true;
-  } catch {
-    return false;
-  }
+  const result = await runAgentToolProcess(
+    'git',
+    ['-C', root, 'check-ignore', '-q', '--', normalizePathForPrompt(relative)],
+    root,
+    5_000,
+    {
+      maxStdoutChars: 1_024,
+      maxStderrChars: 1_024,
+      env: {
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_OPTIONAL_LOCKS: '0',
+      },
+    },
+  );
+  return result.exitCode === 0;
 }

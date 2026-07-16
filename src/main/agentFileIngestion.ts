@@ -3,6 +3,7 @@ import path from 'node:path';
 import { agentDerivedFileCache, derivedFileCacheKey } from './agentFileIngestionCache';
 import type { ToolStatus } from './agentToolEnvelope';
 import { runAgentToolProcess } from './agentToolProcess';
+import type { FolderCapabilitySnapshot } from './agentFolderCapabilities';
 
 export type FileIngestionContentPart =
   | { type: 'text'; text: string }
@@ -66,7 +67,11 @@ export class AgentFileIngestionFailure extends Error {
   }
 }
 
-export async function ingestRichDocumentAsMarkdown(filePath: string, sourceHash?: string): Promise<MarkdownIngestionResult> {
+export async function ingestRichDocumentAsMarkdown(
+  filePath: string,
+  sourceHash?: string,
+  capabilities?: FolderCapabilitySnapshot,
+): Promise<MarkdownIngestionResult> {
   const command = await resolveMarkitdownCommand(path.dirname(filePath));
   const cacheKey = sourceHash
     ? derivedFileCacheKey(MARKITDOWN_CACHE_EXTRACTOR, sourceHash, {
@@ -85,6 +90,7 @@ export async function ingestRichDocumentAsMarkdown(filePath: string, sourceHash?
     path.dirname(filePath),
     MARKITDOWN_TIMEOUT_MS,
     {
+      capabilities,
       maxStdoutChars: MARKITDOWN_STDOUT_CAPTURE_CHARS,
       maxStderrChars: MARKITDOWN_STDERR_CAPTURE_CHARS,
     },

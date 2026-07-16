@@ -1,0 +1,148 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import {
+  FolderCapabilityService,
+  capabilityFolderForTarget,
+  createFolderCapabilitySnapshot,
+  missingFolderCapabilities,
+  normalizeRequiredFolders,
+} from '../../src/main/agentFolderCapabilities';
+
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe('folder capability service', () => {
+  test('canonicalizes, deduplicates, and persists folder capabilities privately', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-folder-capability-'));
+    const nested = path.join(root, 'nested');
+    const storePath = path.join(root, 'state', 'agent-tool-permissions.json');
+    roots.push(root);
+    await mkdir(nested);
+    const service = new FolderCapabilityService(storePath);
+
+    await service.write({ folders: [nested, root, nested], blocks: ['Action(git.publish_remote)'] });
+    const canonicalRoot = await realpath(root);
+
+    expect(await service.read()).toEqual({
+      folders: [canonicalRoot],
+      blocks: ['Action(git.publish_remote)'],
+    });
+    if (process.platform !== 'win32') {
+      expect((await stat(storePath)).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  test('publishes revocation only after the persistent root is removed', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-folder-revoke-'));
+    const granted = path.join(root, 'granted');
+    roots.push(root);
+    await mkdir(granted);
+    const service = new FolderCapabilityService(path.join(root, 'permissions.json'));
+    const revoked: string[] = [];
+    service.onRevoked((folder) => { revoked.push(folder); });
+    await service.grant(granted);
+    const canonicalGranted = await realpath(granted);
+
+    const next = await service.revoke(granted);
+
+    expect(next.folders).toEqual([]);
+    expect(revoked).toEqual([canonicalGranted]);
+  });
+
+  test('publishes revocations when Settings replaces the folder list', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-folder-capability-settings-'));
+    roots.push(root);
+    const first = path.join(root, 'first');
+    const second = path.join(root, 'second');
+    await mkdir(first);
+    await mkdir(second);
+    const store = path.join(root, 'permissions.json');
+    const service = new FolderCapabilityService(store);
+    await service.write({ folders: [first, second], blocks: [] });
+
+    const revoked: Array<{ folder: string; persisted: string[] }> = [];
+    service.onRevoked(async (folder) => {
+      revoked.push({ folder, persisted: (await service.read()).folders });
+    });
+
+    await service.write({ folders: [second], blocks: [] });
+
+    expect(revoked).toEqual([{ folder: await realpath(first), persisted: [await realpath(second)] }]);
+  });
+
+  test('publishes only newly persistent folder capabilities', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-folder-grant-'));
+    const first = path.join(root, 'first');
+    const second = path.join(root, 'second');
+    roots.push(root);
+    await mkdir(first);
+    await mkdir(second);
+    const service = new FolderCapabilityService(path.join(root, 'permissions.json'));
+    const grants: string[][] = [];
+    service.onGranted((folders) => { grants.push([...folders]); });
+
+    await service.grant(first);
+    await service.grant(first);
+    await service.grantMany([first, second]);
+
+    expect(grants).toEqual([
+      [await realpath(first)],
+      [await realpath(second)],
+    ]);
+  });
+
+  test('publishes concurrent grants exactly once from their serialized states', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-folder-concurrent-grant-'));
+    const first = path.join(root, 'first');
+    const second = path.join(root, 'second');
+    roots.push(root);
+    await mkdir(first);
+    await mkdir(second);
+    const service = new FolderCapabilityService(path.join(root, 'permissions.json'));
+    const grants: string[] = [];
+    service.onGranted((folders) => { grants.push(...folders); });
+
+    await Promise.all([service.grant(first), service.grant(second)]);
+
+    expect(grants.sort()).toEqual([await realpath(first), await realpath(second)].sort());
+  });
+
+  test('derives the nearest existing folder and preflights missing capabilities', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-folder-preflight-'));
+    const workspace = path.join(root, 'workspace');
+    const outside = path.join(root, 'outside');
+    roots.push(root);
+    await mkdir(workspace);
+    await mkdir(outside);
+    await writeFile(path.join(outside, 'source.json'), '{}');
+    const canonicalWorkspace = await realpath(workspace);
+    const canonicalOutside = await realpath(outside);
+    const snapshot = createFolderCapabilitySnapshot({ workspaceRoot: workspace }, []);
+
+    expect(capabilityFolderForTarget(path.join(outside, 'source.json'), workspace)).toBe(canonicalOutside);
+    expect(normalizeRequiredFolders([outside, outside], workspace)).toEqual([canonicalOutside]);
+    expect(missingFolderCapabilities([outside], snapshot)).toEqual([canonicalOutside]);
+    expect(missingFolderCapabilities([canonicalWorkspace], snapshot)).toEqual([]);
+  });
+
+  test('keeps attachments read-only while cleanup and output roots are writable', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-folder-snapshot-'));
+    const workspace = path.join(root, 'workspace');
+    const scratch = path.join(root, 'scratch');
+    roots.push(root);
+    await mkdir(workspace);
+    await mkdir(scratch);
+    const canonicalScratch = await realpath(scratch);
+    const snapshot = createFolderCapabilitySnapshot({ workspaceRoot: workspace, scratchRoot: scratch }, []);
+
+    expect(snapshot.readRoots).toContain(canonicalScratch);
+    expect(snapshot.writeRoots).not.toContain(canonicalScratch);
+    expect(snapshot.writeRoots).toContain(path.join(canonicalScratch, 'data-cleanup'));
+    expect(snapshot.writeRoots).toContain(path.join(canonicalScratch, 'agent-tool-outputs'));
+  });
+});

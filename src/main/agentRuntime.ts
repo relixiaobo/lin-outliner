@@ -44,7 +44,6 @@ import {
   type AgentRunTranscriptPayload,
   type AgentRuntimeEvent,
   type AgentApprovalRequestView,
-  type AgentApprovalResolutionScope,
   type AgentAuthoringInput,
   type AgentDefinitionView,
   type AgentUserViewContext,
@@ -77,9 +76,11 @@ import {
   type AgentEvent,
   type AgentEventMessageRecord,
   type AgentEventReplayState,
+  type AgentFolderCapabilityRequestRecord,
   type AgentIdentityRecord,
   type AgentNotificationKind,
   type AgentNotificationSource,
+  type NotificationCreatedEvent,
   type AgentRunSubmissionProjection,
   type AgentPayloadRef,
   type AgentPersistedContent,
@@ -229,10 +230,9 @@ import {
   type AgentImageGenerationRuntime,
 } from './agentImageGenerationTool';
 import {
-  appendAgentToolPermissionGrant,
-  appendAgentToolPermissionSoftBlockAllow,
+  grantAgentFolderCapability,
+  grantAgentFolderCapabilities,
   readAgentToolPermissionConfig,
-  removeAgentToolPermissionBlock,
 } from './agentToolPermissionStore';
 import type { OutlinerToolHost } from './agentNodeTools';
 import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } from './agentUserViewContextReminder';
@@ -261,21 +261,19 @@ import {
 import {
   agentDefinitionAgentId,
 } from './agentDelegationIdentity';
-import { AgentRunLedgerWriter, fromPiAssistantContent } from './agentRunLedger';
+import {
+  AgentRunLedgerWriter,
+  fromPiAssistantContent,
+  type AgentRunPermissionEventInput,
+} from './agentRunLedger';
 import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
 import {
   evaluateAgentToolPermission,
-  toolPathArgumentName,
-  type AgentPermissionAskDecision,
-  type AgentPermissionSoftBlockDecision,
+  type AgentPermissionFolderRequiredDecision,
 } from './agentPermissions';
-import { grantRuleValue } from './agentToolPermissionRules';
 import {
-  resolveAgentPermissionAsk,
-  type PermissionDeniedReason,
-} from './agentPermissionAskResolver';
-import {
+  folderAccessRequiredToolResultMessage,
   permissionActionKinds,
   permissionDeniedReasonForDecision,
   permissionDeniedToolResultMessage,
@@ -285,6 +283,7 @@ import {
   permissionResolutionStatusForDeniedReason,
   permissionResolvedByForAllowDecision,
   permissionResolvedByForDeniedReason,
+  type AgentPermissionDeniedReason,
   type AgentToolPermissionLogInput,
 } from './agentPermissionEvents';
 import {
@@ -294,6 +293,7 @@ import {
   setAgentLocalPermissionRoots,
   type AgentLocalWorkspaceContext,
 } from './agentLocalTools';
+import { isPathInside } from './agentFolderCapabilities';
 import {
   assistantMessageText,
   buildCompactSummaryRequest,
@@ -368,9 +368,10 @@ import {
   offsetIsoLocalDate,
   startOfLocalDay,
 } from '../core/localDate';
-import { readOnlyAgentToolNames, type AgentPermissionGrant } from '../core/agentPermissionModel';
+import { readOnlyAgentToolNames } from '../core/agentPermissionModel';
 
 const CLEAR_COMMAND_PATTERN = /^\/clear\s*$/;
+const FOLDER_CAPABILITY_BLOCKED_REASON = 'Agent Session stopped because a required folder capability is missing.';
 
 const EMPTY_USAGE = {
   input: 0,
@@ -476,6 +477,7 @@ interface AgentRuntimeOptions {
   completeSimpleFn?: CompleteSimpleFn;
   localFileRoot?: string;
   scratchRoot?: string;
+  protectedStoreRoot?: string;
   assetResolver?: AgentAssetResolver;
   permissionMode?: AgentPermissionMode;
   runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
@@ -491,23 +493,19 @@ interface AgentToolApprovalInput {
   requestId: string;
   toolCall: ToolCall;
   args: unknown;
-  decision: AgentPermissionAskDecision | AgentPermissionSoftBlockDecision;
+  decision: AgentPermissionFolderRequiredDecision;
 }
 
 interface AgentToolApprovalResolution {
   approved: boolean;
-  deniedReason?: PermissionDeniedReason;
-  scope?: AgentApprovalResolutionScope;
-  alwaysAllowRule?: string;
+  deniedReason?: AgentPermissionDeniedReason;
+  folders?: string[];
 }
 
 interface AgentPendingApproval {
   conversationId: string;
   runId?: string;
   request: AgentApprovalRequestView;
-  alwaysAllowRule?: string;
-  alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
-  autoBlockTimer?: ReturnType<typeof setTimeout>;
   onApproved?: () => Promise<void>;
   resolve: (resolution: AgentToolApprovalResolution) => void;
 }
@@ -783,6 +781,7 @@ export class AgentRuntime {
   private shutdownStarted = false;
   private pastChatsService: AgentPastChatsService | null = null;
   private pendingApprovals = new Map<string, AgentPendingApproval>();
+  private folderCapabilityRecoveryTail: Promise<void> = Promise.resolve();
   private pendingUserQuestions = new Map<string, AgentPendingUserQuestion>();
   private nextConversationId = 1;
   private dreamMemoryExtractionTail: Promise<void> = Promise.resolve();
@@ -1423,6 +1422,7 @@ export class AgentRuntime {
         ...renderProjection,
         conversationTitle: sanitizeConversationTitle(renderProjection.conversationTitle),
       },
+      pendingApprovals: this.pendingApprovalViews(conversationId, eventState),
       pendingUserQuestion: null,
     };
   }
@@ -1489,38 +1489,40 @@ export class AgentRuntime {
     conversationId: string,
     requestId: string,
     approved: boolean,
-    scope: AgentApprovalResolutionScope = 'once',
   ) {
     const pending = this.pendingApprovals.get(requestId);
-    if (!pending || pending.conversationId !== conversationId) return { resolved: false };
-    const conversation = this.conversations.get(conversationId);
+    const conversation = this.conversations.get(conversationId)
+      ?? await this.ensureConversationWithId(conversationId);
     if (!conversation) return { resolved: false };
-    this.clearPendingApprovalAutoBlock(pending);
-
-    let resolvedApproved = approved;
-    let deniedReason: PermissionDeniedReason | undefined = approved ? undefined : 'user_denied';
-    let resolvedScope = scope;
-    let alwaysAllowRule = approved && scope === 'always' ? pending.alwaysAllowRule : undefined;
-    let alwaysAllowAction = approved && scope === 'always' ? pending.alwaysAllowAction ?? 'grant' : undefined;
-    if (approved && scope === 'always' && !alwaysAllowRule) {
-      resolvedScope = 'once';
-      alwaysAllowAction = undefined;
-    }
-    if (alwaysAllowRule) {
+    if (!pending || pending.conversationId !== conversationId) {
+      const durable = conversation.eventState.folderCapabilityRequests[requestId];
+      if (!durable || durable.status !== 'pending') return { resolved: false };
+      if (!approved) {
+        await this.resolveDurableFolderRequest(conversationId, conversation, durable, false);
+        return { resolved: true };
+      }
       try {
-        if (alwaysAllowAction === 'remove_block') {
-          await removeAgentToolPermissionBlock(alwaysAllowRule);
-        } else if (alwaysAllowAction === 'soft_allow') {
-          await appendAgentToolPermissionSoftBlockAllow(alwaysAllowRule);
-        } else {
-          await appendAgentToolPermissionGrant(alwaysAllowRule);
-        }
+        await grantAgentFolderCapabilities(durable.folders);
+        this.queueFolderCapabilityRecovery();
+        return { resolved: true };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.emitError(conversationId, `Failed to persist permission rule; approved once instead. ${message}`);
-        resolvedScope = 'once';
-        alwaysAllowRule = undefined;
-        alwaysAllowAction = undefined;
+        this.emitError(conversationId, `Failed to persist folder access. ${message}`);
+        return { resolved: false };
+      }
+    }
+    let resolvedApproved = approved;
+    let deniedReason: AgentPermissionDeniedReason | undefined = approved ? undefined : 'user_cancelled';
+    const folders = approved ? pending.request.folders ?? [] : [];
+    if (approved) {
+      try {
+        if (folders.length === 0) throw new Error('Folder capability request has no folders.');
+        await grantAgentFolderCapabilities(folders);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.emitError(conversationId, `Failed to persist folder access. ${message}`);
+        resolvedApproved = false;
+        deniedReason = 'runtime';
       }
     }
     if (resolvedApproved && pending.onApproved) {
@@ -1531,37 +1533,49 @@ export class AgentRuntime {
         this.emitError(conversationId, message);
         resolvedApproved = false;
         deniedReason = 'runtime';
-        resolvedScope = 'once';
-        alwaysAllowRule = undefined;
-        alwaysAllowAction = undefined;
       }
     }
 
     this.pendingApprovals.delete(requestId);
     try {
-      await this.appendConversationEvents(conversationId, conversation, [{
-        type: 'approval.resolved',
-        actor: userActor(),
-        runId: pending.runId,
-        requestId,
-        approved: resolvedApproved,
-      }]);
       this.emitConversationRuntimeEvent(conversationId, {
         type: 'approval_resolved',
         requestId,
         approved: resolvedApproved,
-        scope: resolvedScope,
       });
-      this.emitProjection(conversationId, 'approval.resolved');
     } finally {
       pending.resolve({
         approved: resolvedApproved,
         deniedReason,
-        scope: resolvedScope,
-        alwaysAllowRule,
+        folders: resolvedApproved ? folders : undefined,
       });
     }
     return { resolved: true };
+  }
+
+  private async resolveDurableFolderRequest(
+    conversationId: string,
+    conversation: AgentConversationState,
+    request: AgentFolderCapabilityRequestRecord,
+    approved: boolean,
+  ): Promise<void> {
+    if (request.status !== 'pending') return;
+    await this.appendConversationEvents(conversationId, conversation, [{
+      type: 'tool.permission.resolved',
+      actor: systemActor(),
+      requestId: request.requestId,
+      toolCallId: request.toolCallId,
+      toolName: request.toolName,
+      status: approved ? 'approved' : 'aborted',
+      resolvedBy: approved ? 'folder_grant' : 'user_cancelled',
+      updatedFolders: approved ? request.folders : undefined,
+      deniedReason: approved ? undefined : 'user_cancelled',
+    }]);
+    this.emitConversationRuntimeEvent(conversationId, {
+      type: 'approval_resolved',
+      requestId: request.requestId,
+      approved,
+    });
   }
 
   /**
@@ -2659,18 +2673,9 @@ export class AgentRuntime {
   }
 
   private async clearPendingApprovalsForConversation(conversationId: string, conversation: AgentConversationState) {
-    const resolvedEvents: AgentEventInput[] = [];
     for (const [requestId, pending] of [...this.pendingApprovals]) {
       if (pending.conversationId !== conversationId) continue;
       this.pendingApprovals.delete(requestId);
-      this.clearPendingApprovalAutoBlock(pending);
-      resolvedEvents.push({
-        type: 'approval.resolved',
-        actor: systemActor(),
-        runId: pending.runId,
-        requestId,
-        approved: false,
-      });
       this.emitConversationRuntimeEvent(conversationId, {
         type: 'approval_resolved',
         requestId,
@@ -2678,49 +2683,31 @@ export class AgentRuntime {
       });
       pending.resolve({ approved: false, deniedReason: 'runtime' });
     }
-    if (resolvedEvents.length > 0) {
-      await this.appendConversationEvents(conversationId, conversation, resolvedEvents);
-      this.emitProjection(conversationId, 'approval.resolved');
-    }
+    void conversation;
   }
 
   private async denyPendingApprovalForRuntime(
     conversationId: string,
     conversation: AgentConversationState,
     requestId: string,
-    deniedReason: PermissionDeniedReason,
+    deniedReason: AgentPermissionDeniedReason,
   ): Promise<boolean> {
     const pending = this.pendingApprovals.get(requestId);
     if (!pending || pending.conversationId !== conversationId) return false;
 
     this.pendingApprovals.delete(requestId);
-    this.clearPendingApprovalAutoBlock(pending);
     try {
-      await this.appendConversationEvents(conversationId, conversation, [{
-        type: 'approval.resolved',
-        actor: systemActor(),
-        runId: pending.runId,
-        requestId,
-        approved: false,
-      }]);
-    } catch (error) {
-      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
-    } finally {
       this.emitConversationRuntimeEvent(conversationId, {
         type: 'approval_resolved',
         requestId,
         approved: false,
       });
-      this.emitProjection(conversationId, 'approval.resolved');
       pending.resolve({ approved: false, deniedReason });
+    } catch (error) {
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
+    void conversation;
     return true;
-  }
-
-  private clearPendingApprovalAutoBlock(pending: AgentPendingApproval) {
-    if (!pending.autoBlockTimer) return;
-    clearTimeout(pending.autoBlockTimer);
-    pending.autoBlockTimer = undefined;
   }
 
   private async clearPendingUserQuestionsForConversation(conversationId: string, reason: string) {
@@ -2773,7 +2760,6 @@ export class AgentRuntime {
         this.currentRuntimeConversation(conversationRef.current)?.activeRun?.id ?? null
       ),
       executeSkillShell: async ({ command, skill, signal }) => {
-        const activeSettings = await this.getRuntimeSettings();
         const globalPermissions = await readAgentToolPermissionConfig();
         const current = this.currentRuntimeConversation(conversationRef.current);
         return executeAgentSkillShellCommand({
@@ -2783,6 +2769,8 @@ export class AgentRuntime {
           command,
           localRoot: this.options.localFileRoot,
           scratchRoot: this.scratchRoot(),
+          protectedStoreRoot: this.options.protectedStoreRoot,
+          trustedReadRoots: [skill.rootDir],
           permissionMode: this.options.permissionMode,
           allowedTools: skill.allowedTools,
           globalPermissions,
@@ -2818,13 +2806,19 @@ export class AgentRuntime {
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     skillRuntime.restoreInvokedSkillsFromMessages(activePath);
     let delegationRuntime: AgentDelegationRuntime;
-    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime);
+    const localWorkspace = createAgentLocalWorkspaceContext(
+      this.options.localFileRoot,
+      this.scratchRoot(),
+      skillRuntime,
+      this.options.protectedStoreRoot,
+    );
     delegationRuntime = new AgentDelegationRuntime({
       conversationId,
       executingAgentId: defaultAgentId,
       memoryOwnerAgentId: defaultAgentId,
       localRoot: this.options.localFileRoot,
       scratchRoot: this.scratchRoot(),
+      protectedStoreRoot: this.options.protectedStoreRoot,
       host: {
         createChildAgent: (input) => {
           if (!providerConfig) throw new Error('No enabled agent provider is configured.');
@@ -2941,6 +2935,7 @@ export class AgentRuntime {
           thinkingLevel: agentThinkingLevel,
           systemPrompt: agentSystemPrompt,
           permissionMode: this.options.permissionMode,
+          protectedStoreRoot: this.options.protectedStoreRoot,
           runtimeSettingsLoader: () => this.getRuntimeSettings(),
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
@@ -2958,10 +2953,6 @@ export class AgentRuntime {
           imageGeneration: this.createImageGenerationRuntime(conversationId, localWorkspace, () => conversationRef.current),
           allowedTools: agentToolFilter.allowedTools,
           disallowedTools: agentToolFilter.disallowedTools,
-          permissionScopeIdProvider: () => {
-            const current = conversationRef.current;
-            return current ? this.activeRunId(current) : null;
-          },
           providerRetryContextProvider: () => {
             const current = conversationRef.current;
             const runId = current ? this.activeRunId(current) : null;
@@ -3183,6 +3174,7 @@ export class AgentRuntime {
       model,
       thinkingLevel,
       permissionMode: input.permissionMode ?? this.options.permissionMode,
+      protectedStoreRoot: this.options.protectedStoreRoot,
       runtimeSettingsLoader: () => this.getRuntimeSettings(),
       skillToolEnabled: true,
       skillRuntime: input.skillRuntime,
@@ -3199,9 +3191,17 @@ export class AgentRuntime {
       streamFn: this.options.streamFn,
       completeSimpleFn: this.options.completeSimpleFn,
       providerApiKeyLoader: this.options.providerApiKeyLoader,
-      permissionEventHandler: (eventInput) => {
+      permissionEventHandler: async (eventInput) => {
         const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
-        return parentConversation ? this.appendToolPermissionEvent(parentConversationId, parentConversation, eventInput) : Promise.resolve();
+        if (!parentConversation) return;
+        await this.appendToolPermissionEvent(parentConversationId, parentConversation, {
+          ...eventInput,
+          runId: input.runId,
+          requestedByAgentId,
+        });
+        if (eventInput.unattended && eventInput.outcome === 'folder_required') {
+          input.blockForInput?.(FOLDER_CAPABILITY_BLOCKED_REASON);
+        }
       },
       systemPrompt: input.systemPrompt,
       l0CacheBreakpointEnabled: input.l0CacheBreakpointEnabled,
@@ -3209,17 +3209,13 @@ export class AgentRuntime {
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
-      permissionScopeIdProvider: () => input.conversationId,
       providerRetryContextProvider: () => ({
         conversationId: parentConversationId,
         runId: input.runId,
       }),
       providerRetryEventHandler: (event) => this.emitProviderRetry(event),
-      // Runtime-owned unattended executions have NO interactive approval channel:
-      // leaving it undefined makes an 'ask' decision resolve to a denial that is
-      // surfaced in the conversation, rather than hanging on a human who will
-      // never answer. Globally always-allowed tools still run (they resolve to
-      // 'allow' before any approval is sought).
+      // Unattended Runs record a durable needs-input folder event and stop before
+      // process launch. They never wait on ephemeral renderer state.
       approvalHandler: input.unattended
         ? undefined
         : (approvalInput, signal) => {
@@ -3433,6 +3429,7 @@ export class AgentRuntime {
       errorMessage: snapshot.error ?? snapshot.blockedReason ?? snapshot.latestVerifierGap,
       completedAt: snapshot.completedAt,
       acknowledgedTerminalDeliveryIds,
+      suppressTerminalDelivery: snapshot.blockedReason === FOLDER_CAPABILITY_BLOCKED_REASON,
     }, { type: 'agent', agentId: snapshot.executingAgentId }, snapshot.updatedAt);
     this.clearAcknowledgedIssueDeliveries(synced?.acknowledgedTerminalDeliveryIds ?? []);
     if (synced && (synced.issueBecameCompleted || synced.becameTerminal)) this.queueIssueDeliveryDrain();
@@ -3465,6 +3462,7 @@ export class AgentRuntime {
       errorMessage: data.error ?? data.blocked_reason ?? data.latest_verifier_gap,
       completedAt: data.completed_at,
       acknowledgedTerminalDeliveryIds,
+      suppressTerminalDelivery: data.blocked_reason === FOLDER_CAPABILITY_BLOCKED_REASON,
     }, { type: 'system' }, data.updated_at ?? Date.now());
     this.clearAcknowledgedIssueDeliveries(synced?.acknowledgedTerminalDeliveryIds ?? []);
     if (synced && (synced.issueBecameCompleted || synced.becameTerminal)) this.queueIssueDeliveryDrain();
@@ -3970,6 +3968,7 @@ export class AgentRuntime {
       osTitle?: string;
       body?: string;
       source?: AgentNotificationSource;
+      folderCapability?: NotificationCreatedEvent['folderCapability'];
       actor?: AgentActor;
       /** Badge-only when false: fold unread but skip the OS notification (default true). */
       deliverOs?: boolean;
@@ -3989,6 +3988,7 @@ export class AgentRuntime {
         title: input.title,
         body,
         source: input.source,
+        folderCapability: input.folderCapability,
       }];
     });
     if (!appended) return false;
@@ -4378,7 +4378,11 @@ export class AgentRuntime {
     this.issueSweepTail = this.issueSweepTail
       .catch(() => undefined)
       .then(() => this.drainTerminalIssueDeliveries());
-    await Promise.allSettled([this.dreamMemoryExtractionTail, this.issueSweepTail]);
+    await Promise.allSettled([
+      this.dreamMemoryExtractionTail,
+      this.issueSweepTail,
+      this.folderCapabilityRecoveryTail,
+    ]);
     await Promise.allSettled([...this.firingIssueStarts]);
     // A scheduler-started Session may fail after the sweep's first delivery
     // drain and enqueue a root/session error. Drain once more after every
@@ -4400,6 +4404,126 @@ export class AgentRuntime {
 
   runIssueCatchUp() {
     this.queueIssueSweep(new Date());
+  }
+
+  folderCapabilitiesChanged(): void {
+    this.queueFolderCapabilityRecovery();
+  }
+
+  private queueFolderCapabilityRecovery(): void {
+    if (this.shutdownStarted) return;
+    this.folderCapabilityRecoveryTail = this.folderCapabilityRecoveryTail
+      .catch(() => undefined)
+      .then(() => this.recoverGrantedFolderRequests())
+      .catch((error) => {
+        this.reportWarn(
+          'agent-runtime',
+          `Folder capability recovery failed: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          { operation: 'recoverGrantedFolderRequests' },
+          'folder-capability-recovery-failed',
+        );
+      });
+  }
+
+  private async recoverGrantedFolderRequests(): Promise<void> {
+    const permissions = await readAgentToolPermissionConfig();
+    const entries = await this.getEventStore().listConversationIndexEntries();
+    for (const entry of entries) {
+      if (this.shutdownStarted) return;
+      const liveConversation = this.conversations.get(entry.id);
+      const eventState = liveConversation?.eventState ?? await this.loadEventState(entry.id);
+      const requests = Object.values(eventState.folderCapabilityRequests)
+        .filter((request) => request.status === 'pending')
+        .filter((request) => request.folders.every((folder) => (
+          permissions.folders.some((root) => isPathInside(root, folder))
+        )))
+        .sort((left, right) => left.createdAt - right.createdAt);
+      if (requests.length === 0) continue;
+      const conversation = liveConversation ?? await this.ensureConversationWithId(entry.id);
+      for (const request of requests) {
+        if (this.shutdownStarted) return;
+        if (await this.startFolderCapabilityContinuation(request)) {
+          await this.resolveDurableFolderRequest(entry.id, conversation, request, true);
+        }
+      }
+    }
+  }
+
+  private async startFolderCapabilityContinuation(
+    request: AgentFolderCapabilityRequestRecord,
+  ): Promise<boolean> {
+    const store = this.getIssueStore();
+    while (!this.shutdownStarted) {
+      const current = (await store.readSession({ agentSessionId: request.agentSessionId }))?.agentSession;
+      if (!current) return false;
+      if (!isActiveAgentSessionState(current.state)) break;
+      await this.syncAgentSessionExecutionForRead({
+        agentSessionId: current.id,
+        include: ['latest-output'],
+        wait: true,
+        timeoutMs: 1_000,
+      }).catch(() => undefined);
+      const refreshed = (await store.readSession({ agentSessionId: current.id }))?.agentSession;
+      if (refreshed && !isActiveAgentSessionState(refreshed.state)) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (this.shutdownStarted) return false;
+
+    const state = await store.state();
+    const priorContinuation = Object.values(state.sessions).find((session) => (
+      session.continuationOfAgentSessionId === request.agentSessionId
+      && session.createdAt >= request.createdAt
+    ));
+    if (priorContinuation) return true;
+    const issue = state.issues[request.issueId];
+    if (!issue) return false;
+
+    const conversationId = this.issueConversationId(issue.id);
+    const conversation = await this.ensureConversationWithId(conversationId, issue.title);
+    await this.refreshRuntimeSettings(conversation);
+    const actor = { type: 'system' as const };
+    const runtime = createAgentIssueToolRuntime({
+      store,
+      actor,
+      executor: this.createIssueSessionExecutor(
+        () => conversation.delegationRuntime,
+        () => conversationId,
+      ),
+      resolveInputScope: (scope, currentIssue, resolvedAt) => (
+        resolveIssueInputScopeFromProjection(scope, currentIssue, this.outlinerToolHost.getProjection(), resolvedAt)
+      ),
+      prepareExecution: (currentIssue, preparedAt, mode) => (
+        this.prepareIssueExecution(currentIssue, preparedAt, mode)
+      ),
+      validateDefinition: (definition, validationOptions) => (
+        validateIssueNodeDefinition(definition, this.outlinerToolHost.getProjection(), validationOptions)
+      ),
+      authorizeChildScope: (parentSession, definition) => (
+        validateChildIssueNodeScope(parentSession, definition, this.outlinerToolHost.getProjection())
+      ),
+      onIssueCreated: () => this.queueIssueSweep(new Date()),
+      onIssueDeliveryQueued: () => this.queueIssueDeliveryDrain(),
+      startSource: () => ({ type: 'runtime-action', actor }),
+    });
+    const result = await runtime.startSession({
+      issueId: issue.id,
+      expectedIssueRevision: issue.revision,
+      continuation: {
+        previousAgentSessionId: request.agentSessionId,
+        intent: 'retry',
+        context: 'transcript',
+        guidance: `Folder access is now available: ${request.folders.join(', ')}. Start a new tool call; do not assume the earlier process ran.`,
+      },
+      request: { mode: 'request' },
+      reason: `Retry after persistent folder capability grant ${request.requestId}.`,
+    });
+    if (result.status === 'applied') return true;
+    this.emitError(
+      request.conversationId,
+      result.validation?.[0]?.message ?? `Folder capability retry could not start: ${result.status}`,
+    );
+    return false;
   }
 
   private queueIssueRecovery(now: Date) {
@@ -5027,12 +5151,18 @@ export class AgentRuntime {
         includeUserSkills: false,
         conversationId: `memory-dream:${task.runId}`,
       });
-      const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime);
+      const localWorkspace = createAgentLocalWorkspaceContext(
+        this.options.localFileRoot,
+        this.scratchRoot(),
+        skillRuntime,
+        this.options.protectedStoreRoot,
+      );
       const dreamAgent = createConfiguredAgent(DEFAULT_DREAM_CHANNEL_ID, providerConfig, activePath, this.outlinerToolHost, {
         localFileRoot: this.options.localFileRoot,
         localWorkspace,
         model,
         permissionMode: this.options.permissionMode,
+        protectedStoreRoot: this.options.protectedStoreRoot,
         runtimeSettingsLoader: () => this.getRuntimeSettings(),
         skillToolEnabled: false,
         skillRuntime,
@@ -5413,8 +5543,24 @@ export class AgentRuntime {
     return {
       conversationId: conversationId,
       renderProjection,
+      pendingApprovals: this.pendingApprovalViews(conversationId, conversation.eventState),
       pendingUserQuestion: this.pendingUserQuestionView(conversationId, conversation),
     };
+  }
+
+  private pendingApprovalViews(
+    conversationId: string,
+    eventState: AgentEventReplayState,
+  ): AgentApprovalRequestView[] {
+    const byRequestId = new Map<string, AgentApprovalRequestView>();
+    for (const pending of this.pendingApprovals.values()) {
+      if (pending.conversationId === conversationId) byRequestId.set(pending.request.requestId, pending.request);
+    }
+    const durable = Object.values(eventState.folderCapabilityRequests)
+      .filter((request) => request.status === 'pending')
+      .sort((left, right) => left.createdAt - right.createdAt);
+    for (const request of durable) byRequestId.set(request.requestId, folderCapabilityApprovalView(request));
+    return [...byRequestId.values()];
   }
 
   private renderProjection(conversation: AgentConversationState) {
@@ -5726,7 +5872,6 @@ export class AgentRuntime {
       conversationId,
       requestId: input.requestId,
       approved: input.approved,
-      scope: input.scope,
       timestamp,
     });
   }
@@ -6536,27 +6681,20 @@ export class AgentRuntime {
     const request: AgentApprovalRequestView = {
       requestId,
       conversationId: conversationId,
-      kind: 'tool_permission',
+      kind: 'folder_capability',
       toolCallId: input.toolCall.id,
       toolName: input.toolCall.name,
       title: input.decision.request.title,
       target: input.decision.request.target,
       reason: input.decision.reason,
       details: input.decision.request.details,
-      alwaysAllowRule: input.decision.request.alwaysAllowRule,
-      alwaysAllowAction: input.decision.request.alwaysAllowAction,
-      autoBlockMs: input.decision.request.autoBlockMs,
+      folders: input.decision.request.folders,
       requestedByAgentId,
     };
-    await this.emitApprovalCard(conversationId, conversation, request, {
+    this.emitConversationRuntimeEvent(conversationId, {
+      type: 'approval_request',
+      requestId: request.requestId,
       request,
-      decision: {
-        behavior: input.decision.behavior,
-        code: input.decision.code,
-        reason: input.decision.reason,
-        access: input.decision.access,
-      },
-      args: input.args,
     });
 
     return new Promise<AgentToolApprovalResolution>((resolve) => {
@@ -6568,60 +6706,15 @@ export class AgentRuntime {
         conversationId,
         runId: this.activeRunId(conversation) ?? undefined,
         request,
-        alwaysAllowRule: request.alwaysAllowRule,
-        alwaysAllowAction: request.alwaysAllowAction,
         resolve: (resolution) => {
           signal?.removeEventListener('abort', onAbort);
           resolve(resolution);
         },
       };
-      if (request.autoBlockMs && request.autoBlockMs > 0) {
-        pendingApproval.autoBlockTimer = setTimeout(() => {
-          void this.denyPendingApprovalForRuntime(conversationId, conversation, requestId, 'user_denied');
-        }, request.autoBlockMs);
-        pendingApproval.autoBlockTimer.unref?.();
-      }
       this.pendingApprovals.set(requestId, pendingApproval);
       signal?.addEventListener('abort', onAbort, { once: true });
       if (signal?.aborted) onAbort();
     });
-  }
-
-  private async emitApprovalCard(
-    conversationId: string,
-    conversation: AgentConversationState,
-    request: AgentApprovalRequestView,
-    payloadData: unknown,
-  ): Promise<void> {
-    const payload = await this.getEventStore().writePayload(conversationId, {
-      id: `approval-${request.requestId}`,
-      data: JSON.stringify(payloadData, null, 2),
-      mimeType: 'application/json',
-      runId: this.activeRunId(conversation) ?? undefined,
-      role: 'approval',
-      summary: request.title,
-    });
-
-    await this.appendConversationEvents(conversationId, conversation, [{
-      type: 'payload.created',
-      actor: systemActor(),
-      runId: this.activeRunId(conversation) ?? undefined,
-      payload,
-    }, {
-      type: 'approval.requested',
-      actor: systemActor(),
-      runId: this.activeRunId(conversation) ?? undefined,
-      requestId: request.requestId,
-      summary: `${request.title} ${request.target}`.trim(),
-      payloadRef: payload,
-    }]);
-
-    this.emitConversationRuntimeEvent(conversationId, {
-      type: 'approval_request',
-      requestId: request.requestId,
-      request,
-    });
-    this.emitProjection(conversationId, 'approval.requested');
   }
 
   private async appendToolPermissionEvent(
@@ -6631,10 +6724,9 @@ export class AgentRuntime {
   ) {
     const source = input.source ?? permissionEventSourceForDecision(input.decision);
     const actionKinds = permissionActionKinds(input.decision);
-    const events: AgentEventInput[] = input.includeChecked === false ? [] : [{
+    const events: AgentRunPermissionEventInput[] = input.includeChecked === false ? [] : [{
       type: 'tool.permission.checked',
       actor: systemActor(),
-      runId: this.activeRunId(conversation) ?? undefined,
       requestId: input.requestId,
       toolCallId: input.toolCall.id,
       toolName: input.toolCall.name,
@@ -6642,22 +6734,126 @@ export class AgentRuntime {
       actionKinds,
       outcome: input.outcome,
       source,
+      requiredFolders: input.decision.behavior === 'folder_required'
+        ? input.decision.request.folders
+        : undefined,
     }];
     if (input.resolved) {
       events.push({
         type: 'tool.permission.resolved',
         actor: systemActor(),
-        runId: this.activeRunId(conversation) ?? undefined,
         requestId: input.requestId,
         toolCallId: input.toolCall.id,
         toolName: input.toolCall.name,
         status: input.resolved.status,
         resolvedBy: input.resolved.resolvedBy,
-        updatedRule: input.resolved.updatedRule,
+        updatedFolders: input.resolved.updatedFolders,
         deniedReason: input.resolved.deniedReason,
       });
     }
-    await this.appendConversationEvents(conversationId, conversation, events);
+    if (input.runId) {
+      await this.runLedger.appendPermissionEvents(input.runId, events);
+    } else {
+      const runId = this.activeRunId(conversation) ?? undefined;
+      await this.appendConversationEvents(
+        conversationId,
+        conversation,
+        events.map((event): AgentEventInput => ({ ...event, runId })),
+      );
+    }
+    if (input.unattended && input.outcome === 'folder_required' && input.decision.behavior === 'folder_required') {
+      const runId = input.runId ?? this.activeRunId(conversation);
+      if (runId) {
+        await this.recordUnattendedFolderRequest({
+          executionConversationId: conversationId,
+          requestId: input.requestId,
+          runId,
+          toolCallId: input.toolCall.id,
+          toolName: input.toolCall.name,
+          folders: input.decision.request.folders,
+          requestedByAgentId: input.requestedByAgentId,
+        });
+      }
+    }
+  }
+
+  private async recordUnattendedFolderRequest(input: {
+    executionConversationId: string;
+    requestId: string;
+    runId: string;
+    toolCallId: string;
+    toolName: string;
+    folders: readonly string[];
+    requestedByAgentId?: string;
+  }): Promise<void> {
+    const route = await this.folderRequestRoute(input.runId);
+    if (!route) {
+      this.reportWarn(
+        'agent-runtime',
+        `Could not route folder request ${input.requestId} for Run ${input.runId}.`,
+        undefined,
+        { conversationId: input.executionConversationId, runId: input.runId, operation: 'recordUnattendedFolderRequest' },
+        'folder-request-route-missing',
+      );
+      return;
+    }
+    const origin = await this.ensureConversationWithId(route.conversationId);
+    const folderCapability = {
+      requestId: input.requestId,
+      runId: input.runId,
+      agentSessionId: route.agentSessionId,
+      issueId: route.issueId,
+      toolCallId: input.toolCallId,
+      toolName: input.toolName,
+      folders: [...input.folders],
+      requestedByAgentId: input.requestedByAgentId,
+    };
+    const appended = await this.emitConversationNotification(route.conversationId, origin, {
+      notificationId: `folder-capability-${input.requestId}`,
+      kind: 'needs_input',
+      title: 'Agent Session needs folder access',
+      body: input.folders.join(', '),
+      source: { type: 'run', runId: input.runId },
+      folderCapability,
+    });
+    if (!appended) return;
+    const record = origin.eventState.folderCapabilityRequests[input.requestId];
+    if (!record) return;
+    const request = folderCapabilityApprovalView(record);
+    this.emitConversationRuntimeEvent(route.conversationId, {
+      type: 'approval_request',
+      requestId: input.requestId,
+      request,
+    });
+  }
+
+  private async folderRequestRoute(runId: string): Promise<{
+    conversationId: string;
+    agentSessionId: string;
+    issueId: string;
+  } | null> {
+    const store = this.getIssueStore();
+    const requestedSession = await store.sessionForExecution({ engine: 'delegation', executionId: runId });
+    if (!requestedSession) return null;
+    const state = await store.state();
+    let session: AgentSession | undefined = requestedSession;
+    const seenSessions = new Set<string>();
+    while (session && !seenSessions.has(session.id)) {
+      seenSessions.add(session.id);
+      const issue: AgentIssue | undefined = state.issues[session.issueId];
+      if (!issue) return null;
+      if (issue.origin?.type === 'conversation') {
+        return {
+          conversationId: issue.origin.conversationId,
+          agentSessionId: requestedSession.id,
+          issueId: requestedSession.issueId,
+        };
+      }
+      session = issue.origin?.type === 'agent-session'
+        ? state.sessions[issue.origin.agentSessionId]
+        : undefined;
+    }
+    return null;
   }
 
   private async appendUserPromptEvent(
@@ -7828,6 +8024,7 @@ export class AgentRuntime {
         continue;
       }
       if (isDirectoryAttachment(attachment)) {
+        await grantAgentFolderCapability(attachment.path);
         out.push(attachment);
         continue;
       }
@@ -8853,10 +9050,27 @@ function approvalDeniedToolResultMessage(toolName: string, approval: AgentToolAp
   });
 }
 
-function approvalDeniedMessage(reason: PermissionDeniedReason): string {
+function folderCapabilityApprovalView(request: AgentFolderCapabilityRequestRecord): AgentApprovalRequestView {
+  const target = request.folders.join(', ');
+  return {
+    requestId: request.requestId,
+    conversationId: request.conversationId,
+    kind: 'folder_capability',
+    toolCallId: request.toolCallId,
+    toolName: request.toolName,
+    title: 'Folder access required',
+    target,
+    reason: `A background Agent Session needs folder access before ${request.toolName} can run.`,
+    details: request.folders.map((folder) => ({ label: 'Folder', value: folder })),
+    folders: request.folders.slice(),
+    requestedByAgentId: request.requestedByAgentId,
+  };
+}
+
+function approvalDeniedMessage(reason: AgentPermissionDeniedReason): string {
   switch (reason) {
-    case 'user_denied':
-      return 'User denied permission. The requested tool call was not executed.';
+    case 'user_cancelled':
+      return 'The folder request was cancelled. The requested tool call was not executed.';
     case 'run_aborted':
       return 'Permission request was cancelled before approval. The requested tool call was not executed.';
     case 'configured_deny':
@@ -8865,24 +9079,6 @@ function approvalDeniedMessage(reason: PermissionDeniedReason): string {
     case 'runtime':
       return 'Permission request was not approved. The requested tool call was not executed.';
   }
-}
-
-function addRunScopedPermissionGrants(
-  target: AgentPermissionGrant[],
-  grants: readonly AgentPermissionGrant[],
-) {
-  for (const grant of grants) {
-    if (!target.some((existing) => permissionGrantsEqual(existing, grant))) target.push(grant);
-  }
-}
-
-function permissionGrantsEqual(left: AgentPermissionGrant, right: AgentPermissionGrant): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === 'scope' && right.kind === 'scope') {
-    return left.access === right.access && path.resolve(left.root) === path.resolve(right.root);
-  }
-  if (left.kind === 'external' && right.kind === 'external') return left.target === right.target;
-  return left.kind === 'command' && right.kind === 'command' && left.form === right.form;
 }
 
 function createConfiguredAgent(
@@ -8896,6 +9092,7 @@ function createConfiguredAgent(
     thinkingLevel?: AgentReasoningLevel;
     systemPrompt?: string;
     permissionMode?: AgentPermissionMode;
+    protectedStoreRoot?: string;
     providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
     runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
     skillToolEnabled?: boolean;
@@ -8911,7 +9108,6 @@ function createConfiguredAgent(
     disallowedTools?: readonly string[];
     preapprovedToolRules?: string[];
     l0CacheBreakpointEnabled?: boolean;
-    permissionScopeIdProvider?: () => string | null;
     providerRetryContextProvider?: () => Pick<AgentProviderRetryEvent, 'conversationId' | 'runId'> | null;
     providerRetryEventHandler?: (event: Omit<AgentProviderRetryEvent, 'type' | 'timestamp'>) => void;
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
@@ -8931,17 +9127,7 @@ function createConfiguredAgent(
   const localFileRoot = options.localFileRoot;
   const skillRuntime = options.skillRuntime;
   let syncedLocalPermissionRootSignature = '';
-  let runScopedPermissionScopeId: string | null = null;
-  let runScopedPermissionGrants: AgentPermissionGrant[] = [];
   let activeProviderRetryContext: Pick<AgentProviderRetryEvent, 'conversationId' | 'runId'> | null = null;
-  const currentRunScopedPermissionGrants = () => {
-    const scopeId = options.permissionScopeIdProvider?.() ?? conversationId;
-    if (runScopedPermissionScopeId !== scopeId) {
-      runScopedPermissionScopeId = scopeId;
-      runScopedPermissionGrants = [];
-    }
-    return runScopedPermissionGrants;
-  };
   const systemPrompt = options.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT;
   const onProviderRetry = options.providerRetryEventHandler
     ? (event: ProviderRetryLifecycleEvent) => {
@@ -9001,57 +9187,30 @@ function createConfiguredAgent(
       return options.providerApiKeyLoader?.(providerId);
     },
     beforeToolCall: async ({ toolCall, args }, signal) => {
-      const globalPermissions = await readAgentToolPermissionConfig();
+      let globalPermissions = await readAgentToolPermissionConfig();
       const activeSkillReadRoots = skillRuntime ? await skillRuntime.getActiveSkillReadRoots() : [];
-      const shouldSyncLocalPermissionRoots = Boolean(
-        options.localWorkspace
-        && toolPathArgumentName(toolCall.name) !== null,
-      );
-      const scopedPermissionGrants = currentRunScopedPermissionGrants();
-      const syncLocalPermissionRoots = (extraGrants: readonly AgentPermissionGrant[] = []) => {
-        if (!options.localWorkspace || !shouldSyncLocalPermissionRoots) return;
+      const syncLocalPermissionRoots = () => {
+        if (!options.localWorkspace) return;
         const roots = [
           ...activeSkillReadRoots.map((root) => ({ access: 'read' as const, root })),
-          ...globalPermissions.grants.flatMap((rule) => (
-            rule.grant.kind === 'scope'
-              ? [{ access: rule.grant.access, root: rule.grant.root }]
-              : []
-          )),
-          ...scopedPermissionGrants.flatMap((grant) => (
-            grant.kind === 'scope'
-              ? [{ access: grant.access, root: grant.root }]
-              : []
-          )),
-          ...extraGrants.flatMap((grant) => (
-            grant.kind === 'scope'
-              ? [{ access: grant.access, root: grant.root }]
-              : []
-          )),
+          ...globalPermissions.folders.map((root) => ({ access: 'write' as const, root })),
         ];
         const signature = roots.map((root) => `${root.access}:${root.root}`).join('\0');
         if (signature === syncedLocalPermissionRootSignature) return;
         setAgentLocalPermissionRoots(options.localWorkspace, roots);
         syncedLocalPermissionRootSignature = signature;
       };
-      if (shouldSyncLocalPermissionRoots) syncLocalPermissionRoots();
-      const decision = evaluateAgentToolPermission({
+      syncLocalPermissionRoots();
+      let decision = evaluateAgentToolPermission({
         toolName: toolCall.name,
         args,
         policy: {
           mode: options.permissionMode,
           workspaceRoot: localFileRoot,
           scratchRoot: options.localWorkspace?.scratchRoot,
+          protectedStoreRoot: options.protectedStoreRoot,
           trustedReadRoots: activeSkillReadRoots,
-          globalPermissions: {
-            ...globalPermissions,
-            grants: [
-              ...globalPermissions.grants,
-              ...scopedPermissionGrants.map((grant) => ({
-                ruleValue: grantRuleValue(grant),
-                grant,
-              })),
-            ],
-          },
+          globalPermissions,
           preapprovedToolRules: [
             ...(skillRuntime?.getActivePermissionRules() ?? []),
             ...(options.preapprovedToolRules ?? []),
@@ -9072,42 +9231,30 @@ function createConfiguredAgent(
         });
         return undefined;
       }
-      if (decision.behavior === 'ask' || decision.behavior === 'soft_blocked') {
+      if (decision.behavior === 'folder_required') {
+        const unattended = !options.approvalHandler;
         await options.permissionEventHandler?.({
           requestId: permissionRequestId,
           toolCall,
           decision,
-          outcome: decision.behavior === 'soft_blocked' ? 'soft_blocked' : 'ask',
+          outcome: 'folder_required',
+          unattended,
         });
-        if (decision.behavior === 'ask') {
-          const askResolution = await resolveAgentPermissionAsk({
+        if (signal?.aborted) {
+          await options.permissionEventHandler?.({
+            requestId: permissionRequestId,
+            toolCall,
             decision,
-            interactionAvailable: Boolean(options.approvalHandler),
-            signal,
+            outcome: 'blocked',
+            includeChecked: false,
+            source: 'runtime',
+            resolved: {
+              status: 'aborted',
+              resolvedBy: 'system_abort',
+              deniedReason: 'run_aborted',
+            },
           });
-          if (askResolution.outcome === 'block') {
-            await options.permissionEventHandler?.({
-              requestId: permissionRequestId,
-              toolCall,
-              decision,
-              outcome: 'blocked',
-              includeChecked: false,
-              source: permissionEventSourceForDeniedReason(askResolution.reason),
-              resolved: {
-                status: permissionResolutionStatusForDeniedReason(askResolution.reason),
-                resolvedBy: permissionResolvedByForDeniedReason(askResolution.reason),
-                deniedReason: askResolution.reason,
-              },
-            });
-            return {
-              block: true,
-              reason: permissionDeniedToolResultMessage({
-                toolName: toolCall.name,
-                reason: askResolution.reason,
-                message: askResolution.message,
-              }),
-            };
-          }
+          return { block: true, reason: permissionDeniedToolResultMessage({ toolName: toolCall.name, reason: 'run_aborted', message: 'Folder request was cancelled with the Run.' }) };
         }
         if (options.approvalHandler) {
           const approval = await options.approvalHandler({
@@ -9126,46 +9273,47 @@ function createConfiguredAgent(
             source: approval.approved ? 'user' : permissionEventSourceForDeniedReason(deniedReason),
             resolved: {
               status: approval.approved ? 'approved' : permissionResolutionStatusForDeniedReason(deniedReason),
-              resolvedBy: approval.approved
-                ? approval.scope === 'always' ? 'allow_rule_update' : 'user_once'
-                : permissionResolvedByForDeniedReason(deniedReason),
-              updatedRule: approval.alwaysAllowRule,
+              resolvedBy: approval.approved ? 'folder_grant' : permissionResolvedByForDeniedReason(deniedReason),
+              updatedFolders: approval.folders,
               deniedReason: approval.approved ? undefined : deniedReason,
             },
           });
           if (approval.approved) {
-            if (shouldSyncLocalPermissionRoots) {
-              const approvedGrants = (decision.descriptors ?? [])
-                .map((descriptor) => descriptor.effect.grant)
-                .filter((grant): grant is AgentPermissionGrant => grant !== undefined);
-              if (approval.scope !== 'always') addRunScopedPermissionGrants(scopedPermissionGrants, approvedGrants);
-              syncLocalPermissionRoots(approvedGrants);
-            }
-            return undefined;
+            globalPermissions = await readAgentToolPermissionConfig();
+            syncLocalPermissionRoots();
+            decision = evaluateAgentToolPermission({
+              toolName: toolCall.name,
+              args,
+              policy: {
+                mode: options.permissionMode,
+                workspaceRoot: localFileRoot,
+                scratchRoot: options.localWorkspace?.scratchRoot,
+                protectedStoreRoot: options.protectedStoreRoot,
+                trustedReadRoots: activeSkillReadRoots,
+                globalPermissions,
+                preapprovedToolRules: [
+                  ...(skillRuntime?.getActivePermissionRules() ?? []),
+                  ...(options.preapprovedToolRules ?? []),
+                ],
+              },
+            });
+            if (decision.behavior === 'allow') return undefined;
+            return {
+              block: true,
+              reason: folderAccessRequiredToolResultMessage({
+                toolName: toolCall.name,
+                folders: decision.behavior === 'folder_required' ? decision.request.folders : approval.folders ?? [],
+              }),
+            };
           }
           return { block: true, reason: approvalDeniedToolResultMessage(toolCall.name, approval) };
         }
-        await options.permissionEventHandler?.({
-          requestId: permissionRequestId,
-          toolCall,
-          decision,
-          outcome: 'blocked',
-          includeChecked: false,
-          source: 'runtime',
-          resolved: {
-            status: 'denied',
-            resolvedBy: 'runtime',
-            deniedReason: 'runtime',
-          },
-        });
         return {
           block: true,
-          reason: permissionDeniedToolResultMessage({
+          reason: folderAccessRequiredToolResultMessage({
             toolName: toolCall.name,
-            reason: 'runtime',
-            message: decision.behavior === 'soft_blocked'
-              ? 'Action was blocked by default and no exception channel is available.'
-              : 'Permission requires user approval, but no approval channel is available.',
+            folders: decision.request.folders,
+            unattended: true,
           }),
         };
       }

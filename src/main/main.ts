@@ -105,11 +105,13 @@ import {
 } from './agentSettings';
 import {
   appendAgentToolPermissionBlockView,
+  getFolderCapabilityService,
+  grantAgentFolderCapability,
   normalizedRuleList,
   readAgentToolPermissionSettingsView,
   writeAgentToolPermissionSettingsView,
 } from './agentToolPermissionStore';
-import { grantRuleValue } from './agentToolPermissionRules';
+import { bindAgentProcessRevocation } from './agentProcessExecutor';
 import {
   isAgentCommand,
   isAssetCommand,
@@ -344,6 +346,8 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
   ensureAgentDir(agentLocalFileRoot);
 }
 ensureAgentDir(agentScratchRoot);
+const folderCapabilityService = getFolderCapabilityService();
+bindAgentProcessRevocation(folderCapabilityService);
 // Scratch holds only ephemeral, app-owned data (materialized attachments, web-fetch binaries,
 // bash overflow logs, PDF page images). Reclaim anything past the TTL once per launch; failures
 // are swallowed so cleanup never blocks startup.
@@ -353,10 +357,13 @@ void pruneAgentScratch(agentScratchRoot).catch((error) => {
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: agentLocalFileRoot,
   scratchRoot: agentScratchRoot,
+  protectedStoreRoot: resolvedUserDataDir,
   assetResolver: assetService,
   dreamMemoryExtractionEnabled: true,
   errorReporter: reportError,
 });
+folderCapabilityService.onGranted(() => agentRuntime.folderCapabilitiesChanged());
+agentRuntime.folderCapabilitiesChanged();
 const pageTranslationService = new PageTranslationService({
   onError: () => reportError(pageTranslationErrorReport()),
 });
@@ -1853,7 +1860,9 @@ function registerIpc() {
     const multiSelections = maxFiles > 1;
     const options: Electron.OpenDialogOptions = {
       ...(defaultPath.path ? { defaultPath: defaultPath.path } : {}),
-      properties: multiSelections ? ['openFile', 'multiSelections'] : ['openFile'],
+      properties: multiSelections
+        ? ['openFile', 'openDirectory', 'multiSelections']
+        : ['openFile', 'openDirectory'],
     };
     const result = window
       ? await dialog.showOpenDialog(window, options)
@@ -1866,6 +1875,10 @@ function registerIpc() {
     }
     lastAttachmentPickerDirectory = dirname(result.filePaths[0]!);
     const selectedPaths = result.filePaths.slice(0, maxFiles);
+    for (const selectedPath of selectedPaths) {
+      const selectedStat = await stat(selectedPath).catch(() => null);
+      if (selectedStat?.isDirectory()) await grantAgentFolderCapability(selectedPath);
+    }
     const skippedCount = Math.max(0, result.filePaths.length - selectedPaths.length);
     const files = (await Promise.all(selectedPaths.map(localPickedFile))).filter(
       (file): file is NonNullable<Awaited<ReturnType<typeof localPickedFile>>> => Boolean(file),
@@ -1902,7 +1915,9 @@ function registerIpc() {
     const id = typeof rawOptions?.id === 'string' ? rawOptions.id : '';
     const filePath = localFileSearchCache.get(id);
     if (!filePath) return { file: null };
-    return { file: await localPickedFile(filePath) };
+    const file = await localPickedFile(filePath);
+    if (file?.entryKind === 'directory') await grantAgentFolderCapability(file.path);
+    return { file };
   });
 
   ipcMain.handle('lin:preview-local-file', async (_event, rawOptions?: { id?: unknown }) => {
@@ -2217,7 +2232,7 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
 
 async function pickAgentScopeFolder(
   event: IpcMainInvokeEvent,
-  draftSettings: { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown } | undefined,
+  draftSettings: { folders?: unknown; blocks?: unknown } | undefined,
 ) {
   const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? settingsWindow ?? mainWindow;
   const defaultPath = safeAppPath('documents') ?? safeAppPath('home') ?? undefined;
@@ -2238,21 +2253,17 @@ async function pickAgentScopeFolder(
   }
 
   const root = await canonicalDirectoryPath(result.filePaths[0]);
-  const grant = grantRuleValue({ kind: 'scope', access: 'write', root });
   const currentSettings = await readAgentToolPermissionSettingsView();
-  const draftGrants = draftSettings?.grants;
-  const baseGrantInput = Array.isArray(draftGrants) ? draftGrants : currentSettings.grants;
-  const baseGrants = normalizedRuleList(baseGrantInput);
-  const grants = baseGrants.includes(grant) ? baseGrants : [...baseGrants, grant];
+  const draftFolders = draftSettings?.folders;
+  const baseFolderInput = Array.isArray(draftFolders) ? draftFolders : currentSettings.folders;
+  const baseFolders = normalizedRuleList(baseFolderInput);
+  const folders = baseFolders.includes(root) ? baseFolders : [...baseFolders, root];
   const blocks = Array.isArray(draftSettings?.blocks) ? normalizedRuleList(draftSettings?.blocks) : currentSettings.blocks;
-  const softBlockAllows = Array.isArray(draftSettings?.softBlockAllows)
-    ? normalizedRuleList(draftSettings?.softBlockAllows)
-    : currentSettings.softBlockAllows;
-  const settings = await writeAgentToolPermissionSettingsView({ grants, blocks, softBlockAllows });
+  const settings = await writeAgentToolPermissionSettingsView({ folders, blocks });
   return {
     canceled: false,
     path: root,
-    grant,
+    folder: root,
     settings,
   };
 }
@@ -2835,7 +2846,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         conversationId(),
         String(args.requestId),
         args.approved === true,
-        args.scope === 'always' ? 'always' : 'once',
       );
     case 'agent_resolve_user_question':
       return agentRuntime.resolveUserQuestion(
@@ -2867,11 +2877,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_get_tool_permission_settings':
       return readAgentToolPermissionSettingsView();
     case 'agent_update_tool_permission_settings':
-      return writeAgentToolPermissionSettingsView(args.settings as { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown });
+      return writeAgentToolPermissionSettingsView(args.settings as { folders?: unknown; blocks?: unknown });
     case 'agent_append_tool_permission_block':
       return appendAgentToolPermissionBlockView(String(args.ruleValue ?? ''));
     case 'agent_pick_scope_folder':
-      return pickAgentScopeFolder(event, args.settings as { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown } | undefined);
+      return pickAgentScopeFolder(event, args.settings as { folders?: unknown; blocks?: unknown } | undefined);
     case 'agent_upsert_provider_config':
       return upsertProviderConfig(args.provider as AgentProviderConfigInput);
     case 'agent_delete_provider_config':

@@ -4,73 +4,60 @@ import type { AgentPermissionMode } from '../core/types';
 import {
   agentToolActionKindProfile,
   isReadOnlyActionKind,
-  decideAgentOperationEffect,
-  type AgentPermissionScopeAccess,
+  type AgentPermissionFloorKind,
 } from '../core/agentPermissionModel';
 import {
-  ARBITRARY_CODE_SHELL_PREFIXES,
-  OUTWARD_FACING_SHELL_PREFIXES,
-  compareToolPermissionResolutionPriority,
+  capabilityFolderForTarget,
+  canonicalPathPreservingSuffix,
+  createFolderCapabilitySnapshot,
+  isPathInside,
+  missingFolderCapabilities,
+  normalizeRequiredFolders,
+} from './agentFolderCapabilities';
+import {
   matchingBlockForDescriptor,
-  matchingGrantForEffect,
-  matchingSoftBlockAllowForDescriptor,
   parseGlobalToolPermissionSettings,
-  alwaysAllowRuleForDescriptor,
-  softBlockAllowRuleForDescriptor,
   type AgentToolActionKind,
   type GlobalToolPermissionConfig,
-  type GlobalToolPermissionDecision,
-  type AgentOperationEffect,
   type ToolAccessScope,
   type ToolActionDescriptor,
 } from './agentToolPermissionRules';
 import { selfDefinitionRootEntries } from './agentAuthoring';
+import { isAgentProtectedStorePath } from './agentProtectedPaths';
 
 export type { AgentPermissionMode } from '../core/types';
 export type {
+  AgentPermissionFloorKind,
   AgentToolActionKind,
-  AgentOperationEffect,
   GlobalToolPermissionConfig,
-  GlobalToolPermissionDecision,
   ToolAccessScope,
   ToolActionDescriptor,
 } from './agentToolPermissionRules';
+
 export type AgentPermissionAccess = 'read' | 'write' | 'execute' | 'control' | 'unknown';
-export type AgentPermissionBehavior = 'allow' | 'ask' | 'soft_blocked' | 'deny';
-export type AgentPermissionSource =
-  | 'default'
-  | 'trust_ledger'
-  | 'built_in_soft_block'
-  | 'user_blocklist'
-  | 'soft_block_allow';
+export type AgentPermissionBehavior = 'allow' | 'folder_required' | 'blocked';
+export type AgentPermissionSource = 'default' | 'folder_capability' | 'user_blocklist';
 
 export interface AgentApprovalDetail {
   label: string;
   value: string;
 }
 
-export interface AgentApprovalRequest {
+export interface AgentFolderCapabilityRequest {
   title: string;
   target: string;
   details: AgentApprovalDetail[];
-  alwaysAllowRule?: string;
-  alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
-  autoBlockMs?: number;
+  folders: string[];
 }
 
 export interface AgentPermissionPolicy {
   mode: AgentPermissionMode;
   workspaceRoot: string;
-  // App-owned ephemeral scratch root (materialized attachments / web-fetch / tool-outputs),
-  // a sibling of the workdir. The app places agent-readable bytes here, so a *read* of a
-  // scratch path counts as inside the allowed file area; writes are still treated as outside.
   scratchRoot?: string;
+  protectedStoreRoot?: string;
   trustedReadRoots: readonly string[];
-  selfDefinitionRoots: readonly string[];
   denyTools: readonly string[];
   preapprovedToolRules: readonly string[];
-  allowOutsideWorkspaceRead: boolean;
-  allowOutsideWorkspaceWrite: boolean;
   globalPermissions: GlobalToolPermissionConfig;
 }
 
@@ -78,11 +65,10 @@ export interface AgentPermissionPolicyInput {
   mode?: AgentPermissionMode;
   workspaceRoot?: string;
   scratchRoot?: string;
+  protectedStoreRoot?: string;
   trustedReadRoots?: readonly string[];
   denyTools?: readonly string[];
   preapprovedToolRules?: readonly string[];
-  allowOutsideWorkspaceRead?: boolean;
-  allowOutsideWorkspaceWrite?: boolean;
   globalPermissions?: unknown;
 }
 
@@ -92,33 +78,24 @@ interface AgentPermissionDecisionBase {
   reason?: string;
   code?: string;
   preapproved: boolean;
-  ruleId?: string;
-  permissionSource?: AgentPermissionSource;
+  permissionSource: AgentPermissionSource;
   descriptor?: ToolActionDescriptor;
-  descriptors?: readonly ToolActionDescriptor[];
+  descriptors: readonly ToolActionDescriptor[];
 }
 
 export interface AgentPermissionAllowDecision extends AgentPermissionDecisionBase {
   behavior: 'allow';
 }
 
-export interface AgentPermissionAskDecision extends AgentPermissionDecisionBase {
-  behavior: 'ask';
-  code: string;
+export interface AgentPermissionFolderRequiredDecision extends AgentPermissionDecisionBase {
+  behavior: 'folder_required';
+  code: 'folder_access_required';
   reason: string;
-  request: AgentApprovalRequest;
+  request: AgentFolderCapabilityRequest;
 }
 
-export interface AgentPermissionSoftBlockDecision extends AgentPermissionDecisionBase {
-  behavior: 'soft_blocked';
-  code: string;
-  reason: string;
-  request: AgentApprovalRequest;
-  blockRuleValue?: string;
-}
-
-export interface AgentPermissionDenyDecision extends AgentPermissionDecisionBase {
-  behavior: 'deny';
+export interface AgentPermissionBlockedDecision extends AgentPermissionDecisionBase {
+  behavior: 'blocked';
   code: string;
   reason: string;
   redline?: true;
@@ -126,28 +103,14 @@ export interface AgentPermissionDenyDecision extends AgentPermissionDecisionBase
 
 export type AgentPermissionDecision =
   | AgentPermissionAllowDecision
-  | AgentPermissionAskDecision
-  | AgentPermissionSoftBlockDecision
-  | AgentPermissionDenyDecision;
+  | AgentPermissionFolderRequiredDecision
+  | AgentPermissionBlockedDecision;
 
 export interface AgentPermissionEvaluationInput {
   toolName: string;
   args: unknown;
   policy: AgentPermissionPolicyInput;
 }
-
-interface DerivedToolActionDescriptor extends ToolActionDescriptor {
-  requestTitle?: string;
-  requestTarget?: string;
-  requestDetails?: AgentApprovalDetail[];
-  redline?: true;
-}
-
-type DescriptorValues = Omit<DerivedToolActionDescriptor, 'toolName' | 'actionKind' | 'effect'> & {
-  effect?: AgentOperationEffect;
-  floor?: AgentOperationEffect['floor'];
-  grantAccess?: AgentPermissionScopeAccess;
-};
 
 const DEFAULT_DENY_TOOLS: readonly string[] = [];
 
@@ -166,175 +129,78 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
 ]);
 
 const TOOL_ALIASES = new Map<string, string>([
-  ['bash', 'bash'],
   ['shell', 'bash'],
   ['read', 'file_read'],
-  ['file_read', 'file_read'],
   ['glob', 'file_glob'],
-  ['file_glob', 'file_glob'],
   ['grep', 'file_grep'],
-  ['file_grep', 'file_grep'],
   ['edit', 'file_edit'],
-  ['file_edit', 'file_edit'],
   ['write', 'file_write'],
-  ['file_write', 'file_write'],
   ['delete', 'file_delete'],
-  ['file_delete', 'file_delete'],
   ['webfetch', 'web_fetch'],
-  ['web_fetch', 'web_fetch'],
   ['websearch', 'web_search'],
-  ['web_search', 'web_search'],
   ['generateimage', 'generate_image'],
-  ['generate_image', 'generate_image'],
-  ['past_chats', 'past_chats'],
   ['pastchats', 'past_chats'],
-  ['ask_user_question', 'ask_user_question'],
   ['askuserquestion', 'ask_user_question'],
-  ['skill', 'skill'],
-  ['bash_stop', 'bash_stop'],
-  ['node_read', 'node_read'],
-  ['node_search', 'node_search'],
-  ['node_create', 'node_create'],
-  ['node_edit', 'node_edit'],
-  ['node_delete', 'node_delete'],
-  ['outline_undo_stack', 'outline_undo_stack'],
 ]);
 
-interface BashDenyRule {
+interface BashHardDenyRule {
   code: string;
   reason: string;
-  floor: AgentOperationEffect['floor'];
-  pattern: RegExp;
+  floor: AgentPermissionFloorKind;
+  matches: (command: string) => boolean;
 }
 
-interface BashSoftBlockRule {
-  code: string;
-  reason: string;
-  pattern: RegExp;
-}
-
-const BASH_HARD_DENY_RULES: readonly BashDenyRule[] = [
+const BASH_HARD_DENY_RULES: readonly BashHardDenyRule[] = [
   {
     code: 'dangerous_root_delete',
-    reason: 'Blocked a command that appears to recursively delete the filesystem root, home directory, or entire allowed file area.',
+    reason: 'Blocked a command that appears to recursively delete the filesystem root or home directory.',
     floor: 'host_destruction',
-    pattern: /(?:^|[;&|\n]\s*|\s-(?:exec|execdir|ok|okdir)\s+)rm\s+(?:-[^\s]*r[^\s]*f[^\s]*|-[^\s]*f[^\s]*r[^\s]*)\s+(?:\/(?:\s|$)|\/\*(?:\s|$)|~(?:\/?(?:\s|$))|\$HOME(?:\/?(?:\s|$))|\$\{HOME\}(?:\/?(?:\s|$))|\.(?:\/?\s|$)|\*(?:\s|$))/i,
+    matches: (command) => shellInvocations(command).some(isDangerousRecursiveDelete),
   },
   {
     code: 'dangerous_disk_format',
     reason: 'Blocked a command that appears to format or erase a disk.',
     floor: 'host_destruction',
-    pattern: /\b(?:mkfs(?:\.[a-z0-9_-]+)?|diskutil\s+(?:erase[a-z]*|partition[a-z]*|apfs\s+delete[a-z]*)|newfs(?:_[a-z0-9_-]+)?)\b/i,
+    matches: (command) => shellInvocations(command).some(isDangerousDiskFormat),
   },
   {
     code: 'dangerous_raw_disk_write',
     reason: 'Blocked a command that appears to write directly to a raw disk device.',
     floor: 'host_destruction',
-    pattern: /\bdd\s+[^;&|]*\bof=\/dev\/(?:disk|rdisk|sd[a-z]|nvme|xvd)/i,
+    matches: (command) => shellInvocations(command).some(isDangerousRawDiskWrite),
   },
   {
     code: 'dangerous_power_command',
     reason: 'Blocked a command that appears to shut down or reboot the machine.',
     floor: 'host_destruction',
-    pattern: /\b(?:shutdown|reboot|halt|poweroff)\b/i,
+    matches: (command) => shellInvocations(command).some((invocation) => (
+      ['shutdown', 'reboot', 'halt', 'poweroff'].includes(invocation.executable)
+    )),
   },
   {
     code: 'dangerous_permission_root',
     reason: 'Blocked a command that appears to recursively change permissions or ownership at filesystem root.',
     floor: 'host_destruction',
-    pattern: /\b(?:chmod|chown)\s+-R\s+[^;&|]*\s+\/(?:\s|$)/i,
+    matches: (command) => shellInvocations(command).some(isDangerousRootPermissionChange),
   },
-];
-
-const BASH_SOFT_BLOCK_RULES: readonly BashSoftBlockRule[] = [
-  {
-    code: 'remote_code_execution',
-    reason: 'This downloads remote code and pipes it directly into an interpreter.',
-    pattern: /\b(?:curl|wget)\b[\s\S]*\|\s*(?:(?:xargs|env|sudo)\s+)*(?:sh|bash|zsh|fish|python|python3|ruby|perl|node)\b/i,
-  },
-  {
-    code: 'known_shell_obfuscation',
-    reason: 'This appears to decode or evaluate opaque shell code.',
-    pattern: /\b(?:base64\s+(?:--decode|-d)|openssl\s+enc\s+-d)[^\n|;&]{0,2048}\|\s*(?:sh|bash|zsh|fish|eval)\b|\beval\s+["'`$]|\b(?:python[0-9.]*|node|deno|bun|perl|ruby|php|osascript)\b[^\n|;&]{0,512}\s(?:-(?:c|e|r|E)\b|--(?:eval|exec|command|run)\b)[^\n|;&]{0,2048}\b(?:eval|exec)\s*\(/i,
-  },
-  {
-    code: 'persistence_crontab',
-    reason: 'This changes scheduled persistent jobs.',
-    pattern: /(?:^|[;&|\n]\s*)crontab\b(?!\s+-l(?:\s|$))/i,
-  },
-  {
-    code: 'persistence_login_item',
-    reason: 'This changes login, service, or defaults persistence.',
-    pattern: /\bdefaults\s+write\b|\bsystemctl\b(?=[\s\S]*(?:^|\s)--user(?:\s|$))(?=[\s\S]*\benable\b)|\blaunchctl\s+(?:load|bootstrap|enable)\b/i,
-  },
-];
-
-const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
-  /(?:^|\/)\.ssh(?:\/|$)/i,
-  /(?:^|\/)\.gnupg(?:\/|$)/i,
-  /(?:^|\/)\.aws(?:\/|$)/i,
-  /(?:^|\/)\.azure(?:\/|$)/i,
-  /(?:^|\/)\.config\/gh(?:\/|$)/i,
-  /(?:^|\/)\.docker\/config\.json$/i,
-  /(?:^|\/)Library\/Keychains(?:\/|$)/i,
-  /(?:^|\/)\.npmrc$/i,
-  /(?:^|\/)\.pypirc$/i,
-  /(?:^|\/)\.netrc$/i,
-  /(?:^|\/)\.env(?:$|[./-])/i,
-  /(?:^|\/)(?:id_rsa|id_dsa|id_ecdsa|id_ed25519)(?:$|\.)/i,
-  /\.(?:pem|key|p12|pfx)$/i,
-];
-
-const SENSITIVE_COMMAND_PATTERNS: readonly RegExp[] = [
-  /(?:~|\$HOME|\$\{HOME\})\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.docker|Library\/Keychains)(?:\/|\b)/i,
-  /(?:^|[\s=@:])(?:\.env(?:$|[\s./-])|\.npmrc\b|\.pypirc\b|\.netrc\b|id_rsa\b|id_dsa\b|id_ecdsa\b|id_ed25519\b|[^/\s]+\.pem\b|[^/\s]+\.key\b)/i,
-];
-
-// Opaque sinks that can ship bytes off the machine without an obvious network
-// verb: inline interpreter execution (python -c / node -e / perl -e / ruby -e /
-// php -r / osascript -e) and ssh remote-command execution. Used only to widen the
-// exfiltration redline, which ALSO requires a sensitive-path mention — so a false
-// positive can only force an approval on an already-sensitive command, never relax
-// one.
-const EXFIL_OPAQUE_SINK_PATTERNS: readonly RegExp[] = [
-  /\b(?:python[0-9.]*|node|deno|bun|perl|ruby|php|osascript)\b[^\n|;&]*\s(?:-(?:c|e|r|E)\b|--(?:eval|exec|command|run)\b)/i,
-  /\bssh\b\s+(?:-\S+\s+)*[^\s-]\S*\s+\S/i,
 ];
 
 export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = {}): AgentPermissionPolicy {
-  const workspaceRoot = path.resolve(input.workspaceRoot ?? process.cwd());
+  const workspaceRoot = canonicalPathPreservingSuffix(input.workspaceRoot ?? process.cwd());
   return {
     mode: input.mode ?? 'trusted',
     workspaceRoot,
-    // A blank scratch root is "unset", not the cwd (`path.resolve('')` === cwd).
-    scratchRoot: input.scratchRoot && input.scratchRoot.trim() ? path.resolve(input.scratchRoot) : undefined,
-    trustedReadRoots: normalizeTrustedReadRoots(input.trustedReadRoots),
-    selfDefinitionRoots: defaultSelfDefinitionRoots(workspaceRoot),
+    scratchRoot: input.scratchRoot?.trim()
+      ? canonicalPathPreservingSuffix(input.scratchRoot)
+      : undefined,
+    protectedStoreRoot: input.protectedStoreRoot?.trim()
+      ? canonicalPathPreservingSuffix(input.protectedStoreRoot)
+      : undefined,
+    trustedReadRoots: normalizeRoots(input.trustedReadRoots),
     denyTools: input.denyTools ?? DEFAULT_DENY_TOOLS,
     preapprovedToolRules: input.preapprovedToolRules ?? [],
-    allowOutsideWorkspaceRead: input.allowOutsideWorkspaceRead ?? false,
-    allowOutsideWorkspaceWrite: input.allowOutsideWorkspaceWrite ?? false,
     globalPermissions: parseGlobalToolPermissionSettings(input.globalPermissions),
   };
-}
-
-function normalizeTrustedReadRoots(roots: readonly string[] | undefined): string[] {
-  if (!roots?.length) return [];
-  const normalized: string[] = [];
-  for (const root of roots) {
-    if (!root.trim()) continue;
-    const resolved = path.resolve(expandHome(root));
-    if (!normalized.some((existing) => isPathInside(existing, resolved))) {
-      normalized.push(resolved);
-    }
-  }
-  return normalized;
-}
-
-function defaultSelfDefinitionRoots(workspaceRoot: string): string[] {
-  return selfDefinitionRootEntries(workspaceRoot)
-    .filter((entry) => entry.scope === 'project')
-    .map((entry) => path.resolve(entry.dir));
 }
 
 export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInput): AgentPermissionDecision {
@@ -342,199 +208,98 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
   const toolName = normalizeToolName(input.toolName);
   const access = classifyToolAccess(toolName, input.args);
   const preapproved = policy.preapprovedToolRules.some((rule) => matchesAgentToolRule(rule, toolName, input.args));
+  const descriptors = deriveAgentToolActionDescriptors({ toolName, args: input.args, policy, access });
 
   if (policy.denyTools.some((rule) => matchesToolNameRule(rule, toolName))) {
-    return deny('tool_denied', `Tool ${input.toolName} is not available for this run.`, access, preapproved);
+    return block('configured_deny', `Tool ${input.toolName} is blocked for this Run.`, access, preapproved, descriptors);
   }
 
-  const descriptors = deriveAgentToolActionDescriptors({
-    toolName,
-    args: input.args,
-    policy,
-    access,
-  });
-  const platformBlock = descriptors.find((descriptor) => descriptor.platformHardBlock);
-  if (platformBlock) {
-    return deny(
-      platformBlock.code ?? 'platform_hard_block',
-      platformBlock.consequence,
+  const hardBlock = descriptors.find((descriptor) => descriptor.platformHardBlock || descriptor.floor);
+  if (hardBlock) {
+    return block(
+      hardBlock.code ?? hardBlock.floor ?? 'platform_hard_block',
+      hardBlock.consequence,
       access,
       preapproved,
-      platformBlock.redline,
-      {
-        descriptor: platformBlock,
-        descriptors,
-      },
+      descriptors,
+      hardBlock,
+      true,
     );
   }
 
   if (policy.mode === 'restricted' && !preapproved && !isRestrictedBaseAllowed(toolName, input.args)) {
-    return deny(
-      'tool_not_preapproved',
-      `Tool ${input.toolName} is not available for this run.`,
+    return block('tool_not_preapproved', `Tool ${input.toolName} is not available for this Run.`, access, preapproved, descriptors);
+  }
+
+  const userBlock = descriptors
+    .map((descriptor) => ({ descriptor, rule: matchingBlockForDescriptor(descriptor, policy.globalPermissions) }))
+    .find((entry) => entry.rule);
+  if (userBlock?.rule) {
+    return block(
+      'configured_deny',
+      `Blocked by user rule ${userBlock.rule.ruleValue}.`,
       access,
       preapproved,
+      descriptors,
+      userBlock.descriptor,
       undefined,
-      {
-        descriptors,
-      },
+      'user_blocklist',
     );
   }
 
-  const effectResolution = resolveEffectDecision(descriptors, policy.globalPermissions);
-  if (effectResolution.decision === 'deny') {
-    return deny(
-      effectResolution.descriptor.code ?? effectResolution.descriptor.effect.floor ?? effectResolution.descriptor.actionKind,
-      effectResolution.descriptor.consequence,
+  const snapshot = createFolderCapabilitySnapshot({
+    workspaceRoot: policy.workspaceRoot,
+    scratchRoot: policy.scratchRoot,
+    activeSkillReadRoots: policy.trustedReadRoots,
+  }, policy.globalPermissions.folders);
+  const requiredFolders = requiredFoldersForTool(toolName, input.args, policy.workspaceRoot, snapshot, access);
+  const missingFolders = missingFolderCapabilities(requiredFolders, { readRoots: snapshot.writeRoots });
+  if (missingFolders.length > 0) {
+    const target = missingFolders.join(', ');
+    return {
+      behavior: 'folder_required',
       access,
+      code: 'folder_access_required',
       preapproved,
-      effectResolution.descriptor.redline,
-      {
-        descriptor: effectResolution.descriptor,
-        descriptors,
+      permissionSource: 'default',
+      reason: `Folder access is required before ${input.toolName} can run: ${target}`,
+      request: {
+        title: missingFolders.length === 1 ? 'Folder access required' : 'Folder access required',
+        target,
+        folders: missingFolders,
+        details: missingFolders.map((folder) => ({ label: 'Folder', value: folder })),
       },
-    );
-  }
-  if (effectResolution.decision === 'ask') {
-    return askForDescriptor(
-      effectResolution.descriptor,
-      access,
-      preapproved,
+      descriptor: descriptors[0],
       descriptors,
-    );
+    };
   }
-  if (effectResolution.decision === 'soft_block') {
-    return softBlockForDescriptor(
-      effectResolution.descriptor,
-      access,
-      preapproved,
-      effectResolution.source,
-      descriptors,
-      effectResolution.blockRuleValue,
-    );
-  }
-  return allow(
+
+  const usesRememberedFolder = descriptors.some((descriptorValue) => (
+    descriptorValue.targetPath
+    && policy.globalPermissions.folders.some((folder) => isPathInside(folder, descriptorValue.targetPath!))
+  )) || requiredFolders.some((required) => (
+    policy.globalPermissions.folders.some((folder) => isPathInside(folder, required))
+  ));
+  return {
+    behavior: 'allow',
     access,
     preapproved,
-    effectResolution.source === 'trust_ledger'
-      ? `Allowed by permission grant ${effectResolution.grantRuleValue}.`
-      : undefined,
-    {
-      descriptor: effectResolution.descriptor,
-      descriptors,
-      permissionSource: effectResolution.source === 'trust_ledger' || effectResolution.source === 'soft_block_allow'
-        ? effectResolution.source
-        : 'default',
-    },
-  );
-}
-
-type EffectDecisionSource = AgentPermissionSource;
-
-interface EffectDecisionResolution {
-  decision: GlobalToolPermissionDecision | 'ask';
-  source: EffectDecisionSource;
-  descriptor: DerivedToolActionDescriptor;
-  grantRuleValue?: string;
-  blockRuleValue?: string;
-}
-
-function resolveEffectDecision(
-  descriptors: readonly DerivedToolActionDescriptor[],
-  globalPermissions: GlobalToolPermissionConfig,
-): EffectDecisionResolution {
-  const resolutions = descriptors.map((descriptor): EffectDecisionResolution => {
-    const baseDecision = decideAgentOperationEffect(descriptor.effect);
-    if (baseDecision === 'deny') {
-      return {
-        decision: 'deny',
-        source: 'default',
-        descriptor,
-      };
-    }
-
-    const block = matchingBlockForDescriptor(descriptor, globalPermissions);
-    if (block) {
-      return {
-        decision: 'soft_block',
-        source: 'user_blocklist',
-        descriptor,
-        blockRuleValue: block.ruleValue,
-      };
-    }
-
-    if (descriptor.softBlock) {
-      const softAllow = matchingSoftBlockAllowForDescriptor(descriptor, globalPermissions);
-      if (!softAllow) {
-        return {
-          decision: 'soft_block',
-          source: 'built_in_soft_block',
-          descriptor,
-          blockRuleValue: descriptor.softBlockRule,
-        };
-      }
-      return {
-        decision: 'allow',
-        source: 'soft_block_allow',
-        descriptor,
-        grantRuleValue: softAllow.ruleValue,
-      };
-    }
-
-    const grant = matchingGrantForEffect(descriptor.effect, globalPermissions);
-    if (!grant && requiresOutsideScopeApproval(descriptor)) {
-      return {
-        decision: 'ask',
-        source: 'default',
-        descriptor,
-      };
-    }
-    return {
-      decision: 'allow',
-      source: grant ? 'trust_ledger' : 'default',
-      descriptor,
-      grantRuleValue: grant?.ruleValue,
-    };
-  });
-  resolutions.sort((left, right) => (
-    compareToolPermissionResolutionPriority(left, right, (resolution) => permissionSourceRank(resolution.source))
-  ));
-  return resolutions[0] ?? {
-    decision: 'deny',
-    source: 'default',
-    descriptor: hiddenShellDescriptor('No permission descriptor was derived.'),
+    permissionSource: usesRememberedFolder ? 'folder_capability' : 'default',
+    descriptor: descriptors[0],
+    descriptors,
   };
-}
-
-function requiresOutsideScopeApproval(descriptor: DerivedToolActionDescriptor): boolean {
-  return descriptor.effect.reach === 'outside_scope'
-    && descriptor.effect.grant?.kind === 'scope'
-    && toolPathArgumentName(descriptor.toolName) !== null;
-}
-
-function permissionSourceRank(source: EffectDecisionSource): number {
-  if (source === 'user_blocklist') return 3;
-  if (source === 'built_in_soft_block') return 2;
-  if (source === 'trust_ledger' || source === 'soft_block_allow') return 1;
-  return 0;
 }
 
 export function matchesAgentToolRule(rule: string, toolNameInput: string, args: unknown): boolean {
   const trimmed = rule.trim();
   if (!trimmed) return false;
   if (trimmed === '*') return true;
-
   const toolName = normalizeToolName(toolNameInput);
   const match = /^([^()\s]+)(?:\(([\s\S]*)\))?$/.exec(trimmed);
   if (!match) return matchesToolNameRule(trimmed, toolName);
-
-  const ruleTool = normalizeToolName(match[1] ?? '');
-  if (!matchesToolNameRule(ruleTool, toolName)) return false;
-
+  if (!matchesToolNameRule(match[1] ?? '', toolName)) return false;
   const pattern = match[2];
-  if (pattern === undefined) return true;
-  if (toolName !== 'bash') return true;
-
+  if (pattern === undefined || toolName !== 'bash') return true;
   const command = getStringArg(args, 'command');
   return command !== null && wildcardMatches(pattern.trim(), command);
 }
@@ -544,308 +309,67 @@ export function deriveAgentToolActionDescriptors(input: {
   args: unknown;
   policy: AgentPermissionPolicy;
   access: AgentPermissionAccess;
-}): DerivedToolActionDescriptor[] {
+}): ToolActionDescriptor[] {
   const toolName = normalizeToolName(input.toolName);
-  if (toolName === 'bash') {
-    return deriveBashActionDescriptors(getStringArg(input.args, 'command'), input.args, input.policy);
-  }
+  if (toolName === 'bash') return deriveBashActionDescriptors(getStringArg(input.args, 'command'), input.args, input.policy);
 
   const pathArgName = toolPathArgumentName(toolName);
-  if (pathArgName) {
-    return [derivePathToolActionDescriptor(toolName, input.args, input.policy, input.access, pathArgName)];
-  }
+  if (pathArgName) return [derivePathToolActionDescriptor(toolName, input.args, input.policy, input.access, pathArgName)];
 
-  if (toolName === 'web_search') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'web.search'), {
-      accessScope: 'external_system',
-      title: 'web search',
-      summary: 'Search external information.',
-      consequence: 'This reads public web search results.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'web_fetch') {
-    const url = getStringArg(input.args, 'url') ?? 'web page';
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'web.fetch'), {
-      accessScope: 'external_system',
-      title: 'web fetch',
-      summary: `Fetch external content from ${url}.`,
-      consequence: 'This contacts an external website and reads its response.',
-      reversible: true,
-      externalEffect: true,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'generate_image') {
-    const model = getStringArg(input.args, 'model');
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.image.generate'), {
-      accessScope: 'external_system',
-      title: 'image generation',
-      summary: model ? `Generate an image with ${model}.` : 'Generate an image with an enabled image provider.',
-      consequence: 'This sends the prompt and referenced images to an external image provider and may consume provider quota.',
-      reversible: true,
-      externalEffect: true,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'past_chats') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.memory.recall'), {
-      accessScope: 'none',
-      title: 'past chat recall',
-      summary: 'Read visible local agent conversation history and raw cited spans.',
-      consequence: 'This reads local prior conversations without changing them.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'ask_user_question') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.user_question.ask'), {
-      accessScope: 'none',
-      title: 'ask user question',
-      summary: 'Pause the run to ask the user for structured input.',
-      consequence: 'This waits for explicit user input and does not read or mutate local or external data.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (isAgentIssueToolName(toolName)) {
-    const copy = agentIssuePermissionCopy(toolName, input.args);
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, copy.actionKind), {
-      accessScope: 'none',
-      title: copy.title,
-      summary: copy.summary,
-      consequence: copy.consequence,
-      reversible: copy.reversible,
-      externalEffect: false,
-      highConsequence: false,
-      code: copy.code,
-    })];
-  }
-
-  if (toolName === 'node_read' || toolName === 'node_search' || toolName === 'outline_undo_stack') {
-    const actionKind = firstActionKindForTool(toolName, input.args, 'outline.read');
-    const writes = actionKind === 'outline.edit';
-    const readSummary = toolName === 'outline_undo_stack'
-      ? 'Inspect the local outline undo stack.'
-      : 'Read local outliner data.';
-    return [descriptor(toolName, actionKind, {
-      accessScope: 'allowed_file_area',
-      title: writes ? 'local document edit' : 'local document read',
-      summary: writes ? 'Undo or redo local outliner operations.' : readSummary,
-      consequence: writes ? 'This changes local documents inside Lin.' : 'This reads local product data without changing it.',
-      reversible: !writes,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'node_create' || toolName === 'node_edit') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'outline.edit'), {
-      accessScope: 'allowed_file_area',
-      title: 'local document edit',
-      summary: 'Edit local outliner content.',
-      consequence: 'This changes local documents inside Lin.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'data_import') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'outline.edit'), {
-      accessScope: 'allowed_file_area',
-      // Do not end this literal with `import`: electron-vite 5's ESM shim
-      // regex can mistake the bundled string for a side-effect import.
-      title: 'local document import operation',
-      summary: 'Bulk import cleaned external data into the local outliner document.',
-      consequence: 'This creates staged local document content inside Lin.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'node_delete') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'outline.delete'), {
-      accessScope: 'allowed_file_area',
-      title: 'local document delete',
-      summary: 'Delete local outliner content.',
-      consequence: 'This can remove local document content.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-      requestTitle: 'Approve local delete?',
-    })];
-  }
-
-  if (toolName === 'bash_stop') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'shell.stop'), {
-      accessScope: 'none',
-      title: 'bash task stop',
-      summary: 'Stop a background task launched by the agent.',
-      consequence: 'This only controls a local background task.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'skill') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.skill.invoke'), {
-      accessScope: 'none',
-      title: 'skill invocation',
-      summary: 'Invoke an installed agent skill.',
-      consequence: 'This runs local skill instructions; downstream tool calls keep their own permission gates.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  return [descriptor(toolName, 'shell.unknown', {
+  const known = descriptorForKnownTool(toolName, input.args);
+  return [known ?? descriptor(toolName, 'shell.unknown', {
     accessScope: 'none',
-    title: 'unknown tool action',
-    summary: `Use unknown tool ${toolName}.`,
-    consequence: `Tool ${toolName} is outside the supported permission classification surface.`,
-    reversible: false,
-    externalEffect: false,
-    highConsequence: true,
-    code: 'unknown_tool_action',
-    platformHardBlock: true,
-    redline: true,
+    title: 'unclassified tool action',
+    summary: `Use ${toolName}.`,
+    consequence: 'The action is unclassified for audit purposes.',
   })];
 }
 
-function isAgentIssueToolName(toolName: string): boolean {
-  return toolName === 'issue_search'
-    || toolName === 'issue_read'
-    || toolName === 'issue_create'
-    || toolName === 'issue_update'
-    || toolName === 'agent_session_start'
-    || toolName === 'agent_session_read'
-    || toolName === 'agent_session_send_message'
-    || toolName === 'agent_session_stop';
+function descriptorForKnownTool(toolName: string, args: unknown): ToolActionDescriptor | null {
+  if (toolName === 'web_search') return simpleDescriptor(toolName, args, 'web.search', 'web search', 'Search public web information.', 'external_system');
+  if (toolName === 'web_fetch') return simpleDescriptor(toolName, args, 'web.fetch', 'web fetch', 'Fetch an external web resource.', 'external_system');
+  if (toolName === 'generate_image') return simpleDescriptor(toolName, args, 'agent.image.generate', 'image generation', 'Generate an image with an enabled provider.', 'external_system');
+  if (toolName === 'past_chats') return simpleDescriptor(toolName, args, 'agent.memory.recall', 'past chat recall', 'Read local conversation history.');
+  if (toolName === 'ask_user_question') return simpleDescriptor(toolName, args, 'agent.user_question.ask', 'user question', 'Ask the user for required product input.');
+  if (toolName === 'node_read' || toolName === 'node_search') return simpleDescriptor(toolName, args, 'outline.read', 'outline read', 'Read local outline content.', 'allowed_file_area');
+  if (toolName === 'node_create' || toolName === 'node_edit' || toolName === 'data_import') return simpleDescriptor(toolName, args, 'outline.edit', 'outline edit', 'Change local outline content.', 'allowed_file_area');
+  if (toolName === 'node_delete') return simpleDescriptor(toolName, args, 'outline.delete', 'outline delete', 'Delete local outline content.', 'allowed_file_area');
+  if (toolName === 'outline_undo_stack') {
+    const actionKind = firstActionKindForTool(toolName, args, 'outline.read') ?? 'outline.read';
+    return simpleDescriptor(toolName, args, actionKind, 'outline history', 'Inspect or apply local outline history.', 'allowed_file_area');
+  }
+  if (toolName === 'bash_stop') return simpleDescriptor(toolName, args, 'shell.stop', 'process stop', 'Stop an agent-launched background process.');
+  if (toolName === 'skill') return simpleDescriptor(toolName, args, 'agent.skill.invoke', 'skill invocation', 'Invoke installed skill instructions.');
+  const issueAction = firstActionKindForTool(toolName, args, null);
+  if (issueAction) return simpleDescriptor(toolName, args, issueAction, issueAction, `Run ${issueAction}.`);
+  if (toolName === 'payment' || toolName === 'purchase') {
+    return descriptor(toolName, 'payment.purchase', {
+      accessScope: 'external_system',
+      title: 'payment',
+      summary: 'Purchase through an unsupported tool.',
+      consequence: 'Payments require a product-owned payment flow.',
+      code: 'payment_flow_required',
+      floor: 'payment',
+      platformHardBlock: true,
+    });
+  }
+  return null;
 }
 
-function agentIssuePermissionCopy(
+function simpleDescriptor(
   toolName: string,
   args: unknown,
-): {
-  actionKind: AgentToolActionKind;
-  title: string;
-  summary: string;
-  consequence: string;
-  reversible: boolean;
-  code: string;
-} {
-  const target = agentIssueToolTarget(toolName, args);
-  switch (toolName) {
-    case 'issue_search':
-      return {
-        actionKind: 'agent.issue.search',
-        title: 'issue search',
-        summary: 'Search local Issues and Recurring Issues.',
-        consequence: 'This reads local Issue metadata without changing it.',
-        reversible: true,
-        code: 'agent_issue_search',
-      };
-    case 'issue_read':
-      return {
-        actionKind: 'agent.issue.read',
-        title: 'issue read',
-        summary: `Read local Issue details for ${target}.`,
-        consequence: 'This reads local Issue metadata, Agent Sessions, and Activity without changing them.',
-        reversible: true,
-        code: 'agent_issue_read',
-      };
-    case 'issue_create':
-      return {
-        actionKind: 'agent.issue.create',
-        title: 'issue create',
-        summary: 'Create local Issue or Recurring Issue work metadata.',
-        consequence: 'This creates local work metadata with runtime provenance. Scheduled or ready triggers may run automatically when their runtime checks pass.',
-        reversible: true,
-        code: 'agent_issue_create',
-      };
-    case 'issue_update':
-      return {
-        actionKind: 'agent.issue.update',
-        title: 'issue update',
-        summary: `Update local Issue metadata for ${target}.`,
-        consequence: 'This changes durable local Issue metadata.',
-        reversible: false,
-        code: 'agent_issue_update',
-      };
-    case 'agent_session_start':
-      return {
-        actionKind: 'agent.session.start',
-        title: 'agent session start',
-        summary: `Start one Agent Session for ${target}.`,
-        consequence: 'This starts execution for an eligible Issue. Downstream tools keep their own permission gates.',
-        reversible: false,
-        code: 'agent_session_start',
-      };
-    case 'agent_session_read':
-      return {
-        actionKind: 'agent.session.read',
-        title: 'agent session read',
-        summary: `Read Agent Session state for ${target}.`,
-        consequence: 'This reads local execution state and bounded output without changing it.',
-        reversible: true,
-        code: 'agent_session_read',
-      };
-    case 'agent_session_send_message':
-      return {
-        actionKind: 'agent.session.send',
-        title: 'agent session message',
-        summary: `Send guidance to ${target}.`,
-        consequence: 'This steers an existing Agent Session within the current Issue definition.',
-        reversible: false,
-        code: 'agent_session_send_message',
-      };
-    case 'agent_session_stop':
-      return {
-        actionKind: 'agent.session.stop',
-        title: 'agent session stop',
-        summary: `Stop ${target}.`,
-        consequence: 'This cancels a pending or active Agent Session without deleting the durable Issue.',
-        reversible: false,
-        code: 'agent_session_stop',
-      };
-    default:
-      return {
-        actionKind: 'shell.unknown',
-        title: 'unknown issue tool',
-        summary: `Use unknown Issue tool ${toolName}.`,
-        consequence: 'This Issue tool is outside the supported permission classification surface.',
-        reversible: false,
-        code: 'unknown_issue_tool',
-      };
-  }
-}
-
-function agentIssueToolTarget(toolName: string, args: unknown): string {
-  if (!args || typeof args !== 'object') return toolName;
-  const record = args as Record<string, unknown>;
-  const target = record.target;
-  if (target && typeof target === 'object') {
-    const id = (target as Record<string, unknown>).id;
-    if (typeof id === 'string' && id.trim()) return id;
-  }
-  for (const key of ['issueId', 'agentSessionId']) {
-    const value = record[key];
-    if (typeof value === 'string' && value.trim()) return value;
-  }
-  return toolName;
+  fallback: AgentToolActionKind,
+  title: string,
+  summary: string,
+  accessScope: ToolAccessScope = 'none',
+): ToolActionDescriptor {
+  return descriptor(toolName, firstActionKindForTool(toolName, args, fallback) ?? fallback, {
+    accessScope,
+    title,
+    summary,
+    consequence: summary,
+  });
 }
 
 function derivePathToolActionDescriptor(
@@ -854,1233 +378,277 @@ function derivePathToolActionDescriptor(
   policy: AgentPermissionPolicy,
   access: AgentPermissionAccess,
   pathArgName: string,
-): DerivedToolActionDescriptor {
-  const pathAccess = access === 'write' ? 'write' : 'read';
-  return derivePathDescriptor({
-    toolName,
-    rawPath: getStringArg(args, pathArgName),
-    policy,
-    access: pathAccess,
-    copy: defaultPathDescriptorCopy(pathAccess),
-  });
-}
-
-type PathDescriptorAccess = 'read' | 'write';
-
-interface PathDescriptorCopy {
-  localTitle: string;
-  missingSummary: string;
-  localSummary: (resolved: string) => string;
-  localConsequence: string;
-  hardBlockTitle: string;
-  hardBlockSummary: (resolved: string) => string;
-  hardBlockConsequence: (resolved: string) => string;
-  sensitiveTitle: string;
-  sensitiveSummary: (resolved: string) => string;
-  sensitiveConsequence: (resolved: string) => string;
-  outsideTitle: string;
-  outsideSummary: (resolved: string) => string;
-  outsideConsequence: (resolved: string) => string;
-}
-
-function derivePathDescriptor(input: {
-  toolName: string;
-  rawPath: string | null;
-  policy: AgentPermissionPolicy;
-  access: PathDescriptorAccess;
-  copy: PathDescriptorCopy;
-}): DerivedToolActionDescriptor {
-  const isWrite = input.access === 'write';
-  const action = isWrite ? 'write' : 'read';
-  const baseAction = fileActionKind(input.toolName, isWrite, 'allowed_file_area');
-  if (!input.rawPath) {
-    return descriptor(input.toolName, baseAction, {
+): ToolActionDescriptor {
+  const rawPath = getStringArg(args, pathArgName);
+  const write = access === 'write';
+  const fallback = fileActionKind(toolName, write, 'allowed_file_area');
+  if (!rawPath) {
+    return descriptor(toolName, fallback, {
       accessScope: 'allowed_file_area',
-      title: input.copy.localTitle,
-      summary: input.copy.missingSummary,
-      consequence: input.copy.localConsequence,
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
+      title: write ? 'file write' : 'file read',
+      summary: write ? 'Write a local file.' : 'Read a local file.',
+      consequence: 'No path was provided.',
     });
   }
 
-  const resolved = resolvePermissionPath(input.policy.workspaceRoot, input.rawPath);
-  // Scratch is app-owned: a read of a path the app placed there (a materialized attachment,
-  // a fetched binary, an overflow log) is inside the allowed file area. Writes to scratch stay
-  // outside — the agent writes its own outputs to the workdir, never to scratch.
-  const isInsideWorkspace = isPathInside(input.policy.workspaceRoot, resolved)
-    || input.policy.selfDefinitionRoots.some((root) => isPathInside(root, resolved))
-    || (!isWrite && input.policy.trustedReadRoots.some((root) => isPathInside(root, resolved)))
-    || (!isWrite && input.policy.scratchRoot != null && isPathInside(input.policy.scratchRoot, resolved));
-
-  if (isWrite && isHardBlockedSensitiveWritePath(resolved)) {
-    return descriptor(input.toolName, fileActionKind(input.toolName, true, 'sensitive_local_path'), {
-      accessScope: 'sensitive_local_path',
-      title: input.copy.hardBlockTitle,
-      summary: input.copy.hardBlockSummary(resolved),
-      consequence: `Blocked a write to agent permission, provider, or secret configuration: ${resolved}`,
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
+  const targetPath = canonicalPathPreservingSuffix(resolvePermissionPath(policy.workspaceRoot, rawPath));
+  if (write && isAgentProtectedStorePath(targetPath, policy.protectedStoreRoot)) {
+    return descriptor(toolName, fileActionKind(toolName, true, 'sensitive_local_path'), {
+      accessScope: 'outside_allowed_file_area',
+      title: 'protected settings write',
+      summary: `Write protected settings at ${targetPath}.`,
+      consequence: 'Agent tools cannot modify Tenon permission or credential stores.',
+      targetPath,
       code: 'sensitive_persistence_write',
       floor: 'permission_self_mod',
       platformHardBlock: true,
-      redline: true,
     });
   }
 
-  if (isWrite && isSoftBlockedPersistenceWritePath(resolved)) {
-    return descriptor(input.toolName, fileActionKind(input.toolName, true, 'sensitive_local_path'), {
-      accessScope: 'sensitive_local_path',
-      title: 'persistence file write',
-      summary: input.copy.hardBlockSummary(resolved),
-      consequence: `This writes an OS persistence or git-hook path: ${resolved}`,
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
-      code: 'persistence_write',
-      softBlock: true,
-      softBlockAllowRule: `Scope(write:${resolved})`,
-      requestTarget: resolved,
-      grantAccess: 'write',
-    });
-  }
-
-  if (isSensitivePath(resolved)) {
-    return descriptor(input.toolName, fileActionKind(input.toolName, isWrite, 'sensitive_local_path'), {
-      accessScope: 'sensitive_local_path',
-      title: input.copy.sensitiveTitle,
-      summary: input.copy.sensitiveSummary(resolved),
-      consequence: input.copy.sensitiveConsequence(resolved),
-      reversible: !isWrite,
-      externalEffect: false,
-      highConsequence: true,
-      code: `sensitive_path_${action}`,
-      requestTitle: `Approve sensitive file ${action}?`,
-      requestTarget: resolved,
-      requestDetails: [
-        { label: 'Tool', value: input.toolName },
-        { label: 'Path', value: resolved },
-        { label: 'Why asking', value: 'This path may contain credentials or local secrets.' },
-      ],
-      grantAccess: input.access,
-    });
-  }
-
-  if (!isInsideWorkspace) {
-    return descriptor(input.toolName, fileActionKind(input.toolName, isWrite, 'outside_allowed_file_area'), {
-      accessScope: 'outside_allowed_file_area',
-      title: input.copy.outsideTitle,
-      summary: input.copy.outsideSummary(resolved),
-      consequence: input.copy.outsideConsequence(resolved),
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
-      code: `outside_workspace_${action}`,
-      requestTitle: `Approve outside file ${action}?`,
-      requestTarget: resolved,
-      grantAccess: input.access,
-    });
-  }
-
-  return descriptor(input.toolName, baseAction, {
-    accessScope: 'allowed_file_area',
-    title: input.copy.localTitle,
-    summary: input.copy.localSummary(resolved),
-    consequence: input.copy.localConsequence,
-    reversible: true,
-    externalEffect: false,
-    highConsequence: false,
+  const snapshot = createFolderCapabilitySnapshot({
+    workspaceRoot: policy.workspaceRoot,
+    scratchRoot: policy.scratchRoot,
+    activeSkillReadRoots: policy.trustedReadRoots,
+  }, policy.globalPermissions.folders);
+  const roots = write ? snapshot.writeRoots : snapshot.readRoots;
+  const inside = roots.some((root) => isPathInside(root, targetPath));
+  const sensitive = isSensitivePath(targetPath);
+  const scope: ToolAccessScope = inside ? 'allowed_file_area' : 'outside_allowed_file_area';
+  const actionKind = fileActionKind(toolName, write, sensitive ? 'sensitive_local_path' : scope);
+  return descriptor(toolName, actionKind, {
+    accessScope: scope,
+    title: write ? 'file write' : 'file read',
+    summary: `${write ? 'Write' : 'Read'} ${targetPath}.`,
+    consequence: inside ? 'This path is covered by an existing folder capability.' : 'This path needs a folder capability.',
+    targetPath,
   });
-}
-
-function defaultPathDescriptorCopy(access: PathDescriptorAccess): PathDescriptorCopy {
-  const isWrite = access === 'write';
-  const action = isWrite ? 'write' : 'read';
-  return {
-    localTitle: isWrite ? 'local file edit' : 'local file read',
-    missingSummary: `${isWrite ? 'Edit' : 'Read'} a path in the allowed file area.`,
-    localSummary: (resolved) => `${isWrite ? 'Edit' : 'Read'} ${resolved}.`,
-    localConsequence: isWrite ? 'This changes local files inside the allowed file area.' : 'This reads local files inside the allowed file area.',
-    hardBlockTitle: 'sensitive file write',
-    hardBlockSummary: (resolved) => `Write sensitive local path ${resolved}.`,
-    hardBlockConsequence: (resolved) => `Blocked a write to a credential, persistence, git-internal, or permission configuration path: ${resolved}`,
-    sensitiveTitle: `sensitive file ${action}`,
-    sensitiveSummary: (resolved) => `${isWrite ? 'Write' : 'Read'} sensitive local path ${resolved}.`,
-    sensitiveConsequence: (resolved) => `This would ${action} a sensitive local path: ${resolved}`,
-    outsideTitle: isWrite ? 'outside-area file write' : 'outside-area file read',
-    outsideSummary: (resolved) => `${isWrite ? 'Write' : 'Read'} ${resolved} outside the allowed file area.`,
-    outsideConsequence: (resolved) => `This would ${action} outside the allowed file area: ${resolved}`,
-  };
 }
 
 function deriveBashActionDescriptors(
   command: string | null,
   args: unknown,
   policy: AgentPermissionPolicy,
-): DerivedToolActionDescriptor[] {
-  if (!command) {
-    return [hiddenShellDescriptor('Missing shell command.')];
-  }
-  const { workspaceRoot } = policy;
-  const shellSurfaceCommand = redactStaticHereDocBodies(command);
-  const floorCommands = shellFloorScanCommands(shellSurfaceCommand);
-
-  for (const floorCommand of floorCommands) {
-    for (const rule of BASH_HARD_DENY_RULES) {
-      if (rule.pattern.test(floorCommand)) {
-        return [descriptor('bash', 'shell.destructive_cleanup', {
-          accessScope: 'none',
-          title: 'blocked shell command',
-          summary: command,
-          consequence: rule.reason,
-          reversible: false,
-          externalEffect: false,
-          highConsequence: true,
-          command,
-          code: rule.code,
-          floor: rule.floor,
-          platformHardBlock: true,
-          redline: true,
-        })];
-      }
-    }
-
-    for (const rule of BASH_SOFT_BLOCK_RULES) {
-      if (rule.pattern.test(floorCommand)) {
-        return [descriptor('bash', 'shell.local_code_execution', {
-          accessScope: 'allowed_file_area',
-          title: 'soft-blocked shell command',
-          summary: command,
-          consequence: rule.reason,
-          reversible: false,
-          externalEffect: false,
-          highConsequence: true,
-          command,
-          code: rule.code,
-          softBlock: true,
-          softBlockRule: `Command(${command})`,
-          softBlockAllowRule: `Command(${command})`,
-        })];
-      }
-    }
-
-    if (looksLikeHostRootOrHomeDelete(floorCommand, workspaceRoot)) {
-      return [descriptor('bash', 'shell.destructive_cleanup', {
-        accessScope: 'none',
-        title: 'blocked host delete',
-        summary: command,
-        consequence: 'Blocked a command that appears to recursively delete the filesystem root or home directory.',
-        reversible: false,
-        externalEffect: false,
-        highConsequence: true,
-        command,
-        code: 'dangerous_root_delete',
-        floor: 'host_destruction',
-        platformHardBlock: true,
-        redline: true,
-      })];
-    }
-
-    if (looksLikeWorkspaceRootDelete(floorCommand, workspaceRoot)) {
+): ToolActionDescriptor[] {
+  if (!command) return [unknownShellDescriptor('', 'Missing shell command.')];
+  for (const rule of BASH_HARD_DENY_RULES) {
+    if (rule.matches(command)) {
       return [descriptor('bash', 'shell.destructive_cleanup', {
         accessScope: 'allowed_file_area',
-        title: 'blocked workspace delete',
+        title: 'blocked host operation',
         summary: command,
-        consequence: 'Blocked a command that appears to recursively delete the entire allowed file area.',
-        reversible: false,
-        externalEffect: false,
-        highConsequence: true,
+        consequence: rule.reason,
         command,
-        code: 'dangerous_workspace_delete',
-        floor: 'host_destruction',
+        code: rule.code,
+        floor: rule.floor,
         platformHardBlock: true,
-        redline: true,
       })];
     }
   }
-
-  const mentionsSensitivePath = floorCommands.some((floorCommand) => commandMentionsSensitivePath(floorCommand, workspaceRoot));
-  if (floorCommands.some((floorCommand) => commandMentionsSensitivePath(floorCommand, workspaceRoot) && looksLikeExfiltrationSink(floorCommand))) {
-    return [descriptor('bash', 'shell.network_write', {
-      accessScope: 'sensitive_local_path',
-      title: 'blocked sensitive data exfiltration',
-      summary: command,
-      consequence: 'Blocked a command that appears to send sensitive local data to a network endpoint.',
-      reversible: false,
-      externalEffect: true,
-      highConsequence: true,
-      command,
-      code: 'sensitive_data_exfiltration',
-      floor: 'exfiltration',
-      platformHardBlock: true,
-      redline: true,
-    })];
-  }
-
-  if (floorCommands.some((floorCommand) => looksLikePermissionSelfModification(floorCommand, workspaceRoot))) {
+  if (looksLikeProtectedStoreWrite(command, policy.workspaceRoot, policy.protectedStoreRoot)) {
     return [descriptor('bash', 'file.write.sensitive_local_path', {
-      accessScope: 'sensitive_local_path',
-      title: 'blocked permission configuration write',
+      accessScope: 'outside_allowed_file_area',
+      title: 'protected settings write',
       summary: command,
-      consequence: 'Blocked a command that appears to modify agent permission, provider, or secret configuration.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
+      consequence: 'Agent tools cannot modify Tenon permission or credential stores.',
       command,
       code: 'sensitive_persistence_write',
       floor: 'permission_self_mod',
       platformHardBlock: true,
-      redline: true,
     })];
   }
-
-  if (floorCommands.some((floorCommand) => looksLikeSelfDefinitionShellWrite(floorCommand, workspaceRoot))) {
+  if (looksLikeSelfDefinitionShellWrite(command, policy.workspaceRoot)) {
     return [descriptor('bash', 'file.write.sensitive_local_path', {
-      accessScope: 'sensitive_local_path',
-      title: 'blocked self-definition shell write',
+      accessScope: 'allowed_file_area',
+      title: 'skill definition write',
       summary: command,
-      consequence: 'Blocked a shell command that appears to write skill or agent definition content outside the validated file_write/file_edit gateway.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
+      consequence: 'Executable skill definitions must go through the validated skill authoring gateway.',
       command,
       code: 'self_definition_shell_write',
       floor: 'permission_self_mod',
       platformHardBlock: true,
-      redline: true,
     })];
   }
 
-  if (floorCommands.some((floorCommand) => looksLikeSoftPersistenceWrite(floorCommand, workspaceRoot))) {
-    return [descriptor('bash', 'file.write.sensitive_local_path', {
-      accessScope: 'sensitive_local_path',
-      title: 'soft-blocked persistence write',
-      summary: command,
-      consequence: 'This appears to write a shell startup file, cron entry, LaunchAgent, systemd user unit, or git-internal path.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
-      command,
-      code: 'persistence_write',
-      softBlock: true,
-      softBlockRule: `Command(${command})`,
-      softBlockAllowRule: `Command(${command})`,
-    })];
-  }
-
-  const descriptors: DerivedToolActionDescriptor[] = [];
-  if (getBooleanArg(args, 'dangerouslyDisableSandbox')) {
-    descriptors.push(descriptor('bash', 'shell.sandbox_override', {
-      accessScope: 'none',
-      title: 'command execution override',
-      summary: command,
-      consequence: 'The command requested an execution override.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
-      command,
-      code: 'sandbox_override',
-      requestTitle: 'Approve command override?',
-      requestTarget: command,
-    }));
-  }
-
+  const descriptors = splitShellSegments(command).map((segment) => classifyShellSegment(segment, command));
   if (getBooleanArg(args, 'run_in_background')) {
     descriptors.push(descriptor('bash', 'shell.background_process', {
-      accessScope: 'none',
-      title: 'background command',
+      accessScope: 'allowed_file_area',
+      title: 'background process',
       summary: command,
-      consequence: 'This starts a process that can keep running after the current turn.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
+      consequence: 'Run a process in the background.',
       command,
-      code: 'background_process',
-      requestTitle: 'Approve background command?',
-      requestTarget: command,
     }));
   }
-
-  if (mentionsSensitivePath) {
-    descriptors.push(descriptor('bash', 'file.read.sensitive_local_path', {
-      accessScope: 'sensitive_local_path',
-      title: 'sensitive file access',
-      summary: command,
-      consequence: 'This command references a path that may contain credentials or local secrets.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: true,
-      command,
-      code: 'sensitive_path_shell',
-      requestTitle: 'Approve sensitive file access?',
-      requestTarget: command,
-    }));
-  }
-
-  descriptors.push(...deriveBashScopeDescriptors(shellSurfaceCommand, workspaceRoot));
-
-  const segments = parseShellSegments(shellSurfaceCommand);
-  if (!segments) return [hiddenShellDescriptor('Dynamic or ambiguous shell execution.', command)];
-  for (const segment of segments) {
-    descriptors.push(classifyShellSegment(segment, command, workspaceRoot));
-  }
-
-  return descriptors.length > 0 ? descriptors : [hiddenShellDescriptor('Unknown shell execution.', command)];
+  return descriptors.length > 0 ? descriptors : [unknownShellDescriptor(command, 'Unclassified shell syntax.')];
 }
 
-function classifyShellSegment(segmentInput: string, fullCommand: string, workspaceRoot: string): DerivedToolActionDescriptor {
-  const segment = stripShellEnvPrefix(segmentInput.trim());
-  const words = parseShellWords(segment);
-  const head = normalizeToolName(words[0] ?? '');
-  const second = (words[1] ?? '').toLowerCase();
-  const packageManager = ['npm', 'pnpm', 'yarn', 'bun'].includes(head);
-
-  if (!head) return hiddenShellDescriptor('Empty shell segment.', fullCommand);
-
-  if (looksLikeUnscopedRecursiveDelete(segment, workspaceRoot)) {
-    return descriptor('bash', 'shell.destructive_cleanup', {
-      accessScope: 'allowed_file_area',
-      title: 'destructive cleanup',
-      summary: fullCommand,
-      consequence: 'This recursively deletes files outside an obviously scoped project path.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
-      command: fullCommand,
-      code: 'destructive_cleanup',
-      requestTitle: 'Approve destructive cleanup?',
-      requestTarget: fullCommand,
-    });
+function classifyShellSegment(segmentInput: string, fullCommand: string): ToolActionDescriptor {
+  const segment = segmentInput.trim();
+  const head = parseShellWords(segment)[0]?.toLowerCase() ?? '';
+  const values = (actionKind: AgentToolActionKind, title: string, summary: string): ToolActionDescriptor => descriptor('bash', actionKind, {
+    accessScope: actionKind === 'shell.network_write' || actionKind === 'git.publish_remote' || actionKind === 'deploy.publish_remote'
+      ? 'external_system'
+      : 'allowed_file_area',
+    title,
+    summary,
+    consequence: summary,
+    command: fullCommand,
+  });
+  if (!head) return unknownShellDescriptor(fullCommand, 'Empty shell segment.');
+  if (/\bgit\s+(?:push|send-email)\b/i.test(segment) || /\bgh\s+(?:pr\s+(?:create|merge|close|reopen|comment|review)|release\s+create)\b/i.test(segment)) {
+    return values('git.publish_remote', 'remote repository write', segment);
   }
-
-  if (head === 'rm') {
-    return descriptor('bash', 'file.delete.allowed_file_area', {
-      accessScope: 'allowed_file_area',
-      title: 'local file delete',
-      summary: fullCommand,
-      consequence: 'This deletes local files in the allowed file area.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: false,
-      command: fullCommand,
-      code: 'local_file_delete',
-      requestTitle: 'Approve local delete?',
-      requestTarget: fullCommand,
-    });
+  if (/\b(?:vercel|wrangler|firebase|fly|netlify)\s+(?:deploy|publish)\b|\bkubectl\s+(?:apply|create|delete|patch|replace|rollout)\b/i.test(segment)) {
+    return values('deploy.publish_remote', 'deployment', segment);
   }
-
-  if (head === 'find' && hasFindExecFlag(words)) {
-    return descriptor('bash', 'shell.local_code_execution', {
-      accessScope: 'allowed_file_area',
-      title: 'local code execution',
-      summary: fullCommand,
-      consequence: 'This runs commands selected by find for matching local files.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
-      command: fullCommand,
-      code: 'find_exec',
-      requestTitle: 'Approve find execution?',
-      requestTarget: fullCommand,
-    });
+  if (looksLikeNetworkWrite(segment)) return values('shell.network_write', 'network write', segment);
+  if (/\b(?:npm|pnpm|yarn|bun)\s+(?:add|install|i|remove|uninstall|update)\b|\b(?:pip|pip3)\s+install\b|\bbrew\s+(?:install|uninstall|upgrade)\b/i.test(segment)) {
+    return values('shell.dependency_install', 'dependency change', segment);
   }
-
-  if (head === 'find' && hasFindDeleteFlag(words)) {
-    return descriptor('bash', 'file.delete.allowed_file_area', {
-      accessScope: 'allowed_file_area',
-      title: 'local file delete',
-      summary: fullCommand,
-      consequence: 'This deletes local files matched by find.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: false,
-      command: fullCommand,
-      code: 'find_delete',
-      requestTitle: 'Approve local delete?',
-      requestTarget: fullCommand,
-    });
+  if (/\brm\s+[^;&|]*-[^\s]*r|\bfind\b[^;&|]*(?:-delete|-exec\s+rm)\b/i.test(segment)) {
+    return values('shell.destructive_cleanup', 'local cleanup', segment);
   }
-
-  if (head === 'git' && second === 'push') {
-    return descriptor('bash', 'git.publish_remote', {
-      accessScope: 'external_system',
-      title: 'git push',
-      summary: fullCommand,
-      consequence: 'This changes external state on a git remote.',
-      reversible: false,
-      externalEffect: true,
-      highConsequence: true,
-      command: fullCommand,
-      code: 'external_git_push',
-      requestTitle: 'Approve GitHub push?',
-      requestTarget: fullCommand,
-    });
+  if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run|test|build|dev|lint|check)\b/i.test(segment)) {
+    return values('shell.project_script', 'project script', segment);
   }
-
-  if (head === 'gh' && isGhMutation(words)) {
-    return descriptor('bash', 'git.publish_remote', {
-      accessScope: 'external_system',
-      title: 'GitHub CLI mutation',
-      summary: fullCommand,
-      consequence: 'This changes external state through the GitHub CLI.',
-      reversible: false,
-      externalEffect: true,
-      highConsequence: true,
-      command: fullCommand,
-      code: 'external_gh_mutation',
-      requestTitle: 'Approve GitHub action?',
-      requestTarget: fullCommand,
-    });
+  if (/\btenon-import\s+commit\b/i.test(segment)) {
+    return values('outline.edit', 'outline import', segment);
   }
-
-  if ((head === 'tenon-import' || head === 'tenon_import') && second === 'commit') {
-    return descriptor('bash', 'outline.edit', {
-      accessScope: 'allowed_file_area',
-      title: 'local document import commit',
-      summary: fullCommand,
-      consequence: 'This commits a validated Import Pack through the running Tenon app and creates staged local document content.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-      command: fullCommand,
-      code: 'tenon_import_commit',
-      requestTitle: 'Approve import commit?',
-      requestTarget: fullCommand,
-    });
+  if (/\b(?:python(?:3)?|node|deno|bun|ruby|perl|php|osascript|bash|sh|zsh)\b(?:\s|$)/i.test(segment)) {
+    return values('shell.local_code_execution', 'local code execution', segment);
   }
-
-  if (head === 'tenon-import' || head === 'tenon_import') {
-    return descriptor('bash', 'shell.local_code_execution', {
-      accessScope: 'allowed_file_area',
-      title: 'local import CLI',
-      summary: fullCommand,
-      consequence: 'This runs the Tenon import CLI for local inspection, conversion, validation, or preview.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-      command: fullCommand,
-      code: 'tenon_import_cli',
-      requestTarget: fullCommand,
-    });
+  if (containsShellWriteOperator(segment) || /\b(?:sed|perl|ruby)\s+-[^\s]*i\b/i.test(segment)) {
+    return values('file.edit.allowed_file_area', 'shell file edit', segment);
   }
-
-  if (packageManager && isDependencyInstallCommand(head, words)) {
-    return descriptor('bash', 'shell.dependency_install', {
-      accessScope: 'allowed_file_area',
-      title: 'dependency install',
-      summary: fullCommand,
-      consequence: 'This can change installed dependencies or lockfiles.',
-      reversible: false,
-      externalEffect: true,
-      highConsequence: true,
-      command: fullCommand,
-      code: 'package_install',
-      requestTitle: 'Approve package change?',
-      requestTarget: fullCommand,
-    });
+  if (/\b(?:ls|find|fd|rg|grep|cat|head|tail|sed|awk|wc|stat|git\s+(?:status|diff|log|show|branch))\b/i.test(segment)) {
+    return values('shell.read_search', 'local inspection', segment);
   }
-
-  if ((packageManager && second === 'publish') || isDeployCommand(head, words)) {
-    return descriptor('bash', 'deploy.publish_remote', {
-      accessScope: 'external_system',
-      title: 'deploy or publish',
-      summary: fullCommand,
-      consequence: 'This can publish artifacts or update a remote environment.',
-      reversible: false,
-      externalEffect: true,
-      highConsequence: true,
-      command: fullCommand,
-      code: 'deploy_or_publish',
-      requestTitle: 'Approve deploy or publish?',
-      requestTarget: fullCommand,
-    });
-  }
-
-  if (looksLikeNetworkWrite(segment) || isOutwardFacingShellCommand(head, words)) {
-    return descriptor('bash', 'shell.network_write', {
-      accessScope: 'external_system',
-      title: 'network write',
-      summary: fullCommand,
-      consequence: 'This appears to send data to a network endpoint or mutate an external system.',
-      reversible: false,
-      externalEffect: true,
-      highConsequence: true,
-      command: fullCommand,
-      code: 'network_write',
-      requestTitle: 'Approve network write?',
-      requestTarget: fullCommand,
-    });
-  }
-
-  if (isDatabaseMigrationCommand(head, words)) {
-    return descriptor('bash', 'shell.project_script', {
-      accessScope: 'allowed_file_area',
-      title: 'database migration',
-      summary: fullCommand,
-      consequence: 'This can mutate a local or remote database.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
-      command: fullCommand,
-      code: 'database_migration',
-      requestTitle: 'Approve database change?',
-      requestTarget: fullCommand,
-    });
-  }
-
-  if (isProjectScriptCommand(head, words)) {
-    return descriptor('bash', 'shell.project_script', {
-      accessScope: 'allowed_file_area',
-      title: 'local validation or project script',
-      summary: fullCommand,
-      consequence: 'This runs local build, test, validation, or project tooling.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-      command: fullCommand,
-      code: 'project_script',
-      requestTarget: fullCommand,
-    });
-  }
-
-  if (ARBITRARY_CODE_SHELL_PREFIXES.includes(head)) {
-    return descriptor('bash', 'shell.local_code_execution', {
-      accessScope: 'allowed_file_area',
-      title: 'local code execution',
-      summary: fullCommand,
-      consequence: 'This executes arbitrary local code.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
-      command: fullCommand,
-      code: 'local_code_execution',
-      requestTitle: 'Approve local code execution?',
-      requestTarget: fullCommand,
-    });
-  }
-
-  if (head === 'sed' && hasInlineEditFlag(words)) {
-    return descriptor('bash', 'file.edit.allowed_file_area', {
-      accessScope: 'allowed_file_area',
-      title: 'local file edit',
-      summary: fullCommand,
-      consequence: 'This edits local files in place.',
-      reversible: false,
-      externalEffect: false,
-      highConsequence: false,
-      command: fullCommand,
-      code: 'local_file_edit',
-      requestTitle: 'Approve local file edit?',
-      requestTarget: fullCommand,
-    });
-  }
-
-  return staticShellDescriptor(fullCommand, head);
+  return unknownShellDescriptor(fullCommand, 'Unclassified shell syntax.');
 }
 
-function deriveBashScopeDescriptors(command: string, workspaceRoot: string): DerivedToolActionDescriptor[] {
-  const seen = new Set<string>();
-  const descriptors: DerivedToolActionDescriptor[] = [];
-  for (const word of parseShellWords(command)) {
-    const cleaned = stripShellPathDecoration(word);
-    if (!looksLikeShellPathToken(cleaned)) continue;
-    const resolved = resolvePermissionPath(workspaceRoot, cleaned);
-    if (isPathInside(workspaceRoot, resolved)) continue;
-    if (seen.has(resolved)) continue;
-    seen.add(resolved);
-    descriptors.push(descriptor('bash', 'file.read.outside_allowed_file_area', {
-      accessScope: 'outside_allowed_file_area',
-      title: 'outside-scope shell path',
-      summary: command,
-      consequence: `This command reaches outside the handed file scope: ${resolved}`,
-      reversible: false,
-      externalEffect: false,
-      highConsequence: true,
-      command,
-      code: 'outside_scope_shell_path',
-      requestTitle: 'Approve outside-scope shell access?',
-      requestTarget: resolved,
-    }));
-  }
-  return descriptors;
-}
-
-function softBlockForDescriptor(
-  descriptor: DerivedToolActionDescriptor,
+function requiredFoldersForTool(
+  toolName: string,
+  args: unknown,
+  workspaceRoot: string,
+  snapshot: ReturnType<typeof createFolderCapabilitySnapshot>,
   access: AgentPermissionAccess,
-  preapproved: boolean,
-  permissionSource: EffectDecisionSource,
-  descriptors: readonly DerivedToolActionDescriptor[],
-  blockRuleValue?: string,
-): AgentPermissionSoftBlockDecision {
-  const reason = descriptor.consequence;
-  const alwaysAllowRule = permissionSource === 'user_blocklist'
-    ? blockRuleValue
-    : softBlockAllowRuleForDescriptor(descriptor);
-  const alwaysAllowAction = permissionSource === 'user_blocklist'
-    ? 'remove_block'
-    : 'soft_allow';
-  return softBlock(
-    descriptor.code ?? descriptor.actionKind,
-    reason,
-    access,
-    preapproved,
-    approvalRequestForDescriptor(descriptor, {
-      reasonLabel: 'Why blocked',
-      title: descriptor.requestTitle ?? `Blocked by default: ${descriptor.title}`,
-      alwaysAllowRule,
-      alwaysAllowAction,
-      autoBlockMs: 10_000,
-    }),
-    {
-      descriptor,
-      descriptors,
-      permissionSource,
-      blockRuleValue,
-    },
-  );
+): string[] {
+  if (toolName === 'bash') return normalizeRequiredFolders(getUnknownArg(args, 'required_folders'), workspaceRoot);
+  const pathArg = toolPathArgumentName(toolName);
+  if (!pathArg) return [];
+  const rawPath = getStringArg(args, pathArg);
+  if (!rawPath) return [];
+  const target = canonicalPathPreservingSuffix(resolvePermissionPath(workspaceRoot, rawPath));
+  const allowedRoots = access === 'write' ? snapshot.writeRoots : snapshot.readRoots;
+  if (allowedRoots.some((root) => isPathInside(root, target))) return [];
+  const folder = capabilityFolderForTarget(target, workspaceRoot);
+  return folder ? [folder] : [];
 }
 
-function askForDescriptor(
-  descriptor: DerivedToolActionDescriptor,
-  access: AgentPermissionAccess,
-  preapproved: boolean,
-  descriptors: readonly DerivedToolActionDescriptor[],
-): AgentPermissionAskDecision {
-  const reason = descriptor.consequence;
-  const alwaysAllowRule = alwaysAllowRuleForDescriptor(descriptor);
-  return {
-    behavior: 'ask',
-    code: descriptor.code ?? descriptor.actionKind,
-    reason,
-    access,
-    preapproved,
-    request: approvalRequestForDescriptor(descriptor, {
-      reasonLabel: 'Why asking',
-      title: descriptor.requestTitle ?? `Approve ${descriptor.title}?`,
-      alwaysAllowRule,
-      alwaysAllowAction: alwaysAllowRule ? 'grant' : undefined,
-    }),
-    descriptor,
-    descriptors,
-  };
-}
-
-function approvalRequestForDescriptor(
-  descriptor: DerivedToolActionDescriptor,
-  options: {
-    title: string;
-    reasonLabel: string;
-    alwaysAllowRule?: string;
-    alwaysAllowAction?: AgentApprovalRequest['alwaysAllowAction'];
-    autoBlockMs?: number;
-  },
-): AgentApprovalRequest {
-  const target = descriptor.requestTarget ?? descriptor.command ?? descriptor.summary;
-  return {
-    title: options.title,
-    target,
-    alwaysAllowRule: options.alwaysAllowRule,
-    alwaysAllowAction: options.alwaysAllowAction,
-    autoBlockMs: options.autoBlockMs,
-    details: descriptor.requestDetails ?? [
-      { label: 'Action', value: descriptor.title },
-      { label: 'Target', value: target },
-      { label: options.reasonLabel, value: descriptor.consequence },
-      { label: 'Permission kind', value: descriptor.actionKind },
-    ],
-  };
-}
-
-export function approvalNoticeForDeniedDecision(
-  toolName: string,
-  decision: AgentPermissionDenyDecision,
-): AgentApprovalRequest {
-  const descriptor = decision.descriptor ?? decision.descriptors?.[0];
-  const target = descriptor?.command ?? descriptor?.summary ?? toolName;
-  const details: AgentApprovalDetail[] = [
-    { label: 'Tool', value: toolName },
-    { label: 'Target', value: target },
-    { label: 'Why blocked', value: decision.reason },
-    { label: 'Permission kind', value: descriptor?.actionKind ?? decision.code },
-  ];
-  if (descriptor?.command && descriptor.command !== target) {
-    details.push({ label: 'Command', value: descriptor.command });
-  }
-  if (decision.redline || descriptor?.platformHardBlock) {
-    details.push({ label: 'Safety floor', value: 'This block cannot be bypassed by trust settings.' });
-  }
-  return {
-    title: `Blocked ${descriptor?.title ?? toolName}`,
-    target,
-    details,
-  };
-}
-
-function descriptor(
-  toolName: string,
-  actionKind: AgentToolActionKind,
-  values: DescriptorValues,
-): DerivedToolActionDescriptor {
-  const {
-    effect,
-    floor,
-    grantAccess,
-    ...descriptorValues
-  } = values;
-  const effectValues = floor === undefined
-    ? { ...descriptorValues, grantAccess }
-    : { ...descriptorValues, grantAccess, floor };
-  const resolvedEffect = effect ?? inferEffect(actionKind, effectValues);
-  assertDescriptorConsistency(toolName, actionKind, {
-    effect: resolvedEffect,
-    ...descriptorValues,
-  });
-  return {
-    toolName,
-    actionKind,
-    effect: resolvedEffect,
-    ...descriptorValues,
-  };
-}
-
-function assertDescriptorConsistency(
-  toolName: string,
-  actionKind: AgentToolActionKind,
-  descriptorValues: Omit<DerivedToolActionDescriptor, 'toolName' | 'actionKind'>,
-) {
-  const hasHardFloor = descriptorValues.effect.floor !== undefined
-    || descriptorValues.platformHardBlock === true
-    || descriptorValues.redline === true;
-  if (descriptorValues.softBlock && hasHardFloor) {
-    throw new Error(`Invalid permission descriptor ${toolName}:${actionKind}: softBlock cannot be combined with a hard floor.`);
-  }
-  if (!descriptorValues.softBlock && (descriptorValues.softBlockRule || descriptorValues.softBlockAllowRule)) {
-    throw new Error(`Invalid permission descriptor ${toolName}:${actionKind}: soft-block rules require softBlock.`);
-  }
-}
-
-function hiddenShellDescriptor(reason: string, command = ''): DerivedToolActionDescriptor {
-  return descriptor('bash', 'shell.unknown', {
-    accessScope: 'none',
-    title: 'unknown shell execution',
-    summary: command,
-    consequence: reason,
-    reversible: false,
-    externalEffect: false,
-    highConsequence: true,
-    command,
-    code: 'hidden_exec',
-    softBlock: true,
-    ...(command ? { softBlockAllowRule: `Command(${command})` } : {}),
-    effect: {
-      reach: 'local',
-      reversible: false,
-      touchesCredentials: false,
-      label: command || 'hidden shell execution',
-      ...(command ? { grant: { kind: 'command' as const, form: command } } : {}),
-    },
-  });
-}
-
-function staticShellDescriptor(command: string, head: string): DerivedToolActionDescriptor {
-  return descriptor('bash', 'shell.unknown', {
-    accessScope: 'allowed_file_area',
-    title: 'local shell command',
-    summary: command,
-    consequence: `This runs a static local command: ${head}.`,
-    reversible: true,
-    externalEffect: false,
-    highConsequence: false,
-    command,
-    code: 'local_static_command',
-    effect: {
-      reach: 'local',
-      reversible: true,
-      touchesCredentials: false,
-      label: `run ${head}`,
-      grant: { kind: 'command', form: command },
-    },
-  });
-}
-
-function inferEffect(
-  actionKind: AgentToolActionKind,
-  values: Omit<DescriptorValues, 'effect'>,
-): AgentOperationEffect {
-  const floor = floorForDescriptor(actionKind, values);
-  const touchesCredentials = values.accessScope === 'sensitive_local_path';
-  const grant = grantForDescriptor(actionKind, values);
-  return {
-    reach: reachForDescriptor(actionKind, values),
-    reversible: values.reversible,
-    touchesCredentials,
-    ...(floor ? { floor } : {}),
-    label: values.title,
-    ...(grant ? { grant } : {}),
-  };
-}
-
-function floorForDescriptor(
-  actionKind: AgentToolActionKind,
-  values: Omit<DescriptorValues, 'effect'>,
-): AgentOperationEffect['floor'] {
-  if (values.floor) return values.floor;
-  if (actionKind === 'agent.permission.modify') return 'permission_self_mod';
-  if (actionKind === 'payment.purchase') return 'payment';
-  if (!values.platformHardBlock) return undefined;
-  const code = values.code ?? '';
-  if (code.includes('exfiltration')) return 'exfiltration';
-  if (code.includes('persistence') || code.includes('sensitive_persistence')) return 'persistence';
-  if (code.includes('hidden') || code.includes('remote_code') || code.includes('obfuscation')) return 'hidden_exec';
-  return 'host_destruction';
-}
-
-function reachForDescriptor(
-  actionKind: AgentToolActionKind,
-  values: Omit<DescriptorValues, 'effect'>,
-): AgentOperationEffect['reach'] {
-  if (values.accessScope === 'outside_allowed_file_area') return 'outside_scope';
-  if (actionKind === 'web.search' || actionKind === 'web.fetch') return 'network_read';
-  if (actionKind === 'shell.network_write' || actionKind === 'git.publish_remote' || actionKind === 'deploy.publish_remote') return 'network_write';
-  if (values.accessScope === 'external_system') return values.externalEffect ? 'external_system' : 'network_read';
-  return 'local';
-}
-
-function grantForDescriptor(
-  actionKind: AgentToolActionKind,
-  values: Omit<DescriptorValues, 'effect'>,
-): AgentOperationEffect['grant'] {
-  const target = values.requestTarget ?? values.command ?? values.summary;
-  if (values.accessScope === 'outside_allowed_file_area') {
-    return {
-      kind: 'scope',
-      access: values.grantAccess ?? (actionKind === 'file.read.outside_allowed_file_area' ? 'read' : 'write'),
-      root: target,
-    };
-  }
-  if (actionKind === 'shell.network_write' || actionKind === 'git.publish_remote' || actionKind === 'deploy.publish_remote') {
-    return { kind: 'external', target };
-  }
-  if (
-    actionKind === 'shell.sandbox_override'
-    || actionKind === 'shell.background_process'
-    || actionKind === 'shell.local_code_execution'
-    || actionKind === 'shell.project_script'
-    || actionKind === 'shell.dependency_install'
-    || actionKind === 'file.delete.allowed_file_area'
-    || actionKind === 'file.edit.allowed_file_area'
-  ) {
-    return { kind: 'command', form: target };
-  }
-  if (values.accessScope === 'sensitive_local_path') {
-    return {
-      kind: 'scope',
-      access: values.grantAccess ?? (actionKind === 'file.read.sensitive_local_path' ? 'read' : 'write'),
-      root: target,
-    };
-  }
-  return undefined;
-}
-
-function fileActionKind(
-  toolName: string,
-  isWrite: boolean,
-  scope: 'allowed_file_area' | 'outside_allowed_file_area' | 'sensitive_local_path',
-): AgentToolActionKind {
-  if (isWrite) {
-    if (scope === 'allowed_file_area') {
-      if (toolName === 'file_delete') return 'file.delete.allowed_file_area';
-      return toolName === 'file_write' ? 'file.write.allowed_file_area' : 'file.edit.allowed_file_area';
-    }
-    return `file.write.${scope}` as AgentToolActionKind;
-  }
-  return `file.read.${scope}` as AgentToolActionKind;
+export function toolPathArgumentName(toolNameInput: string): string | null {
+  const toolName = normalizeToolName(toolNameInput);
+  if (toolName === 'file_read' || toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete') return 'file_path';
+  if (toolName === 'file_glob' || toolName === 'file_grep') return 'path';
+  return null;
 }
 
 function firstActionKindForTool(
   toolName: string,
   args: unknown,
-  fallback: AgentToolActionKind,
-): AgentToolActionKind {
+  fallback: AgentToolActionKind | null,
+): AgentToolActionKind | null {
   return agentToolActionKindProfile(toolName, args)?.[0] ?? fallback;
 }
 
-function parseShellSegments(command: string): string[] | null {
-  if (hasDynamicShellConstruction(command)) return null;
-  const expanded = expandStaticShellCommand(command);
-  if (expanded === null) return null;
-  const segments = splitShellByOperators(expanded)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-  return segments.length > 0 ? segments : null;
+function fileActionKind(
+  toolName: string,
+  write: boolean,
+  scope: 'allowed_file_area' | 'outside_allowed_file_area' | 'sensitive_local_path',
+): AgentToolActionKind {
+  if (!write) return `file.read.${scope}`;
+  if (scope !== 'allowed_file_area') return `file.write.${scope}`;
+  if (toolName === 'file_delete') return 'file.delete.allowed_file_area';
+  if (toolName === 'file_edit') return 'file.edit.allowed_file_area';
+  return 'file.write.allowed_file_area';
 }
 
-function shellFloorScanCommands(command: string): string[] {
-  const expanded = expandStaticShellCommand(command);
-  return expanded && expanded !== command ? [command, expanded] : [command];
+function descriptor(
+  toolName: string,
+  actionKind: AgentToolActionKind,
+  values: Omit<ToolActionDescriptor, 'toolName' | 'actionKind'>,
+): ToolActionDescriptor {
+  return { toolName, actionKind, ...values };
 }
 
-function hasDynamicShellConstruction(command: string): boolean {
-  return /base64\s+(?:--decode|-d)[\s\S]*\|/i.test(command);
-}
-
-function expandStaticShellCommand(command: string): string | null {
-  const words = parseShellWords(command);
-  const head = normalizeToolName(words[0] ?? '');
-  if ((head === 'bash' || head === 'sh' || head === 'zsh') && words[1] === '-c') {
-    const inner = words[2];
-    return inner && !hasDynamicShellConstruction(inner) ? inner : null;
-  }
-  return command;
-}
-
-function redactStaticHereDocBodies(command: string): string {
-  const lines = command.split(/\r?\n/);
-  const redacted: string[] = [];
-  let terminator: string | null = null;
-  for (const line of lines) {
-    if (terminator) {
-      if (line.trim() === terminator) {
-        redacted.push(line);
-        terminator = null;
-      }
-      continue;
-    }
-    redacted.push(line);
-    const marker = hereDocTerminatorFromLine(line);
-    if (marker) terminator = marker;
-  }
-  return redacted.join('\n');
-}
-
-function hereDocTerminatorFromLine(line: string): string | null {
-  let quote: '"' | "'" | null = null;
-  let escaped = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index]!;
-    const next = line[index + 1];
-    const afterNext = line[index + 2];
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === '\\' && quote !== "'") {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (char === '#' && (index === 0 || /\s/u.test(line[index - 1]!))) return null;
-    if (char !== '<' || next !== '<' || line[index - 1] === '<' || afterNext === '<') continue;
-
-    let cursor = index + 2;
-    if (line[cursor] === '-') cursor += 1;
-    while (cursor < line.length && /\s/u.test(line[cursor]!)) cursor += 1;
-
-    const delimiterQuote = line[cursor];
-    if (delimiterQuote === '"' || delimiterQuote === "'") {
-      const end = line.indexOf(delimiterQuote, cursor + 1);
-      return end > cursor + 1 ? line.slice(cursor + 1, end) : null;
-    }
-
-    const match = /^[A-Za-z_][A-Za-z0-9_]*/u.exec(line.slice(cursor));
-    return match?.[0] ?? null;
-  }
-  return null;
-}
-
-function splitShellByOperators(command: string): string[] {
-  const segments: string[] = [];
-  let current = '';
-  let quote: '"' | "'" | null = null;
-  for (let index = 0; index < command.length; index += 1) {
-    const char = command[index]!;
-    const next = command[index + 1];
-    if (quote) {
-      current += char;
-      if (char === quote) quote = null;
-      if (char === '\\' && quote === '"' && next) {
-        index += 1;
-        current += next;
-      }
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      current += char;
-      continue;
-    }
-    if (char === '\n' || char === ';' || char === '|') {
-      segments.push(current);
-      current = '';
-      if (next === char) index += 1;
-      continue;
-    }
-    if (char === '&' && command[index - 1] !== '>' && next !== '>') {
-      segments.push(current);
-      current = '';
-      if (next === '&') index += 1;
-      continue;
-    }
-    current += char;
-  }
-  segments.push(current);
-  return segments;
-}
-
-function stripShellEnvPrefix(segment: string): string {
-  let words = parseShellWords(segment);
-  if (words[0] === 'env') {
-    words = words.slice(1);
-    while (words[0]?.startsWith('-')) words = words.slice(1);
-  }
-  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] ?? '')) {
-    words = words.slice(1);
-  }
-  return words.join(' ');
-}
-
-function isDependencyInstallCommand(head: string, words: readonly string[]): boolean {
-  const sub = words[1]?.toLowerCase();
-  if (head === 'bun') return ['add', 'install', 'remove', 'update', 'upgrade'].includes(sub ?? '');
-  if (head === 'npm') return ['install', 'i', 'add', 'remove', 'update', 'upgrade'].includes(sub ?? '');
-  if (head === 'pnpm' || head === 'yarn') return ['add', 'install', 'remove', 'update', 'upgrade'].includes(sub ?? '');
-  return false;
-}
-
-function isProjectScriptCommand(head: string, words: readonly string[]): boolean {
-  const sub = words[1]?.toLowerCase();
-  if (head === 'bun') return ['test', 'run', 'build'].includes(sub ?? '');
-  if (head === 'npm' || head === 'pnpm' || head === 'yarn') return ['test', 'run', 'exec', 'build'].includes(sub ?? '');
-  if (['make', 'pytest', 'vitest', 'jest', 'tsx', 'ts-node', 'node-gyp'].includes(head)) return true;
-  return false;
-}
-
-function isDatabaseMigrationCommand(head: string, words: readonly string[]): boolean {
-  const joined = words.join(' ').toLowerCase();
-  if (head === 'prisma') return /(?:^|\s)(?:migrate|db\s+push)(?:\s|$)/.test(joined);
-  if (head === 'drizzle-kit') return /(?:^|\s)(?:push|migrate)(?:\s|$)/.test(joined);
-  if (head === 'rails') return joined.includes('db:migrate');
-  if (head === 'alembic') return words[1]?.toLowerCase() === 'upgrade';
-  return /(?:migrat|db:push|db\s+push|schema\s+push)/.test(joined);
-}
-
-function isGhMutation(words: readonly string[]): boolean {
-  const area = words[1]?.toLowerCase();
-  const action = words[2]?.toLowerCase();
-  if (area === 'api') return true;
-  if (area === 'pr') return ['create', 'edit', 'merge', 'close', 'reopen', 'ready', 'review'].includes(action ?? '');
-  if (area === 'issue') return ['create', 'edit', 'close', 'reopen', 'transfer'].includes(action ?? '');
-  if (area === 'release') return ['create', 'delete', 'edit', 'upload'].includes(action ?? '');
-  if (area === 'repo') return ['create', 'delete', 'fork'].includes(action ?? '');
-  if (area === 'workflow') return action === 'run';
-  return false;
-}
-
-function isDeployCommand(head: string, words: readonly string[]): boolean {
-  const joined = words.join(' ').toLowerCase();
-  const sub = words[1]?.toLowerCase();
-  if (head === 'vercel') return words.includes('--prod') || words[1]?.toLowerCase() === 'deploy';
-  if (head === 'netlify') return words[1]?.toLowerCase() === 'deploy';
-  if (head === 'fly') return words[1]?.toLowerCase() === 'deploy';
-  if (head === 'wrangler') return ['deploy', 'publish'].includes(words[1]?.toLowerCase() ?? '');
-  if (head === 'firebase') return words[1]?.toLowerCase() === 'deploy';
-  if (head === 'supabase') return joined.includes('db push');
-  if (head === 'railway') return words[1]?.toLowerCase() === 'up';
-  if (head === 'docker') return words[1]?.toLowerCase() === 'push';
-  if (head === 'terraform') return ['apply', 'destroy'].includes(sub ?? '');
-  if (head === 'pulumi') return ['up', 'destroy'].includes(sub ?? '');
-  if (head === 'render') return sub === 'deploy';
-  return false;
-}
-
-function isOutwardFacingShellCommand(head: string, words: readonly string[]): boolean {
-  if (!OUTWARD_FACING_SHELL_PREFIXES.includes(head)) return false;
-  if (head === 'curl' || head === 'wget') return true;
-  if (head === 'git') return words[1]?.toLowerCase() === 'push';
-  if (head === 'npm' || head === 'pnpm' || head === 'yarn' || head === 'bun') return words[1]?.toLowerCase() === 'publish';
-  return ['aws', 'docker', 'firebase', 'fly', 'gcloud', 'gsutil', 'kubectl', 'netlify', 'rclone', 'rsync', 'scp', 'sftp', 'ssh', 'supabase', 'vercel', 'wrangler'].includes(head);
-}
-
-function isHardBlockedSensitiveWritePath(filePath: string): boolean {
-  return isAgentPermissionConfigPath(filePath);
-}
-
-function isSoftBlockedPersistenceWritePath(filePath: string): boolean {
-  return isPersistencePath(filePath) || isGitInternalWritePath(filePath);
-}
-
-function isPersistencePath(filePath: string): boolean {
-  return /(?:^|\/)(?:\.bashrc|\.bash_profile|\.zshrc|\.zprofile|\.profile|crontab|cron\.d)(?:\/|$)/i.test(filePath)
-    || /(?:^|\/)Library\/LaunchAgents(?:\/|$)/i.test(filePath)
-    || /(?:^|\/)\.config\/systemd\/user(?:\/|$)/i.test(filePath);
-}
-
-function isGitInternalWritePath(filePath: string): boolean {
-  return /(?:^|\/)\.git\/(?:hooks(?:\/|$)|config$|refs(?:\/|$)|objects(?:\/|$))/i.test(filePath);
-}
-
-function isAgentPermissionConfigPath(filePath: string): boolean {
-  return /(?:^|\/)(?:agent-tool-permissions|agent-permissions|agent-providers|agent-secrets)\.json$/i.test(filePath);
-}
-
-function looksLikePermissionSelfModification(command: string, workspaceRoot: string): boolean {
-  const words = parseShellWords(command);
-  if (!hasSensitivePersistenceWriteTrigger(command, words)) return false;
-  return words.some((word) => {
-    const cleaned = stripShellPathDecoration(word);
-    if (!looksLikePath(cleaned)) return false;
-    const resolved = resolvePermissionPath(workspaceRoot, cleaned);
-    return isHardBlockedSensitiveWritePath(resolved);
+function unknownShellDescriptor(command: string, reason: string): ToolActionDescriptor {
+  return descriptor('bash', 'shell.unknown', {
+    accessScope: 'allowed_file_area',
+    title: 'unclassified shell command',
+    summary: command || reason,
+    consequence: reason,
+    command: command || undefined,
   });
 }
 
-function looksLikeSoftPersistenceWrite(command: string, workspaceRoot: string): boolean {
-  const words = parseShellWords(command);
-  if (!hasSensitivePersistenceWriteTrigger(command, words)) return false;
-  return words.some((word) => {
-    const cleaned = stripShellPathDecoration(word);
-    if (!looksLikePath(cleaned)) return false;
-    const resolved = resolvePermissionPath(workspaceRoot, cleaned);
-    return isSoftBlockedPersistenceWritePath(resolved);
-  });
+function block(
+  code: string,
+  reason: string,
+  access: AgentPermissionAccess,
+  preapproved: boolean,
+  descriptors: readonly ToolActionDescriptor[],
+  descriptorValue?: ToolActionDescriptor,
+  redline?: true,
+  permissionSource: AgentPermissionSource = 'default',
+): AgentPermissionBlockedDecision {
+  return {
+    behavior: 'blocked',
+    code,
+    reason,
+    access,
+    preapproved,
+    permissionSource,
+    descriptor: descriptorValue ?? descriptors[0],
+    descriptors,
+    redline,
+  };
+}
+
+function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
+  if (toolName === 'bash') return 'execute';
+  if (toolName === 'bash_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'generate_image') return 'control';
+  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete' || toolName === 'data_import') return 'write';
+  if (toolName === 'outline_undo_stack') {
+    return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
+  }
+  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search') return 'read';
+  return 'unknown';
+}
+
+function isRestrictedBaseAllowed(toolName: string, args: unknown): boolean {
+  if (toolName === 'outline_undo_stack') {
+    return agentToolActionKindProfile(toolName, args)?.every(isReadOnlyActionKind) === true;
+  }
+  return RESTRICTED_BASE_ALLOWED_TOOLS.has(toolName);
+}
+
+function looksLikeProtectedStoreWrite(
+  command: string,
+  workspaceRoot: string,
+  protectedStoreRoot?: string,
+): boolean {
+  if (!protectedStoreRoot) return false;
+  return shellMutationTargets(command, workspaceRoot)
+    .some((target) => isAgentProtectedStorePath(target, protectedStoreRoot));
 }
 
 function looksLikeSelfDefinitionShellWrite(command: string, workspaceRoot: string): boolean {
-  const words = parseShellWords(command);
-  if (!hasSensitivePersistenceWriteTrigger(command, words)) return false;
-  return words.some((word) => {
-    const cleaned = stripShellPathDecoration(word);
-    if (!looksLikePath(cleaned) && !cleaned.startsWith('.agents/')) return false;
-    const resolved = resolvePermissionPath(workspaceRoot, cleaned);
-    return isSelfDefinitionPath(resolved, workspaceRoot);
-  });
+  return shellMutationTargets(command, workspaceRoot).some((target) => (
+    selfDefinitionRootEntries(workspaceRoot).some((entry) => isPathInside(entry.dir, target))
+  ));
 }
 
-function isSelfDefinitionPath(filePath: string, workspaceRoot: string): boolean {
-  const resolved = path.resolve(filePath);
-  return selfDefinitionRootEntries(workspaceRoot).some((entry) => isPathInside(path.resolve(entry.dir), resolved));
-}
-
-function hasSensitivePersistenceWriteTrigger(command: string, words: readonly string[]): boolean {
-  if (containsShellWriteOperator(command)) return true;
-  for (let index = 0; index < words.length; index += 1) {
-    const word = normalizeToolName(words[index] ?? '');
-    if (SENSITIVE_PERSISTENCE_WRITE_COMMANDS.has(word)) return true;
-    if (word === 'find' && (hasFindDeleteFlag(words.slice(index)) || hasFindExecFlag(words.slice(index)))) return true;
-    if ((word === 'sed' || word === 'perl' || word === 'ruby') && hasInlineEditFlag(words.slice(index))) return true;
-  }
-  return false;
+function looksLikeNetworkWrite(command: string): boolean {
+  return /\b(?:curl|wget)\b[\s\S]*(?:--data(?:-binary|-raw|-urlencode)?|-d\b|--form|-F\b|--upload-file|-T\b|-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s+(?:POST|PUT|PATCH|DELETE))\b|\b(?:scp|sftp|rsync|rclone\s+(?:copy|sync)|aws\s+s3\s+cp|gsutil\s+cp|nc|netcat)\b/i.test(command);
 }
 
 function containsShellWriteOperator(command: string): boolean {
@@ -2102,131 +670,180 @@ function containsShellWriteOperator(command: string): boolean {
   return false;
 }
 
-const SENSITIVE_PERSISTENCE_WRITE_COMMANDS = new Set([
-  'chmod',
-  'chown',
-  'chgrp',
-  'cp',
-  'install',
-  'mkdir',
-  'mv',
-  'rm',
-  'rmdir',
-  'tee',
-  'touch',
-  'truncate',
-]);
-
-const FIND_EXEC_FLAGS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
-
-function hasFindExecFlag(words: readonly string[]): boolean {
-  return words.some((word) => FIND_EXEC_FLAGS.has(word.toLowerCase()));
+function splitShellSegments(command: string): string[] {
+  const lines = command.split(/\r?\n/);
+  const segments: string[] = [];
+  let heredocEnd: string | null = null;
+  for (const line of lines) {
+    if (heredocEnd) {
+      if (line.trim() === heredocEnd) heredocEnd = null;
+      continue;
+    }
+    const heredoc = /<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/.exec(line);
+    if (heredoc?.[1]) heredocEnd = heredoc[1];
+    segments.push(...line.split(/\s*(?:&&|\|\||;|\|)\s*/).filter(Boolean));
+  }
+  return segments;
 }
 
-function hasFindDeleteFlag(words: readonly string[]): boolean {
-  return words.some((word) => word.toLowerCase() === '-delete');
+interface ShellInvocation {
+  executable: string;
+  args: string[];
+  segment: string;
 }
 
-function hasInlineEditFlag(words: readonly string[]): boolean {
-  return words.slice(1).some((word) => (
-    word === '-i'
-    || word.startsWith('-i.')
-    || word.startsWith('-i')
-    || /^-[A-Za-z]*i(?:[A-Za-z.]*)?$/.test(word)
-    || word === '--in-place'
-    || word.startsWith('--in-place=')
-  ));
-}
-
-function looksLikeWorkspaceRootDelete(command: string, workspaceRoot: string): boolean {
-  return recursiveRmTargetGroups(command).some((targets) => targets.some((word) => (
-    resolvePermissionPath(workspaceRoot, stripShellPathDecoration(word)) === workspaceRoot
-  )));
-}
-
-function looksLikeHostRootOrHomeDelete(command: string, workspaceRoot: string): boolean {
-  const home = homedir();
-  return recursiveRmTargetGroups(command).some((targets) => targets.some((word) => {
-    const resolved = resolvePermissionPath(workspaceRoot, stripShellPathDecoration(word));
-    return resolved === path.parse(resolved).root || resolved === home;
-  }));
-}
-
-function looksLikeUnscopedRecursiveDelete(command: string, workspaceRoot: string): boolean {
-  for (const targets of recursiveRmTargetGroups(command)) {
-    if (targets.length === 0) return true;
-    if (targets.some((word) => {
-      const resolved = resolvePermissionPath(workspaceRoot, stripShellPathDecoration(word));
-      return !isPathInside(workspaceRoot, resolved) || resolved === workspaceRoot || isSensitivePath(resolved);
-    })) {
-      return true;
+function shellInvocations(command: string, depth = 0): ShellInvocation[] {
+  if (depth > 2) return [];
+  const invocations: ShellInvocation[] = [];
+  for (const segment of splitShellSegments(command)) {
+    const words = unwrapShellWords(parseShellWords(segment));
+    const executable = path.basename(words[0] ?? '').toLowerCase();
+    if (!executable) continue;
+    const invocation = { executable, args: words.slice(1), segment };
+    invocations.push(invocation);
+    if (['bash', 'sh', 'zsh'].includes(executable)) {
+      const commandIndex = invocation.args.findIndex((arg) => arg === '-c' || arg === '--command');
+      const nested = commandIndex >= 0 ? invocation.args[commandIndex + 1] : undefined;
+      if (nested) invocations.push(...shellInvocations(nested, depth + 1));
     }
   }
-  return false;
+  return invocations;
 }
 
-function recursiveRmTargetGroups(command: string): string[][] {
-  const deletePattern = /(?:^|[;&|\n]\s*|\s-(?:exec|execdir|ok|okdir)\s+)rm\s+([^;&|\n]*)/gi;
-  const groups: string[][] = [];
-  let match: RegExpExecArray | null;
-  while ((match = deletePattern.exec(command)) !== null) {
-    const part = match[0].replace(/^(?:[;&|\n]\s*|\s-(?:exec|execdir|ok|okdir)\s+)/i, '');
-    if (!/^rm\s+(?:-[^\s]*r[^\s]*f[^\s]*|-[^\s]*f[^\s]*r[^\s]*)/i.test(part)) continue;
-    const targets = parseShellWords(part)
-      .slice(1)
-      .filter((word) => !word.startsWith('-') && word !== '{}');
-    groups.push(targets);
+function unwrapShellWords(wordsInput: readonly string[]): string[] {
+  let words = [...wordsInput];
+  while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) words.shift();
+  while (words.length > 1) {
+    const wrapper = path.basename(words[0]!).toLowerCase();
+    if (wrapper === 'command' || wrapper === 'nohup') {
+      words = words.slice(1);
+      continue;
+    }
+    if (wrapper === 'env') {
+      words = words.slice(1);
+      while (words.length > 0 && (words[0]!.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!))) {
+        words.shift();
+      }
+      continue;
+    }
+    if (wrapper === 'sudo') {
+      words = words.slice(1);
+      while (words.length > 0 && words[0]!.startsWith('-')) words.shift();
+      continue;
+    }
+    break;
   }
-  return groups;
+  return words;
 }
 
-function commandMentionsSensitivePath(command: string, workspaceRoot: string): boolean {
-  if (SENSITIVE_COMMAND_PATTERNS.some((pattern) => pattern.test(command))) return true;
-  return parseShellWords(command).some((word) => {
-    const cleaned = stripShellPathDecoration(word);
-    if (!looksLikePath(cleaned)) return false;
-    return isSensitivePath(resolvePermissionPath(workspaceRoot, cleaned));
-  });
+function isDangerousRecursiveDelete(invocation: ShellInvocation): boolean {
+  if (invocation.executable === 'rm') {
+    const flags = invocation.args.filter((arg) => arg.startsWith('-')).join('');
+    const recursive = /r/i.test(flags) || invocation.args.includes('--recursive');
+    const force = /f/i.test(flags) || invocation.args.includes('--force');
+    return recursive && force && shellPathOperands(invocation.args).some(isHostRootTarget);
+  }
+  if (invocation.executable !== 'find') return false;
+  const operands = shellPathOperands(invocation.args);
+  const destructive = invocation.args.includes('-delete')
+    || invocation.args.some((arg, index) => arg === '-exec' && path.basename(invocation.args[index + 1] ?? '') === 'rm');
+  return destructive && operands.slice(0, 1).some(isHostRootTarget);
 }
 
-function looksLikeNetworkWrite(command: string): boolean {
-  return /\b(?:curl|wget)\b[\s\S]*(?:--data(?:-binary|-raw|-urlencode)?|-d\b|--form|-F\b|--upload-file|-T\b|-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s+(?:POST|PUT|PATCH|DELETE))\b|\b(?:scp|sftp|rsync|rclone\s+(?:copy|sync)|aws\s+s3\s+cp|gsutil\s+cp|nc|netcat)\b/i.test(command);
+function isDangerousDiskFormat(invocation: ShellInvocation): boolean {
+  if (/^(?:mkfs(?:\..+)?|newfs(?:_.+)?)$/i.test(invocation.executable)) return true;
+  if (invocation.executable !== 'diskutil') return false;
+  const operation = invocation.args[0]?.toLowerCase() ?? '';
+  return /^(?:erase|partition)/.test(operation)
+    || (operation === 'apfs' && /^delete/.test(invocation.args[1]?.toLowerCase() ?? ''));
 }
 
-// Broader sink check used only by the exfiltration redline (gated behind a
-// sensitive-path mention): an explicit network write OR an opaque sink (inline
-// interpreter / ssh remote exec) that could carry the data out unseen.
-function looksLikeExfiltrationSink(command: string): boolean {
-  return looksLikeNetworkWrite(command) || EXFIL_OPAQUE_SINK_PATTERNS.some((pattern) => pattern.test(command));
+function isDangerousRawDiskWrite(invocation: ShellInvocation): boolean {
+  return invocation.executable === 'dd'
+    && invocation.args.some((arg) => /^of=\/dev\/(?:disk|rdisk|sd[a-z]|nvme|xvd)/i.test(arg));
+}
+
+function isDangerousRootPermissionChange(invocation: ShellInvocation): boolean {
+  if (invocation.executable !== 'chmod' && invocation.executable !== 'chown') return false;
+  const recursive = invocation.args.some((arg) => arg === '--recursive' || /^-[^-]*R/.test(arg));
+  return recursive && shellPathOperands(invocation.args).some((operand) => path.resolve(expandHome(operand)) === path.parse(path.resolve(operand)).root);
+}
+
+function isHostRootTarget(valueInput: string): boolean {
+  const value = valueInput.replace(/\/\*$/, '').replace(/\/$/, '') || '/';
+  const resolved = path.resolve(expandHome(value));
+  return resolved === path.parse(resolved).root || resolved === path.resolve(homedir());
+}
+
+function shellPathOperands(args: readonly string[]): string[] {
+  return args
+    .filter((arg) => arg !== '--' && !arg.startsWith('-'))
+    .map((arg) => arg.replace(/[),]+$/, ''));
+}
+
+function shellMutationTargets(command: string, workspaceRoot: string): string[] {
+  const targets: string[] = [];
+  for (const invocation of shellInvocations(command)) {
+    targets.push(...redirectionTargets(invocation.segment));
+    const operands = shellPathOperands(invocation.args);
+    switch (invocation.executable) {
+      case 'rm':
+      case 'unlink':
+      case 'rmdir':
+      case 'mkdir':
+      case 'touch':
+      case 'truncate':
+      case 'tee':
+      case 'mv':
+        targets.push(...operands);
+        break;
+      case 'cp':
+      case 'install':
+      case 'ln':
+        if (operands.length > 0) targets.push(operands[operands.length - 1]!);
+        break;
+      case 'chmod':
+      case 'chown':
+        if (operands.length > 1) targets.push(...operands.slice(1));
+        break;
+      case 'sed':
+      case 'perl':
+      case 'ruby':
+        if (invocation.args.some((arg) => /^-[^-]*i/.test(arg)) && operands.length > 0) {
+          targets.push(operands[operands.length - 1]!);
+        }
+        break;
+    }
+  }
+  return [...new Set(targets
+    .map((target) => target.trim())
+    .filter(Boolean)
+    .map((target) => resolvePermissionPath(workspaceRoot, target)))];
+}
+
+function redirectionTargets(segment: string): string[] {
+  const targets: string[] = [];
+  const pattern = /(?:^|\s)(?:\d*|&)>>?\s*(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(segment)) !== null) {
+    const target = match[1] ?? match[2] ?? match[3];
+    if (target) targets.push(target);
+  }
+  return targets;
 }
 
 function isSensitivePath(filePath: string): boolean {
-  return SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(filePath));
+  return /(?:^|\/)(?:\.ssh|\.gnupg|\.aws|\.azure|Library\/Keychains)(?:\/|$)|(?:^|\/)\.env(?:$|[./-])|\.(?:pem|key|p12|pfx)$/i.test(filePath);
 }
 
-export function toolPathArgumentName(toolNameInput: string): string | null {
-  const toolName = normalizeToolName(toolNameInput);
-  if (toolName === 'file_read' || toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete') return 'file_path';
-  if (toolName === 'file_glob' || toolName === 'file_grep') return 'path';
-  return null;
-}
-
-function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
-  if (toolName === 'bash') return 'execute';
-  if (toolName === 'bash_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'generate_image') return 'control';
-  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete' || toolName === 'data_import') return 'write';
-  if (toolName === 'outline_undo_stack') {
-    return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
+function normalizeRoots(roots: readonly string[] | undefined): string[] {
+  const normalized: string[] = [];
+  for (const root of roots ?? []) {
+    if (!root.trim()) continue;
+    const canonical = canonicalPathPreservingSuffix(root);
+    if (!normalized.some((existing) => isPathInside(existing, canonical))) normalized.push(canonical);
   }
-  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search') return 'read';
-  return 'unknown';
-}
-
-function isRestrictedBaseAllowed(toolName: string, args: unknown): boolean {
-  if (toolName === 'outline_undo_stack') {
-    return agentToolActionKindProfile(toolName, args)?.every(isReadOnlyActionKind) === true;
-  }
-  return RESTRICTED_BASE_ALLOWED_TOOLS.has(toolName) || toolName.startsWith('node_');
+  return normalized;
 }
 
 function matchesToolNameRule(rule: string, toolNameInput: string): boolean {
@@ -2236,19 +853,22 @@ function matchesToolNameRule(rule: string, toolNameInput: string): boolean {
 }
 
 function normalizeToolName(value: string): string {
-  const normalized = value.trim().replace(/-/g, '_').toLowerCase();
+  const normalized = value.trim().replace(/^\//, '').replace(/-/g, '_').toLowerCase();
   return TOOL_ALIASES.get(normalized) ?? normalized;
 }
 
+function getUnknownArg(args: unknown, name: string): unknown {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return undefined;
+  return (args as Record<string, unknown>)[name];
+}
+
 function getStringArg(args: unknown, name: string): string | null {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
-  const value = (args as Record<string, unknown>)[name];
+  const value = getUnknownArg(args, name);
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 function getBooleanArg(args: unknown, name: string): boolean {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return false;
-  return (args as Record<string, unknown>)[name] === true;
+  return getUnknownArg(args, name) === true;
 }
 
 function resolvePermissionPath(root: string, inputPath: string): string {
@@ -2257,17 +877,11 @@ function resolvePermissionPath(root: string, inputPath: string): string {
 }
 
 function expandHome(inputPath: string): string {
-  if (inputPath === '~') return homedir();
-  if (inputPath === '$HOME' || inputPath === '${HOME}') return homedir();
+  if (inputPath === '~' || inputPath === '$HOME' || inputPath === '${HOME}') return homedir();
   if (inputPath.startsWith('~/')) return path.join(homedir(), inputPath.slice(2));
   if (inputPath.startsWith('$HOME/')) return path.join(homedir(), inputPath.slice(6));
   if (inputPath.startsWith('${HOME}/')) return path.join(homedir(), inputPath.slice(8));
   return inputPath;
-}
-
-function isPathInside(root: string, filePath: string): boolean {
-  const relative = path.relative(root, filePath);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function wildcardMatches(pattern: string, value: string): boolean {
@@ -2293,66 +907,4 @@ function parseShellWords(command: string): string[] {
     words.push((match[1] ?? match[2] ?? match[3] ?? '').replace(/\\(["\\])/g, '$1'));
   }
   return words;
-}
-
-function stripShellPathDecoration(value: string): string {
-  return value
-    .replace(/^[^=\s]+=@(?=~|\/|\$HOME|\$\{HOME\})/, '')
-    .replace(/^[@<>=:]+/, '')
-    .replace(/[),]+$/, '');
-}
-
-function looksLikePath(value: string): boolean {
-  return value === '~'
-    || value === '$HOME'
-    || value === '${HOME}'
-    || isAgentPermissionConfigPath(value)
-    || value.startsWith('~/')
-    || value.startsWith('/')
-    || value.startsWith('./')
-    || value.startsWith('../')
-    || value.startsWith('$HOME/')
-    || value.startsWith('${HOME}/')
-    || value.startsWith('.git/')
-    || value.startsWith('.env')
-    || value.startsWith('.npmrc')
-    || value.startsWith('.pypirc')
-    || value.startsWith('.netrc');
-}
-
-function looksLikeShellPathToken(value: string): boolean {
-  if (!value || value.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) return false;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false;
-  return looksLikePath(value);
-}
-
-function allow(
-  access: AgentPermissionAccess,
-  preapproved: boolean,
-  reason?: string,
-  options: Pick<AgentPermissionAllowDecision, 'descriptor' | 'descriptors' | 'permissionSource'> = {},
-): AgentPermissionAllowDecision {
-  return { behavior: 'allow', access, preapproved, reason, ...options };
-}
-
-function softBlock(
-  code: string,
-  reason: string,
-  access: AgentPermissionAccess,
-  preapproved: boolean,
-  request: AgentApprovalRequest,
-  options: Pick<AgentPermissionSoftBlockDecision, 'descriptor' | 'descriptors' | 'permissionSource' | 'blockRuleValue'>,
-): AgentPermissionSoftBlockDecision {
-  return { behavior: 'soft_blocked', code, reason, access, preapproved, request, ...options };
-}
-
-function deny(
-  code: string,
-  reason: string,
-  access: AgentPermissionAccess,
-  preapproved: boolean,
-  redline?: true,
-  options: Pick<AgentPermissionDenyDecision, 'descriptor' | 'descriptors'> = {},
-): AgentPermissionDenyDecision {
-  return { behavior: 'deny', code, reason, access, preapproved, redline, ...options };
 }

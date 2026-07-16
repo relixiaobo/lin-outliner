@@ -1,5 +1,5 @@
 import type { AgentRenderProjection } from './agentRenderProjection';
-import type { AgentUserQuestionPendingView } from './agentTypes';
+import type { AgentApprovalRequestView, AgentUserQuestionPendingView } from './agentTypes';
 import type { AgentPrincipal } from './agentEventLog';
 import type { CaptureNodeMetadata } from './launcher/sources';
 
@@ -691,6 +691,7 @@ export interface SearchHit {
 export interface AgentConversation {
   conversationId: string;
   renderProjection: AgentRenderProjection;
+  pendingApprovals?: AgentApprovalRequestView[];
   pendingUserQuestion?: AgentUserQuestionPendingView | null;
 }
 

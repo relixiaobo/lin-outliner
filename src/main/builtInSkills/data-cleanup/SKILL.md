@@ -6,8 +6,8 @@ allowed-tools: file_read, file_glob, file_grep, bash, ask_user_question, node_se
 # Data Cleanup
 
 Use this skill as a data-cleanup workflow, not as a source-specific importer.
-Importing is the final step: inspect the source, profile it, ask what to
-preserve, run a deterministic route when available, preview the cleaned shape,
+Importing is the final step: inspect the source, profile it, infer what to
+preserve, run a deterministic route when available, validate the cleaned shape,
 then stage the result through `tenon-import`.
 
 ## Workflow
@@ -16,18 +16,19 @@ then stage the result through `tenon-import`.
    `tenon-import inspect <source> --out <profile.json>`.
 2. Read the source profile. Do not read a large export wholesale into model
    context.
-3. Ask the user only for real cleanup choices: destination, fidelity, date
-   handling, tag/field handling, and whether to proceed after preview.
+3. Infer destination, fidelity, date handling, and tag/field handling from the
+   request and source profile. Ask only for a required choice that cannot be
+   inferred; preview approval is not a separate permission step.
 4. For Tana exports, run `tenon-import tana <source> --out <pack.json>
    --coverage-out <coverage.json>` to create
    Import Pack v1 and coverage sidecar files. Roam EDN is profile-only in this
    release; do not write Roam data unless a deterministic adapter exists.
 5. Run `tenon-import validate <pack.json> --out <report.json>`.
-6. Run `tenon-import preview <pack.json> --out <preview.md>` and show the
+6. Run `tenon-import preview <pack.json> --out <preview.md>` and inspect the
    stats, coverage, warnings, representative samples, and returned preview id.
-7. Ask the user whether to commit the previewed pack.
-8. After the user approves the preview, run
-   `tenon-import commit <pack.json> --preview-id <preview:id>`.
+7. When the original request authorizes importing and the preview passes the
+   gates below, run `tenon-import commit <pack.json> --preview-id <preview:id>`
+   without a second confirmation.
 
 ## Boundaries
 
@@ -40,8 +41,10 @@ then stage the result through `tenon-import`.
 - `tenon-import commit` is the only bulk document mutation path for cleaned
   import data. It calls the running Tenon app; scripts must not write document
   storage directly.
-- Stop before writing if the source profile is low-confidence, the preview shows
-  unsupported structures the user has not accepted, or validation fails.
+- Stop before writing if validation fails. If the source profile is
+  low-confidence or unsupported structures create a material cleanup choice,
+  ask only for that unresolved choice; otherwise report dropped/unsupported
+  coverage and continue according to the requested fidelity.
 
 ## References
 

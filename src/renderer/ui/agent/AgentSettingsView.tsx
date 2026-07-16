@@ -69,7 +69,7 @@ interface AgentSettingsViewProps {
 type SettingsCategory = SettingsCategoryTarget;
 type SettingsRoute = { type: 'category'; category: SettingsCategory };
 type RequestScope = 'settings' | 'section' | 'mutation' | 'dream';
-type PermissionRuleListKind = 'grants' | 'blocks' | 'softBlockAllows';
+type PermissionRuleListKind = 'blocks';
 
 interface DraftConfig {
   providerId: string;
@@ -603,11 +603,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     [providerCatalog, settings],
   );
 
-  const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
-  const permissionGrants = permissionDraft?.grants ?? permissionSettings?.grants ?? [];
+  const permissionFolders = permissionDraft?.folders ?? permissionSettings?.folders ?? [];
   const permissionBlocks = permissionDraft?.blocks ?? permissionSettings?.blocks ?? [];
-  const permissionSoftAllows = permissionDraft?.softBlockAllows ?? permissionSettings?.softBlockAllows ?? [];
-  const acceptedSkillTrustGrants = allSkills.filter((skill) => skill.accepted);
   const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
   const permissionDraftDirty = permissionDraft !== permissionSettings;
   const showFooterActions = category === 'permissions'
@@ -626,6 +623,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
       ...base,
       [kind]: base[kind].filter((candidate) => candidate !== rule),
     });
+  }
+
+  function revokePermissionFolder(folder: string) {
+    const base = permissionDraft ?? permissionSettings ?? emptyPermissionSettings();
+    setPermissionDraft({ ...base, folders: base.folders.filter((candidate) => candidate !== folder) });
   }
 
   function renderPermissionRuleRows(
@@ -696,9 +698,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
       });
       const nextPermissions = permissionDraft && permissionDraft !== permissionSettings
         ? await api.agentUpdateToolPermissionSettings({
-            grants: permissionDraft.grants,
+            folders: permissionDraft.folders,
             blocks: permissionDraft.blocks,
-            softBlockAllows: permissionDraft.softBlockAllows,
           })
         : null;
 
@@ -1098,44 +1099,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
             ) : category === 'permissions' ? (
               <section className="agent-settings-section settings-permissions-section" aria-label={t.settings.permissions.sectionAriaLabel}>
                 <InsetGroup
-                  ariaLabel={t.settings.permissions.trustLevelAriaLabel}
-                  footnote={t.settings.permissions.hardBlockNote}
-                  label={t.settings.permissions.trustLevelGroup}
-                >
-                  <InsetRow
-                    className="settings-permission-mode-row"
-                    label={t.settings.permissions.delegatedOperatorLabel}
-                    sublabel={t.settings.permissions.delegatedOperatorSublabel}
-                    wrap
-                  />
-                </InsetGroup>
-
-                <InsetGroup
-                  ariaLabel={t.settings.permissions.blocksAriaLabel}
-                  label={t.settings.permissions.blocksGroup}
-                >
-                  {renderPermissionRuleRows(
-                    permissionBlocks,
-                    'blocks',
-                    t.settings.permissions.noBlocks,
-                    t.settings.permissions.removeRule,
-                  )}
-                </InsetGroup>
-
-                <InsetGroup
-                  ariaLabel={t.settings.permissions.softAllowsAriaLabel}
-                  footnote={t.settings.permissions.softAllowsFootnote}
-                  label={t.settings.permissions.softAllowsGroup}
-                >
-                  {renderPermissionRuleRows(
-                    permissionSoftAllows,
-                    'softBlockAllows',
-                    t.settings.permissions.noSoftAllows,
-                    t.settings.permissions.removeRule,
-                  )}
-                </InsetGroup>
-
-                <InsetGroup
                   ariaLabel={t.settings.permissions.boundariesAriaLabel}
                   label={t.settings.permissions.boundariesGroup}
                 >
@@ -1155,55 +1118,42 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     )}
                     wrap
                   />
+                  {permissionFolders.length === 0 ? <InsetRow disabled label={t.settings.permissions.noBoundaries} /> : permissionFolders.map((folder) => (
+                    <InsetRow
+                      key={folder}
+                      label={folder}
+                      leading={<FolderIcon size={ICON_SIZE.menu} aria-hidden />}
+                      trailing={(
+                        <Button onClick={() => revokePermissionFolder(folder)} size="sm" variant="ghost">
+                          {t.settings.permissions.revokeGrant}
+                        </Button>
+                      )}
+                      wrap
+                    />
+                  ))}
+                </InsetGroup>
+
+                <InsetGroup ariaLabel={t.settings.permissions.blocksAriaLabel} label={t.settings.permissions.blocksGroup}>
                   {renderPermissionRuleRows(
-                    permissionGrants,
-                    'grants',
-                    t.settings.permissions.noBoundaries,
-                    t.settings.permissions.revokeGrant,
+                    permissionBlocks,
+                    'blocks',
+                    t.settings.permissions.noBlocks,
+                    t.settings.permissions.removeRule,
                   )}
                 </InsetGroup>
 
-                {acceptedSkillTrustGrants.length > 0 ? (
-                  <InsetGroup ariaLabel={t.settings.permissions.acceptedSkillsAriaLabel} label={t.settings.permissions.acceptedSkillsGroup}>
-                    {acceptedSkillTrustGrants.map((skill) => (
-                      <InsetRow
-                        key={`skill:${skill.name}:${skill.contentHash ?? ''}`}
-                        label={`/${skill.displayName || skill.name}`}
-                        sublabel={t.settings.permissions.skillGrantSublabel}
-                        trailing={(
-                          <Button
-                            disabled={skillTrustBusy}
-                            onClick={() => runSkillTrustAction(() => api.agentRevokeSkillAcceptance(conversationId || 'workspace', skill.name))}
-                            size="sm"
-                            variant="ghost"
-                          >
-                            {t.settings.permissions.revokeGrant}
-                          </Button>
-                        )}
-                        wrap
-                      />
-                    ))}
-                  </InsetGroup>
-                ) : null}
-
-                {permissionDiagnostics.length > 0 ? (
-                  <InsetGroup ariaLabel={t.settings.permissions.ignoredRulesAriaLabel} label={t.settings.permissions.ignoredRulesGroup}>
-                    {permissionDiagnostics.map((diagnostic) => (
-                      <InsetRow
-                        disabled
-                        key={`${diagnostic.ruleValue}:${diagnostic.code}`}
-                        label={(
-                          <>
-                            {diagnostic.ruleValue}
-                            <span className="settings-chip">{diagnostic.code}</span>
-                          </>
-                        )}
-                        sublabel={diagnostic.message}
-                        wrap
-                      />
-                    ))}
-                  </InsetGroup>
-                ) : null}
+                <InsetGroup
+                  ariaLabel={t.settings.permissions.trustLevelAriaLabel}
+                  footnote={t.settings.permissions.hardBlockNote}
+                  label={t.settings.permissions.trustLevelGroup}
+                >
+                  <InsetRow
+                    className="settings-permission-mode-row"
+                    label={t.settings.permissions.delegatedOperatorLabel}
+                    sublabel={t.settings.permissions.delegatedOperatorSublabel}
+                    wrap
+                  />
+                </InsetGroup>
               </section>
             ) : category === 'memory' ? (
               <section className="agent-settings-section settings-memory-section" aria-label={t.settings.memory.sectionAriaLabel}>
@@ -1611,15 +1561,13 @@ function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
 }
 
 function permissionRuleLabel(rule: string, t: Messages): string {
-  if (rule.startsWith('Scope(')) return t.settings.permissions.scopeGrantLabel;
-  if (rule.startsWith('External(')) return t.settings.permissions.externalGrantLabel;
   if (rule.startsWith('Command(')) return t.settings.permissions.commandGrantLabel;
   if (rule.startsWith('Action(')) return t.settings.permissions.actionRuleLabel;
   return t.settings.permissions.unknownGrantLabel;
 }
 
 function emptyPermissionSettings(): AgentToolPermissionSettingsView {
-  return { grants: [], blocks: [], softBlockAllows: [], diagnostics: [] };
+  return { folders: [], blocks: [], diagnostics: [] };
 }
 
 function formatSettingsDate(timestamp: number): string {

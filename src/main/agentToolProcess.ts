@@ -1,6 +1,7 @@
-import { spawn } from 'node:child_process';
 import { getBundledRipgrepBinDirForPath } from './agentRipgrep';
 import { buildAgentToolPathValue } from './agentToolPath';
+import { getAgentProcessExecutor } from './agentProcessExecutor';
+import type { FolderCapabilitySnapshot } from './agentFolderCapabilities';
 
 export interface AgentToolProcessResult {
   stdout: string;
@@ -14,9 +15,11 @@ export interface AgentToolProcessResult {
   stderrTruncated?: boolean;
 }
 
-interface AgentToolProcessOptions {
+export interface AgentToolProcessOptions {
   maxStdoutChars?: number;
   maxStderrChars?: number;
+  capabilities?: FolderCapabilitySnapshot;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface AgentLocalToolProcessEnvOptions {
@@ -41,7 +44,7 @@ export async function runAgentToolProcess(
   options: AgentToolProcessOptions = {},
 ): Promise<AgentToolProcessResult> {
   return await new Promise<AgentToolProcessResult>((resolve) => {
-    const child = spawn(command, args, { cwd, env: buildAgentLocalToolProcessEnv(), shell: false });
+    const executor = getAgentProcessExecutor();
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -50,36 +53,52 @@ export async function runAgentToolProcess(
     let stdoutChars = 0;
     let stderrChars = 0;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-      killTimer = setTimeout(() => {
-        child.kill('SIGKILL');
-      }, 2_000);
-    }, timeoutMs);
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      stdoutChars += chunk.length;
-      const next = appendBounded(stdout, chunk, options.maxStdoutChars);
-      stdout = next.value;
-      stdoutTruncated ||= next.truncated;
-    });
-    child.stderr.on('data', (chunk: string) => {
-      stderrChars += chunk.length;
-      const next = appendBounded(stderr, chunk, options.maxStderrChars);
-      stderr = next.value;
-      stderrTruncated ||= next.truncated;
-    });
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
-      resolve({ stdout, stderr, stdoutChars, stderrChars, exitCode: null, error, timedOut, stdoutTruncated, stderrTruncated });
-    });
-    child.once('close', (code) => {
-      clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
-      resolve({ stdout, stderr, stdoutChars, stderrChars, exitCode: code, timedOut, stdoutTruncated, stderrTruncated });
+    void executor.spawn({
+      command,
+      args,
+      cwd,
+      env: { ...buildAgentLocalToolProcessEnv(), ...options.env },
+      capabilities: options.capabilities,
+      detached: process.platform !== 'win32',
+    }).then((child) => {
+      const timer = setTimeout(() => {
+        timedOut = true;
+        executor.terminate(child, 'SIGTERM');
+        killTimer = setTimeout(() => executor.terminate(child, 'SIGKILL'), 2_000);
+      }, timeoutMs);
+      child.stdout?.setEncoding('utf8');
+      child.stderr?.setEncoding('utf8');
+      child.stdout?.on('data', (chunk: string) => {
+        stdoutChars += chunk.length;
+        const next = appendBounded(stdout, chunk, options.maxStdoutChars);
+        stdout = next.value;
+        stdoutTruncated ||= next.truncated;
+      });
+      child.stderr?.on('data', (chunk: string) => {
+        stderrChars += chunk.length;
+        const next = appendBounded(stderr, chunk, options.maxStderrChars);
+        stderr = next.value;
+        stderrTruncated ||= next.truncated;
+      });
+      child.once('error', (error) => {
+        clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
+        resolve({ stdout, stderr, stdoutChars, stderrChars, exitCode: null, error, timedOut, stdoutTruncated, stderrTruncated });
+      });
+      child.once('close', (code) => {
+        clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
+        resolve({ stdout, stderr, stdoutChars, stderrChars, exitCode: code, timedOut, stdoutTruncated, stderrTruncated });
+      });
+    }, (error: unknown) => {
+      resolve({
+        stdout,
+        stderr,
+        stdoutChars,
+        stderrChars,
+        exitCode: null,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
     });
   });
 }

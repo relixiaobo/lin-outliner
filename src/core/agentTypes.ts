@@ -539,8 +539,7 @@ export interface AgentToolResultEvent {
   timestamp: number;
 }
 
-export type AgentApprovalResolutionScope = 'once' | 'always';
-export type AgentApprovalRequestKind = 'tool_permission' | 'skill_trust' | 'permission_notice';
+export type AgentApprovalRequestKind = 'folder_capability';
 
 export interface AgentApprovalRequestDetail {
   label: string;
@@ -557,21 +556,9 @@ export interface AgentApprovalRequestView {
   target: string;
   reason: string;
   details: AgentApprovalRequestDetail[];
-  alwaysAllowRule?: string;
-  alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
-  autoBlockMs?: number;
-  /**
-   * Agent id, set only when an approval/notice is attributed to a separate
-   * consulted agent. Same-agent Runs leave this unset; their risky actions still
-   * gate through ordinary capability permissions.
-   */
+  folders?: string[];
+  /** Agent id when a separate consulted agent requested the folder. */
   requestedByAgentId?: string;
-  skillTrust?: {
-    name: string;
-    displayName?: string;
-    source: 'user' | 'project';
-    contentHash: string;
-  };
 }
 
 export interface AgentApprovalResolvedEvent {
@@ -579,7 +566,6 @@ export interface AgentApprovalResolvedEvent {
   conversationId: string;
   requestId: string;
   approved: boolean;
-  scope?: AgentApprovalResolutionScope;
   timestamp: number;
 }
 

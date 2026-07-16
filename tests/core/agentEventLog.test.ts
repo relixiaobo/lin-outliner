@@ -991,6 +991,45 @@ describe('notification + attention projection', () => {
     expect(Object.values(state.notifications).every((record) => record.read === false)).toBe(true);
   });
 
+  test('restores and resolves durable folder capability requests', () => {
+    const request = {
+      requestId: 'folder-request-1',
+      runId: 'run-folder-1',
+      agentSessionId: 'agent-session-folder-1',
+      issueId: 'issue-folder-1',
+      toolCallId: 'tool-folder-1',
+      toolName: 'bash',
+      folders: ['/tmp/external'],
+    };
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
+      notificationCreated(2, {
+        kind: 'needs_input',
+        source: { type: 'run', runId: request.runId },
+        folderCapability: request,
+      }),
+      {
+        ...base(3, 'tool.permission.resolved'),
+        runId: request.runId,
+        requestId: request.requestId,
+        toolCallId: request.toolCallId,
+        toolName: request.toolName,
+        status: 'approved',
+        resolvedBy: 'folder_grant',
+        updatedFolders: request.folders,
+      },
+    ]);
+
+    expect(state.notifications['notif-2']?.folderCapability).toEqual(request);
+    expect(state.folderCapabilityRequests[request.requestId]).toMatchObject({
+      ...request,
+      conversationId,
+      status: 'approved',
+      createdAt: 1_700_000_000_002,
+      updatedAt: 1_700_000_000_003,
+    });
+  });
+
   test('rejects a notification claiming another conversation (delivery anchor = log identity)', () => {
     expect(() => replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Untitled' },

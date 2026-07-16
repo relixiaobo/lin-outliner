@@ -23,7 +23,6 @@ import type {
   AgentSessionTranscriptResult,
   AgentPickScopeFolderResult,
   AgentSlashCommandView,
-  AgentApprovalResolutionScope,
   AgentToolPermissionSettingsInput,
   AgentToolPermissionSettingsView,
   AgentDefinition,
@@ -395,8 +394,7 @@ export const api = {
     conversationId: string,
     requestId: string,
     approved: boolean,
-    scope: AgentApprovalResolutionScope = 'once',
-  ) => command<{ resolved: boolean }>('agent_resolve_approval', { conversationId, requestId, approved, scope }),
+  ) => command<{ resolved: boolean }>('agent_resolve_approval', { conversationId, requestId, approved }),
   agentResolveUserQuestion: (
     conversationId: string,
     requestId: string,

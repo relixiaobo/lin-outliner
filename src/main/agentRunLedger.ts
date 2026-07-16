@@ -6,6 +6,7 @@ import {
   getAgentEventActivePath,
   type AgentActor,
   type AgentEvent,
+  type AgentEventBase,
   type AgentEventReplayState,
   type AgentId,
   type AgentPersistedContent,
@@ -21,6 +22,8 @@ import {
   type AgentRunScope,
   type AgentRunLogEventType,
   type AgentRunStatus,
+  type ToolPermissionCheckedEvent,
+  type ToolPermissionResolvedEvent,
 } from '../core/agentEventLog';
 import {
   assertValidRunExecutionStatusTransition,
@@ -112,6 +115,13 @@ export interface AgentRunLedgerWriterOptions {
   persister: AgentRunLedgerContentPersister;
 }
 
+type RunPermissionEventInput<T extends ToolPermissionCheckedEvent | ToolPermissionResolvedEvent> =
+  Omit<T, keyof AgentEventBase> & Pick<T, 'type' | 'actor'>;
+
+export type AgentRunPermissionEventInput =
+  | RunPermissionEventInput<ToolPermissionCheckedEvent>
+  | RunPermissionEventInput<ToolPermissionResolvedEvent>;
+
 export class AgentRunLedgerWriter {
   private readonly runs = new Map<string, RunLedgerRunState>();
 
@@ -174,6 +184,15 @@ export class AgentRunLedgerWriter {
     await this.enqueue(runId, run, async () => {
       const events = await this.messageEvents(run, runId, message, actor);
       if (events.length === 0) return;
+      await this.options.store().appendRunStreamEvents(run.conversationId, runId, events);
+    });
+  }
+
+  async appendPermissionEvents(runId: string, inputs: readonly AgentRunPermissionEventInput[]): Promise<void> {
+    if (inputs.length === 0) return;
+    const run = this.requireRun(runId);
+    await this.enqueue(runId, run, async () => {
+      const events = inputs.map((input) => this.buildEvent(run, runId, { ...input }));
       await this.options.store().appendRunStreamEvents(run.conversationId, runId, events);
     });
   }

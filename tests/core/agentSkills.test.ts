@@ -634,10 +634,12 @@ describe('agent skills', () => {
 
     expect(body).toContain('resolve and read the current `SKILL.md` first');
     expect(body).toContain('Prefer a focused `file_edit` patch');
-    expect(body).toContain('Show the complete `SKILL.md`');
-    expect(body).toContain('focused diff for updates');
+    expect(body).toContain('write it directly without a second confirmation');
+    expect(body).toContain('Ask only for a missing identity');
+    expect(body).toContain('show the complete `SKILL.md`');
+    expect(body).toContain('only when that preview is needed');
     expect(body).toContain('ask_user_question');
-    expect(body).toContain('Save, revise, or cancel choices');
+    expect(body).not.toContain('Save, revise, or cancel choices');
 
     expect(body).toContain('Separate authoring tools from runtime tools');
     expect(body).toContain('Omit `allowed-tools` when the future workflow does not need preapproval');

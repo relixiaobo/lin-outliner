@@ -19,14 +19,12 @@ export type AgentPermissionDeniedReason =
   | 'platform_hard_block'
   | 'run_aborted'
   | 'runtime'
-  | 'user_denied';
+  | 'user_cancelled';
 
 export type AgentToolPermissionEventSource =
   | 'default'
-  | 'trust_ledger'
-  | 'built_in_soft_block'
+  | 'folder_capability'
   | 'user_blocklist'
-  | 'soft_block_allow'
   | 'configured_deny'
   | 'policy_denied'
   | 'user'
@@ -35,9 +33,9 @@ export type AgentToolPermissionEventSource =
 
 export type AgentToolPermissionResolvedBy =
   | 'default'
-  | 'trust_ledger'
-  | 'user_once'
-  | 'allow_rule_update'
+  | 'folder_capability'
+  | 'folder_grant'
+  | 'user_cancelled'
   | 'configured_deny'
   | 'policy_denied'
   | 'platform_hard_block'
@@ -461,8 +459,9 @@ export type AgentRunLogEvent =
       toolName: string;
       primaryActionKind?: string;
       actionKinds: string[];
-      outcome: 'allow' | 'ask' | 'soft_blocked' | 'blocked';
+      outcome: 'allow' | 'folder_required' | 'blocked';
       source: AgentToolPermissionEventSource;
+      requiredFolders?: string[];
       descriptorRef?: AgentPayloadRef;
     })
   | (AgentRunEventBase & {
@@ -472,7 +471,7 @@ export type AgentRunLogEvent =
       toolName: string;
       status: 'approved' | 'denied' | 'aborted';
       resolvedBy: AgentToolPermissionResolvedBy;
-      updatedRule?: string;
+      updatedFolders?: string[];
       deniedReason?: AgentPermissionDeniedReason;
     })
   | (AgentRunEventBase & {
@@ -824,8 +823,9 @@ export interface ToolPermissionCheckedEvent extends AgentEventBase {
   toolName: string;
   primaryActionKind?: string;
   actionKinds: string[];
-  outcome: 'allow' | 'ask' | 'soft_blocked' | 'blocked';
+  outcome: 'allow' | 'folder_required' | 'blocked';
   source: AgentToolPermissionEventSource;
+  requiredFolders?: string[];
   descriptorRef?: AgentPayloadRef;
 }
 
@@ -836,7 +836,7 @@ export interface ToolPermissionResolvedEvent extends AgentEventBase {
   toolName: string;
   status: 'approved' | 'denied' | 'aborted';
   resolvedBy: AgentToolPermissionResolvedBy;
-  updatedRule?: string;
+  updatedFolders?: string[];
   deniedReason?: AgentPermissionDeniedReason;
 }
 
@@ -932,6 +932,18 @@ export interface NotificationCreatedEvent extends AgentEventBase {
   body?: string;
   /** The background Run or Issue transition that produced this notification. */
   source?: AgentNotificationSource;
+  folderCapability?: AgentFolderCapabilityRequest;
+}
+
+export interface AgentFolderCapabilityRequest {
+  requestId: string;
+  runId: string;
+  agentSessionId: string;
+  issueId: string;
+  toolCallId: string;
+  toolName: string;
+  folders: string[];
+  requestedByAgentId?: string;
 }
 
 /**
@@ -1269,9 +1281,17 @@ export interface AgentNotificationRecord {
   title: string;
   body?: string;
   source?: AgentNotificationSource;
+  folderCapability?: AgentFolderCapabilityRequest;
   seq: number;
   createdAt: number;
   read: boolean;
+}
+
+export interface AgentFolderCapabilityRequestRecord extends AgentFolderCapabilityRequest {
+  conversationId: string;
+  status: 'pending' | 'approved' | 'cancelled';
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface AgentConversationAttention {
@@ -1296,6 +1316,7 @@ export interface AgentEventReplayState {
   contextClearsByMessageId: Record<string, AgentContextClearRecord>;
   dreamsByMessageId: Record<string, AgentDreamRecord>;
   userQuestions: Record<string, AgentUserQuestionRecord>;
+  folderCapabilityRequests: Record<string, AgentFolderCapabilityRequestRecord>;
   notifications: Record<string, AgentNotificationRecord>;
   attentionByConversationId: Record<string, AgentConversationAttention>;
 }
@@ -1333,6 +1354,7 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     contextClearsByMessageId: {},
     dreamsByMessageId: {},
     userQuestions: {},
+    folderCapabilityRequests: {},
     notifications: {},
     attentionByConversationId: {},
   };
@@ -1753,7 +1775,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'thinking.delta':
     case 'tool_call.delta':
     case 'tool.permission.checked':
-    case 'tool.permission.resolved':
     case 'widget_state.updated':
     case 'approval.requested':
     case 'approval.resolved':
@@ -1768,6 +1789,13 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'skill.curation.updated':
     case 'checkpoint.created':
       return;
+    case 'tool.permission.resolved': {
+      const request = state.folderCapabilityRequests[event.requestId];
+      if (!request) return;
+      request.status = event.status === 'approved' ? 'approved' : 'cancelled';
+      request.updatedAt = event.createdAt;
+      return;
+    }
     case 'user_question.requested':
       state.userQuestions[event.requestId] = {
         requestId: event.requestId,
@@ -1806,10 +1834,23 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         title: event.title,
         body: event.body,
         source: event.source,
+        folderCapability: event.folderCapability
+          ? { ...event.folderCapability, folders: event.folderCapability.folders.slice() }
+          : undefined,
         seq: event.seq,
         createdAt: event.createdAt,
         read,
       };
+      if (event.folderCapability && !state.folderCapabilityRequests[event.folderCapability.requestId]) {
+        state.folderCapabilityRequests[event.folderCapability.requestId] = {
+          ...event.folderCapability,
+          folders: event.folderCapability.folders.slice(),
+          conversationId: event.conversationId,
+          status: 'pending',
+          createdAt: event.createdAt,
+          updatedAt: event.createdAt,
+        };
+      }
       if (!read) attention.unreadCount += 1;
       return;
     }

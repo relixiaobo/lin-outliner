@@ -68,7 +68,6 @@ export type {
 
 export type {
   AgentApprovalRequestView,
-  AgentApprovalResolutionScope,
   AgentAuthoringInput,
   AgentDefinitionView,
   AgentRunDetailPayload,
@@ -100,9 +99,8 @@ export type {
 } from '../../core/agentRenderProjection';
 
 export interface AgentToolPermissionSettingsView {
-  grants: string[];
+  folders: string[];
   blocks: string[];
-  softBlockAllows: string[];
   diagnostics: Array<{
     ruleValue: string;
     code: string;
@@ -111,15 +109,14 @@ export interface AgentToolPermissionSettingsView {
 }
 
 export interface AgentToolPermissionSettingsInput {
-  grants: string[];
+  folders: string[];
   blocks: string[];
-  softBlockAllows: string[];
 }
 
 export interface AgentPickScopeFolderResult {
   canceled: boolean;
   path?: string;
-  grant?: string;
+  folder?: string;
   settings: AgentToolPermissionSettingsView;
 }
 

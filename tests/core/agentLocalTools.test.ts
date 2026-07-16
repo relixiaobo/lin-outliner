@@ -358,7 +358,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('remembered scope grants widen file-tool containment without changing the relative base', async () => {
+  test('remembered folder capabilities widen file-tool containment without changing the relative base', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const handedRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-handed-'));
       try {
@@ -2188,7 +2188,6 @@ describe('local tool model-visible projections', () => {
       command: 'echo hi',
       returnCodeInterpretation: undefined,
       noOutputExpected: false,
-      dangerouslyDisableSandbox: false,
     };
     expect(visibleBash(data)).toEqual({ stdout: 'hi', stderr: '' });
   });

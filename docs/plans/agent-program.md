@@ -57,10 +57,10 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   run-scoped preapproval; `model`/`effort` override; `context: fork`; slash-only
   built-in `/skillify`; governed file-tool self-authoring with hot-reload and
   `skill.*` audit events (`docs/spec/agent-skills.md`).
-- **Permissions** — `allow | ask | deny` + platform hard blocks + bash classifier +
-  ask resolver + approval UI + permission events (#60,
-  `docs/spec/agent-tool-permissions.md`). Conversation-scoped allow rules were
-  removed by the archived hardening pass.
+- **Permissions** — `allow | folder_required | blocked` + persistent folder
+  capabilities + one sandboxed process executor + direct hard/user/restricted
+  blocks + durable unattended recovery + permission events
+  (`docs/spec/agent-tool-permissions.md`).
 - **Subagents** — fresh / fork / background runs + sidechain transcripts + background
   notifications + `Agent` / `AgentStatus` / `AgentSend` / `AgentStop`
   (`docs/spec/agent-delegation-runtime.md`).

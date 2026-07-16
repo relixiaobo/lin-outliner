@@ -646,9 +646,10 @@ permission behavior harder to reason about.
 - Use `past_chats` for visible prior conversation history and raw stream spans.
   Search/recent results are navigation; the model must read by `message_id` or
   `source` before relying on details.
-- Use `ask_user_question` for decisions or missing context, not permission
-  approval. Permission approval answers "may the agent do this"; this tool
-  answers "what information or direction should the agent use next".
+- Use `ask_user_question` only for decisions or missing context that cannot be
+  inferred, never for permission. Folder capability requests answer "which local
+  folder may the agent access"; this tool answers "what information or direction
+  should the agent use next".
 - Use `generate_image` for raster image generation/editing only; normal
   multimodal chat and `file_read` remain the way to inspect existing images.
 - Local file tools should mirror proven read, edit, write, glob, and grep roles,
@@ -2581,7 +2582,6 @@ interface ToolPreview {
   moves: Array<{ nodeId: string; fromParentId: string; toParentId: string }>;
   deletes: Array<{ nodeId: string; title: string; destination: "trash" }>;
   warnings: string[];
-  requiresApproval: boolean;
 }
 ```
 
@@ -2638,14 +2638,17 @@ interface ValidationReport {
 
 ## Local File Tools
 
-File tools are for local files under the configured local file root (the **workdir**:
-the agent's cwd, the default `file_glob`/`file_grep` root, and where `file_write`
-output lands). The app-owned **scratch** sibling (materialized attachments, web-fetch
-binaries, bash overflow logs, PDF pages) is read-accessible by absolute path but is
-never the default listing root. Generated images are the narrow exception: their
+File tools are for local files under the configured capability roots. The
+**workdir** is the agent's cwd, the default `file_glob`/`file_grep` root, and
+where relative `file_write` output lands. Persistent user-granted folders are
+additional absolute read/write roots. The app-owned **scratch** sibling holds
+materialized attachments, web-fetch binaries, bash overflow logs, PDF pages,
+cleanup files, and generated images. Attachments are read-only; app-owned output
+subdirectories are writable and scratch is never the default listing root.
+Generated images' narrow path shorthand resolves under scratch: their
 tool-returned `generated-images/...` paths resolve under scratch for preview and
 follow-up `generate_image.image_paths` use — see
-[`agent-tool-permissions.md` → Allowed file area](./agent-tool-permissions.md#allowed-file-area)
+[`agent-tool-permissions.md` -> Folder Capabilities](./agent-tool-permissions.md#folder-capabilities)
 for the two-root model. They must not mutate the outliner
 document. The design keeps dedicated tools for each local file role:
 
@@ -3191,7 +3194,7 @@ interface BashParams {
   description?: string;
   timeout?: number; // milliseconds
   run_in_background?: boolean;
-  dangerouslyDisableSandbox?: boolean; // optional, hidden or approval-gated
+  required_folders?: string[]; // absolute folders outside the implicit roots
 }
 ```
 
@@ -3207,7 +3210,7 @@ interface BashData {
   backgroundTaskId?: string;
   backgroundedByUser?: boolean;
   assistantAutoBackgrounded?: boolean;
-  dangerouslyDisableSandbox?: boolean;
+  folderAccessRequired?: boolean;
   returnCodeInterpretation?: string;
   noOutputExpected?: boolean;
   structuredContent?: unknown[];
@@ -3226,6 +3229,12 @@ Result behavior:
 - Commands run in the local file root by default. Lin should not expose a
   model-facing `cwd` parameter initially; the agent can use shell syntax when a
   command truly needs another directory.
+- Commands that need local folders outside the implicit capability roots declare
+  them in `required_folders`. Missing folders are requested and persisted before
+  process start. Undeclared access is denied by the process sandbox, returned as
+  `folder_access_required`, and never auto-replayed.
+- Every agent-driven process uses the shared process executor. On macOS it runs
+  inside the capability-derived Seatbelt profile; there is no sandbox bypass.
 - Long-running commands should use `run_in_background: true` and return
   `backgroundTaskId`. The agent should not append `&`.
 - Foreground commands that outlive Lin's blocking budget may be auto-backgrounded
@@ -3780,13 +3789,9 @@ survives the removal:
   metadata in tool details, emits `skill.created` / `skill.patched` /
   `skill.replaced` audit events on success, records provenance hashes, and
   hot-reloads the skill registry.
-- Agent definition files use the ordinary `file_write` / `file_edit` permission
-  decision. After that decision, the file-tool gateway recognizes writes under
-  user/project agent directories, accepts only `AGENT.md` files with
-  `permission-mode: restricted`, validates strict frontmatter/body shape, rejects
-  support files, deletes, trusted permission mode, reserved built-in names, and
-  unsafe metadata, and hot-reloads live agent registries on success. Shell writes
-  are not self-definition authoring routes.
+- Shell writes are not a skill-authoring route. The permission floor and process
+  sandbox deny writes under governed `.agents/skills`; validated skill authoring
+  uses `file_write` / `file_edit` only.
 
 ## Mapping to Current Lin Commands
 
@@ -3816,12 +3821,13 @@ Lin should prefer adding semantic TypeScript core commands where the current com
 set is too UI-shaped. For example, semantic target/source merge is better for
 agents than only `merge_node_into_previous`.
 
-## Approval Policy
+## Permission Policy
 
-The permission **policy** — the allow/ask/deny model, platform hard blocks, the
-bash projection, ask resolution, sensitive-data redlines, the global store, and
-events — is specified in `agent-tool-permissions.md`. This section only
-classifies each tool as read-only vs mutating (the input that policy acts on).
+The permission **policy** — `allow | folder_required | blocked`, persistent
+folder capabilities, process containment, direct hard blocks, explicit user
+blocks, restricted Runs, and events — is specified in
+`agent-tool-permissions.md`. This section only classifies each tool as read-only
+vs mutating, one input to that policy.
 
 Read-only tools run immediately when their permission scope is already allowed:
 
@@ -3833,7 +3839,7 @@ Read-only tools run immediately when their permission scope is already allowed:
 - `past_chats`
 - `outline_undo_stack(action: "list")`
 
-Web tools are also read-only, but may be blocked by host/offline policy:
+Web tools are also read-only, but can return direct host/offline/SSRF errors:
 
 - `web_search`
 - `web_fetch`
@@ -3850,9 +3856,10 @@ Mutating tools still pass through the global permission layer:
 - `bash_stop`
 - `generate_image`
 
-How risk maps to allow / ask / deny (broad node/file edits, user-origin
-undo/redo, risky shell, exfiltration redlines, permissive-mode behavior) is owned
-by `agent-tool-permissions.md`.
+Ordinary reads and mutations run immediately when their folder capabilities are
+available. Missing folders request one persistent capability; hard floors,
+explicit user blocks, and restricted-Run ceilings reject directly. The exact
+rules are owned by `agent-tool-permissions.md`.
 
 ## Implementation Notes
 

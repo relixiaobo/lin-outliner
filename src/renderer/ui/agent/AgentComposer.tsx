@@ -7,7 +7,6 @@ import {
 } from 'react';
 import type {
   AgentApprovalRequestView,
-  AgentApprovalResolutionScope,
   AgentMessageAttachmentInput,
   AgentUserQuestionPendingView,
   AskUserQuestionResult,
@@ -78,7 +77,6 @@ interface AgentComposerProps {
   onResolveApproval: (
     requestId: string,
     approved: boolean,
-    scope?: AgentApprovalResolutionScope,
   ) => Promise<boolean>;
   onResolveUserQuestion: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
   pendingApproval: AgentApprovalRequestView | null;
@@ -778,69 +776,21 @@ function AgentApprovalCard({
   onResolve: (
     requestId: string,
     approved: boolean,
-    scope?: AgentApprovalResolutionScope,
   ) => Promise<boolean>;
 }) {
   const t = useT();
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [submitting, setSubmitting] = useState<AgentApprovalResolutionScope | 'deny' | null>(null);
-  const isSkillTrust = approval.kind === 'skill_trust';
-  const isNotice = approval.kind === 'permission_notice';
-  const isSoftBlock = approval.kind === 'tool_permission' && typeof approval.autoBlockMs === 'number' && approval.autoBlockMs > 0;
-  const [remainingMs, setRemainingMs] = useState(approval.autoBlockMs ?? 0);
-  const autoBlockCancelledRef = useRef(false);
-  const onResolveRef = useRef(onResolve);
+  const [submitting, setSubmitting] = useState<'grant' | 'cancel' | null>(null);
 
-  useEffect(() => {
-    onResolveRef.current = onResolve;
-  }, [onResolve]);
-
-  useEffect(() => {
-    if (!isSoftBlock || !approval.autoBlockMs) return undefined;
-    autoBlockCancelledRef.current = false;
-    setRemainingMs(approval.autoBlockMs);
-    let settled = false;
-    const deadline = Date.now() + approval.autoBlockMs;
-    const tick = () => setRemainingMs(Math.max(0, deadline - Date.now()));
-    const interval = window.setInterval(tick, 1000);
-    const timeout = window.setTimeout(() => {
-      if (autoBlockCancelledRef.current) return;
-      settled = true;
-      setSubmitting('deny');
-      void onResolveRef.current(approval.requestId, false, 'once').finally(() => setSubmitting(null));
-    }, approval.autoBlockMs);
-    tick();
-    return () => {
-      window.clearInterval(interval);
-      if (!settled) window.clearTimeout(timeout);
-    };
-  }, [approval.autoBlockMs, approval.requestId, isSoftBlock]);
-
-  async function resolve(approved: boolean, scope: AgentApprovalResolutionScope = 'once') {
+  async function resolve(approved: boolean) {
     if (submitting) return;
-    autoBlockCancelledRef.current = true;
-    setSubmitting(approved ? scope : 'deny');
+    setSubmitting(approved ? 'grant' : 'cancel');
     try {
-      await onResolve(approval.requestId, approved, scope);
+      await onResolve(approval.requestId, approved);
     } finally {
       setSubmitting(null);
     }
   }
-
-  async function dismissNotice() {
-    if (submitting) return;
-    autoBlockCancelledRef.current = true;
-    setSubmitting('deny');
-    try {
-      await onResolve(approval.requestId, false, 'once');
-    } finally {
-      setSubmitting(null);
-    }
-  }
-
-  const blockNowLabel = isSoftBlock
-    ? t.agent.composer.blockNowCountdown({ seconds: Math.max(1, Math.ceil(remainingMs / 1000)) })
-    : t.agent.composer.denyOnce;
 
   return (
     <div className="agent-approval-card" role="group" aria-label={approval.title}>
@@ -870,74 +820,28 @@ function AgentApprovalCard({
                 <span className="agent-approval-detail-value">{detail.value}</span>
               </div>
             ))}
-            {approval.alwaysAllowRule ? (
-              <div className="agent-approval-detail">
-                <span className="agent-approval-detail-label">{t.agent.composer.alwaysAllowRule}</span>
-                <span className="agent-approval-detail-value">{approval.alwaysAllowRule}</span>
-              </div>
-            ) : null}
           </div>
         ) : null}
       </div>
       <div className="agent-approval-actions">
-        {isNotice ? (
+        <>
           <button
             className="agent-approval-button is-primary"
             disabled={!!submitting}
-            onClick={() => void dismissNotice()}
+            onClick={() => void resolve(true)}
             type="button"
           >
-            {t.agent.composer.dismiss}
+            {t.agent.composer.grantFolderAccess}
           </button>
-        ) : isSkillTrust ? (
-          <>
-            <button
-              className="agent-approval-button is-primary"
-              disabled={!!submitting}
-              onClick={() => void resolve(true, 'once')}
-              type="button"
-            >
-              {t.agent.composer.acceptSkill}
-            </button>
-            <button
-              className="agent-approval-button"
-              disabled={!!submitting}
-              onClick={() => void resolve(false, 'once')}
-              type="button"
-            >
-              {t.agent.composer.notNow}
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              className="agent-approval-button is-primary"
-              disabled={!!submitting}
-              onClick={() => void resolve(true, 'once')}
-              type="button"
-            >
-              {t.agent.composer.approveOnce}
-            </button>
-            {approval.alwaysAllowRule ? (
-              <button
-                className="agent-approval-button"
-                disabled={!!submitting}
-                onClick={() => void resolve(true, 'always')}
-                type="button"
-              >
-                {isSoftBlock ? t.agent.composer.alwaysAllow : t.agent.composer.alwaysAllowBoundary}
-              </button>
-            ) : null}
-            <button
-              className="agent-approval-button"
-              disabled={!!submitting}
-              onClick={() => void resolve(false, 'once')}
-              type="button"
-            >
-              {blockNowLabel}
-            </button>
-          </>
-        )}
+          <button
+            className="agent-approval-button"
+            disabled={!!submitting}
+            onClick={() => void resolve(false)}
+            type="button"
+          >
+            {t.agent.composer.cancelFolderAccess}
+          </button>
+        </>
       </div>
     </div>
   );

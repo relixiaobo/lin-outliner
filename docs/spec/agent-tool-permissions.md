@@ -1,333 +1,227 @@
 # Agent Tool Permissions
 
-The permission gate is the single runtime-owned policy for agent tool calls. It
-decides whether a call runs, is soft-blocked with a user override, or is hard
-blocked. The prompt never owns permissions. `agent-tool-design.md` defines the
-tools; `agent-skills.md` defines the restricted delegation sandbox and skill
-`allowed-tools` inputs that feed this gate.
+Agent permissions are capability-first. A user request authorizes the requested
+work; risk labels, reversibility, command complexity, network effects, installs,
+publishes, and other ordinary side effects do not create confirmation prompts.
+The permission layer asks only when execution needs a local folder that Tenon
+does not already have, and it remembers that folder after the user grants it.
 
-The current model is default-allow with a tiny non-overridable redline and a
-user-editable blocklist. It is implemented by
-`src/core/agentPermissionModel.ts`, `src/main/agentPermissions.ts`,
-`src/main/agentToolPermissionRules.ts`, and
-`src/main/agentToolPermissionStore.ts`.
+The runtime owns this policy. Prompts and skills may suggest tools, but they
+cannot widen the capability set or bypass a block. `agent-tool-design.md`
+defines the tools, and `agent-skills.md` defines the restricted delegation mode
+and skill `allowed-tools` metadata that feed this policy.
 
 ## Decision Model
 
-Every governed operation projects to one `AgentOperationEffect` and one or more
-audit descriptors:
+Every tool call has exactly one permission outcome:
 
-```ts
-interface AgentOperationEffect {
-  reach: 'local' | 'outside_scope' | 'network_read' | 'network_write' | 'external_system';
-  reversible: boolean;
-  touchesCredentials: boolean;
-  floor?: 'exfiltration' | 'host_destruction' | 'persistence' | 'hidden_exec' | 'permission_self_mod' | 'payment';
-  label: string;
-  grant?: Grant;
-}
-```
+- `allow`: execute immediately.
+- `folder_required`: stop before side effects and request one or more persistent
+  folder capabilities.
+- `blocked`: reject directly. A block never opens an approval card and cannot be
+  bypassed by granting a folder.
 
-`decideAgentOperationEffect(effect)` is intentionally small:
+Evaluation order is deliberately short:
 
-- `floor` -> `deny`
-- everything else -> `allow`
+1. Normalize the tool call and derive audit descriptors.
+2. Apply the non-overridable hard floor.
+3. Apply a restricted-Run tool ceiling.
+4. Apply explicit user block rules.
+5. Preflight local folder capabilities.
+6. Allow.
 
-`AgentToolActionKind` values still exist as audit labels, read-only catalog
-metadata, and user blocklist keys. They are not a consequence severity model.
+`AgentToolActionKind` values describe calls for audit, restricted-Run tool
+selection, and explicit user blocks. They are not a risk score. Unknown static
+shell syntax is an audit label and still runs.
 
-The public permission vocabulary is:
+## Folder Capabilities
 
-- `allow`: run the tool and record the derived action kinds.
-- `ask`: stop for explicit user approval before widening a typed file-tool root,
-  currently used when typed file read/search/write/delete tools target a local
-  non-sensitive path outside the handed file area. **Always allow** records a
-  narrow `Scope(read:/absolute/path)` or `Scope(write:/absolute/path)` grant.
-- `soft_blocked`: stop and show a card with **Allow once**, **Always allow**, and
-  **Block now**. If the user does nothing, the card auto-blocks after its
-  countdown.
-- `blocked`: hard redlines, restricted sandbox denials, runtime cancellation, or
-  explicit/expired soft-block denials.
+The folder capability service is the sole authority for local file roots. It
+canonicalizes existing directories with `realpath`, rejects filesystem-root
+grants, removes duplicate/nested roots, persists private JSON atomically, and
+publishes grant and revocation events.
 
-The legacy ask resolver and event schema remain shared with non-permission
-approval surfaces such as skill trust.
+The effective roots are:
 
-## Allowed File Area
+| Root | Access | Lifetime |
+| --- | --- | --- |
+| Current workdir | read/write | Run context |
+| App attachment scratch | read | app-owned |
+| Cleanup, tool-output, and generated-image scratch | read/write | app-owned |
+| Active skill resources | read | active invocation |
+| User-granted folder | read/write | persistent |
 
-Default-allow does not remove the typed file-tool execution boundary. File tools
-still operate inside explicit roots enforced by `resolveWorkspacePath` and
-realpath containment:
+Relative file paths resolve against the workdir. A granted folder is reached by
+an explicit absolute path; adding it does not change the relative base.
 
-- **workdir**: the cwd and default write root. Relative file-tool paths resolve
-  here.
-- **project self-definition root**: `<workdir>/.agents/skills`. This root is part
-  of the typed file-tool area so `/skillify` can use the same file tools as normal
-  project work. (The one-Neva invariant makes skills the only self-definition
-  surface; agent authoring under `.agents/agents` is no longer a write surface.)
-  The personal/global self-definition root `~/.agents/skills` is not implicitly in
-  every workspace's file area; it requires an explicit handed write scope.
-- **scratch**: app-owned materialized attachments, web-fetch binaries, overflow
-  logs, and PDF page images. Reads may use scratch; writes do not.
-- **active skill resource roots**: when an inline skill has been invoked and has a
-  real resource directory, that skill directory is projected into the typed file
-  boundary as a read-only root so the agent can load referenced support files
-  such as `references/*.md` through `file_read`. In dev this may be either a
-  Tenon-owned `src/main/builtInSkills/<skill>` path or an enabled
-  `linlab-skills/<skill>` path; in packaged builds it is the copied app-resource
-  `built-in-skills/<skill>` directory. Restored history only counts if that path
-  still matches the currently registered skill, so transcript text cannot grant
-  arbitrary reads. It never grants write access and does not expose
-  sibling skills or arbitrary parent folders.
-- **handed folders**: users may hand Tenon a real folder from Settings ->
-  Security. That records a legacy `Scope(write:/absolute/folder)` grant and the
-  runtime projects that scope into the file-tool execution layer.
-- **approved outside-scope file roots**: when a typed file tool targets a
-  non-sensitive path outside the current boundary, the permission layer asks
-  before the file tool runs. Approval for once projects that exact
-  `Scope(read:/absolute/path)` or `Scope(write:/absolute/path)` into the current
-  run's file-tool roots; approval for always also persists the grant. Isolated
-  read-only skill runs, including `/research`, inherit the same approval flow and
-  can continue after the parent conversation approves the scope.
+Typed file tools canonicalize the target at the operation boundary and preflight
+the nearest existing directory before execution. Reads may use every read root.
+Writes may use the workdir, app output roots, and persistent user folders. An
+active skill resource never becomes writable merely because the skill is active.
 
-The boundary is asymmetric:
+Settings -> Security can add and revoke persistent folders. Revocation is
+committed before it is published, immediately affects new calls, and terminates
+active foreground or background agent processes whose immutable capability
+snapshot contains the revoked folder.
 
-- Reads may touch workdir, project self-definition roots, scratch, active skill
-  resource roots, and handed `read` / `write` scope roots.
-- Writes may touch workdir, project self-definition roots, and handed `write`
-  scope roots.
-- Relative file-tool paths still resolve against workdir; handed folders are
-  reached through explicit absolute paths.
+## Process Boundary
 
-`tenon-import preview` and `tenon-import commit` run through `bash`, but commit
-is classified as an `outline.edit` consequence. The CLI reads local Import Pack
-files under the shell/file permission model, then sends bounded pack JSON content
-to the running app import API. The API never accepts arbitrary pack file paths.
-Approval/blocking decisions therefore keep the shell execution gate while making
-the final document write visible as an outline edit.
+All agent-driven child processes use `AgentProcessExecutor`, including foreground
+and background `bash`, embedded skill shell, ripgrep, and model-driven converters.
+The executor owns spawn, environment filtering, process-tree termination,
+timeouts, output capture integration, and immutable capability snapshots.
 
-The self-definition roots only extend where typed file tools may execute; they
-do not bypass the content gateway. Skill writes are validated as skill content,
-agent-definition writes are limited to restricted `AGENT.md` creates/edits, and
-`file_delete` refuses both skill and agent definition content. Conversion outputs
-and shell writes are not accepted self-definition authoring routes; use
-`file_write` / `file_edit` so the content gateway can validate and hot-reload.
+On macOS, the executor runs commands through one `sandbox-exec` adapter. The
+profile allows ordinary process and network behavior, allows reads from the
+effective read roots, denies writes by default, and then allows only effective
+write roots. Exact write denials remain above those roots for Tenon permission,
+provider, and secret stores and for governed `.agents/skills` directories. The
+adapter probes the platform mechanism and fails closed when it is unavailable.
 
-Shell commands are the broad local execution surface. They may operate outside
-the typed file boundary unless they hit a hard redline, a built-in soft block, or
-a user blocklist rule.
+Child processes do not inherit environment variables whose names identify API
+keys, tokens, secrets, passwords, credentials, or private keys. Provider secrets
+remain in the main process.
 
-## Default Allow
+`bash.required_folders` declares folders outside the implicit roots. The runtime
+canonicalizes and preflights those folders before process start. If a command
+attempts undeclared filesystem access, the process sandbox denies it and the tool
+returns a recoverable `folder_access_required` error. The runtime never replays
+that process automatically; the model must issue a new call with the folder
+declared, which then follows the ordinary capability flow.
 
-These run silently unless a hard redline, built-in soft block, restricted
-sandbox, or user blocklist rule matches:
+There is no model-facing or persisted sandbox bypass.
 
-- local file read/write/edit/delete inside the allowed file area;
-- `tenon-import commit` staging writes from a validated Import Pack, audited as
-  an `outline.edit` consequence;
-- local code execution such as Python, Node, shell scripts, build tools, tests,
-  converters, and project scripts;
-- dependency installs;
-- network reads such as search/fetch;
-- external CLI actions such as `git push`, `gh pr create`, deploy commands, and
-  message sends;
-- local control-plane actions such as Agent Session start/message/stop, skill
-  invocation, `bash_stop`, Dream, and whitelisted runtime config writes.
+## Interaction Flows
 
-This deliberately trades approval prompts for model judgment, durable audit, and
-fast user correction through the blocklist.
+### Foreground
 
-## Hard Redline
+1. A file tool inherently targets a path, or `bash` declares
+   `required_folders`.
+2. Hard blocks run first.
+3. The capability service computes uncovered canonical folders.
+4. The runtime creates one deduplicated folder request before any side effect.
+5. **Grant and remember** persists the folders, re-evaluates the original call,
+   and executes it once. **Cancel** aborts only that call.
+6. Later Runs, conversations, and app launches reuse the persistent capability.
 
-Hard redlines are non-configurable and cannot be bypassed by grants or soft-block
-exceptions:
+There is no allow-once option, countdown, command exception, or generic risk
+approval.
 
-- **credential exfiltration**: a sensitive credential path combined with a
-  network write or opaque outward sink.
-- **permission self-modification**: attempts to alter agent permission/provider
-  or secret configuration through tools.
-- **payment / purchase**: future payment actions unless a separate product-owned
-  payment confirmation flow exists.
-- **host destruction**: root, home, or whole-workdir recursive deletion; disk
-  erase; raw disk overwrite; shutdown/reboot; recursive ownership or permission
-  changes at filesystem root.
+### Unattended Agent Session
 
-Sensitive credential reads default to allow when they are not paired with an
-outward sink, including when the path is outside the handed file area. Credential
-plus outward sink is exfiltration and is blocked.
+An unattended Agent Session never waits on renderer-only state. It records a
+durable `needs_input` folder request in the origin conversation and stops before
+process execution. The stopped Session remains an error record for audit but does
+not enqueue a second generic failure notification; the folder request is the one
+user-facing interruption. Granting the folder starts a new continuation Agent
+Session after the original one is terminal. The continuation receives explicit
+guidance to issue a new tool call and never assumes that the earlier process ran.
 
-## Built-In Soft Blocks
+Restoring a conversation projects unresolved durable requests back into the same
+folder request card. Granting a folder from Settings also runs the durable
+recovery scan, so a pending Session does not require the original card to remain
+mounted.
 
-The built-in blocklist is intentionally minimal and user-overridable:
+## Direct Blocks
 
-- **remote or decoded code execution**: `curl|wget ... | sh`, decode-and-pipe
-  shell forms, and explicit `eval` / interpreter-eval forms that execute opaque
-  generated code.
-- **OS-level persistence / self-amplification**: writes to shell startup files,
-  cron, LaunchAgents, systemd user units, and git internals that can persist or
-  rewrite repository behavior: `.git/hooks/*`, `.git/config`, `.git/refs/**`, and
-  `.git/objects/**`.
+The hard floor is structural and intentionally small:
 
-These do not soft-block by default:
+- recognizable host-wide destruction: recursive root/home erase, disk erase,
+  direct raw-disk writes, shutdown/reboot, and recursive ownership or permission
+  changes at filesystem root;
+- writes to Tenon's actual permission, provider, or secret store files through
+  typed file tools or shell mutation targets;
+- shell writes under governed skill directories, which must use the validated
+  `file_write` / `file_edit` gateway;
+- unsupported payment or purchase tools without a product-owned payment flow;
+- explicit user `Action(...)` or exact `Command(...)` block rules;
+- restricted-Run tools that are neither in the read-only base nor explicitly
+  preapproved for that Run.
 
-- `git push`, GitHub CLI mutations, deploys, package publishes, and message
-  sends;
-- ordinary shell command substitution using `$(...)` or backticks;
-- ordinary project-local file edits that do not hit a redline, soft block, or
-  user block.
+These calls return a structured, non-overridable `permission_denied` result.
+They do not ask the user to approve the same action under another label.
 
-When a built-in soft block fires, **Always allow** adds a narrow
-`softBlockAllows` rule, usually `Command(exact command)` for shell calls or
-`Scope(write:/absolute/path)` for path-specific file writes.
+Remote-code pipes, persistence writes outside governed skill paths, package
+installs, network writes, Git/GitHub publishes, deployments, message sends, and
+unknown shell commands are not prompt categories. They execute when their
+folder capabilities are available.
 
-## User Blocklist
+The process boundary is delegated-operator containment, not hostile-code
+isolation. User files inside a granted folder are intentionally available to the
+agent, including files that may contain credentials. Tenon protects its own
+provider secrets structurally; it does not claim that shell-string heuristics can
+prevent every misuse of user-owned data after the user grants the containing
+folder.
 
-`agent-tool-permissions.json` under `userData` stores global permission rules:
+## Restricted Runs
+
+`restricted` mode is a capability ceiling for delegated or verification Runs,
+not a user confirmation mode:
+
+- a read-only base set remains available;
+- non-base tools require a matching run-scoped preapproval rule;
+- `node_edit` and every other mutation therefore require explicit preapproval;
+- preapproval never bypasses the hard floor, user blocks, or folder preflight.
+
+Skill `allowed-tools` entries and runtime preapproval rules satisfy this ceiling
+for the current Run only. They do not persist a global grant and do not grant a
+folder.
+
+## Persistent Settings
+
+`agent-tool-permissions.json` under `userData` contains only:
 
 ```ts
 interface AgentToolPermissionSettings {
-  grants?: string[]; // legacy file-boundary grants
+  folders: string[];
   blocks: string[];
-  softBlockAllows: string[];
 }
 ```
 
-Rule syntax:
+Supported block syntax is `Action(action.kind)` or
+`Command(exact command form)`. Command matching normalizes whitespace outside
+quotes. Broad, empty, or unknown block rules are inert and produce internal
+diagnostics. The debug panel can add a block from a concrete tool exchange;
+Settings can remove it.
 
-- `Action(git.publish_remote)`
-- `Command(git push origin main)`
-- `External(git push origin main)`
-- `Scope(read:/some/folder)`
-- `Scope(write:/some/folder)`
+## Events and UI
 
-Command rules are displayed and persisted in their original spelling, but
-matching normalizes whitespace outside quotes so debug-panel blocks and
-soft-block exceptions keep working across formatting-only command variants.
+The durable permission event pair is:
 
-`blocks` are user blacklists. A match returns `soft_blocked`. **Always allow** on
-a user block removes the matching block rule.
+- `tool.permission.checked`, with outcome `allow | folder_required | blocked`;
+- `tool.permission.resolved`, with status `approved | denied | aborted`.
 
-The agent debug log is also a correction surface. Tool-exchange rows that can be
-mapped to this rule language show an **Add to user blocks** action. Shell calls
-with a captured `command` become `Command(exact command)`; tools with a single
-known audit action become `Action(action.kind)`. Ambiguous tool rows do not offer
-the action rather than writing invalid or overly broad rules.
+The request id joins the pair. Folder requests use transient runtime
+`approval_request` / `approval_resolved` notifications only to drive the current
+composer card; they do not create a second persisted approval event track.
+Unattended requests additionally persist the durable `needs_input` notification
+and folder-request projection described above.
 
-`softBlockAllows` are exceptions for the built-in soft blocks. A match allows
-the call. Invalid strings, unsupported action kinds, legacy broad grants, and
-unqualified `Scope(/path)` values become diagnostics and never take effect.
-Writes are serialized, atomically renamed into place, and locked down with
-private file permissions.
+Settings -> Security has three sections:
 
-`grants` are retained for handed file folders and compatibility, and are also
-the persistence target for outside-scope typed file-tool approvals.
+- **Folder Access**: add, list, and revoke persistent folder capabilities;
+- **Your Blocks**: list and remove explicit user blocks;
+- **System Protections**: explain the non-overridable hard floor.
 
-## Evaluation Pipeline
+The composer has one permission card: the canonical folder path plus **Grant and
+remember** and **Cancel**. Skill acceptance, `ask_user_question`, OAuth input,
+Issue human review, and ordinary validation errors are separate product flows;
+they are not permission prompts and cannot authorize a blocked tool call.
 
-`AgentRuntime.beforeToolCall` is the live entry. Core evaluation is
-`evaluateAgentToolPermission`:
+## Adjacent System Blocks
 
-1. Normalize the tool and derive one or more descriptors with effects.
-2. Hard redline descriptors deny.
-3. Restricted sandbox denies non-base tools unless a run-scoped preapproved tool
-   rule matches.
-4. A matching user `blocks` rule returns `soft_blocked`.
-5. A built-in soft-block descriptor returns `soft_blocked` unless a matching
-   `softBlockAllows` rule exists.
-6. An unmatched `outside_scope` typed file-tool descriptor returns `ask`; a
-   matching `Scope(...)` grant allows and is projected into the local file-tool
-   execution boundary.
-7. Everything else allows.
+Some operations can fail without entering this permission policy:
 
-For compound bash commands, shell-surface segments are classified and ranked.
-Decision priority is `deny > soft_block > allow`, then source rank, then
-descriptor risk. This keeps the audit event pointed at the reason that actually
-blocked or allowed the call.
+- `web_fetch` rejects non-public, loopback, link-local, and private-network
+  targets to prevent SSRF;
+- Electron renderer permissions remain allow-listed and external navigation is
+  kept outside the app renderer;
+- Issue execution rejects invalid lifecycle, scope, unresolved dependency, and
+  unsupported output contracts; `human-review` completion remains a real human
+  workflow;
+- a missing macOS process sandbox disables agent child processes rather than
+  silently running them uncontained.
 
-## Bash Projection
-
-`deriveBashActionDescriptors` runs whole-command redline and soft-block checks
-first, then extracts static path tokens for file-boundary audit descriptors.
-Static shell segments map to audit labels such as local code execution, project
-script, dependency install, network write, git publish, deploy/publish, local
-file edit/delete, or `shell.unknown` for a plain unrecognized static command.
-
-Static heredocs are parsed as one outer shell command. The heredoc body is not
-split on shell operators and does not trigger shell redlines or soft blocks by
-accident; the outer command still classifies as local code execution. This keeps
-generated Python/Node artifacts from producing fake `hidden_exec` decisions.
-Heredoc detection ignores quoted `<<`, comments, and here-strings (`<<<`) so a
-live command following those forms still participates in redline and soft-block
-scans.
-
-## Restricted Skill Sandbox
-
-The skill/agent `restricted` mode is orthogonal to the global permission model.
-It narrows a run's available tool surface before blocklist decisions run:
-
-- A read-only base set remains available.
-- Non-base tools require a matching run-scoped `allowed-tools` preapproval rule.
-- Even when preapproved, the call still goes through descriptor projection, hard
-  redlines, user blocks, and built-in soft blocks.
-
-`tenon-import commit` is not read-only because it mutates the outliner. The
-restricted data-cleanup skill declares `bash` in `allowed-tools`; command
-classification still records the commit as `outline.edit`.
-
-Skill content-hash ratification is separate from permission rules.
-
-## Settings and UI
-
-Settings -> Security has no mode selector. It shows:
-
-- one delegated-operator row explaining default allow and hard redlines;
-- user blocklist rules;
-- built-in soft-block exceptions;
-- file boundaries from handed folders / legacy grants;
-- accepted skill hashes;
-- diagnostics for ignored permission-rule strings.
-
-Soft-block cards are the permission interruption surface:
-
-- **Allow once**: run this call only.
-- **Always allow**: for a built-in soft block, add a matching
-  `softBlockAllows` rule; for a user block, remove that block rule.
-- **Block now**: immediately deny. If the user does nothing, the countdown
-  auto-blocks. The renderer shows the countdown, and the main process owns the
-  authoritative timeout so a renderer crash or unmount cannot leave a tool call
-  pending forever.
-
-Hard redlines do not create user-facing approval or notice cards. The runtime
-records the denial in tool permission events and returns a `permission_denied`
-tool result to the model. Skills are default-ratified and do not use a separate
-trust approval card.
-
-## Events and Denials
-
-The runtime persists:
-
-- `tool.permission.checked`
-- `tool.permission.resolved`
-- `approval.requested`
-- `approval.resolved`
-
-`tool.permission.checked.outcome` is `allow`, `soft_blocked`, or `blocked` for
-new permission decisions. Legacy `ask` may still appear in older logs.
-`tool.permission.checked.source` is `default`, `built_in_soft_block`,
-`user_blocklist`, `soft_block_allow`, `user`, `configured_deny`, `runtime`,
-`trust_ledger`, or `platform_hard_block` depending on the path.
-
-Denied tool calls return structured `permission_denied` results:
-
-```json
-{
-  "ok": false,
-  "error": {
-    "code": "permission_denied",
-    "recoverable": false,
-    "details": { "reason": "platform_hard_block" }
-  }
-}
-```
-
-Recoverable denials include user rejection, runtime cancellation, and unattended
-soft blocks. Hard redlines are not recoverable inside the app.
+These are execution invariants or platform failures. They return direct errors
+or their own product interaction; none should be converted into a generic
+"approve this risky action" prompt.

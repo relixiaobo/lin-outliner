@@ -38,12 +38,10 @@ interface MockFixtureOptions {
   oauthProvider?: boolean;
   /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
   noProvider?: boolean;
-  /** Preloads remembered permission grants for settings/security specs. */
-  permissionGrants?: string[];
+  /** Preloads remembered folder capabilities for settings/security specs. */
+  permissionFolders?: string[];
   /** Preloads user blocklist rules for settings/security specs. */
   permissionBlocks?: string[];
-  /** Preloads built-in soft-block exceptions for settings/security specs. */
-  permissionSoftBlockAllows?: string[];
   /** Delays initial workspace restoration so startup chrome can be asserted before data arrives. */
   initWorkspaceDelayMs?: number;
   /** Delays provider settings so Settings chrome can be asserted before settings data arrives. */
@@ -490,14 +488,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       });
     }
     const agentToolPermissions = {
-      grants: [...(options.permissionGrants ?? [])] as string[],
+      folders: [...(options.permissionFolders ?? [])] as string[],
       blocks: [...(options.permissionBlocks ?? [])] as string[],
-      softBlockAllows: [...(options.permissionSoftBlockAllows ?? [])] as string[],
-      diagnostics: [{
-        ruleValue: 'Action(file.read.outside_allowed_file_area)',
-        code: 'unsupported_grant',
-        message: 'Broad action grants are not supported. Approve a narrow scope, external system, or command-form boundary instead.',
-      }] as Array<{ ruleValue: string; code: string; message: string }>,
+      diagnostics: [] as Array<{ ruleValue: string; code: string; message: string }>,
     };
     const agentSkills = [{
       name: 'workspace-review',
@@ -2081,19 +2074,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(agentToolPermissions) as T;
         }
         if (cmd === 'agent_pick_scope_folder') {
-          const next = args.settings as { grants?: string[]; blocks?: string[]; softBlockAllows?: string[] };
-          agentToolPermissions.grants = Array.isArray(next.grants) ? next.grants.map(String) : agentToolPermissions.grants;
+          const next = args.settings as { folders?: string[]; blocks?: string[] };
+          agentToolPermissions.folders = Array.isArray(next.folders) ? next.folders.map(String) : agentToolPermissions.folders;
           agentToolPermissions.blocks = Array.isArray(next.blocks) ? next.blocks.map(String) : agentToolPermissions.blocks;
-          agentToolPermissions.softBlockAllows = Array.isArray(next.softBlockAllows) ? next.softBlockAllows.map(String) : agentToolPermissions.softBlockAllows;
           const path = '/mock/handoff-folder';
-          const grant = `Scope(write:${path})`;
-          if (!agentToolPermissions.grants.includes(grant)) {
-            agentToolPermissions.grants.push(grant);
+          if (!agentToolPermissions.folders.includes(path)) {
+            agentToolPermissions.folders.push(path);
           }
           return clone({
             canceled: false,
             path,
-            grant,
+            folder: path,
             settings: agentToolPermissions,
           }) as T;
         }
@@ -2125,10 +2116,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(agentDefinitions) as T;
         }
         if (cmd === 'agent_update_tool_permission_settings') {
-          const next = args.settings as { grants?: string[]; blocks?: string[]; softBlockAllows?: string[] };
-          agentToolPermissions.grants = Array.isArray(next.grants) ? next.grants.map(String) : [];
+          const next = args.settings as { folders?: string[]; blocks?: string[] };
+          agentToolPermissions.folders = Array.isArray(next.folders) ? next.folders.map(String) : [];
           agentToolPermissions.blocks = Array.isArray(next.blocks) ? next.blocks.map(String) : [];
-          agentToolPermissions.softBlockAllows = Array.isArray(next.softBlockAllows) ? next.softBlockAllows.map(String) : [];
           return clone(agentToolPermissions) as T;
         }
         if (cmd === 'agent_append_tool_permission_block') {

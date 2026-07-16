@@ -1,22 +1,24 @@
 import type { ToolCall } from '@earendil-works/pi-ai';
 import { randomUUID } from 'node:crypto';
 import type { AgentPermissionMode } from '../core/types';
-import type { AgentApprovalResolutionScope } from '../core/agentTypes';
 import {
   evaluateAgentToolPermission,
-  type AgentPermissionAskDecision,
-  type AgentPermissionSoftBlockDecision,
+  type AgentPermissionFolderRequiredDecision,
   type GlobalToolPermissionConfig,
 } from './agentPermissions';
-import { resolveAgentPermissionAsk, type PermissionDeniedReason } from './agentPermissionAskResolver';
+import { agentProtectedStorePaths } from './agentProtectedPaths';
+import { createFolderCapabilitySnapshot } from './agentFolderCapabilities';
+import { selfDefinitionRootEntries } from './agentAuthoring';
 import { runLocalBashCommand, type LocalBashRunResult } from './agentLocalTools';
 import {
+  folderAccessRequiredToolResultMessage,
   permissionDeniedReasonForDecision,
   permissionDeniedToolResultMessage,
   permissionEventSourceForDeniedReason,
   permissionResolutionStatusForDeniedReason,
   permissionResolvedByForAllowDecision,
   permissionResolvedByForDeniedReason,
+  type AgentPermissionDeniedReason,
   type AgentToolPermissionLogInput,
 } from './agentPermissionEvents';
 
@@ -24,14 +26,13 @@ export interface AgentSkillShellApprovalInput {
   requestId: string;
   toolCall: ToolCall;
   args: { command: string };
-  decision: AgentPermissionAskDecision | AgentPermissionSoftBlockDecision;
+  decision: AgentPermissionFolderRequiredDecision;
 }
 
 export interface AgentSkillShellApprovalResolution {
   approved: boolean;
-  deniedReason?: PermissionDeniedReason;
-  scope?: AgentApprovalResolutionScope;
-  alwaysAllowRule?: string;
+  deniedReason?: AgentPermissionDeniedReason;
+  folders?: string[];
 }
 
 export interface AgentSkillShellCommandInput {
@@ -39,6 +40,8 @@ export interface AgentSkillShellCommandInput {
   command: string;
   localRoot?: string;
   scratchRoot?: string;
+  protectedStoreRoot?: string;
+  trustedReadRoots?: readonly string[];
   permissionMode?: AgentPermissionMode;
   allowedTools?: readonly string[];
   globalPermissions?: GlobalToolPermissionConfig;
@@ -49,7 +52,7 @@ export interface AgentSkillShellCommandInput {
 
 export class AgentSkillShellError extends Error {
   constructor(
-    readonly code: 'permission_denied' | 'command_failed',
+    readonly code: 'permission_denied' | 'folder_access_required' | 'command_failed',
     message: string,
   ) {
     super(message);
@@ -64,94 +67,68 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
     name: 'bash',
     arguments: { command: input.command },
   };
-  const permissionRequestId = `permission-${randomUUID()}`;
-  const decision = evaluateAgentToolPermission({
+  const requestId = `permission-${randomUUID()}`;
+  let globalPermissions = input.globalPermissions ?? await loadAgentToolPermissionConfig();
+  const evaluate = () => evaluateAgentToolPermission({
     toolName: 'bash',
     args: { command: input.command },
     policy: {
       mode: input.permissionMode,
       workspaceRoot: input.localRoot,
       scratchRoot: input.scratchRoot,
+      protectedStoreRoot: input.protectedStoreRoot,
+      trustedReadRoots: input.trustedReadRoots,
       preapprovedToolRules: input.allowedTools ?? [],
-      globalPermissions: input.globalPermissions,
+      globalPermissions,
     },
   });
-  const appendPermissionEvent = (event: Omit<AgentToolPermissionLogInput, 'requestId' | 'toolCall' | 'decision'>) => (
-    input.permissionEventHandler?.({
-      requestId: permissionRequestId,
-      toolCall,
-      decision,
-      ...event,
-    })
+  let decision = evaluate();
+  const append = (event: Omit<AgentToolPermissionLogInput, 'requestId' | 'toolCall' | 'decision'>) => (
+    input.permissionEventHandler?.({ requestId, toolCall, decision, ...event })
   );
-  const appendDeniedPermissionEvent = (reason: PermissionDeniedReason, includeChecked?: false) => appendPermissionEvent({
-    outcome: 'blocked',
-    includeChecked,
-    source: permissionEventSourceForDeniedReason(reason),
-    resolved: {
-      status: permissionResolutionStatusForDeniedReason(reason),
-      resolvedBy: permissionResolvedByForDeniedReason(reason),
-      deniedReason: reason,
-    },
-  });
-  if (decision.behavior === 'allow') {
-    await appendPermissionEvent({
-      outcome: 'allow',
+
+  if (decision.behavior === 'blocked') {
+    const reason = permissionDeniedReasonForDecision(decision);
+    await append({
+      outcome: 'blocked',
+      source: permissionEventSourceForDeniedReason(reason),
       resolved: {
-        status: 'approved',
-        resolvedBy: permissionResolvedByForAllowDecision(decision),
+        status: permissionResolutionStatusForDeniedReason(reason),
+        resolvedBy: permissionResolvedByForDeniedReason(reason),
+        deniedReason: reason,
       },
     });
+    throw new AgentSkillShellError('permission_denied', permissionDeniedToolResultMessage({
+      toolName: 'bash',
+      reason,
+      message: decision.reason,
+    }));
   }
-  if (decision.behavior === 'ask' || decision.behavior === 'soft_blocked') {
-    await appendPermissionEvent({ outcome: decision.behavior === 'soft_blocked' ? 'soft_blocked' : 'ask' });
-    // Route through the same ask resolver as the main runtime so the unattended
-    // fail-safe (no approval channel => deny) applies consistently here.
-    if (decision.behavior === 'ask') {
-      const resolution = await resolveAgentPermissionAsk({
-        decision,
-        interactionAvailable: Boolean(input.approvalHandler),
-        signal: input.signal,
-      });
-      if (resolution.outcome === 'block') {
-        await appendDeniedPermissionEvent(resolution.reason, false);
-        throw new AgentSkillShellError('permission_denied', permissionDeniedToolResultMessage({
-          toolName: 'bash',
-          reason: resolution.reason,
-          message: resolution.message,
-        }));
-      }
-    }
+
+  if (decision.behavior === 'folder_required') {
+    await append({ outcome: 'folder_required', unattended: !input.approvalHandler });
     if (!input.approvalHandler) {
-      await appendDeniedPermissionEvent('runtime', false);
-      throw new AgentSkillShellError(
-        'permission_denied',
-        permissionDeniedToolResultMessage({
-          toolName: 'bash',
-          reason: 'runtime',
-          message: decision.behavior === 'soft_blocked'
-            ? 'Shell command was blocked by default and no exception channel is available.'
-            : 'Shell command was not run because no approval channel is available.',
-        }),
-      );
+      throw new AgentSkillShellError('folder_access_required', folderAccessRequiredToolResultMessage({
+        toolName: 'bash',
+        folders: decision.request.folders,
+        unattended: true,
+      }));
     }
     const approval = await input.approvalHandler({
-      requestId: permissionRequestId,
+      requestId,
       toolCall,
       args: { command: input.command },
       decision,
     }, input.signal);
     const deniedReason = approval.deniedReason ?? 'runtime';
-    await appendPermissionEvent({
+    await append({
       outcome: approval.approved ? 'allow' : 'blocked',
       includeChecked: false,
       source: approval.approved ? 'user' : permissionEventSourceForDeniedReason(deniedReason),
       resolved: {
         status: approval.approved ? 'approved' : permissionResolutionStatusForDeniedReason(deniedReason),
-        resolvedBy: approval.approved
-          ? approval.scope === 'always' ? 'allow_rule_update' : 'user_once'
-          : permissionResolvedByForDeniedReason(deniedReason),
-        updatedRule: approval.alwaysAllowRule,
+        resolvedBy: approval.approved ? 'folder_grant' : permissionResolvedByForDeniedReason(deniedReason),
+        updatedFolders: approval.folders,
         deniedReason: approval.approved ? undefined : deniedReason,
       },
     });
@@ -159,22 +136,38 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       throw new AgentSkillShellError('permission_denied', permissionDeniedToolResultMessage({
         toolName: 'bash',
         reason: deniedReason,
-        message: skillShellApprovalDeniedMessage(deniedReason),
+        message: deniedReason === 'user_cancelled'
+          ? 'The folder request was cancelled.'
+          : 'Folder access was not granted.',
       }));
     }
-  } else if (decision.behavior !== 'allow') {
-    const reason = permissionDeniedReasonForDecision(decision);
-    await appendDeniedPermissionEvent(reason);
-    throw new AgentSkillShellError(
-      'permission_denied',
-      permissionDeniedToolResultMessage({
+    globalPermissions = await loadAgentToolPermissionConfig();
+    decision = evaluate();
+    if (decision.behavior !== 'allow') {
+      throw new AgentSkillShellError('folder_access_required', folderAccessRequiredToolResultMessage({
         toolName: 'bash',
-        reason,
-        message: decision.reason ?? 'permission was denied.',
-      }),
-    );
+        folders: decision.behavior === 'folder_required' ? decision.request.folders : approval.folders ?? [],
+      }));
+    }
+  } else {
+    await append({
+      outcome: 'allow',
+      resolved: { status: 'approved', resolvedBy: permissionResolvedByForAllowDecision(decision) },
+    });
   }
 
+  const capabilities = createFolderCapabilitySnapshot({
+    workspaceRoot: input.localRoot ?? process.cwd(),
+    scratchRoot: input.scratchRoot,
+    activeSkillReadRoots: input.trustedReadRoots,
+    includeSystemRoots: true,
+    deniedWrites: [
+      ...selfDefinitionRootEntries(input.localRoot ?? process.cwd()).map((entry) => ({ path: entry.dir, recursive: true })),
+      ...(input.protectedStoreRoot
+        ? agentProtectedStorePaths(input.protectedStoreRoot).map((filePath) => ({ path: filePath, recursive: false }))
+        : []),
+    ],
+  }, globalPermissions.folders);
   let result: LocalBashRunResult;
   try {
     result = await runLocalBashCommand({
@@ -182,25 +175,21 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       scratchRoot: input.scratchRoot,
       command: input.command,
       signal: input.signal,
+      capabilities,
     });
   } catch (error) {
     throw new AgentSkillShellError('command_failed', errorMessage(error));
   }
-
   if (result.isError) {
     const output = formatSkillShellOutput(result);
-    const reason = output || result.errorMessage || result.returnCodeInterpretation || 'Command failed.';
-    throw new AgentSkillShellError('command_failed', reason);
+    throw new AgentSkillShellError('command_failed', output || result.errorMessage || result.returnCodeInterpretation || 'Command failed.');
   }
-
   return formatSkillShellOutput(result);
 }
 
-function skillShellApprovalDeniedMessage(reason: PermissionDeniedReason): string {
-  if (reason === 'run_aborted') return 'Shell command was not run because the request was cancelled.';
-  if (reason === 'runtime') return 'Shell command was not run because the runtime stopped before approval.';
-  if (reason === 'user_denied') return 'Shell command was not run because the user denied permission.';
-  return 'Shell command was not run because permission was denied.';
+async function loadAgentToolPermissionConfig(): Promise<GlobalToolPermissionConfig> {
+  const { readAgentToolPermissionConfig } = await import('./agentToolPermissionStore');
+  return readAgentToolPermissionConfig();
 }
 
 function formatSkillShellOutput(result: Pick<LocalBashRunResult, 'stdout' | 'stderr' | 'persistedOutputPath'>): string {

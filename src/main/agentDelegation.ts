@@ -161,6 +161,7 @@ export interface AgentChildAgentCreateInput {
    * still run. Set only by runtime-owned unattended execution paths.
    */
   unattended?: boolean;
+  blockForInput?: (reason: string) => void;
   afterToolResult?: (
     toolCallId: string,
     toolName: string,
@@ -238,6 +239,7 @@ export interface AgentDelegationRuntimeOptions {
   memoryOwnerAgentId?: string;
   localRoot?: string;
   scratchRoot?: string;
+  protectedStoreRoot?: string;
   depth?: number;
   ancestry?: string[];
   maxDepth?: number;
@@ -385,6 +387,7 @@ export class AgentDelegationRuntime {
   private readonly conversationId: string;
   private readonly localRoot: string;
   private readonly scratchRoot: string;
+  private readonly protectedStoreRoot?: string;
   private readonly depth: number;
   private readonly maxDepth: number;
   private readonly ancestry: string[];
@@ -404,6 +407,7 @@ export class AgentDelegationRuntime {
     this.conversationId = options.conversationId;
     this.localRoot = path.resolve(options.localRoot ?? process.cwd());
     this.scratchRoot = scratchRootForWorkdir(this.localRoot, options.scratchRoot);
+    this.protectedStoreRoot = options.protectedStoreRoot;
     this.depth = options.depth ?? 0;
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH;
     this.ancestry = options.ancestry ?? [];
@@ -431,6 +435,18 @@ export class AgentDelegationRuntime {
     run.agent?.abort();
     this.runs.delete(runId);
     if (run.name && this.names.get(run.name) === runId) this.names.delete(run.name);
+  }
+
+  private blockRunForInput(runId: string, reason: string): void {
+    const run = this.runs.get(runId);
+    if (!run || run.status !== 'running') return;
+    run.status = 'failed';
+    run.objectiveStatus = 'blocked';
+    run.error = reason;
+    run.blockedReason = reason;
+    run.completedAt = Math.max(Date.now(), run.updatedAt + 1);
+    run.updatedAt = run.completedAt;
+    run.agent?.abort();
   }
 
   async listAllAgentDefinitions(): Promise<AgentDefinition[]> {
@@ -1202,7 +1218,12 @@ export class AgentDelegationRuntime {
       },
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
-    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, this.scratchRoot, skillRuntime);
+    const localWorkspace = createAgentLocalWorkspaceContext(
+      this.localRoot,
+      this.scratchRoot,
+      skillRuntime,
+      this.protectedStoreRoot,
+    );
     // A sub-run runs AS its spawner, so it inherits the spawner's approval
     // attribution. The nested runtime carries it so deeper sub-runs inherit it.
     const requestedByAgentId = this.requestedByAgentId;
@@ -1213,6 +1234,7 @@ export class AgentDelegationRuntime {
       requestedByAgentId,
       localRoot: this.localRoot,
       scratchRoot: this.scratchRoot,
+      protectedStoreRoot: this.protectedStoreRoot,
       depth: this.depth + 1,
       maxDepth: this.maxDepth,
       ancestry: [...this.ancestry, input.definition.name],
@@ -1246,6 +1268,7 @@ export class AgentDelegationRuntime {
       preapprovedToolRules: input.preapprovedToolRules,
       l0CacheBreakpointEnabled: false,
       unattended: input.unattended,
+      blockForInput: (reason) => this.blockRunForInput(input.runId, reason),
       afterToolResult: input.afterToolResult,
     });
     return { skillRuntime, localWorkspace, childAgent, subRunRuntime };

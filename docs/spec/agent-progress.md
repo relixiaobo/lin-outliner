@@ -3,7 +3,7 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-07-10
+Last updated: 2026-07-16
 
 ## Current Direction
 
@@ -239,11 +239,13 @@ Finish runtime polish on top of the event log and delegation foundation.
 - [ ] Add richer non-text media payload lazy loading UI in debug/render details.
 - [ ] Add performance instrumentation around replay, projection, IPC payload size,
   and long transcript rendering.
-- [x] Permission policy wired end to end: default-allow decisions, hard redlines,
-  user blocklist, built-in soft blocks with allow-once / always-allow / auto-block
-  cards (child-run + skill-shell bubbling, pending-request queue), and joinable
-  `tool.permission.*` plus `approval.*` events persisted to the log (PR #51,
-  redesigned for default-allow blocklists in #277).
+- [x] Capability-first permission policy wired end to end: direct execution by
+  default; one persistent folder-capability request for uncovered local roots;
+  direct hard-floor, user-block, and restricted-Run denials; one sandboxed
+  process executor with stripped child credentials; durable unattended
+  `needs_input` recovery; revocation-driven process termination; and joinable
+  `tool.permission.checked` / `tool.permission.resolved` events without a second
+  persisted approval track.
 - [ ] Emit and render the remaining schema-reserved runtime events that are not
   active yet: persisted follow-ups, metrics, and explicit cancellation details.
 - [ ] Refine checkpoint retention settings if real user conversations show unusual

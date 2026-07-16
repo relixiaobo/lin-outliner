@@ -935,7 +935,7 @@ These are the active core tool surface.
 | `file_edit` | local exact edit role | Yes | Typed file boundary | Perform exact string replacement after reading the file. |
 | `file_write` | local file write role | Yes | Typed file boundary | Create files or rewrite whole files. |
 | `file_delete` | local file delete role | Yes | Typed file boundary | Move files or directories to agent trash. |
-| `bash` | shell execution role | Yes | Hard redlines + soft blocks | Run local commands with timeout, block policy, and output limits. |
+| `bash` | shell execution role | Yes | Folder capabilities + hard blocks | Run local commands with timeout, process containment, block policy, and output limits. |
 | `bash_stop` | bash stop role | Yes | Default allow unless blocked | Stop background commands created by `bash`. |
 | `web_search` | web search role | Optional | Default allow unless host/offline policy blocks | Search the web for current external information. |
 | `web_fetch` | web fetch role | Optional | Default allow unless host/offline policy blocks | Fetch and read a specific URL with pagination or snippet search. |
@@ -1062,7 +1062,7 @@ Each command should return:
 - structured `error` when failed
 - optional `preview` for UI rendering
 - optional `operation` with `undoGroupId` for document mutations
-- optional `requiresApproval` for deferred execution
+- optional preview metadata for UI inspection
 
 `generate_image` returns normal tool-envelope details plus short
 scratch-relative local paths for each generated image. Runtime details keep the
@@ -1087,28 +1087,31 @@ is not the security boundary.
 
 ## Permission Flow
 
-Tool permissions use the default-allow blocklist gate in
+Tool permissions use the capability-first gate in
 `agent-tool-permissions.md`. Ordinary local and external work runs immediately.
-Hard redlines deny before execution. Built-in or user soft blocks pause the run
-with an allow-once / always-allow / block card; unattended soft blocks deny
-without waiting.
+Only an uncovered local folder creates a permission interaction. Hard-floor,
+explicit user, and restricted-Run blocks reject before execution without an
+override card.
 
 Flow:
 
 ```txt
 Tool call starts
-  -> adapter asks TypeScript for descriptors and blocklist classification
+  -> adapter asks TypeScript for descriptors, blocks, and required folders
   -> if allowed, tool runs immediately
-  -> if soft-blocked, AgentRuntime appends approval.requested and waits
-  -> user allows once, always allows, blocks, or countdown auto-blocks
-  -> AgentRuntime appends approval.resolved and tool.permission.resolved
+  -> if a folder is missing, AgentRuntime requests one persistent capability
+  -> foreground grant re-evaluates and executes once; cancel aborts the call
+  -> unattended request persists needs_input and stops before execution
+  -> a later grant starts a new continuation Session, never an old process replay
+  -> hard/user/restricted blocks return directly
   -> adapter resolves tool result
   -> pi-agent-core continues
 ```
 
-Rejected, auto-blocked, hard-blocked, or unattended soft-blocked tools return a
-normal tool result that says permission was denied. The agent can then explain
-or propose a safer alternative.
+Blocked calls return a normal structured `permission_denied` tool result. A
+missing folder returns `folder_access_required`; the original process has not
+started. The agent can continue independent work or explain the concrete
+blocker.
 
 ## Event Mapping
 

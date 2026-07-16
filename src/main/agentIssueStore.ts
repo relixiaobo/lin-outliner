@@ -182,6 +182,7 @@ export interface AgentSessionExecutionSyncInput {
   errorMessage?: string;
   completedAt?: number;
   acknowledgedTerminalDeliveryIds?: readonly string[];
+  suppressTerminalDelivery?: boolean;
 }
 
 export interface AgentSessionExecutionSyncResult {
@@ -1027,6 +1028,7 @@ export class AgentIssueStore {
         (nextState === 'error' || nextState === 'stale')
         && previousState !== nextState
         && !(previousState === 'stale' && nextState === 'error')
+        && input.suppressTerminalDelivery !== true
       ) {
         enqueueSessionErrorDelivery(state, session, now);
       }
