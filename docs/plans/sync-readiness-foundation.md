@@ -203,7 +203,8 @@ allocate a separate server sequence.
 The catalog is a deterministic, versioned value with no build timestamp. Its
 stream entries contain only conversation/Run identity, event count, and first/
 last event identity. A separate portable stream read filters debug snapshots,
-capability decisions, checkpoint markers, and payload events or nested payload
+capability decisions, capability-request notifications (including their
+free-form bodies), checkpoint markers, and payload events or nested payload
 references outside the `source`, `preview`, `text_extract`, and `tool_output`
 role allow-list, and strips free-form payload summaries. Payload catalog entries
 contain identity, scope, role, media type, byte length, and SHA-256, never local
@@ -221,6 +222,11 @@ whose ledgers it discards before recreating the conversation stream. Before
 online transport enables reset across devices, the online plan must add an
 ordered conversation-stream generation/reset operation; this local foundation
 does not claim that replacing one device's stream orders another device's copy.
+Batch appends preflight top-level Run IDs and Run-scoped payloads before writing
+any event. Retention recovery reconciles its raw stored Run index with existing
+`retention_pruned` tombstones and remaining Run directories, so a failure after
+the tombstone can resume cleanup. Workspace conversation/search indexes record
+the deletion-ledger tail and rebuild whenever that watermark is stale.
 
 Replace mutable whole-file `issue-manager.json` truth with versioned append-only
 Issue operations and a rebuildable projection. Operations cover Issue and

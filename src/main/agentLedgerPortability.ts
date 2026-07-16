@@ -150,6 +150,7 @@ export function portableAgentEvent(event: AgentEvent): AgentEvent | null {
     event.type === 'debug.run_snapshot.created'
     || event.type === 'tool.capability.checked'
     || event.type === 'tool.capability.resolved'
+    || (event.type === 'notification.created' && event.folderCapability !== undefined)
     || event.type === 'checkpoint.created'
   ) return null;
   if (

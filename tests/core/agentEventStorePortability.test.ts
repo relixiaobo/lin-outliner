@@ -39,6 +39,71 @@ async function readTombstones(root: string): Promise<AgentDeletionTombstone[]> {
   return raw.trim().split('\n').map((line) => JSON.parse(line) as AgentDeletionTombstone);
 }
 
+async function appendRetentionFixture(store: AgentEventStore, conversationId: string) {
+  const oldRunId = `${conversationId}-old-run`;
+  const retainedRunId = `${conversationId}-retained-run`;
+  await store.appendEvents(conversationId, [
+    { ...base(conversationId, 1, 'conversation.created'), title: 'Retention recovery' },
+    {
+      ...base(conversationId, 2, 'user_message.created', userActor),
+      messageId: 'old-user-message',
+      parentMessageId: null,
+      content: [{ type: 'text', text: 'obsolete-retention-token user prompt' }],
+    },
+    { ...base(conversationId, 3, 'branch.selected'), leafMessageId: 'old-user-message' },
+    {
+      ...base(conversationId, 4, 'run.started'),
+      runId: oldRunId,
+      trigger: { type: 'message', messageId: 'old-user-message' },
+    },
+    {
+      ...base(conversationId, 5, 'assistant_message.started'),
+      runId: oldRunId,
+      messageId: 'old-assistant-message',
+      parentMessageId: 'old-user-message',
+      providerId: 'test',
+      modelId: 'test',
+    },
+    {
+      ...base(conversationId, 6, 'assistant_message.completed'),
+      runId: oldRunId,
+      messageId: 'old-assistant-message',
+      stopReason: 'stop',
+      content: [{ type: 'text', text: 'obsolete-retention-token assistant reply' }],
+    },
+    { ...base(conversationId, 7, 'run.completed'), runId: oldRunId },
+    {
+      ...base(conversationId, 8, 'user_message.created', userActor),
+      messageId: 'retained-user-message',
+      parentMessageId: 'old-assistant-message',
+      content: [{ type: 'text', text: 'current-retention-token user prompt' }],
+    },
+    { ...base(conversationId, 9, 'branch.selected'), leafMessageId: 'retained-user-message' },
+    {
+      ...base(conversationId, 10, 'run.started'),
+      runId: retainedRunId,
+      trigger: { type: 'message', messageId: 'retained-user-message' },
+    },
+    {
+      ...base(conversationId, 11, 'assistant_message.started'),
+      runId: retainedRunId,
+      messageId: 'retained-assistant-message',
+      parentMessageId: 'retained-user-message',
+      providerId: 'test',
+      modelId: 'test',
+    },
+    {
+      ...base(conversationId, 12, 'assistant_message.completed'),
+      runId: retainedRunId,
+      messageId: 'retained-assistant-message',
+      stopReason: 'stop',
+      content: [{ type: 'text', text: 'current-retention-token assistant reply' }],
+    },
+    { ...base(conversationId, 13, 'run.completed'), runId: retainedRunId },
+  ]);
+  return { oldRunId, retainedRunId };
+}
+
 describe('agent event store portability', () => {
   test('builds a deterministic catalog from portable streams and payload roles only', async () => {
     await withStore(async (store, root) => {
@@ -106,6 +171,22 @@ describe('agent event store portability', () => {
           updatedFolders: ['/Users/private/workspace'],
         },
         {
+          ...base(conversationId, seq++, 'notification.created'),
+          notificationId: 'capability-notification',
+          kind: 'needs_input',
+          title: 'Folder access required',
+          body: 'Allow access to /Users/private/workspace',
+          folderCapability: {
+            requestId: 'capability-1',
+            runId,
+            agentSessionId: 'agent-session-1',
+            issueId: 'issue-1',
+            toolCallId: 'tool-call-1',
+            toolName: 'read',
+            folders: ['/Users/private/workspace'],
+          },
+        },
+        {
           ...base(conversationId, seq++, 'checkpoint.created'),
           checkpointSeq: seq - 1,
           eventByteOffset: 42,
@@ -136,6 +217,7 @@ describe('agent event store portability', () => {
       const portableRun = await restartedStore.readPortableStream({ type: 'run', conversationId, runId });
       const portableConversation = await restartedStore.readPortableStream({ type: 'conversation', conversationId });
       expect(portableRun.map((event) => event.type)).toEqual(['run.started']);
+      expect(portableConversation.map((event) => event.type)).not.toContain('notification.created');
       const portableJson = JSON.stringify({ catalog: restarted, conversation: portableConversation, run: portableRun });
       expect(portableJson).not.toContain('DO_NOT_EXPORT_SYSTEM_PROMPT');
       expect(portableJson).not.toContain('/Users/private');
@@ -331,6 +413,29 @@ describe('agent event store portability', () => {
       ]);
       expect(await restarted.readRunMetaProjection(oldRunId)).toBeNull();
       expect(await restarted.readRunStreamEvents(oldRunId)).toEqual([]);
+      const conversationEventsBeforeRejectedAppend = await readFile(
+        restarted.paths(conversationId).conversationEventsPath,
+        'utf8',
+      );
+      const runEventsBeforeRejectedAppend = await readFile(
+        restarted.runPaths(oldRunId).runEventsPath,
+        'utf8',
+      );
+      await expect(restarted.appendEvents(conversationId, [
+        { ...base(conversationId, 6, 'conversation.renamed'), title: 'Partially resurrected' },
+        {
+          ...base(conversationId, 7, 'assistant_message.completed'),
+          runId: oldRunId,
+          messageId: 'resurrected-message',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'resurrected-run-token' }],
+        },
+      ])).rejects.toThrow('was deleted');
+      await expect(readFile(restarted.paths(conversationId).conversationEventsPath, 'utf8'))
+        .resolves.toBe(conversationEventsBeforeRejectedAppend);
+      await expect(readFile(restarted.runPaths(oldRunId).runEventsPath, 'utf8'))
+        .resolves.toBe(runEventsBeforeRejectedAppend);
+      expect(await restarted.searchMessages('resurrected-run-token', { conversationId })).toEqual([]);
       await expect(restarted.appendRunStreamEvents(conversationId, oldRunId, [
         { ...base(conversationId, 6, 'run.completed'), runId: oldRunId },
       ])).rejects.toThrow('was deleted');
@@ -360,12 +465,118 @@ describe('agent event store portability', () => {
         { ...base(conversationId, 1, 'conversation.created'), eventId: 'reset-conversation-recreated', title: 'After reset' },
       ]);
 
+      const conversationEventsBeforeRejectedAppend = await readFile(
+        store.paths(conversationId).conversationEventsPath,
+        'utf8',
+      );
+      await expect(store.appendEvents(conversationId, [
+        { ...base(conversationId, 2, 'conversation.renamed'), title: 'Partially resurrected' },
+        { ...base(conversationId, 3, 'run.completed'), runId },
+      ])).rejects.toThrow('was deleted');
+      await expect(readFile(store.paths(conversationId).conversationEventsPath, 'utf8'))
+        .resolves.toBe(conversationEventsBeforeRejectedAppend);
+      await expect(readFile(store.runPaths(runId).runEventsPath, 'utf8')).rejects.toThrow();
+      await expect(store.appendEvents(conversationId, [{
+        ...base(conversationId, 2, 'payload.created'),
+        payload: {
+          kind: 'payload_ref',
+          id: 'deleted-run-payload',
+          storage: 'file',
+          mimeType: 'text/plain',
+          byteLength: 1,
+          sha256: '0'.repeat(64),
+          scope: { type: 'run', conversationId, runId },
+          role: 'source',
+        },
+      }])).rejects.toThrow('was deleted');
       expect((await store.replay(conversationId)).conversation?.title).toBe('After reset');
       expect(await store.readRunStreamEvents(runId)).toEqual([]);
       expect(await readTombstones(root)).toMatchObject([{
         entity: { type: 'run', conversationId, runId },
         reason: 'conversation_reset',
       }]);
+    });
+  });
+
+  test('retries retention cleanup after the tombstone has already committed', async () => {
+    await withStore(async (store, root) => {
+      const conversationId = 'retention-retry';
+      const { oldRunId, retainedRunId } = await appendRetentionFixture(store, conversationId);
+      expect(await store.searchMessages('obsolete-retention-token', { conversationId })).toHaveLength(2);
+
+      const makeDirectory = fsPromises.mkdir;
+      const segmentsDir = store.paths(conversationId).conversationSegmentsDir;
+      const mkdirSpy = spyOn(fsPromises, 'mkdir').mockImplementation((target, options) => {
+        if (target === segmentsDir) return Promise.reject(new Error('simulated retention rewrite failure'));
+        return makeDirectory(target, options);
+      });
+      try {
+        await expect(store.retainRecentConversationRuns(conversationId, 1, {
+          actor: systemActor,
+          reason: 'retention_pruned',
+        })).rejects.toThrow('simulated retention rewrite failure');
+      } finally {
+        mkdirSpy.mockRestore();
+      }
+
+      expect(await readTombstones(root)).toMatchObject([{
+        entity: { type: 'run', conversationId, runId: oldRunId },
+        reason: 'retention_pruned',
+      }]);
+      await expect(store.retainRecentConversationRuns(conversationId, 1, {
+        actor: systemActor,
+        reason: 'retention_pruned',
+      })).resolves.toEqual({ prunedRunIds: [oldRunId], retainedRunIds: [retainedRunId] });
+
+      expect(await readTombstones(root)).toHaveLength(1);
+      expect(await store.searchMessages('obsolete-retention-token', { conversationId })).toEqual([]);
+      expect(await store.searchMessages('current-retention-token', { conversationId })).toHaveLength(2);
+      expect((await store.listConversationIndexEntries())[0]?.messageCount).toBe(2);
+      await expect(readFile(store.runPaths(oldRunId).runEventsPath, 'utf8')).rejects.toThrow();
+    });
+  });
+
+  test('rebuilds conversation and search indexes restored from before a Run tombstone', async () => {
+    await withStore(async (store, root) => {
+      const conversationId = 'retention-index-watermark';
+      const { oldRunId, retainedRunId } = await appendRetentionFixture(store, conversationId);
+      const backupDir = path.join(root, 'index-backup');
+      await mkdir(backupDir, { recursive: true });
+      await cp(
+        path.join(root, 'indexes', 'conversation-index.json'),
+        path.join(backupDir, 'conversation-index.json'),
+      );
+      await cp(
+        path.join(root, 'indexes', 'search-index.json'),
+        path.join(backupDir, 'search-index.json'),
+      );
+
+      await expect(store.retainRecentConversationRuns(conversationId, 1, {
+        actor: systemActor,
+        reason: 'retention_pruned',
+      })).resolves.toEqual({ prunedRunIds: [oldRunId], retainedRunIds: [retainedRunId] });
+      await cp(
+        path.join(backupDir, 'conversation-index.json'),
+        path.join(root, 'indexes', 'conversation-index.json'),
+      );
+      await cp(
+        path.join(backupDir, 'search-index.json'),
+        path.join(root, 'indexes', 'search-index.json'),
+      );
+
+      const restarted = new AgentEventStore(root);
+      expect((await restarted.listConversationIndexEntries())[0]?.messageCount).toBe(2);
+      expect(await restarted.searchMessages('obsolete-retention-token', { conversationId })).toEqual([]);
+      expect(await restarted.searchMessages('current-retention-token', { conversationId })).toHaveLength(2);
+
+      const conversationIndex = JSON.parse(
+        await readFile(path.join(root, 'indexes', 'conversation-index.json'), 'utf8'),
+      ) as { deletionSeq?: number };
+      const searchIndex = JSON.parse(
+        await readFile(path.join(root, 'indexes', 'search-index.json'), 'utf8'),
+      ) as { deletionSeq?: number };
+      expect(conversationIndex.deletionSeq).toBe(1);
+      expect(searchIndex.deletionSeq).toBe(1);
     });
   });
 });

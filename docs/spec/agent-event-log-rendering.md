@@ -1772,8 +1772,11 @@ timestamp. It contains:
 
 Portable event reads omit `debug.run_snapshot.created`,
 `tool.capability.checked`, `tool.capability.resolved`, and
-`checkpoint.created`. Payload events and nested payload references are retained
-only for the `source`, `preview`, `text_extract`, and `tool_output` roles.
+`checkpoint.created`. A `notification.created` carrying `folderCapability` is
+also omitted as one unit because both its structured grant request and its
+free-form body may disclose device paths. Payload events and nested payload
+references are retained only for the `source`, `preview`, `text_extract`, and
+`tool_output` roles.
 `thumbnail`, `debug`, and unclassified payloads are local/derived and excluded.
 Portable payload refs also drop their free-form local summary field.
 The catalog never contains absolute storage paths, payload summaries, indexes,
@@ -1793,10 +1796,20 @@ the conversation entity alive and tombstones only the discarded Runs.
 Tombstones take precedence over restored bytes and derived state. Tombstoned
 entities are excluded from directory listing, portable catalogs, explicit stream
 and meta reads, conversation/search projections, and every Run-index rebuild;
-new event, payload, checkpoint, and Run-meta writes are rejected. Physical
-cleanup may be retried idempotently after a failure without appending duplicate
-tombstones. Restoring a deleted directory or an obsolete derived index therefore
-cannot resurrect it.
+new event, payload, checkpoint, and Run-meta writes are rejected. A conversation
+event batch preflights every top-level Run ID and Run-scoped payload before any
+event file is written. Retention reconciliation reads the unfiltered stored Run
+index internally, combines it with `retention_pruned` tombstones and remaining
+Run directories, and resumes every incomplete rewrite/index/removal step without
+appending duplicate tombstones. Ordinary readers continue to use the filtered
+Run index.
+
+`conversation-index.json` and `search-index.json` persist the deletion-ledger
+tail as `deletionSeq`. An absent or mismatched watermark makes the whole derived
+index stale and forces canonical reconstruction; restoring an index snapshot
+from before a tombstone cannot expose deleted Run content. Physical cleanup may
+therefore be retried idempotently after a failure, and restoring a deleted
+directory or obsolete derived index cannot resurrect it.
 
 Conversation reset is currently a local stream replacement, not a portable
 multi-device operation. It protects discarded Run entities with tombstones, but
