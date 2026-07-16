@@ -6,6 +6,7 @@ import { sha256Bytes, sha256File } from '../src/main/fileHashing';
 
 const MIB = 1024 * 1024;
 const HEARTBEAT_MS = 5;
+let electronApp: import('electron').App | undefined;
 
 interface ProbeResult {
   source: 'buffer' | 'file';
@@ -50,7 +51,15 @@ async function measure(
   }
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<number> {
+  const electronVersion = process.versions.electron;
+  if (!electronVersion) {
+    throw new Error('Asset hashing probe must run in Electron main. Use `bun run probe:asset-hashing`.');
+  }
+  const { app } = await import('electron');
+  electronApp = app;
+  await app.whenReady();
+
   const sizeMiB = Number(process.env.ASSET_HASH_PROBE_MIB ?? 512);
   if (!Number.isSafeInteger(sizeMiB) || sizeMiB <= 0) {
     throw new Error('ASSET_HASH_PROBE_MIB must be a positive integer.');
@@ -65,10 +74,27 @@ async function main(): Promise<void> {
       await measure('buffer', sizeMiB, () => sha256Bytes(bytes)),
       await measure('file', sizeMiB, () => sha256File(filePath)),
     ];
-    console.log(JSON.stringify({ sizeMiB, heartbeatMs: HEARTBEAT_MS, results }, null, 2));
+    console.log(JSON.stringify({
+      runtime: { electron: electronVersion, node: process.versions.node },
+      sizeMiB,
+      heartbeatMs: HEARTBEAT_MS,
+      results,
+    }, null, 2));
+    return 0;
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 }
 
-await main();
+void main()
+  .catch((error) => {
+    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+    return 1;
+  })
+  .then((exitCode) => {
+    process.exitCode = exitCode;
+    if (electronApp) {
+      electronApp.quit();
+      setTimeout(() => process.exit(exitCode), 250).unref();
+    }
+  });

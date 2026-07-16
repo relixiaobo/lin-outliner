@@ -29,7 +29,8 @@
     "test:renderer": "bun test --path-ignore-patterns 'tmp/**' tests/renderer",
     "test:e2e": "playwright test",
     "test:smoke": "electron-vite build && playwright test --config=playwright.smoke.config.ts",
-    "probe:web-tools": "bun build scripts/probe-web-tools.ts --outfile scripts/.out/probe-web-tools.cjs --target node --format cjs --external electron && electron scripts/.out/probe-web-tools.cjs"
+    "probe:web-tools": "bun build scripts/probe-web-tools.ts --outfile scripts/.out/probe-web-tools.cjs --target node --format cjs --external electron && electron scripts/.out/probe-web-tools.cjs",
+    "probe:asset-hashing": "bun build scripts/probe-asset-hashing.ts --outfile scripts/.out/probe-asset-hashing.cjs --target node --format cjs --external electron && electron scripts/.out/probe-asset-hashing.cjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.80.6",

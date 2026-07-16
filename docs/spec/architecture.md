@@ -37,9 +37,10 @@ streaming and does not pre-read an entire video merely to render it.
 Path-backed assets hash the final stored file through a read stream. Buffer
 ingest, derived thumbnails, and verified reads hash in bounded 1 MiB turns that
 yield to the event loop between chunks, keeping Electron main responsive for
-large assets. `bun scripts/probe-asset-hashing.ts` measures total hashing time
-and maximum event-loop stall for both paths; `ASSET_HASH_PROBE_MIB` overrides its
-512 MiB fixture size.
+large assets. `bun run probe:asset-hashing` compiles the probe and runs it in
+Electron main, where it asserts and reports the Electron runtime version before
+measuring total hashing time and maximum event-loop stall for both paths;
+`ASSET_HASH_PROBE_MIB` overrides its 512 MiB fixture size.
 
 Document-referenced source assets are portable. PDF thumbnails are derived
 outputs rather than portable source assets; their ids may appear in source
