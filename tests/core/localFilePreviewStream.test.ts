@@ -55,6 +55,22 @@ describe('local file preview stream registry', () => {
     expect(invalid.headers.get('content-range')).toBe('bytes */10');
   });
 
+  test('issues direct file paths only inside an allowed root', async () => {
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'lin-preview-stream-outside-'));
+    try {
+      const insidePath = join(root, 'book.epub');
+      const outsidePath = join(outsideRoot, 'book.epub');
+      await writeFile(insidePath, 'inside');
+      await writeFile(outsidePath, 'outside');
+      const registry = new LocalFilePreviewStreamRegistry(() => [root]);
+
+      expect(await registry.issuePath(insidePath, 'application/epub+zip')).toBeTruthy();
+      expect(await registry.issuePath(outsidePath, 'application/epub+zip')).toBeNull();
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   test('rejects missing tokens and files that no longer resolve inside the trusted root', async () => {
     const outsideRoot = await mkdtemp(join(tmpdir(), 'lin-preview-local-stream-outside-'));
     try {

@@ -1,5 +1,7 @@
 import { expect, type Page } from '@playwright/test';
 import { DEFAULT_DREAM_CHANNEL_ID, DEFAULT_GENERAL_CHANNEL_ID, usesChannelActivitySurface } from '../../src/core/agentChannel';
+import type { TranslationLanguage } from '../../src/core/translationLanguage';
+import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
 
 export const ids = {
   workspace: 'workspace',
@@ -54,6 +56,12 @@ interface MockFixtureOptions {
   agentSkillsDelayMs?: number;
   /** Delays conversation list loading so channel-config first paint can be asserted before data arrives. */
   agentConversationsDelayMs?: number;
+  /** Seeds the shared preview-translation target language. */
+  translationLanguage?: TranslationLanguage;
+  /** Seeds URL/EPUB automatic translation and model preferences. */
+  translationPreferences?: UrlPageTranslationPreferences;
+  /** Keeps translated blocks pending long enough for loader assertions. */
+  translationDelayMs?: number;
 }
 
 const DEBUG_USAGE = {
@@ -88,13 +96,23 @@ type E2EWindow = Window & {
     ) => void;
     setAgentRuns: (runs: unknown[]) => void;
     setAgentMessageContextMenuAction: (action: 'copy' | 'retry' | 'regenerate' | 'details' | null) => void;
+    setTranslationDelayMs: (delayMs: number) => void;
+    setTranslationLanguage: (language: TranslationLanguage) => void;
+    setTranslationPreferences: (preferences: UrlPageTranslationPreferences) => void;
   };
   lin?: {
+    initialTranslationLanguage?: TranslationLanguage;
+    initialUrlPageTranslationPreferences?: UrlPageTranslationPreferences;
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
     getProviderApiKey: (providerId: string) => Promise<{ providerId: string; apiKey?: string }>;
     onAgentEvent: (listener: (event: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
+    onTranslationLanguageChanged?: (listener: (language: TranslationLanguage) => void) => () => void;
+    onUrlPageTranslationPreferencesChanged?: (listener: (preferences: UrlPageTranslationPreferences) => void) => () => void;
+    onUrlPageTranslationShortcut?: (listener: (webContentsId: number) => void) => () => void;
+    setTranslationLanguage?: (language: TranslationLanguage) => Promise<void>;
+    setUrlPageTranslationPreferences?: (preferences: UrlPageTranslationPreferences) => Promise<UrlPageTranslationPreferences>;
     openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
     openAgentConfig?: (params: { agentId?: string }) => Promise<void>;
     openChannelConfig?: (params: { conversationId?: string; mode: string }) => Promise<void>;
@@ -347,6 +365,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentListeners: Array<(event: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
     const oauthListeners: Array<(envelope: unknown) => void> = [];
+    const translationLanguageListeners: Array<(language: TranslationLanguage) => void> = [];
+    const translationPreferenceListeners: Array<(preferences: UrlPageTranslationPreferences) => void> = [];
+    let translationLanguage = options.translationLanguage ?? 'en';
+    let translationPreferences: UrlPageTranslationPreferences = options.translationPreferences ?? {
+      translationModel: null,
+      autoTranslateEpubs: false,
+      autoTranslateUrls: false,
+    };
+    let translationDelayMs = options.translationDelayMs ?? 80;
     let messageContextMenuAction: 'copy' | 'retry' | 'regenerate' | 'details' | null = null;
     let agentIssueRows: unknown[] = [];
     let agentIssueDetails: Record<string, unknown> = {};
@@ -1680,6 +1707,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (pending) { oauthPending.delete(providerId); pending.resolve(clone(agentSettings)); }
     };
 
+    const setMockTranslationLanguage = (language: TranslationLanguage) => {
+      translationLanguage = language;
+      if (win.lin) win.lin.initialTranslationLanguage = language;
+      for (const listener of translationLanguageListeners) listener(language);
+    };
+
+    const setMockTranslationPreferences = (preferences: UrlPageTranslationPreferences) => {
+      translationPreferences = clone(preferences);
+      if (win.lin) win.lin.initialUrlPageTranslationPreferences = clone(translationPreferences);
+      for (const listener of translationPreferenceListeners) listener(clone(translationPreferences));
+    };
+
     win.__LIN_E2E__ = {
       calls,
       projection,
@@ -1695,6 +1734,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       setAgentRuns: (runs) => { agentRuns = runs; },
       setAgentMessageContextMenuAction: (action) => { messageContextMenuAction = action; },
+      setTranslationDelayMs: (delayMs) => { translationDelayMs = Math.max(0, delayMs); },
+      setTranslationLanguage: setMockTranslationLanguage,
+      setTranslationPreferences: setMockTranslationPreferences,
     };
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
 
@@ -1785,6 +1827,30 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       renderProjection: agentProjection(conversationId),
     });
     win.lin = {
+      initialTranslationLanguage: translationLanguage,
+      initialUrlPageTranslationPreferences: clone(translationPreferences),
+      setTranslationLanguage: async (language) => {
+        setMockTranslationLanguage(language);
+      },
+      onTranslationLanguageChanged: (listener) => {
+        translationLanguageListeners.push(listener);
+        return () => {
+          const index = translationLanguageListeners.indexOf(listener);
+          if (index >= 0) translationLanguageListeners.splice(index, 1);
+        };
+      },
+      setUrlPageTranslationPreferences: async (preferences) => {
+        setMockTranslationPreferences(preferences);
+        return clone(translationPreferences);
+      },
+      onUrlPageTranslationPreferencesChanged: (listener) => {
+        translationPreferenceListeners.push(listener);
+        return () => {
+          const index = translationPreferenceListeners.indexOf(listener);
+          if (index >= 0) translationPreferenceListeners.splice(index, 1);
+        };
+      },
+      onUrlPageTranslationShortcut: () => () => undefined,
       // The per-provider config opens as its own native window in the app; in tests
       // it is reached by navigating to ?surface=provider-config directly, so this
       // just records the open request (so the list can assert it) and no-ops close.
@@ -1848,6 +1914,27 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });
+        if (cmd === 'url_page_translate_blocks') {
+          await delay(translationDelayMs);
+          const blocks = Array.isArray(args.blocks)
+            ? args.blocks.flatMap((entry) => {
+                if (!entry || typeof entry !== 'object') return [];
+                const { id, text } = entry as { id?: unknown; text?: unknown };
+                return typeof id === 'string' && typeof text === 'string' ? [{ id, text }] : [];
+              })
+            : [];
+          return clone({
+            ok: true,
+            requestId: String(args.requestId ?? ''),
+            translations: blocks.map(({ id, text }) => ({
+              id,
+              translation: `Translated: ${text}`,
+            })),
+          }) as T;
+        }
+        if (cmd === 'url_page_translation_cancel') {
+          return clone({ cancelled: true }) as T;
+        }
         if (cmd === 'agent_restore_latest_conversation') {
           return clone(restoreAgentConversation(ASSISTANT_DM_ID)) as T;
         }
@@ -2462,6 +2549,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           } | undefined;
           if (target?.kind === 'asset' && target.assetId) {
             const asset = assets.get(target.assetId);
+            const epubBytes = asset?.mimeType === 'application/epub+zip'
+              ? asset.originalFilename?.toLowerCase().includes('long')
+                ? previewLongEpubBytes()
+                : previewEpubBytes()
+              : null;
             return clone({
               source: asset ? {
                 kind: 'file',
@@ -2474,7 +2566,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 entryKind: 'file',
                 sizeBytes: asset.byteSize,
                 lastModified: asset.createdAt,
-                streamUrl: `asset://${target.assetId}`,
+                streamUrl: epubBytes
+                  ? URL.createObjectURL(new Blob([epubBytes], { type: asset.mimeType }))
+                  : `asset://${target.assetId}`,
               } : null,
             }) as T;
           }
@@ -3323,6 +3417,23 @@ export async function openMockedApp(page: Page, options: MockFixtureOptions = {}
   await page.goto('/');
   await expect(row(page, ids.alpha)).toContainText('Alpha');
   await expect(row(page, ids.beta)).toContainText('Beta');
+}
+
+export async function configurePreviewTranslationMock(
+  page: Page,
+  options: {
+    delayMs?: number;
+    language?: TranslationLanguage;
+    preferences?: UrlPageTranslationPreferences;
+  },
+) {
+  await page.evaluate((input) => {
+    const mock = (window as E2EWindow).__LIN_E2E__;
+    if (!mock) throw new Error('Missing E2E fixture');
+    if (input.delayMs !== undefined) mock.setTranslationDelayMs(input.delayMs);
+    if (input.language) mock.setTranslationLanguage(input.language);
+    if (input.preferences) mock.setTranslationPreferences(input.preferences);
+  }, options);
 }
 
 export async function emitAgentEvent(page: Page, event: unknown) {

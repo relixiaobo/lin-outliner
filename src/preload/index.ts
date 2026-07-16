@@ -242,7 +242,7 @@ function readInitialUrlPageTranslationPreferences(): UrlPageTranslationPreferenc
   } catch {
     // Fall through to the opt-in defaults.
   }
-  return { translationModel: null, autoTranslateUrls: false };
+  return { translationModel: null, autoTranslateEpubs: false, autoTranslateUrls: false };
 }
 
 const api = {

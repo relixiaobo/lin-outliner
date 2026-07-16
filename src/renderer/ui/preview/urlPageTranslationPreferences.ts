@@ -3,6 +3,7 @@ import type { UrlPageTranslationPreferences } from '../../../core/urlPageTransla
 
 const DEFAULT_PREFERENCES: UrlPageTranslationPreferences = {
   translationModel: null,
+  autoTranslateEpubs: false,
   autoTranslateUrls: false,
 };
 
@@ -26,6 +27,7 @@ function setCurrent(preferences: UrlPageTranslationPreferences): void {
   const current = initialPreferences();
   if (
     current.translationModel === preferences.translationModel
+    && current.autoTranslateEpubs === preferences.autoTranslateEpubs
     && current.autoTranslateUrls === preferences.autoTranslateUrls
   ) return;
   currentPreferences = preferences;
@@ -60,15 +62,21 @@ function updatePreferences(patch: Partial<UrlPageTranslationPreferences>): void 
 }
 
 export function useUrlPageTranslationPreferences(): UrlPageTranslationPreferences & {
+  setAutoTranslateEpubs: (enabled: boolean) => void;
   setAutoTranslateUrls: (enabled: boolean) => void;
   setTranslationModel: (model: string | null) => void;
 } {
   const preferences = useSyncExternalStore(subscribe, snapshot, () => DEFAULT_PREFERENCES);
   return {
     ...preferences,
+    setAutoTranslateEpubs,
     setAutoTranslateUrls,
     setTranslationModel,
   };
+}
+
+export function setAutoTranslateEpubs(enabled: boolean): void {
+  updatePreferences({ autoTranslateEpubs: enabled });
 }
 
 export function setAutoTranslateUrls(enabled: boolean): void {

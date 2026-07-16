@@ -371,8 +371,8 @@ resolve it through the preload preview API:
 - `preview_resolve_source` returns source metadata and never exposes raw payload
   filesystem paths to the renderer.
 - `preview_read_text` is capped to bounded text reads.
-- `preview_read_bytes` is capped to bounded binary reads for image/PDF/EPUB
-  previews.
+- `preview_read_bytes` is capped to bounded binary reads for preview sources
+  that have no direct internal stream.
 - `preview_list_directory` lists trusted local-file directories with a capped
   result set.
 
@@ -380,11 +380,15 @@ Source authority stays source-specific:
 
 - `local-file` targets are validated in main through the local-file reference
   policy before reads or external open.
-- `asset` targets resolve by `assetId` inside the asset jail. Image rendering may
-  use the existing `asset://` URL; open/reveal/copy stay on the existing asset
-  commands. A standalone `asset` preview is only valid when the view is bound to a
-  file node via `nodeId`; a persisted `file-preview` view whose target is an
-  `asset` but has no `nodeId` is dropped on restore (pre-launch — no migration).
+- `asset` targets resolve by `assetId` inside the asset jail. Image and media
+  rendering may use the existing no-CORS `asset://` URL. Fetch-based EPUB
+  loading instead receives an opaque `preview-local://` UUID backed by the
+  bounded trusted-file registry; that scheme is registered only in the app's
+  default session, not the remote URL-preview partition. Open/reveal/copy stay
+  on the existing asset commands. A standalone `asset` preview is only valid
+  when the view is bound to a file node via `nodeId`; a persisted `file-preview`
+  view whose target is an `asset` but has no `nodeId` is dropped on restore
+  (pre-launch — no migration).
 - `agent-payload` targets resolve only through the active replay state for the
   referenced conversation and payload id. Normal conversation payloads can be
   previewed; debug-only payloads are not exposed through the normal preview
@@ -466,29 +470,35 @@ the suppression and evaluates the new page again. Changing the target also
 re-runs the language rule for an auto-activated page and turns translation off
 only when neither valid language signal differs from the target.
 
-Translation is viewport-driven rather than an eager whole-page request. Visible
-content starts with a latency-oriented batch of at most two blocks or roughly
-2,000 source characters; later visible and prefetch batches contain at most four
-blocks or roughly 4,000 characters. Page prefetch does not consume that initial
-visible budget; the first priority-zero page batch still uses the `2 / 2,000`
-limit even when prefetch work started first. Before direction is known, the guest runtime
-prefetches about two viewports above and below the activation point. It then keeps
-about four viewports ahead and one behind the observed reading direction, with
-symmetric upward and downward behavior. Blocks outside that window are not sent.
+Translation is viewport-driven rather than an eager whole-page request. The
+complete visible viewport is the coverage unit: every eligible visible block is
+immediately translated, queued/loading, or an explicit local error even when the
+request pool cannot submit it in the first batch. Visible batches favor latency
+and contain at most eight blocks or roughly 2,000 source characters. Prefetch
+batches favor throughput and contain at most sixteen blocks or 4,000 characters,
+so adjacent short passages use the available character budget and context.
 
-Each pane keeps at most three active model requests and at most one prefetch
-request. Free capacity always takes visible work first, so a dense initial
-viewport starts `2 / 4 / 4` blocks without waiting for an earlier response.
-Micro-batches settle independently and render in response order. A 120ms
-scheduling probe continues while translation is enabled. When all slots are full
-and new visible work appears, the controller invalidates only an offscreen
-lowest-priority request, removes its transient loaders, returns those blocks to
-the pending pool, and starts a visible micro-batch without waiting for the
-obsolete provider response. Cancellation is not surfaced as an error. Dynamic
-content joins only after it enters the same window, and successful blocks remain
-cached in memory so back-scrolling does not call the provider again. When a source
-element's normalized text changes, it receives a fresh block id; responses,
-failures, and releases from the previous text snapshot can no longer affect it.
+The lookahead is derived from smoothed viewport velocity and recent high request
+latency plus a safety margin. It has a stationary floor of about three viewports
+and a ceiling of eight; before direction is known the floor is symmetric, then
+the larger window follows the reading direction with a smaller opposite buffer.
+Blocks outside that bounded window are not sent.
+
+Each pane has one shared, work-conserving pool with a six-request ceiling and no
+reserved visible/prefetch slots. Visible work may use the whole pool and always
+drains before prefetch; when the pool is full it replaces only the farthest batch
+that no longer contains visible content. Batches settle independently and render
+in response order. Main's safety ceiling covers the workspace's four-pane maximum,
+so one pane cannot make another pane's valid pool requests fail. Scroll, relevant
+DOM mutation, caption change, and retry increment a monotonic isolated-world work
+revision. A trusted, timeout-bounded
+wait wakes the host immediately; its one-second timeout is only a recovery probe.
+The remote page cannot choose blocks or provider inputs through that signal.
+Cancellation is not surfaced as an error. Dynamic content joins only after it
+enters the same bounded window, and successful blocks remain cached in memory so
+back-scrolling does not call the provider again. When a source element's
+normalized text changes, it receives a fresh block id; responses, failures, and
+releases from the previous text snapshot can no longer affect it.
 DOM insertion, hide, and restore capture the
 first visible source block and compensate its post-write offset immediately and
 across two bounded animation frames. Wheel, touch, keyboard input, or any viewport
@@ -500,16 +510,23 @@ request smooth scrolling, and injected nodes do not become browser scroll anchor
 keeping the reader's current sentence stationary through translation growth or
 collapse.
 
-Every block entering a submitted batch immediately shows a small inline loading
-control at the end of its source. The control keeps a fixed 16px status area and
+Every eligible block in the visible viewport immediately shows a small inline
+loading control at the end of its source, including queued blocks waiting for a
+request slot. The control keeps a fixed 16px status area and
 10px spinner across page typography, so headings do not enlarge it. Success
 removes it as the translation appears; failure changes it into a
 keyboard-accessible error control whose activation retries only that block. The
 retry control keeps at least a 16px hit area and
-neutral hover, pressed, and keyboard-focus feedback. While any failures remain,
-normal scheduling pauses and polls only for an explicit retry; this includes a
-missing provider/model, so the user can configure one and retry the affected
-paragraph in place. The existing localized toast announces each failure wave.
+neutral hover, pressed, and keyboard-focus feedback. Transport failures, rate
+limits, and provider `5xx` responses retry at most twice while the loader remains
+visible, using abortable 200/400ms exponential backoff with jitter and a bounded
+`Retry-After`. Authentication and unavailable-model failures do not retry.
+Exhausted failures remain local and never pause unrelated visible or prefetch
+work; a provider failure temporarily reduces new concurrency until a success.
+Configuration failure blocks only new provider work until configuration changes
+or the user retries an affected paragraph. Removing that paragraph or replacing
+the active caption timeline does not clear the configuration latch. The existing
+localized toast announces each terminal failure wave.
 When the current page window contains no eligible untranslated blocks,
 translation stays enabled in an idle state without showing the completed fill;
 a later eligible block returns the control to loading before its request starts.
@@ -524,7 +541,8 @@ controls, editable regions, navigation, hidden/inert/`aria-hidden` subtrees, and
 Tenon-injected nodes. Its runtime lives in an Electron isolated world rather than
 the remote page's main world. A dedicated preload IPC operation verifies that the
 target is an HTTP(S) `webview` owned by the requesting main window, rejects more
-than four blocks or 4,000 source characters, and invokes only bounded runtime
+than sixteen blocks or 4,000 source characters, rejects more than six active
+batches, and invokes only bounded runtime
 operations. Remote scripts therefore cannot replace the collector or manufacture
 provider requests. Main revalidates the bounded block ids and text before using
 the dynamically followed Agent model or the explicitly selected qualified model.
@@ -538,7 +556,7 @@ a guest-to-main IPC channel.
 
 Prerecorded video captions participate in that same URL-translation session.
 The target language, `Follow Agent` or explicit model, automatic-translation
-preference, shortcut, three-request pane budget, and Show original command are
+preference, shortcut, six-request shared pane pool, and Show original command are
 shared with page blocks; there is no second subtitle settings system. Automatic
 translation activates when either the valid page language or a detected caption
 language differs from the target, so an English video can translate inside a
@@ -600,6 +618,62 @@ prefetch. Live-generated captions, speech recognition, DRM circumvention, local
 video files, and media without a finite usable cue track remain outside this
 capability.
 
+Reflowable EPUB file panels and dedicated EPUB readers extend the same
+translation workflow to local books. They use the shared `Languages` control,
+target-language catalog, `Follow Agent` or explicit model, Translate / Show
+original command, fixed-size loading and retry states, completion treatment, and
+scoped `Option+A` / `Alt+A` shortcut. Compact inline outliner previews do not
+expose the control, and a book whose rendition layout is `pre-paginated` exposes
+no translation capability. Model output is inserted as inert plain text after
+the source block, marked with the target language for assistive technology;
+source text always remains visible.
+
+EPUB automatic translation is a separate globally remembered opt-in that
+defaults off. It never inherits website automatic translation consent. When
+enabled, a valid differing book-metadata or loaded-section language activates
+translation; missing, invalid, or same-target metadata leaves the book manual.
+Turning the preference off does not hide an already active book session. Manual
+Show original cancels pending work, removes transient state, and hides completed
+translations without discarding the current book/configuration cache.
+
+Each loaded reflowable section registers its same-origin document and iframe with
+one book-scoped adapter. The adapter collects direct readable text from headings,
+paragraphs, list and definition items, quotations, captions, table cells, and
+leaf block containers while excluding nested candidate text, navigation,
+code/preformatted content, forms, editable or hidden content, and Tenon-owned
+nodes. Records are keyed by section, semantic ordinal, and normalized-text hash.
+A lazy section remount therefore restores matching cached translations, while a
+changed source record removes obsolete loading/error/translation nodes and cannot
+accept or retain the old request result. Nearest valid element language wins,
+then section-root language, then validated book metadata; target-language records
+receive no loader or provider request. The completed header treatment is derived
+from valid cached records: lazy-unmounted sections retain recoverable completion,
+while removed, stale, ineligible, or target-language records no longer count.
+
+EPUB scheduling follows the reader scrollport without loading the full spine.
+It uses the same complete-viewport queue, eight-block / 2,000-character visible
+batches, sixteen-block / 4,000-character prefetch batches, six-request shared
+pool, latency/velocity lookahead, local failure recovery, and visible-work
+preemption as URL pages. A batch contains one priority tier and is sent in
+document reading order even while the user scrolls upward. Scroll, section
+registration, relevant mutation, and retry wake the local controller directly.
+While translation is enabled, lazy section mounting expands from its ordinary
+800px margin to the scheduler's maximum eight-reader-screen window. That window
+tracks the live scrollport height across pane resizing and summary/full layout
+changes; it returns to the ordinary margin when translation is hidden, keeps
+already visited sections mounted, and never loads or submits the whole spine.
+
+EPUB loading, retry, insertion, hide/show, and stale-record cleanup use the same
+bounded scroll-anchor correction as webpage translation. Immediate and delayed
+correction yields to wheel, touch, keyboard, pointer, native-scrollbar, or other
+external scroll input. Target/model changes cancel stale generations, clear the
+old configuration cache, and restart an enabled session; an auto-activated book
+retains that provenance across a model restart so a later matching target can
+turn it off correctly. UI-language label changes update live status nodes without
+rebuilding the adapter or losing session state. Main receives EPUB batches as
+`document` content under the existing validated translation command and uses
+neighboring reflowable passages only as untrusted translation context.
+
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the
 scroll viewport and is fitted to the available width, with no page-nav or zoom
@@ -611,7 +685,10 @@ rendered frame — into one continuous vertical scrollport with page-like gaps.
 Each section's wrapper is always present (reserving a placeholder height) but its
 iframe mounts lazily as the section nears the scroll viewport and stays mounted
 thereafter, so opening a long book never spins up every section's document at
-once; book bytes load only through the capped preview bytes API; file-only reader
+once; asset and trusted-local book packages load through their existing
+main-validated internal stream with a cancelable bounded range request and a
+128 MiB compressed-package cap, while sources without a stream URL retain the
+capped preview-bytes fallback; file-only reader
 panes fill the available pane height while preserving the EPUB document
 viewport/inset), sandboxed static HTML (`.html`, `.htm`, or
 `text/html`) with a rendered iframe that fills file-only reader panes plus a

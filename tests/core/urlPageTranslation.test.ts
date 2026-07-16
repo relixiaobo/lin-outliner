@@ -48,7 +48,12 @@ describe('URL page translation preferences', () => {
     expect(isUrlPageTranslationModel('gpt-4.1-mini')).toBe(false);
     expect(isUrlPageTranslationPreferences({
       translationModel: null,
+      autoTranslateEpubs: false,
       autoTranslateUrls: false,
     })).toBe(true);
+    expect(isUrlPageTranslationPreferences({
+      translationModel: null,
+      autoTranslateUrls: false,
+    })).toBe(false);
   });
 });

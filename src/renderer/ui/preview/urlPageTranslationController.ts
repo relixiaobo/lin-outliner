@@ -15,18 +15,18 @@ import {
   type UrlPageTranslationGuestLabels,
   type UrlPageTranslationGuestBridge,
 } from './urlPageTranslationGuest';
+import {
+  PREFETCH_TRANSLATION_BATCH_LIMITS,
+  PREVIEW_TRANSLATION_MAX_CONCURRENT_REQUESTS,
+  PreviewTranslationLatencyTracker,
+  VISIBLE_TRANSLATION_BATCH_LIMITS,
+} from './previewTranslationScheduling';
 
-const DEFAULT_POLL_INTERVAL_MS = 120;
-const DEFAULT_MAX_CONCURRENT_REQUESTS = 3;
-const FIRST_VISIBLE_MAX_BLOCKS = 2;
-const FIRST_VISIBLE_MAX_CHARS = 2_000;
+const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const FIRST_CAPTION_MAX_BLOCKS = 6;
 const FIRST_CAPTION_MAX_CHARS = 1_500;
-const STANDARD_BATCH_MAX_BLOCKS = 4;
-const STANDARD_BATCH_MAX_CHARS = 4_000;
 const STANDARD_CAPTION_MAX_BLOCKS = 16;
 const STANDARD_CAPTION_MAX_CHARS = 4_000;
-const MAX_PREFETCH_REQUESTS = 1;
 const AUTO_EVALUATION_INTERVAL_MS = 1_000;
 const DEFAULT_GUEST_LABELS: UrlPageTranslationGuestLabels = {
   retry: 'Retry translation',
@@ -61,6 +61,7 @@ interface ActivePageTranslationRequest {
   requestId: string;
   sequence: number;
   sessionId: string;
+  startedAt: number;
 }
 
 interface FailedPageTranslationBlock {
@@ -83,23 +84,28 @@ export class UrlPageTranslationController {
   private enabled = false;
   private readonly failedIds = new Map<string, FailedPageTranslationBlock>();
   private generation = 0;
+  private blockedForConfiguration = false;
+  private currentConcurrencyLimit: number;
   private guestQueue: Promise<void> = Promise.resolve();
   private completedCaptionRevision: number | null = null;
   private hasCompletedPageTranslation = false;
   private hasStartedCaptionBatch = false;
-  private hasStartedVisiblePageBatch = false;
   private initialized = false;
+  private readonly latency = new PreviewTranslationLatencyTracker();
   private lastReportedCompletion = false;
   private manualSuppressed = false;
   private model: string | null;
   private pageIdentity: string;
-  private pausedForError = false;
+  private pendingFailureUpdates = 0;
   private observedCaptionRevision: number | null = null;
+  private observedWorkRevision = 0;
   private requestSequence = 0;
   private status: UrlPageTranslationStatus = 'off';
   private targetLanguage: TranslationLanguage;
   private timer: number | null = null;
   private tickQueue: Promise<void> = Promise.resolve();
+  private workWatchPending = false;
+  private workWatchToken = 0;
 
   constructor(
     private readonly webview: Electron.WebviewTag,
@@ -108,9 +114,10 @@ export class UrlPageTranslationController {
     this.guest = options.guest ?? createUrlPageTranslationGuestBridge(webview);
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.maxConcurrentRequests = Math.min(
-      DEFAULT_MAX_CONCURRENT_REQUESTS,
-      Math.max(1, Math.floor(options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS)),
+      PREVIEW_TRANSLATION_MAX_CONCURRENT_REQUESTS,
+      Math.max(1, Math.floor(options.maxConcurrentRequests ?? PREVIEW_TRANSLATION_MAX_CONCURRENT_REQUESTS)),
     );
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.translate = options.translate ?? api.translateUrlPageBlocks;
     this.cancel = options.cancel ?? api.cancelUrlPageTranslation;
     this.autoTranslate = options.autoTranslate ?? false;
@@ -173,9 +180,9 @@ export class UrlPageTranslationController {
     this.clearAutoTimer();
     this.autoActivated = automatic;
     this.enabled = true;
-    this.pausedForError = false;
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.hasStartedCaptionBatch = false;
-    this.hasStartedVisiblePageBatch = false;
     this.generation += 1;
     this.setStatus('starting');
     if (this.domReady) void this.startGuest(this.generation);
@@ -197,12 +204,13 @@ export class UrlPageTranslationController {
     this.generation += 1;
     const generation = this.generation;
     this.clearTimer();
+    this.clearWorkWatcher();
     this.clearAutoTimer();
     this.cancelAllActiveRequests();
     this.initialized = false;
-    this.pausedForError = false;
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.hasStartedCaptionBatch = false;
-    this.hasStartedVisiblePageBatch = false;
     this.failedIds.clear();
     this.resetCompletionState();
     const resetGuest = this.runGuest(() => this.guest.destroy()).catch(() => undefined);
@@ -226,9 +234,11 @@ export class UrlPageTranslationController {
     this.manualSuppressed = true;
     this.autoActivated = false;
     this.enabled = false;
-    this.pausedForError = false;
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.generation += 1;
     this.clearTimer();
+    this.clearWorkWatcher();
     this.clearAutoTimer();
     this.cancelAllActiveRequests();
     if (this.initialized) {
@@ -245,6 +255,7 @@ export class UrlPageTranslationController {
     this.autoActivated = false;
     this.generation += 1;
     this.clearTimer();
+    this.clearWorkWatcher();
     this.clearAutoTimer();
     this.webview.removeEventListener('did-start-navigation', this.handleDidStartNavigation);
     this.webview.removeEventListener('did-navigate-in-page', this.handleDidNavigateInPage);
@@ -273,16 +284,17 @@ export class UrlPageTranslationController {
     this.domReady = false;
     this.enabled = false;
     this.autoActivated = false;
-    this.pausedForError = false;
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.initialized = false;
     this.cancelAllActiveRequests();
     this.hasStartedCaptionBatch = false;
-    this.hasStartedVisiblePageBatch = false;
     this.manualSuppressed = false;
     this.failedIds.clear();
     this.resetCompletionState();
     this.generation += 1;
     this.clearTimer();
+    this.clearWorkWatcher();
     this.clearAutoTimer();
     void this.runGuest(() => this.guest.destroy()).catch(() => undefined);
     this.setStatus('off');
@@ -303,15 +315,16 @@ export class UrlPageTranslationController {
     this.enabled = false;
     this.autoActivated = false;
     this.manualSuppressed = false;
-    this.pausedForError = false;
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.initialized = false;
     this.generation += 1;
     const generation = this.generation;
     this.clearTimer();
+    this.clearWorkWatcher();
     this.clearAutoTimer();
     this.cancelAllActiveRequests();
     this.hasStartedCaptionBatch = false;
-    this.hasStartedVisiblePageBatch = false;
     this.failedIds.clear();
     this.resetCompletionState();
     const resetGuest = this.runGuest(() => this.guest.destroy()).catch(() => undefined);
@@ -407,19 +420,37 @@ export class UrlPageTranslationController {
   private async tick(generation: number): Promise<void> {
     if (!this.isCurrent(generation)) return;
     try {
+      if (this.blockedForConfiguration) {
+        const retry = await this.runGuest(() => this.guest.nextBatch({
+          captionMaxBlocks: STANDARD_CAPTION_MAX_BLOCKS,
+          captionMaxChars: STANDARD_CAPTION_MAX_CHARS,
+          ...VISIBLE_TRANSLATION_BATCH_LIMITS,
+          estimatedLatencyMs: this.latency.estimateMs,
+          retryOnly: true,
+        }));
+        this.observeGuestBatch(retry, generation);
+        if (retry.blocks.length > 0) {
+          this.startRequest(retry, generation);
+        }
+      }
+      let queueVisible = true;
       while (
         this.isCurrent(generation)
-        && this.activeRequests.size < this.maxConcurrentRequests
+        && !this.blockedForConfiguration
+        && this.activeRequests.size < this.currentConcurrencyLimit
       ) {
-        const batch = await this.nextAvailableBatch(generation);
+        const batch = await this.nextAvailableBatch(generation, queueVisible);
+        queueVisible = false;
         if (!this.isCurrent(generation)) return;
         if (batch.blocks.length === 0) break;
         this.startRequest(batch, generation);
       }
 
-      if (!this.pausedForError && this.activeRequests.size >= this.maxConcurrentRequests) {
-        for (let index = 0; index < this.maxConcurrentRequests; index += 1) {
-          if (!await this.preemptForVisibleBatch(generation)) break;
+      if (!this.blockedForConfiguration && this.activeRequests.size >= this.currentConcurrencyLimit) {
+        for (let index = 0; index < this.currentConcurrencyLimit; index += 1) {
+          const preempted = await this.preemptForVisibleBatch(generation, queueVisible);
+          queueVisible = false;
+          if (!preempted) break;
         }
       }
 
@@ -430,51 +461,46 @@ export class UrlPageTranslationController {
       if (!this.isCurrent(generation)) return;
       this.failBeforeRequest('provider-error');
     }
-    if (this.isCurrent(generation)) this.scheduleTick(this.pollIntervalMs, generation);
+    if (this.isCurrent(generation)) this.ensureWorkWatcher(generation);
   }
 
-  private async nextAvailableBatch(generation: number): Promise<UrlPageTranslationGuestBatch> {
-    const activePrefetchRequests = [...this.activeRequests.values()]
-      .filter((request) => request.priority > 0)
-      .length;
-    if (!this.hasStartedVisiblePageBatch && !this.pausedForError) {
-      const firstVisible = await this.runGuest(() => this.guest.nextBatch({
-        captionMaxBlocks: this.hasStartedCaptionBatch
-          ? STANDARD_CAPTION_MAX_BLOCKS
-          : FIRST_CAPTION_MAX_BLOCKS,
-        captionMaxChars: this.hasStartedCaptionBatch
-          ? STANDARD_CAPTION_MAX_CHARS
-          : FIRST_CAPTION_MAX_CHARS,
-        maxBlocks: FIRST_VISIBLE_MAX_BLOCKS,
-        maxChars: FIRST_VISIBLE_MAX_CHARS,
-        visibleOnly: true,
-      }));
-      this.observeGuestBatch(firstVisible, generation);
-      if (firstVisible.blocks.length > 0) {
-        this.markBatchStarted(firstVisible);
-        return firstVisible;
-      }
-      if (activePrefetchRequests >= MAX_PREFETCH_REQUESTS) return firstVisible;
-    }
-
-    const batch = await this.runGuest(() => this.guest.nextBatch({
+  private async nextAvailableBatch(
+    generation: number,
+    queueVisible: boolean,
+  ): Promise<UrlPageTranslationGuestBatch> {
+    const visible = await this.runGuest(() => this.guest.nextBatch({
       captionMaxBlocks: this.hasStartedCaptionBatch
         ? STANDARD_CAPTION_MAX_BLOCKS
         : FIRST_CAPTION_MAX_BLOCKS,
       captionMaxChars: this.hasStartedCaptionBatch
         ? STANDARD_CAPTION_MAX_CHARS
         : FIRST_CAPTION_MAX_CHARS,
-      maxBlocks: STANDARD_BATCH_MAX_BLOCKS,
-      maxChars: STANDARD_BATCH_MAX_CHARS,
-      retryOnly: this.pausedForError,
-      visibleOnly: !this.pausedForError && activePrefetchRequests >= MAX_PREFETCH_REQUESTS,
+      ...VISIBLE_TRANSLATION_BATCH_LIMITS,
+      estimatedLatencyMs: this.latency.estimateMs,
+      queueVisible,
+      visibleOnly: true,
     }));
-    this.observeGuestBatch(batch, generation);
-    if (batch.blocks.length > 0) this.markBatchStarted(batch);
-    return batch;
+    this.observeGuestBatch(visible, generation);
+    if (visible.blocks.length > 0) {
+      this.markBatchStarted(visible);
+      return visible;
+    }
+    const prefetch = await this.runGuest(() => this.guest.nextBatch({
+      captionMaxBlocks: this.hasStartedCaptionBatch
+        ? STANDARD_CAPTION_MAX_BLOCKS
+        : FIRST_CAPTION_MAX_BLOCKS,
+      captionMaxChars: this.hasStartedCaptionBatch
+        ? STANDARD_CAPTION_MAX_CHARS
+        : FIRST_CAPTION_MAX_CHARS,
+      ...PREFETCH_TRANSLATION_BATCH_LIMITS,
+      estimatedLatencyMs: this.latency.estimateMs,
+    }));
+    this.observeGuestBatch(prefetch, generation);
+    if (prefetch.blocks.length > 0) this.markBatchStarted(prefetch);
+    return prefetch;
   }
 
-  private async preemptForVisibleBatch(generation: number): Promise<boolean> {
+  private async preemptForVisibleBatch(generation: number, queueVisible: boolean): Promise<boolean> {
     const candidates = [...this.activeRequests.values()]
       .sort((left, right) => right.priority - left.priority || left.sequence - right.sequence);
     const batch = await this.runGuest(() => this.guest.nextBatch({
@@ -482,8 +508,9 @@ export class UrlPageTranslationController {
         ids: request.ids,
         requestId: request.requestId,
       })),
-      maxBlocks: STANDARD_BATCH_MAX_BLOCKS,
-      maxChars: STANDARD_BATCH_MAX_CHARS,
+      ...VISIBLE_TRANSLATION_BATCH_LIMITS,
+      estimatedLatencyMs: this.latency.estimateMs,
+      queueVisible,
       captionMaxBlocks: this.hasStartedCaptionBatch
         ? STANDARD_CAPTION_MAX_BLOCKS
         : FIRST_CAPTION_MAX_BLOCKS,
@@ -505,7 +532,7 @@ export class UrlPageTranslationController {
         this.cancel(preempted.sessionId).catch(() => undefined),
       ]);
       if (!this.isCurrent(generation)) return false;
-    } else if (this.activeRequests.size >= this.maxConcurrentRequests) {
+    } else if (this.activeRequests.size >= this.currentConcurrencyLimit) {
       await this.runGuest(() => this.guest.release(batch.blocks.map((block) => block.id)))
         .catch(() => undefined);
       return false;
@@ -529,6 +556,7 @@ export class UrlPageTranslationController {
       requestId,
       sequence: this.requestSequence++,
       sessionId: nextId('session'),
+      startedAt: Date.now(),
     };
     this.activeRequests.set(requestId, activeRequest);
     const response = this.translate({
@@ -544,7 +572,6 @@ export class UrlPageTranslationController {
 
   private markBatchStarted(batch: UrlPageTranslationGuestBatch): void {
     if ((batch.contentKind ?? 'page') === 'caption') this.hasStartedCaptionBatch = true;
-    else if (batch.priority === 0) this.hasStartedVisiblePageBatch = true;
   }
 
   private async finishRequest(
@@ -559,6 +586,7 @@ export class UrlPageTranslationController {
       return;
     }
     if (!this.isActiveRequest(activeRequest)) return;
+    this.latency.record(Date.now() - activeRequest.startedAt);
 
     if (response.requestId !== activeRequest.requestId) {
       await this.failRequest(activeRequest, 'invalid-response');
@@ -585,11 +613,12 @@ export class UrlPageTranslationController {
     }
     if (!this.isActiveRequest(activeRequest)) return;
     this.activeRequests.delete(activeRequest.requestId);
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     if (insertedCount > 0) this.markRequestCompleted(activeRequest);
     for (const translation of response.translations) this.failedIds.delete(translation.id);
-    this.pausedForError = this.failedIds.size > 0;
     this.setStatus(
-      this.pausedForError
+      this.failedIds.size > 0
         ? 'error'
         : this.hasCompletedTranslations
           ? 'on'
@@ -597,7 +626,7 @@ export class UrlPageTranslationController {
             ? 'starting'
             : 'idle',
     );
-    this.scheduleTick(this.pausedForError ? this.pollIntervalMs : 0, activeRequest.generation);
+    this.scheduleTick(0, activeRequest.generation);
   }
 
   private async failRequest(
@@ -605,11 +634,25 @@ export class UrlPageTranslationController {
     error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>,
   ): Promise<void> {
     if (!this.isActiveRequest(activeRequest)) return;
-    await this.runGuest(() => this.guest.fail(activeRequest.ids)).catch(() => undefined);
+    const shouldNotify = this.failedIds.size === 0;
+    this.trackFailed(activeRequest);
+    this.pendingFailureUpdates += 1;
+    try {
+      await this.runGuest(() => this.guest.fail(activeRequest.ids)).catch(() => undefined);
+    } finally {
+      this.pendingFailureUpdates -= 1;
+    }
     if (!this.isActiveRequest(activeRequest)) return;
     this.activeRequests.delete(activeRequest.requestId);
-    this.trackFailed(activeRequest);
-    this.pauseWithError(error);
+    if (error === 'not-configured') {
+      this.blockedForConfiguration = true;
+      this.cancelOtherRequests();
+    } else {
+      this.currentConcurrencyLimit = 1;
+    }
+    this.setStatus('error');
+    if (shouldNotify) this.options.onError(error);
+    this.scheduleTick(error === 'not-configured' ? 0 : this.pollIntervalMs, activeRequest.generation);
   }
 
   private isActiveRequest(activeRequest: ActivePageTranslationRequest): boolean {
@@ -622,9 +665,11 @@ export class UrlPageTranslationController {
   private failBeforeRequest(error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>): void {
     this.enabled = false;
     this.autoActivated = false;
-    this.pausedForError = false;
+    this.blockedForConfiguration = false;
+    this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.generation += 1;
     this.clearTimer();
+    this.clearWorkWatcher();
     this.cancelAllActiveRequests();
     this.failedIds.clear();
     if (this.initialized) {
@@ -632,15 +677,6 @@ export class UrlPageTranslationController {
     }
     this.setStatus('off');
     this.options.onError(error);
-  }
-
-  private pauseWithError(error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>): void {
-    const shouldNotify = !this.pausedForError;
-    this.pausedForError = true;
-    this.clearTimer();
-    this.setStatus('error');
-    if (shouldNotify) this.options.onError(error);
-    this.scheduleTick(this.pollIntervalMs, this.generation);
   }
 
   private cancelAllActiveRequests(): void {
@@ -653,8 +689,41 @@ export class UrlPageTranslationController {
     }
   }
 
+  private cancelOtherRequests(): void {
+    for (const request of [...this.activeRequests.values()]) {
+      this.activeRequests.delete(request.requestId);
+      void Promise.all([
+        this.runGuest(() => this.guest.release(request.ids)).catch(() => undefined),
+        this.cancel(request.sessionId).catch(() => undefined),
+      ]);
+    }
+  }
+
   private observeGuestBatch(batch: UrlPageTranslationGuestBatch, generation: number): void {
-    if (!this.isCurrent(generation) || this.observedCaptionRevision === batch.captionRevision) return;
+    if (!this.isCurrent(generation)) return;
+    if (Number.isSafeInteger(batch.workRevision) && batch.workRevision >= 0) {
+      this.observedWorkRevision = batch.workRevision;
+    }
+    if (
+      !batch.hasActiveFailures
+      && this.pendingFailureUpdates === 0
+      && (
+        this.failedIds.size > 0
+        || this.blockedForConfiguration
+        || this.currentConcurrencyLimit < this.maxConcurrentRequests
+      )
+    ) {
+      this.failedIds.clear();
+      if (
+        !this.blockedForConfiguration
+        && batch.blocks.length === 0
+        && this.activeRequests.size === 0
+      ) {
+        this.currentConcurrencyLimit = this.maxConcurrentRequests;
+      }
+      this.setStatus(this.statusForObservedBatch(batch));
+    }
+    if (this.observedCaptionRevision === batch.captionRevision) return;
     const previousRevision = this.observedCaptionRevision;
     this.observedCaptionRevision = batch.captionRevision;
     if (previousRevision === null) return;
@@ -672,17 +741,21 @@ export class UrlPageTranslationController {
         && failure.captionRevision !== batch.captionRevision
       ) this.failedIds.delete(id);
     }
-    this.pausedForError = this.failedIds.size > 0;
     this.emitCompletionChange();
-    this.setStatus(
-      this.pausedForError
-        ? 'error'
-        : this.hasCompletedTranslations
-          ? 'on'
-          : batch.blocks.length > 0 || this.activeRequests.size > 0
-            ? 'starting'
-            : 'idle',
-    );
+    this.setStatus(this.statusForObservedBatch(batch));
+  }
+
+  private statusForObservedBatch(batch: UrlPageTranslationGuestBatch): UrlPageTranslationStatus {
+    if (
+      this.failedIds.size > 0
+      || (
+        this.blockedForConfiguration
+        && batch.blocks.length === 0
+        && this.activeRequests.size === 0
+      )
+    ) return 'error';
+    if (this.hasCompletedTranslations) return 'on';
+    return batch.blocks.length > 0 || this.activeRequests.size > 0 ? 'starting' : 'idle';
   }
 
   private markRequestCompleted(request: ActivePageTranslationRequest): void {
@@ -708,6 +781,38 @@ export class UrlPageTranslationController {
         contentKind: request.contentKind,
       });
     }
+  }
+
+  private ensureWorkWatcher(generation: number): void {
+    const waitForWork = this.guest.waitForWork;
+    if (!waitForWork) {
+      this.scheduleTick(this.pollIntervalMs, generation);
+      return;
+    }
+    if (!this.isCurrent(generation) || this.workWatchPending) return;
+    const token = ++this.workWatchToken;
+    const afterRevision = this.observedWorkRevision;
+    const timeoutMs = Math.max(1, Math.min(2_000, this.pollIntervalMs));
+    this.workWatchPending = true;
+    void waitForWork.call(this.guest, afterRevision, timeoutMs).then(
+      (revision) => {
+        if (token !== this.workWatchToken) return;
+        this.workWatchPending = false;
+        if (!this.isCurrent(generation)) return;
+        if (Number.isSafeInteger(revision) && revision >= 0) this.observedWorkRevision = revision;
+        this.scheduleTick(0, generation);
+      },
+      () => {
+        if (token !== this.workWatchToken) return;
+        this.workWatchPending = false;
+        if (this.isCurrent(generation)) this.scheduleTick(this.pollIntervalMs, generation);
+      },
+    );
+  }
+
+  private clearWorkWatcher(): void {
+    this.workWatchToken += 1;
+    this.workWatchPending = false;
   }
 
   private runGuest<T>(operation: () => Promise<T>): Promise<T> {

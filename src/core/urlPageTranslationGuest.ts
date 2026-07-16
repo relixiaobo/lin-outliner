@@ -2,6 +2,7 @@ import { isTranslationLanguage, type TranslationLanguage } from './translationLa
 import {
   URL_CAPTION_TRANSLATION_MAX_BATCH_CHARS,
   URL_CAPTION_TRANSLATION_MAX_BLOCKS,
+  URL_PAGE_TRANSLATION_MAX_ACTIVE_BATCHES,
   URL_PAGE_TRANSLATION_MAX_BATCH_CHARS,
   URL_PAGE_TRANSLATION_MAX_BLOCKS,
   URL_PAGE_TRANSLATION_MAX_TRANSLATION_CHARS,
@@ -11,7 +12,8 @@ import {
 export const LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL = 'lin:url-page-translation-guest';
 export const URL_PAGE_TRANSLATION_RUNTIME_KEY = '__tenonBilingualTranslationV1__';
 export const URL_PAGE_TRANSLATION_MAX_RUNTIME_SOURCE_CHARS = 64_000;
-const URL_PAGE_TRANSLATION_MAX_ACTIVE_BATCHES = 3;
+export const URL_PAGE_TRANSLATION_GUEST_MAX_WAIT_MS = 2_000;
+const URL_PAGE_TRANSLATION_MAX_ESTIMATED_LATENCY_MS = 60_000;
 const URL_PAGE_TRANSLATION_MAX_RESULT_ITEMS = Math.max(
   URL_PAGE_TRANSLATION_MAX_BLOCKS,
   URL_CAPTION_TRANSLATION_MAX_BLOCKS,
@@ -32,8 +34,10 @@ export interface UrlPageTranslationGuestBatchOptions {
   activeBatches?: readonly UrlPageTranslationGuestActiveBatch[];
   captionMaxBlocks?: number;
   captionMaxChars?: number;
+  estimatedLatencyMs?: number;
   maxBlocks?: number;
   maxChars?: number;
+  queueVisible?: boolean;
   retryOnly?: boolean;
   visibleOnly?: boolean;
 }
@@ -49,6 +53,7 @@ export type UrlPageTranslationGuestCommand =
     }
   | { operation: 'set-enabled'; enabled: boolean; targetLanguage: TranslationLanguage }
   | { operation: 'next-batch'; options: UrlPageTranslationGuestBatchOptions }
+  | { operation: 'wait-for-work'; afterRevision: number; timeoutMs: number }
   | { operation: 'release'; ids: readonly string[] }
   | { operation: 'apply'; translations: readonly UrlPageTranslationItem[] }
   | { operation: 'fail'; ids: readonly string[] }
@@ -94,6 +99,22 @@ export function validateUrlPageTranslationGuestCommand(raw: unknown): UrlPageTra
       return { operation: 'set-enabled', enabled: raw.enabled, targetLanguage: raw.targetLanguage };
     case 'next-batch':
       return { operation: 'next-batch', options: validateBatchOptions(raw.options) };
+    case 'wait-for-work': {
+      if (
+        !Number.isSafeInteger(raw.afterRevision)
+        || (raw.afterRevision as number) < 0
+        || !Number.isSafeInteger(raw.timeoutMs)
+        || (raw.timeoutMs as number) < 1
+        || (raw.timeoutMs as number) > URL_PAGE_TRANSLATION_GUEST_MAX_WAIT_MS
+      ) {
+        throw new Error('Invalid URL page translation work wait.');
+      }
+      return {
+        operation: 'wait-for-work',
+        afterRevision: raw.afterRevision as number,
+        timeoutMs: raw.timeoutMs as number,
+      };
+    }
     case 'release':
     case 'fail':
       return { operation: raw.operation, ids: validateIds(raw.ids) };
@@ -118,7 +139,16 @@ function validateBatchOptions(raw: unknown): Required<UrlPageTranslationGuestBat
     URL_CAPTION_TRANSLATION_MAX_BATCH_CHARS,
     'caption character count',
   );
-  if (typeof raw.retryOnly !== 'boolean' || typeof raw.visibleOnly !== 'boolean') {
+  const estimatedLatencyMs = validateBoundedInteger(
+    raw.estimatedLatencyMs,
+    URL_PAGE_TRANSLATION_MAX_ESTIMATED_LATENCY_MS,
+    'estimated latency',
+  );
+  if (
+    typeof raw.queueVisible !== 'boolean'
+    || typeof raw.retryOnly !== 'boolean'
+    || typeof raw.visibleOnly !== 'boolean'
+  ) {
     throw new Error('Invalid URL page translation batch mode.');
   }
   if (!Array.isArray(raw.activeBatches) || raw.activeBatches.length > URL_PAGE_TRANSLATION_MAX_ACTIVE_BATCHES) {
@@ -134,8 +164,10 @@ function validateBatchOptions(raw: unknown): Required<UrlPageTranslationGuestBat
     activeBatches,
     captionMaxBlocks,
     captionMaxChars,
+    estimatedLatencyMs,
     maxBlocks,
     maxChars,
+    queueVisible: raw.queueVisible,
     retryOnly: raw.retryOnly,
     visibleOnly: raw.visibleOnly,
   };

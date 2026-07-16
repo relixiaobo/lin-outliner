@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open, realpath } from 'node:fs/promises';
+import { open, realpath, stat } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { isPathInside } from './agentAttachmentMaterialization';
@@ -32,14 +32,22 @@ export class LocalFilePreviewStreamRegistry {
 
   async issue(file: TrustedLocalFileReference, mimeType: string): Promise<string | null> {
     if (file.entryKind !== 'file') return null;
-    const rootPath = await trustedRootForFile(file.path, this.allowedRoots());
+    return this.issuePath(file.path, mimeType);
+  }
+
+  async issuePath(filePath: string, mimeType: string): Promise<string | null> {
+    const resolvedPath = await realpath(filePath).catch(() => null);
+    if (!resolvedPath) return null;
+    const fileStats = await stat(resolvedPath).catch(() => null);
+    if (!fileStats?.isFile() || fileStats.size <= 0) return null;
+    const rootPath = await trustedRootForFile(resolvedPath, this.allowedRoots());
     if (!rootPath) return null;
     const token = randomUUID();
     setBoundedMapEntry(this.entries, token, {
       mimeType,
-      path: file.path,
+      path: resolvedPath,
       rootPath,
-      sizeBytes: file.stats.size,
+      sizeBytes: fileStats.size,
     }, PREVIEW_LOCAL_TOKEN_LIMIT);
     return token;
   }

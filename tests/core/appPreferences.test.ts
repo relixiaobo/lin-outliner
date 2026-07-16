@@ -43,18 +43,20 @@ describe('app preferences persistence', () => {
     saveTranslationLanguagePreference('ja');
     saveUrlPageTranslationPreferences({
       translationModel: 'openai/gpt-4.1-mini',
+      autoTranslateEpubs: true,
       autoTranslateUrls: true,
     });
     saveOsNotificationsPreference(true);
 
     const raw = await readFile(path.join(userData, 'app-preferences.json'), 'utf8');
-    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","translationLanguage":"ja","translationModel":"openai/gpt-4.1-mini","autoTranslateUrls":true,"osNotificationsEnabled":true}');
+    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","translationLanguage":"ja","translationModel":"openai/gpt-4.1-mini","autoTranslateUrls":true,"autoTranslateEpubs":true,"osNotificationsEnabled":true}');
     expect(loadAppPreferences()).toEqual({
       theme: 'dark',
       language: 'zh-Hans',
       translationLanguage: 'ja',
       translationModel: 'openai/gpt-4.1-mini',
       autoTranslateUrls: true,
+      autoTranslateEpubs: true,
       osNotificationsEnabled: true,
     });
   });
@@ -69,6 +71,7 @@ describe('app preferences persistence', () => {
     expect(loadAppPreferences()).toMatchObject({
       translationModel: null,
       autoTranslateUrls: false,
+      autoTranslateEpubs: false,
     });
   });
 });
