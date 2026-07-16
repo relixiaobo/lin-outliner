@@ -249,6 +249,7 @@ function EpubReader({
   const measuredSectionsRef = useRef(new Map<number, number>());
   const [state, setState] = useState<EpubReaderState>({ status: 'loading' });
   const [lazyRootMargin, setLazyRootMargin] = useState(EPUB_LAZY_ROOT_MARGIN);
+  const [translationEnabled, setTranslationEnabled] = useState(false);
   const [outlineLayoutVersion, setOutlineLayoutVersion] = useState(0);
   const restoredFullSessionRef = useRef(0);
   const fullSessionRef = useRef(0);
@@ -359,6 +360,40 @@ function EpubReader({
   const translationBook = state.status === 'ready' ? state.book : null;
 
   useEffect(() => {
+    const scrollRoot = scrollRootRef.current;
+    if (!scrollRoot || !translationEnabled) {
+      setLazyRootMargin(EPUB_LAZY_ROOT_MARGIN);
+      return undefined;
+    }
+
+    const view = scrollRoot.ownerDocument.defaultView ?? window;
+    let frame: number | null = null;
+    let framePending = false;
+    const updateMargin = () => {
+      frame = null;
+      framePending = false;
+      const viewportHeight = Math.max(
+        1,
+        Math.ceil(scrollRoot.getBoundingClientRect().height || EPUB_READER_MAX_BLOCK_SIZE),
+      );
+      setLazyRootMargin(`${PREVIEW_TRANSLATION_MAX_LOOKAHEAD_VIEWPORTS * viewportHeight}px 0px`);
+    };
+    const scheduleUpdate = () => {
+      if (framePending) return;
+      framePending = true;
+      frame = view.requestAnimationFrame(updateMargin);
+    };
+    const observer = new ResizeObserver(scheduleUpdate);
+    observer.observe(scrollRoot);
+    scheduleUpdate();
+
+    return () => {
+      observer.disconnect();
+      if (frame !== null) view.cancelAnimationFrame(frame);
+    };
+  }, [displayMode, translationEnabled]);
+
+  useEffect(() => {
     if (
       !onEpubTranslationSurfaceChange
       || !translationBook
@@ -369,17 +404,7 @@ function EpubReader({
     const surface = new EpubTranslationDomAdapter({
       bookLanguages: epubBookLanguages(translationBook),
       labels: translationLabelsRef.current,
-      onEnabledChange: (enabled) => {
-        if (!enabled) {
-          setLazyRootMargin(EPUB_LAZY_ROOT_MARGIN);
-          return;
-        }
-        const viewportHeight = Math.max(
-          1,
-          scrollRoot.getBoundingClientRect().height || EPUB_READER_MAX_BLOCK_SIZE,
-        );
-        setLazyRootMargin(`${PREVIEW_TRANSLATION_MAX_LOOKAHEAD_VIEWPORTS * viewportHeight}px 0px`);
-      },
+      onEnabledChange: setTranslationEnabled,
       onShortcut: () => false,
       scrollRoot,
     });

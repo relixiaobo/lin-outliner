@@ -138,8 +138,9 @@ tracks recent request latency. Their product plus a safety margin determines a
 bounded window, with a floor for stationary reading and a ceiling of about eight
 viewports. Before direction is known the floor is symmetric. EPUB translation
 temporarily expands lazy section mounting to that same maximum window while it
-is enabled, then retains the reader's mount-once behavior; it never mounts the
-whole spine.
+is enabled. A resize observer keeps that margin aligned with the live reader
+height across pane resizing and summary/full transitions, then the reader retains
+its mount-once behavior; it never mounts the whole spine.
 
 Scheduling is event-driven. EPUB scroll, section registration, mutation, and
 retry events wake its controller directly. The sandboxed URL runtime increments

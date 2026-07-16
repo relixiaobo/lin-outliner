@@ -248,7 +248,7 @@ export function createUrlPageTranslationGuestBridge(
       await execute({
         operation: 'initialize',
         labels,
-        runtimeSource: installUrlPageTranslationRuntime.toString(),
+        runtimeSource: urlPageTranslationRuntimeSource(),
         targetLanguage,
       });
     },
@@ -2252,6 +2252,14 @@ export function installUrlPageTranslationRuntime(
   };
 
   (host as unknown as Record<string, unknown>)[runtimeKey] = runtime;
+}
+
+/**
+ * Preserve readable runtime source while removing formatting-only indentation from
+ * the isolated-world payload. Serialized execution tests cover the exact result.
+ */
+export function urlPageTranslationRuntimeSource(): string {
+  return installUrlPageTranslationRuntime.toString().replace(/^[ \t]+/gmu, '');
 }
 
 function validatedGuestBatch(

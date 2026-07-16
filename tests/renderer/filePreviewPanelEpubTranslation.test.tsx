@@ -14,6 +14,13 @@ import { resetUrlPageTranslationPreferencesForTests } from '../../src/renderer/u
 
 const makeBookInputs: unknown[] = [];
 const originalFetch = globalThis.fetch;
+const intersectionRootMargins: string[] = [];
+const resizeObserverStubs: Array<{
+  callback: ResizeObserverCallback;
+  observer: ResizeObserver;
+  targets: Set<Element>;
+}> = [];
+let intersectionsAutoVisible = true;
 
 mock.module('foliate-js/view.js', () => ({
   makeBook: async (input: unknown) => {
@@ -33,6 +40,9 @@ afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
   globalThis.fetch = originalFetch;
   makeBookInputs.length = 0;
+  intersectionRootMargins.length = 0;
+  resizeObserverStubs.length = 0;
+  intersectionsAutoVisible = true;
   resetUrlPageTranslationPreferencesForTests();
 });
 
@@ -98,6 +108,57 @@ describe('FilePreviewPanel EPUB translation chrome', () => {
     await waitFor(() => rendered.document.documentElement.lang === 'zh-Hans');
     expect(rendered.document.querySelector('.file-preview-translation-toggle')?.getAttribute('data-translation-enabled'))
       .toBe('true');
+  });
+
+  test('keeps the translation lazy-mount window aligned with the live reader height', async () => {
+    intersectionsAutoVisible = false;
+    const rendered = renderEpubPanel({
+      translationModel: null,
+      autoTranslateEpubs: false,
+      autoTranslateUrls: false,
+    });
+    await waitFor(() => rendered.document.querySelector('.file-preview-translation-toggle') !== null);
+    const scrollRoot = rendered.document.querySelector<HTMLElement>('.file-preview-epub-host');
+    if (!scrollRoot) throw new Error('Missing EPUB reader');
+    let readerHeight = 360;
+    scrollRoot.getBoundingClientRect = () => ({
+      bottom: readerHeight,
+      height: readerHeight,
+      left: 0,
+      right: 800,
+      top: 0,
+      width: 800,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    await act(async () => {
+      rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle')?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-command')?.click();
+      await Promise.resolve();
+    });
+    await waitFor(() => intersectionRootMargins.at(-1) === '2880px 0px');
+
+    readerHeight = 720;
+    await act(async () => {
+      triggerResize(scrollRoot);
+      await Promise.resolve();
+    });
+    await waitFor(() => intersectionRootMargins.at(-1) === '5760px 0px');
+
+    await act(async () => {
+      rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle')?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-command')?.click();
+      await Promise.resolve();
+    });
+    await waitFor(() => intersectionRootMargins.at(-1) === '800px');
   });
 
   test('streams image-heavy EPUBs without using the generic preview byte read', async () => {
@@ -380,25 +441,62 @@ function installDomGlobals(window: Window): void {
     HTMLElement: window.HTMLElement,
     Node: window.Node,
     IntersectionObserver: class {
-      constructor(private readonly callback: IntersectionObserverCallback) {}
+      readonly root: Element | Document | null;
+      readonly rootMargin: string;
+      readonly thresholds = [0];
+
+      constructor(
+        private readonly callback: IntersectionObserverCallback,
+        options: IntersectionObserverInit = {},
+      ) {
+        this.root = options.root ?? null;
+        this.rootMargin = options.rootMargin ?? '0px';
+        intersectionRootMargins.push(this.rootMargin);
+      }
+
       observe(target: Element) {
-        this.callback([{ isIntersecting: true, target } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+        if (intersectionsAutoVisible) {
+          this.callback(
+            [{ isIntersecting: true, target } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver,
+          );
+        }
       }
       disconnect() {}
       takeRecords() { return []; }
       unobserve() {}
-      root = null;
-      rootMargin = '0px';
-      thresholds = [0];
     },
     ResizeObserver: class {
-      observe() {}
-      disconnect() {}
-      unobserve() {}
+      private readonly targets = new Set<Element>();
+
+      constructor(private readonly callback: ResizeObserverCallback) {
+        resizeObserverStubs.push({
+          callback,
+          observer: this as unknown as ResizeObserver,
+          targets: this.targets,
+        });
+      }
+
+      observe(target: Element) { this.targets.add(target); }
+      disconnect() { this.targets.clear(); }
+      unobserve(target: Element) { this.targets.delete(target); }
     },
     window,
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+}
+
+function triggerResize(target: Element): void {
+  for (const stub of resizeObserverStubs) {
+    if (!stub.targets.has(target)) continue;
+    stub.callback([{
+      borderBoxSize: [],
+      contentBoxSize: [],
+      contentRect: target.getBoundingClientRect(),
+      devicePixelContentBoxSize: [],
+      target,
+    }], stub.observer);
+  }
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {

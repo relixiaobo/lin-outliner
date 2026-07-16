@@ -655,9 +655,10 @@ preemption as URL pages. A batch contains one priority tier and is sent in
 document reading order even while the user scrolls upward. Scroll, section
 registration, relevant mutation, and retry wake the local controller directly.
 While translation is enabled, lazy section mounting expands from its ordinary
-800px margin to the scheduler's maximum eight-reader-screen window; it returns
-to the ordinary margin when translation is hidden, keeps already visited
-sections mounted, and never loads or submits the whole spine.
+800px margin to the scheduler's maximum eight-reader-screen window. That window
+tracks the live scrollport height across pane resizing and summary/full layout
+changes; it returns to the ordinary margin when translation is hidden, keeps
+already visited sections mounted, and never loads or submits the whole spine.
 
 EPUB loading, retry, insertion, hide/show, and stale-record cleanup use the same
 bounded scroll-anchor correction as webpage translation. Immediate and delayed

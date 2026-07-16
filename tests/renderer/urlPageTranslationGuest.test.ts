@@ -6,6 +6,7 @@ import {
   URL_PAGE_TRANSLATION_MAX_RUNTIME_SOURCE_CHARS,
   URL_PAGE_TRANSLATION_RUNTIME_KEY,
   installUrlPageTranslationRuntime,
+  urlPageTranslationRuntimeSource,
   type UrlPageTranslationGuestActiveBatch,
   type UrlPageTranslationGuestBatch,
   type UrlPageTranslationGuestLabels,
@@ -48,8 +49,10 @@ interface GuestRuntime {
 
 describe('URL page translation guest runtime', () => {
   test('stays within the isolated-world runtime source limit', () => {
-    expect(installUrlPageTranslationRuntime.toString().length)
+    const source = urlPageTranslationRuntimeSource();
+    expect(source.length)
       .toBeLessThanOrEqual(URL_PAGE_TRANSLATION_MAX_RUNTIME_SOURCE_CHARS);
+    expect(URL_PAGE_TRANSLATION_MAX_RUNTIME_SOURCE_CHARS - source.length).toBeGreaterThanOrEqual(8_000);
   });
 
   test('keeps inline loading controls the same size across page typography', () => {
@@ -1112,6 +1115,9 @@ describe('URL page translation guest runtime', () => {
     } as unknown as Electron.WebviewTag;
     const bridge = createUrlPageTranslationGuestBridge(webview, async (command) => {
       commands.push(command.operation);
+      if (command.operation === 'initialize') {
+        expect(command.runtimeSource).toBe(urlPageTranslationRuntimeSource());
+      }
       if (command.operation === 'next-batch') {
         return {
           blocks: [
@@ -1473,7 +1479,7 @@ function createFixture(options: { serialized?: boolean } = {}): {
       'runtimeKey',
       'targetLanguage',
       'labels',
-      `return (${installUrlPageTranslationRuntime.toString()})(host, runtimeKey, targetLanguage, labels);`,
+      `return (${urlPageTranslationRuntimeSource()})(host, runtimeKey, targetLanguage, labels);`,
     ) as (
       host: Window,
       runtimeKey: string,
