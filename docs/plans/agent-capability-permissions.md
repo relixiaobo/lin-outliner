@@ -148,7 +148,10 @@ sandbox preparation so a stale snapshot cannot start after revocation.
 Every agent-launched process uses `AgentProcessExecutor`: foreground/background
 bash, skill shell, ripgrep, converters, and helper commands. The executor owns
 spawn, environment construction, process-tree termination, output capture,
-timeout, and the immutable capability snapshot.
+timeout, and the immutable capability snapshot. Every spawn and helper probe
+must supply a snapshot. The executor independently overlays the application-bound
+`userData` control-plane root and app-owned exceptions; caller snapshots can
+narrow but cannot replace that policy, so incomplete snapshots fail closed.
 
 On macOS, `MacOSFileSandboxAdapter` continues to use one probed Seatbelt adapter.
 The profile:

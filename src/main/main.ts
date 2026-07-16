@@ -111,7 +111,8 @@ import {
   grantAgentFolderCapabilityView,
   readAgentCapabilitySettingsView,
 } from './agentCapabilityStore';
-import { bindAgentProcessRevocation } from './agentProcessExecutor';
+import { bindAgentProcessCapabilities } from './agentProcessExecutor';
+import { createFolderCapabilitySnapshot } from './agentFolderCapabilities';
 import {
   isAgentCommand,
   isAssetCommand,
@@ -347,7 +348,12 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
 }
 ensureAgentDir(agentScratchRoot);
 const folderCapabilityService = getFolderCapabilityService();
-bindAgentProcessRevocation(folderCapabilityService);
+const agentProcessControlPlaneProtections = createFolderCapabilitySnapshot({
+  workspaceRoot: agentLocalFileRoot,
+  scratchRoot: agentScratchRoot,
+  protectedRoots: [resolvedUserDataDir],
+}, []).protectedRoots;
+bindAgentProcessCapabilities(folderCapabilityService, agentProcessControlPlaneProtections);
 // Scratch holds only ephemeral, app-owned data (materialized attachments, web-fetch binaries,
 // bash overflow logs, PDF page images). Reclaim anything past the TTL once per launch; failures
 // are swallowed so cleanup never blocks startup.
@@ -2344,7 +2350,13 @@ async function commonDirectoryRecentFilePaths(limit: number): Promise<string[]> 
 async function rgFileNameMatches(query: string, limit: number): Promise<string[]> {
   const home = safeAppPath('home');
   if (!home) return [];
-  const ripgrep = await resolveRipgrepCommand().catch(() => null);
+  const capabilities = createFolderCapabilitySnapshot({
+    workspaceRoot: home,
+    includeSystemRoots: true,
+    protectedRoots: [resolvedUserDataDir],
+    revocationGeneration: folderCapabilityService.currentRevocationGeneration(),
+  }, []);
+  const ripgrep = await resolveRipgrepCommand(home, capabilities).catch(() => null);
   if (!ripgrep) return [];
   return new Promise((resolve) => {
     const results: string[] = [];

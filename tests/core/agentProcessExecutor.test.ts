@@ -2,10 +2,14 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { FolderCapabilityService, createFolderCapabilitySnapshot } from '../../src/main/agentFolderCapabilities';
+import {
+  FolderCapabilityService,
+  createFolderCapabilitySnapshot,
+  snapshotFromRoots,
+} from '../../src/main/agentFolderCapabilities';
 import {
   AgentProcessExecutor,
-  bindAgentProcessRevocation,
+  bindAgentProcessCapabilities,
   resetAgentProcessExecutorForTests,
   sanitizeAgentProcessEnv,
 } from '../../src/main/agentProcessExecutor';
@@ -93,7 +97,7 @@ describe('agent process executor', () => {
     await service.grant(granted);
     const snapshot = await service.snapshot({ workspaceRoot: workspace, includeSystemRoots: true });
     resetAgentProcessExecutorForTests();
-    const unbind = bindAgentProcessRevocation(service);
+    const unbind = bindAgentProcessCapabilities(service, []);
 
     try {
       await service.revoke(granted);
@@ -173,8 +177,13 @@ describe('agent process executor', () => {
   test('removes only explicitly private injected environment values', async () => {
     const root = await mkdtemp(path.join(homedir(), '.tenon-process-env-'));
     roots.push(root);
+    const capabilities = createFolderCapabilitySnapshot({
+      workspaceRoot: root,
+      includeSystemRoots: true,
+    }, []);
 
     const result = await runAgentToolProcess('/usr/bin/env', [], root, 10_000, {
+      capabilities,
       env: {
         TENON_PROCESS_TEST: 'visible',
         GITHUB_TOKEN: 'user-owned',
@@ -258,5 +267,56 @@ describe('agent process executor', () => {
     expect(readSecret.exitCode).not.toBe(0);
     expect(writeControl.exitCode).not.toBe(0);
     expect(writeAttachment.exitCode).not.toBe(0);
+  });
+
+  test('enforces the bound control-plane root when a broad caller omits or overrides it', async () => {
+    if (process.platform !== 'darwin') return;
+    const root = await mkdtemp(path.join(homedir(), '.tenon-process-global-control-'));
+    roots.push(root);
+    const control = path.join(root, 'control');
+    const workspace = path.join(control, 'agent-workdir');
+    await mkdir(workspace, { recursive: true });
+    const secret = path.join(control, 'agent-secrets.json');
+    const workspaceFile = path.join(workspace, 'inside.txt');
+    await writeFile(secret, 'private');
+    await writeFile(workspaceFile, 'inside');
+    const service = new FolderCapabilityService(path.join(root, 'capabilities.json'));
+    const broad = createFolderCapabilitySnapshot({
+      workspaceRoot: path.parse(root).root,
+      includeSystemRoots: true,
+    }, []);
+    const callerOverride = snapshotFromRoots(broad.roots, broad.deniedWrites, [{
+      root: control,
+      readExceptions: [control],
+      writeExceptions: [control],
+    }]);
+    const callerNarrowing = snapshotFromRoots(broad.roots, broad.deniedWrites, [{
+      root: control,
+      readExceptions: [],
+      writeExceptions: [],
+    }]);
+    const controlPlaneProtections = createFolderCapabilitySnapshot({
+      workspaceRoot: workspace,
+      protectedRoots: [control],
+    }, []).protectedRoots;
+    resetAgentProcessExecutorForTests();
+    const unbind = bindAgentProcessCapabilities(service, controlPlaneProtections);
+
+    try {
+      const allowed = await runAgentToolProcess('/bin/cat', [workspaceFile], workspace, 10_000, { capabilities: broad });
+      const denied = await runAgentToolProcess('/bin/cat', [secret], workspace, 10_000, { capabilities: broad });
+      const overrideDenied = await runAgentToolProcess('/bin/cat', [secret], workspace, 10_000, { capabilities: callerOverride });
+      const narrowed = await runAgentToolProcess('/bin/cat', [workspaceFile], workspace, 10_000, { capabilities: callerNarrowing });
+
+      expect(allowed).toMatchObject({ exitCode: 0, stdout: 'inside' });
+      expect(denied.exitCode).not.toBe(0);
+      expect(denied.stdout).not.toContain('private');
+      expect(overrideDenied.exitCode).not.toBe(0);
+      expect(overrideDenied.stdout).not.toContain('private');
+      expect(narrowed.exitCode).not.toBe(0);
+    } finally {
+      unbind();
+      resetAgentProcessExecutorForTests();
+    }
   });
 });

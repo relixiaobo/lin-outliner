@@ -812,6 +812,50 @@ describe('agent local tools', () => {
     });
   });
 
+  test('MarkItDown probes use the file tool capability snapshot', async () => {
+    if (process.platform !== 'darwin') return;
+    await withWorkspace(async (workspaceRoot) => {
+      const controlRoot = path.join(workspaceRoot, 'control');
+      await mkdir(controlRoot);
+      const secretPath = path.join(controlRoot, 'agent-secrets.json');
+      const probeLeakPath = path.join(workspaceRoot, 'probe-leak.txt');
+      await writeFile(secretPath, 'private-control-state', 'utf8');
+
+      const fakeMarkitdown = path.join(workspaceRoot, 'markitdown');
+      await writeFile(fakeMarkitdown, [
+        '#!/bin/sh',
+        'if [ "$1" = "--help" ]; then',
+        '  /bin/cat "$CONTROL_SECRET" > "$PROBE_LEAK" 2>/dev/null || true',
+        '  echo "Usage: markitdown"',
+        '  exit 0',
+        'fi',
+        'printf "# Converted safely\\n"',
+      ].join('\n'), 'utf8');
+      await chmod(fakeMarkitdown, 0o755);
+      const filePath = path.join(workspaceRoot, 'brief.docx');
+      await writeFile(filePath, 'fake office payload', 'utf8');
+      const workspace = createAgentLocalWorkspaceContext(
+        workspaceRoot,
+        undefined,
+        undefined,
+        controlRoot,
+      );
+      const tool = createLocalTools({ workspace }).find((candidate) => candidate.name === 'file_read')!;
+
+      await withEnv({
+        LIN_AGENT_MARKITDOWN_COMMAND: fakeMarkitdown,
+        CONTROL_SECRET: secretPath,
+        PROBE_LEAK: probeLeakPath,
+      }, async () => {
+        const result = await (tool.execute as any)('protected-markitdown-probe', { file_path: filePath });
+        const read = result.details as ToolEnvelope<{ type: 'markdown' }>;
+
+        expect(read.ok).toBe(true);
+        expect(await readFile(probeLeakPath, 'utf8').catch(() => '')).not.toContain('private-control-state');
+      });
+    });
+  });
+
   test('file_read keeps local HTML on the text path so it remains editable without MarkItDown', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
@@ -1825,8 +1869,8 @@ describe('agent local tools', () => {
 
   ripgrepTest('file_grep streams large result sets so high offsets do not silently drop matches', async () => {
     await withWorkspace(async (workspaceRoot) => {
-      const content = Array.from({ length: 25_000 }, (_, index) => (
-        `needle-${String(index).padStart(5, '0')}-${'x'.repeat(80)}`
+      const content = Array.from({ length: 110_000 }, (_, index) => (
+        `needle-${String(index).padStart(6, '0')}-${'x'.repeat(80)}`
       )).join('\n');
       await writeFile(path.join(workspaceRoot, 'big.txt'), `${content}\n`, 'utf8');
 
@@ -1834,14 +1878,14 @@ describe('agent local tools', () => {
         pattern: 'needle',
         path: 'big.txt',
         output_mode: 'content',
-        offset: 20_000,
+        offset: 100_000,
         head_limit: 1,
       });
 
       expect(grep.ok).toBe(true);
-      expect(grep.data!.content).toContain('20001:needle-20000-');
+      expect(grep.data!.content).toContain('100001:needle-100000-');
       expect(grep.data!.numLines).toBe(1);
-      expect(grep.data!.appliedOffset).toBe(20_000);
+      expect(grep.data!.appliedOffset).toBe(100_000);
     });
   });
 

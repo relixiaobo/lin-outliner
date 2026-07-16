@@ -417,7 +417,7 @@ interface ProcessResult {
 interface ProcessOptions {
   maxStdoutChars?: number;
   maxStderrChars?: number;
-  capabilities?: FolderCapabilitySnapshot;
+  capabilities: FolderCapabilitySnapshot;
 }
 
 interface ProcessItemsResult {
@@ -638,11 +638,11 @@ export async function runLocalBashCommand(
     command: string;
     timeout?: number;
     signal?: AbortSignal;
-    capabilities?: FolderCapabilitySnapshot;
+    capabilities: FolderCapabilitySnapshot;
   },
 ): Promise<LocalBashRunResult> {
   const workspace = createWorkspaceContext(options.localRoot, options.scratchRoot);
-  if (options.capabilities) workspace.processCapabilities = options.capabilities;
+  workspace.processCapabilities = options.capabilities;
   const params = normalizeBashParams({
     command: options.command,
     timeout: options.timeout,
@@ -793,7 +793,7 @@ export async function restorePostCompactReadFiles(
 }
 
 async function notifySuccessfulFileTouch(workspace: WorkspaceContext, filePath: string): Promise<void> {
-  await workspace.skillRuntime?.notifyFileTouched([filePath]);
+  await workspace.skillRuntime?.notifyFileTouched([filePath], workspace.processCapabilities);
 }
 
 async function notifySuccessfulSkillContentWrite(
@@ -1561,7 +1561,7 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   const mode = params.output_mode ?? 'files_with_matches';
   const args = buildRipgrepArgs(workspace, target, params);
   const page = grepPageParams(params.head_limit, params.offset);
-  const ripgrep = await resolveRipgrepForTool();
+  const ripgrep = await resolveRipgrepForTool(workspace.root, workspace.processCapabilities);
   const result = await runProcessLinesPage(ripgrep.command, [...ripgrep.argsPrefix, ...args], workspace.root, page.offset, page.limit, 60_000, workspace.processCapabilities);
   if (result.error) {
     const detail = `${ripgrep.mode} provider at ${ripgrep.source} failed to start: ${result.error.message}`;
@@ -1716,9 +1716,12 @@ function clearReadStateForDeletedPath(workspace: WorkspaceContext, filePath: str
   }
 }
 
-async function resolveRipgrepForTool(): Promise<ResolvedRipgrepCommand> {
+async function resolveRipgrepForTool(
+  cwd: string,
+  capabilities: FolderCapabilitySnapshot,
+): Promise<ResolvedRipgrepCommand> {
   try {
-    return await resolveRipgrepCommand();
+    return await resolveRipgrepCommand(cwd, capabilities);
   } catch (error) {
     const detail = errorMessage(error);
     throw new LocalToolFailure('ripgrep_unavailable', detail, ripgrepRecoveryInstructions(detail));
@@ -1729,7 +1732,7 @@ function ripgrepRecoveryInstructions(detail: string): string {
   return `${RIPGREP_RECOVERY_INSTRUCTIONS} Provider failure: ${detail}`;
 }
 
-async function runProcess(command: string, args: string[], cwd: string, timeoutMs = 60_000, options: ProcessOptions = {}): Promise<ProcessResult> {
+async function runProcess(command: string, args: string[], cwd: string, timeoutMs: number, options: ProcessOptions): Promise<ProcessResult> {
   return await runAgentToolProcess(command, args, cwd, timeoutMs, options);
 }
 
@@ -1740,19 +1743,24 @@ async function runProcessItems(
   separator: string,
   maxItems: number,
   timeoutMs: number,
-  capabilities?: FolderCapabilitySnapshot,
+  capabilities: FolderCapabilitySnapshot,
 ): Promise<ProcessItemsResult> {
   const result = await runAgentToolProcess(command, args, cwd, timeoutMs, {
     capabilities,
-    maxStdoutChars: 8 * 1024 * 1024,
     maxStderrChars: GREP_STDERR_CAPTURE_CHARS,
+    stdoutItemPage: {
+      separator,
+      offset: 0,
+      limit: maxItems + 1,
+      omitEmpty: true,
+    },
   });
-  const allItems = result.stdout.split(separator).filter(Boolean);
+  const allItems = result.stdoutItems ?? [];
   return {
     items: allItems.slice(0, maxItems),
     stderr: result.stderr,
-    exitCode: result.exitCode,
-    truncated: result.stdoutTruncated === true || allItems.length > maxItems,
+    exitCode: result.stdoutStoppedEarly ? 0 : result.exitCode,
+    truncated: result.stdoutStoppedEarly === true || allItems.length > maxItems,
     timedOut: result.timedOut === true,
     error: result.error,
   };
@@ -1765,21 +1773,23 @@ async function runProcessLinesPage(
   offset: number,
   limit: number,
   timeoutMs: number,
-  capabilities?: FolderCapabilitySnapshot,
+  capabilities: FolderCapabilitySnapshot,
 ): Promise<ProcessLinesPageResult> {
   const result = await runAgentToolProcess(command, args, cwd, timeoutMs, {
     capabilities,
-    maxStdoutChars: 8 * 1024 * 1024,
     maxStderrChars: GREP_STDERR_CAPTURE_CHARS,
+    stdoutItemPage: {
+      separator: '\n',
+      offset,
+      limit: limit + 1,
+    },
   });
-  const allLines = normalizeLineEndings(result.stdout).split('\n');
-  if (allLines.at(-1) === '') allLines.pop();
-  const lines = allLines.slice(offset, offset + limit + 1);
+  const lines = (result.stdoutItems ?? []).map((line) => line.endsWith('\r') ? line.slice(0, -1) : line);
   return {
     lines,
     stderr: result.stderr,
-    exitCode: result.exitCode,
-    truncated: result.stdoutTruncated === true || allLines.length > offset + limit,
+    exitCode: result.stdoutStoppedEarly ? 0 : result.exitCode,
+    truncated: result.stdoutStoppedEarly === true || lines.length > limit,
     timedOut: result.timedOut === true,
     error: result.error,
   };
@@ -2026,14 +2036,14 @@ interface FileGlobCandidates {
   truncated: boolean;
 }
 
-async function collectFileGlobCandidates(searchRoot: string, pattern: string, capabilities?: FolderCapabilitySnapshot): Promise<FileGlobCandidates> {
+async function collectFileGlobCandidates(searchRoot: string, pattern: string, capabilities: FolderCapabilitySnapshot): Promise<FileGlobCandidates> {
   const ripgrep = await collectFilesWithRipgrep(searchRoot, pattern, capabilities);
   if (ripgrep) return ripgrep;
   return collectFilesFallback(searchRoot, FILE_GLOB_CANDIDATE_LIMIT);
 }
 
-async function collectFilesWithRipgrep(searchRoot: string, pattern: string, capabilities?: FolderCapabilitySnapshot): Promise<FileGlobCandidates | null> {
-  const ripgrep = await resolveRipgrepCommand().catch(() => null);
+async function collectFilesWithRipgrep(searchRoot: string, pattern: string, capabilities: FolderCapabilitySnapshot): Promise<FileGlobCandidates | null> {
+  const ripgrep = await resolveRipgrepCommand(searchRoot, capabilities).catch(() => null);
   if (!ripgrep) return null;
   const args = ['--files', '--hidden', '--null'];
   const positiveGlob = ripgrepGlobForFileGlob(pattern, searchRoot);
@@ -2237,7 +2247,11 @@ function readUInt24LE(buffer: Buffer, offset: number): number {
   return buffer[offset]! | (buffer[offset + 1]! << 8) | (buffer[offset + 2]! << 16);
 }
 
-async function getPdfPageCount(filePath: string, sourceHash?: string, capabilities?: FolderCapabilitySnapshot): Promise<number> {
+async function getPdfPageCount(
+  filePath: string,
+  sourceHash: string | undefined,
+  capabilities: FolderCapabilitySnapshot,
+): Promise<number> {
   const cacheKey = sourceHash
     ? derivedFileCacheKey(PDF_INFO_CACHE_EXTRACTOR, sourceHash, pdfToolCacheOptions({}))
     : null;
@@ -2422,7 +2436,7 @@ function isPdfBuffer(buffer: Buffer): boolean {
 async function extractPdfText(
   filePath: string,
   range: PdfPageRange,
-  options: { ignoreUnavailableReader?: boolean; sourceHash?: string; capabilities?: FolderCapabilitySnapshot } = {},
+  options: { ignoreUnavailableReader?: boolean; sourceHash?: string; capabilities: FolderCapabilitySnapshot },
 ): Promise<{ text: string; chars: number; truncated: boolean } | null> {
   const cacheKey = options.sourceHash
     ? derivedFileCacheKey(PDF_TEXT_CACHE_EXTRACTOR, options.sourceHash, pdfToolCacheOptions({

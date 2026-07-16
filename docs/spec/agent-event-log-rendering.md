@@ -1724,7 +1724,8 @@ Open-conversation policy:
 - Opening a conversation loads the latest checkpoint, reads the conversation segment
   and indexed run logs from the checkpoint target offsets, then replays only
   events after the checkpoint `seq`.
-- If no usable checkpoint exists, replay falls back to the full joined log; a
+- If no usable checkpoint exists, including when its version predates the current
+  replay-state shape, replay falls back to the full joined log; a
   background progress UI can be added later if very large cold conversations need it.
 - The active transcript starts from the render projection and uses row
   virtualization for long conversations.

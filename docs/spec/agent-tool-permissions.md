@@ -99,7 +99,12 @@ registered process cannot start with a revoked snapshot.
 All agent-launched processes use `AgentProcessExecutor`: foreground/background
 `bash`, embedded skill shell, ripgrep, converters, and helper commands. The
 executor owns spawn, environment construction, process-tree termination, output
-capture, timeout, and an immutable capability snapshot.
+capture, timeout, and an immutable capability snapshot. Every spawn and helper
+probe must supply that snapshot; there is no executor-generated permissive
+fallback. The executor also overlays the application-bound `userData`
+control-plane root and its app-owned exception set. Caller snapshots may narrow
+that policy but cannot replace it, so incomplete or over-broad snapshots fail
+closed instead of weakening control-plane isolation.
 
 On macOS, one probed Seatbelt adapter:
 

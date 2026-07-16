@@ -5,6 +5,8 @@ import path from 'node:path';
 import {
   createFolderCapabilitySnapshot,
   isPathInside,
+  snapshotFromRoots,
+  type FolderCapabilityProtectedRoot,
   type FolderCapabilitySnapshot,
 } from './agentFolderCapabilities';
 import type { FolderCapabilityService } from './agentFolderCapabilities';
@@ -15,7 +17,7 @@ export interface AgentProcessSpawnInput {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   privateEnvKeys?: readonly string[];
-  capabilities?: FolderCapabilitySnapshot;
+  capabilities: FolderCapabilitySnapshot;
   detached?: boolean;
   stdio?: SpawnOptions['stdio'];
   windowsHide?: boolean;
@@ -61,16 +63,13 @@ export class MacOSFileSandboxAdapter implements AgentProcessSandboxAdapter {
 export class AgentProcessExecutor {
   private readonly active = new Map<number, ActiveAgentProcess>();
   private revocationGenerationProvider: (() => number) | null = null;
+  private controlPlaneProtections: readonly FolderCapabilityProtectedRoot[] = [];
 
   constructor(private readonly sandbox: AgentProcessSandboxAdapter = new MacOSFileSandboxAdapter()) {}
 
   async spawn(input: AgentProcessSpawnInput): Promise<ChildProcess> {
     const cwd = path.resolve(input.cwd);
-    const capabilities = input.capabilities ?? createFolderCapabilitySnapshot({
-      workspaceRoot: cwd,
-      includeSystemRoots: true,
-      revocationGeneration: this.currentRevocationGeneration(),
-    }, []);
+    const capabilities = this.withControlPlaneProtection(input.capabilities);
     this.assertCurrentSnapshot(capabilities);
     const prepared = await this.sandbox.prepare({
       command: input.command,
@@ -117,6 +116,14 @@ export class AgentProcessExecutor {
     };
   }
 
+  bindControlPlaneProtections(protections: readonly FolderCapabilityProtectedRoot[]): () => void {
+    const boundProtections = snapshotFromRoots([], [], protections).protectedRoots;
+    this.controlPlaneProtections = boundProtections;
+    return () => {
+      if (this.controlPlaneProtections === boundProtections) this.controlPlaneProtections = [];
+    };
+  }
+
   async terminateProcessesUsingFolder(folderInput: string): Promise<void> {
     const folder = path.resolve(folderInput);
     const matches = [...this.active.values()].filter(({ capabilities }) => (
@@ -135,11 +142,44 @@ export class AgentProcessExecutor {
     return this.revocationGenerationProvider?.() ?? 0;
   }
 
+  private withControlPlaneProtection(capabilities: FolderCapabilitySnapshot): FolderCapabilitySnapshot {
+    if (this.controlPlaneProtections.length === 0) return capabilities;
+    const normalized = snapshotFromRoots(
+      capabilities.roots,
+      capabilities.deniedWrites,
+      capabilities.protectedRoots,
+      capabilities.revocationGeneration,
+    );
+    const controlPlaneProtections = this.controlPlaneProtections.map((protection) => {
+      const declared = normalized.protectedRoots.find((entry) => path.resolve(entry.root) === path.resolve(protection.root));
+      if (!declared) return protection;
+      return {
+        root: protection.root,
+        readExceptions: intersectPathRoots(protection.readExceptions, declared.readExceptions),
+        writeExceptions: intersectPathRoots(protection.writeExceptions, declared.writeExceptions),
+      };
+    });
+    return {
+      ...normalized,
+      // Keep the application policy as the final Seatbelt rules. Combining it
+      // through ordinary root compaction would let a broader caller root replace it.
+      protectedRoots: [...normalized.protectedRoots, ...controlPlaneProtections],
+    };
+  }
+
   private assertCurrentSnapshot(capabilities: FolderCapabilitySnapshot): void {
     const current = this.currentRevocationGeneration();
     if (capabilities.revocationGeneration === current) return;
     throw new StaleFolderCapabilitySnapshotError(capabilities.revocationGeneration, current);
   }
+}
+
+function intersectPathRoots(left: readonly string[], right: readonly string[]): string[] {
+  return [...new Set(left.flatMap((leftRoot) => right.flatMap((rightRoot) => {
+    if (isPathInside(leftRoot, rightRoot)) return [path.resolve(rightRoot)];
+    if (isPathInside(rightRoot, leftRoot)) return [path.resolve(leftRoot)];
+    return [];
+  })))];
 }
 
 export class StaleFolderCapabilitySnapshotError extends Error {
@@ -158,12 +198,17 @@ export function getAgentProcessExecutor(): AgentProcessExecutor {
   return executor;
 }
 
-export function bindAgentProcessRevocation(service: FolderCapabilityService): () => void {
+export function bindAgentProcessCapabilities(
+  service: FolderCapabilityService,
+  controlPlaneProtections: readonly FolderCapabilityProtectedRoot[],
+): () => void {
   const processExecutor = getAgentProcessExecutor();
   const unbindGeneration = processExecutor.bindRevocationGeneration(() => service.currentRevocationGeneration());
+  const unbindControlPlaneProtections = processExecutor.bindControlPlaneProtections(controlPlaneProtections);
   const unsubscribe = service.onRevoked((folder) => processExecutor.terminateProcessesUsingFolder(folder));
   return () => {
     unsubscribe();
+    unbindControlPlaneProtections();
     unbindGeneration();
   };
 }

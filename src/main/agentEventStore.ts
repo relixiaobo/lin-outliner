@@ -89,7 +89,9 @@ export const LAYOUT_SENTINEL_FILE = 'layout.json';
 // events.jsonl`, own seq space) excluded from conversation replay. The
 // pre-unification entity-grade events and transcript-snapshot payloads are gone.
 export const STORAGE_LAYOUT_VERSION = 7;
-const CHECKPOINT_VERSION = 5;
+// Checkpoints are disposable replay caches. Bump this whenever a required
+// AgentEventReplayState field changes so older shapes fall back to full replay.
+const CHECKPOINT_VERSION = 6;
 const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
 const MAX_CHECKPOINTS_PER_CONVERSATION = 3;
@@ -2659,6 +2661,10 @@ function normalizeCheckpoint(value: unknown, conversationId: string): AgentEvent
   if (!isRecord(state.compactionsByMessageId)) return null;
   if (!isRecord(state.contextClearsByMessageId)) return null;
   if (!isRecord(state.dreamsByMessageId) || !isRecord(state.userQuestions)) return null;
+  if (!isRecord(state.folderCapabilityRequests)) return null;
+  if (!isRecord(state.notifications) || !isRecord(state.attentionByConversationId)) return null;
+  if (state.selectedLeafMessageId !== null && typeof state.selectedLeafMessageId !== 'string') return null;
+  if (state.latestMessageId !== null && typeof state.latestMessageId !== 'string') return null;
   if (!Array.isArray(state.rootMessageIds)) return null;
   if (!isRecord(state.childrenByParentId) || !isRecord(state.derivedPayloadsBySourceId)) return null;
   const targets = normalizeCheckpointTargets(value.targets);
