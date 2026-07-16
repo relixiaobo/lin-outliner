@@ -121,6 +121,13 @@ durable even when conflict resolution leaves the visible state unchanged.
 Duplicate or still-pending imports do not invalidate materialized caches or
 clear redo.
 
+Shared snapshot export, version-vector reads, incremental export, and remote
+import are available only at a committed Core boundary. They reject both an
+active explicit transaction and a standalone async mutation while it has
+yielded. Loro export can otherwise auto-commit pending operations, so this guard
+prevents a failed Core transaction from publishing data that its rollback later
+removes locally.
+
 Loro snapshots omit updates whose causal dependencies are still missing. The
 local envelope therefore keeps only base64 update blobs whose end versions are
 not yet covered by the current oplog. Reload replays those blobs; they are

@@ -142,6 +142,76 @@ describe('workspace replication persistence', () => {
     expectConverged(restored, receiver);
   });
 
+  test('does not export operations from a transaction that later rolls back', async () => {
+    const seed = Core.new({ installationId: newInstallationId() });
+    const shared = seed.exportSharedState();
+    const source = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const target = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const baseVersion = source.replicationVersionVector();
+    let rolledBackNodeId = '';
+
+    await expect(source.transaction('user', async () => {
+      rolledBackNodeId = focusedNodeId(source.createNode(source.projection().todayId, null, 'Rolled back'));
+      const replicationCalls: Array<() => unknown> = [
+        () => source.serializeState(),
+        () => source.exportSharedState(),
+        () => source.replicationVersionVector(),
+        () => source.exportReplicationUpdate(baseVersion),
+        () => source.applyReplicationUpdates([]),
+      ];
+      for (const call of replicationCalls) {
+        expect(call).toThrow('cannot use replication APIs during an uncommitted mutation');
+      }
+      throw new Error('force rollback');
+    })).rejects.toThrow('force rollback');
+
+    expect(source.state().nodes[rolledBackNodeId]).toBeUndefined();
+    target.applyReplicationUpdates([source.exportReplicationUpdate(baseVersion)]);
+    expect(target.state().nodes[rolledBackNodeId]).toBeUndefined();
+    expectConverged(source, target);
+  });
+
+  test('blocks replication while an async mutation has yielded', async () => {
+    const seed = Core.new({ installationId: newInstallationId() });
+    const shared = seed.exportSharedState();
+    const source = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const target = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const baseVersion = source.replicationVersionVector();
+    let resumeMutation: (() => void) | undefined;
+    let signalYield: (() => void) | undefined;
+    const yielded = new Promise<void>((resolve) => { signalYield = resolve; });
+    const mutation = source.createNodesFromTreeYielding(source.projection().todayId, [{
+      content: plainText('Yielded row'),
+      children: [],
+    }], {
+      yieldEveryNodes: 1,
+      yield: () => new Promise<void>((resolve) => {
+        resumeMutation = resolve;
+        signalYield?.();
+      }),
+    });
+
+    await yielded;
+    try {
+      expect(() => source.serializeState())
+        .toThrow('cannot use replication APIs during an uncommitted mutation');
+      expect(() => source.replicationVersionVector())
+        .toThrow('cannot use replication APIs during an uncommitted mutation');
+      expect(() => source.exportReplicationUpdate(baseVersion))
+        .toThrow('cannot use replication APIs during an uncommitted mutation');
+      expect(() => source.applyReplicationUpdates([]))
+        .toThrow('cannot use replication APIs during an uncommitted mutation');
+    } finally {
+      resumeMutation?.();
+    }
+
+    const outcome = await mutation;
+    const nodeId = focusedNodeId(outcome);
+    target.applyReplicationUpdates([source.exportReplicationUpdate(baseVersion)]);
+    expect(target.state().nodes[nodeId]?.content.text).toBe('Yielded row');
+    expectConverged(source, target);
+  });
+
   test('converges command-driven edits made concurrently by two offline replicas', () => {
     const seed = Core.new({ installationId: newInstallationId() });
     const sharedNodeId = focusedNodeId(seed.createNode(seed.projection().todayId, null, 'Shared row'));

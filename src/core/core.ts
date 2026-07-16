@@ -232,6 +232,9 @@ export class Core {
   private commitOriginStack: string[] = [];
   private commitMetadataStack: CoreTransactionMetadata[] = [];
   private activeTransaction?: CoreTransaction;
+  // Standalone yielding mutations are rollback-capable without creating a
+  // CoreTransaction, so they need their own replication-boundary guard.
+  private activeAsyncMutations = 0;
   private stateValue: DocumentState;
   private history: OperationJournal;
   // Projection cache: the per-node projections plus their sorted id order.
@@ -355,6 +358,7 @@ export class Core {
   }
 
   exportSharedState(): WorkspaceSharedState {
+    this.assertReplicationIdle();
     return {
       workspaceId: this.workspaceIdValue,
       documentId: this.documentIdValue,
@@ -373,10 +377,12 @@ export class Core {
   }
 
   replicationVersionVector(): Uint8Array {
+    this.assertReplicationIdle();
     return this.loro.versionVector();
   }
 
   exportReplicationUpdate(from?: Uint8Array): Uint8Array {
+    this.assertReplicationIdle();
     return this.loro.exportUpdate(from);
   }
 
@@ -385,7 +391,7 @@ export class Core {
   }
 
   applyReplicationUpdates(updates: readonly Uint8Array[]): CoreReplicationImportResult {
-    if (this.activeTransaction) throw CoreError.invalidOperation('cannot import replication updates during a transaction');
+    this.assertReplicationIdle();
     const before = this.loro.materializeState();
     const importResult = this.loro.importUpdates(updates);
     const after = this.loro.materializeState();
@@ -408,6 +414,12 @@ export class Core {
       changedNodeIds: [],
       requiresFullSearchRebuild: false,
     };
+  }
+
+  private assertReplicationIdle(): void {
+    if (this.activeTransaction || this.activeAsyncMutations > 0) {
+      throw CoreError.invalidOperation('cannot use replication APIs during an uncommitted mutation');
+    }
   }
 
   projection(): DocumentProjection {
@@ -2633,6 +2645,7 @@ export class Core {
     const before = this.loro.materializeState();
     this.loro.clearTouchedNodeIds();
     const rollbackFrontiers = this.loro.frontiers();
+    this.activeAsyncMutations += 1;
     try {
       const focusHint = await mutator();
       const after = this.loro.materializeState();
@@ -2651,6 +2664,8 @@ export class Core {
       this.invalidateProjectionCache();
       this.refreshStateFromLoro();
       throw error;
+    } finally {
+      this.activeAsyncMutations -= 1;
     }
   }
 

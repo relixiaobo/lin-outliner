@@ -134,13 +134,17 @@ persistence changes, and visible document changes. Duplicate and pending-only
 imports preserve redo and materialized caches. An accepted conflict-losing
 operation still marks persistence dirty. Normal reload imports its snapshot
 once; a second import occurs only when no-op reconciliation actually created a
-pending transaction that must be discarded.
+pending transaction that must be discarded. Snapshot export, version-vector
+reads, incremental export, and remote import reject active explicit
+transactions and standalone async mutations while they are yielded, ensuring a
+later rollback cannot leave already-published operations on another replica.
 
 The complete acceptance harness uses two isolated persisted replicas and an
 in-memory relay. It proves:
 
 - shared bootstrap creates distinct replica and session peer ids;
 - cloned `userData` and restored old envelopes cannot reuse operation ids;
+- failed and yielded transactions cannot expose uncommitted replication state;
 - concurrent command-driven edits converge after normal, reversed, duplicate,
   and paginated delivery;
 - dependency-pending pages survive serialize/reload and later converge;
