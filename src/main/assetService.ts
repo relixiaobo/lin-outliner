@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, unlink } from 'node:fs/promises';
 import { Readable } from 'node:stream';
@@ -12,6 +12,18 @@ const META_SUFFIX = '.meta.json';
 // Lowercase + digits only: ids land in `asset://<id>` URLs whose hostname
 // the URL parser lowercases, so a mixed-case id would never match its file.
 const NANOID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
+
+export interface VerifiedAsset {
+  metadata: AssetMetadata;
+  bytes: Uint8Array;
+}
+
+export class AssetIntegrityError extends Error {
+  constructor(assetId: string, reason: string) {
+    super(`Asset integrity check failed for ${assetId}: ${reason}`);
+    this.name = 'AssetIntegrityError';
+  }
+}
 
 /**
  * Owns binary asset files under a single directory. The document references
@@ -43,9 +55,10 @@ export class AssetService {
     const dimensions = imageDimensions(bytes, mimeType);
     const durationMs = mediaDurationMs(bytes, mimeType);
     const metadata: AssetMetadata = {
+      schemaVersion: 1,
       id,
       mimeType,
-      byteSize: bytes.byteLength,
+      ...assetIntegrity(bytes),
       createdAt: Date.now(),
       ...(originalFilename ? { originalFilename } : {}),
       ...(dimensions ? { imageWidth: dimensions.width, imageHeight: dimensions.height } : {}),
@@ -62,21 +75,35 @@ export class AssetService {
     if (thumbnailAssetId) metadata.thumbnailAssetId = thumbnailAssetId;
     await writeJsonFile(join(this.root, `${id}${META_SUFFIX}`), metadata, { trailingNewline: false });
     this.metaCache.set(id, metadata);
-    return metadata;
+    return { ...metadata };
   }
 
   async lookup(id: string): Promise<AssetMetadata | null> {
-    const cached = this.metaCache.get(id);
-    if (cached) return cached;
+    const safe = sanitizeId(id);
+    const cached = this.metaCache.get(safe);
+    if (cached) return { ...cached };
     try {
-      const raw = await readFile(join(this.root, `${sanitizeId(id)}${META_SUFFIX}`), 'utf8');
-      const metadata = JSON.parse(raw) as AssetMetadata;
-      this.metaCache.set(id, metadata);
-      return metadata;
+      const raw = await readFile(join(this.root, `${safe}${META_SUFFIX}`), 'utf8');
+      const metadata = parseAssetMetadataJson(raw, safe);
+      this.metaCache.set(safe, metadata);
+      return { ...metadata };
     } catch (error) {
       if (isNotFound(error)) return null;
       throw error;
     }
+  }
+
+  /** Read source bytes for portable transfer after verifying the sidecar contract. */
+  async readVerified(id: string): Promise<VerifiedAsset | null> {
+    const safe = sanitizeId(id);
+    const [metadata, filePath] = await Promise.all([
+      this.lookup(safe),
+      this.safeAssetFilePath(safe),
+    ]);
+    if (!metadata || !filePath) return null;
+    const bytes = await readFile(filePath);
+    assertAssetIntegrity(safe, metadata, bytes);
+    return { metadata, bytes };
   }
 
   /** Absolute path to the stored asset bytes, or null if missing. */
@@ -190,9 +217,10 @@ export class AssetService {
       const id = nanoid();
       const dimensions = imageDimensions(pngBytes, 'image/png');
       const metadata: AssetMetadata = {
+        schemaVersion: 1,
         id,
         mimeType: 'image/png',
-        byteSize: pngBytes.byteLength,
+        ...assetIntegrity(pngBytes),
         createdAt: Date.now(),
         originalFilename: `${originalFilename ?? 'attachment.pdf'} thumbnail.png`,
         ...(dimensions ? { imageWidth: dimensions.width, imageHeight: dimensions.height } : {}),
@@ -205,6 +233,61 @@ export class AssetService {
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
+}
+
+function assetIntegrity(bytes: Uint8Array): Pick<AssetMetadata, 'byteSize' | 'sha256'> {
+  return {
+    byteSize: bytes.byteLength,
+    sha256: sha256(bytes),
+  };
+}
+
+function assertAssetIntegrity(assetId: string, metadata: AssetMetadata, bytes: Uint8Array): void {
+  if (bytes.byteLength !== metadata.byteSize) {
+    throw new AssetIntegrityError(
+      assetId,
+      `expected ${metadata.byteSize} bytes but found ${bytes.byteLength}`,
+    );
+  }
+  if (sha256(bytes) !== metadata.sha256) {
+    throw new AssetIntegrityError(assetId, 'SHA-256 digest mismatch');
+  }
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function parseAssetMetadataJson(raw: string, expectedId: string): AssetMetadata {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new AssetIntegrityError(expectedId, 'invalid metadata JSON');
+  }
+  return parseAssetMetadata(value, expectedId);
+}
+
+function parseAssetMetadata(value: unknown, expectedId: string): AssetMetadata {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AssetIntegrityError(expectedId, 'invalid metadata');
+  }
+  const metadata = value as Partial<AssetMetadata>;
+  if (
+    metadata.schemaVersion !== 1
+    || metadata.id !== expectedId
+    || typeof metadata.mimeType !== 'string'
+    || metadata.mimeType.length === 0
+    || !Number.isSafeInteger(metadata.byteSize)
+    || (metadata.byteSize ?? -1) < 0
+    || typeof metadata.sha256 !== 'string'
+    || !/^[a-f0-9]{64}$/.test(metadata.sha256)
+    || !Number.isSafeInteger(metadata.createdAt)
+    || (metadata.createdAt ?? -1) < 0
+  ) {
+    throw new AssetIntegrityError(expectedId, 'invalid metadata');
+  }
+  return metadata as AssetMetadata;
 }
 
 function notFoundResponse(): Response {

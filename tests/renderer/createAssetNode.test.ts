@@ -28,9 +28,11 @@ afterEach(() => {
 });
 
 const imageAsset: AssetMetadata = {
+  schemaVersion: 1,
   id: 'img1',
   mimeType: 'image/png',
   byteSize: 1024,
+  sha256: '0'.repeat(64),
   createdAt: 1,
   originalFilename: 'shot.png',
   imageWidth: 200,
@@ -38,9 +40,11 @@ const imageAsset: AssetMetadata = {
 };
 
 const pdfAsset: AssetMetadata = {
+  schemaVersion: 1,
   id: 'doc1',
   mimeType: 'application/pdf',
   byteSize: 4096,
+  sha256: '1'.repeat(64),
   createdAt: 1,
   originalFilename: 'report.pdf',
   pdfPageCount: 3,
