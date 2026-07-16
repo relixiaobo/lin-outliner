@@ -374,6 +374,7 @@ export function installUrlPageTranslationRuntime(
   };
   type CaptionCueSnapshot = {
     endTime: number;
+    sourceCue?: TextTrackCue;
     startTime: number;
     text: string;
   };
@@ -438,6 +439,7 @@ export function installUrlPageTranslationRuntime(
   let youtubeMetadata: YoutubeCaptionMetadata | null = null;
   let youtubeIdentityKey: string | null = null;
   let youtubeNoCaptionsKey: string | null = null;
+  let youtubeLoadRevision = 0;
   let youtubeLoadKey: string | null = null;
   let youtubeLoadPromise: Promise<void> | null = null;
   let youtubeRetryAttempt = 0;
@@ -994,7 +996,6 @@ export function installUrlPageTranslationRuntime(
   const createCaptionRecords = (
     snapshots: readonly CaptionCueSnapshot[],
     generatedTrack: TextTrack | null,
-    sourceCues: readonly TextTrackCue[] = [],
   ): Map<string, CaptionRecord> => {
     const records = new Map<string, CaptionRecord>();
     const revision = ++captionRevision;
@@ -1017,7 +1018,7 @@ export function installUrlPageTranslationRuntime(
       };
       if (generatedTrack) {
         const cue = createNativeCue(
-          sourceCues[index] ?? null,
+          snapshot.sourceCue ?? null,
           snapshot.startTime,
           snapshot.endTime,
           nativeCueText(snapshot.text),
@@ -1160,6 +1161,7 @@ export function installUrlPageTranslationRuntime(
     }
     const snapshots = cues.map((cue) => ({
       endTime: cue.endTime,
+      sourceCue: cue,
       startTime: cue.startTime,
       text: cueText(cue),
     })).filter((cue) => (
@@ -1171,7 +1173,7 @@ export function installUrlPageTranslationRuntime(
     const totalChars = snapshots.reduce((sum, cue) => sum + cue.text.length, 0);
     if (snapshots.length === 0 || totalChars > 1_000_000) return true;
     clearGeneratedCues(state);
-    state.records = createCaptionRecords(snapshots, state.bilingualTrack, cues);
+    state.records = createCaptionRecords(snapshots, state.bilingualTrack);
     state.sourceSignature = signature;
     if (![...state.records.values()].some((record) => record.generatedCue)) {
       state.records.clear();
@@ -1359,6 +1361,7 @@ export function installUrlPageTranslationRuntime(
   const prepareYoutubeIdentity = (identity: { key: string }): void => {
     if (youtubeIdentityKey === identity.key) return;
     youtubeIdentityKey = identity.key;
+    youtubeLoadRevision += 1;
     youtubeMetadata = null;
     youtubeNoCaptionsKey = null;
     youtubeLoadKey = null;
@@ -1398,6 +1401,14 @@ export function installUrlPageTranslationRuntime(
     identity: { key: string; videoId: string },
     metadata: YoutubeCaptionMetadata,
   ): void => {
+    if (
+      !runtimeActive
+      || !enabled
+      || youtubeVideoKey()?.key !== identity.key
+      || languageMatchesTarget(metadata.language)
+      || youtubeMetadata?.language !== metadata.language
+      || youtubeMetadata?.url !== metadata.url
+    ) return;
     const refreshKey = `${identity.key}:${metadata.language}:${metadata.url}`;
     if (youtubeCaptionRefreshKey === refreshKey) return;
     const button = doc.querySelector<HTMLButtonElement>('.ytp-subtitles-button');
@@ -1582,12 +1593,21 @@ export function installUrlPageTranslationRuntime(
     return source;
   };
 
-  const loadYoutubeCaptionState = async (loadCues: boolean): Promise<void> => {
+  const loadYoutubeCaptionState = async (
+    loadCues: boolean,
+    loadRevision: number,
+  ): Promise<void> => {
     if (!runtimeActive) return;
     const identity = youtubeVideoKey();
     const media = currentMedia();
     if (!identity || !media) return;
     prepareYoutubeIdentity(identity);
+    const loadIsCurrent = (): boolean => (
+      runtimeActive
+      && youtubeLoadRevision === loadRevision
+      && youtubeVideoKey()?.key === identity.key
+      && currentMedia() === media
+    );
     if (!hasFiniteCaptionTimeline(media)) {
       if (captionState?.adapter === 'youtube') clearCaptionState();
       detectedCaptionLanguage = null;
@@ -1611,7 +1631,7 @@ export function installUrlPageTranslationRuntime(
           credentials: 'include',
           redirect: 'error',
         }), 5_000_000);
-        if (!runtimeActive || youtubeVideoKey()?.key !== identity.key) return;
+        if (!loadIsCurrent()) return;
         lookup = youtubeMetadataFromHtml(html, identity.videoId);
       }
       if (lookup.status === 'absent') {
@@ -1626,7 +1646,7 @@ export function installUrlPageTranslationRuntime(
       detectedCaptionLanguage = lookup.metadata.language;
       clearYoutubeRetry();
     }
-    if (!runtimeActive) return;
+    if (!loadIsCurrent()) return;
     const metadata = youtubeMetadata;
     if (!metadata) return;
     if (!loadCues || languageMatchesTarget(metadata.language)) return;
@@ -1636,6 +1656,13 @@ export function installUrlPageTranslationRuntime(
     }
     const fetcher = (host as Window & { fetch?: typeof fetch }).fetch?.bind(host);
     if (!fetcher) return;
+    const captionLoadIsCurrent = (): boolean => (
+      loadIsCurrent()
+      && enabled
+      && !languageMatchesTarget(metadata.language)
+      && youtubeMetadata?.language === metadata.language
+      && youtubeMetadata?.url === metadata.url
+    );
     const captionRetryKey = `${identity.key}:caption:${metadata.language}:${metadata.url}`;
     const captionsUrl = new URL(metadata.url);
     captionsUrl.searchParams.set('fmt', 'json3');
@@ -1644,22 +1671,18 @@ export function installUrlPageTranslationRuntime(
       redirect: 'error',
     }), 2_000_000).catch(() => '');
     if (!source) {
+      if (!captionLoadIsCurrent()) return;
       source = await readBoundedResponse(await fetcher(metadata.url, {
         credentials: 'include',
         redirect: 'error',
       }), 2_000_000).catch(() => '');
     }
+    if (!captionLoadIsCurrent()) return;
     if (!source) {
       requestYoutubeCaptionRefresh(identity, metadata);
       deferYoutubeRetry(captionRetryKey);
       return;
     }
-    if (
-      !runtimeActive
-      || youtubeVideoKey()?.key !== identity.key
-      || youtubeMetadata?.language !== metadata.language
-      || youtubeMetadata?.url !== metadata.url
-    ) return;
     const snapshots = parseCaptionResponse(source);
     const totalChars = snapshots.reduce((sum, cue) => sum + cue.text.length, 0);
     if (snapshots.length === 0 || totalChars > 1_000_000) {
@@ -1700,11 +1723,13 @@ export function installUrlPageTranslationRuntime(
     const key = loadCues && youtubeMetadata
       ? `${identity.key}:caption:${youtubeMetadata.language}:${youtubeMetadata.url}`
       : `${identity.key}:metadata`;
-    if (youtubeLoadPromise && youtubeLoadKey === key) return await youtubeLoadPromise;
+    const loadRevision = youtubeLoadRevision;
+    const loadKey = `${loadRevision}:${key}`;
+    if (youtubeLoadPromise && youtubeLoadKey === loadKey) return await youtubeLoadPromise;
     if (youtubeRetryPending(key)) return;
-    youtubeLoadKey = key;
-    const loading = loadYoutubeCaptionState(loadCues).catch(() => {
-      deferYoutubeRetry(key);
+    youtubeLoadKey = loadKey;
+    const loading = loadYoutubeCaptionState(loadCues, loadRevision).catch(() => {
+      if (runtimeActive && youtubeLoadRevision === loadRevision) deferYoutubeRetry(key);
     }).finally(() => {
       if (youtubeLoadPromise === loading) youtubeLoadPromise = null;
     });
@@ -1777,6 +1802,7 @@ export function installUrlPageTranslationRuntime(
     },
     setEnabled(nextEnabled: boolean, nextTargetLanguage: TranslationLanguage): void {
       const languageChanged = targetLanguage !== nextTargetLanguage;
+      if (enabled !== nextEnabled || languageChanged) youtubeLoadRevision += 1;
       targetLanguage = nextTargetLanguage;
       if (languageChanged) {
         withStableAnchor(() => {
@@ -1806,6 +1832,12 @@ export function installUrlPageTranslationRuntime(
             removeStatus(record);
           }
         });
+        for (const record of captionState?.records.values() ?? []) {
+          record.pending = false;
+          record.failed = false;
+          record.retrying = false;
+          record.retryRequested = false;
+        }
       }
       refreshCaptionState();
       if (captionState) {
@@ -2057,6 +2089,7 @@ export function installUrlPageTranslationRuntime(
         doc.documentElement.removeAttribute(hiddenAttribute);
       });
       runtimeActive = false;
+      youtubeLoadRevision += 1;
       restoreYoutubeCaptionToggle();
       clearCaptionState();
       doc.documentElement.removeAttribute(youtubeCaptionsAttribute);

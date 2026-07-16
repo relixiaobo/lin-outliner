@@ -437,14 +437,15 @@ of silently falling back. Changing model while translation is on cancels the
 active request, clears page-local results, and retranslates the current viewport.
 
 Automatic translation is a globally remembered opt-in switch. Turning it on
-immediately checks the current document and translates only when a valid
-top-level `<html lang>` differs from the target. Missing, empty, or invalid
-top-level language metadata leaves the page manual. Turning the switch off does
-not hide visible translations. Manually choosing Show original suppresses auto
-translation for only the current page; the next top-level navigation clears the
-suppression and evaluates the new page again. Changing the target also re-runs
-the language rule for an auto-activated page and turns translation off when the
-new target matches the document language.
+immediately checks the current document and detected media captions. Translation
+activates when either a valid top-level `<html lang>` or a detected caption
+language differs from the target. When both language signals are missing,
+invalid, or match the target, the page remains manual. Turning the switch off
+does not hide visible translations. Manually choosing Show original suppresses
+auto translation for only the current page; the next top-level navigation clears
+the suppression and evaluates the new page again. Changing the target also
+re-runs the language rule for an auto-activated page and turns translation off
+only when neither valid language signal differs from the target.
 
 Translation is viewport-driven rather than an eager whole-page request. Visible
 content starts with a latency-oriented batch of at most two blocks or roughly

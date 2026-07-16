@@ -210,6 +210,26 @@ const rawColorExceptions: Record<string, { name: string; reason: string; sourceP
     reason: 'Transparent image pixels are composited against white before JPEG encoding for model upload.',
     sourcePattern: /\bcontext\.fillStyle\s*=\s*['"]#ffffff['"]/,
   },
+  'src/renderer/ui/preview/urlPageTranslationGuest.ts:rgb(0 0 0 / 0.72)': {
+    name: 'Remote video captions use fixed contrast colors.',
+    reason: 'Caption CSS is injected into untrusted remote pages and cannot inherit the renderer token tree.',
+    sourcePattern: /\bexport const URL_PAGE_TRANSLATION_GUEST_CSS\b/,
+  },
+  'src/renderer/ui/preview/urlPageTranslationGuest.ts:rgb(255 255 255)': {
+    name: 'Remote video captions use fixed contrast colors.',
+    reason: 'Caption CSS is injected into untrusted remote pages and cannot inherit the renderer token tree.',
+    sourcePattern: /\bexport const URL_PAGE_TRANSLATION_GUEST_CSS\b/,
+  },
+  'src/renderer/ui/preview/urlPageTranslationGuest.ts:rgb(0 0 0 / 0.95)': {
+    name: 'Remote video captions use fixed contrast colors.',
+    reason: 'Caption CSS is injected into untrusted remote pages and cannot inherit the renderer token tree.',
+    sourcePattern: /\bexport const URL_PAGE_TRANSLATION_GUEST_CSS\b/,
+  },
+  'src/renderer/ui/preview/urlPageTranslationGuest.ts:rgb(0 0 0)': {
+    name: 'Remote video captions use fixed contrast colors.',
+    reason: 'Caption CSS is injected into untrusted remote pages and cannot inherit the renderer token tree.',
+    sourcePattern: /\bexport const URL_PAGE_TRANSLATION_GUEST_CSS\b/,
+  },
 };
 
 const localCalibrationExceptionNames = new Set([

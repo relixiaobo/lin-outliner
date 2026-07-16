@@ -89,6 +89,10 @@ describe('URL page translation guest runtime', () => {
     );
 
     expect(overlayRule).toContain('bottom: max(72px, 12%) !important;');
+    expect(overlayRule).toContain('--tenon-caption-background: rgb(0 0 0 / 0.72);');
+    expect(overlayRule).toContain('--tenon-caption-foreground: rgb(255 255 255);');
+    expect(overlayRule).toContain('--tenon-caption-shadow: 0 1px 2px rgb(0 0 0 / 0.95);');
+    expect(URL_PAGE_TRANSLATION_GUEST_CSS).toContain('--tenon-caption-background: rgb(0 0 0);');
     expect(youtubeRule).toContain('transition: bottom 160ms ease-out !important;');
     expect(autoHideRule).toContain('bottom: max(20px, 4%) !important;');
     expect(adRule).toContain('display: none !important;');
@@ -173,6 +177,24 @@ describe('URL page translation guest runtime', () => {
     fixture.runtime.setEnabled(false, 'zh-Hans');
     expect(caption.source.mode).toBe('showing');
     expect(caption.bilingual().mode).toBe('disabled');
+  });
+
+  test('releases pending caption cues when translation is hidden and shown again', () => {
+    const fixture = createFixture();
+    addCaptionVideo(fixture.document, fixture.window, {
+      language: 'en',
+      cues: [{ startTime: 0, endTime: 8, text: 'Resume this caption' }],
+    });
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const pending = nextBatch(fixture.runtime);
+    expect(pending.blocks.map((block) => block.text)).toEqual(['Resume this caption']);
+
+    fixture.runtime.setEnabled(false, 'zh-Hans');
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const resumed = nextBatch(fixture.runtime);
+
+    expect(resumed.contentKind).toBe('caption');
+    expect(resumed.blocks).toEqual(pending.blocks);
   });
 
   test('detects a standard caption language without adding a synthetic track', async () => {
@@ -277,6 +299,35 @@ describe('URL page translation guest runtime', () => {
       line: 0,
       position: 24,
       size: 62,
+    });
+  });
+
+  test('keeps source cue layout paired after invalid cues are filtered out', () => {
+    const fixture = createFixture();
+    const caption = addCaptionVideo(fixture.document, fixture.window, {
+      language: 'en',
+      cues: [
+        { startTime: 0, endTime: 4, text: '   ' },
+        { startTime: 4, endTime: 8, text: 'Visible positioned caption' },
+      ],
+    });
+    const emptyCue = caption.source.cues?.[0];
+    const visibleCue = caption.source.cues?.[1];
+    if (!emptyCue || !visibleCue) throw new Error('Missing source cues');
+    emptyCue.align = 'start';
+    emptyCue.line = 2;
+    visibleCue.align = 'end';
+    visibleCue.line = 0;
+    visibleCue.position = 72;
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+
+    expect(nextBatch(fixture.runtime).blocks.map((block) => block.text))
+      .toEqual(['Visible positioned caption']);
+    expect(caption.bilingual().cues).toHaveLength(1);
+    expect(caption.bilingual().cues?.[0]).toMatchObject({
+      align: 'end',
+      line: 0,
+      position: 72,
     });
   });
 
@@ -646,6 +697,101 @@ describe('URL page translation guest runtime', () => {
     expect(captionStates).toEqual(['false', 'true']);
     expect(captionButton.getAttribute('aria-pressed')).toBe('true');
     restorePerformance();
+  });
+
+  test('does not let a destroyed YouTube loader toggle the site caption control', async () => {
+    const fixture = createFixture();
+    const timedTextUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en&pot=expired';
+    setWindowLocation(fixture.window, 'https://www.youtube.com/watch?v=video123');
+    addCaptionVideo(fixture.document, fixture.window, { cues: [], language: null });
+    const script = fixture.document.createElement('script');
+    script.textContent = `var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: { videoId: 'video123' },
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [{ baseUrl: timedTextUrl, languageCode: 'en' }],
+        },
+      },
+    })};`;
+    fixture.document.head.append(script);
+    const captionButton = fixture.document.createElement('button');
+    captionButton.className = 'ytp-subtitles-button';
+    captionButton.setAttribute('aria-pressed', 'true');
+    let captionClicks = 0;
+    captionButton.addEventListener('click', () => {
+      captionClicks += 1;
+    });
+    fixture.document.body.append(captionButton);
+    let fetchCount = 0;
+    let resolveFirstFetch: ((response: Response) => void) | null = null;
+    setWindowFetch(fixture.window, async () => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return await new Promise<Response>((resolve) => {
+          resolveFirstFetch = resolve;
+        });
+      }
+      return new Response('', { status: 200 });
+    });
+
+    expect(await fixture.runtime.captionLanguage()).toBe('en');
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    await waitForCount(() => fetchCount, 1);
+    fixture.runtime.destroy();
+    resolveFirstFetch?.(new Response('', { status: 200 }));
+    await new Promise((resolve) => setTimeout(resolve, 75));
+
+    expect(fetchCount).toBe(1);
+    expect(captionClicks).toBe(0);
+    setWindowLocation(fixture.window, 'https://example.com/');
+  });
+
+  test('invalidates a pending YouTube loader across a disable and re-enable cycle', async () => {
+    const fixture = createFixture();
+    const timedTextUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en&pot=expired';
+    setWindowLocation(fixture.window, 'https://www.youtube.com/watch?v=video123');
+    addCaptionVideo(fixture.document, fixture.window, { cues: [], language: null });
+    const script = fixture.document.createElement('script');
+    script.textContent = `var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: { videoId: 'video123' },
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [{ baseUrl: timedTextUrl, languageCode: 'en' }],
+        },
+      },
+    })};`;
+    fixture.document.head.append(script);
+    let fetchCount = 0;
+    let resolveStaleFetch: ((response: Response) => void) | null = null;
+    setWindowFetch(fixture.window, async () => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return await new Promise<Response>((resolve) => {
+          resolveStaleFetch = resolve;
+        });
+      }
+      return new Response(JSON.stringify({
+        events: [{
+          tStartMs: 0,
+          dDurationMs: 10_000,
+          segs: [{ utf8: 'Fresh YouTube caption' }],
+        }],
+      }), { status: 200 });
+    });
+
+    expect(await fixture.runtime.captionLanguage()).toBe('en');
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    await waitForCount(() => fetchCount, 1);
+    fixture.runtime.setEnabled(false, 'zh-Hans');
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    expect((await waitForCaptionBatch(fixture.runtime)).blocks.map((block) => block.text))
+      .toEqual(['Fresh YouTube caption']);
+
+    resolveStaleFetch?.(new Response('', { status: 200 }));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(fetchCount).toBe(2);
+    setWindowLocation(fixture.window, 'https://example.com/');
   });
 
   test('exponentially backs off an unreadable YouTube caption URL', async () => {
