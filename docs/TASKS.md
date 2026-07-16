@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398, sync-readiness-foundation Units 1–2 #402/#404**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped semantic-ingest-pipeline #397) |
-| Codex 3 | `lin-outliner-codex-3/` | `codex-3/agent-capability-permissions` | PR #401 ready for main review |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped url-preview-persistent-session #400, agent-capability-permissions #401) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,10 +31,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-16).** Open PR queue: #401
-(`codex-3/agent-capability-permissions`), ready for main review. Recently merged:
-#403 (`codex-4/epub-bilingual-translation`) merged 2026-07-16 after two main
-review passes; see *Recently completed*. #404 (`codex/asset-content-integrity`)
+**In flight (2026-07-16).** Open PR queue: none. Recently merged: #401
+(`codex-3/agent-capability-permissions`) merged 2026-07-16 after two main review
+passes; see *Recently completed*. #403 (`codex-4/epub-bilingual-translation`)
+merged 2026-07-16 after two main review passes; see *Recently completed*. #404
+(`codex/asset-content-integrity`)
 merged 2026-07-16 after four main review passes; see *Recently completed*. #402
 (`codex/sync-readiness-foundation`) merged 2026-07-16 after two main review
 rounds; see *Recently completed*. #399
@@ -523,6 +524,28 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-capability-permissions**
+  (`codex-3/agent-capability-permissions`, PR #401, codex-3, merged 2026-07-16,
+  plan-track) — replaced action-risk approval layers with one ownership-based
+  contract: available resources execute immediately, missing external folders
+  acquire persistent capabilities, and explicit blocks or Tenon control-plane
+  access return terminal unavailable results. Typed file tools, bash, embedded
+  skill shell, ripgrep, converters, and helper processes now share immutable
+  snapshots; macOS denies undeclared user roots and keeps private `userData`
+  inaccessible even under Home or filesystem-root grants. Scoped Runs remove
+  tools before model start, revocation rejects stale starts and terminates
+  affected processes, web fetches use credential-free sessions, and Settings
+  exposes folder access, user blocks, and the system boundary. **Gate (main):**
+  the first review found three defects: stale v5 checkpoints could crash restore,
+  snapshot-less helper probes could bypass control-plane protection, and
+  `file_grep` pagination stopped at the first 8 MiB. Codex-3 fixed all three with
+  checkpoint v6 fallback, mandatory snapshots plus an application-bound control
+  root, and streaming page collection; the final pass found no reportable issues.
+  Verified on final head `1fc0d0ba` and the latest-`main` merge result with
+  typecheck, 212 focused Core tests, 895 renderer tests, `docs:check`, and diff
+  check. Plan archived `done`:
+  `docs/plans/archive/agent-capability-permissions.md`.
 
 - **epub-bilingual-translation**
   (`codex-4/epub-bilingual-translation`, PR #403, codex-4, merged 2026-07-16,

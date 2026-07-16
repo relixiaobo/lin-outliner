@@ -67,6 +67,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent capability permissions (PR #401, codex-3)** — replaced action-risk
+  confirmations and safety modes with an ownership-based contract: existing
+  resources execute immediately, missing external folders acquire persistent
+  capabilities, and explicit blocks or Tenon control-plane access are terminal
+  unavailable results. File tools and every Agent-launched process now share an
+  immutable capability snapshot; macOS keeps private `userData` inaccessible
+  even under Home or filesystem-root grants, while revocation rejects stale
+  starts and terminates affected processes. Scoped Runs remove tools before the
+  model starts, web fetches use credential-free sessions, and Security Settings
+  expose folder access, user blocks, and the system boundary. **Gate (main):**
+  two review passes closed stale-checkpoint restore, snapshot-less helper probe,
+  and high-offset `file_grep` pagination defects. Verified on the latest-`main`
+  merge with typecheck, 212 focused Core tests, 895 renderer tests, docs check,
+  and diff check.
 - **EPUB bilingual translation (PR #403, codex-4)** — reflowable EPUB file
   panels and dedicated readers now use the shared target language, translation
   model, status control, shortcut, paragraph-local retry, viewport-first
