@@ -310,8 +310,8 @@ describe('page translation service', () => {
       domain: 'page-translation',
       severity: 'warn',
       code: 'page-translation-request-failed',
-      message: 'Page translation request failed.',
-      context: { operation: 'translate-url-preview' },
+      message: 'Preview translation request failed.',
+      context: { operation: 'translate-preview-content' },
     });
     expect(JSON.stringify(report)).not.toContain('Authorization');
     expect(JSON.stringify(report)).not.toContain('sk-');
@@ -349,5 +349,30 @@ describe('page translation prompt', () => {
       contentKind: 'caption',
       targetLanguage: 'Simplified Chinese',
     });
+  });
+
+  test('uses adjacent document passages as context without widening the request shape', async () => {
+    const prompt = buildPageTranslationPrompts('zh-Hans', [
+      { id: 'e1:0', text: 'A chapter opens.' },
+      { id: 'e1:1', text: 'The argument continues.' },
+    ], 'document');
+
+    expect(prompt.systemPrompt).toContain('adjacent passages from a reflowable document');
+    expect(prompt.systemPrompt).toContain('every passage separately');
+    expect(JSON.parse(prompt.userPrompt)).toMatchObject({
+      contentKind: 'document',
+      targetLanguage: 'Simplified Chinese',
+    });
+
+    const service = new PageTranslationService({
+      complete: async ({ userPrompt }) => {
+        const payload = JSON.parse(userPrompt) as { blocks: Array<{ id: string }> };
+        return JSON.stringify(payload.blocks.map(({ id }) => ({ id, translation: `Translated ${id}` })));
+      },
+    });
+    const response = await service.handle(URL_PAGE_TRANSLATE_COMMAND, {
+      ...request({ contentKind: 'document' }),
+    });
+    expect(response.ok).toBe(true);
   });
 });

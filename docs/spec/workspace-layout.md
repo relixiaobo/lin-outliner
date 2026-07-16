@@ -600,6 +600,58 @@ prefetch. Live-generated captions, speech recognition, DRM circumvention, local
 video files, and media without a finite usable cue track remain outside this
 capability.
 
+Reflowable EPUB file panels and dedicated EPUB readers extend the same
+translation workflow to local books. They use the shared `Languages` control,
+target-language catalog, `Follow Agent` or explicit model, Translate / Show
+original command, fixed-size loading and retry states, completion treatment, and
+scoped `Option+A` / `Alt+A` shortcut. Compact inline outliner previews do not
+expose the control, and a book whose rendition layout is `pre-paginated` exposes
+no translation capability. Model output is inserted as inert plain text after
+the source block, marked with the target language for assistive technology;
+source text always remains visible.
+
+EPUB automatic translation is a separate globally remembered opt-in that
+defaults off. It never inherits website automatic translation consent. When
+enabled, a valid differing book-metadata or loaded-section language activates
+translation; missing, invalid, or same-target metadata leaves the book manual.
+Turning the preference off does not hide an already active book session. Manual
+Show original cancels pending work, removes transient state, and hides completed
+translations without discarding the current book/configuration cache.
+
+Each loaded reflowable section registers its same-origin document and iframe with
+one book-scoped adapter. The adapter collects direct readable text from headings,
+paragraphs, list and definition items, quotations, captions, table cells, and
+leaf block containers while excluding nested candidate text, navigation,
+code/preformatted content, forms, editable or hidden content, and Tenon-owned
+nodes. Records are keyed by section, semantic ordinal, and normalized-text hash.
+A lazy section remount therefore restores matching cached translations, while a
+changed source record removes obsolete loading/error/translation nodes and cannot
+accept or retain the old request result. Nearest valid element language wins,
+then section-root language, then validated book metadata; target-language records
+receive no loader or provider request.
+
+EPUB scheduling follows the reader scrollport without loading the full spine.
+The first visible probe accepts at most two blocks / 2,000 source characters;
+later batches accept at most four blocks / 4,000 characters. A batch contains a
+single priority tier and is sent in document reading order even while the user is
+scrolling upward. At most three requests run concurrently and at most one is
+prefetch; newly visible work can replace only obsolete off-window work. Before
+direction is known the window covers about two viewports in both directions;
+afterward it keeps about four viewports ahead and one behind. Only sections
+mounted by the existing EPUB lazy reader can participate, so translation never
+forces the whole book to load or submit.
+
+EPUB loading, retry, insertion, hide/show, and stale-record cleanup use the same
+bounded scroll-anchor correction as webpage translation. Immediate and delayed
+correction yields to wheel, touch, keyboard, pointer, native-scrollbar, or other
+external scroll input. Target/model changes cancel stale generations, clear the
+old configuration cache, and restart an enabled session; an auto-activated book
+retains that provenance across a model restart so a later matching target can
+turn it off correctly. UI-language label changes update live status nodes without
+rebuilding the adapter or losing session state. Main receives EPUB batches as
+`document` content under the existing validated translation command and uses
+neighboring reflowable passages only as untrusted translation context.
+
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the
 scroll viewport and is fitted to the available width, with no page-nav or zoom

@@ -1,6 +1,7 @@
 import { expect, test, type Locator } from '@playwright/test';
 import {
   commandCalls,
+  configurePreviewTranslationMock,
   emitDocumentEvent,
   e2eProjection,
   ids,
@@ -91,6 +92,31 @@ async function pasteClipboardFileAndOpenPreview(
   const previewFrame = pastedRow.locator('.file-node-row-preview .file-node-preview.collapsed');
   await expect(previewFrame).toBeVisible();
   return previewFrame;
+}
+
+async function openEpubSplitReader(
+  page: Parameters<typeof trailingEditor>[0],
+  name: string,
+) {
+  const inlinePreview = await pasteClipboardFileAndOpenPreview(page, {
+    name,
+    mimeType: 'application/epub+zip',
+    text: 'epub bytes',
+  });
+  await expect(inlinePreview.locator('.file-preview-translation-toggle')).toHaveCount(0);
+  const inlineChapter = inlinePreview.locator('.file-preview-epub-iframe').first().contentFrame();
+  await expect(inlineChapter.locator('[data-tenon-epub-translation-style]')).toHaveCount(0);
+
+  const panelCountBefore = await page.locator('.outline-panel-surface').count();
+  await inlinePreview.locator('..').locator('.file-preview-pill-more').click();
+  await page.getByRole('menu', { name: 'Preview actions' })
+    .getByRole('menuitem', { name: 'Open in split pane' })
+    .click();
+  await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCountBefore + 1);
+  const readerPane = page.locator('.outline-panel-surface.active-panel');
+  await expect(readerPane.locator('.file-preview-panel--reader')).toBeVisible();
+  const chapter = readerPane.locator('.file-preview-epub-iframe').first().contentFrame();
+  return { chapter, readerPane };
 }
 
 async function expectConcentricPreviewCorners(previewFrame: Locator, contentSelector: string) {
@@ -1183,6 +1209,103 @@ test.describe('file attachments', () => {
     const restoredReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub-host');
     await expect(restoredReader).toHaveAttribute('data-epub-continuous-reader', 'true');
     await expect.poll(async () => restoredReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  });
+
+  test('EPUB readers translate in place without inheriting website automatic consent', async ({ page }) => {
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await configurePreviewTranslationMock(page, {
+      delayMs: 150,
+      language: 'zh-Hans',
+      preferences: {
+        translationModel: null,
+        autoTranslateEpubs: false,
+        autoTranslateUrls: true,
+      },
+    });
+    const { chapter, readerPane } = await openEpubSplitReader(page, 'translated-book.epub');
+    const translationToggle = readerPane.locator('.file-preview-translation-toggle');
+    await expect(translationToggle).toHaveAttribute('aria-label', 'Translation settings: Translation off');
+    await page.waitForTimeout(200);
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'url_page_translate_blocks')).toHaveLength(0);
+
+    await translationToggle.click();
+    await page.getByRole('dialog', { name: 'Translation settings' })
+      .locator('.file-preview-translation-command')
+      .click();
+    await expect(chapter.locator('[data-tenon-epub-translation-status="loading"]').first()).toBeVisible();
+
+    const firstTranslation = chapter.locator('[data-tenon-epub-translation="true"]').first();
+    await expect(firstTranslation).toContainText('Translated:');
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.some((call) => (
+        call.cmd === 'url_page_translate_blocks'
+        && call.args.contentKind === 'document'
+      ));
+    }).toBe(true);
+    const callsBeforeOriginal = (await commandCalls(page))
+      .filter((call) => call.cmd === 'url_page_translate_blocks');
+    const firstRequestIds = new Set(
+      (Array.isArray(callsBeforeOriginal[0]?.args.blocks) ? callsBeforeOriginal[0].args.blocks : [])
+        .flatMap((block) => (
+          block && typeof block === 'object' && typeof (block as { id?: unknown }).id === 'string'
+            ? [(block as { id: string }).id]
+            : []
+        )),
+    );
+    expect(firstRequestIds.size).toBeGreaterThan(0);
+
+    await translationToggle.click();
+    await page.getByRole('dialog', { name: 'Translation settings' })
+      .locator('.file-preview-translation-command')
+      .click();
+    await expect(firstTranslation).toBeHidden();
+
+    const callCountBeforeRestore = callsBeforeOriginal.length;
+    await translationToggle.click();
+    await page.getByRole('dialog', { name: 'Translation settings' })
+      .locator('.file-preview-translation-command')
+      .click();
+    await expect(firstTranslation).toBeVisible();
+    await page.waitForTimeout(250);
+    const restoreCalls = (await commandCalls(page))
+      .filter((call) => call.cmd === 'url_page_translate_blocks')
+      .slice(callCountBeforeRestore);
+    const restoredIds = restoreCalls.flatMap((call) => (
+      Array.isArray(call.args.blocks)
+        ? call.args.blocks.flatMap((block) => (
+            block && typeof block === 'object' && typeof (block as { id?: unknown }).id === 'string'
+              ? [(block as { id: string }).id]
+              : []
+          ))
+        : []
+    ));
+    expect(restoredIds.some((id) => firstRequestIds.has(id))).toBe(false);
+  });
+
+  test('same-language EPUB readers stay idle without provider requests', async ({ page }) => {
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await configurePreviewTranslationMock(page, {
+      delayMs: 30,
+      language: 'en',
+      preferences: {
+        translationModel: null,
+        autoTranslateEpubs: false,
+        autoTranslateUrls: false,
+      },
+    });
+    const { chapter, readerPane } = await openEpubSplitReader(page, 'same-language-book.epub');
+    const translationToggle = readerPane.locator('.file-preview-translation-toggle');
+    await translationToggle.click();
+    await page.getByRole('dialog', { name: 'Translation settings' })
+      .locator('.file-preview-translation-command')
+      .click();
+    await expect(translationToggle).toHaveAttribute('aria-label', 'Translation settings: Translation on');
+    await page.waitForTimeout(250);
+
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'url_page_translate_blocks')).toHaveLength(0);
+    await expect(chapter.locator('[data-tenon-epub-translation-status]')).toHaveCount(0);
+    await expect(chapter.locator('[data-tenon-epub-translation]')).toHaveCount(0);
   });
 
   test('long EPUB readers mount sections lazily as they scroll into view', async ({ page }) => {

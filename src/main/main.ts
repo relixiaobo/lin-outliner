@@ -719,8 +719,8 @@ function effectiveTranslationLanguage(): TranslationLanguage {
 }
 
 function urlPageTranslationPreferences(): UrlPageTranslationPreferences {
-  const { translationModel, autoTranslateUrls } = loadAppPreferences();
-  return { translationModel, autoTranslateUrls };
+  const { translationModel, autoTranslateEpubs, autoTranslateUrls } = loadAppPreferences();
+  return { translationModel, autoTranslateEpubs, autoTranslateUrls };
 }
 
 // Standard application menu (A2b). macOS gets the conventional App / Edit / View

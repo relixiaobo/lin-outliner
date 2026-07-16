@@ -192,7 +192,7 @@ html[data-tenon-bilingual-youtube-captions="true"] .ytp-caption-window-container
 export interface UrlPageTranslationGuestBatch {
   blocks: UrlPageTranslationBlock[];
   captionRevision: number;
-  contentKind?: UrlPageTranslationContentKind;
+  contentKind?: Exclude<UrlPageTranslationContentKind, 'document'>;
   preemptRequestId?: string | null;
   priority: number | null;
 }

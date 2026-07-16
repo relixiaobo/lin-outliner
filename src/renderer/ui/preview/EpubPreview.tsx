@@ -10,6 +10,7 @@ import {
   writeEpubReadingPosition,
   type EpubReadingPosition,
 } from './readingPositionStore';
+import { EpubTranslationDomAdapter } from './epubTranslationDom';
 
 type EpubState =
   | { status: 'loading' }
@@ -24,6 +25,8 @@ type EpubReaderState =
 type EpubBook = {
   destroy?: () => void;
   isExternal?: (href: string) => boolean;
+  metadata?: { language?: unknown };
+  rendition?: { layout?: unknown };
   resolveHref?: (href: string) => { index?: unknown; anchor?: unknown } | undefined;
   sections?: unknown[];
   toc?: unknown[];
@@ -97,7 +100,7 @@ function loadFoliateMakeBook(): Promise<EpubMakeBook> {
   return foliateMakeBookPromise;
 }
 
-export function EpubPreview({ displayMode, source }: PreviewRendererProps) {
+export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const [state, setState] = useState<EpubState>({ status: 'loading' });
   const targetKey = previewReadingPositionKey(source.target);
@@ -153,6 +156,7 @@ export function EpubPreview({ displayMode, source }: PreviewRendererProps) {
       displayMode={displayMode}
       initialReadingPosition={savedReadingPositionRef.current.position}
       name={source.name}
+      onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}
       onReadingPositionChange={persistReadingPosition}
     />
   );
@@ -163,17 +167,28 @@ function EpubReader({
   displayMode,
   initialReadingPosition,
   name,
+  onEpubTranslationSurfaceChange,
   onReadingPositionChange,
 }: {
   blob: Blob;
   displayMode: PreviewRendererProps['displayMode'];
   initialReadingPosition: EpubReadingPosition | null;
   name: string;
+  onEpubTranslationSurfaceChange?: (surface: EpubTranslationDomAdapter | null) => void;
   onReadingPositionChange: (position: EpubReadingPosition) => void;
 }) {
   const labels = useT().shell.filePreview;
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
   const frameRefs = useRef(new Map<number, HTMLIFrameElement>());
+  const translationSurfaceRef = useRef<EpubTranslationDomAdapter | null>(null);
+  const translationLabelsRef = useRef({
+    retry: labels.retryBlockTranslation,
+    translating: labels.translatingBlock,
+  });
+  translationLabelsRef.current = {
+    retry: labels.retryBlockTranslation,
+    translating: labels.translatingBlock,
+  };
   // Sections that have reported a measured height (or settled on error). The restore
   // effect waits on this so it only locks once the layout above the target is final.
   const measuredSectionsRef = useRef(new Map<number, number>());
@@ -217,7 +232,16 @@ function EpubReader({
 
   const registerFrame = useCallback((sectionIndex: number, frame: HTMLIFrameElement | null) => {
     if (frame) frameRefs.current.set(sectionIndex, frame);
-    else frameRefs.current.delete(sectionIndex);
+    else {
+      frameRefs.current.delete(sectionIndex);
+      translationSurfaceRef.current?.unregisterSection(sectionIndex);
+    }
+  }, []);
+  const registerTranslationDocument = useCallback((sectionIndex: number, frame: HTMLIFrameElement | null) => {
+    const surface = translationSurfaceRef.current;
+    if (!surface) return;
+    if (frame) surface.registerSection(sectionIndex, frame);
+    else surface.unregisterSection(sectionIndex);
   }, []);
 
   const handleNavigation = useCallback((href: string) => {
@@ -268,6 +292,38 @@ function EpubReader({
     ? displayMode === 'summary' ? state.sections.slice(0, 1) : state.sections
     : [];
   const ready = state.status === 'ready';
+  const translationBook = state.status === 'ready' ? state.book : null;
+
+  useEffect(() => {
+    if (
+      !onEpubTranslationSurfaceChange
+      || !translationBook
+      || translationBook.rendition?.layout === 'pre-paginated'
+    ) return undefined;
+    const scrollRoot = scrollRootRef.current;
+    if (!scrollRoot) return undefined;
+    const surface = new EpubTranslationDomAdapter({
+      bookLanguages: epubBookLanguages(translationBook),
+      labels: translationLabelsRef.current,
+      onShortcut: () => false,
+      scrollRoot,
+    });
+    translationSurfaceRef.current = surface;
+    for (const [sectionIndex, frame] of frameRefs.current) surface.registerSection(sectionIndex, frame);
+    onEpubTranslationSurfaceChange?.(surface);
+    return () => {
+      if (translationSurfaceRef.current === surface) translationSurfaceRef.current = null;
+      onEpubTranslationSurfaceChange?.(null);
+      surface.destroy();
+    };
+  }, [onEpubTranslationSurfaceChange, translationBook]);
+
+  useEffect(() => {
+    translationSurfaceRef.current?.setLabels({
+      retry: labels.retryBlockTranslation,
+      translating: labels.translatingBlock,
+    });
+  }, [labels.retryBlockTranslation, labels.translatingBlock]);
 
   useEffect(() => {
     if (
@@ -343,6 +399,7 @@ function EpubReader({
             name={name}
             onNavigate={handleNavigation}
             onSectionLayout={reportSectionLayout}
+            onTranslationDocument={registerTranslationDocument}
             registerFrame={registerFrame}
             scrollRootRef={scrollRootRef}
             section={section}
@@ -369,6 +426,7 @@ function EpubSectionFrame({
   name,
   onNavigate,
   onSectionLayout,
+  onTranslationDocument,
   registerFrame,
   scrollRootRef,
   section,
@@ -380,6 +438,7 @@ function EpubSectionFrame({
   name: string;
   onNavigate: (href: string) => void;
   onSectionLayout: (sectionIndex: number, height: number | null) => void;
+  onTranslationDocument: (sectionIndex: number, frame: HTMLIFrameElement | null) => void;
   registerFrame: (sectionIndex: number, frame: HTMLIFrameElement | null) => void;
   scrollRootRef: RefObject<HTMLElement | null>;
   section: EpubSection;
@@ -454,8 +513,9 @@ function EpubSectionFrame({
       onNavigate,
       section,
     });
+    onTranslationDocument(sectionIndex, frame);
     measureHeight();
-  }, [book, displayMode, onNavigate, section]);
+  }, [book, displayMode, onNavigate, onTranslationDocument, section, sectionIndex]);
 
   useEffect(() => {
     if (!visible) return undefined;
@@ -476,10 +536,11 @@ function EpubSectionFrame({
       cancelled = true;
       releaseDocumentRef.current?.();
       releaseDocumentRef.current = null;
+      onTranslationDocument(sectionIndex, null);
       registerFrame(sectionIndex, null);
       section.unload?.();
     };
-  }, [registerFrame, section, sectionIndex, visible]);
+  }, [onTranslationDocument, registerFrame, section, sectionIndex, visible]);
 
   // Single setup source: run once when the document becomes available, and again only
   // when a setup input (displayMode/book/section/onNavigate) actually changes.
@@ -548,6 +609,13 @@ function readableEpubSections(book: EpubBook): EpubReadableSection[] {
     .map((section, index) => ({ index, section }))
     .filter((entry): entry is { index: number; section: EpubSection } => isEpubSection(entry.section))
     .map((entry, offset) => ({ ...entry, number: offset + 1 }));
+}
+
+function epubBookLanguages(book: EpubBook): string[] {
+  const language = book.metadata?.language;
+  if (typeof language === 'string') return [language];
+  if (!Array.isArray(language)) return [];
+  return language.filter((entry): entry is string => typeof entry === 'string');
 }
 
 function epubOutlineItems(book: EpubBook): DocumentOutlineItem[] {

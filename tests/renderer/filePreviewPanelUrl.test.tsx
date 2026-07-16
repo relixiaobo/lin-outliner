@@ -117,6 +117,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
     });
     expect(rendered.savedTranslationPreferences.at(-1)).toEqual({
       translationModel: null,
+      autoTranslateEpubs: false,
       autoTranslateUrls: false,
     });
     await act(async () => {
@@ -134,6 +135,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
     });
     expect(rendered.savedTranslationPreferences.at(-1)).toEqual({
       translationModel: 'openai/gpt-4.1-mini',
+      autoTranslateEpubs: false,
       autoTranslateUrls: true,
     });
 
@@ -174,6 +176,7 @@ describe('FilePreviewPanel URL preview chrome', () => {
     const rendered = renderUrlPanel({
       initialTranslationPreferences: {
         translationModel: 'anthropic/claude-retired',
+        autoTranslateEpubs: false,
         autoTranslateUrls: false,
       },
     });
@@ -246,6 +249,7 @@ function renderUrlPanel(options: {
     initialTranslationLanguage: 'en',
     initialUrlPageTranslationPreferences: options.initialTranslationPreferences ?? {
       translationModel: null,
+      autoTranslateEpubs: false,
       autoTranslateUrls: false,
     },
     executeUrlPageTranslationGuest: async ({ command }) => {

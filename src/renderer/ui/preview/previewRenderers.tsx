@@ -49,6 +49,7 @@ import { normalizeCodeLanguage } from '../editor/codeLanguages';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { wantsNewPaneFromClick } from '../shared';
 import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
+import type { EpubTranslationDomAdapter } from './epubTranslationDom';
 import { formatBytes } from './fileNode';
 import { DocumentOutlineRail, type DocumentOutlineItem } from './DocumentOutlineRail';
 import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
@@ -176,6 +177,7 @@ function clampPreviewHeight(height: number) {
 export interface PreviewRendererProps {
   displayMode: FilePreviewDisplayMode;
   mediaActions?: ReactElement | null;
+  onEpubTranslationSurfaceChange?: (surface: EpubTranslationDomAdapter | null) => void;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onSummaryPageSelect?: (pageNumber: number) => void;
   onUrlMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
@@ -225,6 +227,7 @@ export function isPassivePlaybackSource(source: PreviewSourceDescriptor): boolea
 
 export function PreviewRenderer({
   displayMode,
+  onEpubTranslationSurfaceChange,
   onSummaryPageSelect,
   onUrlMetadataChange,
   onUrlWebviewChange,
@@ -237,6 +240,7 @@ export function PreviewRenderer({
 }: {
   displayMode: FilePreviewDisplayMode;
   mediaActions?: ReactElement | null;
+  onEpubTranslationSurfaceChange?: (surface: EpubTranslationDomAdapter | null) => void;
   onSummaryPageSelect?: (pageNumber: number) => void;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   scrollToPageNumber?: number | null;
@@ -259,6 +263,7 @@ export function PreviewRenderer({
   return (
     <Renderer
       displayMode={displayMode}
+      onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}
       onSummaryPageSelect={onSummaryPageSelect}
       onOpenTarget={onOpenTarget}
       scrollToPageNumber={scrollToPageNumber}
@@ -283,6 +288,7 @@ export interface FilePreviewShellProps {
   initialExpanded?: boolean;
   /** Dedicated split-pane reader: full content only, with header actions outside the preview. */
   readerMode?: boolean;
+  onEpubTranslationSurfaceChange?: (surface: EpubTranslationDomAdapter | null) => void;
   onUrlMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
   onUrlWebviewChange?: (webview: Electron.WebviewTag | null) => void;
 }
@@ -306,6 +312,7 @@ export function FilePreviewShell({
   meta = null,
   initialExpanded = false,
   readerMode = false,
+  onEpubTranslationSurfaceChange,
   onUrlMetadataChange,
   onUrlWebviewChange,
 }: FilePreviewShellProps) {
@@ -433,6 +440,7 @@ export function FilePreviewShell({
         ) : (
           <PreviewRenderer
             displayMode={displayMode}
+            onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}
             onSummaryPageSelect={openSummaryPage}
             onUrlMetadataChange={onUrlMetadataChange}
             onUrlWebviewChange={onUrlWebviewChange}
@@ -1830,7 +1838,7 @@ function isPdfSource(source: PreviewFileSource): boolean {
     && (source.mimeType.toLowerCase() === 'application/pdf' || source.ext === 'pdf');
 }
 
-function isEpubSource(source: PreviewFileSource): boolean {
+export function isEpubSource(source: PreviewFileSource): boolean {
   return source.entryKind === 'file'
     && (source.mimeType.toLowerCase() === 'application/epub+zip' || source.ext === 'epub');
 }

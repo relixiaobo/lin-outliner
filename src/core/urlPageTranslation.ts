@@ -24,7 +24,7 @@ export interface UrlPageTranslationBlock {
   text: string;
 }
 
-export type UrlPageTranslationContentKind = 'caption' | 'page';
+export type UrlPageTranslationContentKind = 'caption' | 'document' | 'page';
 
 export interface UrlPageTranslationRequest {
   sessionId: string;
@@ -41,6 +41,8 @@ export interface UrlPageTranslationPreferences {
   /** Provider-qualified model id. null means dynamically follow the Agent model. */
   translationModel: string | null;
   autoTranslateUrls: boolean;
+  /** Local EPUB content requires a separate explicit opt-in from remote webpages. */
+  autoTranslateEpubs: boolean;
 }
 
 export interface UrlPageTranslationCancelRequest {
@@ -85,6 +87,7 @@ export function isUrlPageTranslationPreferences(value: unknown): value is UrlPag
   return (
     (model === null || isUrlPageTranslationModel(model))
     && typeof record.autoTranslateUrls === 'boolean'
+    && typeof record.autoTranslateEpubs === 'boolean'
   );
 }
 

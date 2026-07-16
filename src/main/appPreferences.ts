@@ -27,6 +27,8 @@ interface PersistedAppPreferences {
   translationModel: string | null;
   // Automatic URL translation is an explicit global opt-in.
   autoTranslateUrls: boolean;
+  // Local EPUB text has an independent explicit provider-sharing opt-in.
+  autoTranslateEpubs: boolean;
   // Opt-in OS (Electron) notifications for off-floor task delivery. Default off —
   // the durable in-app delivery is always on; the OS banner is the user-enabled
   // escalation layer (A3-respecting).
@@ -39,6 +41,7 @@ const DEFAULTS: PersistedAppPreferences = {
   translationLanguage: null,
   translationModel: null,
   autoTranslateUrls: false,
+  autoTranslateEpubs: false,
   osNotificationsEnabled: false,
 };
 
@@ -61,6 +64,7 @@ export function loadAppPreferences(): PersistedAppPreferences {
         : DEFAULTS.translationLanguage,
       translationModel: normalizeTranslationModel(parsed.translationModel),
       autoTranslateUrls: parsed.autoTranslateUrls === true,
+      autoTranslateEpubs: parsed.autoTranslateEpubs === true,
       osNotificationsEnabled: parsed.osNotificationsEnabled === true,
     };
   } catch {

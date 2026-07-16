@@ -65,8 +65,10 @@ import {
   sourceTitle,
   targetTitleFallback,
   usePreviewSource,
+  isEpubSource,
   type UrlPreviewPageMetadata,
 } from './previewRenderers';
+import { useEpubTranslation } from './useEpubTranslation';
 import { useUrlPageTranslation } from './useUrlPageTranslation';
 import { useTranslationLanguagePreference } from './translationLanguagePreference';
 import { useUrlPageTranslationPreferences } from './urlPageTranslationPreferences';
@@ -123,6 +125,10 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const fileRoot = readerMode ? null : boundFileNode;
   const nodeTarget = boundFileNode ? fileNodeTarget(boundFileNode) : null;
   const looseUrlPreview = !readerMode && !boundFileNode && props.target.kind === 'url';
+  const epubPreviewSource = state.status === 'ready'
+    && state.source.kind === 'file'
+    && isEpubSource(state.source);
+  const [epubTranslationAvailable, setEpubTranslationAvailable] = useState(false);
   const translationLanguage = useTranslationLanguagePreference();
   const translationPreferences = useUrlPageTranslationPreferences();
   const [translationPopoverOpen, setTranslationPopoverOpen] = useState(false);
@@ -146,11 +152,29 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     targetLanguage: translationLanguage.language,
     onError: handleTranslationError,
   });
-  const translationEnabled = urlTranslation.status !== 'off';
-  const translationCompleted = translationEnabled && urlTranslation.completed;
-  const translationStatusLabel = urlTranslation.status === 'off'
+  const epubTranslation = useEpubTranslation({
+    active: epubPreviewSource,
+    autoTranslate: translationPreferences.autoTranslateEpubs,
+    shortcutActive: props.activePanel,
+    model: translationPreferences.translationModel,
+    targetLanguage: translationLanguage.language,
+    onError: handleTranslationError,
+  });
+  const handleEpubTranslationSurfaceChange = useCallback((surface: Parameters<typeof epubTranslation.attachSurface>[0]) => {
+    setEpubTranslationAvailable(surface !== null);
+    epubTranslation.attachSurface(surface);
+  }, [epubTranslation.attachSurface]);
+  const epubPreview = epubPreviewSource && epubTranslationAvailable;
+  const translatablePreview = looseUrlPreview || epubPreview;
+  const activeTranslation = looseUrlPreview
+    ? urlTranslation
+    : epubPreview ? epubTranslation : null;
+  const translationStatus = activeTranslation?.status ?? 'off';
+  const translationEnabled = translationStatus !== 'off';
+  const translationCompleted = translationEnabled && (activeTranslation?.completed ?? false);
+  const translationStatusLabel = translationStatus === 'off'
     ? previewLabels.translationOff
-    : urlTranslation.status === 'starting'
+    : translationStatus === 'starting'
       ? previewLabels.translatingBlock
       : previewLabels.translationOn;
   const translationControlLabel = `${previewLabels.translationSettings}: ${translationStatusLabel}`;
@@ -197,11 +221,18 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   useEffect(() => {
     if (!looseUrlPreview) {
       setUrlPageMetadata({});
-      setTranslationPopoverOpen(false);
       return;
     }
     setUrlPageMetadata({ title });
   }, [looseUrlPreview, targetKey, title]);
+
+  useEffect(() => {
+    if (!translatablePreview) setTranslationPopoverOpen(false);
+  }, [translatablePreview]);
+
+  useEffect(() => {
+    if (!epubPreviewSource) setEpubTranslationAvailable(false);
+  }, [epubPreviewSource, targetKey]);
 
   const handleUrlMetadataChange = useCallback((metadata: UrlPreviewPageMetadata) => {
     setUrlPageMetadata((prev) => {
@@ -375,6 +406,58 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const looseBreadcrumbSegments = !fileRoot && !readerMode
     ? looseBreadcrumbFor(props.target, state, previewLabels)
     : [];
+  const automaticTranslationEnabled = looseUrlPreview
+    ? translationPreferences.autoTranslateUrls
+    : translationPreferences.autoTranslateEpubs;
+  const setAutomaticTranslation = looseUrlPreview
+    ? translationPreferences.setAutoTranslateUrls
+    : translationPreferences.setAutoTranslateEpubs;
+  const translationControl = activeTranslation ? (
+    <>
+      <ButtonControl
+        aria-expanded={translationPopoverOpen}
+        aria-haspopup="dialog"
+        aria-label={translationControlLabel}
+        className={`file-preview-reader-actions file-preview-translation-toggle ${translationStatus === 'starting' ? 'is-starting' : ''}`}
+        data-translation-completed={translationCompleted}
+        data-translation-enabled={translationEnabled}
+        onClick={(event) => {
+          event.stopPropagation();
+          setTranslationPopoverOpen((open) => !open);
+        }}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        ref={translationTriggerRef}
+        title={`${translationControlLabel} (${translationShortcutLabel()})`}
+      >
+        {translationStatus === 'starting' ? (
+          <LoaderIcon size={ICON_SIZE.menu} />
+        ) : (
+          <LanguagesIcon size={ICON_SIZE.menu} />
+        )}
+      </ButtonControl>
+      {translationPopoverOpen ? (
+        <TranslationPopover
+          anchorRef={translationTriggerRef}
+          autoTranslate={automaticTranslationEnabled}
+          dismissIgnoreRefs={translationDismissRefs}
+          language={translationLanguage.language}
+          model={translationPreferences.translationModel}
+          onAutoTranslateChange={setAutomaticTranslation}
+          onClose={closeTranslationPopover}
+          onLanguageChange={translationLanguage.setLanguage}
+          onModelChange={translationPreferences.setTranslationModel}
+          onToggle={() => {
+            activeTranslation.toggle();
+            setTranslationPopoverOpen(false);
+          }}
+          status={translationStatus}
+        />
+      ) : null}
+    </>
+  ) : null;
 
   const fillPreviewPane = readerMode || looseUrlPreview;
 
@@ -425,6 +508,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 {displayTitle}
               </span>
             </span>
+            {translationControl}
             {readerMenuActions.length > 0 ? (
               <FilePreviewHeaderMenu
                 actions={readerMenuActions}
@@ -463,6 +547,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 </span>
               );
             })}
+            {translationControl}
           </>
         ) : looseUrlPreview ? (
           <>
@@ -471,48 +556,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 {displayTitle}
               </span>
             </span>
-            <ButtonControl
-              aria-expanded={translationPopoverOpen}
-              aria-haspopup="dialog"
-              aria-label={translationControlLabel}
-              className={`file-preview-reader-actions file-preview-translation-toggle ${urlTranslation.status === 'starting' ? 'is-starting' : ''}`}
-              data-translation-completed={translationCompleted}
-              data-translation-enabled={translationEnabled}
-              onClick={(event) => {
-                event.stopPropagation();
-                setTranslationPopoverOpen((open) => !open);
-              }}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              ref={translationTriggerRef}
-              title={`${translationControlLabel} (${translationShortcutLabel()})`}
-            >
-              {urlTranslation.status === 'starting' ? (
-                <LoaderIcon size={ICON_SIZE.menu} />
-              ) : (
-                <LanguagesIcon size={ICON_SIZE.menu} />
-              )}
-            </ButtonControl>
-            {translationPopoverOpen ? (
-              <UrlTranslationPopover
-                anchorRef={translationTriggerRef}
-                autoTranslate={translationPreferences.autoTranslateUrls}
-                dismissIgnoreRefs={translationDismissRefs}
-                language={translationLanguage.language}
-                model={translationPreferences.translationModel}
-                onAutoTranslateChange={translationPreferences.setAutoTranslateUrls}
-                onClose={closeTranslationPopover}
-                onLanguageChange={translationLanguage.setLanguage}
-                onModelChange={translationPreferences.setTranslationModel}
-                onToggle={() => {
-                  urlTranslation.toggle();
-                  setTranslationPopoverOpen(false);
-                }}
-                status={urlTranslation.status}
-              />
-            ) : null}
+            {translationControl}
             {looseUrlOpenAction ? (
               <FilePreviewHeaderMenu
                 actions={[{
@@ -534,6 +578,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 <span className="file-preview-path-label">{segment.label}</span>
               </span>
             ))}
+            {translationControl}
             {looseUrlOpenAction ? (
               <FilePreviewHeaderMenu
                 actions={[{
@@ -568,6 +613,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           meta={meta}
           initialExpanded={readerMode}
           readerMode={readerMode}
+          onEpubTranslationSurfaceChange={epubPreviewSource ? handleEpubTranslationSurfaceChange : undefined}
           onUrlMetadataChange={looseUrlPreview ? handleUrlMetadataChange : undefined}
           onUrlWebviewChange={looseUrlPreview ? urlTranslation.attachWebview : undefined}
         />
@@ -637,7 +683,7 @@ function collapsePathSegments(path: string): LooseBreadcrumbSegment[] {
   return visible.map((label, index) => ({ key: `${index}:${label}`, label }));
 }
 
-function UrlTranslationPopover({
+function TranslationPopover({
   anchorRef,
   autoTranslate,
   dismissIgnoreRefs,

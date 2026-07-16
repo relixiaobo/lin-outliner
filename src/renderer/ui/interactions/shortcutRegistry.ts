@@ -141,7 +141,7 @@ export const OUTLINER_SHORTCUTS: ShortcutDefinition[] = [
   { id: 'global.go_to_today', scope: 'global', bindings: [binding('d', { mod: true, shift: true })], description: 'Go to today' },
   { id: 'global.nav_back', scope: 'global', bindings: [binding('[', { mod: true }), codeBinding('BracketLeft', { mod: true }), binding('ArrowLeft', { alt: true })], description: 'Navigate active panel back' },
   { id: 'global.nav_forward', scope: 'global', bindings: [binding(']', { mod: true }), codeBinding('BracketRight', { mod: true }), binding('ArrowRight', { alt: true })], description: 'Navigate active panel forward' },
-  { id: 'global.toggle_page_translation', scope: 'global', bindings: [binding('a', { alt: true }), codeBinding('KeyA', { alt: true })], description: 'Toggle translation for the active URL preview' },
+  { id: 'global.toggle_page_translation', scope: 'global', bindings: [binding('a', { alt: true }), codeBinding('KeyA', { alt: true })], description: 'Toggle translation for the active supported preview' },
   { id: 'global.undo', scope: 'global', bindings: [binding('z', { mod: true })], description: 'Undo document edit' },
   { id: 'global.redo', scope: 'global', bindings: [binding('z', { mod: true, shift: true }), binding('y', { mod: true })], description: 'Redo document edit' },
 ];
