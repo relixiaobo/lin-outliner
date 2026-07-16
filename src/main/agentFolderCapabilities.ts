@@ -319,14 +319,14 @@ export function normalizeRequiredFolders(input: unknown, cwd: string): string[] 
     if (typeof value !== 'string' || !value.trim()) return [];
     const resolved = resolveInputPath(value, cwd);
     const folder = nearestExistingDirectorySync(resolved);
-    return folder && !isFilesystemRoot(folder) ? [folder] : [];
+    return folder ? [folder] : [];
   }));
 }
 
 export function capabilityFolderForTarget(inputPath: string, cwd: string): string | null {
   const resolved = resolveInputPath(inputPath, cwd);
   const folder = nearestExistingDirectorySync(resolved);
-  return folder && !isFilesystemRoot(folder) ? folder : null;
+  return folder;
 }
 
 export function canonicalPathPreservingSuffix(inputPath: string): string {
@@ -350,7 +350,6 @@ export function isPathInside(rootInput: string, candidateInput: string): boolean
 
 export async function canonicalExistingDirectory(inputPath: string): Promise<string> {
   const canonical = await realpath(path.resolve(expandHome(inputPath)));
-  if (isFilesystemRoot(canonical)) throw new Error('The filesystem root cannot be granted.');
   const info = await stat(canonical);
   if (!info.isDirectory()) throw new Error(`Folder capability requires a directory: ${inputPath}`);
   return canonical;
@@ -381,7 +380,6 @@ function compactCapabilityRoots(roots: readonly FolderCapabilityRoot[]): FolderC
   const result: FolderCapabilityRoot[] = [];
   for (const entry of roots) {
     const root = canonicalPathPreservingSuffix(entry.root);
-    if (isFilesystemRoot(root)) continue;
     const existing = result.find((candidate) => samePath(candidate.root, root) && candidate.access === entry.access);
     if (existing) continue;
     if (result.some((candidate) => candidate.access === 'write' && isPathInside(candidate.root, root))) continue;
@@ -501,11 +499,6 @@ function expandHome(inputPath: string): string {
   if (inputPath.startsWith('$HOME/')) return path.join(homedir(), inputPath.slice(6));
   if (inputPath.startsWith('${HOME}/')) return path.join(homedir(), inputPath.slice(8));
   return inputPath;
-}
-
-function isFilesystemRoot(inputPath: string): boolean {
-  const resolved = path.resolve(inputPath);
-  return path.parse(resolved).root === resolved;
 }
 
 function samePath(left: string, right: string): boolean {

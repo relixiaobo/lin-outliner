@@ -128,36 +128,37 @@ describe('agent permissions', () => {
     }
   });
 
-  test('keeps the structural hard floor non-overridable', async () => {
+  test('does not turn host, payment, skill, or control-plane shell syntax into permission policy', async () => {
     const { root, workspace } = await workspaceFixture();
     const protectedStoreRoot = path.join(root, 'user-data');
     await mkdir(protectedStoreRoot);
     await mkdir(path.join(workspace, '.agents', 'skills', 'unsafe'), { recursive: true });
     const cases = [
-      ['rm -rf /', 'dangerous_root_delete'],
-      ['bash -c "chmod -R 777 /"', 'dangerous_permission_root'],
-      ['diskutil eraseDisk JHFS+ X disk2', 'dangerous_disk_format'],
-      ['dd if=/tmp/image of=/dev/disk2', 'dangerous_raw_disk_write'],
-      ['shutdown -h now', 'dangerous_power_command'],
-      [`printf "{}" > ${JSON.stringify(path.join(protectedStoreRoot, 'agent-tool-permissions.json'))}`, 'sensitive_persistence_write'],
-      ['printf "name: hijack" > .agents/skills/unsafe/SKILL.md', 'self_definition_shell_write'],
-    ] as const;
+      'rm -rf /',
+      'bash -c "chmod -R 777 /"',
+      'diskutil eraseDisk JHFS+ X disk2',
+      'dd if=/tmp/image of=/dev/disk2',
+      'shutdown -h now',
+      `printf "{}" > ${JSON.stringify(path.join(protectedStoreRoot, 'agent-tool-permissions.json'))}`,
+      'printf "name: skill" > .agents/skills/unsafe/SKILL.md',
+    ];
 
-    for (const [command, code] of cases) {
+    for (const command of cases) {
       const decision = evaluateAgentToolPermission({
         toolName: 'bash',
         args: { command },
         policy: { workspaceRoot: workspace, protectedStoreRoot },
       });
-      expect(decision.behavior, command).toBe('blocked');
-      if (decision.behavior !== 'blocked') throw new Error('Expected hard denial.');
-      expect(decision.code).toBe(code);
-      expect(decision.redline).toBe(true);
-      expect(permissionDeniedReasonForDecision(decision)).toBe('platform_hard_block');
+      expect(decision.behavior, command).toBe('allow');
     }
+    expect(evaluateAgentToolPermission({
+      toolName: 'payment',
+      args: { amount: 10 },
+      policy: { workspaceRoot: workspace },
+    }).behavior).toBe('allow');
   });
 
-  test('hard guards inspect actual mutation targets instead of matching keywords or basenames', async () => {
+  test('keeps control-plane ownership path-based instead of keyword-based', async () => {
     const { root, workspace } = await workspaceFixture();
     const protectedStoreRoot = path.join(root, 'user-data');
     await mkdir(protectedStoreRoot);
@@ -282,10 +283,20 @@ describe('agent permissions', () => {
     expect(config.diagnostics).toHaveLength(2);
   });
 
-  test('formats hard denials as non-recoverable tool results', async () => {
-    const { workspace } = await workspaceFixture();
-    const decision = evaluateAgentToolPermission({ toolName: 'bash', args: { command: 'rm -rf /' }, policy: { workspaceRoot: workspace } });
-    if (decision.behavior !== 'blocked') throw new Error('Expected hard denial.');
+  test('formats control-plane unavailability as a non-recoverable tool result', async () => {
+    const { root, workspace } = await workspaceFixture();
+    const protectedStoreRoot = path.join(root, 'user-data');
+    await mkdir(protectedStoreRoot);
+    const decision = evaluateAgentToolPermission({
+      toolName: 'file_read',
+      args: { file_path: path.join(protectedStoreRoot, 'agent-secrets.json') },
+      policy: {
+        workspaceRoot: workspace,
+        protectedStoreRoot,
+        globalPermissions: { folders: [root], blocks: [] },
+      },
+    });
+    if (decision.behavior !== 'blocked') throw new Error('Expected control-plane denial.');
     const result = JSON.parse(permissionDeniedToolResultMessage({
       toolName: 'bash',
       reason: permissionDeniedReasonForDecision(decision),

@@ -23,8 +23,6 @@ import {
   type ToolAccessScope,
   type ToolActionDescriptor,
 } from './agentToolPermissionRules';
-import { selfDefinitionRootEntries } from './agentAuthoring';
-import { isAgentProtectedStorePath } from './agentProtectedPaths';
 
 export type { AgentPermissionMode } from '../core/types';
 export type {
@@ -143,48 +141,6 @@ const TOOL_ALIASES = new Map<string, string>([
   ['pastchats', 'past_chats'],
   ['askuserquestion', 'ask_user_question'],
 ]);
-
-interface BashHardDenyRule {
-  code: string;
-  reason: string;
-  floor: AgentPermissionFloorKind;
-  matches: (command: string) => boolean;
-}
-
-const BASH_HARD_DENY_RULES: readonly BashHardDenyRule[] = [
-  {
-    code: 'dangerous_root_delete',
-    reason: 'Blocked a command that appears to recursively delete the filesystem root or home directory.',
-    floor: 'host_destruction',
-    matches: (command) => shellInvocations(command).some(isDangerousRecursiveDelete),
-  },
-  {
-    code: 'dangerous_disk_format',
-    reason: 'Blocked a command that appears to format or erase a disk.',
-    floor: 'host_destruction',
-    matches: (command) => shellInvocations(command).some(isDangerousDiskFormat),
-  },
-  {
-    code: 'dangerous_raw_disk_write',
-    reason: 'Blocked a command that appears to write directly to a raw disk device.',
-    floor: 'host_destruction',
-    matches: (command) => shellInvocations(command).some(isDangerousRawDiskWrite),
-  },
-  {
-    code: 'dangerous_power_command',
-    reason: 'Blocked a command that appears to shut down or reboot the machine.',
-    floor: 'host_destruction',
-    matches: (command) => shellInvocations(command).some((invocation) => (
-      ['shutdown', 'reboot', 'halt', 'poweroff'].includes(invocation.executable)
-    )),
-  },
-  {
-    code: 'dangerous_permission_root',
-    reason: 'Blocked a command that appears to recursively change permissions or ownership at filesystem root.',
-    floor: 'host_destruction',
-    matches: (command) => shellInvocations(command).some(isDangerousRootPermissionChange),
-  },
-];
 
 export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = {}): AgentPermissionPolicy {
   const workspaceRoot = canonicalPathPreservingSuffix(input.workspaceRoot ?? process.cwd());
@@ -313,7 +269,7 @@ export function deriveAgentToolActionDescriptors(input: {
   access: AgentPermissionAccess;
 }): ToolActionDescriptor[] {
   const toolName = normalizeToolName(input.toolName);
-  if (toolName === 'bash') return deriveBashActionDescriptors(getStringArg(input.args, 'command'), input.args, input.policy);
+  if (toolName === 'bash') return deriveBashActionDescriptors(getStringArg(input.args, 'command'), input.args);
 
   const pathArgName = toolPathArgumentName(toolName);
   if (pathArgName) return [derivePathToolActionDescriptor(toolName, input.args, input.policy, input.access, pathArgName)];
@@ -344,17 +300,6 @@ function descriptorForKnownTool(toolName: string, args: unknown): ToolActionDesc
   if (toolName === 'skill') return simpleDescriptor(toolName, args, 'agent.skill.invoke', 'skill invocation', 'Invoke installed skill instructions.');
   const issueAction = firstActionKindForTool(toolName, args, null);
   if (issueAction) return simpleDescriptor(toolName, args, issueAction, issueAction, `Run ${issueAction}.`);
-  if (toolName === 'payment' || toolName === 'purchase') {
-    return descriptor(toolName, 'payment.purchase', {
-      accessScope: 'external_system',
-      title: 'payment',
-      summary: 'Purchase through an unsupported tool.',
-      consequence: 'Payments require a product-owned payment flow.',
-      code: 'payment_flow_required',
-      floor: 'payment',
-      platformHardBlock: true,
-    });
-  }
   return null;
 }
 
@@ -430,48 +375,8 @@ function derivePathToolActionDescriptor(
 function deriveBashActionDescriptors(
   command: string | null,
   args: unknown,
-  policy: AgentPermissionPolicy,
 ): ToolActionDescriptor[] {
   if (!command) return [unknownShellDescriptor('', 'Missing shell command.')];
-  for (const rule of BASH_HARD_DENY_RULES) {
-    if (rule.matches(command)) {
-      return [descriptor('bash', 'shell.destructive_cleanup', {
-        accessScope: 'allowed_file_area',
-        title: 'blocked host operation',
-        summary: command,
-        consequence: rule.reason,
-        command,
-        code: rule.code,
-        floor: rule.floor,
-        platformHardBlock: true,
-      })];
-    }
-  }
-  if (looksLikeProtectedStoreWrite(command, policy.workspaceRoot, policy.protectedStoreRoot)) {
-    return [descriptor('bash', 'file.write.sensitive_local_path', {
-      accessScope: 'outside_allowed_file_area',
-      title: 'protected settings write',
-      summary: command,
-      consequence: 'Agent tools cannot modify Tenon permission or credential stores.',
-      command,
-      code: 'sensitive_persistence_write',
-      floor: 'permission_self_mod',
-      platformHardBlock: true,
-    })];
-  }
-  if (looksLikeSelfDefinitionShellWrite(command, policy.workspaceRoot)) {
-    return [descriptor('bash', 'file.write.sensitive_local_path', {
-      accessScope: 'allowed_file_area',
-      title: 'skill definition write',
-      summary: command,
-      consequence: 'Executable skill definitions must go through the validated skill authoring gateway.',
-      command,
-      code: 'self_definition_shell_write',
-      floor: 'permission_self_mod',
-      platformHardBlock: true,
-    })];
-  }
-
   const descriptors = splitShellSegments(command).map((segment) => classifyShellSegment(segment, command));
   if (getBooleanArg(args, 'run_in_background')) {
     descriptors.push(descriptor('bash', 'shell.background_process', {
@@ -634,22 +539,6 @@ function isRestrictedBaseAllowed(toolName: string, args: unknown): boolean {
   return RESTRICTED_BASE_ALLOWED_TOOLS.has(toolName);
 }
 
-function looksLikeProtectedStoreWrite(
-  command: string,
-  workspaceRoot: string,
-  protectedStoreRoot?: string,
-): boolean {
-  if (!protectedStoreRoot) return false;
-  return shellMutationTargets(command, workspaceRoot)
-    .some((target) => isAgentProtectedStorePath(target, protectedStoreRoot));
-}
-
-function looksLikeSelfDefinitionShellWrite(command: string, workspaceRoot: string): boolean {
-  return shellMutationTargets(command, workspaceRoot).some((target) => (
-    selfDefinitionRootEntries(workspaceRoot).some((entry) => isPathInside(entry.dir, target))
-  ));
-}
-
 function looksLikeNetworkWrite(command: string): boolean {
   return /\b(?:curl|wget)\b[\s\S]*(?:--data(?:-binary|-raw|-urlencode)?|-d\b|--form|-F\b|--upload-file|-T\b|-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s+(?:POST|PUT|PATCH|DELETE))\b|\b(?:scp|sftp|rsync|rclone\s+(?:copy|sync)|aws\s+s3\s+cp|gsutil\s+cp|nc|netcat)\b/i.test(command);
 }
@@ -687,152 +576,6 @@ function splitShellSegments(command: string): string[] {
     segments.push(...line.split(/\s*(?:&&|\|\||;|\|)\s*/).filter(Boolean));
   }
   return segments;
-}
-
-interface ShellInvocation {
-  executable: string;
-  args: string[];
-  segment: string;
-}
-
-function shellInvocations(command: string, depth = 0): ShellInvocation[] {
-  if (depth > 2) return [];
-  const invocations: ShellInvocation[] = [];
-  for (const segment of splitShellSegments(command)) {
-    const words = unwrapShellWords(parseShellWords(segment));
-    const executable = path.basename(words[0] ?? '').toLowerCase();
-    if (!executable) continue;
-    const invocation = { executable, args: words.slice(1), segment };
-    invocations.push(invocation);
-    if (['bash', 'sh', 'zsh'].includes(executable)) {
-      const commandIndex = invocation.args.findIndex((arg) => arg === '-c' || arg === '--command');
-      const nested = commandIndex >= 0 ? invocation.args[commandIndex + 1] : undefined;
-      if (nested) invocations.push(...shellInvocations(nested, depth + 1));
-    }
-  }
-  return invocations;
-}
-
-function unwrapShellWords(wordsInput: readonly string[]): string[] {
-  let words = [...wordsInput];
-  while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) words.shift();
-  while (words.length > 1) {
-    const wrapper = path.basename(words[0]!).toLowerCase();
-    if (wrapper === 'command' || wrapper === 'nohup') {
-      words = words.slice(1);
-      continue;
-    }
-    if (wrapper === 'env') {
-      words = words.slice(1);
-      while (words.length > 0 && (words[0]!.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!))) {
-        words.shift();
-      }
-      continue;
-    }
-    if (wrapper === 'sudo') {
-      words = words.slice(1);
-      while (words.length > 0 && words[0]!.startsWith('-')) words.shift();
-      continue;
-    }
-    break;
-  }
-  return words;
-}
-
-function isDangerousRecursiveDelete(invocation: ShellInvocation): boolean {
-  if (invocation.executable === 'rm') {
-    const flags = invocation.args.filter((arg) => arg.startsWith('-')).join('');
-    const recursive = /r/i.test(flags) || invocation.args.includes('--recursive');
-    const force = /f/i.test(flags) || invocation.args.includes('--force');
-    return recursive && force && shellPathOperands(invocation.args).some(isHostRootTarget);
-  }
-  if (invocation.executable !== 'find') return false;
-  const operands = shellPathOperands(invocation.args);
-  const destructive = invocation.args.includes('-delete')
-    || invocation.args.some((arg, index) => arg === '-exec' && path.basename(invocation.args[index + 1] ?? '') === 'rm');
-  return destructive && operands.slice(0, 1).some(isHostRootTarget);
-}
-
-function isDangerousDiskFormat(invocation: ShellInvocation): boolean {
-  if (/^(?:mkfs(?:\..+)?|newfs(?:_.+)?)$/i.test(invocation.executable)) return true;
-  if (invocation.executable !== 'diskutil') return false;
-  const operation = invocation.args[0]?.toLowerCase() ?? '';
-  return /^(?:erase|partition)/.test(operation)
-    || (operation === 'apfs' && /^delete/.test(invocation.args[1]?.toLowerCase() ?? ''));
-}
-
-function isDangerousRawDiskWrite(invocation: ShellInvocation): boolean {
-  return invocation.executable === 'dd'
-    && invocation.args.some((arg) => /^of=\/dev\/(?:disk|rdisk|sd[a-z]|nvme|xvd)/i.test(arg));
-}
-
-function isDangerousRootPermissionChange(invocation: ShellInvocation): boolean {
-  if (invocation.executable !== 'chmod' && invocation.executable !== 'chown') return false;
-  const recursive = invocation.args.some((arg) => arg === '--recursive' || /^-[^-]*R/.test(arg));
-  return recursive && shellPathOperands(invocation.args).some((operand) => path.resolve(expandHome(operand)) === path.parse(path.resolve(operand)).root);
-}
-
-function isHostRootTarget(valueInput: string): boolean {
-  const value = valueInput.replace(/\/\*$/, '').replace(/\/$/, '') || '/';
-  const resolved = path.resolve(expandHome(value));
-  return resolved === path.parse(resolved).root || resolved === path.resolve(homedir());
-}
-
-function shellPathOperands(args: readonly string[]): string[] {
-  return args
-    .filter((arg) => arg !== '--' && !arg.startsWith('-'))
-    .map((arg) => arg.replace(/[),]+$/, ''));
-}
-
-function shellMutationTargets(command: string, workspaceRoot: string): string[] {
-  const targets: string[] = [];
-  for (const invocation of shellInvocations(command)) {
-    targets.push(...redirectionTargets(invocation.segment));
-    const operands = shellPathOperands(invocation.args);
-    switch (invocation.executable) {
-      case 'rm':
-      case 'unlink':
-      case 'rmdir':
-      case 'mkdir':
-      case 'touch':
-      case 'truncate':
-      case 'tee':
-      case 'mv':
-        targets.push(...operands);
-        break;
-      case 'cp':
-      case 'install':
-      case 'ln':
-        if (operands.length > 0) targets.push(operands[operands.length - 1]!);
-        break;
-      case 'chmod':
-      case 'chown':
-        if (operands.length > 1) targets.push(...operands.slice(1));
-        break;
-      case 'sed':
-      case 'perl':
-      case 'ruby':
-        if (invocation.args.some((arg) => /^-[^-]*i/.test(arg)) && operands.length > 0) {
-          targets.push(operands[operands.length - 1]!);
-        }
-        break;
-    }
-  }
-  return [...new Set(targets
-    .map((target) => target.trim())
-    .filter(Boolean)
-    .map((target) => resolvePermissionPath(workspaceRoot, target)))];
-}
-
-function redirectionTargets(segment: string): string[] {
-  const targets: string[] = [];
-  const pattern = /(?:^|\s)(?:\d*|&)>>?\s*(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(segment)) !== null) {
-    const target = match[1] ?? match[2] ?? match[3];
-    if (target) targets.push(target);
-  }
-  return targets;
 }
 
 function isSensitivePath(filePath: string): boolean {

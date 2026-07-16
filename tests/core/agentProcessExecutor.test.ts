@@ -99,7 +99,7 @@ describe('agent process executor', () => {
     if (process.platform !== 'darwin') return;
     const root = await mkdtemp(path.join(homedir(), '.tenon-process-deny-'));
     roots.push(root);
-    const protectedDir = path.join(root, '.agents', 'skills');
+    const protectedDir = path.join(root, 'protected');
     await mkdir(protectedDir, { recursive: true });
     const capabilities = createFolderCapabilitySnapshot({
       workspaceRoot: root,
@@ -109,8 +109,24 @@ describe('agent process executor', () => {
 
     const allowed = await runAgentToolProcess('/bin/zsh', ['-c', 'printf ok > ordinary.txt'], root, 10_000, { capabilities });
     expect(allowed.exitCode).toBe(0);
-    const denied = await runAgentToolProcess('/bin/zsh', ['-c', 'printf blocked > .agents/skills/SKILL.md'], root, 10_000, { capabilities });
+    const denied = await runAgentToolProcess('/bin/zsh', ['-c', 'printf blocked > protected/state.json'], root, 10_000, { capabilities });
     expect(denied.exitCode).not.toBe(0);
+  });
+
+  test('allows shell writes under user-owned skill directories', async () => {
+    const root = await mkdtemp(path.join(homedir(), '.tenon-process-skill-write-'));
+    roots.push(root);
+    const skillDir = path.join(root, '.agents', 'skills', 'generated');
+    await mkdir(skillDir, { recursive: true });
+    const capabilities = createFolderCapabilitySnapshot({
+      workspaceRoot: root,
+      includeSystemRoots: true,
+    }, []);
+
+    const target = path.join(skillDir, 'SKILL.md');
+    const result = await runAgentToolProcess('/bin/zsh', ['-c', `printf '# Generated' > ${JSON.stringify(target)}`], root, 10_000, { capabilities });
+    expect(result.exitCode).toBe(0);
+    expect(await readFile(target, 'utf8')).toBe('# Generated');
   });
 
   test('protects control state from a process with a broader user folder', async () => {
@@ -134,7 +150,7 @@ describe('agent process executor', () => {
       scratchRoot: scratch,
       includeSystemRoots: true,
       protectedRoots: [control],
-    }, [root]);
+    }, [path.parse(root).root]);
 
     expect((await runAgentToolProcess('/bin/cat', [path.join(outside, 'user.txt')], workspace, 10_000, { capabilities })).exitCode).toBe(0);
     expect((await runAgentToolProcess('/bin/cat', [path.join(workspace, 'inside.txt')], workspace, 10_000, { capabilities })).exitCode).toBe(0);

@@ -1,7 +1,5 @@
 export type AgentPermissionFloorKind =
-  | 'host_destruction'
-  | 'permission_self_mod'
-  | 'payment';
+  | 'permission_self_mod';
 
 export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'file.read.allowed_file_area',
@@ -42,7 +40,6 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'agent.session.send',
   'agent.session.stop',
   'agent.permission.modify',
-  'payment.purchase',
 ] as const;
 
 export type AgentToolActionKind = typeof SUPPORTED_AGENT_TOOL_ACTION_KINDS[number];
@@ -86,7 +83,6 @@ const READ_ONLY_ACTION_KIND_FLAGS = {
   'agent.session.send': false,
   'agent.session.stop': false,
   'agent.permission.modify': false,
-  'payment.purchase': false,
 } satisfies Record<AgentToolActionKind, boolean>;
 
 export const AGENT_TOOL_ACTION_KIND_PROFILES = {

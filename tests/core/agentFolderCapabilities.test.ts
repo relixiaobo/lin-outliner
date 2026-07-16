@@ -156,11 +156,12 @@ describe('folder capability service', () => {
     await mkdir(workspace, { recursive: true });
     await mkdir(scratch);
     const canonicalControl = await realpath(control);
+    const filesystemRoot = path.parse(root).root;
     const snapshot = createFolderCapabilitySnapshot({
       workspaceRoot: workspace,
       scratchRoot: scratch,
       protectedRoots: [control],
-    }, [root]);
+    }, [filesystemRoot]);
 
     expect(protectedRootForPath(snapshot, path.join(control, 'agent-secrets.json'), 'read')).toBe(canonicalControl);
     expect(protectedRootForPath(snapshot, path.join(control, 'workspace.json'), 'write')).toBe(canonicalControl);
@@ -169,5 +170,16 @@ describe('folder capability service', () => {
     expect(protectedRootForPath(snapshot, path.join(scratch, 'attachment.pdf'), 'read')).toBeNull();
     expect(protectedRootForPath(snapshot, path.join(scratch, 'attachment.pdf'), 'write')).toBe(canonicalControl);
     expect(protectedRootForPath(snapshot, path.join(scratch, 'data-cleanup', 'pack.json'), 'write')).toBeNull();
+  });
+
+  test('persists the filesystem root as an explicit capability', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-folder-root-grant-'));
+    roots.push(root);
+    const filesystemRoot = path.parse(root).root;
+    const service = new FolderCapabilityService(path.join(root, 'permissions.json'));
+
+    expect((await service.grant(filesystemRoot)).folders).toEqual([filesystemRoot]);
+    expect(normalizeRequiredFolders([filesystemRoot], root)).toEqual([filesystemRoot]);
+    expect(capabilityFolderForTarget(path.join(filesystemRoot, 'missing-root-child'), root)).toBe(filesystemRoot);
   });
 });
