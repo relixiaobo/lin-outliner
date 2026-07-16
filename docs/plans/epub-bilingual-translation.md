@@ -14,6 +14,9 @@ files.
   after each eligible semantic block.
 - Translate the current reading viewport first, prefetch a bounded window in
   both directions, and never submit an entire book eagerly.
+- Keep normal sequential reading ahead of the user's eyes with the same
+  deadline-driven coverage, batching, concurrency, and recovery policy in EPUB
+  and URL preview translation.
 - Preserve the reader's position while injected translations change section
   and iframe heights.
 - Let image-heavy EPUBs use the existing trusted preview stream instead of
@@ -104,23 +107,45 @@ header state.
 
 ### Viewport scheduler and anchoring
 
-Scheduling follows the EPUB reader's own scrollport and maps section-iframe
-geometry into that viewport. Priority is visible blocks, blocks ahead in the
-known scroll direction, then a smaller buffer behind. Before direction is
-known, the initial window is symmetric so starting in the middle and scrolling
-up works as well as scrolling down.
+The user-visible coverage unit is the complete reading viewport, the result and
+failure unit is one semantic block, and the provider-efficiency unit is a
+dynamic batch. A request limit must never define how much of the current screen
+receives feedback. On activation, scroll, remount, or content mutation, every
+eligible visible block immediately becomes translated, queued/loading, or an
+explicit local error. The dispatcher then drains visible work before selecting
+prefetch work.
 
-The first visible request contains at most two blocks or about 2,000 source
-characters. Later requests contain at most four blocks or 4,000 characters.
-At most three requests run concurrently and at most one is prefetch. A dense
-viewport can start `2 / 4 / 4` without waiting for the first response. New
-visible work may preempt only an obsolete off-window prefetch request. Batches
-settle independently and render in response order.
+Both URL and EPUB translation use one shared scheduling policy. All work uses a
+priority queue: visible blocks, predicted reading-direction blocks, then a
+smaller opposite-direction buffer. There are no reserved visible or prefetch
+slots. The work-conserving pool may use one through six requests according to
+the coverage deficit; visible work can use the whole pool and preempt the
+farthest request that no longer contains visible content. Batches settle
+independently and apply as soon as each response arrives.
 
-The controller keeps approximately four viewports ahead and one behind once a
-direction is known. It only sees sections already mounted by the existing EPUB
-lazy-loader margin, so no translation action forces every spine section to load.
-Scrolling into either direction mounts and schedules the new section normally.
+Visible batches favor latency and contain at most eight blocks or about 2,000
+source characters. Prefetch batches favor throughput and contain at most
+sixteen blocks or 4,000 characters. Contiguous short passages therefore share
+context without making the current screen wait for one large response. The
+main-owned validator enforces the same sixteen-block and character ceilings,
+and the isolated URL guest may describe at most six active batches to trusted
+host code.
+
+The lookahead is time-based rather than a fixed block or viewport count. Each
+surface tracks smoothed reading direction and viewport velocity; the controller
+tracks recent request latency. Their product plus a safety margin determines a
+bounded window, with a floor for stationary reading and a ceiling of about eight
+viewports. Before direction is known the floor is symmetric. EPUB translation
+temporarily expands lazy section mounting to that same maximum window while it
+is enabled, then retains the reader's mount-once behavior; it never mounts the
+whole spine.
+
+Scheduling is event-driven. EPUB scroll, section registration, mutation, and
+retry events wake its controller directly. The sandboxed URL runtime increments
+a bounded work revision and resolves a trusted, timeout-bounded wait command;
+the host still validates and selects every batch, so a remote page cannot submit
+arbitrary text or enlarge limits. A low-frequency timeout is only a recovery
+probe, not the normal scheduling path.
 
 Before loading/status/translation DOM writes, the adapter captures the first
 visible source block and its viewport offset. It batches writes, asks the
@@ -129,12 +154,29 @@ outer scrollport over bounded animation frames. Wheel, touch, keyboard, or
 native scrollbar movement invalidates delayed compensation so translation
 layout work never reverses user input.
 
+### Failure isolation and recovery
+
+Provider transport failures, rate limits, and server errors retry inside the
+main-owned request while the affected blocks remain loading. Retries are
+abortable, honor a bounded `Retry-After` when available, and use short
+exponential backoff with jitter. Authentication, unavailable-model, and other
+configuration failures do not retry.
+
+After automatic retries are exhausted, only that batch becomes an accessible
+local error. Other active and queued batches continue; an offscreen failure can
+never freeze the document. Clicking an error prioritizes only that failed work.
+Successful requests restore normal pool capacity, while terminal provider
+failures temporarily reduce new concurrency so a broad outage cannot turn the
+whole lookahead window into errors. Configuration failures block new provider
+work until configuration changes or the user explicitly retries, but preserve
+completed translations.
+
 ### Lifecycle and provider boundary
 
 The existing main-owned translation service remains the only model boundary.
 EPUB requests use document-specific prompt context under the same validated
-four-block, per-block, per-batch, output, model-selection, cancellation, and
-secret-safe diagnostic limits as page translation.
+sixteen-block, per-block, per-batch, output, model-selection, cancellation,
+retry, and secret-safe diagnostic limits as page translation.
 
 Changing target language or model cancels book-local requests, clears results
 for the old configuration, and restarts the current viewport when translation
@@ -162,17 +204,20 @@ configuration before it can update the DOM.
     window begins translating; missing or same-target metadata remains idle.
 - **FR-3 — Bounded bidirectional scheduling.** Translation follows the reading
   viewport without eagerly traversing the book.
-  - **AC-5:** When translation starts in a dense viewport, requests may begin as
-    `2 / 4 / 4`, never exceed three concurrent requests, and never include more
-    than one offscreen prefetch batch.
+  - **AC-5:** When translation starts or lands on a dense viewport, every
+    eligible visible block immediately shows cached output or loading; visible
+    batches contain at most eight blocks / 2,000 characters, may use the whole
+    six-request pool, and settle independently.
   - **AC-6:** When the reader scrolls down or up into an untranslated section,
-    newly visible eligible blocks receive a loader or cached translation while
-    sections outside the bounded lazy window remain unloaded and unsent.
+    newly visible work preempts obsolete distant work, while latency- and
+    velocity-derived prefetch stays bounded and sections outside the maximum
+    lazy window remain unloaded and unsent.
 - **FR-4 — Stable bilingual presentation.** Source text remains authoritative
   while plain-text translations and local recovery state are added in place.
   - **AC-7:** When a submitted block succeeds, its loader disappears and its
     translation appears after the source; when it fails, the loader becomes an
-    accessible retry control that retries only affected work.
+    accessible retry control that retries only affected work without pausing
+    unrelated visible or prefetch translation.
   - **AC-8:** If a model returns unchanged text or the source record is stale,
     no translation node is inserted and the header does not claim completion
     from that result.
@@ -214,15 +259,20 @@ Expected production scope:
 - `src/renderer/ui/preview/previewRenderers.tsx`
 - a private EPUB translation controller/adapter under
   `src/renderer/ui/preview/`
+- a shared preview translation scheduling policy under
+  `src/renderer/ui/preview/`
 - translation preferences/shortcut helpers, localized messages, preview CSS,
   and current-behavior specs
 
 Focused tests cover manual and automatic activation, the separate local-content
 opt-in, same-language exclusion, stable ids across lazy section remounts,
-`2 / 4 / 4` batching, the three-request ceiling, response-order rendering,
-bidirectional scrolling, preemption, retry, cache restore, target/model/book
+whole-viewport loading, short-block batch utilization, the six-request safety
+ceiling, latency/velocity lookahead bounds, event wakeups, response-order
+rendering, bidirectional scrolling, preemption, transient automatic retry,
+terminal failure isolation, explicit retry, cache restore, target/model/book
 reset, stale-response rejection, iframe-focused shortcut handling, text-only
-insertion, and scroll anchoring that yields to real user input.
+insertion, and scroll anchoring that yields to real user input. The same
+scheduler cases run against URL page translation so the policies cannot drift.
 
 Before readiness, run typecheck, relevant Core and renderer suites, full Core
 and renderer suites, docs checks, design-system guards, and an Electron smoke
@@ -232,4 +282,5 @@ dark appearance.
 ## Open Questions
 
 None. The PM ratified the separate, default-off EPUB auto-translation consent
-boundary and reflowable-reader scope.
+boundary, reflowable-reader scope, and deadline-driven continuous-reading
+scheduler shared with URL previews.
