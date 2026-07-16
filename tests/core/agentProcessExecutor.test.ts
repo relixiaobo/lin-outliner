@@ -319,4 +319,54 @@ describe('agent process executor', () => {
       resetAgentProcessExecutorForTests();
     }
   });
+
+  test('intersects the managed content upper bound with one exact read-only version', async () => {
+    if (process.platform !== 'darwin') return;
+    const root = await mkdtemp(path.join(homedir(), '.tenon-process-managed-skill-'));
+    roots.push(root);
+    const control = path.join(root, 'control');
+    const workspace = path.join(control, 'agent-workdir');
+    const contentRoot = path.join(control, 'managed-skill-content');
+    const activeVersion = path.join(contentRoot, 'demo', 'a'.repeat(64));
+    const siblingVersion = path.join(contentRoot, 'demo', 'b'.repeat(64));
+    const activeFile = path.join(activeVersion, 'script.py');
+    const siblingFile = path.join(siblingVersion, 'script.py');
+    await mkdir(workspace, { recursive: true });
+    await mkdir(activeVersion, { recursive: true });
+    await mkdir(siblingVersion, { recursive: true });
+    await writeFile(activeFile, 'active');
+    await writeFile(siblingFile, 'sibling');
+    const service = new FolderCapabilityService(path.join(root, 'capabilities.json'));
+    const upperBound = createFolderCapabilitySnapshot({
+      workspaceRoot: workspace,
+      activeSkillReadRoots: [contentRoot],
+      protectedRoots: [control],
+    }, []).protectedRoots;
+    const invocation = createFolderCapabilitySnapshot({
+      workspaceRoot: workspace,
+      activeSkillReadRoots: [activeVersion],
+      includeSystemRoots: true,
+      protectedRoots: [control],
+    }, [path.parse(root).root]);
+    resetAgentProcessExecutorForTests();
+    const unbind = bindAgentProcessCapabilities(service, upperBound);
+
+    try {
+      const activeRead = await runAgentToolProcess('/bin/cat', [activeFile], workspace, 10_000, { capabilities: invocation });
+      const siblingRead = await runAgentToolProcess('/bin/cat', [siblingFile], workspace, 10_000, { capabilities: invocation });
+      const activeWrite = await runAgentToolProcess('/bin/zsh', [
+        '-c',
+        `printf changed > ${JSON.stringify(activeFile)}`,
+      ], workspace, 10_000, { capabilities: invocation });
+
+      expect(activeRead).toMatchObject({ exitCode: 0, stdout: 'active' });
+      expect(siblingRead.exitCode).not.toBe(0);
+      expect(siblingRead.stdout).not.toContain('sibling');
+      expect(activeWrite.exitCode).not.toBe(0);
+      expect(await readFile(activeFile, 'utf8')).toBe('active');
+    } finally {
+      unbind();
+      resetAgentProcessExecutorForTests();
+    }
+  });
 });

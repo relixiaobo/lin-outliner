@@ -784,11 +784,13 @@ export interface AgentDefinition {
   body: string;
 }
 
+export type SkillSourceKind = 'built-in' | 'managed' | 'user' | 'project';
+
 export interface SkillDefinition {
   name: string;
   identity?: string;
   displayName?: string;
-  source: 'built-in' | 'user' | 'project';
+  source: SkillSourceKind;
   rootDir: string;
   skillFile: string;
   description: string;
@@ -796,14 +798,7 @@ export interface SkillDefinition {
   whenToUse?: string;
   userInvocable: boolean;
   modelInvocable: boolean;
-  /**
-   * Trust state, derived (never stored). Project skills are false until the user
-   * accepts the current content hash. User-source skills are false while the current
-   * content hash matches the last agent-written hash AND the user has not accepted
-   * those bytes. Unratified skills are excluded from the model skill listing and
-   * refuse model-triggered invocation; slash invocation always works (the user's
-   * command is per-run consent). Built-ins are always true.
-   */
+  /** Trust state derived from the current bytes and source-specific policy. */
   ratified: boolean;
   /** True when the user explicitly accepted exactly these bytes for automatic model use. */
   accepted?: boolean;
@@ -811,6 +806,8 @@ export interface SkillDefinition {
   canUndoLastAgentEdit?: boolean;
   /** sha256 of the raw SKILL.md content; absent for code-registered built-ins. */
   contentHash?: string;
+  /** Whole-subtree hash for a pinned Tenon-managed skill version. */
+  managedContentHash?: string;
   allowedTools: string[];
   argumentHint?: string;
   argumentNames: string[];
@@ -822,6 +819,104 @@ export interface SkillDefinition {
   paths?: string[];
   contentLength: number;
   body: string;
+}
+
+export type ManagedSkillCompatibilityStatus = 'compatible' | 'unknown' | 'incompatible';
+
+export interface ManagedSkillCompatibilityView {
+  status: ManagedSkillCompatibilityStatus;
+  appVersion: string;
+  declaredRange?: string;
+  declaredRanges?: string[];
+}
+
+export interface ManagedSkillCatalogEntryView {
+  id: string;
+  name: string;
+  description: string;
+  repository: string;
+  subdirectory: string;
+  trackingRef: string;
+  compatibilityRange?: string;
+  installedSkillId?: string;
+}
+
+export interface ManagedSkillCatalogView {
+  status: 'fresh' | 'cached' | 'unavailable';
+  entries: ManagedSkillCatalogEntryView[];
+  refreshedAt?: number;
+  error?: string;
+}
+
+export interface ManagedSkillDiscoveryCandidateView {
+  id: string;
+  name: string;
+  description: string;
+  subdirectory: string;
+  version?: string;
+  compatibility: ManagedSkillCompatibilityView;
+  scripts: string[];
+}
+
+export interface ManagedSkillDiscoveryView {
+  id: string;
+  repository: string;
+  trackingRef: string;
+  resolvedCommit: string;
+  recommended: boolean;
+  selectionRequired: boolean;
+  candidates: ManagedSkillDiscoveryCandidateView[];
+}
+
+export interface ManagedSkillVersionView {
+  commit: string;
+  contentHash: string;
+  installedAt: number;
+  fileCount: number;
+  totalBytes: number;
+  version?: string;
+  compatibility?: ManagedSkillCompatibilityView;
+  scripts?: string[];
+}
+
+export type ManagedSkillStatus =
+  | 'installed-disabled'
+  | 'enabled'
+  | 'update-available'
+  | 'modified'
+  | 'failed';
+
+export interface ManagedSkillView {
+  id: string;
+  name: string;
+  description: string;
+  repository: string;
+  subdirectory: string;
+  trackingRef: string;
+  recommended: boolean;
+  enabled: boolean;
+  status: ManagedSkillStatus;
+  compatibility: ManagedSkillCompatibilityView;
+  active: ManagedSkillVersionView;
+  previous?: ManagedSkillVersionView;
+  updateCommit?: string;
+  scripts: string[];
+  diagnostic?: string;
+}
+
+export interface ManagedSkillUpdatePreviewView {
+  id: string;
+  skillId: string;
+  repository: string;
+  subdirectory: string;
+  recommended: boolean;
+  current: ManagedSkillVersionView;
+  candidate: ManagedSkillVersionView;
+  compatibility: ManagedSkillCompatibilityView;
+  scripts: string[];
+  changedPaths: string[];
+  skillDiff: string;
+  diffTruncated: boolean;
 }
 
 export type AgentSlashCommandKind = 'runtime' | 'skill';

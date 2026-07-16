@@ -18,9 +18,6 @@ import { AgentSkillAuthoringError, validateAgentSkillContentWrite } from './agen
 import {
   BUILT_IN_SKILL_RESOURCE_DIR_NAME,
   BUILT_IN_SKILL_SOURCE_DIR,
-  ENABLED_LINLAB_BUILT_IN_SKILLS,
-  LINLAB_SKILLS_ROOT_ENV,
-  resolveLinlabSkillsRoot,
 } from './builtInSkillConfig';
 import {
   errorEnvelope,
@@ -242,17 +239,20 @@ export interface SkillLoadOptions {
   executeSkillShell?: SkillShellExecutor;
   executeIsolatedSkill?: SkillIsolatedExecutor;
   provenanceStore?: AgentSkillProvenanceStore;
+  managedSkillRoots?: () => Promise<Array<{
+    id: string;
+    name: string;
+    rootDir: string;
+    contentHash: string;
+  }>>;
+  managedSkillContentRoot?: string;
+  assertManagedSkillInvocable?: (skillId: string, expectedContentHash: string) => Promise<void>;
 }
 
 export interface BuiltInSkillResourceRootOptions {
   isPackaged?: boolean;
   resourcesPath?: string;
   moduleDir?: string;
-}
-
-export interface ExternalBuiltInSkillRootOptions extends BuiltInSkillResourceRootOptions {
-  linlabSkillsRoot?: string;
-  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -456,10 +456,12 @@ export class AgentSkillRuntime {
   private readonly conversationId: string;
   private readonly executeSkillShell?: SkillShellExecutor;
   private readonly executeIsolatedSkill?: SkillIsolatedExecutor;
+  private readonly assertManagedSkillInvocable?: SkillLoadOptions['assertManagedSkillInvocable'];
   private readonly listedSkills = new SkillListingState();
   private readonly pendingSteeringMessages: UserMessage[] = [];
   private pendingTurnEffect: SkillTurnEffect | null = null;
   private readonly invokedSkills = new Map<string, InvokedSkillRecord>();
+  private readonly transientSkillReadRoots = new Map<string, number>();
   private disabledSkills: string[] = [];
 
   constructor(options: SkillLoadOptions = {}) {
@@ -467,6 +469,7 @@ export class AgentSkillRuntime {
     this.conversationId = options.conversationId?.trim() || 'lin-agent-conversation';
     this.executeSkillShell = options.executeSkillShell;
     this.executeIsolatedSkill = options.executeIsolatedSkill;
+    this.assertManagedSkillInvocable = options.assertManagedSkillInvocable;
   }
 
   updateAdditionalSkillDirectories(directories: readonly string[]): void {
@@ -482,17 +485,18 @@ export class AgentSkillRuntime {
     this.pendingSteeringMessages.length = 0;
     this.pendingTurnEffect = null;
     this.invokedSkills.clear();
+    this.transientSkillReadRoots.clear();
   }
 
   async getActiveSkillReadRoots(): Promise<string[]> {
-    if (this.invokedSkills.size === 0) return [];
+    if (this.invokedSkills.size === 0 && this.transientSkillReadRoots.size === 0) return [];
     const trustedRootsBySkill = new Map<string, string>();
     for (const skill of await this.registry.listAllSkills()) {
       const skillRoot = skillDirectoryForPrompt(skill);
       const skillName = normalizeSkillName(skill.name);
       if (skillRoot && skillName) trustedRootsBySkill.set(skillName, skillRoot);
     }
-    const roots = new Set<string>();
+    const roots = new Set<string>(this.transientSkillReadRoots.keys());
     for (const skill of this.invokedSkills.values()) {
       const skillName = normalizeSkillName(skill.skillName);
       const expectedRoot = skillName ? trustedRootsBySkill.get(skillName) : undefined;
@@ -530,7 +534,7 @@ export class AgentSkillRuntime {
 
   async reserveSkillListingReminderText(contextWindowTokens?: number | null): Promise<SkillListingReservation | null> {
     const skills = await this.registry.getModelInvocableSkills();
-    const newSkills = skills.filter((skill) => !this.listedSkills.has(skill) && !this.disabledSkills.includes(skill.name));
+    const newSkills = skills.filter((skill) => !this.listedSkills.has(skill) && !this.isDisabledByRuntimeSettings(skill));
     if (newSkills.length === 0) return null;
 
     const content = formatSkillListing(newSkills, contextWindowTokens ?? undefined);
@@ -627,7 +631,7 @@ export class AgentSkillRuntime {
 
   async listUserInvocableSkills(): Promise<SkillDefinition[]> {
     const skills = await this.registry.getUserInvocableSkills();
-    return skills.filter((skill) => !this.disabledSkills.includes(skill.name));
+    return skills.filter((skill) => !this.isDisabledByRuntimeSettings(skill));
   }
 
   async listAllSkills(): Promise<SkillDefinition[]> {
@@ -644,7 +648,7 @@ export class AgentSkillRuntime {
     if (!skill) {
       return { ok: false, code: 'unknown_skill', message: `Unknown skill: ${requestedName}` };
     }
-    if (this.disabledSkills.includes(skill.name)) {
+    if (this.isDisabledByRuntimeSettings(skill)) {
       return { ok: false, code: 'skill_disabled', message: `Skill ${skill.name} is currently disabled in settings.` };
     }
     if (input.trigger === 'agent' && !skill.modelInvocable) {
@@ -662,6 +666,27 @@ export class AgentSkillRuntime {
         message: `This skill can only be invoked by the agent, not directly by users. Ask the agent to use the "${skill.name}" skill for you.`,
         skill,
       };
+    }
+    if (skill.source === 'managed') {
+      if (!skill.managedContentHash || !this.assertManagedSkillInvocable) {
+        return {
+          ok: false,
+          code: 'managed_skill_unavailable',
+          message: `Managed skill ${skill.name} has no active integrity contract.`,
+          skill,
+        };
+      }
+      try {
+        await this.assertManagedSkillInvocable(skill.name, skill.managedContentHash);
+      } catch (error) {
+        this.registry.reloadAll();
+        return {
+          ok: false,
+          code: 'managed_skill_unavailable',
+          message: error instanceof Error ? error.message : String(error),
+          skill,
+        };
+      }
     }
     let renderedContent: string;
     try {
@@ -684,6 +709,7 @@ export class AgentSkillRuntime {
           skill,
         };
       }
+      const releaseReadRoot = this.retainTransientSkillReadRoot(skill);
       try {
         const isolated = await this.executeIsolatedSkill({
           skill,
@@ -709,6 +735,8 @@ export class AgentSkillRuntime {
           message,
           skill,
         };
+      } finally {
+        releaseReadRoot();
       }
     }
 
@@ -774,6 +802,21 @@ export class AgentSkillRuntime {
       content: renderedContent,
       invokedAt: Date.now(),
     });
+  }
+
+  private retainTransientSkillReadRoot(skill: SkillDefinition): () => void {
+    const root = skillDirectoryForPrompt(skill);
+    if (!root) return () => undefined;
+    this.transientSkillReadRoots.set(root, (this.transientSkillReadRoots.get(root) ?? 0) + 1);
+    return () => {
+      const remaining = (this.transientSkillReadRoots.get(root) ?? 1) - 1;
+      if (remaining > 0) this.transientSkillReadRoots.set(root, remaining);
+      else this.transientSkillReadRoots.delete(root);
+    };
+  }
+
+  private isDisabledByRuntimeSettings(skill: SkillDefinition): boolean {
+    return skill.source !== 'managed' && this.disabledSkills.includes(skill.name);
   }
 
   private recordTurnEffect(skill: SkillDefinition): void {
@@ -983,6 +1026,8 @@ class SkillRegistry {
   // version. Ratification is derived from these in addLoadedSkill, never stored.
   private readonly provenance = new Map<string, AgentSkillProvenanceRecord>();
   private readonly provenanceStore?: AgentSkillProvenanceStore;
+  private readonly managedSkillRoots?: SkillLoadOptions['managedSkillRoots'];
+  private readonly managedSkillContentRoot?: string;
   private provenanceLoaded = false;
 
   constructor(options: SkillLoadOptions) {
@@ -992,11 +1037,8 @@ class SkillRegistry {
       options.builtInSkillDirectories ?? [resolveBuiltInSkillResourceRoot()],
       this.root,
     );
-    const defaultBuiltInSkillRoots = options.builtInSkillDirectories === undefined
-      ? resolveExternalBuiltInSkillRoots()
-      : [];
     this.builtInSkillRoots = normalizeBuiltInSkillDirectories(
-      options.builtInSkillRoots ?? defaultBuiltInSkillRoots,
+      options.builtInSkillRoots ?? [],
       this.root,
     );
     this.builtInSkills = options.builtInSkills ?? [...DEFAULT_BUILT_IN_SKILLS];
@@ -1007,6 +1049,10 @@ class SkillRegistry {
     );
     this.additionalSkillDirectories = normalizeAdditionalSkillDirectories(options.additionalSkillDirectories, this.root);
     this.provenanceStore = options.provenanceStore;
+    this.managedSkillRoots = options.managedSkillRoots;
+    this.managedSkillContentRoot = options.managedSkillContentRoot
+      ? path.resolve(options.managedSkillContentRoot)
+      : undefined;
   }
 
   isBuiltInReadOnlyIsolatedSkill(skill: SkillDefinition): boolean {
@@ -1150,8 +1196,8 @@ class SkillRegistry {
         ?? null
       : null;
     if (!skill) throw new Error(`Unknown skill: ${name}`);
-    if (skill.source === 'built-in' || !skill.contentHash) {
-      throw new Error(`Skill ${skill.name} is built-in and has no trust record to manage.`);
+    if (skill.source === 'built-in' || skill.source === 'managed' || !skill.contentHash) {
+      throw new Error(`Skill ${skill.name} is ${skill.source} and has no mutable trust record to manage.`);
     }
     return skill;
   }
@@ -1200,6 +1246,7 @@ class SkillRegistry {
       additionalSkillDirectories: this.additionalSkillDirectories,
       builtInSkillDirectories: this.builtInSkillDirectories,
       builtInSkillRoots: this.builtInSkillRoots,
+      managedSkillContentRoot: this.managedSkillContentRoot,
     });
   }
 
@@ -1293,11 +1340,16 @@ class SkillRegistry {
       for (const dir of this.builtInSkillRoots) {
         const skill = await loadSkillFromRoot(dir, 'built-in');
         if (!skill) {
-          throw new Error(`Configured built-in skill root is missing a valid ${SKILL_FILE_NAME}: ${dir}. Set ${LINLAB_SKILLS_ROOT_ENV} to the linlab-skills checkout.`);
+          throw new Error(`Configured built-in skill root is missing a valid ${SKILL_FILE_NAME}: ${dir}.`);
         }
         await this.addLoadedSkill(skill);
       }
       for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
+        await this.addLoadedSkill(skill);
+      }
+      for (const managed of await this.managedSkillRoots?.() ?? []) {
+        const skill = await loadSkillFromRoot(managed.rootDir, 'managed', managed.name, managed.contentHash);
+        if (!skill) throw new Error(`Managed skill ${managed.name} is missing a valid ${SKILL_FILE_NAME}.`);
         await this.addLoadedSkill(skill);
       }
       const roots = skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
@@ -1404,19 +1456,6 @@ export function resolveBuiltInSkillResourceRoot(options: BuiltInSkillResourceRoo
   return path.resolve(moduleDir, '../../', BUILT_IN_SKILL_SOURCE_DIR);
 }
 
-export function resolveExternalBuiltInSkillRoots(options: ExternalBuiltInSkillRootOptions = {}): string[] {
-  const isPackaged = options.isPackaged ?? appIsPackaged();
-  if (isPackaged) return [];
-  const moduleDir = options.moduleDir ?? fileURLToPath(new URL('.', import.meta.url));
-  const localBuiltInRoot = resolveBuiltInSkillResourceRoot({ isPackaged: false, moduleDir });
-  const linlabSkillsRoot = resolveLinlabSkillsRoot({
-    linlabSkillsRoot: options.linlabSkillsRoot,
-    env: options.env,
-    localBuiltInRoot,
-  });
-  return ENABLED_LINLAB_BUILT_IN_SKILLS.map((name) => path.join(linlabSkillsRoot, name));
-}
-
 function appIsPackaged(): boolean {
   try {
     const electron = requireForElectron('electron') as typeof import('electron');
@@ -1430,13 +1469,13 @@ function skillSearchDirs(
   root: string,
   includeUserSkills: boolean,
   additionalSkillDirectories: readonly string[] = [],
-): Array<{ dir: string; source: SkillDefinition['source'] }> {
-  const dirs: Array<{ dir: string; source: SkillDefinition['source'] }> = [
+): Array<{ dir: string; source: 'user' | 'project' }> {
+  const dirs: Array<{ dir: string; source: 'user' | 'project' }> = [
     ...(includeUserSkills ? [
       { dir: path.join(homedir(), '.agents', 'skills'), source: 'user' },
-    ] as Array<{ dir: string; source: SkillDefinition['source'] }> : []),
+    ] as Array<{ dir: string; source: 'user' | 'project' }> : []),
     { dir: path.join(root, '.agents', 'skills'), source: 'project' },
-    ...additionalSkillDirectories.map((dir): { dir: string; source: SkillDefinition['source'] } => ({
+    ...additionalSkillDirectories.map((dir): { dir: string; source: 'user' | 'project' } => ({
       dir,
       source: isPathInside(dir, root) ? 'project' : 'user',
     })),
@@ -1455,7 +1494,7 @@ export interface AgentSkillContentTarget {
   skillName: string;
   skillRoot: string;
   skillsDir: string;
-  source: SkillDefinition['source'];
+  source: Exclude<SkillDefinition['source'], 'built-in' | 'managed'>;
   relativePath: string;
   isSkillFile: boolean;
 }
@@ -1467,12 +1506,13 @@ export interface SkillDirConfig {
   additionalSkillDirectories: readonly string[];
   builtInSkillDirectories?: readonly string[];
   builtInSkillRoots?: readonly string[];
+  managedSkillContentRoot?: string;
 }
 
 function targetInsideSkillsDir(
   filePath: string,
   skillsDirInput: string,
-  source: SkillDefinition['source'],
+  source: Exclude<SkillDefinition['source'], 'built-in' | 'managed'>,
 ): AgentSkillContentTarget | null {
   const skillsDir = path.resolve(skillsDirInput);
   if (!isPathInside(filePath, skillsDir)) return null;
@@ -1504,6 +1544,10 @@ export function resolveSkillContentTarget(
   for (const dir of [...(config.builtInSkillDirectories ?? []), ...(config.builtInSkillRoots ?? [])]) {
     const builtInDir = path.resolve(dir);
     if (filePathIdentity === builtInDir || isPathInside(filePathIdentity, builtInDir)) return null;
+  }
+  if (config.managedSkillContentRoot) {
+    const managedRoot = canonicalDirectoryIdentity(config.managedSkillContentRoot);
+    if (filePathIdentity === managedRoot || isPathInside(filePathIdentity, managedRoot)) return null;
   }
   // 1. The configured skill-dir set the loader enumerates (defaults + additional dirs).
   for (const { dir, source } of skillSearchDirs(config.root, config.includeUserSkills, config.additionalSkillDirectories)) {
@@ -1549,6 +1593,7 @@ async function loadSkillFromRoot(
   rootDir: string,
   source: SkillDefinition['source'],
   name = path.basename(rootDir),
+  managedContentHash?: string,
 ): Promise<SkillDefinition | null> {
   const skillFile = path.join(rootDir, SKILL_FILE_NAME);
   let raw: string;
@@ -1568,6 +1613,7 @@ async function loadSkillFromRoot(
       body: parsed.body,
       frontmatter: parsed.frontmatter,
       contentHash: skillContentHash(raw),
+      managedContentHash,
     });
   } catch (error) {
     console.warn(`Skipping invalid skill ${skillFile}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1597,6 +1643,7 @@ function createSkillDefinition(input: {
   body: string;
   frontmatter: Record<string, unknown>;
   contentHash?: string;
+  managedContentHash?: string;
 }): SkillDefinition {
   const description = compactInlineText(
     coerceString(input.frontmatter.description)
@@ -1620,10 +1667,12 @@ function createSkillDefinition(input: {
     // recorded agent write (addLoadedSkill).
     ratified: true,
     contentHash: input.contentHash,
+    managedContentHash: input.managedContentHash,
     allowedTools: parseToolListFromFrontmatter(input.frontmatter['allowed-tools']),
     argumentHint: coerceString(input.frontmatter['argument-hint']),
     argumentNames,
-    version: coerceString(input.frontmatter.version),
+    version: coerceString(input.frontmatter.version)
+      ?? (isPlainRecord(input.frontmatter.metadata) ? coerceString(input.frontmatter.metadata.version) : undefined),
     model: coerceString(input.frontmatter.model) === 'inherit'
       ? undefined
       : coerceString(input.frontmatter.model),

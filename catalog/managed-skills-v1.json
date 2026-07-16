@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "data-analysis",
+      "name": "data-analysis",
+      "description": "Profile, query, verify, visualize, and report on files or databases with reproducible analysis workflows.",
+      "repository": "https://github.com/relixiaobo/linlab-skills",
+      "subdirectory": "data-analysis",
+      "trackingRef": "main",
+      "compatibilityRange": ">=0.1.0 <1.0.0"
+    },
+    {
+      "id": "document",
+      "name": "document",
+      "description": "Create, edit, review, and verify professional Markdown and Word document artifacts.",
+      "repository": "https://github.com/relixiaobo/linlab-skills",
+      "subdirectory": "document",
+      "trackingRef": "main",
+      "compatibilityRange": ">=0.1.0 <1.0.0"
+    },
+    {
+      "id": "feed-processing",
+      "name": "feed-processing",
+      "description": "Discover, fetch, parse, filter, and package RSS, Atom, JSON Feed, and OPML sources.",
+      "repository": "https://github.com/relixiaobo/linlab-skills",
+      "subdirectory": "feed-processing",
+      "trackingRef": "main",
+      "compatibilityRange": ">=0.1.0 <1.0.0"
+    },
+    {
+      "id": "pdf",
+      "name": "pdf",
+      "description": "Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts.",
+      "repository": "https://github.com/relixiaobo/linlab-skills",
+      "subdirectory": "pdf",
+      "trackingRef": "main",
+      "compatibilityRange": ">=0.1.0 <1.0.0"
+    },
+    {
+      "id": "presentation",
+      "name": "presentation",
+      "description": "Create, redesign, edit, and verify slide decks, PPTX files, HTML decks, and handouts.",
+      "repository": "https://github.com/relixiaobo/linlab-skills",
+      "subdirectory": "presentation",
+      "trackingRef": "main",
+      "compatibilityRange": ">=0.1.0 <1.0.0"
+    },
+    {
+      "id": "spreadsheet",
+      "name": "spreadsheet",
+      "description": "Create, inspect, validate, and package spreadsheet workbooks and calculable tabular models.",
+      "repository": "https://github.com/relixiaobo/linlab-skills",
+      "subdirectory": "spreadsheet",
+      "trackingRef": "main",
+      "compatibilityRange": ">=0.1.0 <1.0.0"
+    }
+  ]
+}

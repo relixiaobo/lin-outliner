@@ -30,6 +30,10 @@ import type {
   AgentAuthoringInput,
   AgentStorageLocation,
   SkillDefinition,
+  ManagedSkillCatalogView,
+  ManagedSkillDiscoveryView,
+  ManagedSkillUpdatePreviewView,
+  ManagedSkillView,
   CommandResult,
   CreateNodeTree,
   BatchMoveNodeInput,
@@ -460,6 +464,30 @@ export const api = {
     command<SkillDefinition[]>('agent_revoke_skill_acceptance', { conversationId, skillName }),
   agentUndoSkillAgentEdit: (conversationId: string, skillName: string) =>
     command<SkillDefinition[]>('agent_undo_skill_agent_edit', { conversationId, skillName }),
+  agentManagedSkillCatalog: () =>
+    command<ManagedSkillCatalogView>('agent_managed_skill_catalog'),
+  agentManagedSkillDiscover: (input: { sourceUrl?: string; catalogId?: string }) =>
+    command<ManagedSkillDiscoveryView>('agent_managed_skill_discover', input),
+  agentManagedSkillInstall: (input: { discoveryId: string; candidateId: string; expectedCommit: string }) =>
+    command<ManagedSkillView>('agent_managed_skill_install', input),
+  agentManagedSkillList: () =>
+    command<ManagedSkillView[]>('agent_managed_skill_list'),
+  agentManagedSkillCheckUpdates: (skillId?: string) =>
+    command<ManagedSkillView[]>('agent_managed_skill_check_updates', skillId ? { skillId } : undefined),
+  agentManagedSkillPreviewUpdate: (skillId: string, expectedActiveHash: string) =>
+    command<ManagedSkillUpdatePreviewView>('agent_managed_skill_preview_update', { skillId, expectedActiveHash }),
+  agentManagedSkillApplyUpdate: (input: {
+    skillId: string;
+    previewId: string;
+    expectedActiveHash: string;
+    expectedCandidateHash: string;
+  }) => command<ManagedSkillView>('agent_managed_skill_apply_update', input),
+  agentManagedSkillSetEnabled: (skillId: string, enabled: boolean, expectedActiveHash: string) =>
+    command<ManagedSkillView>('agent_managed_skill_set_enabled', { skillId, enabled, expectedActiveHash }),
+  agentManagedSkillRollback: (skillId: string, expectedActiveHash: string, expectedPreviousHash: string) =>
+    command<ManagedSkillView>('agent_managed_skill_rollback', { skillId, expectedActiveHash, expectedPreviousHash }),
+  agentManagedSkillUninstall: (skillId: string, expectedActiveHash: string) =>
+    command<ManagedSkillView[]>('agent_managed_skill_uninstall', { skillId, expectedActiveHash }),
   agentUpdateAgentDefinition: (conversationId: string, agentId: string, input: AgentAuthoringInput) =>
     command<AgentDefinitionView[]>('agent_update_agent_definition', { conversationId, agentId, input }),
   agentReloadAgentDefinitions: (conversationId: string) =>

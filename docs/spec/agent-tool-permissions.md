@@ -59,13 +59,16 @@ data roots:
 | Current workdir | yes | yes | Run context |
 | Attachment scratch | yes | no | Tenon ingestion |
 | Cleanup, tool-output, generated-image scratch | yes | yes | Agent output |
-| Active skill resources | yes | no | Skill invocation |
+| Exact active/invoked skill resources | yes | no | Skill invocation |
 | Persistent user folder | yes | yes | User capability |
 | Tenon `userData` control state | no | no | Product commands/services |
 
 The workdir and scratch roots can live inside `userData`; they are explicit
-exceptions to the private control container. Every other current or future
-descendant remains inaccessible even when Home or `/` is granted.
+exceptions to the private control container. Managed payloads also live there,
+but only the exact enabled version being invoked is a temporary read exception.
+The managed index, catalog cache, staging, disabled versions, retained versions,
+and every managed write remain private. Every other current or future descendant
+remains inaccessible even when Home or `/` is granted.
 
 Typed file tools canonicalize the target at their own operation boundary. They
 check the control container and then apply read/write roots, so direct tool use
@@ -113,7 +116,14 @@ On macOS, one probed Seatbelt adapter:
    re-allows only snapshot read roots;
 3. permits writes only to snapshot write roots;
 4. denies the entire protected `userData` container;
-5. re-allows only the declared workdir and scratch exceptions.
+5. re-allows only the declared workdir, scratch, and exact invoked
+   managed-skill read exceptions.
+
+The application-bound process policy carries the managed content root only as a
+read-only upper bound. `AgentProcessExecutor` intersects that bound with each
+immutable invocation snapshot, so it can admit one exact active hash but cannot
+turn the whole managed store into a process-readable root. The upper bound has
+no write exception.
 
 If the adapter is unavailable, process execution is unavailable because Tenon
 cannot enforce folder capabilities and control-plane isolation. There is no
@@ -172,6 +182,14 @@ Shell writes under `.agents/skills` are ordinary user-data writes. Typed
 `file_write` / `file_edit` retain the validated authoring gateway, provenance,
 undo metadata, and hot reload. Shell or external-editor writes are validated on
 discovery/load; invalid skills remain unloaded with diagnostics.
+
+Installing or enabling a managed skill is a product lifecycle action, not a
+tool grant. Recommended and Unverified labels do not change the tool catalog,
+user blocks, folder capabilities, process sandbox, native authorization, or
+control-plane boundary. Managed installation never executes support scripts or
+installs dependencies. If a later model tool call needs a runtime, dependency,
+folder, or host authorization, it follows the ordinary capability/owner flow at
+that time.
 
 ## Interaction Flows
 

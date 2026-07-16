@@ -240,9 +240,11 @@ import { buildConversationEnvironmentReminder } from './agentConversationEnviron
 import {
   AgentSkillRuntime,
   createUserSkillPrompt,
+  type SkillLoadOptions,
   type SkillListingReservation,
   type SkillTurnEffect,
 } from './agentSkills';
+import type { ManagedSkillNameConflict, ManagedSkillService } from './managedSkillService';
 import {
   createAgentIssueToolRuntime,
   runAgentSessionControlOperation,
@@ -477,6 +479,7 @@ interface AgentRuntimeOptions {
   localFileRoot?: string;
   scratchRoot?: string;
   protectedStoreRoot?: string;
+  managedSkillService?: ManagedSkillService;
   assetResolver?: AgentAssetResolver;
   runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
   providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
@@ -2105,6 +2108,23 @@ export class AgentRuntime {
     return (await this.skillRuntimeForConversation(conversationId)).listAllSkills();
   }
 
+  async findSkillNameConflict(name: string, excludingManagedSkillId?: string): Promise<ManagedSkillNameConflict | null> {
+    const normalized = name.trim();
+    if (!normalized) return null;
+    const skills = await (await this.skillRuntimeForConversation('managed-skill-conflict-check')).listAllSkills();
+    const conflict = skills.find((skill) => (
+      skill.name === normalized
+      && !(skill.source === 'managed' && skill.name === excludingManagedSkillId)
+    ));
+    return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
+  }
+
+  async managedSkillsChanged(): Promise<void> {
+    await Promise.all([...this.conversations.values()].map((conversation) => (
+      conversation.skillRuntime.notifySkillContentWritten([])
+    )));
+  }
+
   async acceptSkill(conversationId: string, skillName: string, expectedHash: string) {
     return this.applySkillTrustAction(conversationId, (skillRuntime) => skillRuntime.acceptSkill(skillName, expectedHash));
   }
@@ -2151,7 +2171,20 @@ export class AgentRuntime {
       localRoot: this.options.localFileRoot,
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
       provenanceStore: createAgentSkillProvenanceStore(),
+      ...this.managedSkillLoadOptions(),
     });
+  }
+
+  private managedSkillLoadOptions(): Pick<
+    SkillLoadOptions,
+    'managedSkillRoots' | 'managedSkillContentRoot' | 'assertManagedSkillInvocable'
+  > {
+    const service = this.options.managedSkillService;
+    return service ? {
+      managedSkillRoots: () => service.activeRuntimeRoots(),
+      managedSkillContentRoot: service.contentRoot,
+      assertManagedSkillInvocable: (skillId, expectedContentHash) => service.assertInvocable(skillId, expectedContentHash),
+    } : {};
   }
 
   async renameConversation(conversationId: string, title: string) {
@@ -2810,6 +2843,7 @@ export class AgentRuntime {
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
       provenanceStore: createAgentSkillProvenanceStore(),
       conversationId,
+      ...this.managedSkillLoadOptions(),
       executeSkillShell: async ({ command, skill, signal }) => {
         const capabilityConfig = await readAgentCapabilityConfig();
         const current = this.currentRuntimeConversation(conversationRef.current);

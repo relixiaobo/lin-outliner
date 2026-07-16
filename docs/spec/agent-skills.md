@@ -9,8 +9,7 @@ be shadowed by mutable local skills with the same name. Resource-backed
 built-in skill folders load before code-registered inline built-ins; a duplicate
 built-in name is a product bug and fails loudly instead of being silently
 dropped. The current user-visible built-in skills are `/skillify`, `/research`,
-`/data-cleanup`, `/data-analysis`, `/document`, `/feed-processing`, `/pdf`,
-`/presentation`, and `/spreadsheet`.
+and `/data-cleanup`.
 `issue-planning` is a model-only built-in workflow and is not exposed as a slash
 skill.
 
@@ -71,10 +70,10 @@ samples, but must not write Roam data until a deterministic Roam adapter emits a
 valid Import Pack.
 
 `/data-analysis`, `/document`, `/feed-processing`, `/pdf`, `/presentation`, and
-`/spreadsheet` are user-visible resource-backed built-ins sourced from the sibling
-`linlab-skills` repository during development and staged into the app bundle
-during packaging. They are goal-oriented skills rather than file-extension
-adapters:
+`/spreadsheet` are optional Linlab-recommended managed skills. They do not ship
+in the app bundle. A user installs them from the remotely refreshed Linlab
+Catalog, reviews the immutable GitHub commit, and enables them separately. They
+are goal-oriented skills rather than file-extension adapters:
 
 - `/presentation` covers slide decks, talks, PPTX inspection, browser HTML
   decks, PDF handouts, speaker outlines, deck verification, and opinionated
@@ -113,7 +112,7 @@ adapters:
   validation, tables, pivots, charts, imports, exports, workbook QA, and
   source-first generation routes.
 
-Each resource-backed built-in includes its own `SKILL.md`, route-specific
+Each resource-backed skill includes its own `SKILL.md`, route-specific
 references, scripts, assets, and templates. The app does not inject those
 support files automatically; the skill body points the model at
 `${AGENT_SKILL_DIR}` or `{baseDir}` so the agent can load or execute only the
@@ -130,22 +129,14 @@ instructions. Resource-backed built-ins use the standard skill folder shape:
   assets/
 ```
 
-`bun run skills:sync` stages Tenon-owned built-ins plus enabled linlab built-ins
-into `build/generated/built-in-skills`. The Electron package copies that
-generated root into `Resources/built-in-skills`, and the packaged runtime
-resolves that resource path instead of depending on the current working
-directory or a user's local `linlab-skills` checkout. Development runs load
-Tenon-owned built-ins from `src/main/builtInSkills` and the enabled linlab
-built-in roots directly, so source changes are visible without staging. The
-linlab checkout is resolved from `LINLAB_SKILLS_ROOT` when set; otherwise the
-default is the sibling `linlab-skills` checkout next to the real clone root,
-including clones opened through `tmp/worktrees/<topic>`. Missing configured
-linlab roots fail fast rather than silently dropping built-ins. `skills:sync`
-copies only tracked files from the external linlab repository and still excludes
-non-runtime folders such as `evals`, so ignored local outputs cannot enter the
-app bundle. The current Tenon-owned resource-backed built-ins are
-`/data-cleanup` and the private `memory-dream` runtime skill; the portable
-artifact skills are sourced from linlab. Like cc-2.1 bundled skills, built-ins
+`bun run skills:sync` stages only Tenon-owned built-ins into
+`build/generated/built-in-skills`. The Electron package copies that generated
+root into `Resources/built-in-skills`, and the packaged runtime resolves that
+resource path instead of depending on the current working directory. The
+resource-backed platform floor is `/data-cleanup` plus the private
+`memory-dream` runtime skill. The code-registered floor is `/skillify`,
+`/research`, and `issue-planning`. General-purpose Linlab skills are installed
+through the managed flow and never copied by `skills:sync`. Resource built-ins
 only receive a `Base directory` prefix when they have real extracted reference
 files. Inline built-ins such as `/skillify` and `/research` have no extracted
 files, so their prompts contain only the skill body. Post-compact bookkeeping
@@ -158,7 +149,90 @@ Default mutable skill directories are always enabled:
 
 Each skill is a directory with a `SKILL.md` file. Additional skill directories can be configured in Agent settings; those directories are appended after the defaults and can be absolute, workspace-relative, `~/...`, `$HOME/...`, or `${HOME}/...`.
 
-Every skill carries one of three sources, symmetric with agent definitions: `built-in` (code-registered, immutable), `user` (the personal library — `~/.agents/skills` plus configured directories outside the workspace root), and `project` (the work context — `<workspace>/.agents/skills`, configured directories inside the root, and nested `.agents/skills` directories discovered at runtime near touched files). Runtime discovery is a discovery mode, not a separate source.
+Every skill carries one of four skill-specific sources: `built-in` (Tenon-owned,
+immutable), `managed` (a validated Tenon-managed local copy pinned to GitHub),
+`user` (the personal library — `~/.agents/skills` plus configured directories
+outside the workspace root), and `project` (the work context —
+`<workspace>/.agents/skills`, configured directories inside the root, and nested
+`.agents/skills` directories discovered at runtime near touched files). This
+does not extend `AgentSourceKind`; agent and skill ownership are separate
+contracts. Runtime discovery is a discovery mode, not a separate source.
+
+## Managed GitHub Skills
+
+The Linlab Catalog is recommendation and distribution metadata, not a runtime
+source. Catalog refresh uses a fixed, bounded `raw.githubusercontent.com` URL and
+caches the last valid schema under private `userData`. A catalog outage may make
+recommendations unavailable, but it never changes installed content, enabled
+state, or offline invocation. Linlab entries are labelled **Recommended**;
+arbitrary public GitHub entries are labelled **Unverified**. Neither label adds
+tools, folders, permissions, or control-plane access.
+Each catalog recommendation is bound to its exact repository subdirectory and
+declared skill name; nested candidates never inherit the Recommended label.
+
+The importer accepts credential-free `https://github.com/{owner}/{repo}`
+repository, tree, and `SKILL.md` blob URLs. It resolves a default branch, branch,
+tag, or commit through bounded `api.github.com` requests. Every mutable ref is
+resolved to a 40-character commit before discovery. Repository URLs may expose
+multiple `SKILL.md` folders; the user must explicitly select one. Install IPC
+then carries the discovery id, candidate id, and expected commit, never a local
+filesystem path.
+
+Before install or update, Tenon validates the complete selected subtree. It
+requires strict YAML frontmatter, a canonical lowercase skill name, and a
+concrete description. Missing `metadata.tenon.version` is accepted as
+Unknown/Unverified; a declared npm SemVer range must include the running Tenon
+version. Validation rejects traversal, symlinks, submodules, nested `.git`,
+hidden support paths, executable Git modes, unsupported binary signatures,
+invalid UTF-8, secret-looking content, embedded shell expansion, duplicate skill
+names, and bounded file/count/aggregate limits. Source metadata such as
+`.gitignore` is excluded. Text scripts may be stored, but every installed file
+has its executable bits removed and install/update never runs scripts or
+installs dependencies.
+
+Managed state and immutable payloads are separate:
+
+```text
+<userData>/managed-skills/index.json, catalog-cache.json, staging/
+<userData>/managed-skill-content/<skill>/<subtree-sha256>/...
+```
+
+The private index records repository, subdirectory, tracking ref, resolved
+commit, whole-subtree SHA-256, compatibility, install time, enabled state, one
+previous version, last checked commit, recommendation provenance, scripts, and
+diagnostics. Staging is re-read and hashed before an atomic rename. The content
+hash orders relative paths by UTF-8 bytes before hashing path lengths, paths,
+file lengths, and exact bytes. Every control/content directory chain is
+revalidated as normal directories before managed reads, writes, or deletion, so
+a locally inserted symlink cannot redirect an operation outside the managed
+store. The content address becomes active only after an atomic index write. A failed install,
+validation, update, or registry refresh leaves or restores the prior index and
+usable version. Updates may resolve a tracking ref automatically, but they only
+record **Update available**. Preview downloads and validates the candidate and
+shows commits, hashes, changed paths, scripts, and a bounded `SKILL.md` diff.
+Only an explicit Apply flips the active hash. One clean prior version is retained
+for explicit rollback.
+
+Install creates `installed-disabled`; Enable is a separate product action.
+Disable does not uninstall bytes, and Uninstall addresses managed records only.
+Managed enablement is owned by that lifecycle record, so stale names in the
+ordinary user/project disabled-skill setting do not override its switch.
+Built-in names can never be shadowed. Install also fails on any managed, user,
+or project name collision with the conflicting source/path. If a local
+user/project skill later takes the same name, normal registry precedence keeps
+the managed version out of resolution; managed actions never rewrite or remove
+that local skill.
+
+Installed content remains usable if GitHub, the repository, or the catalog goes
+offline. Settings and invocation rehash the active subtree. A mismatch marks the
+record Modified, removes it from resolution, and blocks enable, update, and
+rollback; recovery is explicit uninstall and reinstall. Tenon never overwrites
+locally modified managed bytes. The original compatibility ranges are retained
+with each version and re-evaluated against the running app version; a version
+that becomes incompatible stays installed but is excluded from runtime until a
+compatible update or rollback is explicitly applied. Only an enabled, clean,
+compatible version enters the skill registry, and invocation revalidates its
+expected subtree hash immediately before rendering.
 
 ## Frontmatter
 
@@ -179,10 +253,11 @@ Supported frontmatter fields:
 - `execution`: `inline` by default; `isolated` runs the rendered skill body through the same-conversation delegation runtime instead of injecting it into the parent context. An isolated skill always forks the current conversation context (the one-Neva invariant: there is no agent selection), so there is no `agent` frontmatter field.
 - `paths`: path-conditional activation patterns for mutable skills.
 
-Lin uses directory-name identity for skills. `name:` frontmatter is tolerated for
-mutable skills as a display alias, but built-ins ignore it so an app-shipped
+User/project skills use directory-name identity. `name:` frontmatter is
+tolerated there as a display alias, while built-ins ignore it so an app-shipped
 folder cannot create an extra slash alias or bypass the built-in duplicate-name
-guard.
+guard. Managed import requires a valid `name:` or uses the selected directory
+name as its canonical fallback, then stores the version under that identity.
 
 `execution` is the skill-level execution mode. `inline` means the rendered body
 is injected into the parent model turn; `isolated` means the rendered body is
@@ -213,12 +288,14 @@ resolve to the skill directory. For built-in skills without extracted reference
 files, directory placeholders are not substituted because there is no real
 directory to read from.
 
-Skill bodies may include embedded shell commands using fenced blocks that start
-with ```` ```! ```` or inline `!` command spans. Commands are expanded only when
-the skill is invoked, after argument and environment placeholder substitution.
-They execute through the same local bash runner, folder capabilities, and
-control-plane boundary used by normal agent tool calls. `allowed-tools` does not
-act as a command-pattern policy.
+User/project and built-in skill bodies may include embedded shell commands using
+fenced blocks that start with ```` ```! ```` or inline `!` command spans.
+Commands are expanded only when the skill is invoked, after argument and
+environment placeholder substitution. They execute through the same local bash
+runner, folder capabilities, and control-plane boundary used by normal agent
+tool calls. `allowed-tools` does not act as a command-pattern policy. Managed
+skills reject both embedded-shell forms during import, so network-distributed
+instructions can only invoke scripts later through ordinary model tool calls.
 
 Additional files inside a mutable or resource-backed built-in skill directory
 are not inserted automatically. Skills should refer to them with
@@ -245,6 +322,12 @@ compatibility, or verification it gives up.
 ## Runtime Flow
 
 At the start of a normal user turn, Lin injects a hidden skill listing reminder containing only skills that have not already been listed in the conversation. This avoids repeated listing text and preserves provider prompt cache friendliness.
+
+Only enabled, integrity-clean managed records join that listing. Immediately
+before either inline or isolated invocation, runtime checks that the requested
+record is still enabled, still points at the expected active subtree hash, and
+still rehashes to that value. Failure invalidates the registry cache and returns
+a managed-skill-unavailable result without rendering instructions.
 
 When the model calls the `skill` tool for an inline skill:
 
@@ -400,7 +483,8 @@ primary reference for invocation semantics and skillify UX; OpenClaw and Hermes
 are supplemental references for safety, recovery, provenance, and curation.
 
 - immutable built-in skills from resource-backed app folders or code-registered
-  inline instructions, plus mutable directory skills as `<skill-name>/SKILL.md`;
+  inline instructions, pinned managed GitHub skills, plus mutable directory
+  skills as `<skill-name>/SKILL.md`;
 - one model-facing skill invocation tool;
 - user slash invocation for user-invocable skills;
 - `allowed-tools` as the whole-tool catalog contract for isolated Runs;
@@ -447,10 +531,10 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Capability | Lin decision |
 | --- | --- |
 | Directory skills | Supported as `<skill-name>/SKILL.md`. Single-file legacy command skills are intentionally not supported. |
-| Built-in skills | Supported as immutable app-shipped skills. Resource-backed built-in folders load before code-registered inline built-ins, and both load before mutable skill directories. Mutable local skills cannot shadow a built-in skill with the same name. |
+| Built-in skills | Supported as the minimal immutable app-shipped floor. Resource-backed built-in folders load before code-registered inline built-ins, and both load before managed and mutable skill directories. No other source can shadow a built-in name. |
 | Automatic listing | Supported. New model-invocable skills are listed once per conversation and persisted across compact restore. Mutable skills are default-ratified; path-conditional skills still wait for a matching touched file. |
 | Skill invocation | Supported through the `skill` tool and slash composer adapter. Both paths share rendering, capability handling, model, and effort behavior. |
-| Embedded shell | Supported for `bash` only, at invocation time, after argument and placeholder substitution. |
+| Embedded shell | Supported for built-in/user/project skills with `bash` only, at invocation time, after argument and placeholder substitution. Managed import rejects fenced and inline embedded-shell forms. |
 | Reference files and scripts | Supported through `${AGENT_SKILL_DIR}` / `{baseDir}` plus normal `file_read` or `bash` calls. They are not bulk-loaded. For invoked inline skills with resource directories, the runtime exposes that exact skill directory as a read-only file-tool root so references can be read in both dev source-tree runs and packaged app-resource runs. |
 | Skill dependencies | Binding guidance. When a loaded skill names a required library, command, runtime, or script, the global system prompt tells Neva to verify and install/enable that dependency directly instead of silently changing route. Owner-specific failures require a concrete explanation before a lower-fidelity fallback. |
 | `allowed-tools` | Supported as the complete whole-tool catalog for isolated Runs. Omission creates a tool-free isolated Run; inline skills do not alter the parent catalog. |
@@ -461,12 +545,13 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary folder capabilities, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Shell/external-editor writes are validated on discovery and invalid definitions remain unloaded. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
 | Agent-managed agent-definition writes | Not supported. The one-Neva invariant removed agent authoring as a self-definition surface (no `/create-agent` workflow, and the self-definition write gate governs skills only). The single agent, Neva, is configured through the agent-config window (`agentUpdateAgentDefinition`), not by authoring `AGENT.md` files. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
-| MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
-| Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
+| Public GitHub skills | Supported through bounded GitHub discovery, strict subtree validation, immutable commit/hash pinning, explicit install/enable/update/rollback/uninstall, and offline local execution. Private repositories, credentials, GitLab, and other providers are not supported. |
+| MCP/plugin skills | Not supported. Managed skill lifecycle does not imply an MCP or plugin lifecycle. |
+| Managed/policy skills | Tenon-managed GitHub skills are supported as optional local installations. There is no separate admin policy layer and no managed source receives extra runtime authority. |
 | `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, writes directly with existing file tools when the request determines the contract, and asks only for missing identity, storage, trigger, or behavior choices. |
 | `research` | Supported as a built-in user- and model-invocable `execution: isolated` workflow with no `agent` override. It starts an isolated sub-run of the current agent, filters its declared read tools through the `AgentToolActionKind` read-only catalog, and returns a compact findings/evidence report. |
 | `data-cleanup` | Supported as a Tenon-owned resource-backed built-in. It profiles local exports, runs deterministic adapters for known sources through `tenon-import`, emits Import Pack v1, validates coverage, produces an API-backed preview id, and uses `tenon-import commit` as the only bulk document write path. Tana JSON is supported as the first write route; Roam EDN is profile-only until a deterministic adapter is added. |
-| `data-analysis`, `document`, `feed-processing`, `pdf`, `presentation`, `spreadsheet` | Supported as immutable resource-backed built-ins sourced from enabled `linlab-skills` folders and staged into the packaged app. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, JSON, RSS, Atom, JSON Feed, OPML, and source tables are handled as input/output routes rather than skill identities. `/presentation` keeps explicit PowerPoint/PPTX requests on the PPTX route: missing PPTX libraries or office automation should be installed/enabled when allowed, and HTML/PDF/hand-authored OOXML are lower-fidelity fallbacks that require an explained blocker. `/document` includes archetype/form-factor guidance plus DOCX/Markdown semantic QA, and explicit Word/DOCX requests stay on the DOCX route before Markdown/plain-text/PDF or hand-authored WordprocessingML fallbacks. `/pdf` keeps PDF-native operations on fixed-layout structural/render/OCR/form/redaction routes while preferring editable source changes when source exists. `/feed-processing` keeps subscription-content processing on source-list, feed-window, bad-feed, full-text-ledger, and feed-content-pack routes while leaving outliner/document/email writes to downstream consumers. `/spreadsheet` keeps workbook/formula/modeling work on spreadsheet-native routes and preserves formulas, validation, named ranges, tables, and source-first generation artifacts. `/data-analysis` keeps dependency-backed pandas/DuckDB/script workflows explicit. |
+| `data-analysis`, `document`, `feed-processing`, `pdf`, `presentation`, `spreadsheet` | Supported as optional Linlab-recommended managed installations, not packaged built-ins. They retain their goal-oriented routes for PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, JSON, RSS, Atom, JSON Feed, OPML, and source tables. Missing dependencies are handled later through ordinary runtime tools/capabilities; installation itself never runs scripts or installs dependencies. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
 | Per-skill invocation approvals | Not supported. The `skill` tool uses ordinary capabilities; `allowed-tools` selects whole tools for isolated Runs. |
 

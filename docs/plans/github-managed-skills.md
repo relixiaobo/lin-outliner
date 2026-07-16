@@ -78,6 +78,9 @@ Use only `api.github.com` for metadata and commit-pinned
 host checks, timeouts, bounded streaming reads/concurrency, and concrete
 rate-limit errors. No response, checkout, archive, staging directory, or update
 preview is an executable runtime source.
+Catalog recommendation provenance applies only when the resolved candidate has
+the exact catalog subdirectory and declared name. Nested candidates remain
+ordinary repository content and never inherit the Recommended label.
 
 ### Compatibility and validation
 
@@ -86,7 +89,9 @@ the `semver` package. `app.getVersion()` must satisfy every declared range.
 Missing community metadata is recorded as `unknown` and remains installable as
 Unverified; explicit incompatibility blocks install. Preserve unknown
 frontmatter keys. A valid `name:` is canonical, with selected-directory fallback;
-always record the original repository subdirectory.
+always record the original repository subdirectory. Persist the original ranges
+with each version and re-evaluate them after an app-version change; newly
+incompatible bytes remain installed but are excluded from runtime.
 
 Before any content enters the managed store:
 
@@ -104,7 +109,8 @@ Before any content enters the managed store:
 - cap catalog/tree responses, inspected entries, selected file count, individual
   bytes, and aggregate bytes (initial limits: 512 KiB, 8 MiB, 20,000, 512,
   1 MiB, and 16 MiB respectively);
-- hash sorted relative paths, byte lengths, and exact bytes with SHA-256.
+- hash UTF-8 byte-sorted relative paths, byte lengths, and exact bytes with
+  SHA-256.
 
 Keep this importer validator separate from the mutable authoring gateway, which
 must retain its stricter agent-written support-file rules. Return stable error
@@ -135,6 +141,9 @@ execute bits, renames the completed candidate into a content-addressed version,
 then atomically flips the index last. Serialize per skill and bind mutations to
 expected hashes. Pre-flip failure leaves the prior version active; post-flip
 integrity/registry failure restores it. Reclaim orphan staging/version paths.
+Before managed reads, writes, promotion, or removal, revalidate each control and
+content container as a normal directory so local symlink insertion cannot
+redirect the operation outside the managed store.
 
 Rehash on Settings load and immediately before invocation. A mismatch marks
 `modified`, removes the skill from resolution, and blocks update/rollback.
@@ -178,25 +187,19 @@ renderer API, new Settings component/dialog, localization/styles; focused Core,
 renderer, E2E, security, offline/update, and packaging tests. Do not edit
 main-owned `docs/TASKS.md` or `CHANGELOG.md`.
 
-Plan-time collision check on 2026-07-16: open Draft PR #405 (`Agent ledger
-portability`) has no file diff. Its claim is separate except for a possible
-narrow `agentRuntime.ts` deletion call site. Recheck before implementation; if
-that file appears, rebase/order this branch after #405 and keep the changes
-semantically separate. No other open PR claim overlaps. This plan absorbs
-`third-party-skill-import`; `agent-skills-authoring` retains mutable
-self-authoring/curation ownership.
+Plan-time collision check on 2026-07-16 found open PR #405 (`Agent ledger
+portability`) with no file diff and no other overlapping claim. The implementation
+recheck found that #405 now also touches `agentRuntime.ts`, but only its
+conversation deletion/reset and retention calls; this feature changes skill
+registry construction and managed lifecycle hooks in separate regions. Keep the
+changes semantically separate and rebase/order this branch after #405 if it lands
+first; a local `git merge-tree` check against #405's current head is clean. This
+plan absorbs `third-party-skill-import`; `agent-skills-authoring`
+retains mutable self-authoring/curation ownership.
 
 ## Open questions
 
-- **Catalog authority.** Approval ratifies the catalog in
-  `relixiaobo/lin-outliner` fetched from raw `main`. Redirecting it to
-  `relixiaobo/linlab-skills` adds a cross-repository prerequisite.
-- **Compatibility default.** Approval ratifies npm SemVer ranges and permits
-  missing Tenon metadata as `unknown`/Unverified; only explicit incompatibility
-  blocks install.
-- **Modified bytes.** Approval ratifies fail-closed invocation and
-  uninstall/reinstall recovery rather than executing or replacing modified
-  managed content.
+None.
 
 ## Acceptance and verification
 
