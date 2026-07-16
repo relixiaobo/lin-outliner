@@ -3163,10 +3163,9 @@ export class AgentRuntime {
       providerConfig,
       () => this.tryResolveProviderModel(providerConfig),
     );
-    // Attribution for this run's gated/denied approvals, resolved at the delegation
-    // layer from the authoritative context mode (fresh consult → the consultee;
-    // fork → inherited; the user's own agent → undefined). The card resolves the id
-    // to its canonical mention; undefined leaves it unattributed.
+    // Folder-request attribution comes from the authoritative delegation context:
+    // fresh consult -> consultee, fork -> inherited, user's own agent -> undefined.
+    // The request card resolves the id to its canonical mention.
     const requestedByAgentId = input.requestedByAgentId;
     return createConfiguredAgent(input.conversationId, providerConfig, input.messages, this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
@@ -9072,12 +9071,12 @@ function approvalDeniedMessage(reason: AgentPermissionDeniedReason): string {
     case 'user_cancelled':
       return 'The folder request was cancelled. The requested tool call was not executed.';
     case 'run_aborted':
-      return 'Permission request was cancelled before approval. The requested tool call was not executed.';
+      return 'The folder request was cancelled before it was resolved. The requested tool call was not executed.';
     case 'configured_deny':
     case 'policy_denied':
     case 'platform_hard_block':
     case 'runtime':
-      return 'Permission request was not approved. The requested tool call was not executed.';
+      return 'Folder access was not granted. The requested tool call was not executed.';
   }
 }
 

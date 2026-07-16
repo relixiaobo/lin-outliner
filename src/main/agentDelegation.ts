@@ -135,9 +135,9 @@ export interface AgentChildAgentCreateInput {
   executingAgentId: string;
   parentAgentId: string;
   /**
-   * The consultee to attribute this run's gated/denied approvals to (its own id
-   * for a fresh consult, the inherited consultee for a fork, undefined for the
-   * user's own agent). Resolved to a mention token by the approval card.
+   * The consultee to attribute this run's folder-capability requests to (its own
+   * id for a fresh consult, the inherited consultee for a fork, undefined for the
+   * user's own agent). Resolved to a mention token by the request card.
    */
   requestedByAgentId?: string;
   memoryOwnerAgentId: string;
@@ -156,9 +156,10 @@ export interface AgentChildAgentCreateInput {
   scopePreauthorized?: boolean;
   l0CacheBreakpointEnabled?: boolean;
   /**
-   * Run with no interactive approval channel. A tool needing approval is denied
-   * and surfaced instead of waiting for a human; globally always-allowed tools
-   * still run. Set only by runtime-owned unattended execution paths.
+   * Run with no interactive folder-capability channel. A missing capability is
+   * surfaced as durable needs-input instead of waiting for a human; calls within
+   * the current capability set still run. Set only by runtime-owned unattended
+   * execution paths.
    */
   unattended?: boolean;
   blockForInput?: (reason: string) => void;
@@ -246,9 +247,9 @@ export interface AgentDelegationRuntimeOptions {
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
   /**
-   * The consultee this runtime executes as, for approval attribution — set when
-   * this runtime IS a consulted agent (a fresh child) or a fork descending from
-   * one; undefined for the user's own top agent. A run's forks inherit it.
+   * The consultee this runtime executes as, for folder-request attribution. Set
+   * when this runtime is a consulted agent (a fresh child) or a fork descending
+   * from one; undefined for the user's own top agent. A run's forks inherit it.
    */
   requestedByAgentId?: string;
   host: AgentDelegationRuntimeHost;
@@ -362,11 +363,9 @@ interface AgentToolParams {
   inheritedVerifierGapSignatures?: string[];
   inheritedVerifierRunIds?: string[];
   /**
-   * Run with no interactive approval channel: a tool needing approval is denied
-   * (and surfaced) instead of waiting for a human. Set for unattended scheduled
-   * command runs so an approval-gated tool can never hang an unwatched run.
-   * Tools covered by the global always-allow rules still run (they resolve to
-   * `allow` before any approval is sought). Internal-only — not part of the
+   * Run with no interactive folder-capability channel. A missing capability is
+   * surfaced as durable needs-input instead of waiting for a human, while calls
+   * within the current capability set still run. Internal-only; not part of the
    * agent-facing Agent tool schema.
    */
   unattended?: boolean;
@@ -1224,8 +1223,8 @@ export class AgentDelegationRuntime {
       skillRuntime,
       this.protectedStoreRoot,
     );
-    // A sub-run runs AS its spawner, so it inherits the spawner's approval
-    // attribution. The nested runtime carries it so deeper sub-runs inherit it.
+    // A sub-run runs as its spawner, so it inherits folder-request attribution.
+    // The nested runtime carries it so deeper sub-runs inherit it.
     const requestedByAgentId = this.requestedByAgentId;
     subRunRuntime = new AgentDelegationRuntime({
       conversationId: childConversationId,

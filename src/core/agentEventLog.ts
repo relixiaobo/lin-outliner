@@ -1216,9 +1216,9 @@ export interface DelegationDetail {
   latestVerifierGap?: string;
   parentToolCallId?: string;
   /**
-   * Run with no interactive approval channel (a tool needing approval is denied
-   * instead of waiting for a human). Scheduled command runs derive this from their
-   * Run trigger/profile.
+   * Run with no interactive folder-capability channel. A missing capability stops
+   * as durable needs-input instead of waiting for a human. Scheduled command runs
+   * derive this from their Run trigger/profile.
    */
   unattended?: boolean;
 }
