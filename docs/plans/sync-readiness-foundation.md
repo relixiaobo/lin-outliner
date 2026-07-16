@@ -33,7 +33,7 @@ rewrite of local product truth.
 This plan is shape (b), a set of independent complete features:
 
 1. Replica-safe workspace and Loro document persistence.
-2. Content-hash identity for Outliner assets.
+2. Content integrity for Outliner assets.
 3. Portable Agent ledger catalogs and deletion tombstones.
 4. Event-sourced Issue persistence with entity tombstones.
 
@@ -160,10 +160,15 @@ outbox semantics need only be introduced with a real acknowledgement protocol.
 
 ### Binary Integrity
 
-Outliner assets remain logically addressed by stable `assetId`, but ingest also
-computes and persists SHA-256. Portable reads verify digest and byte length.
-Agent payloads already have this minimum contract. Source assets are portable;
-reproducible previews and thumbnails are derived.
+Outliner assets remain logically addressed by stable `assetId`. The versioned
+sidecar records exact byte length and SHA-256 for buffer ingest, path ingest,
+and derived thumbnail writes. A dedicated portable read returns bytes only
+after both values verify. Path-backed assets hash the stored file as a stream;
+memory-backed hashing yields between bounded chunks, while local range serving
+stays streaming. SHA-256 is an integrity/idempotency key and never replaces the
+logical id. Agent payloads already have this minimum metadata contract.
+Document-referenced source assets are portable; reproducible previews and
+thumbnails are derived and excluded from future source-asset catalogs.
 
 This plan does not upload, globally deduplicate, or garbage-collect blobs. A
 future object store uses `{workspaceId, sha256}` for idempotency and introduces

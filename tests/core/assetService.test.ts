@@ -1,8 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AssetService, imageDimensions, mimeTypeForFilename, sniffMimeType } from '../../src/main/assetService';
+import {
+  AssetIntegrityError,
+  AssetService,
+  imageDimensions,
+  mimeTypeForFilename,
+  sniffMimeType,
+} from '../../src/main/assetService';
+
+function sha256(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
 
 function pngBytes(width: number, height: number): Uint8Array {
   const buf = Buffer.alloc(24);
@@ -64,10 +75,13 @@ describe('AssetService', () => {
   });
 
   test('ingests an image buffer, records metadata, and writes bytes + sidecar', async () => {
-    const meta = await service.ingest({ kind: 'buffer', data: pngBytes(120, 80), originalFilename: 'shot.png' });
+    const bytes = pngBytes(120, 80);
+    const meta = await service.ingest({ kind: 'buffer', data: bytes, originalFilename: 'shot.png' });
     expect(meta).toMatchObject({
+      schemaVersion: 1,
       mimeType: 'image/png',
       byteSize: 24,
+      sha256: sha256(bytes),
       originalFilename: 'shot.png',
       imageWidth: 120,
       imageHeight: 80,
@@ -80,24 +94,117 @@ describe('AssetService', () => {
 
     // ingest resolves only after both files are durable, and the metadata sidecar
     // keeps the existing pretty-without-trailing-newline format.
-    expect(await readFile(join(root, `${meta.id}.png`))).toEqual(Buffer.from(pngBytes(120, 80)));
+    expect(await readFile(join(root, `${meta.id}.png`))).toEqual(Buffer.from(bytes));
     const sidecar = await readFile(join(root, `${meta.id}.meta.json`), 'utf8');
     expect(sidecar.endsWith('\n')).toBe(false);
     expect(JSON.parse(sidecar)).toMatchObject({
       id: meta.id,
+      schemaVersion: 1,
       mimeType: 'image/png',
+      byteSize: bytes.byteLength,
+      sha256: sha256(bytes),
       originalFilename: 'shot.png',
     });
   });
 
-  test('lookup returns persisted metadata after a fresh service reads the sidecar', async () => {
-    const meta = await service.ingest({ kind: 'buffer', data: gifBytes(64, 48) });
+  test('a fresh service verifies persisted bytes without changing logical asset identity', async () => {
+    const bytes = gifBytes(64, 48);
+    const meta = await service.ingest({ kind: 'buffer', data: bytes });
     const reader = new AssetService(root);
     expect(await reader.lookup(meta.id)).toMatchObject({
       id: meta.id,
+      schemaVersion: 1,
       mimeType: 'image/gif',
+      sha256: sha256(bytes),
       imageWidth: 64,
       imageHeight: 48,
+    });
+    const verified = await reader.readVerified(meta.id);
+    expect(verified?.metadata.id).toBe(meta.id);
+    expect(verified?.bytes).toEqual(bytes);
+  });
+
+  test('path ingest records the same portable integrity contract', async () => {
+    const sourcePath = join(root, 'source.txt');
+    const bytes = Buffer.from('portable asset');
+    await writeFile(sourcePath, bytes);
+
+    const meta = await service.ingest({ kind: 'path', path: sourcePath });
+    expect(meta).toMatchObject({
+      schemaVersion: 1,
+      mimeType: 'text/plain',
+      byteSize: bytes.byteLength,
+      sha256: sha256(bytes),
+      originalFilename: 'source.txt',
+    });
+    expect(meta.id).not.toBe(meta.sha256);
+  });
+
+  test('content identity does not replace stable logical asset ids', async () => {
+    const bytes = pngBytes(12, 8);
+    const first = await service.ingest({ kind: 'buffer', data: bytes });
+    const second = await service.ingest({ kind: 'buffer', data: bytes });
+
+    expect(first.sha256).toBe(second.sha256);
+    expect(first.id).not.toBe(second.id);
+    expect((await new AssetService(root).readVerified(first.id))?.metadata.id).toBe(first.id);
+  });
+
+  test('returned metadata cannot mutate the cached integrity contract', async () => {
+    const originalBytes = pngBytes(10, 10);
+    const meta = await service.ingest({ kind: 'buffer', data: originalBytes });
+    const corruptedBytes = Buffer.alloc(meta.byteSize, 0x42);
+    meta.sha256 = sha256(corruptedBytes);
+    const assetPath = await service.pathFor(meta.id);
+    expect(assetPath).not.toBeNull();
+    await writeFile(assetPath!, corruptedBytes);
+
+    await expect(service.readVerified(meta.id)).rejects.toBeInstanceOf(AssetIntegrityError);
+  });
+
+  test('rejects an unversioned sidecar instead of bypassing integrity metadata', async () => {
+    const meta = await service.ingest({ kind: 'buffer', data: pngBytes(10, 10) });
+    const sidecarPath = join(root, `${meta.id}.meta.json`);
+    const sidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as Record<string, unknown>;
+    delete sidecar.schemaVersion;
+    await writeFile(sidecarPath, JSON.stringify(sidecar));
+
+    await expect(new AssetService(root).lookup(meta.id)).rejects.toMatchObject({
+      name: 'AssetIntegrityError',
+      message: expect.stringContaining('invalid metadata'),
+    });
+  });
+
+  test('reports malformed sidecar JSON as an integrity error', async () => {
+    const meta = await service.ingest({ kind: 'buffer', data: pngBytes(10, 10) });
+    await writeFile(join(root, `${meta.id}.meta.json`), '{');
+
+    await expect(new AssetService(root).lookup(meta.id)).rejects.toMatchObject({
+      name: 'AssetIntegrityError',
+      message: expect.stringContaining('invalid metadata JSON'),
+    });
+  });
+
+  test('verified reads reject byte-length corruption', async () => {
+    const meta = await service.ingest({ kind: 'buffer', data: pngBytes(10, 10) });
+    const assetPath = await service.pathFor(meta.id);
+    expect(assetPath).not.toBeNull();
+    await writeFile(assetPath!, Buffer.alloc(meta.byteSize + 1));
+
+    await expect(service.readVerified(meta.id)).rejects.toThrow(
+      `expected ${meta.byteSize} bytes but found ${meta.byteSize + 1}`,
+    );
+  });
+
+  test('verified reads reject same-length content corruption', async () => {
+    const meta = await service.ingest({ kind: 'buffer', data: pngBytes(10, 10) });
+    const assetPath = await service.pathFor(meta.id);
+    expect(assetPath).not.toBeNull();
+    await writeFile(assetPath!, Buffer.alloc(meta.byteSize, 0x42));
+
+    await expect(service.readVerified(meta.id)).rejects.toMatchObject({
+      name: 'AssetIntegrityError',
+      message: expect.stringContaining('SHA-256 digest mismatch'),
     });
   });
 
@@ -192,9 +299,11 @@ describe('AssetService', () => {
       await writeFile(outsideFile, 'secret');
       await symlink(outsideFile, join(root, 'escapes.txt'));
       await writeFile(join(root, 'escapes.meta.json'), JSON.stringify({
+        schemaVersion: 1,
         id: 'escapes',
         mimeType: 'text/plain',
         byteSize: 6,
+        sha256: sha256(Buffer.from('secret')),
         createdAt: Date.now(),
       }));
 

@@ -174,8 +174,24 @@ describe('agent runtime referenced asset materialization', () => {
     await writeFile(pdfPath, '%PDF-1.4 body');
 
     const meta: Record<string, AssetMetadata> = {
-      'asset-img': { id: 'asset-img', mimeType: 'image/png', byteSize: imageBytes.length, createdAt: 0, originalFilename: 'diagram.png' },
-      'asset-doc': { id: 'asset-doc', mimeType: 'application/pdf', byteSize: 13, createdAt: 0, originalFilename: 'report.pdf' },
+      'asset-img': {
+        schemaVersion: 1,
+        id: 'asset-img',
+        mimeType: 'image/png',
+        byteSize: imageBytes.length,
+        sha256: '0'.repeat(64),
+        createdAt: 0,
+        originalFilename: 'diagram.png',
+      },
+      'asset-doc': {
+        schemaVersion: 1,
+        id: 'asset-doc',
+        mimeType: 'application/pdf',
+        byteSize: 13,
+        sha256: '1'.repeat(64),
+        createdAt: 0,
+        originalFilename: 'report.pdf',
+      },
     };
     const assetResolver = {
       pathFor: async (id: string) => (id === 'asset-img' ? imagePath : id === 'asset-doc' ? pdfPath : null),
@@ -327,7 +343,14 @@ describe('agent runtime referenced asset materialization', () => {
         pathForCalls += 1;
         return imagePath;
       },
-      lookup: async () => ({ id: 'shared', mimeType: 'image/png', byteSize: imageBytes.length, createdAt: 0 } as AssetMetadata),
+      lookup: async () => ({
+        schemaVersion: 1,
+        id: 'shared',
+        mimeType: 'image/png',
+        byteSize: imageBytes.length,
+        sha256: '0'.repeat(64),
+        createdAt: 0,
+      } as AssetMetadata),
     };
 
     const contexts: Context[] = [];

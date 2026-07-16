@@ -587,9 +587,12 @@ export interface DocumentProjectionChangedEvent {
  * data directory; the document only ever references the stable `id`.
  */
 export interface AssetMetadata {
+  schemaVersion: 1;
   id: string;
   mimeType: string;
   byteSize: number;
+  /** Lowercase hexadecimal SHA-256 of the stored bytes. */
+  sha256: string;
   originalFilename?: string;
   createdAt: number;
   imageWidth?: number;

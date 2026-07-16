@@ -26,6 +26,30 @@ flows ingest files through asset commands, then mutate the document only through
 core commands such as `create_image_node`, `set_node_image`, and
 `create_attachment_node`.
 
+Every asset sidecar is a versioned `AssetMetadata` record carrying the stable
+logical `id`, exact `byteSize`, and lowercase SHA-256 digest. Buffer-backed and
+path-backed ingest share this contract, and generated PDF thumbnails receive the
+same integrity metadata. `AssetService.readVerified()` is the portable byte-read
+boundary: it returns the stored bytes only after both length and digest match,
+and reports corruption explicitly. Local `asset://` range serving remains
+streaming and does not pre-read an entire video merely to render it.
+
+Path-backed assets hash the final stored file through a read stream. Buffer
+ingest, derived thumbnails, and verified reads hash in bounded 1 MiB turns that
+yield to the event loop between chunks, keeping Electron main responsive for
+large assets. `bun run probe:asset-hashing` compiles the probe and runs it in
+Electron main, where it asserts and reports the Electron runtime version before
+measuring total hashing time and maximum event-loop stall for both paths;
+`ASSET_HASH_PROBE_MIB` overrides its 512 MiB fixture size.
+
+Document-referenced source assets are portable. PDF thumbnails are derived
+outputs rather than portable source assets; their ids may appear in source
+metadata, but this integrity layer neither deletes nor rebuilds them. Future
+preview formats follow the same ownership rule only when they are reproducible.
+A digest never replaces `assetId`; it is an integrity and future object-store
+idempotency key, not user-visible identity. The pre-release v1 sidecar has no
+legacy reader.
+
 Derived metadata is extracted at ingest from the bytes alone — PDF page count by
 scanning for page objects, audio/video duration parsed from WAV/MP4 container
 headers. PDF thumbnails are an exception: they shell out to poppler's `pdftoppm`
