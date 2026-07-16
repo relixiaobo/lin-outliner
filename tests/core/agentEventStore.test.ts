@@ -6,6 +6,7 @@ import type { AgentActor, AgentEvent, AgentPrincipal } from '../../src/core/agen
 import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
 import {
   AgentEventStore,
+  AGENT_DELETION_LOG_FILE,
   agentCheckpointFileName,
   agentPayloadFileName,
   agentConversationDirName,
@@ -714,11 +715,13 @@ describe('agent event store', () => {
     await withStore(async (store, root) => {
       const { conversationId } = await seedCurrentLayout(store);
       await writeFile(path.join(root, LAYOUT_SENTINEL_FILE), `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION - 1 })}\n`, 'utf8');
+      await writeFile(path.join(root, AGENT_DELETION_LOG_FILE), 'stale deletion generation\n', 'utf8');
 
       const restarted = new AgentEventStore(root);
       expect(await restarted.listConversationIndexEntries()).toEqual([]);
       await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
       expect(JSON.parse(await readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8'))).toEqual({ v: STORAGE_LAYOUT_VERSION });
+      await expect(readFile(path.join(root, AGENT_DELETION_LOG_FILE), 'utf8')).rejects.toThrow();
     });
   });
 
@@ -922,7 +925,10 @@ describe('agent event store', () => {
         { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
       ]);
 
-      await store.deleteConversation(conversationId);
+      await store.deleteConversation(conversationId, {
+        actor: userActor,
+        reason: 'conversation_deleted',
+      });
 
       expect(await store.listConversationIndexEntries()).toEqual([]);
       expect(await store.listConversationIds()).toEqual([]);
@@ -1801,7 +1807,10 @@ describe('agent event store', () => {
       await appendRun('run-3', 'retained-three');
 
       expect(await store.searchMessages('forgotten', { conversationId })).toHaveLength(2);
-      await expect(store.retainRecentConversationRuns(conversationId, 2))
+      await expect(store.retainRecentConversationRuns(conversationId, 2, {
+        actor: systemActor,
+        reason: 'retention_pruned',
+      }))
         .resolves.toEqual({ prunedRunIds: ['run-1'], retainedRunIds: ['run-2', 'run-3'] });
 
       const events = await store.readEvents(conversationId);
@@ -1877,7 +1886,10 @@ describe('agent event store', () => {
       ]);
       const rawBefore = await readFile(store.paths(conversationId).conversationEventsPath, 'utf8');
 
-      await expect(store.retainRecentConversationRuns(conversationId, 1))
+      await expect(store.retainRecentConversationRuns(conversationId, 1, {
+        actor: systemActor,
+        reason: 'retention_pruned',
+      }))
         .rejects.toThrow('Missing parent agent message: missing-message-that-is-not-pruned');
 
       await expect(readFile(store.paths(conversationId).conversationEventsPath, 'utf8')).resolves.toBe(rawBefore);

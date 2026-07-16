@@ -200,10 +200,27 @@ permissions, and temp files. Local per-stream `seq` remains replay order, not a
 global multi-device sequence. Future transport deduplicates by `eventId` and may
 allocate a separate server sequence.
 
+The catalog is a deterministic, versioned value with no build timestamp. Its
+stream entries contain only conversation/Run identity, event count, and first/
+last event identity. A separate portable stream read filters debug snapshots,
+capability decisions, checkpoint markers, and payload events or nested payload
+references outside the `source`, `preview`, `text_extract`, and `tool_output`
+role allow-list, and strips free-form payload summaries. Payload catalog entries
+contain identity, scope, role, media type, byte length, and SHA-256, never local
+paths or summaries. Raw JSONL paths are not a transport API.
+
 Before physical conversation or Run cleanup, append a versioned workspace-level
 tombstone containing the entity id, deletion id, actor, timestamp, and last-known
-event identity. Catalog rebuild and stale-merge tests prove deleted data cannot
-reappear.
+event identity. Conversation deletion batches its own tombstone with every known
+Run tombstone before removing any directory. Retention writes Run tombstones
+before rewriting the retained conversation stream or reclaiming Run bytes.
+Catalog, explicit reads, append guards, and derived-index rebuilds all apply
+tombstones first, so restored stale directories cannot reappear. Conversation
+reset preserves the conversation identity and therefore tombstones only the Runs
+whose ledgers it discards before recreating the conversation stream. Before
+online transport enables reset across devices, the online plan must add an
+ordered conversation-stream generation/reset operation; this local foundation
+does not claim that replacing one device's stream orders another device's copy.
 
 Replace mutable whole-file `issue-manager.json` truth with versioned append-only
 Issue operations and a rebuildable projection. Operations cover Issue and
@@ -249,7 +266,7 @@ without changing product semantics.
 | --- | --- |
 | document replica | `src/core/loroDocument.ts`, `src/core/core.ts`, `src/main/documentService.ts`, new identity/persistence helpers, focused core/persistence tests, `docs/spec/architecture.md` |
 | asset hash | `src/core/types.ts`, `src/main/assetService.ts`, asset tests, `docs/spec/architecture.md` |
-| Agent portability | `src/main/agentEventStore.ts`, `src/main/appendOnlySeqLog.ts`, Agent event-store tests, `docs/spec/agent-event-log-rendering.md` |
+| Agent portability | `src/main/agentEventStore.ts`, `src/main/agentLedgerPortability.ts`, `src/main/appendOnlySeqLog.ts`, Agent event-store tests, `docs/spec/agent-event-log-rendering.md` |
 | Issue events | `src/core/agentIssue.ts`, `src/main/agentIssueStore.ts`, Issue/runtime tests, Agent architecture/delegation/event-log specs |
 
 `src/core/commands.ts` is not changed here; the online plan owns its coordinated
