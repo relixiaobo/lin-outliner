@@ -59,7 +59,7 @@ describe('agent process executor', () => {
     expect(await readFile(target, 'utf8')).toBe('');
   });
 
-  test('does not inherit provider credentials into child processes', () => {
+  test('preserves user-owned ambient credentials in child environments', () => {
     const env = sanitizeAgentProcessEnv({
       PATH: '/usr/bin',
       HOME: '/tmp/home',
@@ -67,23 +67,32 @@ describe('agent process executor', () => {
       GITHUB_TOKEN: 'secret',
       SAFE_VALUE: 'visible',
     });
-    expect(env).toEqual({ PATH: '/usr/bin', HOME: '/tmp/home', SAFE_VALUE: 'visible' });
+    expect(env).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/tmp/home',
+      OPENAI_API_KEY: 'secret',
+      GITHUB_TOKEN: 'secret',
+      SAFE_VALUE: 'visible',
+    });
   });
 
-  test('applies explicit environment overrides after removing credentials', async () => {
+  test('removes only explicitly private injected environment values', async () => {
     const root = await mkdtemp(path.join(homedir(), '.tenon-process-env-'));
     roots.push(root);
 
     const result = await runAgentToolProcess('/usr/bin/env', [], root, 10_000, {
       env: {
         TENON_PROCESS_TEST: 'visible',
-        OPENAI_API_KEY: 'secret',
+        GITHUB_TOKEN: 'user-owned',
+        TENON_PRIVATE_PROVIDER_KEY: 'private',
       },
+      privateEnvKeys: ['tenon_private_provider_key'],
     });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('TENON_PROCESS_TEST=visible');
-    expect(result.stdout).not.toContain('OPENAI_API_KEY=');
+    expect(result.stdout).toContain('GITHUB_TOKEN=user-owned');
+    expect(result.stdout).not.toContain('TENON_PRIVATE_PROVIDER_KEY=');
   });
 
   test('keeps explicit write denials inside an otherwise writable capability root', async () => {

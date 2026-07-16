@@ -14,6 +14,7 @@ export interface AgentProcessSpawnInput {
   args?: readonly string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  privateEnvKeys?: readonly string[];
   capabilities?: FolderCapabilitySnapshot;
   detached?: boolean;
   stdio?: SpawnOptions['stdio'];
@@ -68,7 +69,7 @@ export class AgentProcessExecutor {
     });
     const child = spawn(prepared.command, prepared.args, {
       cwd,
-      env: sanitizeAgentProcessEnv(input.env ?? process.env),
+      env: sanitizeAgentProcessEnv(input.env ?? process.env, input.privateEnvKeys),
       shell: false,
       stdio: input.stdio ?? ['ignore', 'pipe', 'pipe'],
       detached: input.detached,
@@ -127,10 +128,14 @@ export function resetAgentProcessExecutorForTests(): void {
   executor = null;
 }
 
-export function sanitizeAgentProcessEnv(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function sanitizeAgentProcessEnv(
+  input: NodeJS.ProcessEnv,
+  privateEnvKeys: readonly string[] = [],
+): NodeJS.ProcessEnv {
+  const privateKeys = new Set(privateEnvKeys.map((key) => key.toUpperCase()));
   const result: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(input)) {
-    if (value === undefined || isSecretEnvironmentName(key)) continue;
+    if (value === undefined || privateKeys.has(key.toUpperCase())) continue;
     result[key] = value;
   }
   return result;
@@ -245,13 +250,6 @@ function isDirectory(inputPath: string): boolean {
   } catch {
     return false;
   }
-}
-
-function isSecretEnvironmentName(name: string): boolean {
-  const normalized = name.toUpperCase();
-  if (normalized === 'PATH' || normalized === 'HOME' || normalized === 'SHELL') return false;
-  return /(?:^|_)(?:API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?|PRIVATE_?KEY)(?:$|_)/.test(normalized)
-    || /^(?:OPENAI|ANTHROPIC|GOOGLE|GEMINI|OPENROUTER|AWS|AZURE|GITHUB|GITLAB)_/.test(normalized);
 }
 
 function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {

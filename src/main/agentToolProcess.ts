@@ -20,6 +20,7 @@ export interface AgentToolProcessOptions {
   maxStderrChars?: number;
   capabilities?: FolderCapabilitySnapshot;
   env?: NodeJS.ProcessEnv;
+  privateEnvKeys?: readonly string[];
 }
 
 export interface AgentLocalToolProcessEnvOptions {
@@ -58,6 +59,7 @@ export async function runAgentToolProcess(
       args,
       cwd,
       env: { ...buildAgentLocalToolProcessEnv(), ...options.env },
+      privateEnvKeys: options.privateEnvKeys,
       capabilities: options.capabilities,
       detached: process.platform !== 'win32',
     }).then((child) => {
