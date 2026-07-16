@@ -104,12 +104,12 @@ import {
   testProviderConnection,
 } from './agentSettings';
 import {
+  applyAgentCapabilitySettingsPatchView,
   appendAgentCapabilityBlockView,
   getFolderCapabilityService,
   grantAgentFolderCapability,
-  normalizedRuleList,
+  grantAgentFolderCapabilityView,
   readAgentCapabilitySettingsView,
-  writeAgentCapabilitySettingsView,
 } from './agentCapabilityStore';
 import { bindAgentProcessRevocation } from './agentProcessExecutor';
 import {
@@ -2230,10 +2230,7 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
   };
 }
 
-async function pickAgentCapabilityFolder(
-  event: IpcMainInvokeEvent,
-  draftSettings: { folders?: unknown; blocks?: unknown } | undefined,
-) {
+async function pickAgentCapabilityFolder(event: IpcMainInvokeEvent) {
   const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? settingsWindow ?? mainWindow;
   const defaultPath = safeAppPath('documents') ?? safeAppPath('home') ?? undefined;
   const dialogStrings = getMessages(effectiveLocale()).window;
@@ -2253,13 +2250,7 @@ async function pickAgentCapabilityFolder(
   }
 
   const root = await canonicalDirectoryPath(result.filePaths[0]);
-  const currentSettings = await readAgentCapabilitySettingsView();
-  const draftFolders = draftSettings?.folders;
-  const baseFolderInput = Array.isArray(draftFolders) ? draftFolders : currentSettings.folders;
-  const baseFolders = normalizedRuleList(baseFolderInput);
-  const folders = baseFolders.includes(root) ? baseFolders : [...baseFolders, root];
-  const blocks = Array.isArray(draftSettings?.blocks) ? normalizedRuleList(draftSettings?.blocks) : currentSettings.blocks;
-  const settings = await writeAgentCapabilitySettingsView({ folders, blocks });
+  const settings = await grantAgentFolderCapabilityView(root);
   return {
     canceled: false,
     path: root,
@@ -2876,12 +2867,12 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput);
     case 'agent_get_capability_settings':
       return readAgentCapabilitySettingsView();
-    case 'agent_update_capability_settings':
-      return writeAgentCapabilitySettingsView(args.settings as { folders?: unknown; blocks?: unknown });
+    case 'agent_apply_capability_settings_patch':
+      return applyAgentCapabilitySettingsPatchView(args.patch as { revokeFolders?: unknown; removeBlocks?: unknown });
     case 'agent_append_capability_block':
       return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
     case 'agent_pick_capability_folder':
-      return pickAgentCapabilityFolder(event, args.settings as { folders?: unknown; blocks?: unknown } | undefined);
+      return pickAgentCapabilityFolder(event);
     case 'agent_upsert_provider_config':
       return upsertProviderConfig(args.provider as AgentProviderConfigInput);
     case 'agent_delete_provider_config':

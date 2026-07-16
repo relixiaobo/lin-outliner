@@ -23,7 +23,7 @@ import type {
   AgentSessionTranscriptResult,
   AgentPickCapabilityFolderResult,
   AgentSlashCommandView,
-  AgentCapabilitySettingsInput,
+  AgentCapabilitySettingsPatchInput,
   AgentCapabilitySettingsView,
   AgentDefinition,
   AgentDefinitionView,
@@ -420,12 +420,12 @@ export const api = {
     command<AgentProviderSettingsView>('agent_update_image_generation_settings', { settings }),
   agentGetCapabilitySettings: () =>
     command<AgentCapabilitySettingsView>('agent_get_capability_settings'),
-  agentUpdateCapabilitySettings: (settings: AgentCapabilitySettingsInput) =>
-    command<AgentCapabilitySettingsView>('agent_update_capability_settings', { settings }),
+  agentApplyCapabilitySettingsPatch: (patch: AgentCapabilitySettingsPatchInput) =>
+    command<AgentCapabilitySettingsView>('agent_apply_capability_settings_patch', { patch }),
   agentAppendCapabilityBlock: (ruleValue: string) =>
     command<AgentCapabilitySettingsView>('agent_append_capability_block', { ruleValue }),
-  agentPickCapabilityFolder: (settings: AgentCapabilitySettingsInput) =>
-    command<AgentPickCapabilityFolderResult>('agent_pick_capability_folder', { settings }),
+  agentPickCapabilityFolder: () =>
+    command<AgentPickCapabilityFolderResult>('agent_pick_capability_folder'),
   agentUpsertProviderConfig: (provider: AgentProviderConfigInput) =>
     command<AgentProviderSettingsView>('agent_upsert_provider_config', { provider }),
   agentDeleteProviderConfig: (providerId: string) =>

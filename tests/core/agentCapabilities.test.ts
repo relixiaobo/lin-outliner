@@ -113,6 +113,36 @@ describe('agent capabilities', () => {
     expect(allowed.behavior).toBe('allow');
   });
 
+  test('rejects protected control state before opening a folder capability request', async () => {
+    const { root, workspace } = await workspaceFixture();
+    const protectedStoreRoot = path.join(root, 'user-data');
+    const scratchRoot = path.join(protectedStoreRoot, 'agent-scratch');
+    await mkdir(scratchRoot, { recursive: true });
+
+    for (const requiredFolder of [protectedStoreRoot, scratchRoot]) {
+      for (const folders of [[], [requiredFolder]]) {
+        const decision = evaluateAgentToolCapability({
+          toolName: 'bash',
+          args: {
+            command: `cat ${JSON.stringify(path.join(requiredFolder, 'state.json'))}`,
+            required_folders: [requiredFolder],
+          },
+          policy: {
+            workspaceRoot: workspace,
+            scratchRoot,
+            protectedStoreRoot,
+            capabilityConfig: { folders, blocks: [] },
+          },
+        });
+        expect(decision).toMatchObject({
+          behavior: 'unavailable',
+          code: 'control_plane_unavailable',
+          source: 'control_plane',
+        });
+      }
+    }
+  });
+
   test('keeps parser uncertainty audit-only', async () => {
     const { workspace } = await workspaceFixture();
     const commands = [

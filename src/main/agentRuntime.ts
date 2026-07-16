@@ -501,10 +501,18 @@ interface AgentToolCapabilityResolution {
 }
 
 interface AgentPendingCapability {
+  acquisitionKey: string;
   conversationId: string;
   runId?: string;
   request: AgentCapabilityRequestView;
   resolve: (resolution: AgentToolCapabilityResolution) => void;
+}
+
+interface AgentFolderCapabilityAcquisition {
+  key: string;
+  folders: string[];
+  requestIds: Set<string>;
+  visibleRequestId: string | null;
 }
 
 interface AgentPendingUserQuestion {
@@ -556,6 +564,11 @@ type PublicConversationRuntimeEventInput =
   | Omit<Extract<AgentRuntimeEvent, { type: 'user_question_resolved' }>, 'conversationId' | 'timestamp'>
   | Omit<Extract<AgentRuntimeEvent, { type: 'closed' }>, 'conversationId' | 'timestamp'>
   | Omit<Extract<AgentRuntimeEvent, { type: 'error' }>, 'conversationId' | 'timestamp'>;
+
+type CapabilityRuntimeEventInput = Extract<
+  PublicConversationRuntimeEventInput,
+  { type: 'capability_request' | 'capability_resolved' }
+>;
 
 /** Allow/deny filter passed to {@link createAgentTools} for a conversation's default agent. */
 interface AgentToolFilter {
@@ -778,6 +791,7 @@ export class AgentRuntime {
   private shutdownStarted = false;
   private pastChatsService: AgentPastChatsService | null = null;
   private pendingCapabilities = new Map<string, AgentPendingCapability>();
+  private folderCapabilityAcquisitions = new Map<string, AgentFolderCapabilityAcquisition>();
   private folderCapabilityRecoveryTail: Promise<void> = Promise.resolve();
   private pendingUserQuestions = new Map<string, AgentPendingUserQuestion>();
   private nextConversationId = 1;
@@ -1508,9 +1522,11 @@ export class AgentRuntime {
         return { resolved: false };
       }
     }
+    const acquisition = this.folderCapabilityAcquisitions.get(pending.acquisitionKey);
+    if (!acquisition || !acquisition.requestIds.has(requestId)) return { resolved: false };
     let resolvedStatus: AgentToolCapabilityResolution['status'] = resolution;
     let reason: AgentCapabilityResolutionReason | undefined = resolution === 'cancelled' ? 'user_cancelled' : undefined;
-    const folders = resolution === 'granted' ? pending.request.folders : [];
+    const folders = resolution === 'granted' ? acquisition.folders : [];
     if (resolution === 'granted') {
       try {
         if (folders.length === 0) throw new Error('Folder capability request has no folders.');
@@ -1523,20 +1539,12 @@ export class AgentRuntime {
       }
     }
 
-    this.pendingCapabilities.delete(requestId);
-    try {
-      this.emitConversationRuntimeEvent(conversationId, {
-        type: 'capability_resolved',
-        requestId,
-        resolution: resolvedStatus,
-      });
-    } finally {
-      pending.resolve({
-        status: resolvedStatus,
-        reason,
-        folders: resolvedStatus === 'granted' ? folders : undefined,
-      });
-    }
+    this.settleFolderCapabilityAcquisition(
+      acquisition,
+      resolvedStatus,
+      reason,
+      resolvedStatus === 'granted' ? folders : undefined,
+    );
     return { resolved: true };
   }
 
@@ -1558,7 +1566,7 @@ export class AgentRuntime {
       updatedFolders: resolution === 'granted' ? request.folders : undefined,
       reason: resolution === 'cancelled' ? 'user_cancelled' : undefined,
     }]);
-    this.emitConversationRuntimeEvent(conversationId, {
+    this.emitCapabilityRuntimeEvent(conversationId, {
       type: 'capability_resolved',
       requestId: request.requestId,
       resolution,
@@ -2529,6 +2537,7 @@ export class AgentRuntime {
   stopConversation(conversationId: string) {
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
+    this.clearPendingCapabilitiesForConversation(conversationId);
     void this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_stopped')
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
     for (const run of this.activeRunList(conversation)) run.agent.abort();
@@ -2559,11 +2568,11 @@ export class AgentRuntime {
       throw new Error('A Channel used by active Agent Session routing cannot be reset. Complete, cancel, or deliver the referenced work first.');
     }
     if (this.conversations.get(conversationId) !== conversation) return;
+    this.clearPendingCapabilitiesForConversation(conversationId);
     for (const run of this.activeRunList(conversation)) run.agent.abort();
     conversation.agent.reset();
     this.cleanupProviderConversationResources(conversationId);
     this.userViewContextReminderTracker.reset(conversationId);
-    await this.clearPendingCapabilitiesForConversation(conversationId, conversation);
     await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_reset');
     const previousConversation = conversation.eventState.conversation;
     await this.getEventStore().deleteConversation(conversationId);
@@ -2598,8 +2607,7 @@ export class AgentRuntime {
   closeConversation(conversationId: string) {
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
-    void this.clearPendingCapabilitiesForConversation(conversationId, conversation)
-      .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
+    this.clearPendingCapabilitiesForConversation(conversationId);
     void this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_closed')
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
     for (const run of this.activeRunList(conversation)) run.agent.abort();
@@ -2653,41 +2661,106 @@ export class AgentRuntime {
     return (this.delegatedExecutionFrames.get(conversationId)?.size ?? 0) > 0;
   }
 
-  private async clearPendingCapabilitiesForConversation(conversationId: string, conversation: AgentConversationState) {
-    for (const [requestId, pending] of [...this.pendingCapabilities]) {
+  private clearPendingCapabilitiesForConversation(conversationId: string): void {
+    const affectedAcquisitions = new Set<string>();
+    for (const pending of [...this.pendingCapabilities.values()]) {
       if (pending.conversationId !== conversationId) continue;
-      this.pendingCapabilities.delete(requestId);
-      this.emitConversationRuntimeEvent(conversationId, {
-        type: 'capability_resolved',
-        requestId,
-        resolution: 'cancelled',
-      });
-      pending.resolve({ status: 'cancelled', reason: 'runtime' });
+      affectedAcquisitions.add(pending.acquisitionKey);
+      this.cancelPendingCapability(pending, 'runtime', false);
     }
-    void conversation;
+    for (const key of affectedAcquisitions) this.promoteFolderCapabilityAcquisition(key);
   }
 
-  private async cancelPendingCapabilityForRuntime(
+  private cancelPendingCapabilityForRuntime(
     conversationId: string,
-    conversation: AgentConversationState,
     requestId: string,
     reason: AgentCapabilityResolutionReason,
-  ): Promise<boolean> {
+  ): boolean {
     const pending = this.pendingCapabilities.get(requestId);
     if (!pending || pending.conversationId !== conversationId) return false;
 
-    this.pendingCapabilities.delete(requestId);
     try {
-      this.emitConversationRuntimeEvent(conversationId, {
-        type: 'capability_resolved',
-        requestId,
-        resolution: 'cancelled',
-      });
-      pending.resolve({ status: 'cancelled', reason });
+      this.cancelPendingCapability(pending, reason, true);
     } catch (error) {
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
-    void conversation;
+    return true;
+  }
+
+  private cancelPendingCapability(
+    pending: AgentPendingCapability,
+    reason: AgentCapabilityResolutionReason,
+    promote: boolean,
+  ): void {
+    const acquisition = this.folderCapabilityAcquisitions.get(pending.acquisitionKey);
+    this.pendingCapabilities.delete(pending.request.requestId);
+    if (!acquisition) {
+      pending.resolve({ status: 'cancelled', reason });
+      return;
+    }
+
+    const wasVisible = acquisition.visibleRequestId === pending.request.requestId;
+    acquisition.requestIds.delete(pending.request.requestId);
+    if (wasVisible) {
+      acquisition.visibleRequestId = null;
+      this.emitCapabilityRuntimeEvent(pending.conversationId, {
+        type: 'capability_resolved',
+        requestId: pending.request.requestId,
+        resolution: 'cancelled',
+      });
+    }
+    pending.resolve({ status: 'cancelled', reason });
+    if (acquisition.requestIds.size === 0) {
+      this.folderCapabilityAcquisitions.delete(acquisition.key);
+    } else if (wasVisible && promote) {
+      this.promoteFolderCapabilityAcquisition(acquisition.key);
+    }
+  }
+
+  private promoteFolderCapabilityAcquisition(key: string): void {
+    const acquisition = this.folderCapabilityAcquisitions.get(key);
+    if (!acquisition || acquisition.visibleRequestId) return;
+    for (const requestId of acquisition.requestIds) {
+      const pending = this.pendingCapabilities.get(requestId);
+      if (!pending) {
+        acquisition.requestIds.delete(requestId);
+        continue;
+      }
+      acquisition.visibleRequestId = requestId;
+      this.emitCapabilityRuntimeEvent(pending.conversationId, {
+        type: 'capability_request',
+        requestId,
+        request: pending.request,
+      });
+      return;
+    }
+    this.folderCapabilityAcquisitions.delete(key);
+  }
+
+  private settleFolderCapabilityAcquisition(
+    acquisition: AgentFolderCapabilityAcquisition,
+    status: AgentToolCapabilityResolution['status'],
+    reason?: AgentCapabilityResolutionReason,
+    folders?: string[],
+  ): boolean {
+    if (this.folderCapabilityAcquisitions.get(acquisition.key) !== acquisition) return false;
+    this.folderCapabilityAcquisitions.delete(acquisition.key);
+    const visible = acquisition.visibleRequestId
+      ? this.pendingCapabilities.get(acquisition.visibleRequestId)
+      : undefined;
+    if (visible) {
+      this.emitCapabilityRuntimeEvent(visible.conversationId, {
+        type: 'capability_resolved',
+        requestId: visible.request.requestId,
+        resolution: status,
+      });
+    }
+    for (const requestId of acquisition.requestIds) {
+      const pending = this.pendingCapabilities.get(requestId);
+      if (!pending) continue;
+      this.pendingCapabilities.delete(requestId);
+      pending.resolve({ status, reason, folders });
+    }
     return true;
   }
 
@@ -4397,6 +4470,7 @@ export class AgentRuntime {
 
   private async recoverGrantedFolderRequests(): Promise<void> {
     const capabilityConfig = await readAgentCapabilityConfig();
+    this.resolveCoveredForegroundCapabilityAcquisitions(capabilityConfig.folders);
     const entries = await this.getEventStore().listConversationIndexEntries();
     for (const entry of entries) {
       if (this.shutdownStarted) return;
@@ -4416,6 +4490,13 @@ export class AgentRuntime {
           await this.resolveDurableFolderRequest(entry.id, conversation, request, 'granted');
         }
       }
+    }
+  }
+
+  private resolveCoveredForegroundCapabilityAcquisitions(grantedFolders: readonly string[]): void {
+    for (const acquisition of [...this.folderCapabilityAcquisitions.values()]) {
+      if (!folderRequestsCovered(acquisition.folders, grantedFolders)) continue;
+      this.settleFolderCapabilityAcquisition(acquisition, 'granted', undefined, acquisition.folders);
     }
   }
 
@@ -5521,7 +5602,10 @@ export class AgentRuntime {
   ): AgentCapabilityRequestView[] {
     const byRequestId = new Map<string, AgentCapabilityRequestView>();
     for (const pending of this.pendingCapabilities.values()) {
-      if (pending.conversationId === conversationId) byRequestId.set(pending.request.requestId, pending.request);
+      const acquisition = this.folderCapabilityAcquisitions.get(pending.acquisitionKey);
+      if (acquisition?.visibleRequestId === pending.request.requestId && pending.conversationId === conversationId) {
+        byRequestId.set(pending.request.requestId, pending.request);
+      }
     }
     const durable = Object.values(eventState.folderCapabilityRequests)
       .filter((request) => request.status === 'pending')
@@ -5841,6 +5925,20 @@ export class AgentRuntime {
       resolution: input.resolution,
       timestamp,
     });
+  }
+
+  private emitCapabilityRuntimeEvent(conversationId: string, input: CapabilityRuntimeEventInput): void {
+    try {
+      this.emitConversationRuntimeEvent(conversationId, input);
+    } catch (error) {
+      this.reportWarn(
+        'agent-runtime',
+        `Failed to deliver ${input.type} to the renderer.`,
+        error,
+        { conversationId, operation: input.type },
+        'capability-runtime-event-delivery-failed',
+      );
+    }
   }
 
   private emit(payload: AgentRuntimeEvent) {
@@ -6645,6 +6743,23 @@ export class AgentRuntime {
     if (signal?.aborted) return { status: 'cancelled', reason: 'run_aborted' };
 
     const requestId = input.requestId;
+    const folders = [...input.decision.request.folders];
+    const capabilityConfig = await readAgentCapabilityConfig();
+    if (folderRequestsCovered(folders, capabilityConfig.folders)) {
+      return { status: 'granted' };
+    }
+    const acquisitionKey = folderCapabilityAcquisitionKey(folders);
+    let acquisition = this.folderCapabilityAcquisitions.get(acquisitionKey);
+    const visible = !acquisition;
+    if (!acquisition) {
+      acquisition = {
+        key: acquisitionKey,
+        folders,
+        requestIds: new Set(),
+        visibleRequestId: requestId,
+      };
+      this.folderCapabilityAcquisitions.set(acquisitionKey, acquisition);
+    }
     const request: AgentCapabilityRequestView = {
       requestId,
       conversationId: conversationId,
@@ -6655,21 +6770,17 @@ export class AgentRuntime {
       target: input.decision.request.target,
       reason: input.decision.reason,
       details: input.decision.request.details,
-      folders: input.decision.request.folders,
+      folders,
       requestedByAgentId,
     };
-    this.emitConversationRuntimeEvent(conversationId, {
-      type: 'capability_request',
-      requestId: request.requestId,
-      request,
-    });
 
     return new Promise<AgentToolCapabilityResolution>((resolve) => {
       const onAbort = () => {
-        void this.cancelPendingCapabilityForRuntime(conversationId, conversation, requestId, 'run_aborted');
+        this.cancelPendingCapabilityForRuntime(conversationId, requestId, 'run_aborted');
       };
 
       const pendingCapability: AgentPendingCapability = {
+        acquisitionKey,
         conversationId,
         runId: this.activeRunId(conversation) ?? undefined,
         request,
@@ -6679,6 +6790,14 @@ export class AgentRuntime {
         },
       };
       this.pendingCapabilities.set(requestId, pendingCapability);
+      acquisition.requestIds.add(requestId);
+      if (visible) {
+        this.emitCapabilityRuntimeEvent(conversationId, {
+          type: 'capability_request',
+          requestId: request.requestId,
+          request,
+        });
+      }
       signal?.addEventListener('abort', onAbort, { once: true });
       if (signal?.aborted) onAbort();
     });
@@ -6787,7 +6906,7 @@ export class AgentRuntime {
     const record = origin.eventState.folderCapabilityRequests[input.requestId];
     if (!record) return;
     const request = folderCapabilityRequestView(record);
-    this.emitConversationRuntimeEvent(route.conversationId, {
+    this.emitCapabilityRuntimeEvent(route.conversationId, {
       type: 'capability_request',
       requestId: input.requestId,
       request,
@@ -9013,6 +9132,14 @@ function capabilityCancelledToolResultMessage(toolName: string, resolution: Agen
   });
 }
 
+function folderCapabilityAcquisitionKey(folders: readonly string[]): string {
+  return [...new Set(folders.map((folder) => path.resolve(folder)))].sort().join('\0');
+}
+
+function folderRequestsCovered(requestedFolders: readonly string[], grantedFolders: readonly string[]): boolean {
+  return requestedFolders.every((folder) => grantedFolders.some((root) => isPathInside(root, folder)));
+}
+
 function folderCapabilityRequestView(request: AgentFolderCapabilityRequestRecord): AgentCapabilityRequestView {
   const target = request.folders.join(', ');
   return {
@@ -9155,9 +9282,10 @@ function createConfiguredAgent(
           ...activeSkillReadRoots.map((root) => ({ access: 'read' as const, root })),
           ...capabilityConfig.folders.map((root) => ({ access: 'write' as const, root })),
         ];
-        const signature = roots.map((root) => `${root.access}:${root.root}`).join('\0');
+        const revocationGeneration = capabilityConfig.revocationGeneration ?? 0;
+        const signature = `${revocationGeneration}\0${roots.map((root) => `${root.access}:${root.root}`).join('\0')}`;
         if (signature === syncedLocalCapabilityRootSignature) return;
-        setAgentLocalCapabilityRoots(options.localWorkspace, roots);
+        setAgentLocalCapabilityRoots(options.localWorkspace, roots, revocationGeneration);
         syncedLocalCapabilityRootSignature = signature;
       };
       syncLocalCapabilityRoots();

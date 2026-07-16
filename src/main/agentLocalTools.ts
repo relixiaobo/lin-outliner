@@ -40,7 +40,7 @@ import {
   protectedRootForPath,
   type FolderCapabilitySnapshot,
 } from './agentFolderCapabilities';
-import { getAgentProcessExecutor, processSandboxDenied } from './agentProcessExecutor';
+import { getAgentProcessExecutor } from './agentProcessExecutor';
 
 export { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 
@@ -273,7 +273,6 @@ export interface BashData {
   backgroundTaskId?: string;
   backgroundedByUser?: boolean;
   assistantAutoBackgrounded?: boolean;
-  folderAccessRequired?: boolean;
   returnCodeInterpretation?: string;
   noOutputExpected?: boolean;
   structuredContent?: unknown[];
@@ -297,7 +296,6 @@ export interface LocalBashRunResult {
   backgroundTaskId?: string;
   backgroundedByUser?: boolean;
   assistantAutoBackgrounded?: boolean;
-  folderAccessRequired?: boolean;
   returnCodeInterpretation?: string;
   noOutputExpected?: boolean;
   structuredContent?: unknown[];
@@ -720,6 +718,7 @@ export function createAgentLocalWorkspaceContext(
 export function setAgentLocalCapabilityRoots(
   workspace: AgentLocalWorkspaceContext,
   roots: readonly AgentLocalCapabilityRoot[],
+  revocationGeneration = 0,
 ): void {
   workspace.capabilityRoots = roots
     .flatMap((entry): ResolvedAgentLocalCapabilityRoot[] => {
@@ -739,6 +738,7 @@ export function setAgentLocalCapabilityRoots(
     activeSkillReadRoots: workspace.capabilityRoots.filter((entry) => entry.access === 'read').map((entry) => entry.realRoot),
     includeSystemRoots: true,
     protectedRoots: workspace.protectedStoreRoot ? [workspace.protectedStoreRoot] : [],
+    revocationGeneration,
   }, workspace.capabilityRoots.filter((entry) => entry.access === 'write').map((entry) => entry.realRoot));
 }
 
@@ -1404,11 +1404,9 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
               : undefined,
             metrics: metrics(started, result),
           })
-          : errorEnvelope<BashData>('bash', result.folderAccessRequired ? 'folder_access_required' : result.interrupted ? 'command_interrupted' : 'command_failed', result.returnCodeInterpretation ?? interpretation.message ?? 'Command was interrupted.', {
+          : errorEnvelope<BashData>('bash', result.interrupted ? 'command_interrupted' : 'command_failed', result.returnCodeInterpretation ?? interpretation.message ?? 'Command was interrupted.', {
             data: result,
-            instructions: result.folderAccessRequired
-              ? 'Add the missing folder to required_folders and retry. The command was not replayed automatically.'
-              : 'Inspect stdout and stderr. Fix the command or inputs, then retry if appropriate.',
+            instructions: 'Inspect stdout and stderr. If the OS denied a known external folder, declare it in required_folders before retrying; otherwise fix the command or inputs.',
             metrics: metrics(started, result),
           });
         return agentToolResult(envelope, visibleBash(result));
@@ -1911,18 +1909,14 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
           : timedOut
             ? { isError: true, message: `Command timed out after ${timeoutMs}ms.` }
             : interpretCommandResult(params.command, code);
-        const folderAccessRequired = processSandboxDenied(output.stderr);
         resolve({
           stdout: output.stdout,
           stderr: output.stderr,
           interrupted,
           exitCode: code,
           command: params.command,
-          returnCodeInterpretation: folderAccessRequired
-            ? 'The command attempted to access a folder outside its declared capabilities. Retry with that folder in required_folders.'
-            : interpretation.message,
+          returnCodeInterpretation: interpretation.message,
           noOutputExpected: isSilentCommand(params.command),
-          folderAccessRequired,
           persistedOutputPath: output.persistedOutputPath,
           persistedOutputSize: output.persistedOutputSize,
         });

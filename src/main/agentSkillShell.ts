@@ -155,6 +155,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
     activeSkillReadRoots: input.trustedReadRoots,
     includeSystemRoots: true,
     protectedRoots: input.protectedStoreRoot ? [input.protectedStoreRoot] : [],
+    revocationGeneration: capabilityConfig.revocationGeneration ?? 0,
   }, capabilityConfig.folders);
   let result: LocalBashRunResult;
   try {

@@ -138,8 +138,10 @@ full filesystem authority under the user's OS account, while the protected
 control container remains excluded. The folder request shows the exact canonical
 root and offers **Grant and remember** / **Cancel** only.
 
-Revocation commits before publication and terminates active foreground or
-background processes whose immutable snapshot contains the revoked user root.
+Revocation increments a serialized generation, commits before publication, and
+terminates active foreground or background processes whose immutable snapshot
+contains the revoked user root. Spawn validates the generation on both sides of
+sandbox preparation so a stale snapshot cannot start after revocation.
 
 ### Unified Process Executor
 
@@ -152,18 +154,20 @@ On macOS, `MacOSFileSandboxAdapter` continues to use one probed Seatbelt adapter
 The profile:
 
 1. allows ordinary process, network, IPC, and OS behavior;
-2. allows reads/writes from the capability snapshot;
-3. denies the protected `userData` container for reads and writes;
-4. re-allows only the app-owned workdir/scratch exceptions inside that container.
+2. denies `/Users` and `/Volumes` recursively, then re-allows snapshot reads;
+3. allows writes only inside snapshot write roots;
+4. denies the protected `userData` container for reads and writes;
+5. re-allows only the app-owned workdir/scratch exceptions inside that container.
 
 If the adapter is unavailable, child processes fail honestly because Tenon
 cannot enforce either folder capabilities or control-plane isolation. There is
 no model-facing bypass.
 
-Undeclared process filesystem access returns recoverable
-`folder_access_required`; the model issues a fresh call with `required_folders`,
-which preflights before process start. Tenon never replays a partially started
-command.
+Undeclared process filesystem access returns its real sandbox error. The model
+issues a fresh call with `required_folders`, which preflights before process
+start. Generic OS authorization errors are never inferred as folder failures,
+and declared control-plane roots return unavailable without UI. Tenon never
+replays a partially started command.
 
 ### Credential Provenance
 
@@ -187,7 +191,9 @@ those effects.
 Remove private-network rejection from the unprivileged `web_fetch` route so
 localhost and intranet development behave like bash networking. A future fetch
 route that carries privileged cookies or credentials must be a distinct tool
-with its own service contract, not a hidden exception here.
+with its own service contract, not a hidden exception here. Direct HTTP uses a
+dedicated session with credentials omitted; browser fallback uses a separate
+reset, non-persistent session and never `defaultSession`.
 
 ### Skills And Scoped Runs
 
@@ -211,7 +217,8 @@ visible tool.
 1. A file tool targets a path or bash declares `required_folders`.
 2. Ownership invariants reject private control-plane access without UI.
 3. The folder service computes uncovered canonical roots.
-4. The runtime creates one deduplicated folder request before side effects.
+4. A runtime-wide registry creates one deduplicated request per canonical folder
+   set across concurrent Runs/conversations while retaining per-call audit.
 5. Grant persists the roots, re-evaluates, and executes once; Cancel aborts the
    call.
 
@@ -241,6 +248,10 @@ Settings -> Security contains:
 - **Your blocks**: list and remove explicit user blocks;
 - **System boundary**: explain that Tenon control state is private while host
   operations follow the user's OS authority.
+
+Folder picking is an atomic grant. Save applies only the draft's explicit
+folder/block removal delta to current state, so concurrent grants cannot be
+overwritten and unsaved removals are not committed by the picker.
 
 Audit descriptors remain human-readable activity metadata. They cannot change
 the authorization result.

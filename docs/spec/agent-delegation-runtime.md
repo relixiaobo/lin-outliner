@@ -74,7 +74,7 @@ read-only tool allow-list.
 
 ## Issue Session Mapping
 
-When `agent_session_start` is approved and eligible:
+When `agent_session_start` is requested and eligible:
 
 1. Runtime prepares the current Issue revision against the current document
    projection. Preview is non-mutating; request mode resolves symbolic output

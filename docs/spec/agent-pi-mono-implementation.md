@@ -1109,9 +1109,12 @@ Tool call starts
   -> pi-agent-core continues
 ```
 
-Unavailable calls return a structured `operation_unavailable` result. A missing
-folder returns `folder_access_required`; the original process has not started.
-The agent can continue independent work or explain the concrete blocker.
+Unavailable calls return a structured `operation_unavailable` result. An
+unattended call with a declared missing folder returns `folder_access_required`;
+the original process has not started. An undeclared process sandbox denial stays
+`command_failed` with the native error and must be retried as a fresh call with
+`required_folders`. The agent can continue independent work or explain the
+concrete blocker.
 
 ## Event Mapping
 

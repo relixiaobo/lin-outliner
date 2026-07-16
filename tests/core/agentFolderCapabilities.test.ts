@@ -26,7 +26,8 @@ describe('folder capability service', () => {
     await mkdir(nested);
     const service = new FolderCapabilityService(storePath);
 
-    await service.write({ folders: [nested, root, nested], blocks: ['Action(git.publish_remote)'] });
+    await service.grantMany([nested, root, nested]);
+    await service.appendBlock('Action(git.publish_remote)');
     const canonicalRoot = await realpath(root);
 
     expect(await service.read()).toEqual({
@@ -53,9 +54,14 @@ describe('folder capability service', () => {
 
     expect(next.folders).toEqual([]);
     expect(revoked).toEqual([canonicalGranted]);
+    expect(service.currentRevocationGeneration()).toBe(1);
+    expect(await service.readState()).toEqual({
+      document: { folders: [], blocks: [] },
+      revocationGeneration: 1,
+    });
   });
 
-  test('publishes revocations when Settings replaces the folder list', async () => {
+  test('publishes revocations when Settings applies a removal patch', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-folder-capability-settings-'));
     roots.push(root);
     const first = path.join(root, 'first');
@@ -64,16 +70,17 @@ describe('folder capability service', () => {
     await mkdir(second);
     const store = path.join(root, 'permissions.json');
     const service = new FolderCapabilityService(store);
-    await service.write({ folders: [first, second], blocks: [] });
+    await service.grantMany([first, second]);
 
     const revoked: Array<{ folder: string; persisted: string[] }> = [];
     service.onRevoked(async (folder) => {
       revoked.push({ folder, persisted: (await service.read()).folders });
     });
 
-    await service.write({ folders: [second], blocks: [] });
+    await service.applyRemovalPatch({ folders: [first] });
 
     expect(revoked).toEqual([{ folder: await realpath(first), persisted: [await realpath(second)] }]);
+    expect(service.currentRevocationGeneration()).toBe(1);
   });
 
   test('publishes only newly persistent folder capabilities', async () => {
@@ -111,6 +118,25 @@ describe('folder capability service', () => {
     await Promise.all([service.grant(first), service.grant(second)]);
 
     expect(grants.sort()).toEqual([await realpath(first), await realpath(second)].sort());
+  });
+
+  test('does not turn a later grant into an implicit revocation of a missing root', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-folder-grant-preserves-missing-'));
+    const first = path.join(root, 'first');
+    const second = path.join(root, 'second');
+    roots.push(root);
+    await mkdir(first);
+    await mkdir(second);
+    const canonicalFirst = await realpath(first);
+    const canonicalSecond = await realpath(second);
+    const service = new FolderCapabilityService(path.join(root, 'permissions.json'));
+    await service.grant(first);
+    await rm(first, { recursive: true });
+
+    await service.grant(second);
+
+    expect((await service.read()).folders.sort()).toEqual([canonicalFirst, canonicalSecond].sort());
+    expect(service.currentRevocationGeneration()).toBe(0);
   });
 
   test('derives the nearest existing folder and preflights missing capabilities', async () => {

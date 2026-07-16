@@ -18,7 +18,11 @@ export function getFolderCapabilityService(): FolderCapabilityService {
 }
 
 export async function readAgentCapabilityConfig(): Promise<AgentCapabilityConfig> {
-  return parseAgentCapabilitySettings(await getFolderCapabilityService().read());
+  const state = await getFolderCapabilityService().readState();
+  return {
+    ...parseAgentCapabilitySettings(state.document),
+    revocationGeneration: state.revocationGeneration,
+  };
 }
 
 export async function readAgentCapabilitySettings(): Promise<Required<AgentCapabilitySettings>> {
@@ -27,15 +31,6 @@ export async function readAgentCapabilitySettings(): Promise<Required<AgentCapab
 
 export async function readAgentCapabilitySettingsView() {
   return agentCapabilitySettingsViewFromConfig(await readAgentCapabilityConfig());
-}
-
-export async function writeAgentCapabilitySettings(settings: AgentCapabilitySettings): Promise<AgentCapabilityConfig> {
-  const document = await getFolderCapabilityService().write(settings);
-  return parseAgentCapabilitySettings(document);
-}
-
-export async function writeAgentCapabilitySettingsView(settings: AgentCapabilitySettings) {
-  return agentCapabilitySettingsViewFromConfig(await writeAgentCapabilitySettings(settings));
 }
 
 export async function grantAgentFolderCapability(folder: string): Promise<AgentCapabilityConfig> {
@@ -50,10 +45,6 @@ export async function grantAgentFolderCapabilityView(folder: string) {
   return agentCapabilitySettingsViewFromConfig(await grantAgentFolderCapability(folder));
 }
 
-export async function revokeAgentFolderCapability(folder: string): Promise<AgentCapabilityConfig> {
-  return parseAgentCapabilitySettings(await getFolderCapabilityService().revoke(folder));
-}
-
 export async function appendAgentCapabilityBlock(ruleValue: string): Promise<AgentCapabilityConfig> {
   return parseAgentCapabilitySettings(await getFolderCapabilityService().appendBlock(ruleValue));
 }
@@ -62,8 +53,22 @@ export async function appendAgentCapabilityBlockView(ruleValue: string) {
   return agentCapabilitySettingsViewFromConfig(await appendAgentCapabilityBlock(ruleValue));
 }
 
-export async function removeAgentCapabilityBlock(ruleValue: string): Promise<AgentCapabilityConfig> {
-  return parseAgentCapabilitySettings(await getFolderCapabilityService().removeBlock(ruleValue));
+export async function applyAgentCapabilitySettingsPatch(input: {
+  revokeFolders?: unknown;
+  removeBlocks?: unknown;
+}): Promise<AgentCapabilityConfig> {
+  const document = await getFolderCapabilityService().applyRemovalPatch({
+    folders: normalizedRuleList(input.revokeFolders),
+    blocks: normalizedRuleList(input.removeBlocks),
+  });
+  return parseAgentCapabilitySettings(document);
+}
+
+export async function applyAgentCapabilitySettingsPatchView(input: {
+  revokeFolders?: unknown;
+  removeBlocks?: unknown;
+}) {
+  return agentCapabilitySettingsViewFromConfig(await applyAgentCapabilitySettingsPatch(input));
 }
 
 export function normalizedRuleList(value: unknown): string[] {

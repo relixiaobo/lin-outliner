@@ -1984,6 +1984,18 @@ describe('agent local tools', () => {
     });
   });
 
+  test('bash keeps non-filesystem OS authorization failures as command failures', async () => {
+    if (process.platform !== 'darwin') return;
+    await withWorkspace(async (workspaceRoot) => {
+      const result = await executeTool(workspaceRoot, 'bash', { command: 'kill -0 1' });
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('command_failed');
+      expect(result.instructions).not.toContain('required_folders and retry');
+      expect(result.data).not.toHaveProperty('folderAccessRequired');
+    });
+  });
+
   test('bash treats semantic non-zero exits as successful tool results', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const filePath = path.join(workspaceRoot, 'notes.txt');

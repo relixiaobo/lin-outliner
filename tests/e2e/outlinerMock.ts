@@ -2072,9 +2072,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(agentCapabilities) as T;
         }
         if (cmd === 'agent_pick_capability_folder') {
-          const next = args.settings as { folders?: string[]; blocks?: string[] };
-          agentCapabilities.folders = Array.isArray(next.folders) ? next.folders.map(String) : agentCapabilities.folders;
-          agentCapabilities.blocks = Array.isArray(next.blocks) ? next.blocks.map(String) : agentCapabilities.blocks;
           const path = '/mock/handoff-folder';
           if (!agentCapabilities.folders.includes(path)) {
             agentCapabilities.folders.push(path);
@@ -2113,10 +2110,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (options.agentDefinitionsDelayMs) await delay(options.agentDefinitionsDelayMs);
           return clone(agentDefinitions) as T;
         }
-        if (cmd === 'agent_update_capability_settings') {
-          const next = args.settings as { folders?: string[]; blocks?: string[] };
-          agentCapabilities.folders = Array.isArray(next.folders) ? next.folders.map(String) : [];
-          agentCapabilities.blocks = Array.isArray(next.blocks) ? next.blocks.map(String) : [];
+        if (cmd === 'agent_apply_capability_settings_patch') {
+          const patch = args.patch as { revokeFolders?: string[]; removeBlocks?: string[] };
+          const revoked = Array.isArray(patch.revokeFolders) ? patch.revokeFolders.map(String) : [];
+          const removed = Array.isArray(patch.removeBlocks) ? patch.removeBlocks.map(String) : [];
+          agentCapabilities.folders = agentCapabilities.folders.filter((folder) => !revoked.includes(folder));
+          agentCapabilities.blocks = agentCapabilities.blocks.filter((block) => !removed.includes(block));
           return clone(agentCapabilities) as T;
         }
         if (cmd === 'agent_append_capability_block') {

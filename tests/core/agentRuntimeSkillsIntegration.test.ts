@@ -197,14 +197,16 @@ async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 
   }
 }
 
-function createWindowSink() {
+function createWindowSink(options: { throwOn?: AgentRuntimeEvent['type'] } = {}) {
   const events: AgentRuntimeEvent[] = [];
   return {
     events,
     window: {
       webContents: {
         send: (channel: string, event: AgentRuntimeEvent) => {
-          if (channel === LIN_AGENT_EVENT_CHANNEL) events.push(event);
+          if (channel !== LIN_AGENT_EVENT_CHANNEL) return;
+          if (event.type === options.throwOn) throw new Error(`Renderer unavailable for ${event.type}.`);
+          events.push(event);
         },
       },
     },
@@ -2132,7 +2134,7 @@ describe('agent runtime skill integration', () => {
     });
   });
 
-  test('persists a folder grant and reuses it without another prompt', async () => {
+  test('persists and reuses a folder grant when resolved-event delivery races a renderer reload', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-grant-'));
     const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-grant-outside-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-grant-data-'));
@@ -2151,7 +2153,7 @@ describe('agent runtime skill integration', () => {
     ], () => undefined);
 
     const { AgentRuntime: Runtime } = await loadRuntimeModule();
-    const sink = createWindowSink();
+    const sink = createWindowSink({ throwOn: 'capability_resolved' });
     const runtime = new Runtime(
       () => sink.window as never,
       hostFor(Core.new()),
@@ -2184,6 +2186,144 @@ describe('agent runtime skill integration', () => {
     expect(events.find((event) => (
       event.type === 'tool.capability.checked' && event.toolCallId === 'tool-folder-grant-second'
     ))).toMatchObject({ outcome: 'allow', source: 'folder_capability' });
+  });
+
+  test('deduplicates concurrent folder acquisition across conversations', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-dedupe-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-dedupe-outside-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-dedupe-data-'));
+    roots.push(localRoot, outsideRoot, dataRoot);
+    const outsideFile = path.join(outsideRoot, 'shared.txt');
+    await writeFile(outsideFile, 'shared-folder-content');
+    const script = scriptedStream([
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-folder-dedupe-a' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-folder-dedupe-b' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxText('First concurrent read complete.')),
+      fauxAssistantMessage(fauxText('Second concurrent read complete.')),
+    ], () => undefined);
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const first = await runtime.restoreLatestConversation();
+    const second = await runtime.createConversation({ title: 'Concurrent folder request' });
+    const sends = [
+      runtime.sendMessage(first.conversationId, 'Read the shared file.'),
+      runtime.sendMessage(second.conversationId, 'Read the shared file too.'),
+    ];
+    await waitFor(() => script.pendingCount() === 2);
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const capabilityRequests = sink.events.filter((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
+    ));
+    expect(capabilityRequests).toHaveLength(1);
+
+    const { grantAgentFolderCapability } = await import('../../src/main/agentCapabilityStore');
+    await grantAgentFolderCapability(outsideRoot);
+    runtime.folderCapabilitiesChanged();
+    await Promise.all(sends);
+
+    expect(sink.events.filter((event) => event.type === 'capability_request')).toHaveLength(1);
+    for (const conversationId of [first.conversationId, second.conversationId]) {
+      const events = await new AgentEventStore(dataRoot).readEvents(conversationId);
+      expect(events.some((event) => (
+        event.type === 'tool.capability.checked' && event.outcome === 'capability_required'
+      ))).toBe(true);
+      expect(events.some((event) => (
+        event.type === 'tool.capability.resolved'
+        && event.status === 'available'
+        && event.resolvedBy === 'folder_grant'
+      ))).toBe(true);
+    }
+  });
+
+  test('promotes a shared folder waiter when the visible conversation closes', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-promote-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-promote-outside-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-promote-data-'));
+    roots.push(localRoot, outsideRoot, dataRoot);
+    const outsideFile = path.join(outsideRoot, 'shared.txt');
+    await writeFile(outsideFile, 'shared-folder-content');
+    const script = scriptedStream([
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-folder-promote-a' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-folder-promote-b' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxText('Remaining read complete.')),
+    ], () => undefined);
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const first = await runtime.restoreLatestConversation();
+    const second = await runtime.createConversation({ title: 'Promoted folder request' });
+    const sends = new Map([
+      [first.conversationId, runtime.sendMessage(first.conversationId, 'Read the shared file.').catch(() => undefined)],
+      [second.conversationId, runtime.sendMessage(second.conversationId, 'Read the shared file too.').catch(() => undefined)],
+    ]);
+    await waitFor(() => script.pendingCount() === 1);
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const visible = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
+    ));
+    if (!visible) throw new Error('Expected a visible folder capability request.');
+    const remainingConversationId = visible.conversationId === first.conversationId
+      ? second.conversationId
+      : first.conversationId;
+
+    runtime.closeConversation(visible.conversationId);
+    await waitFor(() => sink.events.filter((event) => event.type === 'capability_request').length === 2);
+    const promoted = sink.events.filter((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
+    )).at(-1);
+    if (!promoted) throw new Error('Expected the remaining folder waiter to be promoted.');
+    expect(promoted.conversationId).toBe(remainingConversationId);
+    expect(promoted.requestId).not.toBe(visible.requestId);
+
+    await runtime.resolveCapability(remainingConversationId, promoted.requestId, 'granted');
+    await Promise.all(sends.values());
+
+    expect(sink.events.filter((event) => event.type === 'capability_request')).toHaveLength(2);
+    expect(sink.events).toContainEqual(expect.objectContaining({
+      type: 'capability_resolved',
+      conversationId: visible.conversationId,
+      requestId: visible.requestId,
+      resolution: 'cancelled',
+    }));
+    expect(sink.events).toContainEqual(expect.objectContaining({
+      type: 'capability_resolved',
+      conversationId: remainingConversationId,
+      requestId: promoted.requestId,
+      resolution: 'granted',
+    }));
   });
 
   test('does not downgrade a failed persistent folder grant to allow-once', async () => {

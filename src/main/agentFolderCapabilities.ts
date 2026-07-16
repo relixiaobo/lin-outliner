@@ -6,6 +6,7 @@ import {
   PRIVATE_JSON_FILE_OPTIONS,
   readJsonOrDefault,
   updateJsonFile,
+  withFileWriteLock,
 } from './jsonFileStore';
 
 export type FolderCapabilityAccess = 'read' | 'write';
@@ -29,6 +30,7 @@ export interface FolderCapabilityProtectedRoot {
 }
 
 export interface FolderCapabilitySnapshot {
+  revocationGeneration: number;
   roots: readonly FolderCapabilityRoot[];
   readRoots: readonly string[];
   writeRoots: readonly string[];
@@ -41,8 +43,14 @@ export interface FolderCapabilityDocument {
   blocks: string[];
 }
 
+export interface FolderCapabilityRemovalPatch {
+  folders?: readonly string[];
+  blocks?: readonly string[];
+}
+
 export interface FolderCapabilityContext {
   workspaceRoot: string;
+  revocationGeneration?: number;
   scratchRoot?: string;
   activeSkillReadRoots?: readonly string[];
   deniedWrites?: readonly FolderCapabilityWriteDeny[];
@@ -58,6 +66,7 @@ const EMPTY_DOCUMENT: FolderCapabilityDocument = { folders: [], blocks: [] };
 export class FolderCapabilityService {
   private readonly revocationListeners = new Set<FolderRevocationListener>();
   private readonly grantListeners = new Set<FolderGrantListener>();
+  private revocationGeneration = 0;
 
   constructor(private readonly filePath: string) {}
 
@@ -66,22 +75,15 @@ export class FolderCapabilityService {
     return normalizeDocument(raw);
   }
 
-  async write(input: unknown): Promise<FolderCapabilityDocument> {
-    const desired = await canonicalDocument(input);
-    let previous = EMPTY_DOCUMENT;
-    const persisted = await updateJsonFile(
-      this.filePath,
-      EMPTY_DOCUMENT,
-      normalizeDocument,
-      (current) => {
-        previous = current;
-        return desired;
-      },
-      PRIVATE_JSON_FILE_OPTIONS,
-    );
-    await this.publishRevokedFolders(previous, persisted);
-    await this.publishGrantedFolders(previous, persisted);
-    return persisted;
+  async readState(): Promise<{ document: FolderCapabilityDocument; revocationGeneration: number }> {
+    return withFileWriteLock(this.filePath, async () => ({
+      document: normalizeDocument(await readJsonOrDefault(this.filePath, EMPTY_DOCUMENT)),
+      revocationGeneration: this.revocationGeneration,
+    }));
+  }
+
+  currentRevocationGeneration(): number {
+    return this.revocationGeneration;
   }
 
   async grant(folderInput: string): Promise<FolderCapabilityDocument> {
@@ -91,12 +93,12 @@ export class FolderCapabilityService {
       this.filePath,
       EMPTY_DOCUMENT,
       normalizeDocument,
-      async (current) => {
+      (current) => {
         previous = current;
-        return canonicalDocument({
-          folders: [...current.folders, folder],
+        return {
+          folders: compactPaths([...current.folders, folder]),
           blocks: current.blocks,
-        });
+        };
       },
       PRIVATE_JSON_FILE_OPTIONS,
     );
@@ -111,12 +113,12 @@ export class FolderCapabilityService {
       this.filePath,
       EMPTY_DOCUMENT,
       normalizeDocument,
-      async (current) => {
+      (current) => {
         previous = current;
-        return canonicalDocument({
-          folders: [...current.folders, ...folders],
+        return {
+          folders: compactPaths([...current.folders, ...folders]),
           blocks: current.blocks,
-        });
+        };
       },
       PRIVATE_JSON_FILE_OPTIONS,
     );
@@ -135,10 +137,12 @@ export class FolderCapabilityService {
       (current) => {
         previous = current;
         folder = current.folders.find((candidate) => samePath(candidate, requested)) ?? requested;
-        return {
+        const next = {
           folders: current.folders.filter((candidate) => !samePath(candidate, folder)),
           blocks: current.blocks,
         };
+        if (next.folders.length !== current.folders.length) this.revocationGeneration += 1;
+        return next;
       },
       PRIVATE_JSON_FILE_OPTIONS,
     );
@@ -148,14 +152,27 @@ export class FolderCapabilityService {
     return next;
   }
 
-  async replaceBlocks(blocks: readonly string[]): Promise<FolderCapabilityDocument> {
-    return updateJsonFile(
+  async applyRemovalPatch(input: FolderCapabilityRemovalPatch): Promise<FolderCapabilityDocument> {
+    const folders = (input.folders ?? []).map(canonicalPathPreservingSuffix);
+    const blocks = normalizedStrings(input.blocks);
+    let previous = EMPTY_DOCUMENT;
+    const next = await updateJsonFile(
       this.filePath,
       EMPTY_DOCUMENT,
       normalizeDocument,
-      (current) => ({ folders: current.folders, blocks: normalizedStrings(blocks) }),
+      (current) => {
+        previous = current;
+        const patched = {
+          folders: current.folders.filter((folder) => !folders.some((candidate) => samePath(candidate, folder))),
+          blocks: current.blocks.filter((block) => !blocks.includes(block)),
+        };
+        if (patched.folders.length !== current.folders.length) this.revocationGeneration += 1;
+        return patched;
+      },
       PRIVATE_JSON_FILE_OPTIONS,
     );
+    await this.publishRevokedFolders(previous, next);
+    return next;
   }
 
   async appendBlock(ruleValue: string): Promise<FolderCapabilityDocument> {
@@ -173,20 +190,6 @@ export class FolderCapabilityService {
     );
   }
 
-  async removeBlock(ruleValue: string): Promise<FolderCapabilityDocument> {
-    const normalized = ruleValue.trim();
-    return updateJsonFile(
-      this.filePath,
-      EMPTY_DOCUMENT,
-      normalizeDocument,
-      (current) => ({
-        folders: current.folders,
-        blocks: current.blocks.filter((candidate) => candidate !== normalized),
-      }),
-      PRIVATE_JSON_FILE_OPTIONS,
-    );
-  }
-
   onRevoked(listener: FolderRevocationListener): () => void {
     this.revocationListeners.add(listener);
     return () => this.revocationListeners.delete(listener);
@@ -198,8 +201,11 @@ export class FolderCapabilityService {
   }
 
   async snapshot(context: FolderCapabilityContext): Promise<FolderCapabilitySnapshot> {
-    const document = await this.read();
-    return createFolderCapabilitySnapshot(context, document.folders);
+    const state = await this.readState();
+    return createFolderCapabilitySnapshot({
+      ...context,
+      revocationGeneration: state.revocationGeneration,
+    }, state.document.folders);
   }
 
   private async publishGrantedFolders(
@@ -267,13 +273,19 @@ export function createFolderCapabilitySnapshot(
       ].filter((candidate) => isPathInside(root, candidate))),
     };
   });
-  return snapshotFromRoots(compactCapabilityRoots(roots), context.deniedWrites, protectedRoots);
+  return snapshotFromRoots(
+    compactCapabilityRoots(roots),
+    context.deniedWrites,
+    protectedRoots,
+    context.revocationGeneration ?? 0,
+  );
 }
 
 export function snapshotFromRoots(
   roots: readonly FolderCapabilityRoot[],
   deniedWrites: readonly FolderCapabilityWriteDeny[] = [],
   protectedRoots: readonly FolderCapabilityProtectedRoot[] = [],
+  revocationGeneration = 0,
 ): FolderCapabilitySnapshot {
   const compacted = compactCapabilityRoots(roots);
   const writeRoots = compactPaths(compacted.filter((entry) => entry.access === 'write').map((entry) => entry.root));
@@ -282,6 +294,7 @@ export function snapshotFromRoots(
     ...compacted.filter((entry) => entry.access === 'read').map((entry) => entry.root),
   ]);
   return {
+    revocationGeneration,
     roots: compacted,
     readRoots,
     writeRoots,
@@ -361,19 +374,6 @@ function normalizeDocument(input: unknown): FolderCapabilityDocument {
     folders: compactPaths(normalizedStrings(input.folders).map((folder) => path.resolve(expandHome(folder)))),
     blocks: normalizedStrings(input.blocks),
   };
-}
-
-async function canonicalDocument(input: unknown): Promise<FolderCapabilityDocument> {
-  const normalized = normalizeDocument(input);
-  const folders: string[] = [];
-  for (const candidate of normalized.folders) {
-    try {
-      folders.push(await canonicalExistingDirectory(candidate));
-    } catch {
-      // Settings only retain capabilities that still name real directories.
-    }
-  }
-  return { folders: compactPaths(folders), blocks: normalized.blocks };
 }
 
 function compactCapabilityRoots(roots: readonly FolderCapabilityRoot[]): FolderCapabilityRoot[] {

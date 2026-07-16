@@ -2,6 +2,7 @@ import {
   BrowserWindow,
   session as electronSession,
   type Event as ElectronEvent,
+  type Session,
   type WebContents,
   type WebContentsWillNavigateEventParams,
   type WebContentsWillRedirectEventParams,
@@ -105,11 +106,15 @@ const GOOGLE_SEARCH_HOME_URL = 'https://www.google.com/';
 const GOOGLE_SEARCH_INPUT_SELECTOR = 'textarea[name="q"], input[name="q"]';
 const GOOGLE_SEARCH_RESULT_SELECTOR = '#search, #rso';
 const WEB_SEARCH_PARTITION = 'persist:web-search';
+const WEB_FETCH_HTTP_PARTITION = 'web-fetch-http';
+const WEB_FETCH_BROWSER_PARTITION = 'web-fetch-browser';
 const SEARCH_NAV_TIMEOUT_MS = 60_000;
 const SEARCH_RATE_INTERVAL_MS = 3_000;
 const SEARCH_RATE_BURST = 2;
 const HTTP_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 let recentSearchStarts: number[] = [];
+let webFetchBrowserTail: Promise<void> = Promise.resolve();
+let webFetchBrowserSessionConfigured = false;
 
 const WEB_FETCH_PARAMETERS = {
   type: 'object',
@@ -655,12 +660,13 @@ function searchInstructions(kind: WebSearchKind, hasResults: boolean): string | 
 }
 
 async function fetchText(url: string, scratchRoot: string, signal?: AbortSignal): Promise<FetchTextResult> {
+  const clientSession = electronSession.fromPartition(WEB_FETCH_HTTP_PARTITION);
   try {
-    return await fetchTextOnce(url, scratchRoot, signal);
+    return await fetchTextOnce(url, scratchRoot, clientSession, signal);
   } catch (error) {
     if (signal?.aborted || !isRetriableFetchFailure(error)) throw error;
     await delay(WEB_FETCH_RETRY_DELAY_MS, signal);
-    return await fetchTextOnce(url, scratchRoot, signal);
+    return await fetchTextOnce(url, scratchRoot, clientSession, signal);
   }
 }
 
@@ -676,7 +682,12 @@ function isRetriableFetchFailure(error: unknown): boolean {
   return isTransientNetworkError(error);
 }
 
-async function fetchTextOnce(url: string, scratchRoot: string, signal?: AbortSignal): Promise<FetchTextResult> {
+async function fetchTextOnce(
+  url: string,
+  scratchRoot: string,
+  clientSession: Session,
+  signal?: AbortSignal,
+): Promise<FetchTextResult> {
   const startedUrl = url;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('timeout'), FETCH_TIMEOUT_MS);
@@ -684,7 +695,7 @@ async function fetchTextOnce(url: string, scratchRoot: string, signal?: AbortSig
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
-    return await fetchTextWithRedirects(startedUrl, startedUrl, controller.signal, scratchRoot);
+    return await fetchTextWithRedirects(startedUrl, startedUrl, controller.signal, scratchRoot, clientSession);
   } catch (error) {
     if (error instanceof WebToolFailure) throw error;
     if (controller.signal.aborted) {
@@ -713,6 +724,7 @@ async function fetchTextWithRedirects(
   startedUrl: string,
   signal: AbortSignal,
   scratchRoot: string,
+  clientSession: Session,
   depth = 0,
   redirect?: WebFetchRedirectContext,
 ): Promise<FetchTextResult> {
@@ -720,9 +732,10 @@ async function fetchTextWithRedirects(
     throw new WebToolFailure('too_many_redirects', `too many redirects; exceeded ${WEB_FETCH_MAX_REDIRECTS}`);
   }
 
-  const response = await electronSession.defaultSession.fetch(currentUrl, {
+  const response = await clientSession.fetch(currentUrl, {
     method: 'GET',
     redirect: 'manual',
+    credentials: 'omit',
     signal,
     headers: buildFetchHeaders(currentUrl, redirect),
   });
@@ -743,7 +756,7 @@ async function fetchTextWithRedirects(
       throw redirectedHostFailure(startedUrl, redirectUrl, response.status);
     }
     const secFetchSite = nextSecFetchSite(redirect?.secFetchSite, currentUrl, redirectUrl);
-    return await fetchTextWithRedirects(redirectUrl, startedUrl, signal, scratchRoot, depth + 1, {
+    return await fetchTextWithRedirects(redirectUrl, startedUrl, signal, scratchRoot, clientSession, depth + 1, {
       referrerUrl: currentUrl,
       secFetchSite,
     });
@@ -978,7 +991,15 @@ function extensionFromUrl(finalUrl: string): string {
 }
 
 async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<FetchTextResult> {
-  const window = createWebFetchWindow();
+  return withCredentialFreeBrowserSession((clientSession) => fetchTextWithBrowserSession(url, clientSession, signal));
+}
+
+async function fetchTextWithBrowserSession(
+  url: string,
+  clientSession: Session,
+  signal?: AbortSignal,
+): Promise<FetchTextResult> {
+  const window = createWebFetchWindow(clientSession);
   let blockedNavigation: WebToolFailure | null = null;
   let rejectBlockedNavigation: ((failure: WebToolFailure) => void) | undefined;
   // A blocked navigation must reject promptly: once we preventDefault it, no
@@ -1111,7 +1132,7 @@ async function waitForRenderedPageSettled(webContents: WebContents, signal?: Abo
   }
 }
 
-function createWebFetchWindow(): BrowserWindow {
+function createWebFetchWindow(clientSession: Session): BrowserWindow {
   return new BrowserWindow({
     x: -20_000,
     y: -20_000,
@@ -1120,12 +1141,45 @@ function createWebFetchWindow(): BrowserWindow {
     show: false,
     title: 'Tenon Web Fetch',
     webPreferences: {
-      session: electronSession.defaultSession,
+      session: clientSession,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
+}
+
+async function withCredentialFreeBrowserSession<T>(run: (clientSession: Session) => Promise<T>): Promise<T> {
+  const execute = async () => {
+    const clientSession = credentialFreeBrowserSession();
+    await resetWebFetchBrowserSession(clientSession);
+    try {
+      return await run(clientSession);
+    } finally {
+      await resetWebFetchBrowserSession(clientSession).catch(() => undefined);
+    }
+  };
+  const operation = webFetchBrowserTail.then(execute, execute);
+  webFetchBrowserTail = operation.then(() => undefined, () => undefined);
+  return operation;
+}
+
+function credentialFreeBrowserSession(): Session {
+  const clientSession = electronSession.fromPartition(WEB_FETCH_BROWSER_PARTITION);
+  if (!webFetchBrowserSessionConfigured) {
+    clientSession.setPermissionCheckHandler(() => false);
+    clientSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    webFetchBrowserSessionConfigured = true;
+  }
+  return clientSession;
+}
+
+async function resetWebFetchBrowserSession(clientSession: Session): Promise<void> {
+  await Promise.all([
+    clientSession.clearStorageData(),
+    clientSession.clearAuthCache(),
+    clientSession.clearCache(),
+  ]);
 }
 
 type SearchOutcome =

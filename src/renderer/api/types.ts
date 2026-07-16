@@ -106,9 +106,9 @@ export interface AgentCapabilitySettingsView {
   }>;
 }
 
-export interface AgentCapabilitySettingsInput {
-  folders: string[];
-  blocks: string[];
+export interface AgentCapabilitySettingsPatchInput {
+  revokeFolders: string[];
+  removeBlocks: string[];
 }
 
 export interface AgentPickCapabilityFolderResult {

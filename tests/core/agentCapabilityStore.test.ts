@@ -17,12 +17,11 @@ mock.module('electron', () => ({
 }));
 
 const {
+  applyAgentCapabilitySettingsPatch,
   appendAgentCapabilityBlock,
   grantAgentFolderCapability,
   readAgentCapabilitySettings,
-  removeAgentCapabilityBlock,
   resetFolderCapabilityServiceForTests,
-  writeAgentCapabilitySettings,
 } = await import('../../src/main/agentCapabilityStore');
 
 describe('agent folder capability store', () => {
@@ -40,10 +39,8 @@ describe('agent folder capability store', () => {
     const folder = path.join(userData, 'project');
     await fs.mkdir(folder, { recursive: true });
     const canonicalFolder = await fs.realpath(folder);
-    await writeAgentCapabilitySettings({
-      folders: [canonicalFolder],
-      blocks: ['Action(git.publish_remote)'],
-    });
+    await grantAgentFolderCapability(canonicalFolder);
+    await appendAgentCapabilityBlock('Action(git.publish_remote)');
 
     const filePath = path.join(userData, 'agent-capabilities.json');
     expect(await readAgentCapabilitySettings()).toEqual({
@@ -78,15 +75,37 @@ describe('agent folder capability store', () => {
     const folder = path.join(userData, 'project');
     await fs.mkdir(folder, { recursive: true });
     const canonicalFolder = await fs.realpath(folder);
-    await writeAgentCapabilitySettings({
-      folders: [canonicalFolder],
-      blocks: ['Command(git push origin main)', 'Action(git.publish_remote)'],
-    });
+    await grantAgentFolderCapability(canonicalFolder);
+    await appendAgentCapabilityBlock('Command(git push origin main)');
+    await appendAgentCapabilityBlock('Action(git.publish_remote)');
 
-    await removeAgentCapabilityBlock('Command(git push origin main)');
+    await applyAgentCapabilitySettingsPatch({ removeBlocks: ['Command(git push origin main)'] });
 
     expect(await readAgentCapabilitySettings()).toEqual({
       folders: [canonicalFolder],
+      blocks: ['Action(git.publish_remote)'],
+    });
+  });
+
+  test('applies removal patches without dropping a concurrent folder grant', async () => {
+    const first = path.join(userData, 'first');
+    const concurrent = path.join(userData, 'concurrent');
+    await fs.mkdir(first, { recursive: true });
+    await fs.mkdir(concurrent, { recursive: true });
+    await grantAgentFolderCapability(first);
+    await appendAgentCapabilityBlock('Action(git.publish_remote)');
+    await appendAgentCapabilityBlock('Command(npm publish)');
+
+    await Promise.all([
+      grantAgentFolderCapability(concurrent),
+      applyAgentCapabilitySettingsPatch({
+        revokeFolders: [first],
+        removeBlocks: ['Command(npm publish)'],
+      }),
+    ]);
+
+    expect(await readAgentCapabilitySettings()).toEqual({
+      folders: [await fs.realpath(concurrent)],
       blocks: ['Action(git.publish_remote)'],
     });
   });

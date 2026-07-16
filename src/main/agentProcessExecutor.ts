@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
@@ -26,7 +26,14 @@ interface ActiveAgentProcess {
   capabilities: FolderCapabilitySnapshot;
 }
 
-export class MacOSFileSandboxAdapter {
+export interface AgentProcessSandboxAdapter {
+  prepare(input: Required<Pick<AgentProcessSpawnInput, 'command' | 'cwd'>> & {
+    args: readonly string[];
+    capabilities: FolderCapabilitySnapshot;
+  }): Promise<{ command: string; args: string[] }>;
+}
+
+export class MacOSFileSandboxAdapter implements AgentProcessSandboxAdapter {
   private probe: Promise<void> | null = null;
 
   async prepare(input: Required<Pick<AgentProcessSpawnInput, 'command' | 'cwd'>> & {
@@ -53,20 +60,25 @@ export class MacOSFileSandboxAdapter {
 
 export class AgentProcessExecutor {
   private readonly active = new Map<number, ActiveAgentProcess>();
-  private readonly sandbox = new MacOSFileSandboxAdapter();
+  private revocationGenerationProvider: (() => number) | null = null;
+
+  constructor(private readonly sandbox: AgentProcessSandboxAdapter = new MacOSFileSandboxAdapter()) {}
 
   async spawn(input: AgentProcessSpawnInput): Promise<ChildProcess> {
     const cwd = path.resolve(input.cwd);
     const capabilities = input.capabilities ?? createFolderCapabilitySnapshot({
       workspaceRoot: cwd,
       includeSystemRoots: true,
+      revocationGeneration: this.currentRevocationGeneration(),
     }, []);
+    this.assertCurrentSnapshot(capabilities);
     const prepared = await this.sandbox.prepare({
       command: input.command,
       args: input.args ?? [],
       cwd,
       capabilities,
     });
+    this.assertCurrentSnapshot(capabilities);
     const child = spawn(prepared.command, prepared.args, {
       cwd,
       env: sanitizeAgentProcessEnv(input.env ?? process.env, input.privateEnvKeys),
@@ -98,6 +110,13 @@ export class AgentProcessExecutor {
     terminateProcessTree(child, signal);
   }
 
+  bindRevocationGeneration(provider: () => number): () => void {
+    this.revocationGenerationProvider = provider;
+    return () => {
+      if (this.revocationGenerationProvider === provider) this.revocationGenerationProvider = null;
+    };
+  }
+
   async terminateProcessesUsingFolder(folderInput: string): Promise<void> {
     const folder = path.resolve(folderInput);
     const matches = [...this.active.values()].filter(({ capabilities }) => (
@@ -111,6 +130,25 @@ export class AgentProcessExecutor {
       if (child.exitCode === null && child.signalCode === null) terminateProcessTree(child, 'SIGKILL');
     }));
   }
+
+  private currentRevocationGeneration(): number {
+    return this.revocationGenerationProvider?.() ?? 0;
+  }
+
+  private assertCurrentSnapshot(capabilities: FolderCapabilitySnapshot): void {
+    const current = this.currentRevocationGeneration();
+    if (capabilities.revocationGeneration === current) return;
+    throw new StaleFolderCapabilitySnapshotError(capabilities.revocationGeneration, current);
+  }
+}
+
+export class StaleFolderCapabilitySnapshotError extends Error {
+  readonly code = 'stale_folder_capability_snapshot';
+
+  constructor(readonly snapshotGeneration: number, readonly currentGeneration: number) {
+    super('Folder capabilities changed before the process started. Retry the command with the current capability state.');
+    this.name = 'StaleFolderCapabilitySnapshotError';
+  }
 }
 
 let executor: AgentProcessExecutor | null = null;
@@ -121,7 +159,13 @@ export function getAgentProcessExecutor(): AgentProcessExecutor {
 }
 
 export function bindAgentProcessRevocation(service: FolderCapabilityService): () => void {
-  return service.onRevoked((folder) => getAgentProcessExecutor().terminateProcessesUsingFolder(folder));
+  const processExecutor = getAgentProcessExecutor();
+  const unbindGeneration = processExecutor.bindRevocationGeneration(() => service.currentRevocationGeneration());
+  const unsubscribe = service.onRevoked((folder) => processExecutor.terminateProcessesUsingFolder(folder));
+  return () => {
+    unsubscribe();
+    unbindGeneration();
+  };
 }
 
 export function resetAgentProcessExecutorForTests(): void {
@@ -158,10 +202,6 @@ export function macOSSeatbeltProfile(snapshot: FolderCapabilitySnapshot): string
   ].join('\n');
 }
 
-export function processSandboxDenied(stderr: string): boolean {
-  return /operation not permitted|sandbox(?:-exec)?:|deny\(1\)/i.test(stderr);
-}
-
 async function probeMacOSSandbox(cwd: string): Promise<void> {
   if (!existsSync('/usr/bin/sandbox-exec')) {
     throw new Error('macOS process sandbox is unavailable; agent processes are disabled.');
@@ -193,16 +233,28 @@ function seatbeltString(value: string): string {
 }
 
 function macOSReadDenyRules(allowedRoots: readonly string[]): string[] {
-  const containers = [homedir(), '/Volumes'];
-  const rules: string[] = [];
-  for (const container of containers) {
-    if (!existsSync(container)) continue;
-    for (const denied of deniedChildren(container, allowedRoots)) {
-      const matcher = isDirectory(denied) ? 'subpath' : 'literal';
-      rules.push(`(deny file-read* (${matcher} ${seatbeltString(denied)}))`);
-    }
+  const containers = macOSUserDataContainers();
+  const rules = containers.map((container) => `(deny file-read* (subpath ${seatbeltString(container)}))`);
+  const exceptions = [...new Set(containers.flatMap((container) => allowedRoots.flatMap((root) => {
+    if (isPathInside(container, root)) return [path.resolve(root)];
+    if (isPathInside(root, container)) return [container];
+    return [];
+  })))];
+  if (exceptions.length > 0) {
+    rules.push(`(allow file-read* ${exceptions.map((root) => `(subpath ${seatbeltString(root)})`).join(' ')})`);
   }
   return rules;
+}
+
+function macOSUserDataContainers(): string[] {
+  const result: string[] = [];
+  for (const candidate of ['/Users', '/Volumes', homedir()]
+    .filter(existsSync)
+    .map((entry) => path.resolve(entry))
+    .sort((left, right) => left.length - right.length)) {
+    if (!result.some((root) => isPathInside(root, candidate))) result.push(candidate);
+  }
+  return result;
 }
 
 function protectedRootRules(
@@ -219,37 +271,6 @@ function protectedRootRules(
     }
   }
   return rules;
-}
-
-function deniedChildren(containerInput: string, allowedRoots: readonly string[]): string[] {
-  const container = path.resolve(containerInput);
-  if (allowedRoots.some((root) => isPathInside(root, container))) return [];
-  const relevant = allowedRoots.filter((root) => isPathInside(container, root));
-  if (relevant.length === 0) return [container];
-  let entries: string[];
-  try {
-    entries = readdirSync(container);
-  } catch {
-    return [container];
-  }
-  const denied: string[] = [];
-  for (const entry of entries) {
-    const child = path.join(container, entry);
-    if (relevant.some((root) => isPathInside(child, root))) {
-      denied.push(...deniedChildren(child, relevant));
-    } else {
-      denied.push(child);
-    }
-  }
-  return denied;
-}
-
-function isDirectory(inputPath: string): boolean {
-  try {
-    return statSync(inputPath).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {

@@ -169,6 +169,20 @@ export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInpu
     protectedRoots: policy.protectedStoreRoot ? [policy.protectedStoreRoot] : [],
   }, policy.capabilityConfig.folders);
   const requiredFolders = requiredFoldersForTool(toolName, input.args, policy.workspaceRoot, snapshot, access);
+  const requiredFolderAccess = access === 'read' ? 'read' : 'write';
+  const protectedRequiredRoot = requiredFolders
+    .map((folder) => protectedRootForPath(snapshot, folder, requiredFolderAccess))
+    .find((root): root is string => Boolean(root));
+  if (protectedRequiredRoot) {
+    return unavailable(
+      'control_plane_unavailable',
+      `Agent processes cannot access Tenon control state under ${protectedRequiredRoot}.`,
+      access,
+      descriptors,
+      descriptors[0],
+      'control_plane',
+    );
+  }
   const missingFolders = missingFolderCapabilities(requiredFolders, { readRoots: snapshot.writeRoots });
   if (missingFolders.length > 0) {
     const target = missingFolders.join(', ');

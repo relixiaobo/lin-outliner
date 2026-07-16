@@ -43,6 +43,7 @@ export interface AgentCapabilityConfig {
   folders: string[];
   blocks: AgentCapabilityBlockRule[];
   diagnostics: AgentCapabilityRuleDiagnostic[];
+  revocationGeneration?: number;
 }
 
 export interface AgentCapabilitySettings {

@@ -3208,7 +3208,6 @@ interface BashData {
   backgroundTaskId?: string;
   backgroundedByUser?: boolean;
   assistantAutoBackgrounded?: boolean;
-  folderAccessRequired?: boolean;
   returnCodeInterpretation?: string;
   noOutputExpected?: boolean;
   structuredContent?: unknown[];
@@ -3229,8 +3228,10 @@ Result behavior:
   command truly needs another directory.
 - Commands that need local folders outside the implicit capability roots declare
   them in `required_folders`. Missing folders are requested and persisted before
-  process start. Undeclared access is denied by the process sandbox, returned as
-  `folder_access_required`, and never auto-replayed.
+  process start. Undeclared access is denied by the process sandbox and remains a
+  `command_failed` result with the native error; the agent must declare the
+  folder in a fresh call. Tenon never infers folder access from stderr and never
+  auto-replays a partially started command.
 - Every agent-driven process uses the shared process executor. On macOS it runs
   inside the capability-derived Seatbelt profile; there is no sandbox bypass.
 - Long-running commands should use `run_in_background: true` and return
@@ -3314,7 +3315,9 @@ Shared behavior:
   `maxResultSizeChars` budget around `100_000`.
 - `web_fetch` is an unprivileged, credential-free HTTP(S) client. Public,
   loopback, private, link-local, and metadata targets share the same URL
-  contract; URLs with embedded username/password credentials are invalid.
+  contract; URLs with embedded username/password credentials are invalid. HTTP
+  requests use a dedicated non-persistent session with credentials omitted;
+  browser fallback uses a separate reset session and never `defaultSession`.
 - Return content separately from telemetry. The `data.content` or
   `data.results` fields carry what the model needs; status, bytes, final URL,
   duration, hints, and pagination metadata stay in structured fields.
@@ -3563,9 +3566,9 @@ Result behavior:
   target). When the landing host differs from the requested host the result still
   returns content plus a non-fatal `data.hint.type: "redirected_host"` and a
   warning, with `finalUrl` reflecting the landing page — the agent does not need
-  to re-fetch. A redirect to a local/private host is the one case that is refused,
-  on both the HTTP path (each hop is validated) and the embedded-browser fallback
-  (`will-navigate`/`will-redirect` are blocked and the landing URL is re-checked).
+  to re-fetch. Local/private redirects follow the same credential-free URL
+  contract as direct local/private requests; both paths still reject invalid
+  schemes and embedded username/password credentials and re-check every landing.
 - A raw network throw is retried once with a short backoff before surfacing,
   UNLESS it is a deterministic transport fault that would fail identically on a
   retry (DNS NXDOMAIN, refused connection, TLS/cert, unsafe/blocked port, bad

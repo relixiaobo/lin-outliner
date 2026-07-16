@@ -137,7 +137,7 @@ export const AGENT_COMMANDS = [
   'agent_update_runtime_settings',
   'agent_update_image_generation_settings',
   'agent_get_capability_settings',
-  'agent_update_capability_settings',
+  'agent_apply_capability_settings_patch',
   'agent_append_capability_block',
   'agent_pick_capability_folder',
   'agent_upsert_provider_config',

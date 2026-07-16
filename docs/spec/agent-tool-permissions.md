@@ -81,14 +81,18 @@ checks.
 - compacts duplicate and nested grants;
 - persists private JSON atomically;
 - serializes concurrent folder and block updates;
+- never turns a grant into an implicit revocation of another persisted root;
+- applies Settings removals as deltas so concurrent grants are preserved;
 - publishes grant and revocation events after persistence.
 
 Relative paths always resolve against the workdir. A capability is used through
 an explicit absolute path and does not change that base.
 
-Revocation commits before publication. New calls see it immediately, and
-foreground or background processes whose immutable snapshot contains that user
-root are terminated.
+Revocation increments an in-memory generation inside the serialized write,
+commits before publication, and terminates foreground or background processes
+whose immutable snapshot contains that user root. Process start validates the
+generation before and after sandbox preparation, so a preflighted but not-yet-
+registered process cannot start with a revoked snapshot.
 
 ## Process Boundary
 
@@ -100,9 +104,11 @@ capture, timeout, and an immutable capability snapshot.
 On macOS, one probed Seatbelt adapter:
 
 1. allows ordinary process, network, IPC, and OS behavior;
-2. permits reads and writes from the snapshot;
-3. denies the entire protected `userData` container;
-4. re-allows only the declared workdir and scratch exceptions.
+2. recursively denies user-data containers (`/Users` and `/Volumes`) and then
+   re-allows only snapshot read roots;
+3. permits writes only to snapshot write roots;
+4. denies the entire protected `userData` container;
+5. re-allows only the declared workdir and scratch exceptions.
 
 If the adapter is unavailable, process execution is unavailable because Tenon
 cannot enforce folder capabilities and control-plane isolation. There is no
@@ -111,7 +117,10 @@ model-facing sandbox bypass.
 `bash.required_folders` declares external roots before process start. Missing
 roots follow the folder capability flow. Undeclared filesystem access receives
 the real sandbox failure; the model must issue a fresh call with the required
-folder. Tenon never replays a partially started process.
+folder. Generic OS/TCC/process `operation not permitted` errors remain command
+failures; Tenon does not infer a missing folder from stderr text. A declared
+protected control-plane root is `unavailable / control_plane` before UI. Tenon
+never replays a partially started process.
 
 The process boundary is capability enforcement, not hostile-code containment.
 Docker, Apple Events, OS services, network services, and deliberately malicious
@@ -136,9 +145,12 @@ deployments, Git publishes, messages, payments, or unknown shell commands. The
 user's OS account and native authorization own those effects.
 
 The unprivileged `web_fetch` client accepts credential-free HTTP(S), including
-loopback, private, link-local, and metadata addresses. A future privileged fetch
-route carrying cookies or product credentials must be a distinct service
-contract; it must not hide authority inside this tool.
+loopback, private, link-local, and metadata addresses. Direct requests use a
+dedicated non-persistent Electron session with `credentials: "omit"`. Browser
+fallback uses a separate non-persistent session, serializes fallback navigation,
+and clears storage, authentication state, and cache before and after each use. A
+future privileged fetch route carrying cookies or product credentials must be a
+distinct service contract; it must not hide authority inside this tool.
 
 ## Scoped Runs And Skills
 
@@ -163,8 +175,9 @@ discovery/load; invalid skills remain unloaded with diagnostics.
 1. A typed file tool targets a path, or `bash` declares `required_folders`.
 2. The ownership boundary rejects private control state without UI.
 3. The folder service computes uncovered canonical roots.
-4. The runtime emits one deduplicated `folder` capability request before side
-   effects.
+4. A runtime-wide acquisition registry emits one `folder` request per canonical
+   folder set, even across concurrent Runs or conversations; each waiting tool
+   call retains its own audit pair.
 5. **Grant and remember** persists the roots, re-evaluates, and executes once.
    **Cancel** aborts the call.
 6. Later Runs, conversations, and launches reuse the capability.
@@ -181,7 +194,8 @@ call and never assumes the previous process ran.
 
 Conversation restore projects unresolved requests back into the composer.
 Granting the same root from Settings also triggers recovery, so the original
-card need not remain mounted.
+card need not remain mounted. The same grant resolves every covered foreground
+waiter and every covered durable request.
 
 ### OS and provider acquisition
 
@@ -212,6 +226,10 @@ Settings -> Security contains:
 - **Your Blocks**: list and remove explicit user blocks;
 - **System Boundary**: explain private Tenon control state and host-owned
   authorization.
+
+Folder picking performs one atomic grant. The Settings draft records only
+explicit folder/block removals; Save applies that removal delta to current
+persistent state, preserving grants made concurrently by another Run or window.
 
 ## Events And Runtime Transport
 

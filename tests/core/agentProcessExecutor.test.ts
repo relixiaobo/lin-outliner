@@ -2,8 +2,13 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { createFolderCapabilitySnapshot } from '../../src/main/agentFolderCapabilities';
-import { sanitizeAgentProcessEnv } from '../../src/main/agentProcessExecutor';
+import { FolderCapabilityService, createFolderCapabilitySnapshot } from '../../src/main/agentFolderCapabilities';
+import {
+  AgentProcessExecutor,
+  bindAgentProcessRevocation,
+  resetAgentProcessExecutorForTests,
+  sanitizeAgentProcessEnv,
+} from '../../src/main/agentProcessExecutor';
 import { runAgentToolProcess } from '../../src/main/agentToolProcess';
 
 const roots: string[] = [];
@@ -57,6 +62,95 @@ describe('agent process executor', () => {
     expect(read).toMatchObject({ exitCode: 0, stdout: 'source' });
     expect(write.exitCode).toBe(0);
     expect(await readFile(target, 'utf8')).toBe('');
+  });
+
+  test('denies shared user data outside the current Home without a folder capability', async () => {
+    if (process.platform !== 'darwin') return;
+    const root = await mkdtemp(path.join(homedir(), '.tenon-process-shared-user-data-'));
+    roots.push(root);
+    const capabilities = createFolderCapabilitySnapshot({
+      workspaceRoot: root,
+      includeSystemRoots: true,
+    }, []);
+
+    const result = await runAgentToolProcess('/usr/bin/stat', ['-f', '%HT', '/Users/Shared'], root, 10_000, { capabilities });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toMatch(/operation not permitted/i);
+  });
+
+  test('rejects a process that starts with a snapshot captured before revocation', async () => {
+    if (process.platform !== 'darwin') return;
+    const root = await mkdtemp(path.join(homedir(), '.tenon-process-stale-snapshot-'));
+    roots.push(root);
+    const workspace = path.join(root, 'workspace');
+    const granted = path.join(root, 'granted');
+    await mkdir(workspace);
+    await mkdir(granted);
+    const target = path.join(granted, 'value.txt');
+    await writeFile(target, 'revoked');
+    const service = new FolderCapabilityService(path.join(root, 'capabilities.json'));
+    await service.grant(granted);
+    const snapshot = await service.snapshot({ workspaceRoot: workspace, includeSystemRoots: true });
+    resetAgentProcessExecutorForTests();
+    const unbind = bindAgentProcessRevocation(service);
+
+    try {
+      await service.revoke(granted);
+      const result = await runAgentToolProcess('/bin/cat', [target], workspace, 10_000, { capabilities: snapshot });
+
+      expect(result.exitCode).toBeNull();
+      expect(result.error).toMatchObject({ code: 'stale_folder_capability_snapshot' });
+    } finally {
+      unbind();
+      resetAgentProcessExecutorForTests();
+    }
+  });
+
+  test('rejects a snapshot revoked while the process sandbox is being prepared', async () => {
+    const root = await mkdtemp(path.join(homedir(), '.tenon-process-revoke-during-prepare-'));
+    roots.push(root);
+    const workspace = path.join(root, 'workspace');
+    const granted = path.join(root, 'granted');
+    const marker = path.join(workspace, 'started.txt');
+    await mkdir(workspace);
+    await mkdir(granted);
+    const service = new FolderCapabilityService(path.join(root, 'capabilities.json'));
+    await service.grant(granted);
+    const snapshot = await service.snapshot({ workspaceRoot: workspace, includeSystemRoots: true });
+    let preparationStarted!: () => void;
+    let finishPreparation!: () => void;
+    const started = new Promise<void>((resolve) => { preparationStarted = resolve; });
+    const preparationGate = new Promise<void>((resolve) => { finishPreparation = resolve; });
+    const executor = new AgentProcessExecutor({
+      prepare: async (input) => {
+        preparationStarted();
+        await preparationGate;
+        return { command: input.command, args: [...input.args] };
+      },
+    });
+    const unbind = executor.bindRevocationGeneration(() => service.currentRevocationGeneration());
+
+    try {
+      const spawnResult = executor.spawn({
+        command: '/usr/bin/touch',
+        args: [marker],
+        cwd: workspace,
+        capabilities: snapshot,
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await started;
+      await service.revoke(granted);
+      finishPreparation();
+
+      expect(await spawnResult).toMatchObject({ code: 'stale_folder_capability_snapshot' });
+      await expect(readFile(marker, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      finishPreparation();
+      unbind();
+    }
   });
 
   test('preserves user-owned ambient credentials in child environments', () => {

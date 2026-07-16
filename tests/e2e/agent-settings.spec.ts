@@ -193,11 +193,11 @@ test.describe('agent settings window', () => {
 
     await settings.getByRole('button', { name: 'Save', exact: true }).click();
     await expect.poll(async () => {
-      const updateCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_update_capability_settings');
-      return updateCall?.args.settings;
+      const updateCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_apply_capability_settings_patch');
+      return updateCall?.args.patch;
     }).toEqual({
-      folders: [],
-      blocks: ['Action(git.publish_remote)'],
+      revokeFolders: [],
+      removeBlocks: ['Command(git push origin main)'],
     });
   });
 
@@ -215,12 +215,8 @@ test.describe('agent settings window', () => {
     await expect(settings.getByText('Folder handed to Tenon: /mock/handoff-folder')).toBeVisible();
     await expect.poll(async () => {
       const pickCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_pick_capability_folder');
-      const settings = pickCall?.args.settings as { folders?: string[]; blocks?: string[] } | undefined;
-      return settings ? {
-        folders: settings.folders,
-        blocks: settings.blocks,
-      } : undefined;
-    }).toEqual({ folders: ['/tmp/project'], blocks: [] });
+      return pickCall?.args;
+    }).toEqual({});
   });
 
   test('opens agent config from the Agent Profiles list', async ({ page }) => {

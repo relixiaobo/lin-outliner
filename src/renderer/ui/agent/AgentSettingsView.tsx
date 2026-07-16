@@ -58,6 +58,10 @@ import {
 } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import { WebsiteDataSettingsGroup } from './WebsiteDataSettingsGroup';
+import {
+  capabilitySettingsRemovalPatch,
+  rebaseCapabilityDraft,
+} from './agentCapabilitySettings';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -606,7 +610,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const capabilityFolders = capabilityDraft?.folders ?? capabilitySettings?.folders ?? [];
   const capabilityBlocks = capabilityDraft?.blocks ?? capabilitySettings?.blocks ?? [];
   const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
-  const capabilityDraftDirty = capabilityDraft !== capabilitySettings;
+  const capabilityPatch = capabilitySettings && capabilityDraft
+    ? capabilitySettingsRemovalPatch(capabilitySettings, capabilityDraft)
+    : null;
+  const capabilityDraftDirty = Boolean(
+    capabilityPatch
+    && (capabilityPatch.revokeFolders.length > 0 || capabilityPatch.removeBlocks.length > 0),
+  );
   const showFooterActions = category === 'security'
     ? capabilityDraftDirty || runtimeDraftDirty
     : (category === 'skills' || category === 'agents') && runtimeDraftDirty;
@@ -657,15 +667,18 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   }
 
   async function chooseCapabilityFolder() {
-    const base = capabilityDraft ?? capabilitySettings ?? emptyCapabilitySettings();
     setCapabilityFolderBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const result = await api.agentPickCapabilityFolder(base);
-      if (!mountedRef.current || result.canceled) return;
+      const result = await api.agentPickCapabilityFolder();
+      if (!mountedRef.current) return;
+      const nextDraft = capabilitySettings && capabilityDraft
+        ? rebaseCapabilityDraft(capabilitySettings, capabilityDraft, result.settings)
+        : result.settings;
       setCapabilitySettings(result.settings);
-      setCapabilityDraft(result.settings);
+      setCapabilityDraft(nextDraft);
+      if (result.canceled) return;
       setNotice(t.settings.security.handedFolderNotice({ path: result.path ?? '' }));
       await onApplied();
     } catch (caught) {
@@ -696,20 +709,15 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         disabledSkills: draft.disabledSkills,
         disabledAgents: draft.disabledAgents,
       });
-      const nextCapabilities = capabilityDraft && capabilityDraft !== capabilitySettings
-        ? await api.agentUpdateCapabilitySettings({
-            folders: capabilityDraft.folders,
-            blocks: capabilityDraft.blocks,
-          })
-        : null;
+      const nextCapabilities = capabilityDraftDirty && capabilityPatch
+        ? await api.agentApplyCapabilitySettingsPatch(capabilityPatch)
+        : await api.agentGetCapabilitySettings();
 
       const next = await api.agentGetProviderSettings();
       if (isCurrentRequest('mutation', requestId)) {
         setSettings(next);
-        if (nextCapabilities) {
-          setCapabilitySettings(nextCapabilities);
-          setCapabilityDraft(nextCapabilities);
-        }
+        setCapabilitySettings(nextCapabilities);
+        setCapabilityDraft(nextCapabilities);
         setDraft(resolveInitialDraft(next));
         setCreatingCustom(false);
         setNotice(t.settings.footer.savedNotice);
@@ -1397,7 +1405,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   <Button onClick={onClose} variant="ghost">
                     {t.settings.footer.cancel}
                   </Button>
-                  <Button disabled={saving} onClick={save} variant="primary">
+                  <Button disabled={saving || capabilityFolderBusy} onClick={save} variant="primary">
                     {saving ? t.settings.footer.saving : t.settings.footer.save}
                   </Button>
                 </div>
