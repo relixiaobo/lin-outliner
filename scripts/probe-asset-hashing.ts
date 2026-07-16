@@ -94,7 +94,6 @@ void main()
   .then((exitCode) => {
     process.exitCode = exitCode;
     if (electronApp) {
-      electronApp.quit();
-      setTimeout(() => process.exit(exitCode), 250).unref();
+      electronApp.exit(exitCode);
     }
   });
