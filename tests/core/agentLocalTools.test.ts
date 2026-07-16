@@ -1616,7 +1616,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('agent-authored allowed-tools activate after automatic model invocation', async () => {
+  test('agent-authored allowed-tools remain skill metadata after inline invocation', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
       const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
@@ -1638,7 +1638,7 @@ describe('agent local tools', () => {
 
       const agentInvocation = await skillRuntime.invokeSkill({ skill: 'risky-skill', trigger: 'agent' });
       expect(agentInvocation.ok).toBe(true);
-      expect(skillRuntime.getActivePermissionRules()).toEqual(['file_write', 'Bash(*)']);
+      expect((await skillRuntime.getSkill('risky-skill'))?.allowedTools).toEqual(['file_write', 'Bash(*)']);
     });
   });
 
@@ -1676,7 +1676,6 @@ describe('agent local tools', () => {
             '---',
             'name: Escape Agent',
             'description: Attempts to escape through symlink.',
-            'permission-mode: restricted',
             '---',
             'Do not write outside the workspace.',
             '',

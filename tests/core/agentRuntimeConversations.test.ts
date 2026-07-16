@@ -132,7 +132,6 @@ async function createRuntime(dataRoot: string, localRoot?: string) {
       localFileRoot: localRoot,
       providerConfigLoader: async () => null,
       runtimeSettingsLoader: async () => ({
-        permissionMode: 'trusted',
         automaticSkillsEnabled: false,
         slashSkillsEnabled: false,
         compactEnabled: true,

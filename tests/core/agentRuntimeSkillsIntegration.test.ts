@@ -306,7 +306,6 @@ describe('agent runtime skill integration', () => {
             enabled: true,
           }),
           runtimeSettingsLoader: async () => ({
-            permissionMode: 'trusted',
             automaticSkillsEnabled: true,
             slashSkillsEnabled: true,
             compactEnabled: true,
@@ -610,7 +609,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -701,7 +699,6 @@ describe('agent runtime skill integration', () => {
         }),
         providerModelResolver: () => customModel,
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1334,7 +1331,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1479,7 +1475,6 @@ describe('agent runtime skill integration', () => {
           enabled: true,
           apiKey: 'test-key',
         }),
-        permissionMode: 'restricted',
         streamFn: script.streamFn,
       },
     );
@@ -1544,7 +1539,6 @@ describe('agent runtime skill integration', () => {
           enabled: true,
           apiKey: 'test-key',
         }),
-        permissionMode: 'restricted',
         streamFn: script.streamFn,
       },
     );
@@ -1636,7 +1630,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1761,7 +1754,6 @@ describe('agent runtime skill integration', () => {
           enabled: true,
           apiKey: 'test-key',
         }),
-        permissionMode: 'restricted',
         streamFn: script.streamFn,
       },
     );
@@ -1841,7 +1833,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'restricted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1899,7 +1890,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1968,7 +1958,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2057,7 +2046,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2236,7 +2224,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2317,7 +2304,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2380,7 +2366,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2455,7 +2440,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: false,
@@ -2490,7 +2474,6 @@ describe('agent runtime skill integration', () => {
     const extraSkillDir = path.join(extraRoot, '.agents', 'skills');
 
     let runtimeSettings = {
-      permissionMode: 'trusted' as const,
       automaticSkillsEnabled: true,
       slashSkillsEnabled: true,
       compactEnabled: true,
@@ -2599,7 +2582,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2898,7 +2880,6 @@ describe('agent runtime skill integration', () => {
         }),
         providerModelResolver: () => compactModel,
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2979,7 +2960,6 @@ describe('agent runtime skill integration', () => {
         }),
         providerModelResolver: () => compactModel,
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -3047,7 +3027,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -3215,7 +3194,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -3282,7 +3260,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -3325,7 +3302,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: true,

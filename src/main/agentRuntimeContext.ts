@@ -301,7 +301,6 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
           updateAgentState: true,
         });
         conversation.autoCompactConsecutiveFailures = 0;
-        conversation.skillRuntime.resetRunPermissionRules();
         await this.host.startReactiveRetryRun(conversationId, conversation);
         await continueFromActivePath(conversation.agent);
       } catch (error) {

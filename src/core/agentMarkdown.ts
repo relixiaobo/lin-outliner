@@ -8,7 +8,6 @@
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { AgentAuthoringInput } from './agentTypes';
-import type { AgentDelegationPermissionMode } from './types';
 
 /**
  * Serialize an authoring input to `AGENT.md` text. Only set fields are emitted;
@@ -21,7 +20,6 @@ export function serializeAgentMarkdown(input: AgentAuthoringInput): string {
   if (description) frontmatter.description = description;
   if (input.model && input.model.trim() && input.model !== 'inherit') frontmatter.model = input.model.trim();
   if (input.effort && input.effort.trim()) frontmatter.effort = input.effort.trim();
-  if (input.permissionMode) frontmatter['permission-mode'] = input.permissionMode;
   if (typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns) && input.maxTurns > 0) {
     frontmatter['max-turns'] = input.maxTurns;
   }
@@ -67,7 +65,6 @@ export function parseAgentAuthoringInput(raw: string): AgentAuthoringInput {
     body: body.trim(),
     model: normalizeModelField(coerceString(frontmatter.model)),
     effort: coerceString(frontmatter.effort),
-    permissionMode: parsePermissionMode(frontmatter['permission-mode'] ?? frontmatter.permissionMode),
     maxTurns: parsePositiveInteger(frontmatter['max-turns'] ?? frontmatter.maxTurns),
     tools: parseStringList(frontmatter.tools),
     disallowedTools: parseStringList(frontmatter['disallowed-tools'] ?? frontmatter.disallowedTools),
@@ -101,10 +98,6 @@ export function parseStringList(value: unknown): string[] | undefined {
     return items.length > 0 ? [...new Set(items)] : undefined;
   }
   return undefined;
-}
-
-export function parsePermissionMode(value: unknown): AgentDelegationPermissionMode | undefined {
-  return value === 'restricted' ? value : undefined;
 }
 
 export function parseBoolean(value: unknown): boolean | undefined {

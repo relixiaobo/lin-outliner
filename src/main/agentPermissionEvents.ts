@@ -89,7 +89,7 @@ export function permissionPrimaryActionKind(decision: AgentPermissionDecision): 
 export function permissionDeniedReasonForDecision(decision: AgentPermissionBlockedDecision): AgentPermissionDeniedReason {
   if (decision.code === 'configured_deny') return 'configured_deny';
   if (decision.redline || decision.descriptor?.platformHardBlock) return 'platform_hard_block';
-  if (decision.code === 'tool_denied' || decision.code === 'tool_not_preapproved') return 'policy_denied';
+  if (decision.code === 'tool_denied') return 'policy_denied';
   return 'runtime';
 }
 

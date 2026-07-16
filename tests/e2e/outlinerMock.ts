@@ -540,7 +540,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           'You are a focused child agent running inside Lin.',
           'Complete the assigned task independently and report only the result that matters.',
         ].join('\n'),
-        permissionMode: 'restricted',
         maxTurns: null,
       },
       {
@@ -554,7 +553,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         description: 'Reviews Channel plans.',
         model: 'gpt-5.4-mini',
         body: 'Review plans and identify risks.',
-        permissionMode: 'restricted',
         maxTurns: null,
       },
     ];

@@ -1238,58 +1238,6 @@ describe('agent skills', () => {
     expect(runtime.consumePendingTurnEffect()).toBeNull();
   });
 
-  test('records allowed-tools as active run permission rules', async () => {
-    const root = await createSkillFixture('demo', {
-      frontmatter: [
-        'description: Demo skill',
-        'allowed-tools: Bash(git diff:*), file_read',
-      ],
-      body: 'Use preapproved tools.',
-    });
-    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'demo');
-
-    const invocation = await runtime.invokeSkill({
-      skill: 'demo',
-      trigger: 'agent',
-    });
-
-    expect(invocation.ok).toBe(true);
-    expect(runtime.getActivePermissionRules()).toEqual(['Bash(git diff:*)', 'file_read']);
-    runtime.resetRunPermissionRules();
-    expect(runtime.getActivePermissionRules()).toEqual([]);
-  });
-
-  test('scopes active permission rules by run when a scope provider is configured', async () => {
-    const root = await createSkillFixture('demo', {
-      frontmatter: [
-        'description: Demo skill',
-        'allowed-tools: Bash(git diff:*), file_read',
-      ],
-      body: 'Use preapproved tools.',
-    });
-    let scope: string | null = 'run-a';
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      permissionScopeProvider: () => scope,
-    });
-    await acceptSkillForTest(runtime, 'demo');
-
-    const invocation = await runtime.invokeSkill({
-      skill: 'demo',
-      trigger: 'agent',
-    });
-
-    expect(invocation.ok).toBe(true);
-    expect(runtime.getActivePermissionRules()).toEqual(['Bash(git diff:*)', 'file_read']);
-    scope = 'run-b';
-    expect(runtime.getActivePermissionRules()).toEqual([]);
-    scope = 'run-a';
-    runtime.resetRunPermissionRules('run-a');
-    expect(runtime.getActivePermissionRules()).toEqual([]);
-  });
-
   test('lists isolated-execution skills and routes them through an isolated executor', async () => {
     const root = await createSkillFixture('isolated', {
       frontmatter: [
@@ -1326,7 +1274,6 @@ describe('agent skills', () => {
     expect(invocation.execution).toBe('isolated');
     expect(invocation.isolated?.runId).toBe('isolated-run-test');
     expect(invocation.renderedContent).toContain('Requires isolated execution for demo.');
-    expect(runtime.getActivePermissionRules()).toEqual([]);
     expect(runtime.consumePendingTurnEffect()).toBeNull();
     const messageText = invocation.message.content[0]?.type === 'text'
       ? invocation.message.content[0].text

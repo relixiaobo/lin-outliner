@@ -823,7 +823,6 @@ describe('agent runtime Issue tools', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,

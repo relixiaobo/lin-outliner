@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
-import type { AgentPermissionMode } from '../core/types';
 import {
   agentToolActionKindProfile,
   isReadOnlyActionKind,
@@ -24,7 +23,6 @@ import {
   type ToolActionDescriptor,
 } from './agentToolPermissionRules';
 
-export type { AgentPermissionMode } from '../core/types';
 export type {
   AgentPermissionFloorKind,
   AgentToolActionKind,
@@ -50,24 +48,18 @@ export interface AgentFolderCapabilityRequest {
 }
 
 export interface AgentPermissionPolicy {
-  mode: AgentPermissionMode;
   workspaceRoot: string;
   scratchRoot?: string;
   protectedStoreRoot?: string;
   trustedReadRoots: readonly string[];
-  denyTools: readonly string[];
-  preapprovedToolRules: readonly string[];
   globalPermissions: GlobalToolPermissionConfig;
 }
 
 export interface AgentPermissionPolicyInput {
-  mode?: AgentPermissionMode;
   workspaceRoot?: string;
   scratchRoot?: string;
   protectedStoreRoot?: string;
   trustedReadRoots?: readonly string[];
-  denyTools?: readonly string[];
-  preapprovedToolRules?: readonly string[];
   globalPermissions?: unknown;
 }
 
@@ -76,7 +68,6 @@ interface AgentPermissionDecisionBase {
   access: AgentPermissionAccess;
   reason?: string;
   code?: string;
-  preapproved: boolean;
   permissionSource: AgentPermissionSource;
   descriptor?: ToolActionDescriptor;
   descriptors: readonly ToolActionDescriptor[];
@@ -111,22 +102,6 @@ export interface AgentPermissionEvaluationInput {
   policy: AgentPermissionPolicyInput;
 }
 
-const DEFAULT_DENY_TOOLS: readonly string[] = [];
-
-const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
-  'file_read',
-  'file_glob',
-  'file_grep',
-  'web_search',
-  'web_fetch',
-  'past_chats',
-  'ask_user_question',
-  'skill',
-  'bash_stop',
-  'node_read',
-  'node_search',
-]);
-
 const TOOL_ALIASES = new Map<string, string>([
   ['shell', 'bash'],
   ['read', 'file_read'],
@@ -145,7 +120,6 @@ const TOOL_ALIASES = new Map<string, string>([
 export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = {}): AgentPermissionPolicy {
   const workspaceRoot = canonicalPathPreservingSuffix(input.workspaceRoot ?? process.cwd());
   return {
-    mode: input.mode ?? 'trusted',
     workspaceRoot,
     scratchRoot: input.scratchRoot?.trim()
       ? canonicalPathPreservingSuffix(input.scratchRoot)
@@ -154,8 +128,6 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
       ? canonicalPathPreservingSuffix(input.protectedStoreRoot)
       : undefined,
     trustedReadRoots: normalizeRoots(input.trustedReadRoots),
-    denyTools: input.denyTools ?? DEFAULT_DENY_TOOLS,
-    preapprovedToolRules: input.preapprovedToolRules ?? [],
     globalPermissions: parseGlobalToolPermissionSettings(input.globalPermissions),
   };
 }
@@ -164,12 +136,7 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
   const policy = createAgentPermissionPolicy(input.policy);
   const toolName = normalizeToolName(input.toolName);
   const access = classifyToolAccess(toolName, input.args);
-  const preapproved = policy.preapprovedToolRules.some((rule) => matchesAgentToolRule(rule, toolName, input.args));
   const descriptors = deriveAgentToolActionDescriptors({ toolName, args: input.args, policy, access });
-
-  if (policy.denyTools.some((rule) => matchesToolNameRule(rule, toolName))) {
-    return block('configured_deny', `Tool ${input.toolName} is blocked for this Run.`, access, preapproved, descriptors);
-  }
 
   const hardBlock = descriptors.find((descriptor) => descriptor.platformHardBlock || descriptor.floor);
   if (hardBlock) {
@@ -177,15 +144,10 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       hardBlock.code ?? hardBlock.floor ?? 'platform_hard_block',
       hardBlock.consequence,
       access,
-      preapproved,
       descriptors,
       hardBlock,
       true,
     );
-  }
-
-  if (policy.mode === 'restricted' && !preapproved && !isRestrictedBaseAllowed(toolName, input.args)) {
-    return block('tool_not_preapproved', `Tool ${input.toolName} is not available for this Run.`, access, preapproved, descriptors);
   }
 
   const userBlock = descriptors
@@ -196,7 +158,6 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       'configured_deny',
       `Blocked by user rule ${userBlock.rule.ruleValue}.`,
       access,
-      preapproved,
       descriptors,
       userBlock.descriptor,
       undefined,
@@ -218,7 +179,6 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       behavior: 'folder_required',
       access,
       code: 'folder_access_required',
-      preapproved,
       permissionSource: 'default',
       reason: `Folder access is required before ${input.toolName} can run: ${target}`,
       request: {
@@ -241,25 +201,10 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
   return {
     behavior: 'allow',
     access,
-    preapproved,
     permissionSource: usesRememberedFolder ? 'folder_capability' : 'default',
     descriptor: descriptors[0],
     descriptors,
   };
-}
-
-export function matchesAgentToolRule(rule: string, toolNameInput: string, args: unknown): boolean {
-  const trimmed = rule.trim();
-  if (!trimmed) return false;
-  if (trimmed === '*') return true;
-  const toolName = normalizeToolName(toolNameInput);
-  const match = /^([^()\s]+)(?:\(([\s\S]*)\))?$/.exec(trimmed);
-  if (!match) return matchesToolNameRule(trimmed, toolName);
-  if (!matchesToolNameRule(match[1] ?? '', toolName)) return false;
-  const pattern = match[2];
-  if (pattern === undefined || toolName !== 'bash') return true;
-  const command = getStringArg(args, 'command');
-  return command !== null && wildcardMatches(pattern.trim(), command);
 }
 
 export function deriveAgentToolActionDescriptors(input: {
@@ -502,7 +447,6 @@ function block(
   code: string,
   reason: string,
   access: AgentPermissionAccess,
-  preapproved: boolean,
   descriptors: readonly ToolActionDescriptor[],
   descriptorValue?: ToolActionDescriptor,
   redline?: true,
@@ -513,7 +457,6 @@ function block(
     code,
     reason,
     access,
-    preapproved,
     permissionSource,
     descriptor: descriptorValue ?? descriptors[0],
     descriptors,
@@ -530,13 +473,6 @@ function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAc
   }
   if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search') return 'read';
   return 'unknown';
-}
-
-function isRestrictedBaseAllowed(toolName: string, args: unknown): boolean {
-  if (toolName === 'outline_undo_stack') {
-    return agentToolActionKindProfile(toolName, args)?.every(isReadOnlyActionKind) === true;
-  }
-  return RESTRICTED_BASE_ALLOWED_TOOLS.has(toolName);
 }
 
 function looksLikeNetworkWrite(command: string): boolean {
@@ -592,12 +528,6 @@ function normalizeRoots(roots: readonly string[] | undefined): string[] {
   return normalized;
 }
 
-function matchesToolNameRule(rule: string, toolNameInput: string): boolean {
-  const normalizedRule = normalizeToolName(rule);
-  const toolName = normalizeToolName(toolNameInput);
-  return normalizedRule === toolName || normalizedRule === '*';
-}
-
 function normalizeToolName(value: string): string {
   const normalized = value.trim().replace(/^\//, '').replace(/-/g, '_').toLowerCase();
   return TOOL_ALIASES.get(normalized) ?? normalized;
@@ -628,21 +558,6 @@ function expandHome(inputPath: string): string {
   if (inputPath.startsWith('$HOME/')) return path.join(homedir(), inputPath.slice(6));
   if (inputPath.startsWith('${HOME}/')) return path.join(homedir(), inputPath.slice(8));
   return inputPath;
-}
-
-function wildcardMatches(pattern: string, value: string): boolean {
-  if (pattern === '*') return true;
-  if (pattern.endsWith(':*')) {
-    const commandPrefix = pattern.slice(0, -2).trim().toLowerCase();
-    const command = value.trim().toLowerCase();
-    return commandPrefix.length > 0 && (command === commandPrefix || command.startsWith(`${commandPrefix} `));
-  }
-  const regex = new RegExp(`^${escapeRegExp(pattern).replace(/\\\*/g, '.*')}$`, 'i');
-  return regex.test(value.trim());
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[|\\{}()[\]^$+?.*]/g, '\\$&');
 }
 
 function parseShellWords(command: string): string[] {

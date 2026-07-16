@@ -143,7 +143,6 @@ function defaultRuntimeOptions(localRoot: string, dataRoot: string, assetResolve
       apiKey: 'test-key',
     }),
     runtimeSettingsLoader: async () => ({
-      permissionMode: 'trusted' as const,
       automaticSkillsEnabled: false,
       slashSkillsEnabled: false,
       compactEnabled: true,

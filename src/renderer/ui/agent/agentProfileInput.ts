@@ -28,7 +28,6 @@ export function builtInDefinitionToAuthoringInput(view: AgentDefinitionView): Ag
     body: view.body,
     model: view.model && view.model !== 'inherit' ? view.model : undefined,
     effort: typeof view.effort === 'string' ? view.effort : undefined,
-    permissionMode: view.permissionMode,
     maxTurns: view.maxTurns,
     tools,
     disallowedTools: view.disallowedTools ? [...view.disallowedTools] : undefined,

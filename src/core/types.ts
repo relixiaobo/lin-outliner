@@ -721,8 +721,6 @@ export interface AgentConversationListMeta {
 export const AGENT_REASONING_LADDER = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type AgentReasoningLevel = (typeof AGENT_REASONING_LADDER)[number];
 export type AgentReasoningLevelLabels = Partial<Record<AgentReasoningLevel, string>>;
-export type AgentPermissionMode = 'trusted' | 'restricted';
-export type AgentDelegationPermissionMode = 'restricted';
 export type AgentCacheRetention = 'none' | 'short' | 'long';
 
 export interface AgentRuntimeSettings {
@@ -740,8 +738,6 @@ export interface AgentRuntimeSettings {
 }
 
 export interface AgentRuntimeSettingsInput {
-  /** Legacy app-level setting, normalized at read/write time. */
-  permissionMode?: AgentPermissionMode;
   automaticSkillsEnabled?: boolean;
   slashSkillsEnabled?: boolean;
   compactEnabled?: boolean;
@@ -779,7 +775,6 @@ export interface AgentDefinition {
   disallowedTools?: string[];
   model?: string;
   effort?: AgentReasoningLevel | string;
-  permissionMode?: AgentDelegationPermissionMode;
   maxTurns?: number;
   skills?: string[];
   background?: boolean;

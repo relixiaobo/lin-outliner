@@ -41,7 +41,6 @@ describe('builtInDefinitionToAuthoringInput', () => {
       body: 'You are Lin. Be terse.',
       model: 'openai/gpt-5.4',
       effort: 'high',
-      permissionMode: undefined,
       maxTurns: undefined,
       tools: ['file_read', 'bash'],
       disallowedTools: ['web_fetch'],

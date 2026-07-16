@@ -30,7 +30,7 @@ import type {
   AgentPayloadRef,
 } from '../core/agentEventLog';
 import type { ErrorReport } from '../core/errorObservability';
-import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
+import type { AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { AgentSkillRuntime } from './agentSkills';
@@ -144,7 +144,6 @@ export interface AgentChildAgentCreateInput {
   memoryOriginWorkspace?: string;
   model?: string;
   effort?: string;
-  permissionMode?: AgentPermissionMode;
   maxTurns?: number;
   skillRuntime: AgentSkillRuntime;
   localWorkspace: AgentLocalWorkspaceContext;
@@ -152,7 +151,6 @@ export interface AgentChildAgentCreateInput {
   scope?: AgentRunScope;
   allowedTools?: string[];
   disallowedTools?: string[];
-  preapprovedToolRules?: string[];
   scopePreauthorized?: boolean;
   l0CacheBreakpointEnabled?: boolean;
   /**
@@ -304,7 +302,6 @@ interface DelegationRunState extends DelegationDetail {
   budgetTimerRefresh?: () => void;
   /** Set when a 'completed' run was actually cut off (maxTurns / unresolved overflow). */
   incomplete?: boolean;
-  preapprovedToolRules?: string[];
   toolResultBudgetState: ToolResultBudgetState;
   nodeChanges: AgentRunNodeChanges;
   fileChanges: AgentRunFileChanges;
@@ -355,7 +352,6 @@ interface AgentToolParams {
   effort?: string;
   name?: string;
   allowedTools?: string[];
-  preapprovedToolRules?: string[];
   parentRunId?: string;
   parentBudget?: AgentRunBudget;
   scopePreauthorized?: boolean;
@@ -630,8 +626,7 @@ export class AgentDelegationRuntime {
         runProfile: runProfileForIsolatedSkill(input.readOnlyIsolated),
         model: input.model,
         effort: input.effort,
-        allowedTools: input.readOnlyIsolated ? readOnlyAgentToolNames(input.allowedTools) : undefined,
-        preapprovedToolRules: input.allowedTools,
+        allowedTools: input.readOnlyIsolated ? readOnlyAgentToolNames(input.allowedTools) : input.allowedTools,
       }, releaseStartupSlot, signal, parentToolCallId);
     } catch (error) {
       releaseStartupSlot();
@@ -1024,7 +1019,6 @@ export class AgentDelegationRuntime {
         memoryOriginWorkspace,
         model: params.model,
         effort: params.effort,
-        preapprovedToolRules: params.preapprovedToolRules,
         unattended: params.unattended,
         // The child consumes its prompt via `run.messages` + `runChildAgent`, not
         // through the agent's seed messages.
@@ -1099,7 +1093,6 @@ export class AgentDelegationRuntime {
       parentBudgetRef: parentBudget,
       budgetSettled: false,
       parentToolCallId,
-      preapprovedToolRules: params.preapprovedToolRules,
       unattended: params.unattended,
       toolResultBudgetState: createToolResultBudgetState(),
       nodeChanges: {},
@@ -1178,7 +1171,6 @@ export class AgentDelegationRuntime {
     memoryOriginWorkspace?: string;
     model?: string;
     effort?: string;
-    preapprovedToolRules?: string[];
     unattended?: boolean;
     initialMessages: AgentMessage[];
     afterToolResult: AgentChildAgentCreateInput['afterToolResult'];
@@ -1256,7 +1248,6 @@ export class AgentDelegationRuntime {
       memoryOriginWorkspace: input.memoryOriginWorkspace,
       model: input.model ?? input.definition.model,
       effort: input.effort ?? input.definition.effort,
-      permissionMode: input.definition.permissionMode,
       maxTurns: input.definition.maxTurns,
       skillRuntime,
       localWorkspace,
@@ -1264,7 +1255,6 @@ export class AgentDelegationRuntime {
       scope: input.scope,
       allowedTools: input.definition.tools,
       disallowedTools: input.definition.disallowedTools,
-      preapprovedToolRules: input.preapprovedToolRules,
       l0CacheBreakpointEnabled: false,
       unattended: input.unattended,
       blockForInput: (reason) => this.blockRunForInput(input.runId, reason),
@@ -1800,7 +1790,6 @@ export class AgentDelegationRuntime {
         model: run.definition?.model === 'inherit' ? undefined : run.definition?.model,
         effort: run.definition?.effort,
         allowedTools: run.definition?.tools,
-        preapprovedToolRules: run.preapprovedToolRules,
         parentRunId: run.parentRunId,
         inheritedVerificationAttempts: run.verificationAttempts,
         inheritedVerifierGapSignatures: run.verifierGapSignatures,
@@ -2040,7 +2029,6 @@ export class AgentDelegationRuntime {
       parentAgentId: run.parentAgentId,
       memoryOwnerAgentId: run.memoryOwnerAgentId,
       memoryOriginWorkspace: run.memoryOriginWorkspace,
-      preapprovedToolRules: run.preapprovedToolRules,
       unattended: run.unattended,
       // Resume continues from the run's restored transcript (the model + effort
       // come from the run's resolved definition, not a fresh override).
@@ -2637,7 +2625,6 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
     model: coerceString(raw.model),
     name: coerceString(raw.name),
     allowedTools,
-    preapprovedToolRules: coerceStringArray(raw.preapprovedToolRules),
     unattended: raw.unattended === true,
   };
 }

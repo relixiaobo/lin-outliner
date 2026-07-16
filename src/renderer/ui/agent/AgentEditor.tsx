@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import type {
   AgentAuthoringInput,
   AgentDefinitionView,
-  AgentDelegationPermissionMode,
   AgentProviderSettingsView,
   AgentReasoningLevel,
   SkillDefinition,
@@ -48,7 +47,6 @@ interface AgentFormState {
   body: string;
   model: string;
   effort: string;
-  permissionMode: '' | AgentDelegationPermissionMode;
   maxTurns: string;
   background: boolean;
   // Allowed tools: catalog names that are checked. All-checked (or none) ⇒ the
@@ -243,7 +241,6 @@ function seedForm(agent: AgentDefinitionView, skillNames: string[]): AgentFormSt
       body: agent.body,
       model: agent.model,
       effort: typeof agent.effort === 'string' ? agent.effort : undefined,
-      permissionMode: agent.permissionMode,
       maxTurns: agent.maxTurns,
       tools: agent.tools,
       disallowedTools: agent.disallowedTools,
@@ -266,7 +263,6 @@ function inputToForm(input: AgentAuthoringInput, skillNames: string[]): AgentFor
     body: input.body,
     model: input.model ?? '',
     effort: normalizeReasoningEffort(input.effort),
-    permissionMode: input.permissionMode ?? '',
     maxTurns: input.maxTurns ? String(input.maxTurns) : '',
     background: input.background ?? false,
     tools,
@@ -291,7 +287,7 @@ function isCatalogToolName(value: string): value is (typeof TOOL_CATALOG)[number
   return (TOOL_CATALOG as readonly string[]).includes(value);
 }
 
-// `permissionMode` / `maxTurns` / `background` have no dedicated Form control (only
+// `maxTurns` / `background` have no dedicated Form control (only
 // name / description / model / effort / tools / skills / persona do). They are still
 // seeded and re-serialized here so a Form-mode save never clobbers values authored in
 // Raw mode — the same lossless-preservation rule as non-catalog tools. Edit them in Raw.
@@ -306,7 +302,6 @@ function buildInput(form: AgentFormState): AgentAuthoringInput {
     body: form.body,
     model: form.model.trim() || undefined,
     effort: form.effort || undefined,
-    permissionMode: form.permissionMode || undefined,
     maxTurns: parsePositiveInt(form.maxTurns),
     tools: tools && tools.length > 0 ? tools : undefined,
     disallowedTools: form.disallowedTools.length > 0 ? form.disallowedTools : undefined,

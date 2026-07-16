@@ -238,7 +238,6 @@ export interface SkillLoadOptions {
   builtInSkillRoots?: string[];
   builtInSkills?: BuiltInSkillInput[];
   conversationId?: string;
-  permissionScopeProvider?: () => string | null;
   executeSkillShell?: SkillShellExecutor;
   executeIsolatedSkill?: SkillIsolatedExecutor;
   provenanceStore?: AgentSkillProvenanceStore;
@@ -454,13 +453,10 @@ class SkillListingState {
 export class AgentSkillRuntime {
   private readonly registry: SkillRegistry;
   private readonly conversationId: string;
-  private readonly permissionScopeProvider?: () => string | null;
   private readonly executeSkillShell?: SkillShellExecutor;
   private readonly executeIsolatedSkill?: SkillIsolatedExecutor;
   private readonly listedSkills = new SkillListingState();
   private readonly pendingSteeringMessages: UserMessage[] = [];
-  private readonly defaultActivePermissionRules = new Set<string>();
-  private readonly activePermissionRulesByScope = new Map<string, Set<string>>();
   private pendingTurnEffect: SkillTurnEffect | null = null;
   private readonly invokedSkills = new Map<string, InvokedSkillRecord>();
   private disabledSkills: string[] = [];
@@ -468,7 +464,6 @@ export class AgentSkillRuntime {
   constructor(options: SkillLoadOptions = {}) {
     this.registry = new SkillRegistry(options);
     this.conversationId = options.conversationId?.trim() || 'lin-agent-conversation';
-    this.permissionScopeProvider = options.permissionScopeProvider;
     this.executeSkillShell = options.executeSkillShell;
     this.executeIsolatedSkill = options.executeIsolatedSkill;
   }
@@ -484,22 +479,8 @@ export class AgentSkillRuntime {
   resetConversationState(): void {
     this.listedSkills.clear();
     this.pendingSteeringMessages.length = 0;
-    this.defaultActivePermissionRules.clear();
-    this.activePermissionRulesByScope.clear();
     this.pendingTurnEffect = null;
     this.invokedSkills.clear();
-  }
-
-  resetRunPermissionRules(scope = this.currentPermissionScope()): void {
-    if (scope) {
-      this.activePermissionRulesByScope.delete(scope);
-      return;
-    }
-    this.defaultActivePermissionRules.clear();
-  }
-
-  getActivePermissionRules(): string[] {
-    return [...this.activePermissionRuleSet()];
   }
 
   async getActiveSkillReadRoots(): Promise<string[]> {
@@ -728,7 +709,6 @@ export class AgentSkillRuntime {
     }
 
     this.recordInvokedSkill(skill, renderedContent);
-    this.recordPermissionRules(skill);
     this.recordTurnEffect(skill);
     return {
       ok: true,
@@ -792,13 +772,6 @@ export class AgentSkillRuntime {
     });
   }
 
-  private recordPermissionRules(skill: SkillDefinition): void {
-    const rules = this.activePermissionRuleSet();
-    for (const rule of skill.allowedTools) {
-      rules.add(rule);
-    }
-  }
-
   private recordTurnEffect(skill: SkillDefinition): void {
     if (!skill.model && !skill.effort) return;
     this.pendingTurnEffect = mergeSkillTurnEffects(this.pendingTurnEffect, {
@@ -808,20 +781,6 @@ export class AgentSkillRuntime {
     });
   }
 
-  private currentPermissionScope(): string | null {
-    return this.permissionScopeProvider?.() ?? null;
-  }
-
-  private activePermissionRuleSet(): Set<string> {
-    const scope = this.currentPermissionScope();
-    if (!scope) return this.defaultActivePermissionRules;
-    let scoped = this.activePermissionRulesByScope.get(scope);
-    if (!scoped) {
-      scoped = new Set();
-      this.activePermissionRulesByScope.set(scope, scoped);
-    }
-    return scoped;
-  }
 }
 
 function mergeSkillTurnEffects(previous: SkillTurnEffect | null, next: SkillTurnEffect): SkillTurnEffect {

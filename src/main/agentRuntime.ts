@@ -318,7 +318,6 @@ import type { ErrorReport, ErrorReportContext } from '../core/errorObservability
 import type {
   AgentDefinition,
   AgentConversation,
-  AgentPermissionMode,
   AgentReasoningLevel,
   AgentRuntimeSettings,
   SkillDefinition,
@@ -479,7 +478,6 @@ interface AgentRuntimeOptions {
   scratchRoot?: string;
   protectedStoreRoot?: string;
   assetResolver?: AgentAssetResolver;
-  permissionMode?: AgentPermissionMode;
   runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
   providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
   providerConfigLoader?: () => Promise<AgentProviderRuntimeConfig | null>;
@@ -2033,7 +2031,6 @@ export class AgentRuntime {
         body: input.body !== base.body ? input.body : null,
         model: input.model ?? null,
         effort: typeof input.effort === 'string' ? input.effort : null,
-        permissionMode: input.permissionMode ?? null,
         maxTurns: input.maxTurns ?? null,
         tools: input.tools ?? null,
         disallowedTools: input.disallowedTools ?? null,
@@ -2276,7 +2273,6 @@ export class AgentRuntime {
         await this.clearConversationContext(conversationId, conversation);
         return;
       }
-      conversation.skillRuntime.resetRunPermissionRules();
       const normalizedUserViewContext = normalizeAgentUserViewContext(userViewContextInput);
       const userViewContextReminder = this.userViewContextReminderTracker.prepare(
         conversationId,
@@ -2384,7 +2380,6 @@ export class AgentRuntime {
       }]);
       conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
       this.emitProjection(conversationId, 'message_edited');
-      conversation.skillRuntime.resetRunPermissionRules();
       startedRunId = await this.startRun(conversationId, conversation);
       await conversation.agent.continue();
       await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
@@ -2411,7 +2406,6 @@ export class AgentRuntime {
       }]);
       conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
       this.emitProjection(conversationId, 'message_regenerate_started');
-      conversation.skillRuntime.resetRunPermissionRules();
       await this.rerunSettledTurn(conversationId, conversation);
     } catch (error) {
       // Run recovery happens inside rerunSettledTurn (it knows the run it
@@ -2435,7 +2429,6 @@ export class AgentRuntime {
       }]);
       conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
       this.emitProjection(conversationId, 'message_retry_started');
-      conversation.skillRuntime.resetRunPermissionRules();
       await this.rerunSettledTurn(conversationId, conversation);
     } catch (error) {
       // Run recovery happens inside rerunSettledTurn (it knows the run it
@@ -2551,7 +2544,6 @@ export class AgentRuntime {
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
     for (const run of this.activeRunList(conversation)) run.agent.abort();
     conversation.agent.abort();
-    conversation.skillRuntime.resetRunPermissionRules();
     this.emitProjection(conversationId, 'stop_requested');
   }
 
@@ -2756,9 +2748,6 @@ export class AgentRuntime {
       additionalSkillDirectories: runtimeSettings.additionalSkillDirectories,
       provenanceStore: createAgentSkillProvenanceStore(),
       conversationId,
-      permissionScopeProvider: () => (
-        this.currentRuntimeConversation(conversationRef.current)?.activeRun?.id ?? null
-      ),
       executeSkillShell: async ({ command, skill, signal }) => {
         const globalPermissions = await readAgentToolPermissionConfig();
         const current = this.currentRuntimeConversation(conversationRef.current);
@@ -2771,8 +2760,6 @@ export class AgentRuntime {
           scratchRoot: this.scratchRoot(),
           protectedStoreRoot: this.options.protectedStoreRoot,
           trustedReadRoots: [skill.rootDir],
-          permissionMode: this.options.permissionMode,
-          allowedTools: skill.allowedTools,
           globalPermissions,
           permissionEventHandler: (input) => {
             const currentConversation = this.currentRuntimeConversation(conversationRef.current);
@@ -2934,7 +2921,6 @@ export class AgentRuntime {
           model: agentModel!,
           thinkingLevel: agentThinkingLevel,
           systemPrompt: agentSystemPrompt,
-          permissionMode: this.options.permissionMode,
           protectedStoreRoot: this.options.protectedStoreRoot,
           runtimeSettingsLoader: () => this.getRuntimeSettings(),
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
@@ -3172,7 +3158,6 @@ export class AgentRuntime {
       localWorkspace: input.localWorkspace,
       model,
       thinkingLevel,
-      permissionMode: input.permissionMode ?? this.options.permissionMode,
       protectedStoreRoot: this.options.protectedStoreRoot,
       runtimeSettingsLoader: () => this.getRuntimeSettings(),
       skillToolEnabled: true,
@@ -3207,7 +3192,6 @@ export class AgentRuntime {
       runScope: input.scope,
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
-      preapprovedToolRules: input.preapprovedToolRules,
       providerRetryContextProvider: () => ({
         conversationId: parentConversationId,
         runId: input.runId,
@@ -4019,7 +4003,6 @@ export class AgentRuntime {
           timestamp: Date.now(),
           content: [{ type: 'text', text: systemReminder(notification) }],
         };
-        conversation.skillRuntime.resetRunPermissionRules();
         await this.appendSystemPromptEvent(conversationId, conversation, prompt);
         startedRunId = await this.startRun(conversationId, conversation, prompt);
         await this.promptConversationAgent(conversation, prompt, async () => {
@@ -4073,7 +4056,6 @@ export class AgentRuntime {
     };
     let startedRunId: string | null = null;
     try {
-      conversation.skillRuntime.resetRunPermissionRules();
       await this.appendSystemPromptEvent(conversationId, conversation, prompt, {
         messageId,
         notificationId: `notification-${delivery.id}`,
@@ -4162,7 +4144,6 @@ export class AgentRuntime {
         conversation.activeRuns.delete(runId);
         if (conversation.activeRun?.id === runId) conversation.activeRun = null;
         activeRun.resolveSettled();
-        conversation.skillRuntime.resetRunPermissionRules(runId);
       }
       conversation.agent.state.messages = await this.deriveRuntimePiMessages(
         conversationId,
@@ -5160,7 +5141,6 @@ export class AgentRuntime {
         localFileRoot: this.options.localFileRoot,
         localWorkspace,
         model,
-        permissionMode: this.options.permissionMode,
         protectedStoreRoot: this.options.protectedStoreRoot,
         runtimeSettingsLoader: () => this.getRuntimeSettings(),
         skillToolEnabled: false,
@@ -5168,7 +5148,6 @@ export class AgentRuntime {
         chatSourceValidator: this.createChatSourceValidator(),
         pastChats: this.createPastChatsToolRuntime(() => DEFAULT_DREAM_CHANNEL_ID),
         allowedTools: [...allowedTools],
-        preapprovedToolRules: [...allowedTools],
         providerRetryContextProvider: () => ({
           conversationId: DEFAULT_DREAM_CHANNEL_ID,
           runId: task.runId,
@@ -7369,7 +7348,6 @@ export class AgentRuntime {
       customInstructions,
       updateAgentState: true,
     });
-    conversation.skillRuntime.resetRunPermissionRules();
   }
 
   private async clearConversationContext(conversationId: string, conversation: AgentConversationState) {
@@ -7406,7 +7384,6 @@ export class AgentRuntime {
     conversation.localWorkspace.readFileState.clear();
     conversation.toolResultBudgetState = createToolResultBudgetState();
     conversation.skillRuntime.resetConversationState();
-    conversation.skillRuntime.resetRunPermissionRules();
     this.cleanupProviderConversationResources(conversationId);
   }
 
@@ -7498,7 +7475,6 @@ export class AgentRuntime {
       activeRun.unsubscribe = undefined;
       conversation.activeRun = null;
       activeRun.resolveSettled();
-      conversation.skillRuntime.resetRunPermissionRules(activeRun.id);
       await this.getEventStore().maybeWriteCheckpoint(conversationId, conversation.eventState, { force: true });
     }
   }
@@ -8903,7 +8879,6 @@ function applyBuiltInAgentProfile(base: AgentDefinition, overlay: StoredBuiltInA
   if (overlay.body !== undefined) next.body = overlay.body;
   if (overlay.model !== undefined) next.model = overlay.model;
   if (overlay.effort !== undefined) next.effort = overlay.effort;
-  if (overlay.permissionMode !== undefined) next.permissionMode = overlay.permissionMode;
   if (overlay.maxTurns !== undefined) next.maxTurns = overlay.maxTurns;
   if (overlay.tools !== undefined) next.tools = overlay.tools;
   if (overlay.disallowedTools !== undefined) next.disallowedTools = overlay.disallowedTools;
@@ -9090,7 +9065,6 @@ function createConfiguredAgent(
     model?: Model<Api>;
     thinkingLevel?: AgentReasoningLevel;
     systemPrompt?: string;
-    permissionMode?: AgentPermissionMode;
     protectedStoreRoot?: string;
     providerApiKeyLoader?: (providerId: string) => Promise<string | undefined> | string | undefined;
     runtimeSettingsLoader?: () => Promise<AgentRuntimeSettings>;
@@ -9105,7 +9079,6 @@ function createConfiguredAgent(
     runScope?: AgentRunScope;
     allowedTools?: readonly string[];
     disallowedTools?: readonly string[];
-    preapprovedToolRules?: string[];
     l0CacheBreakpointEnabled?: boolean;
     providerRetryContextProvider?: () => Pick<AgentProviderRetryEvent, 'conversationId' | 'runId'> | null;
     providerRetryEventHandler?: (event: Omit<AgentProviderRetryEvent, 'type' | 'timestamp'>) => void;
@@ -9204,16 +9177,11 @@ function createConfiguredAgent(
         toolName: toolCall.name,
         args,
         policy: {
-          mode: options.permissionMode,
           workspaceRoot: localFileRoot,
           scratchRoot: options.localWorkspace?.scratchRoot,
           protectedStoreRoot: options.protectedStoreRoot,
           trustedReadRoots: activeSkillReadRoots,
           globalPermissions,
-          preapprovedToolRules: [
-            ...(skillRuntime?.getActivePermissionRules() ?? []),
-            ...(options.preapprovedToolRules ?? []),
-          ],
         },
       });
       const permissionRequestId = `permission-${randomUUID()}`;
@@ -9284,16 +9252,11 @@ function createConfiguredAgent(
               toolName: toolCall.name,
               args,
               policy: {
-                mode: options.permissionMode,
                 workspaceRoot: localFileRoot,
                 scratchRoot: options.localWorkspace?.scratchRoot,
                 protectedStoreRoot: options.protectedStoreRoot,
                 trustedReadRoots: activeSkillReadRoots,
                 globalPermissions,
-                preapprovedToolRules: [
-                  ...(skillRuntime?.getActivePermissionRules() ?? []),
-                  ...(options.preapprovedToolRules ?? []),
-                ],
               },
             });
             if (decision.behavior === 'allow') return undefined;

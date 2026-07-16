@@ -65,9 +65,8 @@ describe('AgentEditor', () => {
     expect(nameInput?.value).toBe('Neva');
     expect(nameInput?.hasAttribute('readOnly')).toBe(false);
     expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(false);
-    // permissionMode / maxTurns / background steer only delegation child runs; the
-    // single-agent editor never offers them — there is no second agent to delegate to.
-    expect(rendered.container.textContent).not.toContain('Delegation Sandbox');
+    // maxTurns / background steer only delegation child runs; the single-agent
+    // editor never offers them because there is no second agent to delegate to.
     expect(rendered.document.querySelector('input[aria-label="Max Turns"]')).toBeNull();
     expect(rendered.container.textContent).not.toContain('Run in background');
     // No "duplicate to edit" friction and no read-only hint — it is editable in place,

@@ -17,7 +17,6 @@ const FULL: AgentAuthoringInput = {
   body: 'You are a researcher.\nReport findings as bullet points.',
   model: 'claude-opus-4-8',
   effort: 'high',
-  permissionMode: 'restricted',
   maxTurns: 8,
   tools: ['file_read', 'file_grep'],
   disallowedTools: ['bash'],
@@ -37,7 +36,6 @@ describe('serializeAgentMarkdown ⇄ parseAgentAuthoringInput', () => {
     expect(back.description).toBe('');
     expect(back.body).toBe('Body.');
     expect(back.model).toBeUndefined();
-    expect(back.permissionMode).toBeUndefined();
     expect(back.maxTurns).toBeUndefined();
     expect(back.tools).toBeUndefined();
     expect(back.skills).toBeUndefined();
@@ -49,10 +47,6 @@ describe('serializeAgentMarkdown ⇄ parseAgentAuthoringInput', () => {
     expect(back.model).toBeUndefined();
   });
 
-  test('legacy trusted permission mode no longer widens agent definitions', () => {
-    const input = parseAgentAuthoringInput(['---', 'name: legacy', 'permission-mode: trusted', '---', '', 'Body.'].join('\n'));
-    expect(input.permissionMode).toBeUndefined();
-  });
 });
 
 describe('parseAgentAuthoringInput tolerance', () => {

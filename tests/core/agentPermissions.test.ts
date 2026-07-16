@@ -2,10 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
-import {
-  evaluateAgentToolPermission,
-  matchesAgentToolRule,
-} from '../../src/main/agentPermissions';
+import { evaluateAgentToolPermission } from '../../src/main/agentPermissions';
 import {
   permissionDeniedReasonForDecision,
   permissionDeniedToolResultMessage,
@@ -217,25 +214,6 @@ describe('agent permissions', () => {
     expect(permissionEventSourceForDecision(decision)).toBe('user_blocklist');
   });
 
-  test('keeps restricted Run ceilings independent from global folder capabilities', async () => {
-    const { workspace } = await workspaceFixture();
-    expect(evaluateAgentToolPermission({
-      toolName: 'bash',
-      args: { command: 'npm test' },
-      policy: { workspaceRoot: workspace, mode: 'restricted' },
-    })).toMatchObject({ behavior: 'blocked', code: 'tool_not_preapproved' });
-    expect(evaluateAgentToolPermission({
-      toolName: 'bash',
-      args: { command: 'npm test' },
-      policy: { workspaceRoot: workspace, mode: 'restricted', preapprovedToolRules: ['bash(npm test)'] },
-    }).behavior).toBe('allow');
-    expect(evaluateAgentToolPermission({
-      toolName: 'node_edit',
-      args: { node_id: 'node:1', old_string: 'a', new_string: 'b' },
-      policy: { workspaceRoot: workspace, mode: 'restricted' },
-    })).toMatchObject({ behavior: 'blocked', code: 'tool_not_preapproved' });
-  });
-
   test('treats active skill resources as read-only implicit capabilities', async () => {
     const { workspace, outside: skillRoot } = await workspaceFixture();
     const reference = path.join(skillRoot, 'references', 'workflow.md');
@@ -321,11 +299,5 @@ describe('agent permissions', () => {
       localRoot: workspace,
       globalPermissions: parseGlobalToolPermissionSettings({ folders: [], blocks: [] }),
     })).rejects.toMatchObject({ code: 'command_failed' });
-  });
-
-  test('matches preapproval rules by normalized tool name and bash command', () => {
-    expect(matchesAgentToolRule('bash(npm test)', 'bash', { command: 'npm test' })).toBe(true);
-    expect(matchesAgentToolRule('bash(npm test)', 'bash', { command: 'npm build' })).toBe(false);
-    expect(matchesAgentToolRule('file-read', 'file_read', {})).toBe(true);
   });
 });
