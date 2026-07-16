@@ -10,6 +10,8 @@ export const URL_PAGE_TRANSLATION_MAX_ACTIVE_SESSIONS = 8;
 export const URL_PAGE_TRANSLATION_MAX_BLOCKS = 4;
 export const URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS = 4_000;
 export const URL_PAGE_TRANSLATION_MAX_BATCH_CHARS = 4_000;
+export const URL_CAPTION_TRANSLATION_MAX_BLOCKS = 16;
+export const URL_CAPTION_TRANSLATION_MAX_BATCH_CHARS = 4_000;
 export const URL_PAGE_TRANSLATION_MAX_OUTPUT_CHARS = 64_000;
 export const URL_PAGE_TRANSLATION_MAX_TRANSLATION_CHARS = 12_000;
 
@@ -22,10 +24,14 @@ export interface UrlPageTranslationBlock {
   text: string;
 }
 
+export type UrlPageTranslationContentKind = 'caption' | 'page';
+
 export interface UrlPageTranslationRequest {
   sessionId: string;
   requestId: string;
   targetLanguage: TranslationLanguage;
+  /** Defaults to page for callers created before caption translation. */
+  contentKind?: UrlPageTranslationContentKind;
   /** Provider-qualified model id. Omitted means resolve the current Agent model. */
   model?: string;
   blocks: UrlPageTranslationBlock[];

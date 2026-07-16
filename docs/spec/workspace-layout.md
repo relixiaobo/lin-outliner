@@ -420,9 +420,9 @@ attached Preview guests.
 
 URL previews also expose one neutral `Languages` icon immediately before the
 header actions menu. It opens a compact, task-first popover: target language and
-the full-width Translate page / Show original command come first; a separator
+the full-width Translate / Show original command come first; a separator
 then groups the globally remembered automatic-translation and model preferences.
-Translate page uses the shared high-contrast neutral primary-button treatment,
+Translate uses the shared high-contrast neutral primary-button treatment,
 while the active page's Show original reversal uses the quieter secondary-button
 treatment. Both commands retain the matching semantic icon and shortcut. At
 least one completed translation gives the stable header language glyph a subtle
@@ -456,19 +456,22 @@ of silently falling back. Changing model while translation is on cancels the
 active request, clears page-local results, and retranslates the current viewport.
 
 Automatic translation is a globally remembered opt-in switch. Turning it on
-immediately checks the current document and translates only when a valid
-top-level `<html lang>` differs from the target. Missing, empty, or invalid
-top-level language metadata leaves the page manual. Turning the switch off does
-not hide visible translations. Manually choosing Show original suppresses auto
-translation for only the current page; the next top-level navigation clears the
-suppression and evaluates the new page again. Changing the target also re-runs
-the language rule for an auto-activated page and turns translation off when the
-new target matches the document language.
+immediately checks the current document and detected media captions. Translation
+activates when either a valid top-level `<html lang>` or a detected caption
+language differs from the target. When both language signals are missing,
+invalid, or match the target, the page remains manual. Turning the switch off
+does not hide visible translations. Manually choosing Show original suppresses
+auto translation for only the current page; the next top-level navigation clears
+the suppression and evaluates the new page again. Changing the target also
+re-runs the language rule for an auto-activated page and turns translation off
+only when neither valid language signal differs from the target.
 
 Translation is viewport-driven rather than an eager whole-page request. Visible
 content starts with a latency-oriented batch of at most two blocks or roughly
 2,000 source characters; later visible and prefetch batches contain at most four
-blocks or roughly 4,000 characters. Before direction is known, the guest runtime
+blocks or roughly 4,000 characters. Page prefetch does not consume that initial
+visible budget; the first priority-zero page batch still uses the `2 / 2,000`
+limit even when prefetch work started first. Before direction is known, the guest runtime
 prefetches about two viewports above and below the activation point. It then keeps
 about four viewports ahead and one behind the observed reading direction, with
 symmetric upward and downward behavior. Blocks outside that window are not sent.
@@ -532,6 +535,70 @@ The guest still has no preload, Node integration, child-window capability, or
 non-HTTP navigation; only fullscreen and sanitized clipboard writes are
 permitted. Translation does not weaken the URL-preview security posture or add
 a guest-to-main IPC channel.
+
+Prerecorded video captions participate in that same URL-translation session.
+The target language, `Follow Agent` or explicit model, automatic-translation
+preference, shortcut, three-request pane budget, and Show original command are
+shared with page blocks; there is no second subtitle settings system. Automatic
+translation activates when either the valid page language or a detected caption
+language differs from the target, so an English video can translate inside a
+same-target-language site shell. A same-target caption track remains original
+only and produces no provider request. Missing, still-loading, inaccessible, or
+captionless media leaves translation idle instead of failing or spinning
+forever.
+
+The isolated runtime first uses the standards `TextTrack` / `VTTCue` path. It
+selects an active, default, or unambiguous finite `captions` / `subtitles` track,
+clones its source cues into one removable Tenon-owned text track, and replaces
+each clone with source plus translation as results arrive while preserving the
+source cue's native line, position, alignment, size, and related layout fields. The original track
+mode is restored by Show original or teardown, and the synthetic track is
+removed rather than accumulating in the site's caption menu across target/model
+changes. This path covers Video.js players such as Frontend Masters. A source
+track replacement creates a fresh caption revision and cue ids, so responses,
+completion, and failures from the previous video or track cannot attach to it.
+Moving playback to another media element restores the previous element's source
+track mode; selecting another track on the same element preserves the user's new
+track choice instead of re-enabling the old one.
+
+YouTube watch pages use a bounded site adapter because their displayed captions
+are not a standards text track. The isolated runtime reads
+`ytInitialPlayerResponse` as JSON without evaluation, accepts only an HTTPS
+`youtube.com/api/timedtext` source, parses a finite timed-text response, and
+renders source plus translation with text-only DOM writes inside the active
+player. A latest matching Resource Timing entry, validated against that same
+origin/path/video policy and retained only in the isolated guest, identifies a
+player-selected caption-track change; changing tracks creates fresh cue ids so
+old model output cannot attach. Tenon's overlay replaces the site's caption
+presentation only while translation is visible, stays clear of visible player
+controls, settles near the lower edge after controls auto-hide, and follows
+player fullscreen; it hides and stops scheduling caption work while YouTube's
+player reports an ad, then resumes after the ad. Disabling translation restores
+the site presentation. A valid player response with no caption tracks is
+negative-cached for that video until video or track discovery changes. If
+YouTube's cached caption URL is no longer readable, the guest toggles the site's
+CC control once and restores its prior state after the player emits a fresh
+bounded URL; repeated metadata or timed-text failures use video/track-keyed
+exponential backoff rather than downloading again every polling interval.
+Non-hash in-page video navigation cancels old requests and restarts an enabled
+manual translation, or re-evaluates automatic translation, without requiring
+another `dom-ready` event.
+
+Caption scheduling follows playback time. The first current batch is at most six
+cues with a soft budget of roughly 1,500 source characters; one indivisible cue
+may exceed that soft budget but remains subject to the trusted 4,000-character
+per-cue hard limit. Later batches are at most sixteen cues / 4,000 characters.
+The runtime keeps about 30 seconds in the immediate tier,
+prefetches up to 90 seconds ahead (at most two minutes at faster playback), and
+keeps a 15-second buffer behind. Seeking promotes the new current window and can
+preempt an obsolete off-window request. Completed cues remain cached for the
+page session, so backward seeking does not call the provider again, and the full
+transcript is never submitted eagerly. Original cue text remains visible during
+loading or failure. Any failed caption batch exposes the same fixed-size
+accessible retry control in the video area immediately, including for off-window
+prefetch. Live-generated captions, speech recognition, DRM circumvention, local
+video files, and media without a finite usable cue track remain outside this
+capability.
 
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the
