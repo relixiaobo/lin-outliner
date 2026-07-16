@@ -8,6 +8,7 @@ import {
   createFolderCapabilitySnapshot,
   missingFolderCapabilities,
   normalizeRequiredFolders,
+  protectedRootForPath,
 } from '../../src/main/agentFolderCapabilities';
 
 const roots: string[] = [];
@@ -144,5 +145,29 @@ describe('folder capability service', () => {
     expect(snapshot.writeRoots).not.toContain(canonicalScratch);
     expect(snapshot.writeRoots).toContain(path.join(canonicalScratch, 'data-cleanup'));
     expect(snapshot.writeRoots).toContain(path.join(canonicalScratch, 'agent-tool-outputs'));
+  });
+
+  test('keeps the control plane private inside a broader user capability', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-folder-protected-'));
+    const control = path.join(root, 'control');
+    const workspace = path.join(control, 'agent-workdir');
+    const scratch = path.join(control, 'agent-scratch');
+    roots.push(root);
+    await mkdir(workspace, { recursive: true });
+    await mkdir(scratch);
+    const canonicalControl = await realpath(control);
+    const snapshot = createFolderCapabilitySnapshot({
+      workspaceRoot: workspace,
+      scratchRoot: scratch,
+      protectedRoots: [control],
+    }, [root]);
+
+    expect(protectedRootForPath(snapshot, path.join(control, 'agent-secrets.json'), 'read')).toBe(canonicalControl);
+    expect(protectedRootForPath(snapshot, path.join(control, 'workspace.json'), 'write')).toBe(canonicalControl);
+    expect(protectedRootForPath(snapshot, path.join(workspace, 'source.ts'), 'read')).toBeNull();
+    expect(protectedRootForPath(snapshot, path.join(workspace, 'source.ts'), 'write')).toBeNull();
+    expect(protectedRootForPath(snapshot, path.join(scratch, 'attachment.pdf'), 'read')).toBeNull();
+    expect(protectedRootForPath(snapshot, path.join(scratch, 'attachment.pdf'), 'write')).toBe(canonicalControl);
+    expect(protectedRootForPath(snapshot, path.join(scratch, 'data-cleanup', 'pack.json'), 'write')).toBeNull();
   });
 });

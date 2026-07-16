@@ -145,8 +145,10 @@ export function macOSSeatbeltProfile(snapshot: FolderCapabilitySnapshot): string
     '(version 1)',
     '(allow default)',
     ...macOSReadDenyRules(snapshot.readRoots),
+    ...protectedRootRules(snapshot, 'read'),
     '(deny file-write*)',
     `(allow file-write* (literal "/dev/null") (literal "/dev/tty") ${writeRules})`,
+    ...protectedRootRules(snapshot, 'write'),
     ...(deniedWrites ? [`(deny file-write* ${deniedWrites})`] : []),
   ].join('\n');
 }
@@ -193,6 +195,22 @@ function macOSReadDenyRules(allowedRoots: readonly string[]): string[] {
     for (const denied of deniedChildren(container, allowedRoots)) {
       const matcher = isDirectory(denied) ? 'subpath' : 'literal';
       rules.push(`(deny file-read* (${matcher} ${seatbeltString(denied)}))`);
+    }
+  }
+  return rules;
+}
+
+function protectedRootRules(
+  snapshot: FolderCapabilitySnapshot,
+  access: 'read' | 'write',
+): string[] {
+  const operation = access === 'read' ? 'file-read*' : 'file-write*';
+  const rules: string[] = [];
+  for (const protection of snapshot.protectedRoots) {
+    rules.push(`(deny ${operation} (subpath ${seatbeltString(protection.root)}))`);
+    const exceptions = access === 'read' ? protection.readExceptions : protection.writeExceptions;
+    if (exceptions.length > 0) {
+      rules.push(`(allow ${operation} ${exceptions.map((root) => `(subpath ${seatbeltString(root)})`).join(' ')})`);
     }
   }
   return rules;

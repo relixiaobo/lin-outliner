@@ -182,15 +182,20 @@ describe('agent permissions', () => {
       args: { file_path: path.join(workspace, 'agent-providers.json'), content: '{}' },
       policy: { workspaceRoot: workspace, protectedStoreRoot },
     }).behavior).toBe('allow');
-    expect(evaluateAgentToolPermission({
-      toolName: 'file_write',
-      args: { file_path: path.join(protectedStoreRoot, 'agent-providers.json'), content: '{}' },
-      policy: {
-        workspaceRoot: workspace,
-        protectedStoreRoot,
-        globalPermissions: { folders: [protectedStoreRoot], blocks: [] },
-      },
-    })).toMatchObject({ behavior: 'blocked', code: 'sensitive_persistence_write' });
+    for (const [toolName, args] of [
+      ['file_read', { file_path: path.join(protectedStoreRoot, 'agent-secrets.json') }],
+      ['file_write', { file_path: path.join(protectedStoreRoot, 'workspace.json'), content: '{}' }],
+    ] as const) {
+      expect(evaluateAgentToolPermission({
+        toolName,
+        args,
+        policy: {
+          workspaceRoot: workspace,
+          protectedStoreRoot,
+          globalPermissions: { folders: [root], blocks: [] },
+        },
+      })).toMatchObject({ behavior: 'blocked', code: 'control_plane_unavailable' });
+    }
   });
 
   test('denies explicit user blocks directly without an exception path', async () => {

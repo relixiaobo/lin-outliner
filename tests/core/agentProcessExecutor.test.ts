@@ -103,4 +103,41 @@ describe('agent process executor', () => {
     const denied = await runAgentToolProcess('/bin/zsh', ['-c', 'printf blocked > .agents/skills/SKILL.md'], root, 10_000, { capabilities });
     expect(denied.exitCode).not.toBe(0);
   });
+
+  test('protects control state from a process with a broader user folder', async () => {
+    if (process.platform !== 'darwin') return;
+    const root = await mkdtemp(path.join(homedir(), '.tenon-process-control-'));
+    roots.push(root);
+    const control = path.join(root, 'control');
+    const workspace = path.join(control, 'agent-workdir');
+    const scratch = path.join(control, 'agent-scratch');
+    const output = path.join(scratch, 'data-cleanup');
+    const outside = path.join(root, 'outside');
+    await mkdir(workspace, { recursive: true });
+    await mkdir(output, { recursive: true });
+    await mkdir(outside);
+    await writeFile(path.join(control, 'agent-secrets.json'), 'private');
+    await writeFile(path.join(workspace, 'inside.txt'), 'inside');
+    await writeFile(path.join(scratch, 'attachment.txt'), 'attachment');
+    await writeFile(path.join(outside, 'user.txt'), 'user');
+    const capabilities = createFolderCapabilitySnapshot({
+      workspaceRoot: workspace,
+      scratchRoot: scratch,
+      includeSystemRoots: true,
+      protectedRoots: [control],
+    }, [root]);
+
+    expect((await runAgentToolProcess('/bin/cat', [path.join(outside, 'user.txt')], workspace, 10_000, { capabilities })).exitCode).toBe(0);
+    expect((await runAgentToolProcess('/bin/cat', [path.join(workspace, 'inside.txt')], workspace, 10_000, { capabilities })).exitCode).toBe(0);
+    expect((await runAgentToolProcess('/bin/cat', [path.join(scratch, 'attachment.txt')], workspace, 10_000, { capabilities })).exitCode).toBe(0);
+    expect((await runAgentToolProcess('/usr/bin/touch', [path.join(workspace, 'written.txt')], workspace, 10_000, { capabilities })).exitCode).toBe(0);
+    expect((await runAgentToolProcess('/usr/bin/touch', [path.join(output, 'pack.json')], workspace, 10_000, { capabilities })).exitCode).toBe(0);
+
+    const readSecret = await runAgentToolProcess('/bin/cat', [path.join(control, 'agent-secrets.json')], workspace, 10_000, { capabilities });
+    const writeControl = await runAgentToolProcess('/usr/bin/touch', [path.join(control, 'workspace.json')], workspace, 10_000, { capabilities });
+    const writeAttachment = await runAgentToolProcess('/usr/bin/touch', [path.join(scratch, 'mutated.txt')], workspace, 10_000, { capabilities });
+    expect(readSecret.exitCode).not.toBe(0);
+    expect(writeControl.exitCode).not.toBe(0);
+    expect(writeAttachment.exitCode).not.toBe(0);
+  });
 });

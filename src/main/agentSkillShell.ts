@@ -6,9 +6,7 @@ import {
   type AgentPermissionFolderRequiredDecision,
   type GlobalToolPermissionConfig,
 } from './agentPermissions';
-import { agentProtectedStorePaths } from './agentProtectedPaths';
 import { createFolderCapabilitySnapshot } from './agentFolderCapabilities';
-import { selfDefinitionRootEntries } from './agentAuthoring';
 import { runLocalBashCommand, type LocalBashRunResult } from './agentLocalTools';
 import {
   folderAccessRequiredToolResultMessage,
@@ -161,12 +159,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
     scratchRoot: input.scratchRoot,
     activeSkillReadRoots: input.trustedReadRoots,
     includeSystemRoots: true,
-    deniedWrites: [
-      ...selfDefinitionRootEntries(input.localRoot ?? process.cwd()).map((entry) => ({ path: entry.dir, recursive: true })),
-      ...(input.protectedStoreRoot
-        ? agentProtectedStorePaths(input.protectedStoreRoot).map((filePath) => ({ path: filePath, recursive: false }))
-        : []),
-    ],
+    protectedRoots: input.protectedStoreRoot ? [input.protectedStoreRoot] : [],
   }, globalPermissions.folders);
   let result: LocalBashRunResult;
   try {

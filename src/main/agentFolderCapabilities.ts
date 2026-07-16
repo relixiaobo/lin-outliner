@@ -22,11 +22,18 @@ export interface FolderCapabilityWriteDeny {
   recursive: boolean;
 }
 
+export interface FolderCapabilityProtectedRoot {
+  root: string;
+  readExceptions: readonly string[];
+  writeExceptions: readonly string[];
+}
+
 export interface FolderCapabilitySnapshot {
   roots: readonly FolderCapabilityRoot[];
   readRoots: readonly string[];
   writeRoots: readonly string[];
   deniedWrites: readonly FolderCapabilityWriteDeny[];
+  protectedRoots: readonly FolderCapabilityProtectedRoot[];
 }
 
 export interface FolderCapabilityDocument {
@@ -39,6 +46,7 @@ export interface FolderCapabilityContext {
   scratchRoot?: string;
   activeSkillReadRoots?: readonly string[];
   deniedWrites?: readonly FolderCapabilityWriteDeny[];
+  protectedRoots?: readonly string[];
   includeSystemRoots?: boolean;
 }
 
@@ -243,12 +251,29 @@ export function createFolderCapabilitySnapshot(
       roots.push({ access: 'write', origin: 'system', root });
     }
   }
-  return snapshotFromRoots(compactCapabilityRoots(roots), context.deniedWrites);
+  const protectedRoots = (context.protectedRoots ?? []).map((rootInput) => {
+    const root = canonicalPathPreservingSuffix(rootInput);
+    return {
+      root,
+      readExceptions: compactPaths([
+        workspaceRoot,
+        ...(scratchRoot ? [scratchRoot] : []),
+      ].filter((candidate) => isPathInside(root, candidate))),
+      writeExceptions: compactPaths([
+        workspaceRoot,
+        ...(scratchRoot
+          ? ['agent-tool-outputs', 'data-cleanup', 'generated-images'].map((child) => path.join(scratchRoot, child))
+          : []),
+      ].filter((candidate) => isPathInside(root, candidate))),
+    };
+  });
+  return snapshotFromRoots(compactCapabilityRoots(roots), context.deniedWrites, protectedRoots);
 }
 
 export function snapshotFromRoots(
   roots: readonly FolderCapabilityRoot[],
   deniedWrites: readonly FolderCapabilityWriteDeny[] = [],
+  protectedRoots: readonly FolderCapabilityProtectedRoot[] = [],
 ): FolderCapabilitySnapshot {
   const compacted = compactCapabilityRoots(roots);
   const writeRoots = compactPaths(compacted.filter((entry) => entry.access === 'write').map((entry) => entry.root));
@@ -261,7 +286,22 @@ export function snapshotFromRoots(
     readRoots,
     writeRoots,
     deniedWrites: compactWriteDenies(deniedWrites),
+    protectedRoots: compactProtectedRoots(protectedRoots),
   };
+}
+
+export function protectedRootForPath(
+  snapshot: Pick<FolderCapabilitySnapshot, 'protectedRoots'>,
+  targetPath: string,
+  access: FolderCapabilityAccess,
+): string | null {
+  const target = canonicalPathPreservingSuffix(targetPath);
+  for (const protection of snapshot.protectedRoots) {
+    if (!isPathInside(protection.root, target)) continue;
+    const exceptions = access === 'write' ? protection.writeExceptions : protection.readExceptions;
+    if (!exceptions.some((root) => isPathInside(root, target))) return protection.root;
+  }
+  return null;
 }
 
 export function missingFolderCapabilities(
@@ -373,6 +413,27 @@ function compactWriteDenies(values: readonly FolderCapabilityWriteDeny[]): Folde
     if (result.some((entry) => entry.recursive && isPathInside(entry.path, candidate.path))) continue;
     if (result.some((entry) => entry.path === candidate.path && entry.recursive === candidate.recursive)) continue;
     result.push(candidate);
+  }
+  return result;
+}
+
+function compactProtectedRoots(values: readonly FolderCapabilityProtectedRoot[]): FolderCapabilityProtectedRoot[] {
+  const result: FolderCapabilityProtectedRoot[] = [];
+  for (const value of values) {
+    const root = canonicalPathPreservingSuffix(value.root);
+    if (result.some((entry) => isPathInside(entry.root, root))) continue;
+    for (let index = result.length - 1; index >= 0; index -= 1) {
+      if (isPathInside(root, result[index]!.root)) result.splice(index, 1);
+    }
+    result.push({
+      root,
+      readExceptions: compactPaths(value.readExceptions
+        .map(canonicalPathPreservingSuffix)
+        .filter((candidate) => isPathInside(root, candidate))),
+      writeExceptions: compactPaths(value.writeExceptions
+        .map(canonicalPathPreservingSuffix)
+        .filter((candidate) => isPathInside(root, candidate))),
+    });
   }
   return result;
 }

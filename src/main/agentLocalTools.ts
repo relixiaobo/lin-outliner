@@ -29,7 +29,6 @@ import {
 import {
   selfDefinitionRootEntries,
 } from './agentAuthoring';
-import { agentProtectedStorePaths } from './agentProtectedPaths';
 import {
   optionalNormalizedString,
   requiredNormalizedString,
@@ -63,7 +62,7 @@ export interface AgentLocalWorkspaceContext {
   // These widen file-tool containment without changing the relative-path base.
   permissionRoots: ResolvedAgentLocalPermissionRoot[];
   processCapabilities: FolderCapabilitySnapshot;
-  deniedProcessWrites: FolderCapabilitySnapshot['deniedWrites'];
+  protectedStoreRoot?: string;
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
 }
@@ -696,12 +695,12 @@ function createWorkspaceContext(
     root,
     scratchRoot: resolvedScratchRoot,
     permissionRoots: [],
-    deniedProcessWrites: agentProcessWriteDenies(root, protectedStoreRoot),
+    protectedStoreRoot,
     processCapabilities: createFolderCapabilitySnapshot({
       workspaceRoot: root,
       scratchRoot: resolvedScratchRoot,
       includeSystemRoots: true,
-      deniedWrites: agentProcessWriteDenies(root, protectedStoreRoot),
+      protectedRoots: protectedStoreRoot ? [protectedStoreRoot] : [],
     }, []),
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
@@ -738,17 +737,8 @@ export function setAgentLocalPermissionRoots(
     scratchRoot: workspace.scratchRoot,
     activeSkillReadRoots: workspace.permissionRoots.filter((entry) => entry.access === 'read').map((entry) => entry.realRoot),
     includeSystemRoots: true,
-    deniedWrites: workspace.deniedProcessWrites,
+    protectedRoots: workspace.protectedStoreRoot ? [workspace.protectedStoreRoot] : [],
   }, workspace.permissionRoots.filter((entry) => entry.access === 'write').map((entry) => entry.realRoot));
-}
-
-function agentProcessWriteDenies(localRoot: string, protectedStoreRoot?: string): FolderCapabilitySnapshot['deniedWrites'] {
-  return [
-    ...selfDefinitionRootEntries(localRoot).map((entry) => ({ path: entry.dir, recursive: true })),
-    ...(protectedStoreRoot
-      ? agentProtectedStorePaths(protectedStoreRoot).map((filePath) => ({ path: filePath, recursive: false }))
-      : []),
-  ];
 }
 
 export async function restorePostCompactReadFiles(

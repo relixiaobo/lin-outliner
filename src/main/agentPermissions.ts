@@ -13,6 +13,7 @@ import {
   isPathInside,
   missingFolderCapabilities,
   normalizeRequiredFolders,
+  protectedRootForPath,
 } from './agentFolderCapabilities';
 import {
   matchingBlockForDescriptor,
@@ -251,6 +252,7 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
     workspaceRoot: policy.workspaceRoot,
     scratchRoot: policy.scratchRoot,
     activeSkillReadRoots: policy.trustedReadRoots,
+    protectedRoots: policy.protectedStoreRoot ? [policy.protectedStoreRoot] : [],
   }, policy.globalPermissions.folders);
   const requiredFolders = requiredFoldersForTool(toolName, input.args, policy.workspaceRoot, snapshot, access);
   const missingFolders = missingFolderCapabilities(requiredFolders, { readRoots: snapshot.writeRoots });
@@ -392,24 +394,25 @@ function derivePathToolActionDescriptor(
   }
 
   const targetPath = canonicalPathPreservingSuffix(resolvePermissionPath(policy.workspaceRoot, rawPath));
-  if (write && isAgentProtectedStorePath(targetPath, policy.protectedStoreRoot)) {
-    return descriptor(toolName, fileActionKind(toolName, true, 'sensitive_local_path'), {
-      accessScope: 'outside_allowed_file_area',
-      title: 'protected settings write',
-      summary: `Write protected settings at ${targetPath}.`,
-      consequence: 'Agent tools cannot modify Tenon permission or credential stores.',
-      targetPath,
-      code: 'sensitive_persistence_write',
-      floor: 'permission_self_mod',
-      platformHardBlock: true,
-    });
-  }
-
   const snapshot = createFolderCapabilitySnapshot({
     workspaceRoot: policy.workspaceRoot,
     scratchRoot: policy.scratchRoot,
     activeSkillReadRoots: policy.trustedReadRoots,
+    protectedRoots: policy.protectedStoreRoot ? [policy.protectedStoreRoot] : [],
   }, policy.globalPermissions.folders);
+  const protectedRoot = protectedRootForPath(snapshot, targetPath, write ? 'write' : 'read');
+  if (protectedRoot) {
+    return descriptor(toolName, fileActionKind(toolName, write, 'sensitive_local_path'), {
+      accessScope: 'outside_allowed_file_area',
+      title: 'Tenon control plane access',
+      summary: `${write ? 'Write' : 'Read'} private Tenon state at ${targetPath}.`,
+      consequence: `Agent file tools cannot access Tenon control state under ${protectedRoot}.`,
+      targetPath,
+      code: 'control_plane_unavailable',
+      floor: 'permission_self_mod',
+      platformHardBlock: true,
+    });
+  }
   const roots = write ? snapshot.writeRoots : snapshot.readRoots;
   const inside = roots.some((root) => isPathInside(root, targetPath));
   const sensitive = isSensitivePath(targetPath);
