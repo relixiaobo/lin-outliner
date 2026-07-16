@@ -62,6 +62,87 @@ window. Starting a text edit, starting an eager-materialized row, undo/redo
 history work, explicit transactions, and app `before-quit` all flush pending
 document writes before continuing.
 
+## Workspace Persistence And Replication Boundary
+
+`DocumentService` atomically persists `workspace.loro.json` as a versioned v3
+envelope. The envelope separates portable workspace facts from state owned by
+one local replica while keeping both sections in one atomic save:
+
+```ts
+interface WorkspacePersistenceEnvelopeV3 {
+  kind: 'tenon-workspace';
+  schemaVersion: 3;
+  shared: {
+    workspaceId: string;
+    documentId: string;
+    document: SharedLoroDocumentState;
+  };
+  local: {
+    installationId: string;
+    replicaId: string;
+    loroPendingUpdates: string[];
+    operationHistory: OperationHistoryEntry[];
+  };
+}
+```
+
+`installation.json` holds the stable identity of one Electron `userData`
+installation and is created with the private atomic JSON store. The local
+envelope section repeats that id as its ownership marker. It is not a hardware
+identity and can be duplicated with a complete `userData` copy. Loading the
+envelope under the same installation restores the document replica, operation
+journal, and unresolved Loro updates. Loading a copied envelope under a
+different installation keeps the shared workspace/document identities but
+mints a new replica and discards copied local history. A shared-state bootstrap
+always follows the same fresh-replica rule. The retired top-level Loro v2 format
+has no compatibility reader; pre-release development data must be reset after
+this format change.
+
+Every Core construction uses a fresh random Loro peer id for new operations;
+the active peer is never persisted. This remains safe when a complete
+`userData` directory is cloned or an older workspace snapshot is restored:
+neither process can reuse an already-synchronized `{peer, counter}` range.
+Historical peer ids remain intrinsic to operation ids in the snapshot. The
+trade-off is one version-vector peer per editing session.
+
+The shared Loro record contains a snapshot but no field designating the active
+local peer. Two converged replicas can therefore emit different snapshot bytes;
+convergence is the same materialized state and semantic version vector, not
+byte-identical snapshot encoding.
+
+Core exposes provider-neutral replication primitives for a full shared
+snapshot, encoded version vectors, updates since a version vector, committed
+local-update subscription, and idempotent batch import. Imports accept
+out-of-order and duplicate Loro updates, never re-emit them as local updates,
+leave replica identity and the local operation journal untouched, and report
+accepted operations, unresolved dependencies, and persistence changes
+separately from materialized node changes. Newly accepted operations are
+durable even when conflict resolution leaves the visible state unchanged.
+Duplicate or still-pending imports do not invalidate materialized caches or
+clear redo.
+
+Shared snapshot export, version-vector reads, incremental export, and remote
+import are available only at a committed Core boundary. They reject both an
+active explicit transaction and a standalone async mutation while it has
+yielded. Loro export can otherwise auto-commit pending operations, so this guard
+prevents a failed Core transaction from publishing data that its rollback later
+removes locally.
+
+Loro snapshots omit updates whose causal dependencies are still missing. The
+local envelope therefore keeps only base64 update blobs whose end versions are
+not yet covered by the current oplog. Reload replays those blobs; they are
+removed once their operations enter the oplog. This list is CRDT dependency
+durability, not a network outbox, acknowledgement cursor, or retry queue.
+Loading an already-normalized snapshot reopens it only when reconciliation
+actually created a pending transaction, so normal reload performs one snapshot
+import while still preventing no-op reconciliation from becoming a hidden
+dependency of the first real local update.
+
+These are local persistence contracts only. Tenon currently starts no account,
+network transport, outbox, cursor, retry loop, Cloudflare resource, or sync UI.
+Future transport remains owned by Electron main and must not introduce
+Cloudflare SDK types into Core.
+
 ## Projection Updates (incremental delta)
 
 The renderer holds its projection index across edits and folds **change sets**

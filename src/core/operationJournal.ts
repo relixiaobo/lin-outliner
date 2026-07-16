@@ -152,9 +152,12 @@ export function isOperationHistoryEntry(value: unknown): value is OperationHisto
   const entry = value as OperationHistoryEntry;
   return typeof entry.operationId === 'string'
     && (entry.origin === 'agent' || entry.origin === 'user' || entry.origin === 'system')
+    && (entry.command == null || typeof entry.command === 'string')
+    && (entry.tool == null || typeof entry.tool === 'string')
     && typeof entry.action === 'string'
     && typeof entry.summary === 'string'
     && Array.isArray(entry.affectedNodeIds)
+    && entry.affectedNodeIds.every((nodeId) => typeof nodeId === 'string')
     && typeof entry.createdAt === 'string';
 }
 

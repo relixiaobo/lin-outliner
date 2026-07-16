@@ -1,10 +1,12 @@
 import { autoInitStrategiesForFieldType } from './autoInit';
 import { CoreError } from './errors';
-import { LoroOutlinerDocument, type SerializedLoroDocumentState } from './loroDocument';
+import { LoroOutlinerDocument, type SharedLoroDocumentState } from './loroDocument';
 import { freshNodeId, isClientNodeId } from './nodeId';
 import {
   OperationJournal,
+  changedNodeIdsBetweenStates,
   decorateHistoryItem,
+  isOperationHistoryEntry,
   operationHistoryEntryFromValue,
   stackStateResult,
   synthesizeHistoryEntry,
@@ -16,6 +18,7 @@ import {
   type OperationHistoryScope,
   type OperationStackState,
 } from './operationJournal';
+import { createPersistenceId, isPersistenceId } from './persistenceIdentity';
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
 import { DONE_FIELD, systemFieldLabel } from './systemFields';
@@ -139,6 +142,12 @@ export interface CoreRevisionDelta {
   requiresFullSearchRebuild: boolean;
 }
 
+export interface CoreReplicationImportResult extends CoreRevisionDelta {
+  acceptedOperations: boolean;
+  hasPendingUpdates: boolean;
+  persistenceChanged: boolean;
+}
+
 interface TemplateFieldRef {
   fieldDefId: NodeId;
   templateOriginId: NodeId;
@@ -167,11 +176,34 @@ interface CoreTransaction {
   chunkUndoValue?: OperationHistoryEntry;
 }
 
-interface SerializedLoroState extends SerializedLoroDocumentState {
-  operationHistory?: OperationHistoryEntry[];
+export interface WorkspaceSharedState {
+  workspaceId: string;
+  documentId: string;
+  document: SharedLoroDocumentState;
 }
 
-type CoreSerializedState = SerializedLoroState;
+export interface WorkspaceReplicaState {
+  installationId: string;
+  replicaId: string;
+  loroPendingUpdates: string[];
+  operationHistory: OperationHistoryEntry[];
+}
+
+export interface WorkspacePersistenceEnvelopeV3 {
+  kind: 'tenon-workspace';
+  schemaVersion: 3;
+  shared: WorkspaceSharedState;
+  local: WorkspaceReplicaState;
+}
+
+export interface CorePersistenceOptions {
+  installationId?: string;
+}
+
+interface CoreInitialState {
+  shared?: WorkspaceSharedState;
+  local?: WorkspaceReplicaState;
+}
 
 const DEFAULT_COMMIT_ORIGIN = 'user:implicit';
 const SYSTEM_COMMIT_ORIGIN = 'system:core';
@@ -193,9 +225,16 @@ const RETIRED_SETTINGS_TITLE = 'Settings';
 
 export class Core {
   private loro: LoroOutlinerDocument;
+  private readonly installationIdValue: string;
+  private readonly workspaceIdValue: string;
+  private readonly documentIdValue: string;
+  private readonly replicaIdValue: string;
   private commitOriginStack: string[] = [];
   private commitMetadataStack: CoreTransactionMetadata[] = [];
   private activeTransaction?: CoreTransaction;
+  // Standalone yielding mutations are rollback-capable without creating a
+  // CoreTransaction, so they need their own replication-boundary guard.
+  private activeAsyncMutations = 0;
   private stateValue: DocumentState;
   private history: OperationJournal;
   // Projection cache: the per-node projections plus their sorted id order.
@@ -222,9 +261,23 @@ export class Core {
   // `parent not found` when the user adds the first row to today's note.
   private initialPersistRequired = false;
 
-  constructor(state?: CoreSerializedState) {
-    this.loro = new LoroOutlinerDocument(state);
-    this.history = new OperationJournal(state?.operationHistory);
+  private constructor(initial: CoreInitialState = {}, options: CorePersistenceOptions = {}) {
+    const installationId = options.installationId ?? initial.local?.installationId ?? createPersistenceId();
+    if (!isPersistenceId(installationId)) throw CoreError.invalidOperation('invalid installation identity');
+    if (initial.shared) assertWorkspaceSharedState(initial.shared);
+    if (initial.local) assertWorkspaceReplicaState(initial.local);
+
+    const reuseLocalReplica = initial.local?.installationId === installationId;
+    const replicaId = reuseLocalReplica ? initial.local!.replicaId : createPersistenceId();
+    const pendingUpdates = reuseLocalReplica ? initial.local!.loroPendingUpdates : undefined;
+
+    this.installationIdValue = installationId;
+    this.workspaceIdValue = initial.shared?.workspaceId ?? createPersistenceId();
+    this.documentIdValue = initial.shared?.documentId ?? createPersistenceId();
+    this.replicaIdValue = replicaId;
+    this.loro = new LoroOutlinerDocument({ shared: initial.shared?.document, pendingUpdates });
+    this.history = new OperationJournal(reuseLocalReplica ? initial.local!.operationHistory : undefined);
+    if (initial.shared && !reuseLocalReplica) this.initialPersistRequired = true;
 
     if (this.loro.isEmpty()) {
       this.ensureSystemNodesDirect();
@@ -239,6 +292,16 @@ export class Core {
       if (!sameJson(existing, normalized)) {
         this.loro.commit(SYSTEM_COMMIT_ORIGIN);
         this.initialPersistRequired = true;
+      } else if (this.loro.pendingLocalTransactionLength() > 0) {
+        // System reconciliation writes through generic node serializers, which
+        // can produce CRDT operations even when the materialized state is
+        // unchanged. Re-open the shared snapshot so those no-op operations do
+        // not become hidden dependencies of the replica's first real update.
+        this.loro = new LoroOutlinerDocument({
+          shared: initial.shared!.document,
+          pendingUpdates,
+          peerId: this.loro.peerId(),
+        });
       }
     }
 
@@ -253,20 +316,20 @@ export class Core {
     return this.initialPersistRequired;
   }
 
-  static new() {
-    return new Core();
+  static new(options: CorePersistenceOptions = {}) {
+    return new Core({}, options);
   }
 
-  static fromState(state: CoreSerializedState) {
-    return new Core(state);
+  static fromState(state: WorkspacePersistenceEnvelopeV3, options: CorePersistenceOptions = {}) {
+    return new Core({ shared: state.shared, local: state.local }, options);
   }
 
-  static deserializeState(raw: string): CoreSerializedState {
-    const parsed = JSON.parse(raw) as CoreSerializedState;
-    if (parsed.kind !== 'loro-document' || parsed.schemaVersion !== 2 || typeof parsed.snapshot !== 'string') {
-      throw CoreError.invalidOperation('invalid Loro workspace state');
-    }
-    return parsed;
+  static fromSharedState(shared: WorkspaceSharedState, options: CorePersistenceOptions = {}) {
+    return new Core({ shared }, options);
+  }
+
+  static deserializeState(raw: string): WorkspacePersistenceEnvelopeV3 {
+    return parseWorkspacePersistenceEnvelope(JSON.parse(raw));
   }
 
   state() {
@@ -279,12 +342,84 @@ export class Core {
     return cloneState(this.stateValue);
   }
 
-  serializeState() {
-    const serialized: SerializedLoroState = {
-      ...this.loro.serialize(SYSTEM_COMMIT_ORIGIN),
-      operationHistory: this.history.entriesForSerialization(500),
+  serializeState(): string {
+    const serialized: WorkspacePersistenceEnvelopeV3 = {
+      kind: 'tenon-workspace',
+      schemaVersion: 3,
+      shared: this.exportSharedState(),
+      local: {
+        installationId: this.installationIdValue,
+        replicaId: this.replicaIdValue,
+        loroPendingUpdates: this.loro.pendingUpdateState(),
+        operationHistory: this.history.entriesForSerialization(500),
+      },
     };
     return JSON.stringify(serialized);
+  }
+
+  exportSharedState(): WorkspaceSharedState {
+    this.assertReplicationIdle();
+    return {
+      workspaceId: this.workspaceIdValue,
+      documentId: this.documentIdValue,
+      document: this.loro.exportSharedState(SYSTEM_COMMIT_ORIGIN),
+    };
+  }
+
+  persistenceIdentity() {
+    return {
+      installationId: this.installationIdValue,
+      workspaceId: this.workspaceIdValue,
+      documentId: this.documentIdValue,
+      replicaId: this.replicaIdValue,
+      loroSessionPeerId: this.loro.peerId(),
+    };
+  }
+
+  replicationVersionVector(): Uint8Array {
+    this.assertReplicationIdle();
+    return this.loro.versionVector();
+  }
+
+  exportReplicationUpdate(from?: Uint8Array): Uint8Array {
+    this.assertReplicationIdle();
+    return this.loro.exportUpdate(from);
+  }
+
+  subscribeLocalUpdates(listener: (update: Uint8Array) => void): () => void {
+    return this.loro.subscribeLocalUpdates(listener);
+  }
+
+  applyReplicationUpdates(updates: readonly Uint8Array[]): CoreReplicationImportResult {
+    this.assertReplicationIdle();
+    const before = this.loro.materializeState();
+    const importResult = this.loro.importUpdates(updates);
+    const after = this.loro.materializeState();
+    const changedNodeIds = changedNodeIdsBetweenStates(before, after);
+    this.loro.clearTouchedNodeIds();
+    let revisionDelta = this.unchangedRevisionDelta();
+    if (changedNodeIds.length > 0) {
+      this.invalidateProjectionCache();
+      this.stateValue = after;
+      this.bumpRevision(changedNodeIds, true);
+      this.verifyCaches();
+      revisionDelta = this.revisionDelta();
+    }
+    return { ...revisionDelta, ...importResult };
+  }
+
+  private unchangedRevisionDelta(): CoreRevisionDelta {
+    return {
+      revision: this.revisionValue,
+      changedNodeIds: [],
+      requiresFullSearchRebuild: false,
+    };
+  }
+
+  private assertReplicationIdle(): void {
+    if (this.activeTransaction || this.activeAsyncMutations > 0) {
+      throw CoreError.invalidOperation('cannot use replication APIs during an uncommitted mutation');
+    }
   }
 
   projection(): DocumentProjection {
@@ -2510,6 +2645,7 @@ export class Core {
     const before = this.loro.materializeState();
     this.loro.clearTouchedNodeIds();
     const rollbackFrontiers = this.loro.frontiers();
+    this.activeAsyncMutations += 1;
     try {
       const focusHint = await mutator();
       const after = this.loro.materializeState();
@@ -2528,6 +2664,8 @@ export class Core {
       this.invalidateProjectionCache();
       this.refreshStateFromLoro();
       throw error;
+    } finally {
+      this.activeAsyncMutations -= 1;
     }
   }
 
@@ -2795,11 +2933,11 @@ export class Core {
     // reflects the tree verbatim (no read-time re-ordering), so every system node
     // must be placed here, matching the historical projection order.
     [DAILY_NOTES_ID, LIBRARY_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID].forEach((id, index) => {
-      this.loro.moveNode(id, WORKSPACE_ID, index);
+      this.ensureChildIndexDirect(id, WORKSPACE_ID, index);
     });
-    this.loro.moveNode(RECENTS_ID, SEARCHES_ID, 0);
+    this.ensureChildIndexDirect(RECENTS_ID, SEARCHES_ID, 0);
     [TAG_DAY_ID, TAG_WEEK_ID, TAG_YEAR_ID].forEach((id, index) => {
-      this.loro.moveNode(id, SCHEMA_ID, index);
+      this.ensureChildIndexDirect(id, SCHEMA_ID, index);
     });
     this.ensureSystemOptionNodesDirect();
     this.migrateLegacyParaRootNodesDirect();
@@ -2899,13 +3037,21 @@ export class Core {
       return;
     }
     const state = this.snapshot();
-    const node = clone(requiredNode(state, id));
+    const current = requiredNode(state, id);
+    const node = clone(current);
     node.type = type;
     if (!node.content.text || legacyNames.includes(node.content.text)) node.content = plainText(name);
     node.locked = locked;
     node.updatedAt = node.updatedAt || now;
-    this.loro.writeNode(node);
+    if (!sameJson(current, node)) this.loro.writeNode(node);
     if (parentId && node.parentId !== parentId) this.loro.moveNode(id, parentId, undefined);
+  }
+
+  private ensureChildIndexDirect(nodeId: string, parentId: string, index: number) {
+    const state = this.snapshot();
+    if (state.nodes[nodeId]?.parentId !== parentId || state.nodes[parentId]?.children[index] !== nodeId) {
+      this.loro.moveNode(nodeId, parentId, index);
+    }
   }
 
   private migrateRetiredSettingsNodeDirect() {
@@ -2936,7 +3082,7 @@ export class Core {
       domain.values.forEach((value, index) => {
         const optionId = systemOptionNodeId(domain.subtreeId, value);
         this.ensureSystemNodeDirect(optionId, 'systemOption', domain.subtreeId, value, true, now);
-        this.loro.moveNode(optionId, domain.subtreeId, index);
+        this.ensureChildIndexDirect(optionId, domain.subtreeId, index);
       });
     }
   }
@@ -2954,7 +3100,7 @@ export class Core {
     keys.forEach((key, index) => {
       const rowId = defConfigNodeId(defId, key);
       if (this.loro.hasNode(rowId)) {
-        this.loro.moveNode(rowId, defId, index);
+        this.ensureChildIndexDirect(rowId, defId, index);
         return;
       }
       this.loro.createNodeWithId<DefConfigNode>(rowId, defId, index, 'defConfig', (node) => {
@@ -3764,6 +3910,49 @@ export class Core {
     }
   }
 
+}
+
+function parseWorkspacePersistenceEnvelope(value: unknown): WorkspacePersistenceEnvelopeV3 {
+  if (!isRecord(value) || value.kind !== 'tenon-workspace' || value.schemaVersion !== 3) {
+    throw CoreError.invalidOperation('invalid Tenon workspace state');
+  }
+  assertWorkspaceSharedState(value.shared);
+  assertWorkspaceReplicaState(value.local);
+  return value as unknown as WorkspacePersistenceEnvelopeV3;
+}
+
+function assertWorkspaceSharedState(value: unknown): asserts value is WorkspaceSharedState {
+  if (!isRecord(value) || !isPersistenceId(value.workspaceId) || !isPersistenceId(value.documentId)) {
+    throw CoreError.invalidOperation('invalid shared workspace identity');
+  }
+  const document = value.document;
+  if (
+    !isRecord(document)
+    || document.kind !== 'loro-document'
+    || document.schemaVersion !== 3
+    || typeof document.snapshot !== 'string'
+    || document.snapshot.length === 0
+  ) {
+    throw CoreError.invalidOperation('invalid shared Loro document state');
+  }
+}
+
+function assertWorkspaceReplicaState(value: unknown): asserts value is WorkspaceReplicaState {
+  if (
+    !isRecord(value)
+    || !isPersistenceId(value.installationId)
+    || !isPersistenceId(value.replicaId)
+    || !Array.isArray(value.loroPendingUpdates)
+    || !value.loroPendingUpdates.every((update) => typeof update === 'string' && update.length > 0)
+    || !Array.isArray(value.operationHistory)
+    || !value.operationHistory.every(isOperationHistoryEntry)
+  ) {
+    throw CoreError.invalidOperation('invalid local workspace replica state');
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function clone<T>(value: T): T {

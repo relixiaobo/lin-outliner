@@ -46,6 +46,7 @@ import { parseLinOutline } from './agentOutlineParser';
 import { indexProjection } from './agentNodeToolProjection';
 import { resolveSearchSpecFromOutlineNode } from './agentNodeToolSearch';
 import { atomicWriteFile } from './jsonFileStore';
+import { loadOrCreateInstallationId } from './installationIdentity';
 import { NodeRetrievalService } from './nodeRetrievalService';
 
 const WORKSPACE_FILE = 'workspace.loro.json';
@@ -918,11 +919,12 @@ export class DocumentService {
   }
 
   private async loadCore() {
+    const installationId = await loadOrCreateInstallationId(app.getPath('userData'));
     try {
       const raw = await readFile(workspacePath(), 'utf8');
-      return Core.fromState(Core.deserializeState(raw));
+      return Core.fromState(Core.deserializeState(raw), { installationId });
     } catch (error) {
-      if (isNotFound(error)) return Core.new();
+      if (isNotFound(error)) return Core.new({ installationId });
       throw error;
     }
   }

@@ -120,6 +120,14 @@ function fieldTypeOf(core: Core, fieldEntryId: string) {
   return projectFieldConfig(byId, fieldDef).fieldType;
 }
 
+function coreFromLoroDocument(document: LoroOutlinerDocument): Core {
+  return Core.fromSharedState({
+    workspaceId: crypto.randomUUID(),
+    documentId: crypto.randomUUID(),
+    document: document.exportSharedState('__legacy__'),
+  });
+}
+
 function coreWithDirtyDuplicateOwnerFields(): Core {
   const legacy = new LoroOutlinerDocument();
   legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {
@@ -149,7 +157,7 @@ function coreWithDirtyDuplicateOwnerFields(): Core {
   legacy.createNodeWithId('xml-entry-b', 'feed-node', undefined, 'fieldEntry', (node) => {
     node.fieldDefId = 'xml-def-b';
   });
-  return Core.fromState(legacy.serialize('__legacy__'));
+  return coreFromLoroDocument(legacy);
 }
 
 function coreWithDirtyDuplicateFieldDefs(): Core {
@@ -175,7 +183,7 @@ function coreWithDirtyDuplicateFieldDefs(): Core {
   legacy.createNodeWithId('source-def-b', SCHEMA_ID, undefined, 'fieldDef', (node) => {
     node.content = plainText(' source ');
   });
-  return Core.fromState(legacy.serialize('__legacy__'));
+  return coreFromLoroDocument(legacy);
 }
 
 async function executeTool<TData>(

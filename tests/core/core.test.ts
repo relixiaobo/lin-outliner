@@ -59,6 +59,14 @@ function inlineNodeReference(targetId: string, displayName = 'Target'): RichText
   };
 }
 
+function coreFromLoroDocument(document: LoroOutlinerDocument): Core {
+  return Core.fromSharedState({
+    workspaceId: crypto.randomUUID(),
+    documentId: crypto.randomUUID(),
+    document: document.exportSharedState('__legacy__'),
+  });
+}
+
 describe('Core', () => {
   test('initializes Recents as a saved search node', () => {
     const core = Core.new();
@@ -117,7 +125,7 @@ describe('Core', () => {
       node.locked = true;
     });
 
-    const restored = Core.fromState(legacy.serialize('__legacy__'));
+    const restored = coreFromLoroDocument(legacy);
     const state = restored.state();
 
     expect(state.nodes.settings).toBeUndefined();
@@ -145,7 +153,7 @@ describe('Core', () => {
       node.content = plainText('User setting note');
     });
 
-    const restored = Core.fromState(legacy.serialize('__legacy__'));
+    const restored = coreFromLoroDocument(legacy);
     const state = restored.state();
 
     expect(state.nodes.settings).toMatchObject({
@@ -174,7 +182,7 @@ describe('Core', () => {
       node.targetId = 'settings';
     });
 
-    const restored = Core.fromState(legacy.serialize('__legacy__'));
+    const restored = coreFromLoroDocument(legacy);
     const state = restored.state();
 
     expect(state.nodes.settings).toMatchObject({
@@ -232,7 +240,7 @@ describe('Core', () => {
       node.content = plainText('Saved reference');
     });
 
-    const restored = Core.fromState(legacy.serialize('__legacy__'));
+    const restored = coreFromLoroDocument(legacy);
     const state = restored.state();
 
     expect(state.nodes[PROJECTS_ID]).toBeUndefined();
