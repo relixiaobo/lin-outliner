@@ -62,6 +62,61 @@ window. Starting a text edit, starting an eager-materialized row, undo/redo
 history work, explicit transactions, and app `before-quit` all flush pending
 document writes before continuing.
 
+## Workspace Persistence And Replication Boundary
+
+`DocumentService` atomically persists `workspace.loro.json` as a versioned v3
+envelope. The envelope separates portable workspace facts from state owned by
+one local replica while keeping both sections in one atomic save:
+
+```ts
+interface WorkspacePersistenceEnvelopeV3 {
+  kind: 'tenon-workspace';
+  schemaVersion: 3;
+  shared: {
+    workspaceId: string;
+    documentId: string;
+    document: SharedLoroDocumentState;
+  };
+  local: {
+    installationId: string;
+    replicaId: string;
+    loroPeerId: string;
+    operationHistory: OperationHistoryEntry[];
+  };
+}
+```
+
+`installation.json` holds the stable identity of one Electron `userData`
+installation and is created with the private atomic JSON store. The local
+envelope section repeats that id as its ownership marker. Loading the envelope
+under the same installation restores the document replica and Loro peer ids.
+Loading a copied envelope under a different installation keeps the shared
+workspace/document identities but mints a new replica and peer and discards the
+copied operation journal. A shared-state bootstrap always follows the same
+fresh-replica rule. The retired top-level Loro v2 format has no compatibility
+reader; pre-release development data must be reset after this format change.
+
+The shared Loro record contains a snapshot but no field designating the active
+local peer. Historical peer ids remain intrinsic to Loro operation ids inside
+the snapshot. Two converged replicas can therefore emit different snapshot
+bytes; convergence is the same materialized state and semantic version vector,
+not byte-identical snapshot encoding.
+
+Core exposes provider-neutral replication primitives for a full shared
+snapshot, encoded version vectors, updates since a version vector, committed
+local-update subscription, and idempotent batch import. Imports accept
+out-of-order and duplicate Loro updates, never re-emit them as local updates,
+leave replica identity and the local operation journal untouched, and force a
+full projection/search cache rebuild when materialized nodes change. Loading an
+already-normalized snapshot also discards reconciliation operations that made
+no logical change, so the first real local update has no replica-private hidden
+dependencies.
+
+These are local persistence contracts only. Tenon currently starts no account,
+network transport, outbox, cursor, retry loop, Cloudflare resource, or sync UI.
+Future transport remains owned by Electron main and must not introduce
+Cloudflare SDK types into Core.
+
 ## Projection Updates (incremental delta)
 
 The renderer holds its projection index across edits and folds **change sets**

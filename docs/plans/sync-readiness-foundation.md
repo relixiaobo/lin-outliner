@@ -98,21 +98,28 @@ interface WorkspacePersistenceEnvelopeV3 {
   kind: 'tenon-workspace';
   schemaVersion: 3;
   shared: { workspaceId: string; documentId: string; document: SharedLoroDocumentState };
-  local: { replicaId: string; loroPeerId: string; operationHistory: OperationHistoryEntry[] };
+  local: {
+    installationId: string;
+    replicaId: string;
+    loroPeerId: string;
+    operationHistory: OperationHistoryEntry[];
+  };
 }
 ```
 
-Persist `installationId` separately under `userData`. Shared state never contains
-the Loro peer id. Local reload restores its peer; bootstrap from shared state
-always mints fresh replica and peer ids. Shared import cannot replace local
-identity, undo history, secrets, paths, permissions, or UI state.
+Persist `installationId` separately under `userData`; repeat it in the local
+section as that section's ownership marker. Shared state never designates the
+active replica's Loro peer id, although historical peer ids are intrinsic to the
+operation ids inside a Loro snapshot. Local reload restores its peer; bootstrap
+from shared state always mints fresh replica and peer ids. Shared import cannot
+replace local identity, undo history, secrets, paths, permissions, or UI state.
 
 ### Loro Replication Kernel
 
-`LoroOutlinerDocument` gains cohesive operations to export a peer-free shared
-snapshot, read a version vector, export an update from a version vector, import
-bounded update batches, subscribe to committed local updates, and invalidate all
-mappings/caches after import.
+`LoroOutlinerDocument` gains cohesive operations to export a shared snapshot
+without a separate active-peer field, read a version vector, export an update
+from a version vector, import update batches, subscribe to committed
+local updates, and invalidate all mappings/caches after import.
 
 The complete acceptance harness uses two isolated persisted replicas and an
 in-memory relay. It proves:

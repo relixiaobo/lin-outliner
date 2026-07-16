@@ -1,4 +1,16 @@
-import { LoroDoc, LoroList, LoroText, UndoManager, type LoroMap, type LoroTree, type LoroTreeNode, type TreeID, type Value } from 'loro-crdt';
+import {
+  LoroDoc,
+  LoroList,
+  LoroText,
+  UndoManager,
+  VersionVector,
+  type ImportStatus,
+  type LoroMap,
+  type LoroTree,
+  type LoroTreeNode,
+  type TreeID,
+  type Value,
+} from 'loro-crdt';
 import { CoreError } from './errors';
 import {
   WORKSPACE_ID,
@@ -17,10 +29,14 @@ import {
 
 export type LoroUndoScope = 'all' | 'agent' | 'user';
 
-export interface SerializedLoroDocumentState {
+export interface SharedLoroDocumentState {
   kind: 'loro-document';
-  schemaVersion: 2;
+  schemaVersion: 3;
   snapshot: string;
+}
+
+export interface LoroDocumentInit {
+  shared?: SharedLoroDocumentState;
   peerId?: string;
 }
 
@@ -123,8 +139,9 @@ export class LoroOutlinerDocument {
   private statePatch = new Set<string>();
   private stateDirtyFull = false;
 
-  constructor(state?: SerializedLoroDocumentState) {
+  constructor(init: LoroDocumentInit = {}) {
     this.doc = new LoroDoc();
+    if (init.peerId) this.doc.setPeerId(init.peerId as `${number}`);
     this.doc.setChangeMergeInterval(0);
     this.doc.configTextStyle({
       bold: { expand: 'after' },
@@ -137,14 +154,7 @@ export class LoroOutlinerDocument {
       [INLINE_REF_MARK]: { expand: 'none' },
     });
     this.tree = this.doc.getTree(LORO_TREE_NAME);
-    if (state?.peerId) {
-      try {
-        this.doc.setPeerId(state.peerId as `${number}`);
-      } catch {
-        // Keep Loro's generated peer id if the stored value is not accepted.
-      }
-    }
-    if (state?.snapshot) this.doc.import(decodeBase64(state.snapshot));
+    if (init.shared?.snapshot) this.doc.import(decodeBase64(init.shared.snapshot));
     this.rebuildMappings();
     this.undoManager = this.createUndoManager(UNDO_EXCLUDED_ORIGIN_PREFIXES);
     this.aiUndoManager = this.createUndoManager(AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES);
@@ -155,14 +165,48 @@ export class LoroOutlinerDocument {
     return this.nodeIdToTreeId.size === 0;
   }
 
-  serialize(commitOrigin: string): SerializedLoroDocumentState {
+  exportSharedState(commitOrigin: string): SharedLoroDocumentState {
     this.commit(commitOrigin);
     return {
       kind: 'loro-document',
-      schemaVersion: 2,
+      schemaVersion: 3,
       snapshot: encodeBase64(this.doc.export({ mode: 'snapshot' })),
-      peerId: this.doc.peerIdStr,
     };
+  }
+
+  peerId(): string {
+    return this.doc.peerIdStr;
+  }
+
+  versionVector(): Uint8Array {
+    const version = this.doc.oplogVersion();
+    try {
+      return version.encode().slice();
+    } finally {
+      version.free();
+    }
+  }
+
+  exportUpdate(from?: Uint8Array): Uint8Array {
+    if (!from) return this.doc.export({ mode: 'update' }).slice();
+    const version = VersionVector.decode(from);
+    try {
+      return this.doc.export({ mode: 'update', from: version }).slice();
+    } finally {
+      version.free();
+    }
+  }
+
+  importUpdates(updates: readonly Uint8Array[]): ImportStatus | undefined {
+    if (updates.length === 0) return undefined;
+    const status = this.doc.importBatch(updates.map((update) => update.slice()));
+    this.clearRedo();
+    this.invalidateWholeTree();
+    return status;
+  }
+
+  subscribeLocalUpdates(listener: (update: Uint8Array) => void): () => void {
+    return this.doc.subscribeLocalUpdates((update) => listener(update.slice()));
   }
 
   commit(origin: string, undoValue?: unknown) {
