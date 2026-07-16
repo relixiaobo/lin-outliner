@@ -34,6 +34,13 @@ boundary: it returns the stored bytes only after both length and digest match,
 and reports corruption explicitly. Local `asset://` range serving remains
 streaming and does not pre-read an entire video merely to render it.
 
+Path-backed assets hash the final stored file through a read stream. Buffer
+ingest, derived thumbnails, and verified reads hash in bounded 1 MiB turns that
+yield to the event loop between chunks, keeping Electron main responsive for
+large assets. `bun scripts/probe-asset-hashing.ts` measures total hashing time
+and maximum event-loop stall for both paths; `ASSET_HASH_PROBE_MIB` overrides its
+512 MiB fixture size.
+
 Document-referenced source assets are portable. PDF thumbnails are derived
 outputs rather than portable source assets; their ids may appear in source
 metadata, but this integrity layer neither deletes nor rebuilds them. Future
