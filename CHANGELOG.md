@@ -67,6 +67,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Asset content integrity (PR #404, codex)** — every Outliner asset sidecar is
+  now schema-versioned with exact byte length and lowercase SHA-256 across
+  buffer ingest, path ingest, and generated PDF thumbnails. Stable logical
+  asset ids remain separate from content hashes; `readVerified()` rejects
+  malformed metadata and byte corruption while local range serving remains
+  streaming. Path assets hash the final stored file as a stream, and in-memory
+  hashing yields between bounded 1 MiB turns to keep Electron main responsive.
+  An Electron-run latency probe records throughput and maximum event-loop stall.
+  **Gate (main):** four review passes closed synchronous main-thread hashing, the
+  probe's initial Bun runtime mismatch, and a swallowed probe failure exit code;
+  the final pass found no reportable issues. Verified with typecheck, focused
+  asset/hash and Agent local-tool tests, 838 renderer tests, Electron probe
+  success/failure paths, docs check, and diff check.
 - **Replica-safe workspace persistence (PR #402, codex)** — Tenon now stores a
   stable private installation identity alongside an atomic v3 workspace
   envelope that separates portable shared document state from local replica
