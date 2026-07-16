@@ -2,289 +2,334 @@
 
 ## Goal
 
-Make direct execution the default and reserve interruption for one honest case:
-Tenon is missing a folder capability that the user can grant.
+Give the agent the authority of a delegated operator without asking the user to
+review risk. Existing resources execute immediately. A genuinely missing
+resource follows the owning system's acquisition flow once, is remembered by
+that owner, and then executes. Product invariants and system failures return an
+honest unavailable result; they are not permission decisions and never offer a
+"continue anyway" path.
 
-The agent is a delegated operator. Permission UI is capability remediation, not
-risk review. Command complexity, reversibility, external effects, and parser
-uncertainty never ask the user to judge an operation. Existing capabilities run
-immediately; a newly handed folder is remembered across Runs, conversations,
-and app restarts.
+Freedom is bounded by ownership, not action type:
 
-The permission path has exactly three observable outcomes:
+- the **user data plane** is available within the current workspace and every
+  persistent folder capability, including an explicitly granted filesystem
+  root;
+- the **Tenon control plane** remains inaccessible to agent file/process tools
+  and is mutated only through product commands and services;
+- the **host boundary** is the user's OS account, native authorization, and
+  service credentials, not a Tenon command-risk classifier.
+
+The observable authorization model is:
 
 ```text
-allow            execute immediately
-folder_required  acquire one persistent folder capability, then execute
-blocked          refuse without offering an override
+allow                execute immediately
+capability_required  acquire a missing resource, remember it, then execute
+unavailable          the owner cannot provide this operation in the current context
 ```
 
-This is shape **(a)**: one complete feature in one PR. The capability store,
-process boundary, foreground/background/skill execution, runtime events, UI,
-tests, and specs ship together. A partial change would preserve a bypass or
-misrepresent the runtime.
+Folder access is the only Tenon-owned capability acquisition in this feature.
+OAuth, Keychain, TCC, and administrator authorization remain owned by their
+provider or OS. Missing product input remains `ask_user_question`, outside the
+authorization model.
+
+This is shape **(a)**: one complete feature in one PR. Control-plane isolation,
+folder capabilities, process execution, policy removal, runtime events, UI,
+tests, and current specs ship together. Broad host capabilities must not land
+before the private control plane is structurally excluded.
 
 ## Non-goals
 
-- Do not ask for confirmation because an action is risky, irreversible,
-  external, unfamiliar, or difficult to classify.
-- Do not add network, publish, deploy, install, or message-send approvals.
-- Do not weaken Electron host security, renderer sandboxing, CSP, navigation
-  guards, secret storage, or per-clone `userData` isolation.
-- Do not build an adversarial arbitrary-code container. The process boundary
-  governs direct filesystem access by normal agent-launched processes; it does
-  not promise containment against a deliberately malicious program escaping
-  through Docker, Apple Events, or another privileged host service.
-- Do not enable executable skill support. Such support remains blocked until
-  the separate untrusted-code sandbox design is complete.
-- Do not conflate missing product input with permission. A workflow may still
-  ask for a destination, format, or other required decision when it cannot be
-  inferred safely.
-- Do not preserve pre-release permission storage compatibility. Delete the old
-  rule reader rather than carrying two models.
+- Do not ask for confirmation because an action is destructive, irreversible,
+  external, unfamiliar, expensive, or hard to classify.
+- Do not add publish, deploy, install, message-send, network, payment, or host
+  administration approvals.
+- Do not expose Tenon-stored provider credentials to child processes. A user
+  may separately provide ambient CLI credentials through their own environment
+  or the owning service's login flow.
+- Do not weaken Electron renderer isolation, CSP, navigation guards,
+  single-instance behavior, or per-clone `userData` isolation.
+- Do not claim hostile-code containment. The process boundary implements folder
+  capabilities and protects the Tenon control plane; Docker, Apple Events, OS
+  services, and deliberately malicious executables remain outside that claim.
+- Do not enable executable skill support. Executable support files still depend
+  on the separate untrusted-code sandbox design.
+- Do not preserve pre-release permission protocol or storage compatibility.
 
 ## Design
 
 ### Product Invariants
 
-- **BR-1:** Any operation with all required capabilities executes without a
-  Tenon confirmation.
-- **BR-2:** One folder grant covers read and write access to that canonical
-  folder and its descendants, globally and persistently.
-- **BR-3:** Selecting, dropping, or explicitly mentioning a folder is itself a
-  grant gesture and never causes a second Tenon prompt.
-- **BR-4:** A hard platform guard, user block, or restricted-Run denial fails
-  directly and never offers "continue anyway."
-- **BR-5:** General shell parsing is audit-only. Unknown syntax, empty segments,
-  heredocs, substitutions, and variable assignments cannot produce a prompt.
-- **BR-6:** OS or provider authorization uses the owning system's flow. Tenon
-  does not stack a duplicate confirmation on top.
+- **BR-1:** A tool with every required resource executes without a Tenon
+  confirmation.
+- **BR-2:** One persistent folder capability grants read/write access to that
+  canonical directory and descendants across Runs, conversations, and restarts.
+- **BR-3:** The filesystem root is a valid explicit capability. Granting it does
+  not expose the Tenon control plane.
+- **BR-4:** Selecting, dropping, or explicitly handing a folder to Tenon is
+  already a grant gesture and never causes a duplicate prompt.
+- **BR-5:** Shell syntax and action classification are audit-only. No command
+  name, consequence, or parser uncertainty changes authorization.
+- **BR-6:** User ambient environment variables reach child processes. Secrets
+  loaded from Tenon's private provider store never enter a child environment.
+- **BR-7:** Network behavior is consistent across tools. An unprivileged fetch
+  client may access public, loopback, and private targets without Tenon auth.
+- **BR-8:** Read-only or scoped Runs receive a narrowed tool catalog before the
+  model runs. They do not discover their scope through permission failures.
+- **BR-9:** Explicit user block rules remain direct and default-empty.
+- **BR-10:** Audit and recovery observe execution; they never gate it.
 
-### Four Independent Layers
+### Ownership Boundary
+
+The clean-slate boundary is a private control directory and agent-visible data
+roots. The brownfield implementation keeps the current directory layout but
+enforces the same boundary in one place:
+
+| Resource | Agent read | Agent write | Mutation path |
+|---|---:|---:|---|
+| current workdir | yes | yes | file tools or process |
+| attachment scratch | yes | no | app ingestion |
+| output/cleanup scratch | yes | yes | file tools or process |
+| persistent user folder | yes | yes | file tools or process |
+| active skill resources | yes | no | invocation context |
+| Tenon `userData` control state | no | no | product command/service only |
+
+The workdir and scratch directories are explicit exceptions when they live
+inside `userData`. Every other `userData` descendant is denied for both reads
+and writes, even when Home or `/` is granted. The rule covers future files and
+subdirectories rather than enumerating only today's three credential files.
+
+Typed file tools apply the same ownership check before filesystem access. The
+macOS process profile applies an immutable protected-container rule with
+workdir/scratch exceptions. Tests use a real process to prove that a root
+capability can read/write arbitrary user data but cannot read or mutate control
+state.
+
+### Decision Pipeline
 
 ```text
-tool call
-  -> hard guards
-  -> folder capabilities
+tool exists in this Run
+  -> explicit user block
+  -> product ownership invariant
+  -> resource capability resolution
   -> execution
-  -> audit
+  -> audit and recovery
 ```
 
-Each layer has one job:
+There is no host-destruction, payment, consequence, or general risk stage.
+Unknown tools are unavailable because the tool catalog does not contain them.
+Restricted tools are absent from that Run's catalog. OS-denied operations return
+their real process/provider error.
 
-1. **Hard guards** return `blocked` for the non-overridable platform floor,
-   explicit user blocks, and restricted-Run capability denials.
-2. **Folder capabilities** return `allow` or `folder_required`; they never score
-   risk.
-3. **Execution** applies the resolved capability snapshot to file tools and
-   child processes.
-4. **Audit** derives human-readable action labels after the authorization
-   decision. Classification cannot alter that decision.
-
-Delete the current cross-coupling between shell classification, consequence
-ranking, soft blocks, approval cards, and remembered command exceptions.
+Replace `allow | folder_required | blocked` with
+`allow | capability_required | unavailable`. A capability request has a typed
+kind; this feature implements only `folder`. Rename transient runtime transport,
+commands, renderer projection, and UI away from approval terminology. There is
+no persisted compatibility reader.
 
 ### Folder Capability Service
 
-Add one `FolderCapabilityService` as the only authority for local roots. It
-canonicalizes existing directories with realpath, removes nested duplicates,
-answers containment queries, persists user grants atomically with private file
-permissions, and publishes revocation events.
+`FolderCapabilityService` remains the authority for user filesystem roots. It
+canonicalizes existing directories with realpath, compacts nested grants,
+persists private JSON atomically, and publishes serialized grant/revocation
+events.
 
-The effective root set is typed by origin and access:
+Remove every special rejection of the filesystem root. A root grant is explicit
+full filesystem authority under the user's OS account, while the protected
+control container remains excluded. The folder request shows the exact canonical
+root and offers **Grant and remember** / **Cancel** only.
 
-| Root | Access | Lifetime |
-|---|---|---|
-| current workdir | read/write | Run context |
-| app attachments | read | app-owned |
-| app cleanup/output | read/write | app-owned |
-| active skill resources | read | active invocation |
-| user-handed folder | read/write | persistent |
+Revocation commits before publication and terminates active foreground or
+background processes whose immutable snapshot contains the revoked user root.
 
-Persist only canonical folder roots and explicit user block rules. Remove the
-generic grant DSL, read/write `Scope(...)` variants, run-scoped once grants,
-external/command grants, and `softBlockAllows`.
+### Unified Process Executor
 
-Explicit handoff routes and the runtime request route call the same grant API.
-A runtime request shows the canonical folder that will be granted. If macOS
-needs a native privacy grant, the action opens the system directory picker;
-otherwise the single Tenon action persists the capability directly.
+Every agent-launched process uses `AgentProcessExecutor`: foreground/background
+bash, skill shell, ripgrep, converters, and helper commands. The executor owns
+spawn, environment construction, process-tree termination, output capture,
+timeout, and the immutable capability snapshot.
 
-### Unified Agent Process Executor
+On macOS, `MacOSFileSandboxAdapter` continues to use one probed Seatbelt adapter.
+The profile:
 
-Add one `AgentProcessExecutor` and route every agent-driven process through it:
+1. allows ordinary process, network, IPC, and OS behavior;
+2. allows reads/writes from the capability snapshot;
+3. denies the protected `userData` container for reads and writes;
+4. re-allows only the app-owned workdir/scratch exceptions inside that container.
 
-- foreground bash;
-- explicit and automatically backgrounded bash;
-- embedded skill shell;
-- model-driven document/PDF/image converters and search helpers.
+If the adapter is unavailable, child processes fail honestly because Tenon
+cannot enforce either folder capabilities or control-plane isolation. There is
+no model-facing bypass.
 
-The executor receives an immutable capability snapshot and owns spawn, process
-group termination, output capture, timeout, and capability metadata. Delete
-parallel process launch implementations where they would create different
-authorization semantics.
-
-`bash` gains a structured `required_folders` argument. The model declares only
-folders outside the implicit root set. The runtime canonicalizes and preflights
-them before process start, so approval never retries a partially executed
+Undeclared process filesystem access returns recoverable
+`folder_access_required`; the model issues a fresh call with `required_folders`,
+which preflights before process start. Tenon never replays a partially started
 command.
 
-On macOS, a narrow `MacOSFileSandboxAdapter` builds a per-process Seatbelt
-profile and launches through `/usr/bin/sandbox-exec`. The profile allows normal
-process and network behavior while constraining direct user-data reads and
-writes to the immutable root snapshot plus required system/app temporary paths.
-No third-party sandbox package owns Tenon's policy. The adapter performs a
-startup health probe and fails closed if the platform mechanism is unavailable.
+### Credential Provenance
 
-An undeclared filesystem access is denied by the process sandbox and returned
-as a recoverable `folder_access_required` result when the target can be
-identified. The runtime never auto-replays that command. The model may issue a
-new call with the missing folder declared, which then preflights before launch.
+Delete name-based environment filtering. `OPENAI_API_KEY`, `GITHUB_TOKEN`,
+`AWS_*`, and other variables inherited from the user's launch environment are
+user-owned ambient capabilities and remain available to CLI tools.
 
-Remove `dangerouslyDisableSandbox` from schemas, normalization, permission
-descriptors, results, and tests. No model-facing or persisted sandbox bypass
-exists.
+The executor accepts an explicit set of private environment keys for any caller
+that injects Tenon-owned values. Current provider credentials are loaded in main
+and passed directly to provider requests, not copied into process environment.
+Tests prove both directions: ambient credentials survive, explicitly private
+injected values do not.
+
+### Direct Host And Network Execution
+
+Remove command hard-deny rules for recursive root/home deletion, disk tools,
+raw devices, shutdown/reboot, and root permission changes. Remove the dormant
+`payment` / `purchase` name guard. The OS account and native authorization own
+those effects.
+
+Remove private-network rejection from the unprivileged `web_fetch` route so
+localhost and intranet development behave like bash networking. A future fetch
+route that carries privileged cookies or credentials must be a distinct tool
+with its own service contract, not a hidden exception here.
+
+### Skills And Scoped Runs
+
+Shell writes under `.agents/skills` are ordinary user-data writes and are no
+longer process-denied or command-blocked. File-tool writes keep the existing
+validated authoring gateway, provenance, undo, and immediate hot reload. Shell
+or external-editor writes are validated at discovery/load time; invalid skills
+remain unloaded with diagnostics instead of being treated as a permission
+violation.
+
+Remove restricted-mode permission evaluation and run-scoped preapproval rules.
+Verifier, Research, isolated-skill, and explicitly scoped Runs derive a narrowed
+tool catalog before model execution. A tool excluded from the catalog cannot be
+called. Folder capabilities and the control-plane boundary still apply to every
+visible tool.
 
 ### Interaction Flows
 
-#### Foreground capability acquisition
+#### Foreground folder acquisition
 
-1. A tool call declares or inherently targets a local path.
-2. Hard guards run first; a blocked call fails without UI.
-3. The folder service finds one or more uncovered canonical folders.
-4. The runtime creates one deduplicated folder request before any side effect.
-5. **Grant and remember** persists the folder, re-evaluates the original call,
-   and executes it once. **Cancel** aborts only that call.
-6. There is no allow-once option, countdown, or command exception.
+1. A file tool targets a path or bash declares `required_folders`.
+2. Ownership invariants reject private control-plane access without UI.
+3. The folder service computes uncovered canonical roots.
+4. The runtime creates one deduplicated folder request before side effects.
+5. Grant persists the roots, re-evaluates, and executes once; Cancel aborts the
+   call.
 
-#### Unattended capability acquisition
+#### Unattended acquisition
 
-An unattended Agent Session cannot wait on ephemeral renderer state. It records
-one durable `needs-input` folder request and stops before process launch. The
-origin conversation surfaces the request once. Granting the folder schedules a
-new execution attempt; it does not replay an old process that may have started.
+An unattended Agent Session records one durable `needs_input` folder request
+and stops before process launch. Granting the folder starts a new continuation
+Session after the original is terminal. It never replays an earlier process.
 
-#### Revocation
+#### OS/provider acquisition
 
-Revocation removes the persisted root immediately for new calls. The process
-executor tracks each active capability snapshot and terminates foreground or
-background processes that still hold the revoked root before reporting the
-revocation complete.
+OAuth, Keychain, TCC, administrator auth, and CLI login use their native owner
+flow. Tenon may surface the concrete remediation but never adds a duplicate risk
+confirmation. Success is remembered by the owning system.
 
-### Hard Guards
+### Events, Settings, And UI
 
-Keep a small structural floor rather than a general risk classifier:
+Permission events become capability events with outcomes
+`allow | capability_required | unavailable`. Folder acquisition uses
+`capability_request` / `capability_resolved` runtime transport and a single
+`agent_resolve_capability` command. Remove approval-named permission types and
+persisted approval events.
 
-- host-wide destruction such as root/home erase, disk erase, shutdown/reboot,
-  or recursive root ownership/permission changes;
-- mutation of Tenon's permission, provider credential, or protected secret
-  stores through agent tools;
-- payment without a product-owned payment flow;
-- explicit user block rules;
-- restricted-Run tool/capability ceilings.
+Settings -> Security contains:
 
-Hard guards return `blocked` and an audit reason. They never create an approval
-request and no folder grant can bypass them. Remote-code pipes, persistence
-writes, publishes, dependency installs, network writes, and static unknown
-commands are not prompt categories.
-
-Tenon-owned provider secrets remain structurally unavailable to child
-processes. User-owned files inside a handed folder are within the user's grant
-and may be used as part of the requested work; do not pretend a shell-string
-exfiltration heuristic is an enforceable confidentiality boundary.
-
-### Events And UI
-
-Keep `tool.permission.checked` and `tool.permission.resolved`, but reduce new
-outcomes to `allow | folder_required | blocked`. Tool permission requests no
-longer emit a second `approval.*` event track. Generic approvals and
-`ask_user_question` remain separate product interactions.
-
-Settings -> Security contains three plain sections:
-
-- **Folder access**: add, list, and revoke persistent folder capabilities;
+- **Folder access**: add, list, and revoke persistent roots, including `/`;
 - **Your blocks**: list and remove explicit user blocks;
-- **System protections**: read-only explanation of the small hard floor.
+- **System boundary**: explain that Tenon control state is private while host
+  operations follow the user's OS authority.
 
-The composer renders one compact folder-capability request with the canonical
-path and **Grant and remember** / **Cancel** actions. Remove soft-block copy,
-countdowns, allow-once, command exceptions, and raw grant-rule diagnostics.
+Audit descriptors remain human-readable activity metadata. They cannot change
+the authorization result.
 
 ### Existing Behavior Removed
 
-- `soft_blocked` decisions and built-in soft blocks;
-- `autoBlockMs` and countdown timers;
-- allow-once and exact-command always-allow paths;
-- `softBlockAllows` and generic scope/command/external grants;
-- general consequence/risk decisions;
-- shell unknown/empty-segment permission decisions;
-- duplicate permission plus approval event recording;
-- run-scoped file grants;
-- sandbox override arguments.
+- all consequence/risk decisions, soft blocks, timers, and command exceptions;
+- host-destruction and payment command/name hard blocks;
+- `permissionMode` restricted evaluation and preapproval permission rules;
+- root capability rejection;
+- name-based child environment secret stripping;
+- shell-write denial for governed skill directories;
+- private-network `web_fetch` rejection for the unprivileged fetch tool;
+- approval-named permission protocol and persisted approval events;
+- sandbox override arguments and run-scoped folder grants.
 
-## Files And Ownership
+## Files And Collision
 
 Expected areas:
 
-- `src/core/agentPermissionModel.ts`, `src/core/agentEventLog.ts`;
+- `src/core/agentPermissionModel.ts`, `agentEventLog.ts`, `agentTypes.ts`, and
+  `types.ts` for the clean capability protocol;
 - `src/main/agentPermissions.ts`, `agentPermissionEvents.ts`,
-  `agentPermissionAskResolver.ts`, `agentToolPermissionRules.ts`,
-  `agentToolPermissionStore.ts`;
-- `src/main/agentLocalTools.ts`, `agentToolProcess.ts`, `agentSkillShell.ts`,
-  `agentRuntime.ts`, and a new capability/process-sandbox module;
-- `src/main/main.ts` for native folder acquisition;
-- renderer API types, runtime projection, Composer capability UI, Security
-  settings, and English/Simplified Chinese messages;
-- focused core/renderer/E2E tests;
-- `docs/spec/agent-tool-permissions.md`, `agent-tool-design.md`,
-  `agent-skills.md`, and `agent-progress.md`;
-- `docs/plans/agent-skills-authoring.md` only to point its future executable
-  support at the shared executor without enabling that feature.
+  `agentToolPermissionRules.ts`, and `agentToolPermissionStore.ts`;
+- `src/main/agentFolderCapabilities.ts`, `agentProcessExecutor.ts`,
+  `agentLocalTools.ts`, `agentToolProcess.ts`, `agentSkillShell.ts`,
+  `agentRuntime.ts`, and `main.ts`;
+- unprivileged fetch validation and skill discovery/load diagnostics;
+- renderer API/runtime, Composer, Security settings, localization, mocks, and
+  focused core/renderer/E2E tests;
+- current permission, tool, skill, architecture, and progress specs.
 
 `docs/TASKS.md` and `CHANGELOG.md` remain main-agent owned. No dependency change
-is planned, so `package.json` and `bun.lock` should remain untouched.
+is planned, so `package.json` and `bun.lock` remain untouched.
+
+Collision result on 2026-07-16: open PR #403 owns EPUB translation only and has
+no file overlap. Sync-readiness PR #402 is merged into this branch before the
+control-plane work; its document persistence changes are treated as current
+main behavior.
 
 ## Risks
 
-- **Deprecated platform mechanism.** `sandbox-exec` is deprecated. Keep it
-  behind one adapter, health-probe it in dev/package tests, and fail closed. A
-  supported replacement is the revisit trigger, not a reason to duplicate
-  policy now.
-- **CLI compatibility.** Build tools read caches/config outside the workdir.
-  Keep system/tool roots explicit, test the real command corpus, and add an
-  app-owned root only when it is necessary and narrower than a user folder.
-- **Path races.** Background processes can race typed file operations. Recheck
-  canonical containment at the operation boundary and add symlink-replacement
-  regressions; the process sandbox remains the child-process enforcement layer.
-- **Revocation races.** Serialize store mutation, root publication, and process
-  termination so Settings cannot report success while an old process retains
-  the capability.
-- **Overclaiming containment.** Specs and UI must state the delegated-operator
-  boundary honestly. Executable skill support remains disabled rather than
-  relying on this filesystem-only sandbox as hostile-code isolation.
+- **Delegated authority:** A mistaken agent or prompt injection can cause
+  irreversible effects inside granted resources or through authenticated host
+  services. This is the accepted maximum-freedom tradeoff; audit and recovery
+  must not be misrepresented as prevention.
+- **Protected-container ordering:** Seatbelt rule order must be proven with real
+  process tests for Home and `/` capabilities, control-state denial, and allowed
+  workdir/scratch exceptions.
+- **Ambient credentials:** Passing the user's environment enables authenticated
+  CLI effects. Tenon-owned provider values must remain provenance-separated and
+  tests must fail if a private key reaches a child.
+- **Deprecated platform mechanism:** `sandbox-exec` remains behind one adapter
+  and health probe. A supported replacement is the revisit trigger.
+- **Skill reload asymmetry:** Shell writes may not carry gateway provenance or
+  immediate undo. Load-time validation and refresh behavior must be explicit.
+- **Protocol breadth:** Removing pre-release approval/restricted protocol touches
+  main, preload/API, renderer, mocks, and event replay together; no mixed model
+  may remain.
 
 ## Open Questions
 
-None. The product direction selects persistent read/write folder capabilities,
-default direct execution, direct hard denial, and the delegated-operator threat
-model.
+None. The selected target is ownership-based delegated authority: unrestricted
+actions over user-capable resources, private Tenon control state, owner-specific
+capability remediation, default-empty user blocks, and no risk review.
 
-## Verification
+## Acceptance Criteria
 
-- [ ] Original Tana cleanup command completes with zero permission cards.
-- [ ] Unknown static shell, heredocs, installs, network writes, and `git push`
-      execute without permission UI.
-- [ ] File tools and every shell path request an uncovered folder exactly once.
-- [ ] A grant survives a new Run, conversation, and app restart.
-- [ ] Explicit folder handoff creates no duplicate request.
-- [ ] Foreground, background, skill shell, and converter processes share the
-      same effective roots.
-- [ ] Hard guards and user blocks fail without an approval card.
-- [ ] Undeclared process access cannot escape the filesystem boundary or
-      trigger automatic replay.
-- [ ] Revocation terminates affected active processes and blocks new access.
-- [ ] `bun run typecheck`, relevant core/renderer/E2E tests,
-      `bun run docs:check`, and `git diff --check` pass.
-- [ ] Packaged app smoke covers sandbox availability, the real Tana route, and
-      persistent grant restore.
-- [ ] Settings and the folder request pass light/dark visual verification.
+- [ ] **AC-1:** Home and `/` can be persistently granted and reused without
+      duplicate UI.
+- [ ] **AC-2:** A root-capable file tool and real child process cannot read or write Tenon
+      control state, but can read/write workdir and output scratch exceptions.
+- [ ] **AC-3:** Ambient `GITHUB_TOKEN`, cloud credentials, and custom token variables reach
+      child processes; explicitly private injected values do not.
+- [ ] **AC-4:** Root/home deletion syntax, shutdown, disk tools, package installs, deploys,
+      `git push`, unknown shell, and network writes produce no Tenon prompt/block.
+- [ ] **AC-5:** `web_fetch` reaches localhost/private targets through its unprivileged
+      client without credentials attached by Tenon.
+- [ ] **AC-6:** Shell writes under `.agents/skills` are not permission-blocked; invalid
+      definitions remain unloaded with a concrete diagnostic.
+- [ ] **AC-7:** Verifier, Research, and scoped Runs never receive tools outside their
+      catalog and no longer depend on restricted permission evaluation.
+- [ ] **AC-8:** Foreground and unattended folder acquisition retain dedupe, persistence,
+      continuation, and revocation semantics.
+- [ ] **AC-9:** No approval-named permission transport, host hard-block matcher, payment
+      guard, root rejection, or generic environment-name scrub remains.
+- [ ] **AC-10:** Original Tana cleanup completes with zero permission cards and
+      `unaccounted: 0`.
+- [ ] **AC-11:** `bun run typecheck`, relevant core/renderer/E2E tests,
+      `bun run docs:check`, and `git diff --check` pass, except the main-owned
+      board reference until integration.
+- [ ] **AC-12:** Security settings and capability cards pass light/dark visual verification.
