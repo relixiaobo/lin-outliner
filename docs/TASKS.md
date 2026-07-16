@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398**) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398, sync-readiness-foundation Unit 1 #402**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped semantic-ingest-pipeline #397) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped field-value-node-children #394, url-preview-persistent-session #400) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399) |
@@ -31,7 +31,9 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-16).** Open PR queue: none. Recently merged: #399
+**In flight (2026-07-16).** Open PR queue: none. Recently merged: #402
+(`codex/sync-readiness-foundation`) merged 2026-07-16 after two main review
+rounds; see *Recently completed*. #399
 (`codex-4/url-video-bilingual-subtitles`) merged 2026-07-16 after two main
 review rounds; see *Recently completed*. #397
 (`codex-2/semantic-ingest-pipeline`) merged 2026-07-15 after iterative main
@@ -473,6 +475,14 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
+- **sync-readiness-foundation** (`in-progress`, plan-track; Unit 1 shipped in
+  PR #402) — Unit 1 established stable installation/workspace/document/replica
+  identities, the atomic v3 shared/local workspace envelope, fresh Loro peers
+  per Core session, durable dependency-pending updates, and provider-neutral
+  snapshot/version/update/import primitives. Remaining independent complete
+  units cover asset content integrity, Agent ledger portability, and
+  event-sourced Issue persistence; each requires its own claim and PR. See
+  `docs/plans/sync-readiness-foundation.md`.
 - **renderer-state-hygiene** (P3, *fast-track, no plan file*, **PM-ratified**) — three
   small renderer items in one PR: (1) `useWorkspaceLayout.ts` localStorage key says
   `:v4` (`STORAGE_KEY`) but the persisted `version` int is `3` — align key↔int (drop
@@ -507,6 +517,24 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **sync-readiness-foundation Unit 1** (`codex/sync-readiness-foundation`, PR
+  #402, codex, merged 2026-07-16, plan-track) — local document persistence is
+  now replica-safe: one private installation identity owns the local section of
+  an atomic v3 workspace envelope, shared workspace/document identities remain
+  portable, every Core session uses a fresh Loro peer, and causally pending
+  updates survive reload without becoming a transport outbox. Core now exposes
+  provider-neutral snapshot, version-vector, incremental export, batch import,
+  and committed-local-update primitives with explicit persistence and visible
+  revision results. **Gate (main):** the first review found that replication
+  export could publish an operation from a transaction that later rolled back;
+  codex added one committed-boundary guard covering explicit transactions and
+  yielded standalone async mutations, plus focused regressions. The final pass
+  found no reportable issues. Verified on final head `4678b023` with typecheck,
+  241 focused Core tests, 838 renderer tests, `docs:check`, and diff check; the
+  full Core suite reached 1558 pass and retained only the existing external
+  Presentation skill failures. The plan remains `in-progress` for independent
+  Units 2–4: `docs/plans/sync-readiness-foundation.md`.
 
 - **url-video-bilingual-subtitles**
   (`codex-4/url-video-bilingual-subtitles`, PR #399, codex-4, merged

@@ -67,6 +67,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Replica-safe workspace persistence (PR #402, codex)** — Tenon now stores a
+  stable private installation identity alongside an atomic v3 workspace
+  envelope that separates portable shared document state from local replica
+  state. Every Core session uses a fresh Loro peer, causally pending updates
+  survive reload, and provider-neutral snapshot, version-vector, incremental
+  export, batch import, and committed-local-update primitives distinguish
+  accepted operations, persistence changes, and visible revision changes.
+  Replication APIs reject explicit transactions and yielded standalone async
+  mutations so a later rollback cannot publish abandoned data. **Gate (main):**
+  the first review found and codex fixed the rollback export leak; the final pass
+  found no reportable issues. Verified with typecheck, 241 focused Core tests,
+  838 renderer tests, docs check, and diff check; the full Core suite reached
+  1558 pass and retained only the existing external Presentation skill failures.
 - **URL video bilingual subtitles (PR #399, codex-4)** — URL Preview translation
   now includes prerecorded standards-based and YouTube captions in the existing
   language, model, shortcut, automatic-translation, and three-request session.
