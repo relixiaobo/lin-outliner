@@ -234,7 +234,6 @@ function persistedText(content: AgentPersistedContent[]): string {
 
 function runtimeSettings() {
   return {
-    permissionMode: 'trusted' as const,
     automaticSkillsEnabled: false,
     slashSkillsEnabled: false,
     compactEnabled: true,

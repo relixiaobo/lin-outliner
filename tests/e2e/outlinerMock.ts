@@ -40,12 +40,10 @@ interface MockFixtureOptions {
   oauthProvider?: boolean;
   /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
   noProvider?: boolean;
-  /** Preloads remembered permission grants for settings/security specs. */
-  permissionGrants?: string[];
+  /** Preloads remembered folder capabilities for settings/security specs. */
+  capabilityFolders?: string[];
   /** Preloads user blocklist rules for settings/security specs. */
-  permissionBlocks?: string[];
-  /** Preloads built-in soft-block exceptions for settings/security specs. */
-  permissionSoftBlockAllows?: string[];
+  capabilityBlocks?: string[];
   /** Delays initial workspace restoration so startup chrome can be asserted before data arrives. */
   initWorkspaceDelayMs?: number;
   /** Delays provider settings so Settings chrome can be asserted before settings data arrives. */
@@ -516,15 +514,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ],
       });
     }
-    const agentToolPermissions = {
-      grants: [...(options.permissionGrants ?? [])] as string[],
-      blocks: [...(options.permissionBlocks ?? [])] as string[],
-      softBlockAllows: [...(options.permissionSoftBlockAllows ?? [])] as string[],
-      diagnostics: [{
-        ruleValue: 'Action(file.read.outside_allowed_file_area)',
-        code: 'unsupported_grant',
-        message: 'Broad action grants are not supported. Approve a narrow scope, external system, or command-form boundary instead.',
-      }] as Array<{ ruleValue: string; code: string; message: string }>,
+    const agentCapabilities = {
+      folders: [...(options.capabilityFolders ?? [])] as string[],
+      blocks: [...(options.capabilityBlocks ?? [])] as string[],
+      diagnostics: [] as Array<{ ruleValue: string; code: string; message: string }>,
     };
     const agentSkills = [{
       name: 'workspace-review',
@@ -574,7 +567,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           'You are a focused child agent running inside Lin.',
           'Complete the assigned task independently and report only the result that matters.',
         ].join('\n'),
-        permissionMode: 'restricted',
         maxTurns: null,
       },
       {
@@ -588,7 +580,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         description: 'Reviews Channel plans.',
         model: 'gpt-5.4-mini',
         body: 'Review plans and identify risks.',
-        permissionMode: 'restricted',
         maxTurns: null,
       },
     ];
@@ -689,8 +680,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       members: [MAIN_AGENT_ID, USER_AGENT_ID, REVIEWER_AGENT_ID],
     };
     const longToolCallId = 'call_hY7YSWjtewOewQfepRMCajzMlfc_00128e64f08e3fd6016a3a61cb0a9c8197a9c011';
-    const deniedToolCallId = 'call_denied_tool_00128e64f08e3fd6016a3a61cb0a9c8197a9c012';
-    const deniedToolResult = '{"ok":false,"tool":"bash","status":"denied","error":{"code":"permission_denied","message":"User denied permission. The requested tool call was not executed."}}';
+    const deniedToolCallId = 'call_unavailable_tool_00128e64f08e3fd6016a3a61cb0a9c8197a9c012';
+    const deniedToolResult = '{"ok":false,"tool":"file_read","status":"unavailable","error":{"code":"operation_unavailable","message":"Tenon control state is unavailable to agent file tools."}}';
     const debugRun = {
       ...debugRunSummary,
       systemPrompt: 'You are Lin agent.\nLong unbroken diagnostic prompt segment: abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789.',
@@ -2164,24 +2155,19 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           agentSettings.activeProviderId = String(args.providerId);
           return clone(agentSettings) as T;
         }
-        if (cmd === 'agent_get_tool_permission_settings') {
-          return clone(agentToolPermissions) as T;
+        if (cmd === 'agent_get_capability_settings') {
+          return clone(agentCapabilities) as T;
         }
-        if (cmd === 'agent_pick_scope_folder') {
-          const next = args.settings as { grants?: string[]; blocks?: string[]; softBlockAllows?: string[] };
-          agentToolPermissions.grants = Array.isArray(next.grants) ? next.grants.map(String) : agentToolPermissions.grants;
-          agentToolPermissions.blocks = Array.isArray(next.blocks) ? next.blocks.map(String) : agentToolPermissions.blocks;
-          agentToolPermissions.softBlockAllows = Array.isArray(next.softBlockAllows) ? next.softBlockAllows.map(String) : agentToolPermissions.softBlockAllows;
+        if (cmd === 'agent_pick_capability_folder') {
           const path = '/mock/handoff-folder';
-          const grant = `Scope(write:${path})`;
-          if (!agentToolPermissions.grants.includes(grant)) {
-            agentToolPermissions.grants.push(grant);
+          if (!agentCapabilities.folders.includes(path)) {
+            agentCapabilities.folders.push(path);
           }
           return clone({
             canceled: false,
             path,
-            grant,
-            settings: agentToolPermissions,
+            folder: path,
+            settings: agentCapabilities,
           }) as T;
         }
         if (cmd === 'agent_list_all_skills') {
@@ -2211,19 +2197,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (options.agentDefinitionsDelayMs) await delay(options.agentDefinitionsDelayMs);
           return clone(agentDefinitions) as T;
         }
-        if (cmd === 'agent_update_tool_permission_settings') {
-          const next = args.settings as { grants?: string[]; blocks?: string[]; softBlockAllows?: string[] };
-          agentToolPermissions.grants = Array.isArray(next.grants) ? next.grants.map(String) : [];
-          agentToolPermissions.blocks = Array.isArray(next.blocks) ? next.blocks.map(String) : [];
-          agentToolPermissions.softBlockAllows = Array.isArray(next.softBlockAllows) ? next.softBlockAllows.map(String) : [];
-          return clone(agentToolPermissions) as T;
+        if (cmd === 'agent_apply_capability_settings_patch') {
+          const patch = args.patch as { revokeFolders?: string[]; removeBlocks?: string[] };
+          const revoked = Array.isArray(patch.revokeFolders) ? patch.revokeFolders.map(String) : [];
+          const removed = Array.isArray(patch.removeBlocks) ? patch.removeBlocks.map(String) : [];
+          agentCapabilities.folders = agentCapabilities.folders.filter((folder) => !revoked.includes(folder));
+          agentCapabilities.blocks = agentCapabilities.blocks.filter((block) => !removed.includes(block));
+          return clone(agentCapabilities) as T;
         }
-        if (cmd === 'agent_append_tool_permission_block') {
+        if (cmd === 'agent_append_capability_block') {
           const ruleValue = String(args.ruleValue ?? '');
-          if (ruleValue && !agentToolPermissions.blocks.includes(ruleValue)) {
-            agentToolPermissions.blocks.push(ruleValue);
+          if (ruleValue && !agentCapabilities.blocks.includes(ruleValue)) {
+            agentCapabilities.blocks.push(ruleValue);
           }
-          return clone(agentToolPermissions) as T;
+          return clone(agentCapabilities) as T;
         }
         if (cmd === 'agent_test_provider_connection') {
           // The credential sheet drives this for its async validate step. Echo a

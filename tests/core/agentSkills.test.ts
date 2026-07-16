@@ -18,8 +18,16 @@ import {
   type AgentSkillProvenanceStore,
 } from '../../src/main/agentSkills';
 import { resolveLinlabSkillsRoot } from '../../src/main/builtInSkillConfig';
+import { createFolderCapabilitySnapshot } from '../../src/main/agentFolderCapabilities';
 
 const execFile = promisify(execFileCallback);
+
+function processCapabilities(root: string) {
+  return createFolderCapabilitySnapshot({
+    workspaceRoot: root,
+    includeSystemRoots: true,
+  }, []);
+}
 
 function expectPandasDuckdbDependency(text: string): void {
   expect(text).toMatch(/`?pandas`?\s+\+\s+`?duckdb`?/);
@@ -430,7 +438,7 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
     await acceptSkillForTest(runtime, 'demo');
 
-    await runtime.notifyFileTouched([path.join(root, 'src', 'file.ts')]);
+    await runtime.notifyFileTouched([path.join(root, 'src', 'file.ts')], processCapabilities(root));
     const skill = await runtime.getSkill('demo');
     const listing = runtime.drainSteeringMessages()
       .map((message) => message.content[0]?.type === 'text' ? message.content[0].text : '')
@@ -634,13 +642,16 @@ describe('agent skills', () => {
 
     expect(body).toContain('resolve and read the current `SKILL.md` first');
     expect(body).toContain('Prefer a focused `file_edit` patch');
-    expect(body).toContain('Show the complete `SKILL.md`');
-    expect(body).toContain('focused diff for updates');
+    expect(body).toContain('write it directly without a second confirmation');
+    expect(body).toContain('Ask only for a missing identity');
+    expect(body).toContain('show the complete `SKILL.md`');
+    expect(body).toContain('only when that preview is needed');
     expect(body).toContain('ask_user_question');
-    expect(body).toContain('Save, revise, or cancel choices');
+    expect(body).not.toContain('Save, revise, or cancel choices');
 
     expect(body).toContain('Separate authoring tools from runtime tools');
-    expect(body).toContain('Omit `allowed-tools` when the future workflow does not need preapproval');
+    expect(body).toContain('omitted `allowed-tools` creates a tool-free Run');
+    expect(body).toContain('`allowed-tools` selects whole tools, not command patterns');
     expect(body).toContain('Flag broad `allowed-tools` in the preview summary');
     expect(body).toContain('Default to `execution: inline`');
     expect(body).toContain('Use `execution: isolated` only for self-contained work');
@@ -1236,58 +1247,6 @@ describe('agent skills', () => {
     expect(runtime.consumePendingTurnEffect()).toBeNull();
   });
 
-  test('records allowed-tools as active run permission rules', async () => {
-    const root = await createSkillFixture('demo', {
-      frontmatter: [
-        'description: Demo skill',
-        'allowed-tools: Bash(git diff:*), file_read',
-      ],
-      body: 'Use preapproved tools.',
-    });
-    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'demo');
-
-    const invocation = await runtime.invokeSkill({
-      skill: 'demo',
-      trigger: 'agent',
-    });
-
-    expect(invocation.ok).toBe(true);
-    expect(runtime.getActivePermissionRules()).toEqual(['Bash(git diff:*)', 'file_read']);
-    runtime.resetRunPermissionRules();
-    expect(runtime.getActivePermissionRules()).toEqual([]);
-  });
-
-  test('scopes active permission rules by run when a scope provider is configured', async () => {
-    const root = await createSkillFixture('demo', {
-      frontmatter: [
-        'description: Demo skill',
-        'allowed-tools: Bash(git diff:*), file_read',
-      ],
-      body: 'Use preapproved tools.',
-    });
-    let scope: string | null = 'run-a';
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      permissionScopeProvider: () => scope,
-    });
-    await acceptSkillForTest(runtime, 'demo');
-
-    const invocation = await runtime.invokeSkill({
-      skill: 'demo',
-      trigger: 'agent',
-    });
-
-    expect(invocation.ok).toBe(true);
-    expect(runtime.getActivePermissionRules()).toEqual(['Bash(git diff:*)', 'file_read']);
-    scope = 'run-b';
-    expect(runtime.getActivePermissionRules()).toEqual([]);
-    scope = 'run-a';
-    runtime.resetRunPermissionRules('run-a');
-    expect(runtime.getActivePermissionRules()).toEqual([]);
-  });
-
   test('lists isolated-execution skills and routes them through an isolated executor', async () => {
     const root = await createSkillFixture('isolated', {
       frontmatter: [
@@ -1324,7 +1283,6 @@ describe('agent skills', () => {
     expect(invocation.execution).toBe('isolated');
     expect(invocation.isolated?.runId).toBe('isolated-run-test');
     expect(invocation.renderedContent).toContain('Requires isolated execution for demo.');
-    expect(runtime.getActivePermissionRules()).toEqual([]);
     expect(runtime.consumePendingTurnEffect()).toBeNull();
     const messageText = invocation.message.content[0]?.type === 'text'
       ? invocation.message.content[0].text
@@ -1583,7 +1541,7 @@ describe('agent skills', () => {
 
     // Drain the initial listing (built-in skillify) so only activation remains.
     expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('typescript-review');
-    await runtime.notifyFileTouched([path.join(root, 'src', 'main.ts')]);
+    await runtime.notifyFileTouched([path.join(root, 'src', 'main.ts')], processCapabilities(root));
     const [message] = runtime.drainSteeringMessages();
     const text = message?.content[0]?.type === 'text' ? message.content[0].text : '';
 
@@ -1616,14 +1574,14 @@ describe('agent skills', () => {
 
     // Drain the initial listing (built-in skillify) so only activation remains.
     expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('src-directory');
-    await runtime.notifyFileTouched([path.join(root, 'src')]);
+    await runtime.notifyFileTouched([path.join(root, 'src')], processCapabilities(root));
     const [directoryMessage] = runtime.drainSteeringMessages();
     const directoryText = directoryMessage?.content[0]?.type === 'text' ? directoryMessage.content[0].text : '';
 
     expect(directoryText).toContain('src-directory');
     expect(directoryText).toContain('src-globstar');
 
-    await runtime.notifyFileTouched([path.join(root, 'src', 'app', 'main.ts')]);
+    await runtime.notifyFileTouched([path.join(root, 'src', 'app', 'main.ts')], processCapabilities(root));
     expect(runtime.drainSteeringMessages()).toEqual([]);
   });
 
@@ -1638,7 +1596,7 @@ describe('agent skills', () => {
 
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
 
-    await runtime.notifyFileTouched([path.join(root, 'ignored', 'pkg', 'file.ts')]);
+    await runtime.notifyFileTouched([path.join(root, 'ignored', 'pkg', 'file.ts')], processCapabilities(root));
 
     expect(runtime.drainSteeringMessages()).toEqual([]);
   });
@@ -1649,7 +1607,7 @@ describe('agent skills', () => {
     const touchedFile = path.join(root, 'packages', 'app', 'src', 'main.ts');
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
 
-    await runtime.notifyFileTouched([touchedFile]);
+    await runtime.notifyFileTouched([touchedFile], processCapabilities(root));
     expect(runtime.drainSteeringMessages()).toEqual([]);
     expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('late-dynamic');
 
@@ -1657,7 +1615,7 @@ describe('agent skills', () => {
       frontmatter: ['description: Late dynamic skill'],
       body: 'Use late dynamic instructions.',
     }, nestedSkillsDir);
-    await runtime.notifyFileTouched([touchedFile]);
+    await runtime.notifyFileTouched([touchedFile], processCapabilities(root));
     const [message] = runtime.drainSteeringMessages();
     const text = message?.content[0]?.type === 'text' ? message.content[0].text : '';
 

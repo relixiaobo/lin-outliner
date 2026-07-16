@@ -296,23 +296,15 @@ export function normalizeWebUrl(rawUrl: unknown): WebParamResult<string> {
   if (parsed.username || parsed.password) {
     return invalidUrl('url must not include username or password credentials');
   }
-  const host = validatePublicWebHost(parsed.hostname);
-  if (!host.ok) return invalidUrl(host.message);
-
-  if (parsed.protocol === 'http:') {
-    parsed.protocol = 'https:';
-  }
+  if (!parsed.hostname) return invalidUrl('url host is required');
   return { ok: true, params: parsed.toString() };
 }
 
-// Validate that a URL is a public http(s) target WITHOUT rewriting it. Unlike
-// {@link normalizeWebUrl}, this never upgrades http→https — it is used on
-// redirect hops and on the browser fallback's landing URL, where the server's
-// literal scheme must be preserved (an upgrade would break an http-only target).
-// Refusing a local/private host is the one SSRF guard we keep even under the
-// local-only, success-rate-first focus: it costs no real fetch and blocks the
-// cloud-metadata / loopback redirect class outright.
-export function isPublicWebFetchUrl(rawUrl: string): boolean {
+// Validate redirect and browser-fallback targets without changing their literal
+// scheme or host. web_fetch is an unprivileged client: it carries no Tenon
+// credentials, so loopback, private-network, and single-label hosts follow the
+// same URL contract as public hosts.
+export function isWebFetchUrl(rawUrl: string): boolean {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -321,108 +313,7 @@ export function isPublicWebFetchUrl(rawUrl: string): boolean {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
   if (parsed.username || parsed.password) return false;
-  return validatePublicWebHost(parsed.hostname).ok;
-}
-
-function validatePublicWebHost(hostname: string): { ok: true } | { ok: false; message: string } {
-  // Strip a single FQDN-root trailing dot ('localhost.', 'printer.local.') first:
-  // the parser keeps it for domain names, and it resolves identically, so without
-  // this it would slip past the loopback/mDNS checks below. (The parser already
-  // strips the dot from IPv4 literals, so this never affects them.)
-  const host = hostname.toLowerCase().replace(/\.$/, '');
-  if (!host) return { ok: false, message: 'url host is required' };
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
-    return { ok: false, message: `local host is not supported for web_fetch: ${hostname}` };
-  }
-  if (host.includes(':')) return validateIpv6Host(host);
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return validateIpv4Host(host);
-  if (!host.includes('.')) {
-    return { ok: false, message: `single-label host is not supported for web_fetch: ${hostname}` };
-  }
-  return { ok: true };
-}
-
-function validateIpv4Host(host: string): { ok: true } | { ok: false; message: string } {
-  const parts = host.split('.').map((part) => Number(part));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-    return { ok: false, message: `invalid IPv4 host: ${host}` };
-  }
-  const [a, b] = parts as [number, number, number, number];
-  const blocked = a === 0
-    || a === 10
-    || a === 127
-    || (a === 169 && b === 254)
-    || (a === 172 && b >= 16 && b <= 31)
-    || (a === 192 && b === 168)
-    || a >= 224;
-  return blocked
-    ? { ok: false, message: `private or local IPv4 host is not supported for web_fetch: ${host}` }
-    : { ok: true };
-}
-
-function validateIpv6Host(host: string): { ok: true } | { ok: false; message: string } {
-  const normalized = host.replace(/^\[|\]$/g, '').toLowerCase();
-  const blocked = (): { ok: false; message: string } => ({
-    ok: false,
-    message: `private or local IPv6 host is not supported for web_fetch: ${host}`,
-  });
-
-  const h = expandIpv6(normalized);
-  if (!h) return { ok: true }; // URL() already accepted it; an un-expandable form won't route
-
-  // Any address that embeds an IPv4 in its low 32 bits must be classified by that
-  // embedded v4, or loopback / cloud-metadata / private would tunnel through the
-  // v6 form. Covers IPv4-mapped (::ffff:0:0/96), the deprecated IPv4-compatible
-  // (::/96, which also subsumes :: and ::1), and NAT64 (64:ff9b::/96 well-known +
-  // 64:ff9b:1::/48 local). The URL parser serializes the embedded v4 to hex
-  // (`[::169.254.169.254]` → `::a9fe:a9fe`), so the check is on the hextets.
-  const zero = (slice: number[]): boolean => slice.every((value) => value === 0);
-  const embedsIpv4 =
-    (zero([h[0], h[1], h[2], h[3], h[4]]) && h[5] === 0xffff)
-    || zero([h[0], h[1], h[2], h[3], h[4], h[5]])
-    || (h[0] === 0x64 && h[1] === 0xff9b && zero([h[2], h[3], h[4], h[5]]))
-    || (h[0] === 0x64 && h[1] === 0xff9b && h[2] === 0x0001);
-  if (embedsIpv4) {
-    return validateIpv4Host(`${h[6] >> 8}.${h[6] & 0xff}.${h[7] >> 8}.${h[7] & 0xff}`);
-  }
-
-  // Otherwise block by leading-hextet range: fc00::/7 unique-local (0xfc00–0xfdff),
-  // fe80::/10 link-local + fec0::/10 site-local (0xfe80–0xfeff), ff00::/8 multicast.
-  const highByte = h[0] >> 8;
-  if (highByte === 0xfc || highByte === 0xfd || highByte === 0xff) return blocked();
-  if (h[0] >= 0xfe80 && h[0] <= 0xfeff) return blocked();
-  return { ok: true };
-}
-
-// Expand an IPv6 literal (no brackets, lowercased) to its 8 hextets, folding any
-// trailing dotted IPv4 into two hextets and expanding a single `::` run. Returns
-// null for anything that does not cleanly expand to 8 hextets.
-function expandIpv6(address: string): number[] | null {
-  let addr = address;
-  const dotted = addr.match(/^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (dotted) {
-    const octets = [dotted[2], dotted[3], dotted[4], dotted[5]].map(Number);
-    if (octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return null;
-    const [a, b, c, d] = octets as [number, number, number, number];
-    addr = `${dotted[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
-  }
-
-  const halves = addr.split('::');
-  if (halves.length > 2) return null;
-  const head = halves[0] ? halves[0].split(':') : [];
-  let hextets: string[];
-  if (halves.length === 1) {
-    hextets = head;
-  } else {
-    const tail = halves[1] ? halves[1].split(':') : [];
-    const missing = 8 - head.length - tail.length;
-    if (missing < 1) return null;
-    hextets = [...head, ...new Array(missing).fill('0'), ...tail];
-  }
-  if (hextets.length !== 8) return null;
-
-  const nums = hextets.map((part) => (/^[0-9a-f]{1,4}$/.test(part) ? parseInt(part, 16) : NaN));
-  return nums.some((value) => !Number.isFinite(value)) ? null : nums;
+  return Boolean(parsed.hostname);
 }
 
 export async function buildWebFetchSuccessEnvelope(

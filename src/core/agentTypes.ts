@@ -23,7 +23,7 @@ import type {
   AgentUserQuestionRequestView,
   AskUserQuestionResult,
 } from './agentEventLog';
-import type { AgentDefinition, AgentDelegationPermissionMode, NodeId, NodeType } from './types';
+import type { AgentDefinition, NodeId, NodeType } from './types';
 import type { AgentObjectiveStatus, AgentRunBudget, AgentRunPurpose, AgentRunScope } from './agentEventLog';
 
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
@@ -76,7 +76,6 @@ export interface AgentAuthoringInput {
   body: string;
   model?: string;
   effort?: string;
-  permissionMode?: AgentDelegationPermissionMode;
   maxTurns?: number;
   tools?: string[];
   disallowedTools?: string[];
@@ -539,55 +538,41 @@ export interface AgentToolResultEvent {
   timestamp: number;
 }
 
-export type AgentApprovalResolutionScope = 'once' | 'always';
-export type AgentApprovalRequestKind = 'tool_permission' | 'skill_trust' | 'permission_notice';
+export type AgentCapabilityRequestKind = 'folder';
 
-export interface AgentApprovalRequestDetail {
+export interface AgentCapabilityRequestDetail {
   label: string;
   value: string;
 }
 
-export interface AgentApprovalRequestView {
+export interface AgentCapabilityRequestView {
   requestId: string;
   conversationId: string;
-  kind: AgentApprovalRequestKind;
+  kind: AgentCapabilityRequestKind;
   toolCallId: string;
   toolName: string;
   title: string;
   target: string;
   reason: string;
-  details: AgentApprovalRequestDetail[];
-  alwaysAllowRule?: string;
-  alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
-  autoBlockMs?: number;
-  /**
-   * Agent id, set only when an approval/notice is attributed to a separate
-   * consulted agent. Same-agent Runs leave this unset; their risky actions still
-   * gate through ordinary capability permissions.
-   */
+  details: AgentCapabilityRequestDetail[];
+  folders: string[];
+  /** Agent id when a separate consulted agent requested the folder. */
   requestedByAgentId?: string;
-  skillTrust?: {
-    name: string;
-    displayName?: string;
-    source: 'user' | 'project';
-    contentHash: string;
-  };
 }
 
-export interface AgentApprovalResolvedEvent {
-  type: 'approval_resolved';
+export interface AgentCapabilityResolvedEvent {
+  type: 'capability_resolved';
   conversationId: string;
   requestId: string;
-  approved: boolean;
-  scope?: AgentApprovalResolutionScope;
+  resolution: 'granted' | 'cancelled';
   timestamp: number;
 }
 
-export interface AgentApprovalRequestEvent {
-  type: 'approval_request';
+export interface AgentCapabilityRequestEvent {
+  type: 'capability_request';
   conversationId: string;
   requestId: string;
-  request: AgentApprovalRequestView;
+  request: AgentCapabilityRequestView;
   timestamp: number;
 }
 
@@ -639,8 +624,8 @@ export type AgentRuntimeEvent =
   | AgentProviderRetryEvent
   | AgentToolCallEvent
   | AgentToolResultEvent
-  | AgentApprovalRequestEvent
-  | AgentApprovalResolvedEvent
+  | AgentCapabilityRequestEvent
+  | AgentCapabilityResolvedEvent
   | AgentUserQuestionRequestEvent
   | AgentUserQuestionResolvedEvent
   | AgentConversationAttentionEvent;

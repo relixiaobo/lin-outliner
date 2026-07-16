@@ -90,20 +90,6 @@ afterEach(async () => {
 });
 
 describe('provider config startup reconcile (Part A)', () => {
-  test('drops legacy app-level permission modes from runtime settings', async () => {
-    await writeProviderFileRaw({
-      agent: { permissionMode: 'restricted' },
-      providers: [],
-    });
-    expect(await getAgentRuntimeSettings()).not.toHaveProperty('safetyMode');
-
-    await writeProviderFileRaw({
-      agent: { permissionMode: 'trusted' },
-      providers: [],
-    });
-    expect(await getAgentRuntimeSettings()).not.toHaveProperty('safetyMode');
-  });
-
   test('stores image generation defaults separately from provider connection rows', async () => {
     await updateImageGenerationSettings({ defaultModel: 'google/gemini-3.1-flash-image' });
 

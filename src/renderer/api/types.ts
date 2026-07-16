@@ -3,8 +3,6 @@ export type {
   AgentProviderConfigInput,
   AgentProviderConfigView,
   AgentProviderCapabilityModelOption,
-  AgentPermissionMode,
-  AgentDelegationPermissionMode,
   AgentModelOption,
   AgentProviderOption,
   AgentReasoningLevel,
@@ -67,8 +65,7 @@ export type {
 } from '../../core/types';
 
 export type {
-  AgentApprovalRequestView,
-  AgentApprovalResolutionScope,
+  AgentCapabilityRequestView,
   AgentAuthoringInput,
   AgentDefinitionView,
   AgentRunDetailPayload,
@@ -99,10 +96,9 @@ export type {
   AgentRenderDreamRunEntity,
 } from '../../core/agentRenderProjection';
 
-export interface AgentToolPermissionSettingsView {
-  grants: string[];
+export interface AgentCapabilitySettingsView {
+  folders: string[];
   blocks: string[];
-  softBlockAllows: string[];
   diagnostics: Array<{
     ruleValue: string;
     code: string;
@@ -110,17 +106,16 @@ export interface AgentToolPermissionSettingsView {
   }>;
 }
 
-export interface AgentToolPermissionSettingsInput {
-  grants: string[];
-  blocks: string[];
-  softBlockAllows: string[];
+export interface AgentCapabilitySettingsPatchInput {
+  revokeFolders: string[];
+  removeBlocks: string[];
 }
 
-export interface AgentPickScopeFolderResult {
+export interface AgentPickCapabilityFolderResult {
   canceled: boolean;
   path?: string;
-  grant?: string;
-  settings: AgentToolPermissionSettingsView;
+  folder?: string;
+  settings: AgentCapabilitySettingsView;
 }
 
 export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';

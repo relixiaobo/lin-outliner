@@ -104,12 +104,15 @@ import {
   testProviderConnection,
 } from './agentSettings';
 import {
-  appendAgentToolPermissionBlockView,
-  normalizedRuleList,
-  readAgentToolPermissionSettingsView,
-  writeAgentToolPermissionSettingsView,
-} from './agentToolPermissionStore';
-import { grantRuleValue } from './agentToolPermissionRules';
+  applyAgentCapabilitySettingsPatchView,
+  appendAgentCapabilityBlockView,
+  getFolderCapabilityService,
+  grantAgentFolderCapability,
+  grantAgentFolderCapabilityView,
+  readAgentCapabilitySettingsView,
+} from './agentCapabilityStore';
+import { bindAgentProcessCapabilities } from './agentProcessExecutor';
+import { createFolderCapabilitySnapshot } from './agentFolderCapabilities';
 import {
   isAgentCommand,
   isAssetCommand,
@@ -356,6 +359,13 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
   ensureAgentDir(agentLocalFileRoot);
 }
 ensureAgentDir(agentScratchRoot);
+const folderCapabilityService = getFolderCapabilityService();
+const agentProcessControlPlaneProtections = createFolderCapabilitySnapshot({
+  workspaceRoot: agentLocalFileRoot,
+  scratchRoot: agentScratchRoot,
+  protectedRoots: [resolvedUserDataDir],
+}, []).protectedRoots;
+bindAgentProcessCapabilities(folderCapabilityService, agentProcessControlPlaneProtections);
 // Scratch holds only ephemeral, app-owned data (materialized attachments, web-fetch binaries,
 // bash overflow logs, PDF page images). Reclaim anything past the TTL once per launch; failures
 // are swallowed so cleanup never blocks startup.
@@ -365,10 +375,13 @@ void pruneAgentScratch(agentScratchRoot).catch((error) => {
 const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: agentLocalFileRoot,
   scratchRoot: agentScratchRoot,
+  protectedStoreRoot: resolvedUserDataDir,
   assetResolver: assetService,
   dreamMemoryExtractionEnabled: true,
   errorReporter: reportError,
 });
+folderCapabilityService.onGranted(() => agentRuntime.folderCapabilitiesChanged());
+agentRuntime.folderCapabilitiesChanged();
 const pageTranslationService = new PageTranslationService({
   onError: () => reportError(pageTranslationErrorReport()),
 });
@@ -1873,7 +1886,9 @@ function registerIpc() {
     const multiSelections = maxFiles > 1;
     const options: Electron.OpenDialogOptions = {
       ...(defaultPath.path ? { defaultPath: defaultPath.path } : {}),
-      properties: multiSelections ? ['openFile', 'multiSelections'] : ['openFile'],
+      properties: multiSelections
+        ? ['openFile', 'openDirectory', 'multiSelections']
+        : ['openFile', 'openDirectory'],
     };
     const result = window
       ? await dialog.showOpenDialog(window, options)
@@ -1886,6 +1901,10 @@ function registerIpc() {
     }
     lastAttachmentPickerDirectory = dirname(result.filePaths[0]!);
     const selectedPaths = result.filePaths.slice(0, maxFiles);
+    for (const selectedPath of selectedPaths) {
+      const selectedStat = await stat(selectedPath).catch(() => null);
+      if (selectedStat?.isDirectory()) await grantAgentFolderCapability(selectedPath);
+    }
     const skippedCount = Math.max(0, result.filePaths.length - selectedPaths.length);
     const files = (await Promise.all(selectedPaths.map(localPickedFile))).filter(
       (file): file is NonNullable<Awaited<ReturnType<typeof localPickedFile>>> => Boolean(file),
@@ -1922,7 +1941,9 @@ function registerIpc() {
     const id = typeof rawOptions?.id === 'string' ? rawOptions.id : '';
     const filePath = localFileSearchCache.get(id);
     if (!filePath) return { file: null };
-    return { file: await localPickedFile(filePath) };
+    const file = await localPickedFile(filePath);
+    if (file?.entryKind === 'directory') await grantAgentFolderCapability(file.path);
+    return { file };
   });
 
   ipcMain.handle('lin:preview-local-file', async (_event, rawOptions?: { id?: unknown }) => {
@@ -2235,16 +2256,13 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
   };
 }
 
-async function pickAgentScopeFolder(
-  event: IpcMainInvokeEvent,
-  draftSettings: { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown } | undefined,
-) {
+async function pickAgentCapabilityFolder(event: IpcMainInvokeEvent) {
   const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? settingsWindow ?? mainWindow;
   const defaultPath = safeAppPath('documents') ?? safeAppPath('home') ?? undefined;
   const dialogStrings = getMessages(effectiveLocale()).window;
   const options: Electron.OpenDialogOptions = {
     ...(defaultPath ? { defaultPath } : {}),
-    title: dialogStrings.handScopeFolderTitle,
+    title: dialogStrings.handCapabilityFolderTitle,
     properties: ['openDirectory', 'createDirectory'],
   };
   const result = window
@@ -2253,26 +2271,16 @@ async function pickAgentScopeFolder(
   if (result.canceled || !result.filePaths[0]) {
     return {
       canceled: true,
-      settings: await readAgentToolPermissionSettingsView(),
+      settings: await readAgentCapabilitySettingsView(),
     };
   }
 
   const root = await canonicalDirectoryPath(result.filePaths[0]);
-  const grant = grantRuleValue({ kind: 'scope', access: 'write', root });
-  const currentSettings = await readAgentToolPermissionSettingsView();
-  const draftGrants = draftSettings?.grants;
-  const baseGrantInput = Array.isArray(draftGrants) ? draftGrants : currentSettings.grants;
-  const baseGrants = normalizedRuleList(baseGrantInput);
-  const grants = baseGrants.includes(grant) ? baseGrants : [...baseGrants, grant];
-  const blocks = Array.isArray(draftSettings?.blocks) ? normalizedRuleList(draftSettings?.blocks) : currentSettings.blocks;
-  const softBlockAllows = Array.isArray(draftSettings?.softBlockAllows)
-    ? normalizedRuleList(draftSettings?.softBlockAllows)
-    : currentSettings.softBlockAllows;
-  const settings = await writeAgentToolPermissionSettingsView({ grants, blocks, softBlockAllows });
+  const settings = await grantAgentFolderCapabilityView(root);
   return {
     canceled: false,
     path: root,
-    grant,
+    folder: root,
     settings,
   };
 }
@@ -2362,7 +2370,13 @@ async function commonDirectoryRecentFilePaths(limit: number): Promise<string[]> 
 async function rgFileNameMatches(query: string, limit: number): Promise<string[]> {
   const home = safeAppPath('home');
   if (!home) return [];
-  const ripgrep = await resolveRipgrepCommand().catch(() => null);
+  const capabilities = createFolderCapabilitySnapshot({
+    workspaceRoot: home,
+    includeSystemRoots: true,
+    protectedRoots: [resolvedUserDataDir],
+    revocationGeneration: folderCapabilityService.currentRevocationGeneration(),
+  }, []);
+  const ripgrep = await resolveRipgrepCommand(home, capabilities).catch(() => null);
   if (!ripgrep) return [];
   return new Promise((resolve) => {
     const results: string[] = [];
@@ -2850,12 +2864,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       );
     case 'agent_clear_steer':
       return agentRuntime.clearSteer(conversationId());
-    case 'agent_resolve_approval':
-      return agentRuntime.resolveApproval(
+    case 'agent_resolve_capability':
+      return agentRuntime.resolveCapability(
         conversationId(),
         String(args.requestId),
-        args.approved === true,
-        args.scope === 'always' ? 'always' : 'once',
+        args.resolution === 'granted' ? 'granted' : 'cancelled',
       );
     case 'agent_resolve_user_question':
       return agentRuntime.resolveUserQuestion(
@@ -2884,14 +2897,14 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
     case 'agent_update_image_generation_settings':
       return updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput);
-    case 'agent_get_tool_permission_settings':
-      return readAgentToolPermissionSettingsView();
-    case 'agent_update_tool_permission_settings':
-      return writeAgentToolPermissionSettingsView(args.settings as { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown });
-    case 'agent_append_tool_permission_block':
-      return appendAgentToolPermissionBlockView(String(args.ruleValue ?? ''));
-    case 'agent_pick_scope_folder':
-      return pickAgentScopeFolder(event, args.settings as { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown } | undefined);
+    case 'agent_get_capability_settings':
+      return readAgentCapabilitySettingsView();
+    case 'agent_apply_capability_settings_patch':
+      return applyAgentCapabilitySettingsPatchView(args.patch as { revokeFolders?: unknown; removeBlocks?: unknown });
+    case 'agent_append_capability_block':
+      return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
+    case 'agent_pick_capability_folder':
+      return pickAgentCapabilityFolder(event);
     case 'agent_upsert_provider_config':
       return upsertProviderConfig(args.provider as AgentProviderConfigInput);
     case 'agent_delete_provider_config':

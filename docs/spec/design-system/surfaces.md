@@ -240,7 +240,7 @@ not an inset card. It uses neutral fill (`--fill-1`, focus/drag `--fill-2`), top
 corners at the rail radius, and text inset to the shared agent content column. Its
 toolbar is visually unified with the textarea; attach/send controls are capsules.
 The footer model/effort chip is a profile shortcut only, never provider settings,
-conversation identity, or a per-message override. Approval and user-question
+conversation identity, or a per-message override. Capability and user-question
 states render as in-composer blocking cards above the editor/toolbar, not as
 floating overlays. Their primary/submit action uses the neutral filled-default
 idiom; secondary, deny, and discussion actions stay neutral filled. The details
@@ -263,7 +263,7 @@ inside one neutral `--radius-pill` capsule with a center divider. The content
 scrollport starts below fixed chrome via margin, not scroll padding.
 
 **Category rail and content.** The left rail lists categories: General,
-Providers, Permissions, Skills, Agent Profiles. The content pane is a flat opaque
+Providers, Security, Skills, Agent Profiles. The content pane is a flat opaque
 Preferences base with constrained grouped content (`--settings-content-max-width`,
 920px). There is no permanent detail pane; per-provider config opens a native
 child window. Categories, not providers, are top-level rail rows. The rail,

@@ -30,7 +30,7 @@ import type {
   AgentPayloadRef,
 } from '../core/agentEventLog';
 import type { ErrorReport } from '../core/errorObservability';
-import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
+import type { AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createAgentLocalWorkspaceContext, restorePostCompactReadFiles, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { AgentSkillRuntime } from './agentSkills';
@@ -62,7 +62,7 @@ import {
   runProfileForIsolatedSkill,
   runProfileForPurpose,
 } from './agentRunProfiles';
-import { readOnlyAgentToolNames } from '../core/agentPermissionModel';
+import { readOnlyAgentToolNames } from '../core/agentActionCatalog';
 import {
   admitRunBudget,
   formatRunBudgetForPrompt,
@@ -135,16 +135,15 @@ export interface AgentChildAgentCreateInput {
   executingAgentId: string;
   parentAgentId: string;
   /**
-   * The consultee to attribute this run's gated/denied approvals to (its own id
-   * for a fresh consult, the inherited consultee for a fork, undefined for the
-   * user's own agent). Resolved to a mention token by the approval card.
+   * The consultee to attribute this run's folder-capability requests to (its own
+   * id for a fresh consult, the inherited consultee for a fork, undefined for the
+   * user's own agent). Resolved to a mention token by the request card.
    */
   requestedByAgentId?: string;
   memoryOwnerAgentId: string;
   memoryOriginWorkspace?: string;
   model?: string;
   effort?: string;
-  permissionMode?: AgentPermissionMode;
   maxTurns?: number;
   skillRuntime: AgentSkillRuntime;
   localWorkspace: AgentLocalWorkspaceContext;
@@ -152,15 +151,16 @@ export interface AgentChildAgentCreateInput {
   scope?: AgentRunScope;
   allowedTools?: string[];
   disallowedTools?: string[];
-  preapprovedToolRules?: string[];
   scopePreauthorized?: boolean;
   l0CacheBreakpointEnabled?: boolean;
   /**
-   * Run with no interactive approval channel. A tool needing approval is denied
-   * and surfaced instead of waiting for a human; globally always-allowed tools
-   * still run. Set only by runtime-owned unattended execution paths.
+   * Run with no interactive folder-capability channel. A missing capability is
+   * surfaced as durable needs-input instead of waiting for a human; calls within
+   * the current capability set still run. Set only by runtime-owned unattended
+   * execution paths.
    */
   unattended?: boolean;
+  blockForInput?: (reason: string) => void;
   afterToolResult?: (
     toolCallId: string,
     toolName: string,
@@ -238,15 +238,16 @@ export interface AgentDelegationRuntimeOptions {
   memoryOwnerAgentId?: string;
   localRoot?: string;
   scratchRoot?: string;
+  protectedStoreRoot?: string;
   depth?: number;
   ancestry?: string[];
   maxDepth?: number;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
   /**
-   * The consultee this runtime executes as, for approval attribution — set when
-   * this runtime IS a consulted agent (a fresh child) or a fork descending from
-   * one; undefined for the user's own top agent. A run's forks inherit it.
+   * The consultee this runtime executes as, for folder-request attribution. Set
+   * when this runtime is a consulted agent (a fresh child) or a fork descending
+   * from one; undefined for the user's own top agent. A run's forks inherit it.
    */
   requestedByAgentId?: string;
   host: AgentDelegationRuntimeHost;
@@ -301,7 +302,6 @@ interface DelegationRunState extends DelegationDetail {
   budgetTimerRefresh?: () => void;
   /** Set when a 'completed' run was actually cut off (maxTurns / unresolved overflow). */
   incomplete?: boolean;
-  preapprovedToolRules?: string[];
   toolResultBudgetState: ToolResultBudgetState;
   nodeChanges: AgentRunNodeChanges;
   fileChanges: AgentRunFileChanges;
@@ -352,7 +352,6 @@ interface AgentToolParams {
   effort?: string;
   name?: string;
   allowedTools?: string[];
-  preapprovedToolRules?: string[];
   parentRunId?: string;
   parentBudget?: AgentRunBudget;
   scopePreauthorized?: boolean;
@@ -360,11 +359,9 @@ interface AgentToolParams {
   inheritedVerifierGapSignatures?: string[];
   inheritedVerifierRunIds?: string[];
   /**
-   * Run with no interactive approval channel: a tool needing approval is denied
-   * (and surfaced) instead of waiting for a human. Set for unattended scheduled
-   * command runs so an approval-gated tool can never hang an unwatched run.
-   * Tools covered by the global always-allow rules still run (they resolve to
-   * `allow` before any approval is sought). Internal-only — not part of the
+   * Run with no interactive folder-capability channel. A missing capability is
+   * surfaced as durable needs-input instead of waiting for a human, while calls
+   * within the current capability set still run. Internal-only; not part of the
    * agent-facing Agent tool schema.
    */
   unattended?: boolean;
@@ -385,6 +382,7 @@ export class AgentDelegationRuntime {
   private readonly conversationId: string;
   private readonly localRoot: string;
   private readonly scratchRoot: string;
+  private readonly protectedStoreRoot?: string;
   private readonly depth: number;
   private readonly maxDepth: number;
   private readonly ancestry: string[];
@@ -404,6 +402,7 @@ export class AgentDelegationRuntime {
     this.conversationId = options.conversationId;
     this.localRoot = path.resolve(options.localRoot ?? process.cwd());
     this.scratchRoot = scratchRootForWorkdir(this.localRoot, options.scratchRoot);
+    this.protectedStoreRoot = options.protectedStoreRoot;
     this.depth = options.depth ?? 0;
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH;
     this.ancestry = options.ancestry ?? [];
@@ -431,6 +430,18 @@ export class AgentDelegationRuntime {
     run.agent?.abort();
     this.runs.delete(runId);
     if (run.name && this.names.get(run.name) === runId) this.names.delete(run.name);
+  }
+
+  private blockRunForInput(runId: string, reason: string): void {
+    const run = this.runs.get(runId);
+    if (!run || run.status !== 'running') return;
+    run.status = 'failed';
+    run.objectiveStatus = 'blocked';
+    run.error = reason;
+    run.blockedReason = reason;
+    run.completedAt = Math.max(Date.now(), run.updatedAt + 1);
+    run.updatedAt = run.completedAt;
+    run.agent?.abort();
   }
 
   async listAllAgentDefinitions(): Promise<AgentDefinition[]> {
@@ -615,8 +626,7 @@ export class AgentDelegationRuntime {
         runProfile: runProfileForIsolatedSkill(input.readOnlyIsolated),
         model: input.model,
         effort: input.effort,
-        allowedTools: input.readOnlyIsolated ? readOnlyAgentToolNames(input.allowedTools) : undefined,
-        preapprovedToolRules: input.allowedTools,
+        allowedTools: input.readOnlyIsolated ? readOnlyAgentToolNames(input.allowedTools) : input.allowedTools,
       }, releaseStartupSlot, signal, parentToolCallId);
     } catch (error) {
       releaseStartupSlot();
@@ -1009,7 +1019,6 @@ export class AgentDelegationRuntime {
         memoryOriginWorkspace,
         model: params.model,
         effort: params.effort,
-        preapprovedToolRules: params.preapprovedToolRules,
         unattended: params.unattended,
         // The child consumes its prompt via `run.messages` + `runChildAgent`, not
         // through the agent's seed messages.
@@ -1084,7 +1093,6 @@ export class AgentDelegationRuntime {
       parentBudgetRef: parentBudget,
       budgetSettled: false,
       parentToolCallId,
-      preapprovedToolRules: params.preapprovedToolRules,
       unattended: params.unattended,
       toolResultBudgetState: createToolResultBudgetState(),
       nodeChanges: {},
@@ -1163,7 +1171,6 @@ export class AgentDelegationRuntime {
     memoryOriginWorkspace?: string;
     model?: string;
     effort?: string;
-    preapprovedToolRules?: string[];
     unattended?: boolean;
     initialMessages: AgentMessage[];
     afterToolResult: AgentChildAgentCreateInput['afterToolResult'];
@@ -1202,9 +1209,14 @@ export class AgentDelegationRuntime {
       },
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
-    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, this.scratchRoot, skillRuntime);
-    // A sub-run runs AS its spawner, so it inherits the spawner's approval
-    // attribution. The nested runtime carries it so deeper sub-runs inherit it.
+    const localWorkspace = createAgentLocalWorkspaceContext(
+      this.localRoot,
+      this.scratchRoot,
+      skillRuntime,
+      this.protectedStoreRoot,
+    );
+    // A sub-run runs as its spawner, so it inherits folder-request attribution.
+    // The nested runtime carries it so deeper sub-runs inherit it.
     const requestedByAgentId = this.requestedByAgentId;
     subRunRuntime = new AgentDelegationRuntime({
       conversationId: childConversationId,
@@ -1213,6 +1225,7 @@ export class AgentDelegationRuntime {
       requestedByAgentId,
       localRoot: this.localRoot,
       scratchRoot: this.scratchRoot,
+      protectedStoreRoot: this.protectedStoreRoot,
       depth: this.depth + 1,
       maxDepth: this.maxDepth,
       ancestry: [...this.ancestry, input.definition.name],
@@ -1235,7 +1248,6 @@ export class AgentDelegationRuntime {
       memoryOriginWorkspace: input.memoryOriginWorkspace,
       model: input.model ?? input.definition.model,
       effort: input.effort ?? input.definition.effort,
-      permissionMode: input.definition.permissionMode,
       maxTurns: input.definition.maxTurns,
       skillRuntime,
       localWorkspace,
@@ -1243,9 +1255,9 @@ export class AgentDelegationRuntime {
       scope: input.scope,
       allowedTools: input.definition.tools,
       disallowedTools: input.definition.disallowedTools,
-      preapprovedToolRules: input.preapprovedToolRules,
       l0CacheBreakpointEnabled: false,
       unattended: input.unattended,
+      blockForInput: (reason) => this.blockRunForInput(input.runId, reason),
       afterToolResult: input.afterToolResult,
     });
     return { skillRuntime, localWorkspace, childAgent, subRunRuntime };
@@ -1778,7 +1790,6 @@ export class AgentDelegationRuntime {
         model: run.definition?.model === 'inherit' ? undefined : run.definition?.model,
         effort: run.definition?.effort,
         allowedTools: run.definition?.tools,
-        preapprovedToolRules: run.preapprovedToolRules,
         parentRunId: run.parentRunId,
         inheritedVerificationAttempts: run.verificationAttempts,
         inheritedVerifierGapSignatures: run.verifierGapSignatures,
@@ -2018,7 +2029,6 @@ export class AgentDelegationRuntime {
       parentAgentId: run.parentAgentId,
       memoryOwnerAgentId: run.memoryOwnerAgentId,
       memoryOriginWorkspace: run.memoryOriginWorkspace,
-      preapprovedToolRules: run.preapprovedToolRules,
       unattended: run.unattended,
       // Resume continues from the run's restored transcript (the model + effort
       // come from the run's resolved definition, not a fresh override).
@@ -2615,7 +2625,6 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
     model: coerceString(raw.model),
     name: coerceString(raw.name),
     allowedTools,
-    preapprovedToolRules: coerceStringArray(raw.preapprovedToolRules),
     unattended: raw.unattended === true,
   };
 }

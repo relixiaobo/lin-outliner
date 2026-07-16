@@ -58,7 +58,7 @@ async function pendingQuestionMetrics(page: Page) {
     const surface = card.closest('.agent-composer-surface');
     const option = card.querySelector('.agent-question-option');
     const textarea = card.querySelector('.agent-question-text');
-    const button = card.querySelector('.agent-approval-button.is-primary');
+    const button = card.querySelector('.agent-request-button.is-primary');
     if (
       !(card instanceof HTMLElement)
       || !(surface instanceof HTMLElement)
@@ -805,114 +805,101 @@ test.describe('agent composer controls', () => {
     await expect(config.getByRole('button', { name: /Add reviewer/ })).toHaveCount(0);
   });
 
-  test('renders skill trust approvals as accept/not-now cards', async ({ page }) => {
+  test('renders folder capability requests as grant-and-remember cards', async ({ page }) => {
     await emitAgentEvent(page, {
-      type: 'approval_request',
+      type: 'capability_request',
       conversationId: DEFAULT_CONVERSATION_ID,
-      requestId: 'skill-trust-e2e',
+      requestId: 'folder-capability-e2e',
       request: {
-        requestId: 'skill-trust-e2e',
+        requestId: 'folder-capability-e2e',
         conversationId: DEFAULT_CONVERSATION_ID,
-        kind: 'skill_trust',
-        toolCallId: 'tool-skill-trust-e2e',
-        toolName: 'skill',
-        title: 'Skill review-pr requests automatic use.',
-        target: '/review-pr',
-        reason: 'Accept the current skill content hash before Lin can invoke it automatically.',
-        details: [{ label: 'Content hash', value: 'abc123' }],
-        skillTrust: {
-          name: 'review-pr',
-          source: 'project',
-          contentHash: 'abc123',
-        },
+        kind: 'folder',
+        toolCallId: 'tool-folder-capability-e2e',
+        toolName: 'file_read',
+        title: 'Folder access required',
+        target: '/Users/example/Research',
+        reason: 'Folder access is required before file_read can run.',
+        details: [{ label: 'Folder', value: '/Users/example/Research' }],
+        folders: ['/Users/example/Research'],
       },
       timestamp: 1_800_000_003_000,
     });
 
-    const card = page.locator('.agent-approval-card');
+    const card = page.locator('.agent-capability-card');
     await expect(card).toBeVisible();
-    await expect(card.getByText('Skill review-pr requests automatic use.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Accept skill' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Not now' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Approve once' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Hand everything to Lin, stop asking' })).toHaveCount(0);
+    await expect(card.getByText('Folder access required')).toBeVisible();
+    await expect(card.getByText('/Users/example/Research')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Grant and remember' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Accept skill' }).click();
+    await page.getByRole('button', { name: 'Grant and remember' }).click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.find((call) => call.cmd === 'agent_resolve_approval' && call.args.requestId === 'skill-trust-e2e')?.args;
+      return calls.find((call) => call.cmd === 'agent_resolve_capability' && call.args.requestId === 'folder-capability-e2e')?.args;
     }).toMatchObject({
       conversationId: DEFAULT_CONVERSATION_ID,
-      requestId: 'skill-trust-e2e',
-      approved: true,
-      scope: 'once',
+      requestId: 'folder-capability-e2e',
+      resolution: 'granted',
     });
   });
 
-  test('renders permission notices as dismiss-only cards', async ({ page }) => {
+  test('cancels a folder capability request without adding a folder grant', async ({ page }) => {
     await emitAgentEvent(page, {
-      type: 'approval_request',
+      type: 'capability_request',
       conversationId: DEFAULT_CONVERSATION_ID,
-      requestId: 'permission-notice-e2e',
+      requestId: 'folder-cancel-e2e',
       request: {
-        requestId: 'permission-notice-e2e',
+        requestId: 'folder-cancel-e2e',
         conversationId: DEFAULT_CONVERSATION_ID,
-        kind: 'permission_notice',
-        toolCallId: 'tool-notice-e2e',
-        toolName: 'bash',
-        title: 'Blocked unknown shell command',
-        target: '$(cat ./script.sh)',
-        reason: 'Unknown or ambiguous shell execution.',
-        details: [{ label: 'Permission kind', value: 'shell.unknown' }],
+        kind: 'folder',
+        toolCallId: 'tool-folder-cancel-e2e',
+        toolName: 'file_write',
+        title: 'Folder access required',
+        target: '/Users/example/Exports',
+        reason: 'Folder access is required before file_write can run.',
+        details: [{ label: 'Folder', value: '/Users/example/Exports' }],
+        folders: ['/Users/example/Exports'],
       },
       timestamp: 1_800_000_003_100,
     });
 
-    const card = page.locator('.agent-approval-card');
-    await expect(card).toBeVisible();
-    await expect(card.getByText('Blocked unknown shell command')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Dismiss' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Approve once' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Accept skill' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Deny once' })).toHaveCount(0);
-
-    await page.getByRole('button', { name: 'Dismiss' }).click();
+    await page.getByRole('button', { name: 'Cancel' }).click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.find((call) => call.cmd === 'agent_resolve_approval' && call.args.requestId === 'permission-notice-e2e')?.args;
+      return calls.find((call) => call.cmd === 'agent_resolve_capability' && call.args.requestId === 'folder-cancel-e2e')?.args;
     }).toMatchObject({
       conversationId: DEFAULT_CONVERSATION_ID,
-      requestId: 'permission-notice-e2e',
-      approved: false,
-      scope: 'once',
+      requestId: 'folder-cancel-e2e',
+      resolution: 'cancelled',
     });
   });
 
-  test('attributes a consulted agent\'s approval to the consultee', async ({ page }) => {
+  test('attributes a consulted agent\'s capability request to the consultee', async ({ page }) => {
     await emitAgentEvent(page, {
-      type: 'approval_request',
+      type: 'capability_request',
       conversationId: DEFAULT_CONVERSATION_ID,
-      requestId: 'consultee-approval-e2e',
+      requestId: 'consultee-capability-e2e',
       request: {
-        requestId: 'consultee-approval-e2e',
+        requestId: 'consultee-capability-e2e',
         conversationId: DEFAULT_CONVERSATION_ID,
-        kind: 'tool_permission',
+        kind: 'folder',
         toolCallId: 'tool-consultee-e2e',
         toolName: 'file_read',
-        title: 'Approve sensitive file read?',
-        target: '/work/.env',
-        reason: 'Reading a sensitive local path.',
-        details: [{ label: 'Permission kind', value: 'file.read.sensitive_local_path' }],
+        title: 'Folder access required',
+        target: '/work/research',
+        reason: 'Folder access is required before file_read can run.',
+        details: [{ label: 'Folder', value: '/work/research' }],
+        folders: ['/work/research'],
         requestedByAgentId: 'project:abc123:researcher',
       },
       timestamp: 1_800_000_003_200,
     });
 
-    const card = page.locator('.agent-approval-card');
+    const card = page.locator('.agent-capability-card');
     await expect(card).toBeVisible();
-    await expect(card.getByText('Approve sensitive file read?')).toBeVisible();
+    await expect(card.getByText('Folder access required')).toBeVisible();
     // The consultee is named via its canonical mention token — the parent's own agent is not the requester.
-    await expect(card.locator('.agent-approval-attribution')).toHaveText('Requested by @researcher');
+    await expect(card.locator('.agent-capability-attribution')).toHaveText('Requested by @researcher');
   });
 
   test('pastes multi-line text as multiple lines instead of collapsing to one', async ({ page }) => {

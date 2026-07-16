@@ -52,7 +52,7 @@ export const DATA_IMPORT_PARAMETERS = {
     confirmed_preview_id: {
       type: 'string',
       minLength: 1,
-      description: 'Preview id returned by a matching dry-run after the user approves the preview.',
+      description: 'Preview id returned by a matching validated dry-run.',
     },
   },
 } as const;

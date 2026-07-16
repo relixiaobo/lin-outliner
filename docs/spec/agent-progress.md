@@ -3,12 +3,12 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-07-10
+Last updated: 2026-07-16
 
 ## Current Direction
 
 Lin uses pi-mono as the current TypeScript agent core. Local document tools,
-file tools, bash, web access, validation, previews, approval policy/schema,
+file tools, bash, web access, validation, previews, capability boundary/schema,
 persistence, and undo stay inside Lin's TypeScript/Electron boundary.
 
 The product is **single-agent**: one user-customizable agent, **Neva** (stable
@@ -127,7 +127,7 @@ truth.
   - path-conditional and dynamically discovered skills with gitignore guards
   - governed `.agents/skills/**` writes through normal file tools with
     validation, provenance, rollback metadata, and hot reload
-  - embedded skill shell expansion through the shared permission layer
+  - embedded skill shell expansion through the shared capability layer
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact
   - internal same-conversation delegation executor retained for Agent Sessions
@@ -198,7 +198,7 @@ truth.
   - `/dream` and the foreground `dream` tool are removed; Dream history remains
     a runtime task/history projection plus the protected Dream channel
     transcript, not a model command surface
-  - permission classification keeps `past_chats` as read-only
+  - the action catalog keeps `past_chats` as read-only
     `agent.memory.recall`; no `agent.memory.dream` action remains
 - [x] Agent M1 structured input and compaction:
   - `ask_user_question` tool with pending question persistence and renderer
@@ -239,11 +239,15 @@ Finish runtime polish on top of the event log and delegation foundation.
 - [ ] Add richer non-text media payload lazy loading UI in debug/render details.
 - [ ] Add performance instrumentation around replay, projection, IPC payload size,
   and long transcript rendering.
-- [x] Permission policy wired end to end: default-allow decisions, hard redlines,
-  user blocklist, built-in soft blocks with allow-once / always-allow / auto-block
-  cards (child-run + skill-shell bubbling, pending-request queue), and joinable
-  `tool.permission.*` plus `approval.*` events persisted to the log (PR #51,
-  redesigned for default-allow blocklists in #277).
+- [x] Ownership-based capability model wired end to end: direct execution when
+  resources exist; persistent folder acquisition for uncovered roots including
+  `/`; typed-file and process isolation for private Tenon control state; ambient
+  user credentials preserved while explicitly private injected values are
+  removed; no action-level host/payment/network hard blocks; scoped Runs built
+  from narrowed tool catalogs; durable unattended `needs_input` recovery;
+  revocation-driven process termination; and joinable
+  `tool.capability.checked` / `tool.capability.resolved` events with no
+  approval-named transport.
 - [ ] Emit and render the remaining schema-reserved runtime events that are not
   active yet: persisted follow-ups, metrics, and explicit cancellation details.
 - [ ] Refine checkpoint retention settings if real user conversations show unusual
@@ -260,7 +264,7 @@ Finish runtime polish on top of the event log and delegation foundation.
   - keep stable behavior in `agentSystemPrompt.ts`
   - keep changing UI and document state in per-turn `<system-reminder>` blocks
   - keep exact argument rules in tool schemas and descriptions
-- [ ] Agent approval UX polish:
+- [ ] Agent tool UX polish:
   - compact tool cards
   - preview diffs for file edits and node edits
   - clear failure states without transient false failures

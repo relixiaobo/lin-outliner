@@ -15,7 +15,7 @@ import {
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
@@ -197,14 +197,16 @@ async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 
   }
 }
 
-function createWindowSink() {
+function createWindowSink(options: { throwOn?: AgentRuntimeEvent['type'] } = {}) {
   const events: AgentRuntimeEvent[] = [];
   return {
     events,
     window: {
       webContents: {
         send: (channel: string, event: AgentRuntimeEvent) => {
-          if (channel === LIN_AGENT_EVENT_CHANNEL) events.push(event);
+          if (channel !== LIN_AGENT_EVENT_CHANNEL) return;
+          if (event.type === options.throwOn) throw new Error(`Renderer unavailable for ${event.type}.`);
+          events.push(event);
         },
       },
     },
@@ -258,11 +260,15 @@ describe('agent runtime skill integration', () => {
   let roots: string[] = [];
 
   beforeEach(async () => {
+    const { resetFolderCapabilityServiceForTests } = await import('../../src/main/agentCapabilityStore');
+    resetFolderCapabilityServiceForTests();
     await rm(electronUserDataRoot, { recursive: true, force: true });
     roots = [electronUserDataRoot];
   });
 
   afterEach(async () => {
+    const { resetFolderCapabilityServiceForTests } = await import('../../src/main/agentCapabilityStore');
+    resetFolderCapabilityServiceForTests();
     piModels().deleteProvider(piCustomProviderId('openai'));
     piModels().deleteProvider(piCustomProviderId(CC_SWITCH_LOCAL_PROVIDER_ID));
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
@@ -302,7 +308,6 @@ describe('agent runtime skill integration', () => {
             enabled: true,
           }),
           runtimeSettingsLoader: async () => ({
-            permissionMode: 'trusted',
             automaticSkillsEnabled: true,
             slashSkillsEnabled: true,
             compactEnabled: true,
@@ -606,7 +611,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -697,7 +701,6 @@ describe('agent runtime skill integration', () => {
         }),
         providerModelResolver: () => customModel,
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1283,10 +1286,7 @@ describe('agent runtime skill integration', () => {
     expect(script.pendingCount()).toBe(0);
     expect(contextTexts.join('\n')).toContain('CARD_SKILL_BODY');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(sink.events.some((event) => (
-      event.type === 'approval_request'
-      && event.request.kind === 'skill_trust'
-    ))).toBe(false);
+    expect(sink.events.some((event) => event.type === 'capability_request')).toBe(false);
 
     const acceptedSkill = (await runtime.listAllSkills(created.conversationId))
       .find((skill) => skill.name === 'card-skill');
@@ -1333,7 +1333,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1347,7 +1346,7 @@ describe('agent runtime skill integration', () => {
     await runtime.sendMessage(created.conversationId, 'Create the audited skill.');
 
     expect(script.pendingCount()).toBe(0);
-    expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
+    expect(sink.events.some((event) => event.type === 'capability_request')).toBe(false);
     expect(await readFile(path.join(localRoot, '.agents', 'skills', 'audited-skill', 'SKILL.md'), 'utf8'))
       .toBe(skillContent);
 
@@ -1449,7 +1448,7 @@ describe('agent runtime skill integration', () => {
           return fauxAssistantMessage([
             fauxToolCall('bash', {
               command: 'echo isolated-ok',
-              description: 'Print isolated skill permission marker',
+              description: 'Print isolated skill capability marker',
             }, { id: 'tool-isolated-bash' }),
           ], { stopReason: 'toolUse' });
         },
@@ -1478,7 +1477,6 @@ describe('agent runtime skill integration', () => {
           enabled: true,
           apiKey: 'test-key',
         }),
-        permissionMode: 'restricted',
         streamFn: script.streamFn,
       },
     );
@@ -1543,7 +1541,6 @@ describe('agent runtime skill integration', () => {
           enabled: true,
           apiKey: 'test-key',
         }),
-        permissionMode: 'restricted',
         streamFn: script.streamFn,
       },
     );
@@ -1635,7 +1632,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1693,13 +1689,14 @@ describe('agent runtime skill integration', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 
-  test('asks for a read scope when research inspects an external folder', async () => {
+  test('grants and remembers one canonical folder capability for isolated research', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-research-scope-root-'));
     const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-research-scope-external-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-research-scope-data-'));
     roots.push(localRoot, outsideRoot, dataRoot);
     await mkdir(path.join(outsideRoot, 'src'), { recursive: true });
     await writeFile(path.join(outsideRoot, 'src', 'finding.ts'), 'export const finding = true;\n');
+    const canonicalOutsideRoot = await realpath(outsideRoot);
 
     const childFollowUpContexts: string[] = [];
     const parentContexts: string[] = [];
@@ -1759,26 +1756,25 @@ describe('agent runtime skill integration', () => {
           enabled: true,
           apiKey: 'test-key',
         }),
-        permissionMode: 'restricted',
         streamFn: script.streamFn,
       },
     );
 
     const created = await runtime.restoreLatestConversation();
     const sendPromise = runtime.sendMessage(created.conversationId, 'Use research on the external folder.');
-    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
-    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+    const capabilityEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
     ));
-    if (!approvalEvent) throw new Error('Expected research file-scope approval request.');
+    if (!capabilityEvent) throw new Error('Expected research file-scope capability request.');
 
-    expect(approvalEvent.request.toolName).toBe('file_glob');
-    expect(approvalEvent.request.toolCallId).toBe('tool-research-glob-outside');
-    expect(approvalEvent.request.target).toBe(outsideRoot);
-    expect(approvalEvent.request.alwaysAllowRule).toBe(`Scope(read:${outsideRoot})`);
-    expect(approvalEvent.request.alwaysAllowAction).toBe('grant');
+    expect(capabilityEvent.request.toolName).toBe('file_glob');
+    expect(capabilityEvent.request.toolCallId).toBe('tool-research-glob-outside');
+    expect(capabilityEvent.request.target).toBe(canonicalOutsideRoot);
+    expect(capabilityEvent.request.folders).toEqual([canonicalOutsideRoot]);
+    expect(capabilityEvent.request.kind).toBe('folder');
 
-    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true);
+    await runtime.resolveCapability(created.conversationId, capabilityEvent.requestId, 'granted');
     await sendPromise;
 
     expect(script.pendingCount()).toBe(0);
@@ -1789,34 +1785,17 @@ describe('agent runtime skill integration', () => {
     expect(childFollowUpContexts.join('\n')).toContain('export const finding = true');
     expect(childFollowUpContexts.join('\n')).not.toContain('path_outside_local_root');
     expect(parentContexts.join('\n')).toContain('External folder contained a TypeScript file.');
-    expect(sink.events.filter((event) => event.type === 'approval_request')).toHaveLength(1);
+    expect(sink.events.filter((event) => event.type === 'capability_request')).toHaveLength(1);
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
-    expect(events.find((event) => (
-      event.type === 'tool.permission.checked'
-      && event.requestId === approvalEvent.requestId
-    ))).toMatchObject({
-      toolCallId: 'tool-research-glob-outside',
-      outcome: 'ask',
-    });
-    expect(events.find((event) => (
-      event.type === 'tool.permission.resolved'
-      && event.requestId === approvalEvent.requestId
-    ))).toMatchObject({
-      toolCallId: 'tool-research-glob-outside',
-      status: 'approved',
-      resolvedBy: 'user_once',
-    });
-    expect(events.find((event) => (
-      event.type === 'tool.permission.checked'
-      && event.toolCallId === 'tool-research-read-outside'
-    ))).toMatchObject({
-      toolCallId: 'tool-research-read-outside',
-      outcome: 'allow',
-    });
+    expect(events.some((event) => event.type === 'tool.capability.checked')).toBe(true);
+    const settings = JSON.parse(await readFile(path.join(electronUserDataRoot, 'agent-capabilities.json'), 'utf8')) as {
+      folders?: string[];
+    };
+    expect(settings.folders).toContain(canonicalOutsideRoot);
   });
 
-  test('runs skill shell expansion through the runtime permission layer', async () => {
+  test('runs skill shell expansion through the runtime capability layer', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-data-'));
     roots.push(localRoot, dataRoot);
@@ -1856,7 +1835,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'restricted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1875,14 +1853,14 @@ describe('agent runtime skill integration', () => {
     expect(contextTexts.join('\n')).toContain('Shell output: skill-shell-ok');
   });
 
-  test('routes skill shell approval requests through the runtime approval flow', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-approval-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-approval-data-'));
+  test('runs skill shell eval syntax without prompting', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-direct-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-direct-data-'));
     roots.push(localRoot, dataRoot);
 
-    await createSkill(localRoot, 'shell-approval-skill', [
+    await createSkill(localRoot, 'shell-direct-skill', [
       '---',
-      'description: Use when checking skill shell approval.',
+      'description: Use when checking skill shell direct.',
       '---',
       'Shell output: !`eval "echo skill-shell-approved"`',
     ].join('\n'));
@@ -1891,9 +1869,9 @@ describe('agent runtime skill integration', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('skill', { skill: 'shell-approval-skill' }, { id: 'tool-skill-shell-approval-1' }),
+          fauxToolCall('skill', { skill: 'shell-direct-skill' }, { id: 'tool-skill-shell-direct-1' }),
         ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('Shell approval skill loaded.')),
+        fauxAssistantMessage(fauxText('Shell direct skill loaded.')),
       ],
       (_model, context) => {
         contextTexts.push(JSON.stringify(context.messages));
@@ -1914,7 +1892,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -1925,69 +1902,44 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    await acceptRuntimeSkill(runtime, created.conversationId, 'shell-approval-skill');
-    const sendPromise = runtime.sendMessage(created.conversationId, 'Please load the shell approval skill.');
-    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
-    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
-    ));
-    if (!approvalEvent) throw new Error('Expected skill shell approval request.');
-
-    expect(approvalEvent.request.toolName).toBe('bash');
-    expect(approvalEvent.request.toolCallId).toStartWith('skill-shell-');
-    expect(approvalEvent.request.target).toContain('eval "echo skill-shell-approved"');
-
-    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true);
-    await sendPromise;
+    await acceptRuntimeSkill(runtime, created.conversationId, 'shell-direct-skill');
+    await runtime.sendMessage(created.conversationId, 'Please load the shell direct skill.');
 
     expect(script.pendingCount()).toBe(0);
     expect(contextTexts.join('\n')).toContain('Shell output: skill-shell-approved');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(sink.events.some((event) => event.type === 'capability_request')).toBe(false);
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
-    expect(events.find((event) => event.type === 'approval.requested')).toMatchObject({
-      requestId: approvalEvent.requestId,
+    expect(events.find((event) => event.type === 'tool.capability.checked')).toMatchObject({
+      outcome: 'allow',
+      source: 'default',
     });
-    expect(events.find((event) => event.type === 'approval.resolved')).toMatchObject({
-      requestId: approvalEvent.requestId,
-      approved: true,
-    });
-    expect(events.find((event) => (
-      event.type === 'tool.permission.checked'
-      && event.requestId === approvalEvent.requestId
-    ))).toMatchObject({
-      requestId: approvalEvent.requestId,
-      toolCallId: approvalEvent.request.toolCallId,
-      outcome: 'soft_blocked',
-    });
-    expect(events.find((event) => (
-      event.type === 'tool.permission.resolved'
-      && event.requestId === approvalEvent.requestId
-    ))).toMatchObject({
-      requestId: approvalEvent.requestId,
-      toolCallId: approvalEvent.request.toolCallId,
-      status: 'approved',
-      resolvedBy: 'user_once',
+    expect(events.find((event) => event.type === 'tool.capability.resolved')).toMatchObject({
+      status: 'available',
+      resolvedBy: 'default',
     });
   });
 
-  test('reports rejected approvals as user-denied tool results', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-denied-approval-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-denied-approval-data-'));
-    roots.push(localRoot, dataRoot);
+  test('cancels a folder request without executing the tool call', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-cancelled-capability-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-denied-folder-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-cancelled-capability-data-'));
+    roots.push(localRoot, outsideRoot, dataRoot);
+    const outsideFile = path.join(outsideRoot, 'private.txt');
+    await writeFile(outsideFile, 'must-not-be-read');
 
     const followUpContexts: string[] = [];
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('bash', {
-            command: 'eval "echo denied-soft-block"',
-            description: 'Soft-blocked eval command',
-          }, { id: 'tool-denied-soft-block' }),
+          fauxToolCall('file_read', {
+            file_path: outsideFile,
+          }, { id: 'tool-denied-folder-read' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
           followUpContexts.push(JSON.stringify(context.messages));
-          return fauxAssistantMessage(fauxText('Approval denial handled.'));
+          return fauxAssistantMessage(fauxText('Capability cancellation handled.'));
         },
       ],
       () => undefined,
@@ -2007,7 +1959,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2018,41 +1969,37 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    const sendPromise = runtime.sendMessage(created.conversationId, 'Try the dry-run push.');
-    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
-    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Read the external file.');
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+    const capabilityEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
     ));
-    if (!approvalEvent) throw new Error('Expected approval request event.');
+    if (!capabilityEvent) throw new Error('Expected capability request event.');
 
-    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, false);
+    await runtime.resolveCapability(created.conversationId, capabilityEvent.requestId, 'cancelled');
     await sendPromise;
 
     const contextText = followUpContexts.join('\n');
-    expect(contextText).toContain('User denied permission. The requested tool call was not executed.');
-    expect(contextText).not.toContain('Permission denied: This changes external state on a git remote.');
+    expect(contextText).toContain('The folder request was cancelled. The requested tool call was not executed.');
+    expect(contextText).not.toContain('must-not-be-read');
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
-    const persistedApprovalRequest = events.find((event) => event.type === 'approval.requested');
-    const persistedApprovalResolution = events.find((event) => event.type === 'approval.resolved');
-    const permissionChecked = events.find((event) => event.type === 'tool.permission.checked');
-    const permissionResolved = events.find((event) => event.type === 'tool.permission.resolved');
-    expect(approvalEvent.requestId.startsWith('permission-')).toBe(true);
-    expect(persistedApprovalRequest).toMatchObject({ requestId: approvalEvent.requestId });
-    expect(persistedApprovalResolution).toMatchObject({ requestId: approvalEvent.requestId, approved: false });
-    expect(permissionChecked).toMatchObject({
-      requestId: approvalEvent.requestId,
-      outcome: 'soft_blocked',
+    const capabilityChecked = events.find((event) => event.type === 'tool.capability.checked');
+    const capabilityResolved = events.find((event) => event.type === 'tool.capability.resolved');
+    expect(capabilityEvent.requestId.startsWith('capability-')).toBe(true);
+    expect(capabilityChecked).toMatchObject({
+      requestId: capabilityEvent.requestId,
+      outcome: 'capability_required',
     });
-    expect(permissionResolved).toMatchObject({
-      requestId: approvalEvent.requestId,
-      status: 'denied',
-      resolvedBy: 'user_once',
-      deniedReason: 'user_denied',
+    expect(capabilityResolved).toMatchObject({
+      requestId: capabilityEvent.requestId,
+      status: 'cancelled',
+      resolvedBy: 'user_cancelled',
+      reason: 'user_cancelled',
     });
     const deniedToolResult = events.find((event) => (
       event.type === 'tool_result.created'
-      && event.toolCallId === 'tool-denied-soft-block'
+      && event.toolCallId === 'tool-denied-folder-read'
     ));
     expect(deniedToolResult?.runId).toBeDefined();
     expect(events.some((event) => (
@@ -2061,19 +2008,21 @@ describe('agent runtime skill integration', () => {
     ))).toBe(true);
   });
 
-  test('auto-blocks soft-block approvals in main when the renderer does not respond', async () => {
+  test('keeps a folder request pending until an explicit decision', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-auto-block-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-pending-folder-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-auto-block-data-'));
-    roots.push(localRoot, dataRoot);
+    roots.push(localRoot, outsideRoot, dataRoot);
+    const outsideFile = path.join(outsideRoot, 'pending.txt');
+    await writeFile(outsideFile, 'pending-folder-content');
 
     const followUpContexts: string[] = [];
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('bash', {
-            command: 'eval "echo auto-blocked-soft-block"',
-            description: 'Soft-blocked eval command',
-          }, { id: 'tool-auto-blocked-soft-block' }),
+          fauxToolCall('file_read', {
+            file_path: outsideFile,
+          }, { id: 'tool-pending-folder-read' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
           followUpContexts.push(JSON.stringify(context.messages));
@@ -2097,7 +2046,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2107,49 +2055,25 @@ describe('agent runtime skill integration', () => {
       },
     );
 
-    const originalSetTimeout = globalThis.setTimeout;
-    const fastSetTimeout = ((
-      handler: (...args: unknown[]) => void,
-      timeout?: number,
-      ...args: unknown[]
-    ) => originalSetTimeout(handler, timeout === 10_000 ? 5 : timeout, ...args)) as typeof setTimeout;
-    globalThis.setTimeout = fastSetTimeout;
+    const created = await runtime.restoreLatestConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Read an external file.');
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+    const capabilityEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
+    ));
+    if (!capabilityEvent) throw new Error('Expected capability request event.');
 
-    try {
-      const created = await runtime.restoreLatestConversation();
-      const sendPromise = runtime.sendMessage(created.conversationId, 'Try an unattended soft-block.');
-      await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
-      const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-        event.type === 'approval_request'
-      ));
-      if (!approvalEvent) throw new Error('Expected approval request event.');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(sink.events.some((event) => (
+      event.type === 'capability_resolved' && event.requestId === capabilityEvent.requestId
+    ))).toBe(false);
 
-      await sendPromise;
-
-      const contextText = followUpContexts.join('\n');
-      expect(contextText).toContain('User denied permission. The requested tool call was not executed.');
-      expect(sink.events.some((event) => (
-        event.type === 'approval_resolved'
-        && event.requestId === approvalEvent.requestId
-        && event.approved === false
-      ))).toBe(true);
-
-      const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
-      expect(events.find((event) => event.type === 'approval.resolved')).toMatchObject({
-        requestId: approvalEvent.requestId,
-        approved: false,
-      });
-      expect(events.find((event) => event.type === 'tool.permission.resolved')).toMatchObject({
-        requestId: approvalEvent.requestId,
-        status: 'denied',
-        deniedReason: 'user_denied',
-      });
-    } finally {
-      globalThis.setTimeout = originalSetTimeout;
-    }
+    await runtime.resolveCapability(created.conversationId, capabilityEvent.requestId, 'cancelled');
+    await sendPromise;
+    expect(followUpContexts.join('\n')).toContain('folder request was cancelled');
   });
 
-  test('returns hard-denied tool calls to the model without user notice cards', async () => {
+  test('executes unclassified shell calls without capability cards', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-data-'));
     roots.push(localRoot, dataRoot);
@@ -2159,12 +2083,12 @@ describe('agent runtime skill integration', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('bash', {
-            command: 'rm -rf /',
-          }, { id: 'tool-hard-denied-shell' }),
+            command: 'unknown-host-tool --flag',
+          }, { id: 'tool-unclassified-shell' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
           followUpContexts.push(JSON.stringify(context.messages));
-          return fauxAssistantMessage(fauxText('Saw the blocked command.'));
+          return fauxAssistantMessage(fauxText('Saw the host command result.'));
         },
       ],
       () => undefined,
@@ -2194,111 +2118,230 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    await runtime.sendMessage(created.conversationId, 'Run the blocked shell command.');
+    await runtime.sendMessage(created.conversationId, 'Run the unclassified shell command.');
 
-    expect(sink.events.some((event) => (
-      event.type === 'approval_request'
-      && event.request.kind === 'permission_notice'
-    ))).toBe(false);
-    expect(followUpContexts.join('\n')).toContain('permission_denied');
-    expect(followUpContexts.join('\n')).toContain('recursively delete');
+    expect(sink.events.some((event) => event.type === 'capability_request')).toBe(false);
+    expect(followUpContexts.join('\n')).toContain('unknown-host-tool');
+    expect(followUpContexts.join('\n')).not.toContain('operation_unavailable');
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
-    expect(events.some((event) => event.type === 'approval.requested')).toBe(false);
-    expect(events.some((event) => event.type === 'approval.resolved')).toBe(false);
     expect(events.find((event) => (
-      event.type === 'tool.permission.resolved'
-      && event.toolCallId === 'tool-hard-denied-shell'
+      event.type === 'tool.capability.resolved'
+      && event.toolCallId === 'tool-unclassified-shell'
     ))).toMatchObject({
-      status: 'denied',
-      deniedReason: 'platform_hard_block',
+      status: 'available',
+      resolvedBy: 'default',
     });
   });
 
-  test('persists always-allow soft-block exceptions globally', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-always-approval-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-always-approval-data-'));
-    roots.push(localRoot, dataRoot);
-
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('bash', {
-            command: 'eval "echo always-soft-block"',
-            description: 'Soft-blocked eval command',
-          }, { id: 'tool-always-soft-block' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('Cleanup handled.')),
-      ],
-      () => undefined,
-    );
+  test('persists and reuses a folder grant when resolved-event delivery races a renderer reload', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-grant-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-grant-outside-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-grant-data-'));
+    roots.push(localRoot, outsideRoot, dataRoot);
+    const outsideFile = path.join(outsideRoot, 'shared.txt');
+    await writeFile(outsideFile, 'persistent-folder-content');
+    const script = scriptedStream([
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-folder-grant-first' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxText('First read complete.')),
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-folder-grant-second' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxText('Second read complete.')),
+    ], () => undefined);
 
     const { AgentRuntime: Runtime } = await loadRuntimeModule();
-    const sink = createWindowSink();
+    const sink = createWindowSink({ throwOn: 'capability_resolved' });
     const runtime = new Runtime(
       () => sink.window as never,
       hostFor(Core.new()),
       {
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
-          automaticSkillsEnabled: true,
-          slashSkillsEnabled: true,
-          compactEnabled: true,
-          additionalSkillDirectories: [],
-        }),
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
         streamFn: script.streamFn,
       },
     );
 
     const created = await runtime.restoreLatestConversation();
-    const sendPromise = runtime.sendMessage(created.conversationId, 'Clean build output.');
-    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
-    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
+    const firstSend = runtime.sendMessage(created.conversationId, 'Read the shared file.');
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+    const capabilityEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
     ));
-    if (!approvalEvent) throw new Error('Expected approval request event.');
+    if (!capabilityEvent) throw new Error('Expected folder capability request.');
+    await runtime.resolveCapability(created.conversationId, capabilityEvent.requestId, 'granted');
+    await firstSend;
+    await runtime.sendMessage(created.conversationId, 'Read it again.');
 
-    expect(approvalEvent.request.alwaysAllowRule).toBe('Command(eval "echo always-soft-block")');
-
-    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true, 'always');
-    await sendPromise;
-
-    const settings = JSON.parse(await readFile(path.join(electronUserDataRoot, 'agent-tool-permissions.json'), 'utf8')) as {
-      grants?: string[];
-      softBlockAllows?: string[];
+    expect(sink.events.filter((event) => event.type === 'capability_request')).toHaveLength(1);
+    const settings = JSON.parse(await readFile(path.join(electronUserDataRoot, 'agent-capabilities.json'), 'utf8')) as {
+      folders?: string[];
+      blocks?: string[];
     };
-    expect(settings.softBlockAllows).toContain('Command(eval "echo always-soft-block")');
-
+    expect(settings).toEqual({ folders: [await realpath(outsideRoot)], blocks: [] });
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
-    expect(events.some((event) => (
-      event.type === 'tool.permission.resolved'
-      && event.status === 'approved'
-      && event.resolvedBy === 'allow_rule_update'
-      && event.updatedRule === 'Command(eval "echo always-soft-block")'
-    ))).toBe(true);
+    expect(events.find((event) => (
+      event.type === 'tool.capability.checked' && event.toolCallId === 'tool-folder-grant-second'
+    ))).toMatchObject({ outcome: 'allow', source: 'folder_capability' });
   });
 
-  test('downgrades always-allow approval to approve-once when the global rule cannot be saved', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-always-approval-fail-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-always-approval-fail-data-'));
-    roots.push(localRoot, dataRoot);
+  test('deduplicates concurrent folder acquisition across conversations', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-dedupe-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-dedupe-outside-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-dedupe-data-'));
+    roots.push(localRoot, outsideRoot, dataRoot);
+    const outsideFile = path.join(outsideRoot, 'shared.txt');
+    await writeFile(outsideFile, 'shared-folder-content');
+    const script = scriptedStream([
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-folder-dedupe-a' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-folder-dedupe-b' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxText('First concurrent read complete.')),
+      fauxAssistantMessage(fauxText('Second concurrent read complete.')),
+    ], () => undefined);
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const first = await runtime.restoreLatestConversation();
+    const second = await runtime.createConversation({ title: 'Concurrent folder request' });
+    const sends = [
+      runtime.sendMessage(first.conversationId, 'Read the shared file.'),
+      runtime.sendMessage(second.conversationId, 'Read the shared file too.'),
+    ];
+    await waitFor(() => script.pendingCount() === 2);
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const capabilityRequests = sink.events.filter((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
+    ));
+    expect(capabilityRequests).toHaveLength(1);
+
+    const { grantAgentFolderCapability } = await import('../../src/main/agentCapabilityStore');
+    await grantAgentFolderCapability(outsideRoot);
+    runtime.folderCapabilitiesChanged();
+    await Promise.all(sends);
+
+    expect(sink.events.filter((event) => event.type === 'capability_request')).toHaveLength(1);
+    for (const conversationId of [first.conversationId, second.conversationId]) {
+      const events = await new AgentEventStore(dataRoot).readEvents(conversationId);
+      expect(events.some((event) => (
+        event.type === 'tool.capability.checked' && event.outcome === 'capability_required'
+      ))).toBe(true);
+      expect(events.some((event) => (
+        event.type === 'tool.capability.resolved'
+        && event.status === 'available'
+        && event.resolvedBy === 'folder_grant'
+      ))).toBe(true);
+    }
+  });
+
+  test('promotes a shared folder waiter when the visible conversation closes', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-promote-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-promote-outside-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-promote-data-'));
+    roots.push(localRoot, outsideRoot, dataRoot);
+    const outsideFile = path.join(outsideRoot, 'shared.txt');
+    await writeFile(outsideFile, 'shared-folder-content');
+    const script = scriptedStream([
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-folder-promote-a' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-folder-promote-b' }),
+      ], { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxText('Remaining read complete.')),
+    ], () => undefined);
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const first = await runtime.restoreLatestConversation();
+    const second = await runtime.createConversation({ title: 'Promoted folder request' });
+    const sends = new Map([
+      [first.conversationId, runtime.sendMessage(first.conversationId, 'Read the shared file.').catch(() => undefined)],
+      [second.conversationId, runtime.sendMessage(second.conversationId, 'Read the shared file too.').catch(() => undefined)],
+    ]);
+    await waitFor(() => script.pendingCount() === 1);
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const visible = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
+    ));
+    if (!visible) throw new Error('Expected a visible folder capability request.');
+    const remainingConversationId = visible.conversationId === first.conversationId
+      ? second.conversationId
+      : first.conversationId;
+
+    runtime.closeConversation(visible.conversationId);
+    await waitFor(() => sink.events.filter((event) => event.type === 'capability_request').length === 2);
+    const promoted = sink.events.filter((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
+    )).at(-1);
+    if (!promoted) throw new Error('Expected the remaining folder waiter to be promoted.');
+    expect(promoted.conversationId).toBe(remainingConversationId);
+    expect(promoted.requestId).not.toBe(visible.requestId);
+
+    await runtime.resolveCapability(remainingConversationId, promoted.requestId, 'granted');
+    await Promise.all(sends.values());
+
+    expect(sink.events.filter((event) => event.type === 'capability_request')).toHaveLength(2);
+    expect(sink.events).toContainEqual(expect.objectContaining({
+      type: 'capability_resolved',
+      conversationId: visible.conversationId,
+      requestId: visible.requestId,
+      resolution: 'cancelled',
+    }));
+    expect(sink.events).toContainEqual(expect.objectContaining({
+      type: 'capability_resolved',
+      conversationId: remainingConversationId,
+      requestId: promoted.requestId,
+      resolution: 'granted',
+    }));
+  });
+
+  test('does not downgrade a failed persistent folder grant to allow-once', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-capability-save-fail-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-save-fail-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-capability-save-fail-data-'));
+    roots.push(localRoot, outsideRoot, dataRoot);
+    const outsideFile = path.join(outsideRoot, 'blocked.txt');
+    await writeFile(outsideFile, 'must-not-run-after-save-failure');
 
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('bash', {
-            command: 'eval "echo always-soft-block-fail"',
-            description: 'Soft-blocked eval command',
-          }, { id: 'tool-always-soft-block-fail' }),
+          fauxToolCall('file_read', {
+            file_path: outsideFile,
+          }, { id: 'tool-folder-save-fail' }),
         ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('Cleanup handled after downgraded approval.')),
+        fauxAssistantMessage(fauxText('Cleanup handled after cancelled capability.')),
       ],
       () => undefined,
     );
@@ -2317,7 +2360,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2328,46 +2370,48 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    const sendPromise = runtime.sendMessage(created.conversationId, 'Clean build output.');
-    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
-    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Read the external file.');
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+    const capabilityEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
     ));
-    if (!approvalEvent) throw new Error('Expected approval request event.');
+    if (!capabilityEvent) throw new Error('Expected capability request event.');
 
     await rm(electronUserDataRoot, { recursive: true, force: true });
     await writeFile(electronUserDataRoot, 'not-a-directory');
 
-    await expect(runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true, 'always')).resolves.toEqual({ resolved: true });
+    await expect(runtime.resolveCapability(created.conversationId, capabilityEvent.requestId, 'granted')).resolves.toEqual({ resolved: true });
     await sendPromise;
 
     expect(sink.events.some((event) => (
       event.type === 'error'
-      && event.error.includes('Failed to persist permission rule; approved once instead.')
+      && event.error.includes('Failed to persist folder access.')
     ))).toBe(true);
     expect(sink.events.some((event) => (
-      event.type === 'approval_resolved'
-      && event.requestId === approvalEvent.requestId
-      && event.scope === 'once'
+      event.type === 'capability_resolved'
+      && event.requestId === capabilityEvent.requestId
+      && event.resolution === 'cancelled'
     ))).toBe(true);
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     expect(events.some((event) => (
-      event.type === 'tool.permission.resolved'
-      && event.status === 'approved'
-      && event.resolvedBy === 'user_once'
-      && event.updatedRule === undefined
+      event.type === 'tool.capability.resolved'
+      && event.status === 'unavailable'
+      && event.resolvedBy === 'runtime'
+      && event.reason === 'runtime'
     ))).toBe(true);
+    expect(events.some((event) => (
+      event.type === 'tool_result.created'
+      && event.toolCallId === 'tool-folder-save-fail'
+      && JSON.stringify(event.content).includes('must-not-run-after-save-failure')
+    ))).toBe(false);
   });
 
-  test('records legacy grants distinctly with all compound shell action kinds', async () => {
+  test('runs compound local cleanup directly while preserving audit action kinds', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-global-allow-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-global-allow-data-'));
     roots.push(localRoot, dataRoot);
-    await mkdir(electronUserDataRoot, { recursive: true });
-    await writeFile(path.join(electronUserDataRoot, 'agent-tool-permissions.json'), JSON.stringify({
-      grants: ['Command(ls && rm -rf ./dist)'],
-    }));
+    await mkdir(path.join(localRoot, 'dist'), { recursive: true });
 
     const script = scriptedStream(
       [
@@ -2396,7 +2440,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2409,34 +2452,36 @@ describe('agent runtime skill integration', () => {
     const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Clean build output without prompting.');
 
-    expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
+    expect(sink.events.some((event) => event.type === 'capability_request')).toBe(false);
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     expect(events.some((event) => (
-      event.type === 'tool.permission.checked'
+      event.type === 'tool.capability.checked'
       && event.outcome === 'allow'
-      && event.source === 'trust_ledger'
-      && event.actionKinds.includes('shell.unknown')
-      && event.actionKinds.includes('file.delete.allowed_file_area')
+      && event.source === 'default'
+      && event.actionKinds.includes('shell.read_search')
+      && event.actionKinds.includes('shell.destructive_cleanup')
     ))).toBe(true);
     expect(events.some((event) => (
-      event.type === 'tool.permission.resolved'
-      && event.status === 'approved'
-      && event.resolvedBy === 'trust_ledger'
+      event.type === 'tool.capability.resolved'
+      && event.status === 'available'
+      && event.resolvedBy === 'default'
     ))).toBe(true);
   });
 
-  test('records runtime-denied approval resolutions when closing a conversation', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-close-approval-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-close-approval-data-'));
-    roots.push(localRoot, dataRoot);
+  test('cancels a pending folder request when closing a conversation', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-close-capability-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-close-folder-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-close-capability-data-'));
+    roots.push(localRoot, outsideRoot, dataRoot);
+    const outsideFile = path.join(outsideRoot, 'close.txt');
+    await writeFile(outsideFile, 'close-pending-content');
 
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('bash', {
-            command: 'eval "echo close-soft-block"',
-            description: 'Soft-blocked eval command',
-          }, { id: 'tool-close-soft-block' }),
+          fauxToolCall('file_read', {
+            file_path: outsideFile,
+          }, { id: 'tool-close-folder-read' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText('This should not be needed after close.')),
       ],
@@ -2457,7 +2502,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2468,41 +2512,33 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    const sendPromise = runtime.sendMessage(created.conversationId, 'Try the dry-run push before close.')
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Read the external file before close.')
       .catch(() => undefined);
-    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
-    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+    const capabilityEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
     ));
-    if (!approvalEvent) throw new Error('Expected approval request event.');
+    if (!capabilityEvent) throw new Error('Expected capability request event.');
 
     runtime.closeConversation(created.conversationId);
     await waitFor(() => sink.events.some((event) => (
-      event.type === 'approval_resolved'
-      && event.requestId === approvalEvent.requestId
-      && event.approved === false
+      event.type === 'capability_resolved'
+      && event.requestId === capabilityEvent.requestId
+      && event.resolution === 'cancelled'
     )));
 
-    const store = new AgentEventStore(dataRoot);
-    await waitFor(async () => {
-      const events = await store.readEvents(created.conversationId);
-      return events.some((event) => (
-        event.type === 'approval.resolved'
-        && event.requestId === approvalEvent.requestId
-        && event.approved === false
-      ));
-    });
     await sendPromise;
 
+    const store = new AgentEventStore(dataRoot);
     const events = await store.readEvents(created.conversationId);
     expect(events.find((event) => (
-      event.type === 'tool.permission.resolved'
-      && event.requestId === approvalEvent.requestId
+      event.type === 'tool.capability.resolved'
+      && event.requestId === capabilityEvent.requestId
     ))).toMatchObject({
-      requestId: approvalEvent.requestId,
-      status: 'denied',
+      requestId: capabilityEvent.requestId,
+      status: 'unavailable',
       resolvedBy: 'runtime',
-      deniedReason: 'runtime',
+      reason: 'runtime',
     });
   });
 
@@ -2539,7 +2575,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: false,
@@ -2574,7 +2609,6 @@ describe('agent runtime skill integration', () => {
     const extraSkillDir = path.join(extraRoot, '.agents', 'skills');
 
     let runtimeSettings = {
-      permissionMode: 'trusted' as const,
       automaticSkillsEnabled: true,
       slashSkillsEnabled: true,
       compactEnabled: true,
@@ -2683,7 +2717,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: true,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -2982,7 +3015,6 @@ describe('agent runtime skill integration', () => {
         }),
         providerModelResolver: () => compactModel,
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -3063,7 +3095,6 @@ describe('agent runtime skill integration', () => {
         }),
         providerModelResolver: () => compactModel,
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -3131,7 +3162,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -3299,7 +3329,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -3366,7 +3395,6 @@ describe('agent runtime skill integration', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: true,
           compactEnabled: true,
@@ -3409,7 +3437,6 @@ describe('agent runtime skill integration', () => {
         localFileRoot: localRoot,
         providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: true,

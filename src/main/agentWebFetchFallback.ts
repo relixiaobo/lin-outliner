@@ -153,7 +153,7 @@ export function crossHostRedirectHint(
 
 // Single builder for the redirected_host hint shape so the soft-hint path
 // (crossHostRedirectHint, attached to a successful cross-host landing) and the
-// hard-failure path (a redirect refused for pointing at a non-public host) never
+// hard-failure path (a redirect refused for an invalid target) never
 // drift in how they label finalHost.
 export function makeRedirectedHostHint(
   originalUrl: string,

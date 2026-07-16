@@ -6,7 +6,6 @@ import type { Api, Credential, Model, OAuthCredentials, SimpleStreamOptions } fr
 import { join } from 'node:path';
 import { AGENT_REASONING_LADDER } from '../core/types';
 import type {
-  AgentDelegationPermissionMode,
   AgentModelOption,
   AgentProviderAuthKind,
   AgentRuntimeSettings,
@@ -98,7 +97,6 @@ export interface StoredBuiltInAgentProfile {
   body?: string;
   model?: string;
   effort?: string;
-  permissionMode?: AgentDelegationPermissionMode;
   maxTurns?: number;
   tools?: string[];
   disallowedTools?: string[];
@@ -114,9 +112,7 @@ interface ProviderConfigFile {
   builtInAgentProfiles?: Record<string, StoredBuiltInAgentProfile>;
 }
 
-type StoredAgentRuntimeSettings = Partial<AgentRuntimeSettings> & {
-  permissionMode?: 'trusted' | 'restricted';
-};
+type StoredAgentRuntimeSettings = Partial<AgentRuntimeSettings>;
 
 type StoredImageGenerationSettings = {
   defaultModel?: string | null;
@@ -269,7 +265,6 @@ export async function getBuiltInAgentProfile(agentId: string): Promise<StoredBui
   if (typeof stored.body === 'string' && stored.body.trim()) profile.body = stored.body;
   if (typeof stored.model === 'string' && stored.model.trim()) profile.model = stored.model.trim();
   if (isAgentReasoningLevel(stored.effort)) profile.effort = stored.effort;
-  if (stored.permissionMode === 'restricted') profile.permissionMode = stored.permissionMode;
   if (typeof stored.maxTurns === 'number' && Number.isInteger(stored.maxTurns) && stored.maxTurns > 0) profile.maxTurns = stored.maxTurns;
   const tools = normalizeBuiltInProfileStringList(stored.tools);
   if (tools) profile.tools = tools;
@@ -295,7 +290,6 @@ export async function setBuiltInAgentProfile(
     body?: string | null;
     model?: string | null;
     effort?: string | null;
-    permissionMode?: AgentDelegationPermissionMode | null;
     maxTurns?: number | null;
     tools?: readonly string[] | null;
     disallowedTools?: readonly string[] | null;
@@ -314,7 +308,6 @@ export async function setBuiltInAgentProfile(
   const model = input.model?.trim();
   if (model && model !== 'inherit') next.model = model;
   if (isAgentReasoningLevel(input.effort)) next.effort = input.effort;
-  if (input.permissionMode === 'restricted') next.permissionMode = input.permissionMode;
   if (typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns) && input.maxTurns > 0) next.maxTurns = input.maxTurns;
   const tools = normalizeBuiltInProfileStringList(input.tools);
   if (tools) next.tools = tools;

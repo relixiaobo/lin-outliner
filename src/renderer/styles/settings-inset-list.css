@@ -192,16 +192,16 @@
   color: var(--text-tertiary);
 }
 
-.settings-permission-mode-row {
+.settings-system-boundary-row {
   flex-wrap: wrap;
   align-items: center;
 }
 
-.settings-permission-mode-row .inset-row-main {
+.settings-system-boundary-row .inset-row-main {
   flex: 1 1 22rem;
 }
 
-.settings-permission-mode-row .inset-row-trailing {
+.settings-system-boundary-row .inset-row-trailing {
   flex: 0 1 auto;
   padding: var(--space-2) var(--space-4) var(--space-4) var(--space-5);
 }

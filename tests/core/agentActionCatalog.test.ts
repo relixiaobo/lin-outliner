@@ -3,30 +3,11 @@ import {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
   agentToolNamesForActionKindScope,
   agentToolActionKindProfile,
-  decideAgentOperationEffect,
   isReadOnlyActionKind,
   readOnlyAgentToolNames,
-  type AgentOperationEffect,
-} from '../../src/core/agentPermissionModel';
+} from '../../src/core/agentActionCatalog';
 
-describe('agent permission model', () => {
-  test('decides from operation consequence only', () => {
-    const base: AgentOperationEffect = {
-      reach: 'local',
-      reversible: true,
-      touchesCredentials: false,
-      label: 'local work',
-    };
-
-    expect(decideAgentOperationEffect(base)).toBe('allow');
-    expect(decideAgentOperationEffect({ ...base, reach: 'network_read' })).toBe('allow');
-    expect(decideAgentOperationEffect({ ...base, reversible: false })).toBe('allow');
-    expect(decideAgentOperationEffect({ ...base, reach: 'outside_scope' })).toBe('allow');
-    expect(decideAgentOperationEffect({ ...base, reach: 'network_write' })).toBe('allow');
-    expect(decideAgentOperationEffect({ ...base, touchesCredentials: true })).toBe('allow');
-    expect(decideAgentOperationEffect({ ...base, floor: 'exfiltration' })).toBe('deny');
-  });
-
+describe('agent action catalog', () => {
   test('keeps action kinds as audit labels and read-only catalog input', () => {
     for (const actionKind of SUPPORTED_AGENT_TOOL_ACTION_KINDS) {
       expect(typeof isReadOnlyActionKind(actionKind)).toBe('boolean');

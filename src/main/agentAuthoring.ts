@@ -5,7 +5,7 @@
 // who is edited in place through the settings overlay (not a file). So the agent
 // authoring file-ops and the `.agents/agents/` content gate are gone; what remains
 // is only the skill self-definition root map, shared with the `file_write` gate in
-// agentLocalTools and the permission guard in agentPermissions.
+// agentLocalTools and the ownership boundary in agentCapabilities.
 
 import { homedir } from 'node:os';
 import path from 'node:path';

@@ -1,45 +1,3 @@
-export type GlobalToolPermissionDecision = 'allow' | 'soft_block' | 'deny';
-
-export type AgentPermissionEffectReach =
-  | 'local'
-  | 'outside_scope'
-  | 'network_read'
-  | 'network_write'
-  | 'external_system';
-
-export type AgentPermissionFloorKind =
-  | 'exfiltration'
-  | 'host_destruction'
-  | 'persistence'
-  | 'hidden_exec'
-  | 'permission_self_mod'
-  | 'payment';
-
-export type AgentPermissionScopeAccess = 'read' | 'write';
-
-export type AgentPermissionGrant =
-  | { kind: 'scope'; access: AgentPermissionScopeAccess; root: string }
-  | { kind: 'external'; target: string }
-  | { kind: 'command'; form: string };
-
-export type AgentPermissionBlock =
-  | AgentPermissionGrant
-  | { kind: 'action'; actionKind: AgentToolActionKind };
-
-export interface AgentOperationEffect {
-  reach: AgentPermissionEffectReach;
-  reversible: boolean;
-  touchesCredentials: boolean;
-  floor?: AgentPermissionFloorKind;
-  label: string;
-  grant?: AgentPermissionGrant;
-}
-
-export function decideAgentOperationEffect(effect: AgentOperationEffect): GlobalToolPermissionDecision {
-  if (effect.floor) return 'deny';
-  return 'allow';
-}
-
 export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'file.read.allowed_file_area',
   'file.read.outside_allowed_file_area',
@@ -61,7 +19,6 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'shell.network_write',
   'shell.destructive_cleanup',
   'shell.background_process',
-  'shell.sandbox_override',
   'shell.unknown',
   'git.publish_remote',
   'deploy.publish_remote',
@@ -79,8 +36,7 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'agent.session.read',
   'agent.session.send',
   'agent.session.stop',
-  'agent.permission.modify',
-  'payment.purchase',
+  'agent.capability.modify',
 ] as const;
 
 export type AgentToolActionKind = typeof SUPPORTED_AGENT_TOOL_ACTION_KINDS[number];
@@ -106,7 +62,6 @@ const READ_ONLY_ACTION_KIND_FLAGS = {
   'shell.network_write': false,
   'shell.destructive_cleanup': false,
   'shell.background_process': false,
-  'shell.sandbox_override': false,
   'shell.unknown': false,
   'git.publish_remote': false,
   'deploy.publish_remote': false,
@@ -124,8 +79,7 @@ const READ_ONLY_ACTION_KIND_FLAGS = {
   'agent.session.read': true,
   'agent.session.send': false,
   'agent.session.stop': false,
-  'agent.permission.modify': false,
-  'payment.purchase': false,
+  'agent.capability.modify': false,
 } satisfies Record<AgentToolActionKind, boolean>;
 
 export const AGENT_TOOL_ACTION_KIND_PROFILES = {
@@ -171,7 +125,6 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
     'shell.network_write',
     'shell.destructive_cleanup',
     'shell.background_process',
-    'shell.sandbox_override',
     'shell.unknown',
     'git.publish_remote',
     'deploy.publish_remote',

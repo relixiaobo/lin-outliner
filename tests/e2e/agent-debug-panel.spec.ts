@@ -109,7 +109,7 @@ test.describe('agent debug panel', () => {
     await expect(highlightedToolCall).toContainText('git push origin main');
     await expect(highlightedToolCall.locator('span')).not.toHaveCount(0);
     const errorResultRow = round.locator('.agent-debug-tool-exchange.is-error').first();
-    await expect(errorResultRow.locator(':scope > summary strong')).toContainText('permission_denied');
+    await expect(errorResultRow.locator(':scope > summary strong')).toContainText('operation_unavailable');
     await expect.poll(async () => errorResultRow.locator(':scope > summary strong').evaluate((node) => {
       const probe = document.createElement('span');
       probe.style.color = 'var(--status-danger)';
@@ -180,7 +180,7 @@ test.describe('agent debug panel', () => {
     await expect(exchange.getByRole('button', { name: /User block added: Command\(git push origin main\)/ })).toBeVisible();
 
     await expect.poll(async () => {
-      const appendCall = (await commandCalls(page)).findLast((call) => call.cmd === 'agent_append_tool_permission_block');
+      const appendCall = (await commandCalls(page)).findLast((call) => call.cmd === 'agent_append_capability_block');
       return appendCall?.args.ruleValue;
     }).toBe('Command(git push origin main)');
   });

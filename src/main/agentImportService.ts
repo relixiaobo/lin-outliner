@@ -334,14 +334,14 @@ function validatePreview(
   const record = previewRecords.get(previewId);
   if (!record || now - record.createdAt > IMPORT_PREVIEW_TTL_MS) {
     previewRecords.delete(previewId);
-    return { code: 'preview_expired', message: 'The confirmed preview id is missing or expired.' };
+    return { code: 'preview_expired', message: 'The validated preview id is missing or expired.' };
   }
   if (
     record.packHash !== expected.packHash
     || record.parentId !== expected.parentId
     || record.mode !== expected.mode
   ) {
-    return { code: 'preview_mismatch', message: 'The confirmed preview id does not match the current pack, destination, or mode.' };
+    return { code: 'preview_mismatch', message: 'The validated preview id does not match the current pack, destination, or mode.' };
   }
   previewRecords.delete(previewId);
   return null;

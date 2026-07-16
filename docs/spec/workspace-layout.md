@@ -872,7 +872,7 @@ The agent can request:
 - Open a node in the active pane.
 - Open a node in a new pane.
 - Apply a document edit through commands.
-- Show a diff or approval overlay.
+- Show a diff preview or an in-composer capability request.
 
 The agent should not:
 
@@ -883,7 +883,7 @@ The agent's view context is pane-centric (`activePanelId`, `focusedPanelId`,
 `nodePanels`); it carries no tab concept.
 
 When the agent dock is reopened from its collapsed rail state, focus moves to the
-agent composer editor when the normal composer is visible. If an approval or
+agent composer editor when the normal composer is visible. If a capability or
 user-question card is occupying the composer surface, the reopen token is
 consumed without focus, and resolving that card must not reuse the old token to
 steal focus. The dock stays mounted while collapsed, so this is a one-shot open
@@ -925,7 +925,6 @@ Overlay examples:
 - Command palette.
 - Node context menu.
 - Tag/reference trigger popovers.
-- Agent tool approval.
 - Agent diff preview.
 - Global search.
 
@@ -934,7 +933,7 @@ through a common overlay host.
 
 ```ts
 interface OverlayState {
-  kind: 'command_palette' | 'node_menu' | 'trigger' | 'agent_approval' | 'diff_preview';
+  kind: 'command_palette' | 'node_menu' | 'trigger' | 'diff_preview';
   anchor?: OverlayAnchor;
 }
 ```

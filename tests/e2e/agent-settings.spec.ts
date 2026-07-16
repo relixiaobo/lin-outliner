@@ -51,7 +51,7 @@ test.describe('agent settings window', () => {
     // toolbar title names the pane; assert the content by its grouped inset list,
     // symmetric with the Providers check below.
     await settings.getByRole('button', { name: /^Security/ }).click();
-    await expect(settings.getByRole('list', { name: 'Default' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'System boundary' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
@@ -63,7 +63,7 @@ test.describe('agent settings window', () => {
 
     // Forward replays the visit.
     await forward.click();
-    await expect(settings.getByRole('list', { name: 'Default' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'System boundary' })).toBeVisible();
     await expect(forward).toBeDisabled();
   });
 
@@ -151,19 +151,19 @@ test.describe('agent settings window', () => {
     });
   }
 
-  test('shows delegated-operator permissions without mode or exception controls', async ({ page }) => {
+  test('shows folder capabilities, user blocks, and the system boundary', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Security/ }).click();
-    await expect(settings.getByRole('list', { name: 'Default' })).toContainText('Delegated operator');
-    await expect(settings.getByText("Credential exfiltration, permission or secret self-modification, payment actions, and host destruction can't be changed here.")).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'System boundary' })).toContainText('Tenon control state');
+    await expect(settings.getByText('Private to Tenon; agent file tools and processes cannot read or change it.')).toBeVisible();
+    await expect(settings.getByText('Other host operations run under your macOS account and use native authorization or service sign-in when required.')).toBeVisible();
     await expect(settings.getByRole('radio', { name: 'Full Access' })).toHaveCount(0);
     await expect(settings.getByText('Add an exception')).toHaveCount(0);
-    await expect(settings.locator('.settings-permissions-section .select-popup-input')).toHaveCount(0);
-    await expect(settings.getByRole('list', { name: 'User blocks' })).toContainText('No user blocks yet.');
-    await expect(settings.getByRole('list', { name: 'Soft-block exceptions' })).toContainText('No soft-block exceptions yet.');
-    await expect(settings.getByRole('list', { name: 'File boundaries' })).toContainText('No handed folders or legacy grants yet.');
+    await expect(settings.locator('.settings-security-section .select-popup-input')).toHaveCount(0);
+    await expect(settings.getByRole('list', { name: 'Your blocks' })).toContainText('No explicit blocks.');
+    await expect(settings.getByRole('list', { name: 'Folder access' })).toContainText('No additional folders.');
 
-    const modeRowMetrics = await settings.locator('.settings-permission-mode-row').evaluate((row) => {
+    const modeRowMetrics = await settings.locator('.settings-system-boundary-row').evaluate((row) => {
       const sublabel = row.querySelector<HTMLElement>('.inset-row-sublabel');
       if (!sublabel) {
         return null;
@@ -181,11 +181,10 @@ test.describe('agent settings window', () => {
 
   test('removes user block rules through the Security pane', async ({ page }) => {
     const settings = await openSettings(page, '', {
-      permissionBlocks: ['Command(git push origin main)', 'Action(git.publish_remote)'],
-      permissionSoftBlockAllows: ['Command(eval "echo ok")'],
+      capabilityBlocks: ['Command(git push origin main)', 'Action(git.publish_remote)'],
     });
     await settings.getByRole('button', { name: /^Security/ }).click();
-    const blocks = settings.getByRole('list', { name: 'User blocks' });
+    const blocks = settings.getByRole('list', { name: 'Your blocks' });
     await expect(blocks).toContainText('Command(git push origin main)');
 
     await blocks.locator('.inset-row', { hasText: 'Command(git push origin main)' }).getByRole('button', { name: 'Remove' }).click();
@@ -194,44 +193,30 @@ test.describe('agent settings window', () => {
 
     await settings.getByRole('button', { name: 'Save', exact: true }).click();
     await expect.poll(async () => {
-      const updateCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_update_tool_permission_settings');
-      return updateCall?.args.settings;
+      const updateCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_apply_capability_settings_patch');
+      return updateCall?.args.patch;
     }).toEqual({
-      grants: [],
-      blocks: ['Action(git.publish_remote)'],
-      softBlockAllows: ['Command(eval "echo ok")'],
+      revokeFolders: [],
+      removeBlocks: ['Command(git push origin main)'],
     });
   });
 
-  test('hands a folder to Tenon as a remembered scope grant', async ({ page }) => {
+  test('hands a folder to Tenon as a remembered folder capability', async ({ page }) => {
     const settings = await openSettings(page, '', {
-      permissionGrants: ['Scope(read:/tmp/project)'],
+      capabilityFolders: ['/tmp/project'],
     });
     await settings.getByRole('button', { name: /^Security/ }).click();
 
-    const boundaries = settings.getByRole('list', { name: 'File boundaries' });
+    const boundaries = settings.getByRole('list', { name: 'Folder access' });
     await boundaries.getByRole('button', { name: 'Choose Folder…' }).click();
 
-    await expect(boundaries).toContainText('Scope(read:/tmp/project)');
-    await expect(boundaries).toContainText('Scope(write:/mock/handoff-folder)');
+    await expect(boundaries).toContainText('/tmp/project');
+    await expect(boundaries).toContainText('/mock/handoff-folder');
     await expect(settings.getByText('Folder handed to Tenon: /mock/handoff-folder')).toBeVisible();
     await expect.poll(async () => {
-      const pickCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_pick_scope_folder');
-      const settings = pickCall?.args.settings as { grants?: string[]; blocks?: string[]; softBlockAllows?: string[] } | undefined;
-      return settings ? {
-        grants: settings.grants,
-        blocks: settings.blocks,
-        softBlockAllows: settings.softBlockAllows,
-      } : undefined;
-    }).toEqual({ grants: ['Scope(read:/tmp/project)'], blocks: [], softBlockAllows: [] });
-  });
-
-  test('shows ignored legacy permission rules as diagnostics', async ({ page }) => {
-    const settings = await openSettings(page);
-    await settings.getByRole('button', { name: /^Security/ }).click();
-    const ignoredRules = settings.getByRole('list', { name: 'Ignored JSON rules' });
-    await expect(ignoredRules).toBeVisible();
-    await expect(ignoredRules.locator('.inset-row', { hasText: 'Action(file.read.outside_allowed_file_area)' })).toContainText('unsupported_grant');
+      const pickCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_pick_capability_folder');
+      return pickCall?.args;
+    }).toEqual({});
   });
 
   test('opens agent config from the Agent Profiles list', async ({ page }) => {

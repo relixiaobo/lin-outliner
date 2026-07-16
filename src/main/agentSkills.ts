@@ -1,6 +1,5 @@
 import { coerceString, parseBoolean } from '../core/agentMarkdown';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
@@ -8,7 +7,6 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import type { AgentMessage, TextContent, UserMessage } from '../core/agentTypes';
 import type { SkillDefinition } from '../core/types';
@@ -29,6 +27,8 @@ import {
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
+import type { FolderCapabilitySnapshot } from './agentFolderCapabilities';
+import { runAgentToolProcess } from './agentToolProcess';
 
 export const SKILL_TOOL_NAME = 'skill';
 
@@ -41,7 +41,6 @@ const MIN_NON_EMPTY_DESCRIPTION_CHARS = 20;
 const POST_COMPACT_MAX_TOKENS_PER_SKILL = 5_000;
 const POST_COMPACT_SKILLS_TOKEN_BUDGET = 25_000;
 const SKILL_LISTING_STATE_MARKER = 'The following skills have already been listed to the agent in this session:';
-const execFile = promisify(execFileCallback);
 const requireForElectron = createRequire(import.meta.url);
 const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
   name: 'skillify',
@@ -76,18 +75,18 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - Prefer a focused `file_edit` patch for existing skills. Use `file_write` for new skills, major rewrites, or malformed files that cannot be safely patched.',
     '',
     '5. Treat `allowed-tools` as an authored runtime contract.',
-    '   - Separate authoring tools from runtime tools: tools used to create the skill are not automatically tools the future skill should preapprove.',
-    '   - Omit `allowed-tools` when the future workflow does not need preapproval.',
-    '   - Prefer narrow read/search rules. Keep writes, bash, external actions, and irreversible operations out of preapproval unless the workflow requires them and the rule can be narrow.',
+    '   - Separate authoring tools from runtime tools: tools used to create the skill are not automatically visible to a future isolated Run.',
+    '   - For `execution: isolated`, list every tool the Run needs; omitted `allowed-tools` creates a tool-free Run.',
+    '   - `allowed-tools` selects whole tools, not command patterns. Inline skills keep the parent Run catalog unchanged.',
     '   - Flag broad `allowed-tools` in the preview summary.',
     '',
-    '6. Preview and confirm before writing.',
-    '   - Show the complete `SKILL.md` for creation, or a focused diff for updates.',
-    '   - Include a short review summary: storage target, slash invocation form, model invocation state, future `allowed-tools`, inline or isolated execution, and trust state.',
-    '   - Ask "Save this skill?" with Save, revise, or cancel choices through `ask_user_question` when available. File permission only answers whether a write may happen; Skillify confirmation answers whether the reusable process is right.',
+    '6. Resolve ambiguity, then write.',
+    '   - When the explicit request and conversation determine the skill contract, write it directly without a second confirmation.',
+    '   - Ask only for a missing identity, storage target, trigger, or behavioral choice that cannot be inferred. Do not ask merely because the skill is persistent or agent-authored.',
+    '   - For materially ambiguous requests, show the complete `SKILL.md` or a focused update diff only when that preview is needed to obtain the missing decision.',
     '',
     '7. Write, report, and explain trust.',
-    '   - Use `file_write` or `file_edit` only after confirmation. The file-tool gateway validates skill content, records rollback metadata in tool details, and hot-reloads the skill registry.',
+    '   - Use `file_write` or `file_edit` after the contract is determined. The file-tool gateway validates skill content, records rollback metadata in tool details, and hot-reloads the skill registry.',
     '   - After writing, report the exact path and how to invoke it as `/<skill-name> ...`.',
     '   - Agent-written skills and workspace skills are available immediately: slash invocation works immediately, and model-invocable skills can appear in the automatic listing without a separate trust prompt.',
     '   - If validation fails, repair the draft and show the corrected preview again when the change is material.',
@@ -240,7 +239,6 @@ export interface SkillLoadOptions {
   builtInSkillRoots?: string[];
   builtInSkills?: BuiltInSkillInput[];
   conversationId?: string;
-  permissionScopeProvider?: () => string | null;
   executeSkillShell?: SkillShellExecutor;
   executeIsolatedSkill?: SkillIsolatedExecutor;
   provenanceStore?: AgentSkillProvenanceStore;
@@ -456,13 +454,10 @@ class SkillListingState {
 export class AgentSkillRuntime {
   private readonly registry: SkillRegistry;
   private readonly conversationId: string;
-  private readonly permissionScopeProvider?: () => string | null;
   private readonly executeSkillShell?: SkillShellExecutor;
   private readonly executeIsolatedSkill?: SkillIsolatedExecutor;
   private readonly listedSkills = new SkillListingState();
   private readonly pendingSteeringMessages: UserMessage[] = [];
-  private readonly defaultActivePermissionRules = new Set<string>();
-  private readonly activePermissionRulesByScope = new Map<string, Set<string>>();
   private pendingTurnEffect: SkillTurnEffect | null = null;
   private readonly invokedSkills = new Map<string, InvokedSkillRecord>();
   private disabledSkills: string[] = [];
@@ -470,7 +465,6 @@ export class AgentSkillRuntime {
   constructor(options: SkillLoadOptions = {}) {
     this.registry = new SkillRegistry(options);
     this.conversationId = options.conversationId?.trim() || 'lin-agent-conversation';
-    this.permissionScopeProvider = options.permissionScopeProvider;
     this.executeSkillShell = options.executeSkillShell;
     this.executeIsolatedSkill = options.executeIsolatedSkill;
   }
@@ -486,22 +480,8 @@ export class AgentSkillRuntime {
   resetConversationState(): void {
     this.listedSkills.clear();
     this.pendingSteeringMessages.length = 0;
-    this.defaultActivePermissionRules.clear();
-    this.activePermissionRulesByScope.clear();
     this.pendingTurnEffect = null;
     this.invokedSkills.clear();
-  }
-
-  resetRunPermissionRules(scope = this.currentPermissionScope()): void {
-    if (scope) {
-      this.activePermissionRulesByScope.delete(scope);
-      return;
-    }
-    this.defaultActivePermissionRules.clear();
-  }
-
-  getActivePermissionRules(): string[] {
-    return [...this.activePermissionRuleSet()];
   }
 
   async getActiveSkillReadRoots(): Promise<string[]> {
@@ -590,8 +570,11 @@ export class AgentSkillRuntime {
     return effect;
   }
 
-  async notifyFileTouched(filePaths: string[]): Promise<void> {
-    const changed = await this.registry.activateForFilePaths(filePaths);
+  async notifyFileTouched(
+    filePaths: string[],
+    capabilities: FolderCapabilitySnapshot,
+  ): Promise<void> {
+    const changed = await this.registry.activateForFilePaths(filePaths, capabilities);
     if (!changed) return;
     const listing = await this.buildSkillListingMessage();
     if (listing) this.enqueueSteeringMessage(listing);
@@ -730,7 +713,6 @@ export class AgentSkillRuntime {
     }
 
     this.recordInvokedSkill(skill, renderedContent);
-    this.recordPermissionRules(skill);
     this.recordTurnEffect(skill);
     return {
       ok: true,
@@ -794,13 +776,6 @@ export class AgentSkillRuntime {
     });
   }
 
-  private recordPermissionRules(skill: SkillDefinition): void {
-    const rules = this.activePermissionRuleSet();
-    for (const rule of skill.allowedTools) {
-      rules.add(rule);
-    }
-  }
-
   private recordTurnEffect(skill: SkillDefinition): void {
     if (!skill.model && !skill.effort) return;
     this.pendingTurnEffect = mergeSkillTurnEffects(this.pendingTurnEffect, {
@@ -810,20 +785,6 @@ export class AgentSkillRuntime {
     });
   }
 
-  private currentPermissionScope(): string | null {
-    return this.permissionScopeProvider?.() ?? null;
-  }
-
-  private activePermissionRuleSet(): Set<string> {
-    const scope = this.currentPermissionScope();
-    if (!scope) return this.defaultActivePermissionRules;
-    let scoped = this.activePermissionRulesByScope.get(scope);
-    if (!scoped) {
-      scoped = new Set();
-      this.activePermissionRulesByScope.set(scope, scoped);
-    }
-    return scoped;
-  }
 }
 
 function mergeSkillTurnEffects(previous: SkillTurnEffect | null, next: SkillTurnEffect): SkillTurnEffect {
@@ -1276,10 +1237,13 @@ class SkillRegistry {
       ?? null;
   }
 
-  async activateForFilePaths(filePaths: string[]): Promise<boolean> {
+  async activateForFilePaths(
+    filePaths: string[],
+    capabilities: FolderCapabilitySnapshot,
+  ): Promise<boolean> {
     await this.ensureLoaded();
     let changed = false;
-    const nestedDirs = await this.discoverSkillDirsForPaths(filePaths);
+    const nestedDirs = await this.discoverSkillDirsForPaths(filePaths, capabilities);
     for (const dir of nestedDirs) {
       // Nested .agents/skills dirs are always under the work root → project source.
       const loaded = await loadSkillsFromDir(dir, 'project');
@@ -1392,7 +1356,10 @@ class SkillRegistry {
     return true;
   }
 
-  private async discoverSkillDirsForPaths(filePaths: string[]): Promise<string[]> {
+  private async discoverSkillDirsForPaths(
+    filePaths: string[],
+    capabilities: FolderCapabilitySnapshot,
+  ): Promise<string[]> {
     const discovered: string[] = [];
     for (const filePath of filePaths) {
       const absolute = path.resolve(filePath);
@@ -1402,7 +1369,7 @@ class SkillRegistry {
         if (!this.checkedDynamicSkillDirs.has(skillDir)) {
           if (await directoryExists(skillDir)) {
             this.checkedDynamicSkillDirs.add(skillDir);
-            if (!(await isGitIgnored(this.root, skillDir))) {
+            if (!(await isGitIgnored(this.root, skillDir, capabilities))) {
               discovered.push(skillDir);
             }
           }
@@ -1525,7 +1492,7 @@ function targetInsideSkillsDir(
 /**
  * The single source of truth for "is this file a skill-content write, and which skill?".
  * Both the loader (via the registry) and write governance (the file-tool gateway and the
- * permission layer) resolve through this, so the two can never disagree. Built-in skills
+ * capability layer) resolve through this, so the two can never disagree. Built-in skills
  * are code-registered and have no writable directory, so a target is never `built-in`.
  */
 export function resolveSkillContentTarget(
@@ -2366,13 +2333,28 @@ async function directoryExists(dir: string): Promise<boolean> {
   }
 }
 
-async function isGitIgnored(root: string, candidate: string): Promise<boolean> {
+async function isGitIgnored(
+  root: string,
+  candidate: string,
+  capabilities: FolderCapabilitySnapshot,
+): Promise<boolean> {
   const relative = path.relative(root, candidate);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return false;
-  try {
-    await execFile('git', ['-C', root, 'check-ignore', '-q', '--', normalizePathForPrompt(relative)]);
-    return true;
-  } catch {
-    return false;
-  }
+  const result = await runAgentToolProcess(
+    'git',
+    ['-C', root, 'check-ignore', '-q', '--', normalizePathForPrompt(relative)],
+    root,
+    5_000,
+    {
+      capabilities,
+      maxStdoutChars: 1_024,
+      maxStderrChars: 1_024,
+      env: {
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_OPTIONAL_LOCKS: '0',
+      },
+    },
+  );
+  return result.exitCode === 0;
 }

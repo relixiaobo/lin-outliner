@@ -5,7 +5,7 @@ import {
   type AgentRuntimeClient,
 } from '../../src/renderer/agent/runtime';
 import type {
-  AgentApprovalResolutionScope,
+  AgentCapabilityRequestView,
   AgentRuntimeEvent,
   AgentUserViewContext,
   AskUserQuestionResult,
@@ -175,6 +175,25 @@ function conversation(conversationId: string, renderProjection: AgentRenderProje
   };
 }
 
+function folderCapability(
+  requestId = 'capability-1',
+  conversationId = 'saved',
+  folder = '/tmp/project',
+): AgentCapabilityRequestView {
+  return {
+    requestId,
+    conversationId,
+    kind: 'folder',
+    toolCallId: `tool-${requestId}`,
+    toolName: 'file_read',
+    title: 'Folder access required',
+    target: folder,
+    reason: `Folder access is required before file_read can run: ${folder}`,
+    details: [{ label: 'Folder', value: folder }],
+    folders: [folder],
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -203,7 +222,11 @@ function createFakeClient(options: {
     restoreConversation: [] as string[],
     markConversationRead: [] as string[],
     queueFollowUp: [] as Array<{ conversationId: string; message: string; userViewContext?: AgentUserViewContext | null }>,
-    resolveApproval: [] as Array<{ conversationId: string; requestId: string; approved: boolean; scope: AgentApprovalResolutionScope | undefined }>,
+    resolveCapability: [] as Array<{
+      conversationId: string;
+      requestId: string;
+      resolution: 'granted' | 'cancelled';
+    }>,
     resolveUserQuestion: [] as Array<{ conversationId: string; requestId: string; result: AskUserQuestionResult }>,
     steerConversation: [] as Array<{ conversationId: string; message: string }>,
     sendMessage: [] as Array<{
@@ -254,8 +277,8 @@ function createFakeClient(options: {
       return { queued: true };
     },
     clearSteer: async () => {},
-    resolveApproval: async (conversationId, requestId, approved, scope) => {
-      calls.resolveApproval.push({ conversationId, requestId, approved, scope });
+    resolveCapability: async (conversationId, requestId, resolution) => {
+      calls.resolveCapability.push({ conversationId, requestId, resolution });
       return { resolved: true };
     },
     resolveUserQuestion: async (conversationId, requestId, result) => {
@@ -534,7 +557,7 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('tracks pending approval requests and clears them after resolve', async () => {
+  test('tracks pending capability requests and clears them after resolution', async () => {
     const fake = createFakeClient({ latestConversation: conversation('saved', projection([], { isStreaming: true })) });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
@@ -542,34 +565,42 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
 
     fake.emit({
-      type: 'approval_request',
+      type: 'capability_request',
       conversationId: 'saved',
-      requestId: 'approval-1',
-      request: {
-        requestId: 'approval-1',
-        conversationId: 'saved',
-        kind: 'tool_permission',
-        toolCallId: 'tool-1',
-        toolName: 'bash',
-        title: 'Approve GitHub push?',
-        target: 'git push origin codex/foo',
-        reason: 'This changes external state on a git remote.',
-        details: [{ label: 'Command', value: 'git push origin codex/foo' }],
-      },
+      requestId: 'capability-1',
+      request: folderCapability(),
       timestamp: 10,
     });
 
-    expect(store.getSnapshot().pendingApproval?.requestId).toBe('approval-1');
+    expect(store.getSnapshot().pendingCapability?.requestId).toBe('capability-1');
 
-    await store.getSnapshot().resolveApproval('approval-1', true, 'once');
+    await store.getSnapshot().resolveCapability('capability-1', 'granted');
 
-    expect(fake.calls.resolveApproval).toEqual([{
+    expect(fake.calls.resolveCapability).toEqual([{
       conversationId: 'saved',
-      requestId: 'approval-1',
-      approved: true,
-      scope: 'once',
+      requestId: 'capability-1',
+      resolution: 'granted',
     }]);
-    expect(store.getSnapshot().pendingApproval).toBeNull();
+    expect(store.getSnapshot().pendingCapability).toBeNull();
+    unsubscribe();
+  });
+
+  test('hydrates durable folder capability requests when a conversation is restored', async () => {
+    const restored = {
+      ...conversation('saved', projection([])),
+      pendingCapabilities: [folderCapability('durable-folder-request', 'saved', '/tmp/archive')],
+    };
+    const fake = createFakeClient({ latestConversation: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(store.getSnapshot().pendingCapability).toEqual(folderCapability(
+      'durable-folder-request',
+      'saved',
+      '/tmp/archive',
+    ));
     unsubscribe();
   });
 
@@ -581,7 +612,7 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
 
     // Attention for a conversation other than the active one still updates (badges
-    // are cross-conversation, unlike projection/approval events).
+    // are cross-conversation, unlike projection/capability events).
     fake.emit({
       type: 'conversation_attention',
       conversationId: 'other',
@@ -634,7 +665,7 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('queues multiple pending approval requests and shows the next one after resolution', async () => {
+  test('queues multiple pending capability requests and shows the next after resolution', async () => {
     const fake = createFakeClient({ latestConversation: conversation('saved', projection([], { isStreaming: true })) });
     const store = createAgentRuntimeStore(fake.client);
     const unsubscribe = store.subscribe(() => {});
@@ -642,41 +673,31 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
 
     const request = (requestId: string, target: string): AgentRuntimeEvent => ({
-      type: 'approval_request',
+      type: 'capability_request',
       conversationId: 'saved',
       requestId,
-      request: {
-        requestId,
-        conversationId: 'saved',
-        kind: 'tool_permission',
-        toolCallId: `tool-${requestId}`,
-        toolName: 'bash',
-        title: 'Approve command?',
-        target,
-        reason: 'This needs approval.',
-        details: [{ label: 'Command', value: target }],
-      },
+      request: folderCapability(requestId, 'saved', target),
       timestamp: 10,
     });
 
-    fake.emit(request('approval-1', 'git push origin codex/foo'));
-    fake.emit(request('approval-2', 'npm publish'));
+    fake.emit(request('capability-1', '/tmp/project-a'));
+    fake.emit(request('capability-2', '/tmp/project-b'));
 
-    expect(store.getSnapshot().pendingApproval?.requestId).toBe('approval-1');
+    expect(store.getSnapshot().pendingCapability?.requestId).toBe('capability-1');
 
-    await store.getSnapshot().resolveApproval('approval-1', true, 'once');
+    await store.getSnapshot().resolveCapability('capability-1', 'granted');
 
-    expect(store.getSnapshot().pendingApproval?.requestId).toBe('approval-2');
+    expect(store.getSnapshot().pendingCapability?.requestId).toBe('capability-2');
 
     fake.emit({
-      type: 'approval_resolved',
+      type: 'capability_resolved',
       conversationId: 'saved',
-      requestId: 'approval-2',
-      approved: false,
+      requestId: 'capability-2',
+      resolution: 'cancelled',
       timestamp: 20,
     });
 
-    expect(store.getSnapshot().pendingApproval).toBeNull();
+    expect(store.getSnapshot().pendingCapability).toBeNull();
     unsubscribe();
   });
 

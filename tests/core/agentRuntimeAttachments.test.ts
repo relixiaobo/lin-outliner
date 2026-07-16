@@ -160,7 +160,6 @@ describe('agent runtime attachments', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: true,
@@ -218,7 +217,6 @@ describe('agent runtime attachments', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: true,
@@ -266,7 +264,6 @@ describe('agent runtime attachments', () => {
           apiKey: 'test-key',
         }),
         runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
           automaticSkillsEnabled: false,
           slashSkillsEnabled: false,
           compactEnabled: true,

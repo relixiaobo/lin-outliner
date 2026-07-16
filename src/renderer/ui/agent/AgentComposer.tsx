@@ -6,8 +6,7 @@ import {
   type DragEvent,
 } from 'react';
 import type {
-  AgentApprovalRequestView,
-  AgentApprovalResolutionScope,
+  AgentCapabilityRequestView,
   AgentMessageAttachmentInput,
   AgentUserQuestionPendingView,
   AskUserQuestionResult,
@@ -75,13 +74,12 @@ interface AgentComposerProps {
   onSteer: (message: string) => Promise<void>;
   onCancelSteer: () => Promise<void>;
   onStop: () => void;
-  onResolveApproval: (
+  onResolveCapability: (
     requestId: string,
-    approved: boolean,
-    scope?: AgentApprovalResolutionScope,
+    resolution: 'granted' | 'cancelled',
   ) => Promise<boolean>;
   onResolveUserQuestion: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
-  pendingApproval: AgentApprovalRequestView | null;
+  pendingCapability: AgentCapabilityRequestView | null;
   pendingUserQuestion: AgentUserQuestionPendingView | null;
   settings: AgentProviderSettingsView | null;
   /** Current model selection of the conversation's editable agent (Neva), for the quick chip. */
@@ -182,12 +180,12 @@ export function AgentComposer({
   queueSends = false,
   onNodeReferenceOpen,
   onCancelSteer,
-  onResolveApproval,
+  onResolveCapability,
   onResolveUserQuestion,
   onSend,
   onSteer,
   onStop,
-  pendingApproval,
+  pendingCapability,
   pendingUserQuestion,
   settings,
   agentModel,
@@ -235,17 +233,17 @@ export function AgentComposer({
   useEffect(() => {
     if (focusToken <= 0 || handledFocusTokenRef.current >= focusToken) return;
     handledFocusTokenRef.current = focusToken;
-    if (pendingApproval || pendingUserQuestion) return;
+    if (pendingCapability || pendingUserQuestion) return;
     const frame = window.requestAnimationFrame(() => editorRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
-  }, [focusToken, pendingApproval, pendingUserQuestion]);
+  }, [focusToken, pendingCapability, pendingUserQuestion]);
   useEffect(() => onAgentComposerNodeReferenceRequest((request) => {
     setPendingNodeReferenceRequests((current) => (
       current.includes(request) ? current : [...current, request]
     ));
   }), []);
   useEffect(() => {
-    if (pendingApproval || pendingUserQuestion || pendingNodeReferenceRequests.length === 0) return undefined;
+    if (pendingCapability || pendingUserQuestion || pendingNodeReferenceRequests.length === 0) return undefined;
     const requests = pendingNodeReferenceRequests;
     const frame = window.requestAnimationFrame(() => {
       const editor = editorRef.current;
@@ -259,7 +257,7 @@ export function AgentComposer({
       setPendingNodeReferenceRequests((current) => current.filter((request) => !requests.includes(request)));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [index.byId, pendingApproval, pendingNodeReferenceRequests, pendingUserQuestion]);
+  }, [index.byId, pendingCapability, pendingNodeReferenceRequests, pendingUserQuestion]);
   const hasAttachments = attachments.length > 0;
   const activeProvider = settings ? resolveUsableActiveProvider(settings) ?? null : null;
   // No usable provider once settings have LOADED → block send and explain why.
@@ -269,7 +267,7 @@ export function AgentComposer({
   // In queue-send (Channel) mode the steer pathway does not exist: a running
   // round never switches the composer into steer submit/placeholder.
   const steering = isStreaming && !queueSends;
-  const canSubmit = (pendingApproval || pendingUserQuestion ? false : steering
+  const canSubmit = (pendingCapability || pendingUserQuestion ? false : steering
     ? hasDraft && !hasAttachments
     : !sending && (hasDraft || hasAttachments)) && !providerBlocksSend;
 
@@ -411,11 +409,11 @@ export function AgentComposer({
             {attachmentError}
           </div>
         ) : null}
-        {pendingApproval ? (
-          <AgentApprovalCard
-            approval={pendingApproval}
-            key={pendingApproval.requestId}
-            onResolve={onResolveApproval}
+        {pendingCapability ? (
+          <AgentCapabilityCard
+            capability={pendingCapability}
+            key={pendingCapability.requestId}
+            onResolve={onResolveCapability}
           />
         ) : pendingUserQuestion ? (
           <AgentUserQuestionCard
@@ -770,174 +768,80 @@ function useAgentComposerAttachmentManager({
   };
 }
 
-function AgentApprovalCard({
-  approval,
+function AgentCapabilityCard({
+  capability,
   onResolve,
 }: {
-  approval: AgentApprovalRequestView;
+  capability: AgentCapabilityRequestView;
   onResolve: (
     requestId: string,
-    approved: boolean,
-    scope?: AgentApprovalResolutionScope,
+    resolution: 'granted' | 'cancelled',
   ) => Promise<boolean>;
 }) {
   const t = useT();
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [submitting, setSubmitting] = useState<AgentApprovalResolutionScope | 'deny' | null>(null);
-  const isSkillTrust = approval.kind === 'skill_trust';
-  const isNotice = approval.kind === 'permission_notice';
-  const isSoftBlock = approval.kind === 'tool_permission' && typeof approval.autoBlockMs === 'number' && approval.autoBlockMs > 0;
-  const [remainingMs, setRemainingMs] = useState(approval.autoBlockMs ?? 0);
-  const autoBlockCancelledRef = useRef(false);
-  const onResolveRef = useRef(onResolve);
+  const [submitting, setSubmitting] = useState<'grant' | 'cancel' | null>(null);
 
-  useEffect(() => {
-    onResolveRef.current = onResolve;
-  }, [onResolve]);
-
-  useEffect(() => {
-    if (!isSoftBlock || !approval.autoBlockMs) return undefined;
-    autoBlockCancelledRef.current = false;
-    setRemainingMs(approval.autoBlockMs);
-    let settled = false;
-    const deadline = Date.now() + approval.autoBlockMs;
-    const tick = () => setRemainingMs(Math.max(0, deadline - Date.now()));
-    const interval = window.setInterval(tick, 1000);
-    const timeout = window.setTimeout(() => {
-      if (autoBlockCancelledRef.current) return;
-      settled = true;
-      setSubmitting('deny');
-      void onResolveRef.current(approval.requestId, false, 'once').finally(() => setSubmitting(null));
-    }, approval.autoBlockMs);
-    tick();
-    return () => {
-      window.clearInterval(interval);
-      if (!settled) window.clearTimeout(timeout);
-    };
-  }, [approval.autoBlockMs, approval.requestId, isSoftBlock]);
-
-  async function resolve(approved: boolean, scope: AgentApprovalResolutionScope = 'once') {
+  async function resolve(resolution: 'granted' | 'cancelled') {
     if (submitting) return;
-    autoBlockCancelledRef.current = true;
-    setSubmitting(approved ? scope : 'deny');
+    setSubmitting(resolution === 'granted' ? 'grant' : 'cancel');
     try {
-      await onResolve(approval.requestId, approved, scope);
+      await onResolve(capability.requestId, resolution);
     } finally {
       setSubmitting(null);
     }
   }
-
-  async function dismissNotice() {
-    if (submitting) return;
-    autoBlockCancelledRef.current = true;
-    setSubmitting('deny');
-    try {
-      await onResolve(approval.requestId, false, 'once');
-    } finally {
-      setSubmitting(null);
-    }
-  }
-
-  const blockNowLabel = isSoftBlock
-    ? t.agent.composer.blockNowCountdown({ seconds: Math.max(1, Math.ceil(remainingMs / 1000)) })
-    : t.agent.composer.denyOnce;
 
   return (
-    <div className="agent-approval-card" role="group" aria-label={approval.title}>
-      <div className="agent-approval-copy">
-        <div className="agent-approval-title">{approval.title}</div>
-        {approval.requestedByAgentId ? (
-          <div className="agent-approval-attribution">
-            {t.agent.composer.approvalRequestedBy({
-              agent: agentMentionToken(approval.requestedByAgentId),
+    <div className="agent-capability-card" role="group" aria-label={capability.title}>
+      <div className="agent-capability-copy">
+        <div className="agent-capability-title">{capability.title}</div>
+        {capability.requestedByAgentId ? (
+          <div className="agent-capability-attribution">
+            {t.agent.composer.capabilityRequestedBy({
+              agent: agentMentionToken(capability.requestedByAgentId),
             })}
           </div>
         ) : null}
-        <div className="agent-approval-target" title={approval.target}>{approval.target}</div>
+        <div className="agent-capability-target" title={capability.target}>{capability.target}</div>
         <button
           aria-expanded={detailsOpen}
-          className="agent-approval-details-toggle"
+          className="agent-capability-details-toggle"
           onClick={() => setDetailsOpen((open) => !open)}
           type="button"
         >
           {detailsOpen ? t.agent.composer.hideDetails : t.agent.composer.showDetails}
         </button>
         {detailsOpen ? (
-          <div className="agent-approval-details-panel">
-            {approval.details.map((detail) => (
-              <div className="agent-approval-detail" key={`${detail.label}:${detail.value}`}>
-                <span className="agent-approval-detail-label">{detail.label}</span>
-                <span className="agent-approval-detail-value">{detail.value}</span>
+          <div className="agent-capability-details-panel">
+            {capability.details.map((detail) => (
+              <div className="agent-capability-detail" key={`${detail.label}:${detail.value}`}>
+                <span className="agent-capability-detail-label">{detail.label}</span>
+                <span className="agent-capability-detail-value">{detail.value}</span>
               </div>
             ))}
-            {approval.alwaysAllowRule ? (
-              <div className="agent-approval-detail">
-                <span className="agent-approval-detail-label">{t.agent.composer.alwaysAllowRule}</span>
-                <span className="agent-approval-detail-value">{approval.alwaysAllowRule}</span>
-              </div>
-            ) : null}
           </div>
         ) : null}
       </div>
-      <div className="agent-approval-actions">
-        {isNotice ? (
+      <div className="agent-capability-actions">
+        <>
           <button
-            className="agent-approval-button is-primary"
+            className="agent-request-button is-primary"
             disabled={!!submitting}
-            onClick={() => void dismissNotice()}
+            onClick={() => void resolve('granted')}
             type="button"
           >
-            {t.agent.composer.dismiss}
+            {t.agent.composer.grantFolderAccess}
           </button>
-        ) : isSkillTrust ? (
-          <>
-            <button
-              className="agent-approval-button is-primary"
-              disabled={!!submitting}
-              onClick={() => void resolve(true, 'once')}
-              type="button"
-            >
-              {t.agent.composer.acceptSkill}
-            </button>
-            <button
-              className="agent-approval-button"
-              disabled={!!submitting}
-              onClick={() => void resolve(false, 'once')}
-              type="button"
-            >
-              {t.agent.composer.notNow}
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              className="agent-approval-button is-primary"
-              disabled={!!submitting}
-              onClick={() => void resolve(true, 'once')}
-              type="button"
-            >
-              {t.agent.composer.approveOnce}
-            </button>
-            {approval.alwaysAllowRule ? (
-              <button
-                className="agent-approval-button"
-                disabled={!!submitting}
-                onClick={() => void resolve(true, 'always')}
-                type="button"
-              >
-                {isSoftBlock ? t.agent.composer.alwaysAllow : t.agent.composer.alwaysAllowBoundary}
-              </button>
-            ) : null}
-            <button
-              className="agent-approval-button"
-              disabled={!!submitting}
-              onClick={() => void resolve(false, 'once')}
-              type="button"
-            >
-              {blockNowLabel}
-            </button>
-          </>
-        )}
+          <button
+            className="agent-request-button"
+            disabled={!!submitting}
+            onClick={() => void resolve('cancelled')}
+            type="button"
+          >
+            {t.agent.composer.cancelFolderAccess}
+          </button>
+        </>
       </div>
     </div>
   );
@@ -1186,7 +1090,7 @@ function AgentUserQuestionCard({
         <div className="agent-question-nav-actions">
           {isLastStep ? (
             <button
-              className="agent-approval-button is-primary"
+              className="agent-request-button is-primary"
               disabled={!currentQuestionIsReady || submitting}
               onClick={() => void submit()}
               type="button"
@@ -1195,7 +1099,7 @@ function AgentUserQuestionCard({
             </button>
           ) : (
             <button
-              className="agent-approval-button is-primary"
+              className="agent-request-button is-primary"
               disabled={!currentQuestionIsReady || submitting}
               onClick={goNext}
               type="button"

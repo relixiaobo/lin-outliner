@@ -6,7 +6,7 @@ import {
   isReadOnlyActionKind,
   normalizeAgentToolActionKinds,
   readOnlyAgentToolNames,
-} from '../core/agentPermissionModel';
+} from '../core/agentActionCatalog';
 
 export const DEFAULT_CHILD_WALL_CLOCK_MINUTES = 30;
 

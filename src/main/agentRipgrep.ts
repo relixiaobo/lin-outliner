@@ -1,8 +1,9 @@
-import { spawn } from 'node:child_process';
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { FolderCapabilitySnapshot } from './agentFolderCapabilities';
 import { buildAgentToolPathValue, pathSegments } from './agentToolPath';
+import { getAgentProcessExecutor } from './agentProcessExecutor';
 
 export type RipgrepMode = 'env' | 'bundled' | 'system';
 
@@ -21,12 +22,20 @@ const RIPGREP_PROBE_TIMEOUT_MS = 5_000;
 
 let cachedResolution: { signature: string; promise: Promise<ResolvedRipgrepCommand> } | undefined;
 
-export async function resolveRipgrepCommand(): Promise<ResolvedRipgrepCommand> {
+export async function resolveRipgrepCommand(
+  cwd: string,
+  capabilities: FolderCapabilitySnapshot,
+): Promise<ResolvedRipgrepCommand> {
   const signature = ripgrepResolutionSignature();
   if (cachedResolution?.signature === signature) return cachedResolution.promise;
-  const promise = resolveRipgrepCommandUncached();
+  const promise = resolveRipgrepCommandUncached(cwd, capabilities);
   cachedResolution = { signature, promise };
-  return promise;
+  try {
+    return await promise;
+  } catch (error) {
+    if (cachedResolution?.promise === promise) cachedResolution = undefined;
+    throw error;
+  }
 }
 
 export function getBundledRipgrepBinDirForPath(): string | undefined {
@@ -46,7 +55,10 @@ export function clearRipgrepCommandCacheForTests(): void {
   cachedResolution = undefined;
 }
 
-async function resolveRipgrepCommandUncached(): Promise<ResolvedRipgrepCommand> {
+async function resolveRipgrepCommandUncached(
+  cwd: string,
+  capabilities: FolderCapabilitySnapshot,
+): Promise<ResolvedRipgrepCommand> {
   const attempts: string[] = [];
   const envCommand = process.env[RIPGREP_COMMAND_ENV]?.trim();
   if (envCommand) {
@@ -59,7 +71,7 @@ async function resolveRipgrepCommandUncached(): Promise<ResolvedRipgrepCommand> 
         mode: 'env',
         binDir: path.isAbsolute(command) ? path.dirname(command) : undefined,
         source: RIPGREP_COMMAND_ENV,
-      });
+      }, cwd, capabilities);
     } catch (error) {
       attempts.push(`env: ${errorMessage(error)}`);
     }
@@ -74,7 +86,7 @@ async function resolveRipgrepCommandUncached(): Promise<ResolvedRipgrepCommand> 
         mode: 'bundled',
         binDir: path.dirname(bundledExecutable),
         source: bundledExecutable,
-      });
+      }, cwd, capabilities);
     } catch (error) {
       attempts.push(`bundled: ${errorMessage(error)}`);
     }
@@ -91,7 +103,7 @@ async function resolveRipgrepCommandUncached(): Promise<ResolvedRipgrepCommand> 
         mode: 'system',
         binDir: path.dirname(systemRipgrep),
         source: systemRipgrep,
-      });
+      }, cwd, capabilities);
     } catch (error) {
       attempts.push(`system: ${errorMessage(error)}`);
     }
@@ -102,8 +114,17 @@ async function resolveRipgrepCommandUncached(): Promise<ResolvedRipgrepCommand> 
   throw new Error(`Tenon could not resolve a working ripgrep provider. Attempts: ${attempts.join(' ')}`);
 }
 
-async function probeRipgrepCommand(input: Omit<ResolvedRipgrepCommand, 'version'>): Promise<ResolvedRipgrepCommand> {
-  const result = await spawnProbe(input.command, [...input.argsPrefix, '--version']);
+async function probeRipgrepCommand(
+  input: Omit<ResolvedRipgrepCommand, 'version'>,
+  cwd: string,
+  capabilities: FolderCapabilitySnapshot,
+): Promise<ResolvedRipgrepCommand> {
+  const result = await spawnProbe(
+    input.command,
+    [...input.argsPrefix, '--version'],
+    cwd,
+    capabilities,
+  );
   if (result.error) {
     throw new Error(`${input.mode} provider at ${input.source} failed to start: ${result.error.message}`);
   }
@@ -118,7 +139,12 @@ async function probeRipgrepCommand(input: Omit<ResolvedRipgrepCommand, 'version'
   return { ...input, version: versionLine || 'ripgrep version unavailable' };
 }
 
-function spawnProbe(command: string, args: string[]): Promise<{
+function spawnProbe(
+  command: string,
+  args: string[],
+  cwd: string,
+  capabilities: FolderCapabilitySnapshot,
+): Promise<{
   stdout: string;
   stderr: string;
   exitCode: number | null;
@@ -126,31 +152,63 @@ function spawnProbe(command: string, args: string[]): Promise<{
   timedOut: boolean;
 }> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const executor = getAgentProcessExecutor();
+    void executor.spawn({
+      command,
+      args,
+      cwd,
+      capabilities,
       env: { ...process.env, PATH: buildAgentToolPathValue() },
-      shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, RIPGREP_PROBE_TIMEOUT_MS);
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, exitCode: null, error, timedOut });
-    });
-    child.once('close', (code) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, exitCode: code, timedOut });
+      detached: process.platform !== 'win32',
+    }).then((child) => {
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      const finish = (result: {
+        stdout: string;
+        stderr: string;
+        exitCode: number | null;
+        error?: Error;
+        timedOut: boolean;
+      }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        timedOut = true;
+        executor.terminate(child, 'SIGTERM');
+        killTimer = setTimeout(() => executor.terminate(child, 'SIGKILL'), 2_000);
+      }, RIPGREP_PROBE_TIMEOUT_MS);
+      child.stdout?.setEncoding('utf8');
+      child.stderr?.setEncoding('utf8');
+      child.stdout?.on('data', (chunk: string) => { stdout = appendProbeOutput(stdout, chunk); });
+      child.stderr?.on('data', (chunk: string) => { stderr = appendProbeOutput(stderr, chunk); });
+      child.once('error', (error) => {
+        finish({ stdout, stderr, exitCode: null, error, timedOut });
+      });
+      child.once('close', (code) => {
+        finish({ stdout, stderr, exitCode: code, timedOut });
+      });
+    }, (error: unknown) => {
+      resolve({
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+        error: error instanceof Error ? error : new Error(String(error)),
+        timedOut: false,
+      });
     });
   });
+}
+
+function appendProbeOutput(current: string, chunk: string): string {
+  return current + chunk.slice(0, Math.max(0, 16_384 - current.length));
 }
 
 function bundledRipgrepRoots(): string[] {

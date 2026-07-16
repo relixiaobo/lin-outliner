@@ -14,7 +14,8 @@ hot-reload, no-escalation guard) — design in `docs/spec/agent-skills.md`; a co
 (source taxonomy collapsed to `AgentSourceKind`, single skill-path resolver, ratification
 gate re-layered onto invocation); skill acceptance (the ratification loop + single-step
 undo); workspace-trust gate for cloned-repo `project` skills; and the shipped Skillify
-creative UX (v2 body, preview/confirm, and natural-language save/update routing).
+creative UX (v2 body, contract-aware direct writing, and natural-language
+save/update routing).
 Remaining tails are executable-script support-file ratify+sandbox and opt-in curation
 dry-run (ride with M2 self-mod). (Lifecycle status lives in `docs/TASKS.md`.)
 
@@ -27,7 +28,7 @@ than it needed to be. The fix landed as **one convergence PR (#174)** that colla
 governance along the cc-2.1 split (validation→load, no-escalation→invocation,
 model-invocability→listing). The `types.ts` interface change rode **in the same PR** (PM
 call — not carved out). It was the prerequisite for the Skillify v2 creative-UX work
-(`save as skill` + preview/confirm), which later shipped on top.
+(`save as skill` + contract-aware direct writing), which later shipped on top.
 
 ## Goal
 
@@ -67,7 +68,7 @@ override; `context: fork`.
 slash-only `/skillify`, governed self-authoring through `file_write` / `file_edit`,
 skill-content validation and no-escalation guards, registry hot-reload after
 successful skill writes, `skill.created` / `skill.patched` / `skill.replaced` audit
-events, Skillify v2 preview/confirmation, and natural-language routing into the
+events, Skillify v2 contract clarification, and natural-language routing into the
 Skillify path. Opt-in curation remains later work.
 
 ## Design
@@ -158,20 +159,20 @@ The upgraded workflow should reliably produce:
   and hard rules where they matter;
 - minimal `allowed-tools` for the future skill, not a replay of every tool used
   while authoring it;
-- a preview/confirmation pass before any `file_write` / `file_edit`.
+- direct `file_write` / `file_edit` when the explicit request determines the
+  contract, with clarification only for a missing material choice.
 
 #### Non-goals
 
 - No new model-facing skill CRUD tools. The workflow still writes through
   `file_write` / `file_edit` after review, matching the current cc-2.1-aligned
   surface.
-- No new trust or permission primitive. Agent-written skills remain unratified:
-  slash-invocable immediately, model-invocable only after exact-byte acceptance
-  through the existing `skill_trust` / Settings path.
+- No new trust or permission primitive. Agent-written skills are ratified by
+  default; exact-byte acceptance in Settings is optional audit metadata, not an
+  invocation gate.
 - No dedicated preview-card protocol in this PR. The complete `SKILL.md` or
-  focused diff is shown in the assistant message, and confirmation uses the
-  existing `ask_user_question` interaction when available; the file-tool
-  permission card remains the write permission surface.
+  focused diff is shown only when it is needed to resolve a material ambiguity.
+  The ordinary folder-capability policy remains the only file access surface.
 - No executable support-file authoring. The existing M1 deny path for executable
   support files stays in force until a separate ratify+sandbox design lands.
 - No background curation or silent skill rewriting.
@@ -190,9 +191,9 @@ cc-2.1 workflow and translated into Tenon terms:
 - Do not over-interview. For a simple explicit request, ask only for missing
   name/storage/trigger details; for ambiguous or broad workflows, run a short
   structured interview.
-- Prefer `ask_user_question` for confirmation and real choices. If the current
-  runtime cannot use it, ask concise plain-language questions in the normal
-  conversation.
+- Use `ask_user_question` only for a real choice that cannot be inferred. If the
+  current runtime cannot use it, ask one concise plain-language question in the
+  normal conversation.
 - Use Tenon paths and frontmatter: `.agents/skills/<skill-name>/SKILL.md`,
   lowercase `skill` tool semantics, no `.claude/skills`, and no `name`
   frontmatter field because identity comes from the directory name.
@@ -223,25 +224,23 @@ For an existing skill:
 - show a focused diff, and call out any changes to `allowed-tools`,
   auto-invocation, storage path, or execution mode before writing.
 
-**3. Preview/confirmation is part of Skillify, not a new tool family.**
+**3. Explicit authoring intent is sufficient; ambiguity is resolved before writing.**
 
 Before writing:
 
-- show the full `SKILL.md` for creation, or a focused diff for updates;
-- include a short review summary: storage target, invocation form, model
-  invocation state, future `allowed-tools`, whether it is inline or forked, and
-  whether it will be born unratified;
-- ask "Save this skill?" through `ask_user_question` where available, with
-  choices to save, revise, or cancel. Do not rely on the later file permission
-  approval as the only review step; permission answers "may this write happen",
-  while Skillify confirmation answers "is this the right reusable process?"
+- infer the storage target, invocation form, model invocation state,
+  `allowed-tools`, and execution mode from the explicit request and conversation;
+- write directly when those inputs determine one coherent contract;
+- show the complete file or focused diff only when it is needed to obtain a
+  missing material decision; persistence or agent authorship alone never creates
+  a confirmation step.
 
 After writing:
 
 - report the exact path;
 - state how to invoke it (`/<skill-name> ...`);
-- explain the trust state: slash works immediately, automatic model use waits
-  for acceptance if the skill is agent-written or project-sourced;
+- explain that slash and eligible automatic model use are available immediately;
+  optional exact-byte acceptance remains visible in Settings for audit;
 - if the write failed validation, repair the draft and retry only after showing
   the corrected preview when the change is material.
 
@@ -315,8 +314,8 @@ Skillify note as a narrow clarification rather than a broad rewrite.
 
 **Write requirements** (from self-modification §7, carried verbatim in intent):
 
-- No dedicated model-facing skill-CRUD tool. Use `skillify`-style review/confirm +
-  `file_write` / `file_edit`; prefer `file_edit` for existing skills, `file_write` only
+- No dedicated model-facing skill-CRUD tool. Use `skillify`-style contract
+  resolution + `file_write` / `file_edit`; prefer `file_edit` for existing skills, `file_write` only
   for new skills / major rewrites / unpatchable malformed files.
 - Generate or update a concrete `SKILL.md` in the stable shape of
   `docs/spec/agent-skills.md`; write only to standard `.agents/skills` roots.
@@ -325,17 +324,10 @@ Skillify note as a narrow clarification rather than a broad rewrite.
 - Classify any `file_write` / `file_edit` under `.agents/skills/**` as a
   **skill-content write**, not a generic document edit — distinct permission / audit
   / snapshot path.
-- **Agent-initiated** writes must show the full `SKILL.md` or a focused diff and ask
-  for explicit confirmation; they are born **unratified** (gateway records the content
-  hash; excluded from the model listing and model invocation refused until accepted —
-  slash invocation works immediately, see *Governance layering*). The file-tool gateway
-  cannot distinguish user-directed from agent-initiated writes (both arrive as the same
-  tool calls), so **all** agent-channel skill writes are born unratified; the user's
-  acceptance (PR A) or any hand-edit promotes. Slash availability keeps the `/skillify`
-  flow fully usable meanwhile.
-  *(The shipped M1 instead force-writes `disable-model-invocation: true`; the convergence
-  moves this to the runtime ratification gate — `disable-model-invocation` stays only as a
-  user-set frontmatter knob, not a policy lin writes for the agent.)*
+- Explicit user-directed writes run once the skill contract is determined. The
+  gateway records the content hash for provenance and optional exact-byte
+  acceptance, but all otherwise eligible skills remain ratified by default and
+  available for slash and model invocation.
 - Write atomically; snapshot the previous version; expose undo. Validate frontmatter,
   size, paths, supported subdirs before/after write; surface failures as repairable.
 - Reject path traversal, symlinks escaping the skill dir, executable/binary support
@@ -347,13 +339,13 @@ the existing dimensions, enforced on any self-authored / edited skill:
 - **No allowed-tools self-escalation** — a skill's `allowedTools` cannot grant the
   agent tools it is not already permitted; the A3 / permission floor stands *above*
   skills, never below. **Never infer broad `allowed-tools` from a successful session.**
-- **Model-invocable gating** — auto-invokable skills (`modelInvocable`) are the
-  higher-risk class; a self-authored skill defaults to **user-invocable-only** until
-  ratified.
+- **Model-invocable gating** — explicit frontmatter/settings controls remain the
+  only model-invocation gates; authorship does not add an approval prompt.
 - **Instructions vs executable scripts** — Markdown instructions are config-grade
-  (cheap to author); a skill bundling an **executable script** crosses the code/A3
-  floor and needs **ratify + sandbox** (cc-2.1 gates bundled scripts behind
-  workspace-trust; hermes allowlists + mtime-revalidates).
+  (cheap to author). Executable support files remain disabled until a dedicated
+  design routes them through the shared `AgentProcessExecutor`, immutable folder
+  capability snapshots, content validation, and mtime/hash revalidation. It must
+  not add a second process sandbox or a generic confirmation card.
 - **Never `built-in`** — agents author `user` / `project`, never the immutable floor.
 
 **Hot-reload.** Self-authoring needs the skill registry to pick up a newly written
@@ -368,7 +360,7 @@ The shipped M1 works but carries three seams. Each is grounded in code; the fix 
 coherent convergence PR. The reference is **cc-2.1** (Claude Code 2.1), whose skill
 authoring is: ordinary `Write`/`Edit` file tools (no typed skill-CRUD tool), path-keyed
 write detection in the filesystem-permission layer, skills confined to canonical
-locations, and preview/confirm carried as *skillify instructions* — not a runtime
+locations, and contract resolution carried as *skillify instructions* — not a runtime
 pipeline (`~/.research-repos/cc-2.1/src/skills/bundled/skillify.ts`,
 `utils/permissions/filesystem.ts:101`).
 
@@ -501,12 +493,11 @@ deliberately conservative (self-modification §8):
 
 ### Policy matrix (skill rows)
 
-| Area | Read | Review preview | Auto write | Ask write | Deny |
-|---|---|---|---|---|---|
-| Skill creation | allow templates | allow | explicit user-requested local create | ask for agent-initiated create | broad tool preapproval; legacy command dirs; `built-in` writes |
-| Agent-created skill edits | allow diffs | allow | explicit user-requested patch | ask for agent-initiated patch | silent background mutation |
-| User-authored skill edits | allow diffs | allow | deny | ask | silent mutation of user-authored skills |
-| Skill curation | allow reports | allow | deny initially | ask | user-authored silent mutation |
+| Area | Read | Direct write | Clarify | Block |
+|---|---|---|---|---|
+| Skill creation | allow templates | explicit user-requested local create | missing identity/storage/trigger/behavior | `built-in` writes; invalid or executable content |
+| Existing skill edit | allow current file/diff | explicit user-requested patch | materially ambiguous contract change | silent background mutation |
+| Skill curation | allow reports | only an explicitly requested concrete patch | unresolved curation choice | inferred background rewriting |
 
 ## Protocol surface & events (M0 dependency)
 
@@ -535,7 +526,7 @@ deliberately conservative (self-modification §8):
   governance re-layering (validation→load, no-escalation→invocation ratification,
   model-invocability→listing). One PR; interface change rides in-PR. See *Governance
   layering & single-source identity*. Prerequisite for the shipped Skillify v2
-  creative-UX work (`save as skill` + preview/confirm).
+  creative-UX work (`save as skill` + contract-aware authoring).
 - **M2 (off-floor + extension)** — opt-in curation **dry-run reports** (agent-created
   only). Skill-declared hooks register as run-scoped or conversation-scoped
   transients and ride the hooks work in [[agent-self-modification]] (on the
@@ -549,10 +540,9 @@ deliberately conservative (self-modification §8):
 - ~~**Writable additional dirs**~~ — **resolved (convergence):** recognition ≠ permission.
   All real skill dirs are recognized/governed via the single resolver; writability is a
   separate permission policy (default read-only), denied at the permission layer.
-- **Per-skill permission suggestions** — adopt cc-2.1-style per-skill invocation
-  permission hints, or is the global permission center enough? (cc-2.1 narrows write
-  permission per skill — `getClaudeSkillScope`, `filesystem.ts:101`; the convergence keeps
-  this as the write-boundary's permission step.)
+- ~~**Per-skill permission suggestions**~~ — **resolved:** no dedicated prompt or
+  UI. `allowed-tools` is restricted-Run preapproval metadata; the global folder
+  capability service and hard floor remain authoritative.
 - **Where bundled adapters ship** (from [[agent-import-skill]]): a built-in
   `import/adapters/` skill bundle (versions with the app → `built-in`) vs the user
   `~/.agents/skills` dir. Leaning `built-in` now that the source exists.
@@ -573,15 +563,16 @@ deliberately conservative (self-modification §8):
 - [x] Confirm binding semantics: `AgentDefinition.skills` selects over the unified
       library; document that there is no per-agent storage.
 - [x] Slash-only built-in `/skillify` workflow.
-- [x] **Skillify v2 body** — capture/update prompt, preview/confirmation
+- [x] **Skillify v2 body** — capture/update prompt, contract clarification
       contract, conservative `allowed-tools` guidance, and Tenon namespace tests
       shipped in #230. See *Skillify Upgrade — creative UX execution unit*
       above.
 - [x] **Natural-language Skillify routing** — explicit "save/update/fix this as a
       skill" requests normalize to the `/skillify` path; shipped in #271.
 - [x] Skill-content write classification for `.agents/skills/**` (permission / audit).
-- [x] Diff / full-`SKILL.md` preview + confirmation carried by the Skillify v2
-      body (#230); no new model-facing skill CRUD tool.
+- [x] Diff / full-`SKILL.md` preview available when a material choice remains;
+      explicit fully determined requests write directly with no new model-facing
+      skill CRUD tool.
 - [x] Provenance metadata in tool details + `skill.created` / `skill.patched` /
       `skill.replaced` events.
 - [x] **PR A — skill acceptance** (close the ratification loop) — **merged #175**: explicit
@@ -596,7 +587,8 @@ deliberately conservative (self-modification §8):
 - [x] Skill registry hot-reload (extend `discoverSkillDirsForPaths`).
 - [x] Allowed-tools no-escalation guard; model-invocable defaults user-only until ratified.
 - [x] Deny executable-script support files in the self-authoring file-tool path.
-- [ ] Ratify + sandbox gate for executable-script support files.
+- [ ] Validated executable-support-file route through the shared
+      `AgentProcessExecutor`; no duplicate sandbox or trust prompt.
 - [ ] Curation dry-run reports (agent-created only) — M2.
 - [x] Spec update: `docs/spec/agent-skills.md` (built-in source + authoring + hot-reload).
 

@@ -3,6 +3,9 @@ import { TOOL_CATALOG } from '../../src/core/agentToolCatalog';
 import type { AgentIssueToolRuntime } from '../../src/main/agentIssueTools';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
+const sessionPartitions: string[] = [];
+const sessionFetches: Array<{ input: string; init?: RequestInit }> = [];
+
 mock.module('electron', () => ({
   app: {
     getPath: () => '/tmp',
@@ -11,9 +14,26 @@ mock.module('electron', () => ({
   },
   BrowserWindow: class BrowserWindow {},
   session: {
-    fromPartition: () => ({
-      clearStorageData: async () => undefined,
-    }),
+    get defaultSession() {
+      throw new Error('web_fetch must not use Electron defaultSession');
+    },
+    fromPartition: (partition: string) => {
+      sessionPartitions.push(partition);
+      return {
+        fetch: async (input: string, init?: RequestInit) => {
+          sessionFetches.push({ input, init });
+          return new Response('credential-free response '.repeat(80), {
+            status: 200,
+            headers: { 'content-type': 'text/plain; charset=utf-8' },
+          });
+        },
+        clearAuthCache: async () => undefined,
+        clearCache: async () => undefined,
+        setPermissionCheckHandler: () => undefined,
+        setPermissionRequestHandler: () => undefined,
+        clearStorageData: async () => undefined,
+      };
+    },
   },
 }));
 
@@ -65,6 +85,25 @@ describe('agent tool catalog', () => {
 
     expect(names).not.toContain('data_import');
     expect(names).toContain('node_create');
+  });
+
+  test('web_fetch uses a credential-free session instead of Electron defaultSession', async () => {
+    sessionPartitions.length = 0;
+    sessionFetches.length = 0;
+    const { createAgentTools } = await import('../../src/main/agentTools');
+    const tool = createAgentTools(undefined, { localFileRoot: '/tmp', scratchRoot: '/tmp' })
+      .find((candidate) => candidate.name === 'web_fetch');
+    if (!tool) throw new Error('Expected web_fetch tool.');
+
+    const result = await tool.execute('web-fetch-session-test', { url: 'https://example.test/content' });
+
+    expect(result.details?.ok).toBe(true);
+    expect(sessionPartitions).toEqual(['web-fetch-http']);
+    expect(sessionFetches).toHaveLength(1);
+    expect(sessionFetches[0]).toMatchObject({
+      input: 'https://example.test/content',
+      init: { credentials: 'omit', redirect: 'manual' },
+    });
   });
 });
 
