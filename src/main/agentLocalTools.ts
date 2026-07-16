@@ -37,6 +37,7 @@ import { buildAgentLocalToolProcessEnv, runAgentToolProcess } from './agentToolP
 import { resolveRipgrepCommand, type ResolvedRipgrepCommand } from './agentRipgrep';
 import {
   createFolderCapabilitySnapshot,
+  protectedRootForPath,
   type FolderCapabilitySnapshot,
 } from './agentFolderCapabilities';
 import { getAgentProcessExecutor, processSandboxDenied } from './agentProcessExecutor';
@@ -60,19 +61,19 @@ export interface AgentLocalWorkspaceContext {
   scratchRoot: string;
   // User-handed folders and active read-only skill resources.
   // These widen file-tool containment without changing the relative-path base.
-  permissionRoots: ResolvedAgentLocalPermissionRoot[];
+  capabilityRoots: ResolvedAgentLocalCapabilityRoot[];
   processCapabilities: FolderCapabilitySnapshot;
   protectedStoreRoot?: string;
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
 }
 
-export interface AgentLocalPermissionRoot {
+export interface AgentLocalCapabilityRoot {
   access: 'read' | 'write';
   root: string;
 }
 
-interface ResolvedAgentLocalPermissionRoot extends AgentLocalPermissionRoot {
+interface ResolvedAgentLocalCapabilityRoot extends AgentLocalCapabilityRoot {
   realRoot: string;
   isDirectory: boolean;
 }
@@ -694,7 +695,7 @@ function createWorkspaceContext(
   return {
     root,
     scratchRoot: resolvedScratchRoot,
-    permissionRoots: [],
+    capabilityRoots: [],
     protectedStoreRoot,
     processCapabilities: createFolderCapabilitySnapshot({
       workspaceRoot: root,
@@ -716,12 +717,12 @@ export function createAgentLocalWorkspaceContext(
   return createWorkspaceContext(localRoot, scratchRoot, skillRuntime, protectedStoreRoot);
 }
 
-export function setAgentLocalPermissionRoots(
+export function setAgentLocalCapabilityRoots(
   workspace: AgentLocalWorkspaceContext,
-  roots: readonly AgentLocalPermissionRoot[],
+  roots: readonly AgentLocalCapabilityRoot[],
 ): void {
-  workspace.permissionRoots = roots
-    .flatMap((entry): ResolvedAgentLocalPermissionRoot[] => {
+  workspace.capabilityRoots = roots
+    .flatMap((entry): ResolvedAgentLocalCapabilityRoot[] => {
       const root = path.resolve(entry.root);
       const resolved = resolveCanonicalPath(root);
       if (!resolved) return [];
@@ -735,10 +736,10 @@ export function setAgentLocalPermissionRoots(
   workspace.processCapabilities = createFolderCapabilitySnapshot({
     workspaceRoot: workspace.root,
     scratchRoot: workspace.scratchRoot,
-    activeSkillReadRoots: workspace.permissionRoots.filter((entry) => entry.access === 'read').map((entry) => entry.realRoot),
+    activeSkillReadRoots: workspace.capabilityRoots.filter((entry) => entry.access === 'read').map((entry) => entry.realRoot),
     includeSystemRoots: true,
     protectedRoots: workspace.protectedStoreRoot ? [workspace.protectedStoreRoot] : [],
-  }, workspace.permissionRoots.filter((entry) => entry.access === 'write').map((entry) => entry.realRoot));
+  }, workspace.capabilityRoots.filter((entry) => entry.access === 'write').map((entry) => entry.realRoot));
 }
 
 export async function restorePostCompactReadFiles(
@@ -3194,8 +3195,8 @@ function countOccurrences(content: string, needle: string): number {
 // The allowed file area is asymmetric: the agent may WRITE under the workdir and handed
 // write-scope roots, but may READ the workdir, handed read/write roots, and the app-owned
 // scratch root (materialized attachments, fetched binaries, overflow logs the app places
-// there). `access` selects which rule applies, so both this layer and the permission engine
-// (`agentPermissions.ts`) enforce the same boundary.
+// there). `access` selects which rule applies, so both this layer and the capability evaluator
+// (`agentCapabilities.ts`) enforce the same boundary.
 type FileAccess = 'read' | 'write';
 
 function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, access: FileAccess): string {
@@ -3208,6 +3209,16 @@ function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, ac
   const expanded = expandHome(inputPath);
   const requestedPath = path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
   const resolved = resolveCanonicalPath(requestedPath);
+  const protectedRoot = resolved
+    ? protectedRootForPath(workspace.processCapabilities, resolved.realPath, access)
+    : null;
+  if (protectedRoot) {
+    throw new LocalToolFailure(
+      'control_plane_unavailable',
+      `Agent file tools cannot access Tenon control state under ${protectedRoot}.`,
+      'Use Tenon product commands and settings for control-state changes.',
+    );
+  }
   if (!resolved || !isInsideAnyRoot(allowedRoots, resolved.realPath)) {
     throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
   }
@@ -3219,12 +3230,12 @@ export function resolveAgentLocalReadPath(workspace: AgentLocalWorkspaceContext,
 }
 
 // The real paths a file tool may touch for the given access: the workdir always, handed
-// permission roots whose access covers the requested operation, plus — for reads — the
+// capability roots whose access covers the requested operation, plus — for reads — the
 // scratch root when it resolves to a distinct, existing location (scratch is `<root>/tmp`
 // by default, already covered by the workdir).
 function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, access: FileAccess): string[] {
   const roots = [rootRealPath];
-  for (const entry of workspace.permissionRoots) {
+  for (const entry of workspace.capabilityRoots) {
     if (access === 'write' && entry.access !== 'write') continue;
     if (!roots.some((root) => isResolvedPathInside(root, entry.realRoot))) {
       roots.push(entry.realRoot);
@@ -3271,7 +3282,7 @@ function isFileAreaRoot(workspace: WorkspaceContext, filePath: string): boolean 
   const candidate = resolveCanonicalPath(filePath);
   if (!rootRealPath || !candidate) return false;
   if (rootRealPath === candidate.realPath) return true;
-  return workspace.permissionRoots.some((entry) => {
+  return workspace.capabilityRoots.some((entry) => {
     if (entry.access !== 'write') return false;
     return entry.realRoot === candidate.realPath && (entry.isDirectory || isDirectoryPath(entry.realRoot));
   });
@@ -3279,11 +3290,7 @@ function isFileAreaRoot(workspace: WorkspaceContext, filePath: string): boolean 
 
 function safeRealPath(target: string): string | null {
   try {
-    const resolved = realpathSync.native(path.resolve(target));
-    // A root that resolves to the filesystem root would make the whole disk "inside" it; treat
-    // it as no root (mirrors localFileReferenceSecurity.trustedRootRealPath).
-    if (path.parse(resolved).root === resolved) return null;
-    return resolved;
+    return realpathSync.native(path.resolve(target));
   } catch {
     return null;
   }
@@ -3300,7 +3307,6 @@ function resolveCanonicalPath(target: string): CanonicalPathResolution | null {
   if (!existingRealPath) return null;
   const suffix = path.relative(existingPath, requestedPath);
   const realPath = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
-  if (path.parse(realPath).root === realPath) return null;
   return { realPath };
 }
 

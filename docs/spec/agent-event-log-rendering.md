@@ -47,7 +47,7 @@ Tenon owns:
 
 - product event log
 - local tool gateway
-- permissions and approvals
+- capability checks and product-input interactions
 - outliner/file/bash/web tool effects
 - undo grouping
 - payload storage
@@ -137,7 +137,7 @@ The old mutable chat snapshot store is no longer part of the runtime.
   for how a profile owns model + effort.
 - A node's **Send to composer** action is a durable renderer request, not a
   fire-and-forget event. App opens the agent rail, while the request remains
-  pending across Work, Dream, approval/question, and component-unmount states
+  pending across Work, Dream, capability/question, and component-unmount states
   until a mounted editor inserts the reference and explicitly acknowledges it.
 
 ## Reference Analysis
@@ -169,7 +169,7 @@ interface AgentChatSession {
 ```
 
 That model was intentionally replaced. It supported simple branch rendering, but
-it was a poor source of truth for streaming, debug replay, approvals, tool
+it was a poor source of truth for streaming, debug replay, interactions, tool
 lifecycle analysis, performance inspection, and durable payload references.
 
 ### nodex
@@ -228,7 +228,7 @@ Keep from lin-agent:
 Adapt for Tenon:
 
 - store runtime event lifecycle, not only conversation lines
-- keep branch selection and approval/tool lifecycle as first-class events
+- keep branch selection and capability/tool lifecycle as first-class events
 - derive conversation rows from events instead of storing a collapsed message
   list as truth
 
@@ -414,14 +414,12 @@ type AgentEventType =
   | 'tool_call.failed'
   | 'tool_result.created'
   | 'tool_result.replaced'
-  | 'tool.permission.checked'
-  | 'tool.permission.resolved'
+  | 'tool.capability.checked'
+  | 'tool.capability.resolved'
   | 'user_question.requested'
   | 'user_question.answered'
   | 'user_question.cancelled'
   | 'widget_state.updated'
-  | 'approval.requested'
-  | 'approval.resolved'
   | 'follow_up.queued'
   | 'follow_up.applied'
   | 'notification.created'
@@ -1765,7 +1763,7 @@ user sends prompt
   -> append run.started
   -> stream pi-mono
   -> append assistant/tool events
-  -> append approval events when approval runtime is enabled
+  -> append capability audit events around tool preflight and folder acquisition
   -> on failure, append assistant_message.failed for the terminal assistant turn
   -> append run.completed or run.failed
   -> write checkpoint
@@ -1883,9 +1881,8 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Streaming a long assistant response does not stall outliner editing.
 - Large media and tool outputs do not enter event lines, IPC snapshots, or React
   transcript state.
-- Branching, retry, edit, and tool lifecycle are represented as events; approval
-  and compaction are already reserved in the schema and should be emitted when
-  those runtime features become active.
+- Branching, retry, edit, tool lifecycle, and capability outcomes are represented
+  as events; compaction is represented as log data rather than hidden mutation.
 - Self-maintenance mutations are reconstructable from events and never require
   reading raw settings files in the renderer.
 

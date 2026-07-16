@@ -22,8 +22,8 @@ import {
   type AgentRunScope,
   type AgentRunLogEventType,
   type AgentRunStatus,
-  type ToolPermissionCheckedEvent,
-  type ToolPermissionResolvedEvent,
+  type ToolCapabilityCheckedEvent,
+  type ToolCapabilityResolvedEvent,
 } from '../core/agentEventLog';
 import {
   assertValidRunExecutionStatusTransition,
@@ -115,12 +115,12 @@ export interface AgentRunLedgerWriterOptions {
   persister: AgentRunLedgerContentPersister;
 }
 
-type RunPermissionEventInput<T extends ToolPermissionCheckedEvent | ToolPermissionResolvedEvent> =
+type RunCapabilityEventInput<T extends ToolCapabilityCheckedEvent | ToolCapabilityResolvedEvent> =
   Omit<T, keyof AgentEventBase> & Pick<T, 'type' | 'actor'>;
 
-export type AgentRunPermissionEventInput =
-  | RunPermissionEventInput<ToolPermissionCheckedEvent>
-  | RunPermissionEventInput<ToolPermissionResolvedEvent>;
+export type AgentRunCapabilityEventInput =
+  | RunCapabilityEventInput<ToolCapabilityCheckedEvent>
+  | RunCapabilityEventInput<ToolCapabilityResolvedEvent>;
 
 export class AgentRunLedgerWriter {
   private readonly runs = new Map<string, RunLedgerRunState>();
@@ -188,7 +188,7 @@ export class AgentRunLedgerWriter {
     });
   }
 
-  async appendPermissionEvents(runId: string, inputs: readonly AgentRunPermissionEventInput[]): Promise<void> {
+  async appendCapabilityEvents(runId: string, inputs: readonly AgentRunCapabilityEventInput[]): Promise<void> {
     if (inputs.length === 0) return;
     const run = this.requireRun(runId);
     await this.enqueue(runId, run, async () => {

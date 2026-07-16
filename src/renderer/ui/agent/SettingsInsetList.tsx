@@ -8,7 +8,7 @@ import { cx } from '../primitives/cx';
 // NEUTRAL (B3/B4) — never the system accent. Geometry derives from the radius /
 // hairline ladders (B9); see settings-inset-list.css.
 //
-// This is the reusable A7 foundation shared by providers, permissions, skills,
+// This is the reusable A7 foundation shared by providers, security, skills,
 // memory, and agent-profile panes.
 
 interface InsetGroupProps {

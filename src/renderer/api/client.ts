@@ -21,10 +21,10 @@ import type {
   AgentSessionReadInput,
   AgentSessionReadResult,
   AgentSessionTranscriptResult,
-  AgentPickScopeFolderResult,
+  AgentPickCapabilityFolderResult,
   AgentSlashCommandView,
-  AgentToolPermissionSettingsInput,
-  AgentToolPermissionSettingsView,
+  AgentCapabilitySettingsInput,
+  AgentCapabilitySettingsView,
   AgentDefinition,
   AgentDefinitionView,
   AgentAuthoringInput,
@@ -390,11 +390,11 @@ export const api = {
     command<{ queued: boolean }>('agent_steer_conversation', { conversationId, message }),
   agentClearSteer: (conversationId: string) =>
     command<void>('agent_clear_steer', { conversationId }),
-  agentResolveApproval: (
+  agentResolveCapability: (
     conversationId: string,
     requestId: string,
-    approved: boolean,
-  ) => command<{ resolved: boolean }>('agent_resolve_approval', { conversationId, requestId, approved }),
+    resolution: 'granted' | 'cancelled',
+  ) => command<{ resolved: boolean }>('agent_resolve_capability', { conversationId, requestId, resolution }),
   agentResolveUserQuestion: (
     conversationId: string,
     requestId: string,
@@ -418,14 +418,14 @@ export const api = {
     command<AgentProviderSettingsView>('agent_update_runtime_settings', { settings }),
   agentUpdateImageGenerationSettings: (settings: AgentImageGenerationSettingsInput) =>
     command<AgentProviderSettingsView>('agent_update_image_generation_settings', { settings }),
-  agentGetToolPermissionSettings: () =>
-    command<AgentToolPermissionSettingsView>('agent_get_tool_permission_settings'),
-  agentUpdateToolPermissionSettings: (settings: AgentToolPermissionSettingsInput) =>
-    command<AgentToolPermissionSettingsView>('agent_update_tool_permission_settings', { settings }),
-  agentAppendToolPermissionBlock: (ruleValue: string) =>
-    command<AgentToolPermissionSettingsView>('agent_append_tool_permission_block', { ruleValue }),
-  agentPickScopeFolder: (settings: AgentToolPermissionSettingsInput) =>
-    command<AgentPickScopeFolderResult>('agent_pick_scope_folder', { settings }),
+  agentGetCapabilitySettings: () =>
+    command<AgentCapabilitySettingsView>('agent_get_capability_settings'),
+  agentUpdateCapabilitySettings: (settings: AgentCapabilitySettingsInput) =>
+    command<AgentCapabilitySettingsView>('agent_update_capability_settings', { settings }),
+  agentAppendCapabilityBlock: (ruleValue: string) =>
+    command<AgentCapabilitySettingsView>('agent_append_capability_block', { ruleValue }),
+  agentPickCapabilityFolder: (settings: AgentCapabilitySettingsInput) =>
+    command<AgentPickCapabilityFolderResult>('agent_pick_capability_folder', { settings }),
   agentUpsertProviderConfig: (provider: AgentProviderConfigInput) =>
     command<AgentProviderSettingsView>('agent_upsert_provider_config', { provider }),
   agentDeleteProviderConfig: (providerId: string) =>

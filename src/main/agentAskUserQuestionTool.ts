@@ -76,7 +76,7 @@ export function createAskUserQuestionTool(
     label: 'Ask User Question',
     description: [
       'Ask the user for structured input when a required decision or missing information cannot be inferred.',
-      'Use this for product choices, required preferences, or free-text details. Do not use it for tool permission approval.',
+      'Use this for product choices, required preferences, or free-text details. Folder access uses the capability flow instead.',
       'Supports single-choice, multi-choice, and free-text questions. The result is keyed by stable question ids.',
     ].join(' '),
     parameters: ASK_USER_QUESTION_PARAMETERS,

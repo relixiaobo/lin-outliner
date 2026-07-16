@@ -8,7 +8,7 @@ import type {
   AgentDefinitionView,
   AgentDreamReadiness,
   AgentRenderDreamRunEntity,
-  AgentToolPermissionSettingsView,
+  AgentCapabilitySettingsView,
   SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
@@ -69,7 +69,7 @@ interface AgentSettingsViewProps {
 type SettingsCategory = SettingsCategoryTarget;
 type SettingsRoute = { type: 'category'; category: SettingsCategory };
 type RequestScope = 'settings' | 'section' | 'mutation' | 'dream';
-type PermissionRuleListKind = 'blocks';
+type CapabilityRuleListKind = 'blocks';
 
 interface DraftConfig {
   providerId: string;
@@ -221,11 +221,11 @@ const EMPTY_DRAFT: DraftConfig = {
 // Theme segment values and category rail order; their visible labels + hints are
 // localized at render (settings.general.theme* and settings.categories.*).
 const THEME_VALUES: readonly ThemeMode[] = ['system', 'light', 'dark'];
-const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'permissions', 'memory', 'skills', 'agents'];
+const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'security', 'memory', 'skills', 'agents'];
 const SETTINGS_CATEGORY_ICONS = {
   general: SettingsIcon,
   providers: DatabaseIcon,
-  permissions: PasswordIcon,
+  security: PasswordIcon,
   memory: BrainIcon,
   skills: SkillIcon,
   agents: AgentIcon,
@@ -259,8 +259,8 @@ function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
 
 export function AgentSettingsView({ onApplied, onClose, conversationId, initialTarget }: AgentSettingsViewProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
-  const [permissionSettings, setPermissionSettings] = useState<AgentToolPermissionSettingsView | null>(null);
-  const [permissionDraft, setPermissionDraft] = useState<AgentToolPermissionSettingsView | null>(null);
+  const [capabilitySettings, setCapabilitySettings] = useState<AgentCapabilitySettingsView | null>(null);
+  const [capabilityDraft, setCapabilityDraft] = useState<AgentCapabilitySettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
   // Route navigation history, so the window can offer macOS System Settings'
   // back / forward (‹ ›) chrome. Top-level categories and drill-down pages share
@@ -309,14 +309,14 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   // per-provider config opens in its own native window, not an in-renderer sheet.
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
   // App-level appearance preference (General pane). Independent of the provider/
-  // permission save flow: it applies immediately across all windows via the main
+  // capability save flow: it applies immediately across all windows via the main
   // process (nativeTheme.themeSource) and persists, so there is no Save step.
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
   // Opt-in OS-notification preference (General pane). Self-contained like the theme:
   // applies immediately, persisted by main, no Save step. Default off.
   const [osNotificationsEnabled, setOsNotificationsEnabled] = useState(false);
   const [diagnosticsBusy, setDiagnosticsBusy] = useState<null | 'reveal' | 'export'>(null);
-  const [scopeFolderBusy, setScopeFolderBusy] = useState(false);
+  const [capabilityFolderBusy, setCapabilityFolderBusy] = useState(false);
   // Display language: the picker reads/writes the shared i18n context (seeded before
   // first paint, broadcast across windows), so it applies instantly like the theme.
   const { locale, t, setLocale } = useI18n();
@@ -488,13 +488,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
 
     void Promise.all([
       api.agentGetProviderSettings(),
-      api.agentGetToolPermissionSettings(),
+      api.agentGetCapabilitySettings(),
     ])
-      .then(([next, nextPermissions]) => {
+      .then(([next, nextCapabilities]) => {
         if (!isCurrentRequest('settings', requestId)) return;
         setSettings(next);
-        setPermissionSettings(nextPermissions);
-        setPermissionDraft(nextPermissions);
+        setCapabilitySettings(nextCapabilities);
+        setCapabilityDraft(nextCapabilities);
         setDraft(resolveInitialDraft(next));
       })
       .catch((caught) => {
@@ -523,7 +523,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   }, []);
 
   useEffect(() => {
-    if (category === 'permissions' || category === 'skills') {
+    if (category === 'skills') {
       const id = beginRequest('section');
       setLoadingSkills(true);
       setError(null);
@@ -603,12 +603,12 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     [providerCatalog, settings],
   );
 
-  const permissionFolders = permissionDraft?.folders ?? permissionSettings?.folders ?? [];
-  const permissionBlocks = permissionDraft?.blocks ?? permissionSettings?.blocks ?? [];
+  const capabilityFolders = capabilityDraft?.folders ?? capabilitySettings?.folders ?? [];
+  const capabilityBlocks = capabilityDraft?.blocks ?? capabilitySettings?.blocks ?? [];
   const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
-  const permissionDraftDirty = permissionDraft !== permissionSettings;
-  const showFooterActions = category === 'permissions'
-    ? permissionDraftDirty || runtimeDraftDirty
+  const capabilityDraftDirty = capabilityDraft !== capabilitySettings;
+  const showFooterActions = category === 'security'
+    ? capabilityDraftDirty || runtimeDraftDirty
     : (category === 'skills' || category === 'agents') && runtimeDraftDirty;
 
   // Custom (OpenAI-compatible) providers are configured in the same native window,
@@ -617,22 +617,22 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     void window.lin?.openProviderConfig?.({ providerId: '', mode: 'custom' });
   }
 
-  function revokePermissionRule(kind: PermissionRuleListKind, rule: string) {
-    const base = permissionDraft ?? permissionSettings ?? emptyPermissionSettings();
-    setPermissionDraft({
+  function removeCapabilityRule(kind: CapabilityRuleListKind, rule: string) {
+    const base = capabilityDraft ?? capabilitySettings ?? emptyCapabilitySettings();
+    setCapabilityDraft({
       ...base,
       [kind]: base[kind].filter((candidate) => candidate !== rule),
     });
   }
 
-  function revokePermissionFolder(folder: string) {
-    const base = permissionDraft ?? permissionSettings ?? emptyPermissionSettings();
-    setPermissionDraft({ ...base, folders: base.folders.filter((candidate) => candidate !== folder) });
+  function revokeCapabilityFolder(folder: string) {
+    const base = capabilityDraft ?? capabilitySettings ?? emptyCapabilitySettings();
+    setCapabilityDraft({ ...base, folders: base.folders.filter((candidate) => candidate !== folder) });
   }
 
-  function renderPermissionRuleRows(
+  function renderCapabilityRuleRows(
     rules: readonly string[],
-    kind: PermissionRuleListKind,
+    kind: CapabilityRuleListKind,
     emptyLabel: string,
     actionLabel: string,
   ) {
@@ -640,11 +640,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     return rules.map((rule) => (
       <InsetRow
         key={rule}
-        label={permissionRuleLabel(rule, t)}
+        label={capabilityRuleLabel(rule, t)}
         sublabel={<span className="inset-row-code">{rule}</span>}
         trailing={(
           <Button
-            onClick={() => revokePermissionRule(kind, rule)}
+            onClick={() => removeCapabilityRule(kind, rule)}
             size="sm"
             variant="ghost"
           >
@@ -656,26 +656,26 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     ));
   }
 
-  async function handScopeFolder() {
-    const base = permissionDraft ?? permissionSettings ?? emptyPermissionSettings();
-    setScopeFolderBusy(true);
+  async function chooseCapabilityFolder() {
+    const base = capabilityDraft ?? capabilitySettings ?? emptyCapabilitySettings();
+    setCapabilityFolderBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const result = await api.agentPickScopeFolder(base);
+      const result = await api.agentPickCapabilityFolder(base);
       if (!mountedRef.current || result.canceled) return;
-      setPermissionSettings(result.settings);
-      setPermissionDraft(result.settings);
-      setNotice(t.settings.permissions.handedFolderNotice({ path: result.path ?? '' }));
+      setCapabilitySettings(result.settings);
+      setCapabilityDraft(result.settings);
+      setNotice(t.settings.security.handedFolderNotice({ path: result.path ?? '' }));
       await onApplied();
     } catch (caught) {
       if (mountedRef.current) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      if (mountedRef.current) setScopeFolderBusy(false);
+      if (mountedRef.current) setCapabilityFolderBusy(false);
     }
   }
 
-  // The footer Save persists ONLY what this pane owns — runtime (permissions /
+  // The footer Save persists ONLY what this pane owns — runtime (security /
   // skills / agents) settings. It never creates or edits a provider row: row
   // creation lives solely in the per-provider config window and the OAuth login
   // (provider-config-cleanup A1). Materializing a keyless row here for whatever
@@ -696,19 +696,19 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         disabledSkills: draft.disabledSkills,
         disabledAgents: draft.disabledAgents,
       });
-      const nextPermissions = permissionDraft && permissionDraft !== permissionSettings
-        ? await api.agentUpdateToolPermissionSettings({
-            folders: permissionDraft.folders,
-            blocks: permissionDraft.blocks,
+      const nextCapabilities = capabilityDraft && capabilityDraft !== capabilitySettings
+        ? await api.agentUpdateCapabilitySettings({
+            folders: capabilityDraft.folders,
+            blocks: capabilityDraft.blocks,
           })
         : null;
 
       const next = await api.agentGetProviderSettings();
       if (isCurrentRequest('mutation', requestId)) {
         setSettings(next);
-        if (nextPermissions) {
-          setPermissionSettings(nextPermissions);
-          setPermissionDraft(nextPermissions);
+        if (nextCapabilities) {
+          setCapabilitySettings(nextCapabilities);
+          setCapabilityDraft(nextCapabilities);
         }
         setDraft(resolveInitialDraft(next));
         setCreatingCustom(false);
@@ -1096,36 +1096,36 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   </InsetGroup>
                 </div>
               </section>
-            ) : category === 'permissions' ? (
-              <section className="agent-settings-section settings-permissions-section" aria-label={t.settings.permissions.sectionAriaLabel}>
+            ) : category === 'security' ? (
+              <section className="agent-settings-section settings-security-section" aria-label={t.settings.security.sectionAriaLabel}>
                 <InsetGroup
-                  ariaLabel={t.settings.permissions.boundariesAriaLabel}
-                  label={t.settings.permissions.boundariesGroup}
+                  ariaLabel={t.settings.security.boundariesAriaLabel}
+                  label={t.settings.security.boundariesGroup}
                 >
                   <InsetRow
-                    label={t.settings.permissions.handFolderLabel}
+                    label={t.settings.security.handFolderLabel}
                     leading={<FolderIcon size={ICON_SIZE.menu} aria-hidden />}
-                    sublabel={t.settings.permissions.handFolderSublabel}
+                    sublabel={t.settings.security.handFolderSublabel}
                     trailing={(
                       <Button
-                        disabled={saving || scopeFolderBusy}
-                        onClick={() => void handScopeFolder()}
+                        disabled={saving || capabilityFolderBusy}
+                        onClick={() => void chooseCapabilityFolder()}
                         size="sm"
                         variant="secondary"
                       >
-                        {scopeFolderBusy ? t.settings.permissions.handingFolderAction : t.settings.permissions.handFolderAction}
+                        {capabilityFolderBusy ? t.settings.security.handingFolderAction : t.settings.security.handFolderAction}
                       </Button>
                     )}
                     wrap
                   />
-                  {permissionFolders.length === 0 ? <InsetRow disabled label={t.settings.permissions.noBoundaries} /> : permissionFolders.map((folder) => (
+                  {capabilityFolders.length === 0 ? <InsetRow disabled label={t.settings.security.noBoundaries} /> : capabilityFolders.map((folder) => (
                     <InsetRow
                       key={folder}
                       label={folder}
                       leading={<FolderIcon size={ICON_SIZE.menu} aria-hidden />}
                       trailing={(
-                        <Button onClick={() => revokePermissionFolder(folder)} size="sm" variant="ghost">
-                          {t.settings.permissions.revokeGrant}
+                        <Button onClick={() => revokeCapabilityFolder(folder)} size="sm" variant="ghost">
+                          {t.settings.security.revokeGrant}
                         </Button>
                       )}
                       wrap
@@ -1133,24 +1133,24 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   ))}
                 </InsetGroup>
 
-                <InsetGroup ariaLabel={t.settings.permissions.blocksAriaLabel} label={t.settings.permissions.blocksGroup}>
-                  {renderPermissionRuleRows(
-                    permissionBlocks,
+                <InsetGroup ariaLabel={t.settings.security.blocksAriaLabel} label={t.settings.security.blocksGroup}>
+                  {renderCapabilityRuleRows(
+                    capabilityBlocks,
                     'blocks',
-                    t.settings.permissions.noBlocks,
-                    t.settings.permissions.removeRule,
+                    t.settings.security.noBlocks,
+                    t.settings.security.removeRule,
                   )}
                 </InsetGroup>
 
                 <InsetGroup
-                  ariaLabel={t.settings.permissions.trustLevelAriaLabel}
-                  footnote={t.settings.permissions.hardBlockNote}
-                  label={t.settings.permissions.trustLevelGroup}
+                  ariaLabel={t.settings.security.systemBoundaryAriaLabel}
+                  footnote={t.settings.security.systemBoundaryNote}
+                  label={t.settings.security.systemBoundaryGroup}
                 >
                   <InsetRow
-                    className="settings-permission-mode-row"
-                    label={t.settings.permissions.delegatedOperatorLabel}
-                    sublabel={t.settings.permissions.delegatedOperatorSublabel}
+                    className="settings-system-boundary-row"
+                    label={t.settings.security.systemBoundaryLabel}
+                    sublabel={t.settings.security.systemBoundarySublabel}
                     wrap
                   />
                 </InsetGroup>
@@ -1388,7 +1388,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
 
             {/* Providers commit per-provider through their own sheet (Cancel/Save)
                 and the General pane applies instantly (no draft), like native
-                Settings — so the global footer is only for the runtime/permission
+                Settings — so the global footer is only for runtime/capability
                 categories that batch a draft into one Save. */}
             {showFooterActions ? (
               <footer className="agent-settings-footer">
@@ -1560,13 +1560,13 @@ function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
   return provider.active ? s.active : s.ready;
 }
 
-function permissionRuleLabel(rule: string, t: Messages): string {
-  if (rule.startsWith('Command(')) return t.settings.permissions.commandGrantLabel;
-  if (rule.startsWith('Action(')) return t.settings.permissions.actionRuleLabel;
-  return t.settings.permissions.unknownGrantLabel;
+function capabilityRuleLabel(rule: string, t: Messages): string {
+  if (rule.startsWith('Command(')) return t.settings.security.commandBlockLabel;
+  if (rule.startsWith('Action(')) return t.settings.security.actionBlockLabel;
+  return t.settings.security.unknownBlockLabel;
 }
 
-function emptyPermissionSettings(): AgentToolPermissionSettingsView {
+function emptyCapabilitySettings(): AgentCapabilitySettingsView {
   return { folders: [], blocks: [], diagnostics: [] };
 }
 

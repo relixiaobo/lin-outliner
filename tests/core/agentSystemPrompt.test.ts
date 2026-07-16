@@ -78,7 +78,7 @@ describe('agent system prompt composer', () => {
     });
     expect(prompt).toContain('# System context');
     expect(prompt).toContain('# Communication and safety');
-    expect(prompt).toContain('Permission-denied or out-of-boundary');
+    expect(prompt).toContain("folder capability flow");
     expect(prompt).toContain('# Skill dependencies');
     expect(prompt).toContain('verify whether the dependency is already available');
     expect(prompt).toContain('You are "Reviewer" (@reviewer).');

@@ -65,7 +65,7 @@ export type {
 } from '../../core/types';
 
 export type {
-  AgentApprovalRequestView,
+  AgentCapabilityRequestView,
   AgentAuthoringInput,
   AgentDefinitionView,
   AgentRunDetailPayload,
@@ -96,7 +96,7 @@ export type {
   AgentRenderDreamRunEntity,
 } from '../../core/agentRenderProjection';
 
-export interface AgentToolPermissionSettingsView {
+export interface AgentCapabilitySettingsView {
   folders: string[];
   blocks: string[];
   diagnostics: Array<{
@@ -106,16 +106,16 @@ export interface AgentToolPermissionSettingsView {
   }>;
 }
 
-export interface AgentToolPermissionSettingsInput {
+export interface AgentCapabilitySettingsInput {
   folders: string[];
   blocks: string[];
 }
 
-export interface AgentPickScopeFolderResult {
+export interface AgentPickCapabilityFolderResult {
   canceled: boolean;
   path?: string;
   folder?: string;
-  settings: AgentToolPermissionSettingsView;
+  settings: AgentCapabilitySettingsView;
 }
 
 export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';

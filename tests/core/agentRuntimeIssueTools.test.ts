@@ -193,13 +193,13 @@ describe('agent runtime Issue tools', () => {
   const roots: string[] = [];
 
   beforeEach(async () => {
-    const { resetFolderCapabilityServiceForTests } = await import('../../src/main/agentToolPermissionStore');
+    const { resetFolderCapabilityServiceForTests } = await import('../../src/main/agentCapabilityStore');
     resetFolderCapabilityServiceForTests();
     await rm(electronUserDataRoot, { recursive: true, force: true });
   });
 
   afterEach(async () => {
-    const { resetFolderCapabilityServiceForTests } = await import('../../src/main/agentToolPermissionStore');
+    const { resetFolderCapabilityServiceForTests } = await import('../../src/main/agentCapabilityStore');
     resetFolderCapabilityServiceForTests();
     await Promise.allSettled(drainableRuntimes.splice(0).map((runtime) => runtime.drainPendingWrites()));
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
@@ -273,7 +273,7 @@ describe('agent runtime Issue tools', () => {
     eventStore.readRunMetaProjection = originalReadRunMetaProjection;
   });
 
-  test('applies Issue tool calls without an approval interruption', async () => {
+  test('applies Issue tool calls without a capability interruption', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-tools-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-tools-data-'));
     roots.push(localRoot, dataRoot);
@@ -333,7 +333,7 @@ describe('agent runtime Issue tools', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(calls[0]?.tools).toContain('issue_update');
-    expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
+    expect(sink.events.some((event) => event.type === 'capability_request')).toBe(false);
     const read = await store.read({ target: issue.target, include: ['activity'] });
     expect(read.issue?.confirmation.confirmedBy).toEqual(actor);
     expect(read.issue?.status).toMatchObject({ name: 'Started', category: 'started' });
@@ -458,7 +458,7 @@ describe('agent runtime Issue tools', () => {
     expect(rootDeliveryContexts).toHaveLength(1);
     expect(rootDeliveryContexts[0]).toContain('Weather issue execution result.');
     expect((await runtime.listConversations()).map((entry) => entry.title)).not.toContain('Query Beijing district weather');
-    expect(sink.events.some((event) => event.type === 'approval_request')).toBe(false);
+    expect(sink.events.some((event) => event.type === 'capability_request')).toBe(false);
     const state = await store.state();
     expect(Object.values(state.sessions)).toHaveLength(1);
     const session = Object.values(state.sessions)[0];
@@ -581,15 +581,15 @@ describe('agent runtime Issue tools', () => {
     const conversation = await runtime.restoreLatestConversation();
     await runtime.sendMessage(conversation.conversationId, 'Create background work for the external source.');
     await waitFor(() => sink.events.some((event) => (
-      event.type === 'approval_request'
+      event.type === 'capability_request'
       && event.conversationId === conversation.conversationId
     )), 3_000);
-    const approval = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
+    const capability = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
+      event.type === 'capability_request'
       && event.conversationId === conversation.conversationId
     ));
-    if (!approval) throw new Error('Expected durable folder capability request.');
-    expect(approval.request.folders).toEqual([canonicalOutsideRoot]);
+    if (!capability) throw new Error('Expected durable folder capability request.');
+    expect(capability.request.folders).toEqual([canonicalOutsideRoot]);
 
     const store = AgentIssueStore.forAgentDataRoot(dataRoot);
     await waitFor(async () => Object.values((await store.state()).sessions).some((session) => session.state === 'error'), 3_000);
@@ -597,9 +597,9 @@ describe('agent runtime Issue tools', () => {
     const failedSession = Object.values(beforeGrant.sessions)[0]!;
     expect(failedSession.errorMessage).toContain('required folder capability is missing');
     const restoredPending = await runtime.restoreConversation(conversation.conversationId);
-    expect(restoredPending.pendingApprovals?.map((request) => request.requestId)).toContain(approval.requestId);
+    expect(restoredPending.pendingCapabilities?.map((request) => request.requestId)).toContain(capability.requestId);
 
-    await runtime.resolveApproval(conversation.conversationId, approval.requestId, true);
+    await runtime.resolveCapability(conversation.conversationId, capability.requestId, 'granted');
     await waitFor(async () => {
       const state = await store.state();
       return Object.values(state.sessions).length === 2
@@ -622,17 +622,17 @@ describe('agent runtime Issue tools', () => {
     expect(sessionToolCalls).toBe(2);
 
     const restoredResolved = await runtime.restoreConversation(conversation.conversationId);
-    expect(restoredResolved.pendingApprovals ?? []).toHaveLength(0);
+    expect(restoredResolved.pendingCapabilities ?? []).toHaveLength(0);
     const originEvents = await new AgentEventStore(dataRoot)
       .readConversationStreamEvents(conversation.conversationId);
     expect(originEvents.find((event) => (
       event.type === 'notification.created'
-      && event.folderCapability?.requestId === approval.requestId
+      && event.folderCapability?.requestId === capability.requestId
     ))).toMatchObject({ kind: 'needs_input' });
     expect(originEvents.find((event) => (
-      event.type === 'tool.permission.resolved'
-      && event.requestId === approval.requestId
-    ))).toMatchObject({ status: 'approved', resolvedBy: 'folder_grant' });
+      event.type === 'tool.capability.resolved'
+      && event.requestId === capability.requestId
+    ))).toMatchObject({ status: 'available', resolvedBy: 'folder_grant' });
   });
 
   test('keeps an active conversation turn alive across same-process restore', async () => {
@@ -1143,7 +1143,7 @@ describe('agent runtime Issue tools', () => {
     const rootBinding = rootSession ? await store.executionForSession(rootSession.id) : null;
     if (!rootBinding) throw new Error('Expected an execution binding for the attended root Session.');
     const rootRunEvents = await new AgentEventStore(dataRoot).readRunStreamEvents(rootBinding.executionId);
-    const permissionIndex = rootRunEvents.findIndex((event) => event.type === 'tool.permission.checked');
+    const capabilityIndex = rootRunEvents.findIndex((event) => event.type === 'tool.capability.checked');
     const toolResultIndex = rootRunEvents.findIndex((event) => event.type === 'tool_result.created');
     expect(rootIssue?.origin).toEqual({ type: 'conversation', conversationId: conversation.conversationId });
     expect(childIssue).toMatchObject({
@@ -1153,8 +1153,8 @@ describe('agent runtime Issue tools', () => {
     expect(parentResumeCount).toBe(1);
     expect(rootSession?.latestOutput).toBe('Run completed without a text result.');
     expect(rootRunEvents.map((event) => event.seq)).toEqual(rootRunEvents.map((event) => event.seq).sort((a, b) => a - b));
-    expect(permissionIndex).toBeGreaterThan(-1);
-    expect(toolResultIndex).toBeGreaterThan(permissionIndex);
+    expect(capabilityIndex).toBeGreaterThan(-1);
+    expect(toolResultIndex).toBeGreaterThan(capabilityIndex);
     expect(Object.values(state.terminalDeliveries)).toHaveLength(2);
     expect(Object.values(state.terminalDeliveries).every((delivery) => delivery.status === 'delivered')).toBe(true);
 

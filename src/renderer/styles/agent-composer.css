@@ -326,7 +326,7 @@
   line-height: var(--line-meta-tight);
 }
 
-.agent-approval-card {
+.agent-capability-card {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -334,14 +334,14 @@
   padding: var(--space-2) var(--space-1);
 }
 
-.agent-approval-copy {
+.agent-capability-copy {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--space-1);
 }
 
-.agent-approval-title {
+.agent-capability-title {
   min-width: 0;
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
@@ -351,22 +351,22 @@
 }
 
 /* The card's secondary meta lines share one type ramp; only color varies. */
-.agent-approval-attribution,
-.agent-approval-target {
+.agent-capability-attribution,
+.agent-capability-target {
   font-size: var(--font-meta);
   line-height: var(--line-meta-tight);
   overflow-wrap: anywhere;
 }
 
-.agent-approval-attribution {
+.agent-capability-attribution {
   color: var(--text-faint);
 }
 
-.agent-approval-target {
+.agent-capability-target {
   color: var(--text-soft);
 }
 
-.agent-approval-details-toggle {
+.agent-capability-details-toggle {
   align-self: flex-start;
   border-radius: var(--radius-sm);
   color: var(--text-faint);
@@ -375,12 +375,12 @@
   padding: var(--space-1) 0;
 }
 
-.agent-approval-details-toggle:hover,
-.agent-approval-details-toggle[aria-expanded="true"] {
+.agent-capability-details-toggle:hover,
+.agent-capability-details-toggle[aria-expanded="true"] {
   color: var(--text-strong);
 }
 
-.agent-approval-details-panel {
+.agent-capability-details-panel {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -389,7 +389,7 @@
   padding: var(--space-4);
 }
 
-.agent-approval-actions {
+.agent-capability-actions {
   display: flex;
   min-width: 0;
   width: 100%;
@@ -398,7 +398,7 @@
   gap: var(--space-2);
 }
 
-.agent-approval-button {
+.agent-request-button {
   display: inline-flex;
   height: var(--control-size-xl);
   width: 100%;
@@ -413,41 +413,41 @@
   white-space: nowrap;
 }
 
-.agent-approval-button:not(.is-primary) {
+.agent-request-button:not(.is-primary) {
   background: var(--fill-2);
 }
 
-.agent-approval-button:not(.is-primary):hover:not(:disabled) {
+.agent-request-button:not(.is-primary):hover:not(:disabled) {
   background: var(--control-hover);
   color: var(--surface-inverse);
 }
 
-.agent-approval-button.is-primary {
+.agent-request-button.is-primary {
   background: var(--surface-inverse);
   color: var(--bg-content);
 }
 
-.agent-approval-button.is-primary:hover:not(:disabled) {
+.agent-request-button.is-primary:hover:not(:disabled) {
   background: var(--surface-inverse-strong);
   color: var(--bg-content);
 }
 
-.agent-approval-button:disabled {
+.agent-request-button:disabled {
   color: var(--text-quaternary);
   cursor: default;
 }
 
-.agent-approval-button.is-primary:disabled {
+.agent-request-button.is-primary:disabled {
   background: var(--fill-3);
   color: var(--bg-content);
 }
 
-.agent-approval-details-toggle:focus-visible,
-.agent-approval-button:focus-visible {
+.agent-capability-details-toggle:focus-visible,
+.agent-request-button:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 
-.agent-approval-detail {
+.agent-capability-detail {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -457,11 +457,11 @@
   line-height: var(--line-meta-tight);
 }
 
-.agent-approval-detail-label {
+.agent-capability-detail-label {
   color: var(--text-faint);
 }
 
-.agent-approval-detail-value {
+.agent-capability-detail-value {
   min-width: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -681,7 +681,7 @@
   margin-inline-start: auto;
 }
 
-.agent-question-nav-actions .agent-approval-button {
+.agent-question-nav-actions .agent-request-button {
   width: auto;
 }
 

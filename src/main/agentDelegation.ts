@@ -62,7 +62,7 @@ import {
   runProfileForIsolatedSkill,
   runProfileForPurpose,
 } from './agentRunProfiles';
-import { readOnlyAgentToolNames } from '../core/agentPermissionModel';
+import { readOnlyAgentToolNames } from '../core/agentActionCatalog';
 import {
   admitRunBudget,
   formatRunBudgetForPrompt,

@@ -104,13 +104,13 @@ import {
   testProviderConnection,
 } from './agentSettings';
 import {
-  appendAgentToolPermissionBlockView,
+  appendAgentCapabilityBlockView,
   getFolderCapabilityService,
   grantAgentFolderCapability,
   normalizedRuleList,
-  readAgentToolPermissionSettingsView,
-  writeAgentToolPermissionSettingsView,
-} from './agentToolPermissionStore';
+  readAgentCapabilitySettingsView,
+  writeAgentCapabilitySettingsView,
+} from './agentCapabilityStore';
 import { bindAgentProcessRevocation } from './agentProcessExecutor';
 import {
   isAgentCommand,
@@ -2230,7 +2230,7 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
   };
 }
 
-async function pickAgentScopeFolder(
+async function pickAgentCapabilityFolder(
   event: IpcMainInvokeEvent,
   draftSettings: { folders?: unknown; blocks?: unknown } | undefined,
 ) {
@@ -2239,7 +2239,7 @@ async function pickAgentScopeFolder(
   const dialogStrings = getMessages(effectiveLocale()).window;
   const options: Electron.OpenDialogOptions = {
     ...(defaultPath ? { defaultPath } : {}),
-    title: dialogStrings.handScopeFolderTitle,
+    title: dialogStrings.handCapabilityFolderTitle,
     properties: ['openDirectory', 'createDirectory'],
   };
   const result = window
@@ -2248,18 +2248,18 @@ async function pickAgentScopeFolder(
   if (result.canceled || !result.filePaths[0]) {
     return {
       canceled: true,
-      settings: await readAgentToolPermissionSettingsView(),
+      settings: await readAgentCapabilitySettingsView(),
     };
   }
 
   const root = await canonicalDirectoryPath(result.filePaths[0]);
-  const currentSettings = await readAgentToolPermissionSettingsView();
+  const currentSettings = await readAgentCapabilitySettingsView();
   const draftFolders = draftSettings?.folders;
   const baseFolderInput = Array.isArray(draftFolders) ? draftFolders : currentSettings.folders;
   const baseFolders = normalizedRuleList(baseFolderInput);
   const folders = baseFolders.includes(root) ? baseFolders : [...baseFolders, root];
   const blocks = Array.isArray(draftSettings?.blocks) ? normalizedRuleList(draftSettings?.blocks) : currentSettings.blocks;
-  const settings = await writeAgentToolPermissionSettingsView({ folders, blocks });
+  const settings = await writeAgentCapabilitySettingsView({ folders, blocks });
   return {
     canceled: false,
     path: root,
@@ -2841,11 +2841,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       );
     case 'agent_clear_steer':
       return agentRuntime.clearSteer(conversationId());
-    case 'agent_resolve_approval':
-      return agentRuntime.resolveApproval(
+    case 'agent_resolve_capability':
+      return agentRuntime.resolveCapability(
         conversationId(),
         String(args.requestId),
-        args.approved === true,
+        args.resolution === 'granted' ? 'granted' : 'cancelled',
       );
     case 'agent_resolve_user_question':
       return agentRuntime.resolveUserQuestion(
@@ -2874,14 +2874,14 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
     case 'agent_update_image_generation_settings':
       return updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput);
-    case 'agent_get_tool_permission_settings':
-      return readAgentToolPermissionSettingsView();
-    case 'agent_update_tool_permission_settings':
-      return writeAgentToolPermissionSettingsView(args.settings as { folders?: unknown; blocks?: unknown });
-    case 'agent_append_tool_permission_block':
-      return appendAgentToolPermissionBlockView(String(args.ruleValue ?? ''));
-    case 'agent_pick_scope_folder':
-      return pickAgentScopeFolder(event, args.settings as { folders?: unknown; blocks?: unknown } | undefined);
+    case 'agent_get_capability_settings':
+      return readAgentCapabilitySettingsView();
+    case 'agent_update_capability_settings':
+      return writeAgentCapabilitySettingsView(args.settings as { folders?: unknown; blocks?: unknown });
+    case 'agent_append_capability_block':
+      return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
+    case 'agent_pick_capability_folder':
+      return pickAgentCapabilityFolder(event, args.settings as { folders?: unknown; blocks?: unknown } | undefined);
     case 'agent_upsert_provider_config':
       return upsertProviderConfig(args.provider as AgentProviderConfigInput);
     case 'agent_delete_provider_config':

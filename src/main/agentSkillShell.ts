@@ -1,53 +1,53 @@
 import type { ToolCall } from '@earendil-works/pi-ai';
 import { randomUUID } from 'node:crypto';
 import {
-  evaluateAgentToolPermission,
-  type AgentPermissionFolderRequiredDecision,
-  type GlobalToolPermissionConfig,
-} from './agentPermissions';
+  evaluateAgentToolCapability,
+  type AgentCapabilityRequiredDecision,
+  type AgentCapabilityConfig,
+} from './agentCapabilities';
 import { createFolderCapabilitySnapshot } from './agentFolderCapabilities';
 import { runLocalBashCommand, type LocalBashRunResult } from './agentLocalTools';
 import {
-  folderAccessRequiredToolResultMessage,
-  permissionDeniedReasonForDecision,
-  permissionDeniedToolResultMessage,
-  permissionEventSourceForDeniedReason,
-  permissionResolutionStatusForDeniedReason,
-  permissionResolvedByForAllowDecision,
-  permissionResolvedByForDeniedReason,
-  type AgentPermissionDeniedReason,
-  type AgentToolPermissionLogInput,
-} from './agentPermissionEvents';
+  capabilityEventSourceForReason,
+  capabilityResolutionReasonForDecision,
+  capabilityResolvedByForAllowDecision,
+  capabilityResolvedByForReason,
+  capabilityStatusForReason,
+  folderCapabilityRequiredToolResultMessage,
+  unavailableToolResultMessage,
+  type AgentCapabilityResolutionReason,
+  type AgentToolCapabilityLogInput,
+} from './agentCapabilityEvents';
 
-export interface AgentSkillShellApprovalInput {
+export interface AgentSkillShellCapabilityInput {
   requestId: string;
   toolCall: ToolCall;
   args: { command: string };
-  decision: AgentPermissionFolderRequiredDecision;
+  decision: AgentCapabilityRequiredDecision;
 }
 
-export interface AgentSkillShellApprovalResolution {
-  approved: boolean;
-  deniedReason?: AgentPermissionDeniedReason;
+export interface AgentSkillShellCapabilityResolution {
+  status: 'granted' | 'cancelled';
+  reason?: AgentCapabilityResolutionReason;
   folders?: string[];
 }
 
 export interface AgentSkillShellCommandInput {
-  approvalHandler?: (input: AgentSkillShellApprovalInput, signal?: AbortSignal) => Promise<AgentSkillShellApprovalResolution>;
+  capabilityHandler?: (input: AgentSkillShellCapabilityInput, signal?: AbortSignal) => Promise<AgentSkillShellCapabilityResolution>;
   command: string;
   localRoot?: string;
   scratchRoot?: string;
   protectedStoreRoot?: string;
   trustedReadRoots?: readonly string[];
-  globalPermissions?: GlobalToolPermissionConfig;
-  permissionEventHandler?: (input: AgentToolPermissionLogInput) => Promise<void> | void;
+  capabilityConfig?: AgentCapabilityConfig;
+  capabilityEventHandler?: (input: AgentToolCapabilityLogInput) => Promise<void> | void;
   signal?: AbortSignal;
   toolCallId?: string;
 }
 
 export class AgentSkillShellError extends Error {
   constructor(
-    readonly code: 'permission_denied' | 'folder_access_required' | 'command_failed',
+    readonly code: 'operation_unavailable' | 'capability_cancelled' | 'folder_access_required' | 'command_failed',
     message: string,
   ) {
     super(message);
@@ -62,9 +62,9 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
     name: 'bash',
     arguments: { command: input.command },
   };
-  const requestId = `permission-${randomUUID()}`;
-  let globalPermissions = input.globalPermissions ?? await loadAgentToolPermissionConfig();
-  const evaluate = () => evaluateAgentToolPermission({
+  const requestId = `capability-${randomUUID()}`;
+  let capabilityConfig = input.capabilityConfig ?? await loadAgentCapabilityConfig();
+  const evaluate = () => evaluateAgentToolCapability({
     toolName: 'bash',
     args: { command: input.command },
     policy: {
@@ -72,80 +72,80 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       scratchRoot: input.scratchRoot,
       protectedStoreRoot: input.protectedStoreRoot,
       trustedReadRoots: input.trustedReadRoots,
-      globalPermissions,
+      capabilityConfig,
     },
   });
   let decision = evaluate();
-  const append = (event: Omit<AgentToolPermissionLogInput, 'requestId' | 'toolCall' | 'decision'>) => (
-    input.permissionEventHandler?.({ requestId, toolCall, decision, ...event })
+  const append = (event: Omit<AgentToolCapabilityLogInput, 'requestId' | 'toolCall' | 'decision'>) => (
+    input.capabilityEventHandler?.({ requestId, toolCall, decision, ...event })
   );
 
-  if (decision.behavior === 'blocked') {
-    const reason = permissionDeniedReasonForDecision(decision);
+  if (decision.behavior === 'unavailable') {
+    const reason = capabilityResolutionReasonForDecision(decision);
     await append({
-      outcome: 'blocked',
-      source: permissionEventSourceForDeniedReason(reason),
+      outcome: 'unavailable',
+      source: capabilityEventSourceForReason(reason),
       resolved: {
-        status: permissionResolutionStatusForDeniedReason(reason),
-        resolvedBy: permissionResolvedByForDeniedReason(reason),
-        deniedReason: reason,
+        status: capabilityStatusForReason(reason),
+        resolvedBy: capabilityResolvedByForReason(reason),
+        reason,
       },
     });
-    throw new AgentSkillShellError('permission_denied', permissionDeniedToolResultMessage({
+    throw new AgentSkillShellError('operation_unavailable', unavailableToolResultMessage({
       toolName: 'bash',
       reason,
       message: decision.reason,
     }));
   }
 
-  if (decision.behavior === 'folder_required') {
-    await append({ outcome: 'folder_required', unattended: !input.approvalHandler });
-    if (!input.approvalHandler) {
-      throw new AgentSkillShellError('folder_access_required', folderAccessRequiredToolResultMessage({
+  if (decision.behavior === 'capability_required') {
+    await append({ outcome: 'capability_required', unattended: !input.capabilityHandler });
+    if (!input.capabilityHandler) {
+      throw new AgentSkillShellError('folder_access_required', folderCapabilityRequiredToolResultMessage({
         toolName: 'bash',
         folders: decision.request.folders,
         unattended: true,
       }));
     }
-    const approval = await input.approvalHandler({
+    const resolution = await input.capabilityHandler({
       requestId,
       toolCall,
       args: { command: input.command },
       decision,
     }, input.signal);
-    const deniedReason = approval.deniedReason ?? 'runtime';
+    const reason = resolution.reason ?? (resolution.status === 'cancelled' ? 'user_cancelled' : undefined);
     await append({
-      outcome: approval.approved ? 'allow' : 'blocked',
+      outcome: resolution.status === 'granted' ? 'allow' : 'unavailable',
       includeChecked: false,
-      source: approval.approved ? 'user' : permissionEventSourceForDeniedReason(deniedReason),
+      source: resolution.status === 'granted' ? 'user' : capabilityEventSourceForReason(reason ?? 'runtime'),
       resolved: {
-        status: approval.approved ? 'approved' : permissionResolutionStatusForDeniedReason(deniedReason),
-        resolvedBy: approval.approved ? 'folder_grant' : permissionResolvedByForDeniedReason(deniedReason),
-        updatedFolders: approval.folders,
-        deniedReason: approval.approved ? undefined : deniedReason,
+        status: resolution.status === 'granted' ? 'available' : capabilityStatusForReason(reason ?? 'runtime'),
+        resolvedBy: resolution.status === 'granted' ? 'folder_grant' : capabilityResolvedByForReason(reason ?? 'runtime'),
+        updatedFolders: resolution.folders,
+        reason,
       },
     });
-    if (!approval.approved) {
-      throw new AgentSkillShellError('permission_denied', permissionDeniedToolResultMessage({
+    if (resolution.status !== 'granted') {
+      throw new AgentSkillShellError('capability_cancelled', unavailableToolResultMessage({
         toolName: 'bash',
-        reason: deniedReason,
-        message: deniedReason === 'user_cancelled'
+        reason: reason ?? 'runtime',
+        message: reason === 'user_cancelled'
           ? 'The folder request was cancelled.'
           : 'Folder access was not granted.',
       }));
     }
-    globalPermissions = await loadAgentToolPermissionConfig();
+    capabilityConfig = await loadAgentCapabilityConfig();
     decision = evaluate();
     if (decision.behavior !== 'allow') {
-      throw new AgentSkillShellError('folder_access_required', folderAccessRequiredToolResultMessage({
+      throw new AgentSkillShellError('folder_access_required', folderCapabilityRequiredToolResultMessage({
         toolName: 'bash',
-        folders: decision.behavior === 'folder_required' ? decision.request.folders : approval.folders ?? [],
+        folders: decision.behavior === 'capability_required' ? decision.request.folders : resolution.folders ?? [],
       }));
     }
   } else {
     await append({
       outcome: 'allow',
-      resolved: { status: 'approved', resolvedBy: permissionResolvedByForAllowDecision(decision) },
+      resolved: { status: 'available', resolvedBy: capabilityResolvedByForAllowDecision(decision) },
     });
   }
 
@@ -155,7 +155,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
     activeSkillReadRoots: input.trustedReadRoots,
     includeSystemRoots: true,
     protectedRoots: input.protectedStoreRoot ? [input.protectedStoreRoot] : [],
-  }, globalPermissions.folders);
+  }, capabilityConfig.folders);
   let result: LocalBashRunResult;
   try {
     result = await runLocalBashCommand({
@@ -175,9 +175,9 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
   return formatSkillShellOutput(result);
 }
 
-async function loadAgentToolPermissionConfig(): Promise<GlobalToolPermissionConfig> {
-  const { readAgentToolPermissionConfig } = await import('./agentToolPermissionStore');
-  return readAgentToolPermissionConfig();
+async function loadAgentCapabilityConfig(): Promise<AgentCapabilityConfig> {
+  const { readAgentCapabilityConfig } = await import('./agentCapabilityStore');
+  return readAgentCapabilityConfig();
 }
 
 function formatSkillShellOutput(result: Pick<LocalBashRunResult, 'stdout' | 'stderr' | 'persistedOutputPath'>): string {

@@ -24,7 +24,7 @@ Session tools.
 - Delegation creates same-agent execution workers, not independent personas,
   team members, or user-visible assignees.
 - Direct delegated-Run tools are not in the agent tool catalog.
-- The permission model does not expose delegated-run action kinds.
+- The action catalog does not expose delegated-run action kinds.
 - Tool-call UI does not special-case delegated-run tool names.
 - Runtime actor names for this internal path use `internal_delegation`, not a
   model-facing tool name.

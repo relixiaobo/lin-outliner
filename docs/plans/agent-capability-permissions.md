@@ -261,10 +261,10 @@ the authorization result.
 
 Expected areas:
 
-- `src/core/agentPermissionModel.ts`, `agentEventLog.ts`, `agentTypes.ts`, and
+- `src/core/agentActionCatalog.ts`, `agentEventLog.ts`, `agentTypes.ts`, and
   `types.ts` for the clean capability protocol;
-- `src/main/agentPermissions.ts`, `agentPermissionEvents.ts`,
-  `agentToolPermissionRules.ts`, and `agentToolPermissionStore.ts`;
+- `src/main/agentCapabilities.ts`, `agentCapabilityEvents.ts`,
+  `agentCapabilityRules.ts`, and `agentCapabilityStore.ts`;
 - `src/main/agentFolderCapabilities.ts`, `agentProcessExecutor.ts`,
   `agentLocalTools.ts`, `agentToolProcess.ts`, `agentSkillShell.ts`,
   `agentRuntime.ts`, and `main.ts`;

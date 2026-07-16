@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { agentToolActionKindProfile } from '../../../core/agentPermissionModel';
+import { agentToolActionKindProfile } from '../../../core/agentActionCatalog';
 import { hasAgentDebugToolResultPrefix, stripAgentDebugToolResultPrefix } from '../../../core/agentDebugProtocol';
 import type {
   AgentDebugMessagePart,
@@ -462,7 +462,7 @@ function ExecutionToolResultRow({ exchange, index, labels }: { exchange: AgentDe
     if (!blockRule || blockState === 'saving') return;
     setBlockState('saving');
     try {
-      await api.agentAppendToolPermissionBlock(blockRule);
+      await api.agentAppendCapabilityBlock(blockRule);
       setBlockState('saved');
     } catch {
       setBlockState('error');

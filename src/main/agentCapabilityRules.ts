@@ -2,17 +2,14 @@ import path from 'node:path';
 import {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
   actionKindFromRuleValue,
-  type AgentPermissionFloorKind,
   type AgentToolActionKind,
-} from '../core/agentPermissionModel';
+} from '../core/agentActionCatalog';
 
 export {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
-  type AgentPermissionFloorKind,
   type AgentToolActionKind,
-} from '../core/agentPermissionModel';
+} from '../core/agentActionCatalog';
 
-export type ToolPermissionOutcome = 'allow' | 'folder_required' | 'blocked';
 export type ToolAccessScope = 'allowed_file_area' | 'outside_allowed_file_area' | 'external_system' | 'none';
 
 export interface ToolActionDescriptor {
@@ -25,44 +22,42 @@ export interface ToolActionDescriptor {
   command?: string;
   targetPath?: string;
   code?: string;
-  floor?: AgentPermissionFloorKind;
-  platformHardBlock?: boolean;
 }
 
-export type AgentPermissionBlock =
+export type AgentCapabilityBlock =
   | { kind: 'action'; actionKind: AgentToolActionKind }
   | { kind: 'command'; form: string };
 
-export interface GlobalToolPermissionBlockRule {
+export interface AgentCapabilityBlockRule {
   ruleValue: string;
-  block: AgentPermissionBlock;
+  block: AgentCapabilityBlock;
 }
 
-export interface GlobalToolPermissionRuleDiagnostic {
+export interface AgentCapabilityRuleDiagnostic {
   ruleValue: string;
   code: 'invalid_block' | 'unsupported_block';
   message: string;
 }
 
-export interface GlobalToolPermissionConfig {
+export interface AgentCapabilityConfig {
   folders: string[];
-  blocks: GlobalToolPermissionBlockRule[];
-  diagnostics: GlobalToolPermissionRuleDiagnostic[];
+  blocks: AgentCapabilityBlockRule[];
+  diagnostics: AgentCapabilityRuleDiagnostic[];
 }
 
-export interface GlobalToolPermissionSettings {
+export interface AgentCapabilitySettings {
   folders?: unknown;
   blocks?: unknown;
 }
 
 const SUPPORTED_ACTION_KIND_SET = new Set<string>(SUPPORTED_AGENT_TOOL_ACTION_KINDS);
 
-export function parseGlobalToolPermissionSettings(input: unknown): GlobalToolPermissionConfig {
-  if (looksParsedGlobalToolPermissionConfig(input)) return input;
-  const settings = isRecord(input) ? input as GlobalToolPermissionSettings : {};
+export function parseAgentCapabilitySettings(input: unknown): AgentCapabilityConfig {
+  if (looksParsedAgentCapabilityConfig(input)) return input;
+  const settings = isRecord(input) ? input as AgentCapabilitySettings : {};
   const folders = normalizedStrings(settings.folders).map((folder) => path.resolve(folder));
-  const blocks: GlobalToolPermissionBlockRule[] = [];
-  const diagnostics: GlobalToolPermissionRuleDiagnostic[] = [];
+  const blocks: AgentCapabilityBlockRule[] = [];
+  const diagnostics: AgentCapabilityRuleDiagnostic[] = [];
   const blockEntries = Array.isArray(settings.blocks) ? settings.blocks : [];
 
   for (const entry of blockEntries) {
@@ -70,11 +65,11 @@ export function parseGlobalToolPermissionSettings(input: unknown): GlobalToolPer
       diagnostics.push({
         ruleValue: String(entry),
         code: 'invalid_block',
-        message: 'Permission block rules must be strings.',
+        message: 'Block rules must be strings.',
       });
       continue;
     }
-    const parsed = parseGlobalToolPermissionBlock(entry);
+    const parsed = parseAgentCapabilityBlock(entry);
     if ('diagnostic' in parsed) diagnostics.push(parsed.diagnostic);
     else blocks.push(parsed.rule);
   }
@@ -82,9 +77,9 @@ export function parseGlobalToolPermissionSettings(input: unknown): GlobalToolPer
   return { folders: compactPaths(folders), blocks, diagnostics };
 }
 
-export function globalToolPermissionConfigToSettings(
-  config: GlobalToolPermissionConfig,
-): Required<GlobalToolPermissionSettings> {
+export function agentCapabilityConfigToSettings(
+  config: AgentCapabilityConfig,
+): Required<AgentCapabilitySettings> {
   return {
     folders: [...config.folders],
     blocks: config.blocks.map((block) => block.ruleValue),
@@ -94,27 +89,27 @@ export function globalToolPermissionConfigToSettings(
 export function matchingBlockForDescriptor(
   descriptor: ToolActionDescriptor,
   configInput?: unknown,
-): GlobalToolPermissionBlockRule | null {
-  const config = normalizePermissionConfig(configInput);
+): AgentCapabilityBlockRule | null {
+  const config = normalizeCapabilityConfig(configInput);
   return config.blocks.find((rule) => blockMatchesDescriptor(rule.block, descriptor)) ?? null;
 }
 
-export function normalizePermissionToolName(value: string): string {
+export function normalizeCapabilityToolName(value: string): string {
   return value.trim().replace(/-/g, '_').toLowerCase();
 }
 
-function parseGlobalToolPermissionBlock(
+function parseAgentCapabilityBlock(
   ruleValueInput: string,
-): { rule: GlobalToolPermissionBlockRule } | { diagnostic: GlobalToolPermissionRuleDiagnostic } {
+): { rule: AgentCapabilityBlockRule } | { diagnostic: AgentCapabilityRuleDiagnostic } {
   const ruleValue = ruleValueInput.trim();
   const match = /^([A-Za-z][A-Za-z0-9_-]*)\(([\s\S]*)\)$/.exec(ruleValue);
   if (!match) {
-    return diagnostic(ruleValue, 'invalid_block', 'Permission blocks must use Action(...) or Command(...).');
+    return diagnostic(ruleValue, 'invalid_block', 'Blocks must use Action(...) or Command(...).');
   }
-  const kind = normalizePermissionToolName(match[1] ?? '');
+  const kind = normalizeCapabilityToolName(match[1] ?? '');
   const rawValue = (match[2] ?? '').trim();
   if (!rawValue || rawValue === '*') {
-    return diagnostic(ruleValue, 'unsupported_block', 'Broad or empty permission blocks are not supported.');
+    return diagnostic(ruleValue, 'unsupported_block', 'Broad or empty blocks are not supported.');
   }
 
   if (kind === 'action') {
@@ -127,10 +122,10 @@ function parseGlobalToolPermissionBlock(
   if (kind === 'command') {
     return { rule: { ruleValue, block: { kind: 'command', form: rawValue } } };
   }
-  return diagnostic(ruleValue, 'unsupported_block', `Unsupported permission block kind: ${kind}.`);
+  return diagnostic(ruleValue, 'unsupported_block', `Unsupported block kind: ${kind}.`);
 }
 
-function blockMatchesDescriptor(block: AgentPermissionBlock, descriptor: ToolActionDescriptor): boolean {
+function blockMatchesDescriptor(block: AgentCapabilityBlock, descriptor: ToolActionDescriptor): boolean {
   if (block.kind === 'action') return block.actionKind === descriptor.actionKind;
   if (block.kind === 'command') {
     return Boolean(descriptor.command) && commandsEqual(block.form, descriptor.command ?? '');
@@ -139,10 +134,10 @@ function blockMatchesDescriptor(block: AgentPermissionBlock, descriptor: ToolAct
 }
 
 function commandsEqual(left: string, right: string): boolean {
-  return normalizeCommandForPermissionMatch(left) === normalizeCommandForPermissionMatch(right);
+  return normalizeCommandForBlockMatch(left) === normalizeCommandForBlockMatch(right);
 }
 
-function normalizeCommandForPermissionMatch(command: string): string {
+function normalizeCommandForBlockMatch(command: string): string {
   const trimmed = command.trim();
   let normalized = '';
   let quote: '"' | "'" | null = null;
@@ -209,19 +204,19 @@ function normalizedStrings(value: unknown): string[] {
 
 function diagnostic(
   ruleValue: string,
-  code: GlobalToolPermissionRuleDiagnostic['code'],
+  code: AgentCapabilityRuleDiagnostic['code'],
   message: string,
-): { diagnostic: GlobalToolPermissionRuleDiagnostic } {
+): { diagnostic: AgentCapabilityRuleDiagnostic } {
   return { diagnostic: { ruleValue, code, message } };
 }
 
-function normalizePermissionConfig(input?: unknown): GlobalToolPermissionConfig {
-  return looksParsedGlobalToolPermissionConfig(input)
+function normalizeCapabilityConfig(input?: unknown): AgentCapabilityConfig {
+  return looksParsedAgentCapabilityConfig(input)
     ? input
-    : parseGlobalToolPermissionSettings(input);
+    : parseAgentCapabilitySettings(input);
 }
 
-function looksParsedGlobalToolPermissionConfig(value: unknown): value is GlobalToolPermissionConfig {
+function looksParsedAgentCapabilityConfig(value: unknown): value is AgentCapabilityConfig {
   return isRecord(value)
     && Array.isArray(value.folders)
     && Array.isArray(value.blocks)
@@ -229,7 +224,7 @@ function looksParsedGlobalToolPermissionConfig(value: unknown): value is GlobalT
     && (value.blocks.length === 0 || isParsedBlockRule(value.blocks[0]));
 }
 
-function isParsedBlockRule(value: unknown): value is GlobalToolPermissionBlockRule {
+function isParsedBlockRule(value: unknown): value is AgentCapabilityBlockRule {
   return isRecord(value)
     && typeof value.ruleValue === 'string'
     && isRecord(value.block)

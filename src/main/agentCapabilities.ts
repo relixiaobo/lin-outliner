@@ -3,8 +3,7 @@ import { homedir } from 'node:os';
 import {
   agentToolActionKindProfile,
   isReadOnlyActionKind,
-  type AgentPermissionFloorKind,
-} from '../core/agentPermissionModel';
+} from '../core/agentActionCatalog';
 import {
   capabilityFolderForTarget,
   canonicalPathPreservingSuffix,
@@ -16,90 +15,89 @@ import {
 } from './agentFolderCapabilities';
 import {
   matchingBlockForDescriptor,
-  parseGlobalToolPermissionSettings,
+  parseAgentCapabilitySettings,
   type AgentToolActionKind,
-  type GlobalToolPermissionConfig,
+  type AgentCapabilityConfig,
   type ToolAccessScope,
   type ToolActionDescriptor,
-} from './agentToolPermissionRules';
+} from './agentCapabilityRules';
 
 export type {
-  AgentPermissionFloorKind,
   AgentToolActionKind,
-  GlobalToolPermissionConfig,
+  AgentCapabilityConfig,
   ToolAccessScope,
   ToolActionDescriptor,
-} from './agentToolPermissionRules';
+} from './agentCapabilityRules';
 
-export type AgentPermissionAccess = 'read' | 'write' | 'execute' | 'control' | 'unknown';
-export type AgentPermissionBehavior = 'allow' | 'folder_required' | 'blocked';
-export type AgentPermissionSource = 'default' | 'folder_capability' | 'user_blocklist';
+export type AgentCapabilityAccess = 'read' | 'write' | 'execute' | 'control' | 'unknown';
+export type AgentCapabilityBehavior = 'allow' | 'capability_required' | 'unavailable';
+export type AgentCapabilitySource = 'default' | 'folder_capability' | 'user_blocklist' | 'control_plane';
 
-export interface AgentApprovalDetail {
+export interface AgentCapabilityDetail {
   label: string;
   value: string;
 }
 
 export interface AgentFolderCapabilityRequest {
+  kind: 'folder';
   title: string;
   target: string;
-  details: AgentApprovalDetail[];
+  details: AgentCapabilityDetail[];
   folders: string[];
 }
 
-export interface AgentPermissionPolicy {
+export interface AgentCapabilityPolicy {
   workspaceRoot: string;
   scratchRoot?: string;
   protectedStoreRoot?: string;
   trustedReadRoots: readonly string[];
-  globalPermissions: GlobalToolPermissionConfig;
+  capabilityConfig: AgentCapabilityConfig;
 }
 
-export interface AgentPermissionPolicyInput {
+export interface AgentCapabilityPolicyInput {
   workspaceRoot?: string;
   scratchRoot?: string;
   protectedStoreRoot?: string;
   trustedReadRoots?: readonly string[];
-  globalPermissions?: unknown;
+  capabilityConfig?: unknown;
 }
 
-interface AgentPermissionDecisionBase {
-  behavior: AgentPermissionBehavior;
-  access: AgentPermissionAccess;
+interface AgentCapabilityDecisionBase {
+  behavior: AgentCapabilityBehavior;
+  access: AgentCapabilityAccess;
   reason?: string;
   code?: string;
-  permissionSource: AgentPermissionSource;
+  source: AgentCapabilitySource;
   descriptor?: ToolActionDescriptor;
   descriptors: readonly ToolActionDescriptor[];
 }
 
-export interface AgentPermissionAllowDecision extends AgentPermissionDecisionBase {
+export interface AgentCapabilityAllowDecision extends AgentCapabilityDecisionBase {
   behavior: 'allow';
 }
 
-export interface AgentPermissionFolderRequiredDecision extends AgentPermissionDecisionBase {
-  behavior: 'folder_required';
+export interface AgentCapabilityRequiredDecision extends AgentCapabilityDecisionBase {
+  behavior: 'capability_required';
   code: 'folder_access_required';
   reason: string;
   request: AgentFolderCapabilityRequest;
 }
 
-export interface AgentPermissionBlockedDecision extends AgentPermissionDecisionBase {
-  behavior: 'blocked';
+export interface AgentCapabilityUnavailableDecision extends AgentCapabilityDecisionBase {
+  behavior: 'unavailable';
   code: string;
   reason: string;
-  redline?: true;
 }
 
-export type AgentPermissionDecision =
-  | AgentPermissionAllowDecision
-  | AgentPermissionFolderRequiredDecision
-  | AgentPermissionBlockedDecision;
+export type AgentCapabilityDecision =
+  | AgentCapabilityAllowDecision
+  | AgentCapabilityRequiredDecision
+  | AgentCapabilityUnavailableDecision;
 
-export interface AgentPermissionEvaluationInput {
+export interface AgentCapabilityEvaluationInput {
   toolName: string;
   args: unknown;
-  policy: AgentPermissionPolicyInput;
+  policy: AgentCapabilityPolicyInput;
 }
 
 const TOOL_ALIASES = new Map<string, string>([
@@ -117,7 +115,7 @@ const TOOL_ALIASES = new Map<string, string>([
   ['askuserquestion', 'ask_user_question'],
 ]);
 
-export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = {}): AgentPermissionPolicy {
+export function createAgentCapabilityPolicy(input: AgentCapabilityPolicyInput = {}): AgentCapabilityPolicy {
   const workspaceRoot = canonicalPathPreservingSuffix(input.workspaceRoot ?? process.cwd());
   return {
     workspaceRoot,
@@ -128,40 +126,39 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
       ? canonicalPathPreservingSuffix(input.protectedStoreRoot)
       : undefined,
     trustedReadRoots: normalizeRoots(input.trustedReadRoots),
-    globalPermissions: parseGlobalToolPermissionSettings(input.globalPermissions),
+    capabilityConfig: parseAgentCapabilitySettings(input.capabilityConfig),
   };
 }
 
-export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInput): AgentPermissionDecision {
-  const policy = createAgentPermissionPolicy(input.policy);
+export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInput): AgentCapabilityDecision {
+  const policy = createAgentCapabilityPolicy(input.policy);
   const toolName = normalizeToolName(input.toolName);
   const access = classifyToolAccess(toolName, input.args);
   const descriptors = deriveAgentToolActionDescriptors({ toolName, args: input.args, policy, access });
 
-  const hardBlock = descriptors.find((descriptor) => descriptor.platformHardBlock || descriptor.floor);
-  if (hardBlock) {
-    return block(
-      hardBlock.code ?? hardBlock.floor ?? 'platform_hard_block',
-      hardBlock.consequence,
-      access,
-      descriptors,
-      hardBlock,
-      true,
-    );
-  }
-
   const userBlock = descriptors
-    .map((descriptor) => ({ descriptor, rule: matchingBlockForDescriptor(descriptor, policy.globalPermissions) }))
+    .map((descriptor) => ({ descriptor, rule: matchingBlockForDescriptor(descriptor, policy.capabilityConfig) }))
     .find((entry) => entry.rule);
   if (userBlock?.rule) {
-    return block(
-      'configured_deny',
+    return unavailable(
+      'user_blocked',
       `Blocked by user rule ${userBlock.rule.ruleValue}.`,
       access,
       descriptors,
       userBlock.descriptor,
-      undefined,
       'user_blocklist',
+    );
+  }
+
+  const unavailableDescriptor = descriptors.find((descriptor) => descriptor.code === 'control_plane_unavailable');
+  if (unavailableDescriptor) {
+    return unavailable(
+      'control_plane_unavailable',
+      unavailableDescriptor.consequence,
+      access,
+      descriptors,
+      unavailableDescriptor,
+      'control_plane',
     );
   }
 
@@ -170,18 +167,19 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
     scratchRoot: policy.scratchRoot,
     activeSkillReadRoots: policy.trustedReadRoots,
     protectedRoots: policy.protectedStoreRoot ? [policy.protectedStoreRoot] : [],
-  }, policy.globalPermissions.folders);
+  }, policy.capabilityConfig.folders);
   const requiredFolders = requiredFoldersForTool(toolName, input.args, policy.workspaceRoot, snapshot, access);
   const missingFolders = missingFolderCapabilities(requiredFolders, { readRoots: snapshot.writeRoots });
   if (missingFolders.length > 0) {
     const target = missingFolders.join(', ');
     return {
-      behavior: 'folder_required',
+      behavior: 'capability_required',
       access,
       code: 'folder_access_required',
-      permissionSource: 'default',
+      source: 'default',
       reason: `Folder access is required before ${input.toolName} can run: ${target}`,
       request: {
+        kind: 'folder',
         title: missingFolders.length === 1 ? 'Folder access required' : 'Folder access required',
         target,
         folders: missingFolders,
@@ -194,14 +192,14 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
 
   const usesRememberedFolder = descriptors.some((descriptorValue) => (
     descriptorValue.targetPath
-    && policy.globalPermissions.folders.some((folder) => isPathInside(folder, descriptorValue.targetPath!))
+    && policy.capabilityConfig.folders.some((folder) => isPathInside(folder, descriptorValue.targetPath!))
   )) || requiredFolders.some((required) => (
-    policy.globalPermissions.folders.some((folder) => isPathInside(folder, required))
+    policy.capabilityConfig.folders.some((folder) => isPathInside(folder, required))
   ));
   return {
     behavior: 'allow',
     access,
-    permissionSource: usesRememberedFolder ? 'folder_capability' : 'default',
+    source: usesRememberedFolder ? 'folder_capability' : 'default',
     descriptor: descriptors[0],
     descriptors,
   };
@@ -210,8 +208,8 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
 export function deriveAgentToolActionDescriptors(input: {
   toolName: string;
   args: unknown;
-  policy: AgentPermissionPolicy;
-  access: AgentPermissionAccess;
+  policy: AgentCapabilityPolicy;
+  access: AgentCapabilityAccess;
 }): ToolActionDescriptor[] {
   const toolName = normalizeToolName(input.toolName);
   if (toolName === 'bash') return deriveBashActionDescriptors(getStringArg(input.args, 'command'), input.args);
@@ -267,8 +265,8 @@ function simpleDescriptor(
 function derivePathToolActionDescriptor(
   toolName: string,
   args: unknown,
-  policy: AgentPermissionPolicy,
-  access: AgentPermissionAccess,
+  policy: AgentCapabilityPolicy,
+  access: AgentCapabilityAccess,
   pathArgName: string,
 ): ToolActionDescriptor {
   const rawPath = getStringArg(args, pathArgName);
@@ -283,13 +281,13 @@ function derivePathToolActionDescriptor(
     });
   }
 
-  const targetPath = canonicalPathPreservingSuffix(resolvePermissionPath(policy.workspaceRoot, rawPath));
+  const targetPath = canonicalPathPreservingSuffix(resolveCapabilityPath(policy.workspaceRoot, rawPath));
   const snapshot = createFolderCapabilitySnapshot({
     workspaceRoot: policy.workspaceRoot,
     scratchRoot: policy.scratchRoot,
     activeSkillReadRoots: policy.trustedReadRoots,
     protectedRoots: policy.protectedStoreRoot ? [policy.protectedStoreRoot] : [],
-  }, policy.globalPermissions.folders);
+  }, policy.capabilityConfig.folders);
   const protectedRoot = protectedRootForPath(snapshot, targetPath, write ? 'write' : 'read');
   if (protectedRoot) {
     return descriptor(toolName, fileActionKind(toolName, write, 'sensitive_local_path'), {
@@ -299,8 +297,6 @@ function derivePathToolActionDescriptor(
       consequence: `Agent file tools cannot access Tenon control state under ${protectedRoot}.`,
       targetPath,
       code: 'control_plane_unavailable',
-      floor: 'permission_self_mod',
-      platformHardBlock: true,
     });
   }
   const roots = write ? snapshot.writeRoots : snapshot.readRoots;
@@ -384,14 +380,14 @@ function requiredFoldersForTool(
   args: unknown,
   workspaceRoot: string,
   snapshot: ReturnType<typeof createFolderCapabilitySnapshot>,
-  access: AgentPermissionAccess,
+  access: AgentCapabilityAccess,
 ): string[] {
   if (toolName === 'bash') return normalizeRequiredFolders(getUnknownArg(args, 'required_folders'), workspaceRoot);
   const pathArg = toolPathArgumentName(toolName);
   if (!pathArg) return [];
   const rawPath = getStringArg(args, pathArg);
   if (!rawPath) return [];
-  const target = canonicalPathPreservingSuffix(resolvePermissionPath(workspaceRoot, rawPath));
+  const target = canonicalPathPreservingSuffix(resolveCapabilityPath(workspaceRoot, rawPath));
   const allowedRoots = access === 'write' ? snapshot.writeRoots : snapshot.readRoots;
   if (allowedRoots.some((root) => isPathInside(root, target))) return [];
   const folder = capabilityFolderForTarget(target, workspaceRoot);
@@ -443,28 +439,26 @@ function unknownShellDescriptor(command: string, reason: string): ToolActionDesc
   });
 }
 
-function block(
+function unavailable(
   code: string,
   reason: string,
-  access: AgentPermissionAccess,
+  access: AgentCapabilityAccess,
   descriptors: readonly ToolActionDescriptor[],
   descriptorValue?: ToolActionDescriptor,
-  redline?: true,
-  permissionSource: AgentPermissionSource = 'default',
-): AgentPermissionBlockedDecision {
+  source: AgentCapabilitySource = 'default',
+): AgentCapabilityUnavailableDecision {
   return {
-    behavior: 'blocked',
+    behavior: 'unavailable',
     code,
     reason,
     access,
-    permissionSource,
+    source,
     descriptor: descriptorValue ?? descriptors[0],
     descriptors,
-    redline,
   };
 }
 
-function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
+function classifyToolAccess(toolName: string, args?: unknown): AgentCapabilityAccess {
   if (toolName === 'bash') return 'execute';
   if (toolName === 'bash_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'generate_image') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete' || toolName === 'data_import') return 'write';
@@ -547,7 +541,7 @@ function getBooleanArg(args: unknown, name: string): boolean {
   return getUnknownArg(args, name) === true;
 }
 
-function resolvePermissionPath(root: string, inputPath: string): string {
+function resolveCapabilityPath(root: string, inputPath: string): string {
   const expanded = expandHome(inputPath);
   return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
 }

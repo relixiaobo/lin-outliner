@@ -60,7 +60,7 @@ export const en = {
     // The native "insert image" file-picker dialog (title + the image filter label).
     insertImageTitle: 'Insert image',
     insertAttachmentTitle: 'Insert attachment',
-    handScopeFolderTitle: 'Hand Tenon a folder',
+    handCapabilityFolderTitle: 'Hand Tenon a folder',
     imageFilesFilter: 'Images',
   },
   // The global launcher's static chrome (placeholder + accessibility labels).
@@ -157,13 +157,8 @@ export const en = {
         active: 'Active',
       },
     },
-    permissions: {
+    security: {
       sectionAriaLabel: 'Security',
-      trustLevelGroup: 'System Protections',
-      trustLevelAriaLabel: 'System protections',
-      delegatedOperatorLabel: 'Non-overridable safety floor',
-      delegatedOperatorSublabel: 'Routine, network, install, publish, and message actions run directly when their folder capabilities are available.',
-      hardBlockNote: "Host-wide destruction, permission or credential self-modification, unsupported payments, explicit blocks, and restricted-Run ceilings are denied without an override.",
       blocksGroup: 'Your Blocks',
       blocksAriaLabel: 'Your blocks',
       noBlocks: 'No explicit blocks.',
@@ -175,11 +170,16 @@ export const en = {
       handFolderAction: 'Choose Folder…',
       handingFolderAction: 'Choosing…',
       handedFolderNotice: ({ path }: { path: string }) => `Folder handed to Tenon: ${path}`,
-      commandGrantLabel: 'Command block',
-      actionRuleLabel: 'Action block',
-      unknownGrantLabel: 'Permission block',
+      commandBlockLabel: 'Command block',
+      actionBlockLabel: 'Action block',
+      unknownBlockLabel: 'Block rule',
       revokeGrant: 'Revoke',
       removeRule: 'Remove',
+      systemBoundaryGroup: 'System Boundary',
+      systemBoundaryAriaLabel: 'System boundary',
+      systemBoundaryLabel: 'Tenon control state',
+      systemBoundarySublabel: 'Private to Tenon; agent file tools and processes cannot read or change it.',
+      systemBoundaryNote: 'Other host operations run under your macOS account and use native authorization or service sign-in when required.',
     },
     memory: {
       sectionAriaLabel: 'Memory & activity',
@@ -281,7 +281,7 @@ export const en = {
     categories: {
       general: { label: 'General', hint: 'Appearance & Theme' },
       providers: { label: 'Providers', hint: 'Connections & API keys' },
-      permissions: { label: 'Security', hint: 'Trust & Permissions' },
+      security: { label: 'Security', hint: 'Folders, blocks & system boundary' },
       memory: { label: 'Memory', hint: 'Dream Activity' },
       skills: { label: 'Skills', hint: 'Extension Capabilities' },
       agents: { label: 'Agent Profiles', hint: 'Persona Definitions' },
@@ -949,7 +949,7 @@ commandPalette: {
       saveChannelSettings: 'Save settings',
       cancel: 'Cancel',
     },
-    // The composer: editor, toolbar, model chip, attachment + approval flows.
+    // The composer: editor, toolbar, model chip, attachment, and capability flows.
     composer: {
       editorAriaLabel: 'Agent message',
       askPlaceholder: 'Ask anything...',
@@ -989,8 +989,8 @@ commandPalette: {
       // Approval card.
       showDetails: 'Show details',
       hideDetails: 'Hide details',
-      // Attribution shown when a separate consulted agent raises the approval.
-      approvalRequestedBy: ({ agent }: { agent: string }) => `Requested by @${agent}`,
+      // Attribution shown when a separate consulted agent requests a capability.
+      capabilityRequestedBy: ({ agent }: { agent: string }) => `Requested by @${agent}`,
       grantFolderAccess: 'Grant and remember',
       cancelFolderAccess: 'Cancel',
       acceptSkill: 'Accept skill',

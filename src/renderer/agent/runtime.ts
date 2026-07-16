@@ -4,7 +4,7 @@ import { isSystemReminderBlock } from '../../core/agentAttachments';
 import { DEFAULT_GENERAL_CHANNEL_ID } from '../../core/agentChannel';
 import type {
   AgentConversationMessage,
-  AgentApprovalRequestView,
+  AgentCapabilityRequestView,
   AgentMessageAttachmentInput,
   AgentMessageBranchState,
   AgentProviderRetryEvent,
@@ -708,10 +708,10 @@ export interface AgentRuntimeClient {
   clearFollowUp: (conversationId: string) => Promise<void>;
   steerConversation: (conversationId: string, message: string) => Promise<{ queued: boolean }>;
   clearSteer: (conversationId: string) => Promise<void>;
-  resolveApproval: (
+  resolveCapability: (
     conversationId: string,
     requestId: string,
-    approved: boolean,
+    resolution: 'granted' | 'cancelled',
   ) => Promise<{ resolved: boolean }>;
   resolveUserQuestion: (
     conversationId: string,
@@ -745,7 +745,7 @@ export interface LinAgentRuntimeView {
   runIds: string[];
   subRuns: Record<string, AgentRenderRunEntity>;
   subRunsByParentToolCallId: Map<string, AgentRenderRunEntity>;
-  pendingApproval: AgentApprovalRequestView | null;
+  pendingCapability: AgentCapabilityRequestView | null;
   pendingUserQuestion: AgentUserQuestionPendingView | null;
   toolResults: Map<string, AgentToolResultWithPayloads>;
   turnPhase: AgentTurnPhase;
@@ -765,9 +765,9 @@ export interface LinAgentRuntimeView {
   clearFollowUp: () => Promise<void>;
   steer: (prompt: string) => Promise<boolean>;
   clearSteer: () => Promise<void>;
-  resolveApproval: (
+  resolveCapability: (
     requestId: string,
-    approved: boolean,
+    resolution: 'granted' | 'cancelled',
   ) => Promise<boolean>;
   resolveUserQuestion: (requestId: string, result: AskUserQuestionResult) => Promise<boolean>;
   stop: () => void;
@@ -794,8 +794,8 @@ const defaultAgentRuntimeClient: AgentRuntimeClient = {
   clearFollowUp: (conversationId) => api.agentClearFollowUp(conversationId),
   steerConversation: (conversationId, message) => api.agentSteerConversation(conversationId, message),
   clearSteer: (conversationId) => api.agentClearSteer(conversationId),
-  resolveApproval: (conversationId, requestId, approved) =>
-    api.agentResolveApproval(conversationId, requestId, approved),
+  resolveCapability: (conversationId, requestId, resolution) =>
+    api.agentResolveCapability(conversationId, requestId, resolution),
   resolveUserQuestion: (conversationId, requestId, result) =>
     api.agentResolveUserQuestion(conversationId, requestId, result),
   stopRun: (conversationId, runId) => api.agentStopRun(conversationId, runId),
@@ -845,8 +845,8 @@ export class AgentRuntimeStore {
   private conversationId: string | null = null;
   private error: string | null = null;
   private readonly providerRetries = new Map<string, AgentProviderRetryStatus>();
-  private readonly pendingApprovals = new Map<string, AgentApprovalRequestView>();
-  private pendingApprovalOrder: string[] = [];
+  private readonly pendingCapabilities = new Map<string, AgentCapabilityRequestView>();
+  private pendingCapabilityOrder: string[] = [];
   private readonly pendingUserQuestions = new Map<string, AgentUserQuestionPendingView>();
   private pendingUserQuestionOrder: string[] = [];
   private readonly unreadByConversationId = new Map<string, number>();
@@ -900,7 +900,7 @@ export class AgentRuntimeStore {
     this.projection = EMPTY_PROJECTION;
     this.error = null;
     this.providerRetries.clear();
-    this.clearPendingApprovalState();
+    this.clearPendingCapabilityState();
     this.publish();
     try {
       const conversation = await this.client.restoreConversation(targetConversationId);
@@ -923,7 +923,7 @@ export class AgentRuntimeStore {
     this.projection = EMPTY_PROJECTION;
     this.error = null;
     this.providerRetries.clear();
-    this.clearPendingApprovalState();
+    this.clearPendingCapabilityState();
     this.publish();
     try {
       const conversation = await this.client.createConversation(options);
@@ -944,7 +944,7 @@ export class AgentRuntimeStore {
     this.error = null;
     this.providerRetries.clear();
     this.restorePromise = null;
-    this.clearPendingApprovalState();
+    this.clearPendingCapabilityState();
     this.publish();
     try {
       const conversation = await this.restoreDefaultConversation();
@@ -1062,15 +1062,15 @@ export class AgentRuntimeStore {
     }
   };
 
-  resolveApproval = async (
+  resolveCapability = async (
     requestId: string,
-    approved: boolean,
+    resolution: 'granted' | 'cancelled',
   ) => {
     if (!this.conversationId) return false;
     try {
-      const result = await this.client.resolveApproval(this.conversationId, requestId, approved);
-      if (result.resolved && this.pendingApprovals.has(requestId)) {
-        this.removePendingApproval(requestId);
+      const result = await this.client.resolveCapability(this.conversationId, requestId, resolution);
+      if (result.resolved && this.pendingCapabilities.has(requestId)) {
+        this.removePendingCapability(requestId);
         this.publish();
       }
       return result.resolved;
@@ -1117,7 +1117,7 @@ export class AgentRuntimeStore {
     const currentConversationId = this.conversationId;
     const requestVersion = this.beginConversationRequest();
     this.error = null;
-    this.clearPendingApprovalState();
+    this.clearPendingCapabilityState();
     // Keep the CURRENT projection on screen while a same-conversation reload re-fetches
     // (e.g. after a model/reasoning config change, which doesn't alter the transcript).
     // Blanking to EMPTY_PROJECTION + publish here flashed the whole transcript empty for
@@ -1247,8 +1247,8 @@ export class AgentRuntimeStore {
     this.projection = conversation.renderProjection;
     this.error = conversation.renderProjection.errorMessage;
     this.providerRetries.clear();
-    this.clearPendingApprovalState();
-    for (const approval of conversation.pendingApprovals ?? []) this.addPendingApproval(approval);
+    this.clearPendingCapabilityState();
+    for (const capability of conversation.pendingCapabilities ?? []) this.addPendingCapability(capability);
     if (conversation.pendingUserQuestion) this.addPendingUserQuestion(conversation.pendingUserQuestion);
     this.conversationPreferenceStore?.writeLastConversationId(conversation.conversationId);
     this.publish();
@@ -1265,7 +1265,7 @@ export class AgentRuntimeStore {
         this.projection = EMPTY_PROJECTION;
         this.error = null;
         this.providerRetries.clear();
-        this.clearPendingApprovalState();
+        this.clearPendingCapabilityState();
         this.conversationPreferenceStore?.writeLastConversationId(null);
         this.publish();
       }
@@ -1295,20 +1295,20 @@ export class AgentRuntimeStore {
       return;
     }
 
-    if (payload.type === 'approval_request') {
+    if (payload.type === 'capability_request') {
       if (!this.conversationId) {
         this.conversationId = payload.conversationId;
       }
       if (payload.conversationId !== this.conversationId) return;
-      this.addPendingApproval(payload.request);
+      this.addPendingCapability(payload.request);
       this.publish();
       return;
     }
 
-    if (payload.type === 'approval_resolved') {
+    if (payload.type === 'capability_resolved') {
       if (payload.conversationId !== this.conversationId) return;
-      if (this.pendingApprovals.has(payload.requestId)) {
-        this.removePendingApproval(payload.requestId);
+      if (this.pendingCapabilities.has(payload.requestId)) {
+        this.removePendingCapability(payload.requestId);
         this.publish();
       }
       return;
@@ -1497,7 +1497,7 @@ export class AgentRuntimeStore {
       runIds: this.projection.runIds ?? [],
       subRuns,
       subRunsByParentToolCallId,
-      pendingApproval: this.currentPendingApproval(),
+      pendingCapability: this.currentPendingCapability(),
       pendingUserQuestion: this.currentPendingUserQuestion(),
       toolResults,
       turnPhase,
@@ -1513,7 +1513,7 @@ export class AgentRuntimeStore {
       clearFollowUp: this.clearFollowUp,
       steer: this.steer,
       clearSteer: this.clearSteer,
-      resolveApproval: this.resolveApproval,
+      resolveCapability: this.resolveCapability,
       resolveUserQuestion: this.resolveUserQuestion,
       stop: this.stop,
       stopRun: this.stopRun,
@@ -1529,30 +1529,30 @@ export class AgentRuntimeStore {
     return current;
   }
 
-  private addPendingApproval(request: AgentApprovalRequestView) {
-    if (!this.pendingApprovals.has(request.requestId)) {
-      this.pendingApprovalOrder.push(request.requestId);
+  private addPendingCapability(request: AgentCapabilityRequestView) {
+    if (!this.pendingCapabilities.has(request.requestId)) {
+      this.pendingCapabilityOrder.push(request.requestId);
     }
-    this.pendingApprovals.set(request.requestId, request);
+    this.pendingCapabilities.set(request.requestId, request);
   }
 
-  private removePendingApproval(requestId: string) {
-    this.pendingApprovals.delete(requestId);
-    this.pendingApprovalOrder = this.pendingApprovalOrder.filter((id) => id !== requestId);
+  private removePendingCapability(requestId: string) {
+    this.pendingCapabilities.delete(requestId);
+    this.pendingCapabilityOrder = this.pendingCapabilityOrder.filter((id) => id !== requestId);
   }
 
-  private clearPendingApprovalState() {
-    this.pendingApprovals.clear();
-    this.pendingApprovalOrder = [];
+  private clearPendingCapabilityState() {
+    this.pendingCapabilities.clear();
+    this.pendingCapabilityOrder = [];
     this.pendingUserQuestions.clear();
     this.pendingUserQuestionOrder = [];
   }
 
-  private currentPendingApproval(): AgentApprovalRequestView | null {
-    while (this.pendingApprovalOrder.length > 0) {
-      const request = this.pendingApprovals.get(this.pendingApprovalOrder[0]);
+  private currentPendingCapability(): AgentCapabilityRequestView | null {
+    while (this.pendingCapabilityOrder.length > 0) {
+      const request = this.pendingCapabilities.get(this.pendingCapabilityOrder[0]);
       if (request) return request;
-      this.pendingApprovalOrder.shift();
+      this.pendingCapabilityOrder.shift();
     }
     return null;
   }

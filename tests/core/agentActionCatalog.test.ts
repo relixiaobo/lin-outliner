@@ -5,9 +5,9 @@ import {
   agentToolActionKindProfile,
   isReadOnlyActionKind,
   readOnlyAgentToolNames,
-} from '../../src/core/agentPermissionModel';
+} from '../../src/core/agentActionCatalog';
 
-describe('agent permission model', () => {
+describe('agent action catalog', () => {
   test('keeps action kinds as audit labels and read-only catalog input', () => {
     for (const actionKind of SUPPORTED_AGENT_TOOL_ACTION_KINDS) {
       expect(typeof isReadOnlyActionKind(actionKind)).toBe('boolean');

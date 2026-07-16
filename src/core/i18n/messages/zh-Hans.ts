@@ -47,7 +47,7 @@ export const zhHans: PartialMessages = {
     channelConfigTitle: '配置频道',
     insertImageTitle: '插入图片',
     insertAttachmentTitle: '插入附件',
-    handScopeFolderTitle: '把文件夹交给 Tenon',
+    handCapabilityFolderTitle: '把文件夹交给 Tenon',
     imageFilesFilter: '图片',
   },
   launcher: {
@@ -128,13 +128,8 @@ export const zhHans: PartialMessages = {
         active: '当前',
       },
     },
-    permissions: {
+    security: {
       sectionAriaLabel: '安全',
-      trustLevelGroup: '系统保护',
-      trustLevelAriaLabel: '系统保护',
-      delegatedOperatorLabel: '不可绕过的安全底线',
-      delegatedOperatorSublabel: '文件夹能力齐备时，常规操作、联网、安装、发布和发送消息都会直接执行。',
-      hardBlockNote: '全局主机破坏、权限或凭据配置自改、非产品支付、用户明确阻断和受限 Run 上限会直接拒绝，不能临时放行。',
       blocksGroup: '你的阻断规则',
       blocksAriaLabel: '你的阻断规则',
       noBlocks: '暂无明确阻断规则。',
@@ -146,11 +141,16 @@ export const zhHans: PartialMessages = {
       handFolderAction: '选择文件夹…',
       handingFolderAction: '选择中…',
       handedFolderNotice: ({ path }) => `已交给 Tenon：${path}`,
-      commandGrantLabel: '命令阻断',
-      actionRuleLabel: '行为阻断',
-      unknownGrantLabel: '权限阻断',
+      commandBlockLabel: '命令阻断',
+      actionBlockLabel: '行为阻断',
+      unknownBlockLabel: '阻断规则',
       revokeGrant: '撤销',
       removeRule: '移除',
+      systemBoundaryGroup: '系统边界',
+      systemBoundaryAriaLabel: '系统边界',
+      systemBoundaryLabel: 'Tenon 控制状态',
+      systemBoundarySublabel: '仅由 Tenon 管理；智能体文件工具和子进程无法读取或修改。',
+      systemBoundaryNote: '其他主机操作使用你的 macOS 账户；需要时，由操作系统原生授权或服务登录流程处理。',
     },
     memory: {
       sectionAriaLabel: '记忆与活动',
@@ -252,7 +252,7 @@ export const zhHans: PartialMessages = {
     categories: {
       general: { label: '通用', hint: '外观与主题' },
       providers: { label: '提供方', hint: '连接与 API 密钥' },
-      permissions: { label: '安全', hint: '信任与权限' },
+      security: { label: '安全', hint: '文件夹、阻断规则与系统边界' },
       memory: { label: '记忆', hint: 'Dream 活动' },
       skills: { label: '技能', hint: '扩展能力' },
       agents: { label: '智能体配置', hint: '人格定义' },
@@ -914,8 +914,8 @@ commandPalette: {
       stopAgent: '停止智能体',
       showDetails: '显示详情',
       hideDetails: '隐藏详情',
-      // Attribution shown when a separate consulted agent raises the approval.
-      approvalRequestedBy: ({ agent }: { agent: string }) => `来自 @${agent} 的请求`,
+      // Attribution shown when a separate consulted agent requests a capability.
+      capabilityRequestedBy: ({ agent }: { agent: string }) => `来自 @${agent} 的请求`,
       grantFolderAccess: '授权并记住',
       cancelFolderAccess: '取消',
       acceptSkill: '接受技能',

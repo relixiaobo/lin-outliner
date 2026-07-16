@@ -44,9 +44,10 @@ are **views, rules, or metadata** of these, not separate primitives.
 6. **Agent** — the single user-customizable agent, **Neva** (stable agentId
    `built-in:tenon:assistant`, handle/mention `assistant`). A built-in defined in
    code; user edits layer as a stored overlay. Persona + model/effort + skill
-   bindings + tool/permission profile + timeline memory tools. ✅
-7. **Permission gate** — ask / allow / deny, over a hard A3 floor (catastrophic
-   hard-blocks + a "can-never-be-globally-allowed" set). ✅
+   bindings + tool catalog + timeline memory tools. ✅
+7. **Capability boundary** — direct execution over available resources,
+   persistent folder acquisition, private Tenon control state, and
+   owner-specific unavailable results. ✅
 
 ### The one agent — Neva
 
@@ -69,7 +70,7 @@ only in id scheme, writer, retention, and vocabulary.
 | Ledger | Keyed by | Holds | Volume |
 |---|---|---|---|
 | **Conversation** | `conversationId` | communication: user message + final assistant reply + membership | ~2 events/turn |
-| **Run** | `runId` (anchored to a conversation) | all execution: assistant deltas, `tool_call ↔ tool_result`, thinking, permission, ask/widget | 10–50+/turn, self-cleans |
+| **Run** | `runId` (anchored to a conversation) | all execution: assistant deltas, `tool_call ↔ tool_result`, thinking, capability audit, ask/widget | 10–50+/turn, self-cleans |
 | **Memory** | timeline outline nodes (`#d-memory`, `#d-episode`, `#d-belief`, `#d-question`, `#d-guidance`) plus Dream-channel audit/run metadata | user-editable durable memory nodes + runtime Dream progress | sub-linear |
 
 Model-readable durable memory has no separate event-log copy. It is ordinary
@@ -181,12 +182,12 @@ kinds.
 The relationship is layered: at the conversation layer user and agent are symmetric
 Principals and the members of every conversation are `{user, Neva}` (✅); at the
 control layer the user is **authority** and Neva is **delegate** (✅ — the
-permission gate); at the memory layer there is **one editable timeline memory
+capability boundary); at the memory layer there is **one editable timeline memory
 graph** — Neva's own knowledge about both the user and the work/domain, distilled
 silently in the background by Dream while
-**decisions stay with the user**. The implementable boundary: **epistemic
-curation is autonomous** (so Dream can run), **volitional commitment escalates**
-(== the existing ask-gate). The earlier two-pool `(user + self-agent)` direction
+**missing product choices stay with the user**. Epistemic curation and requested
+operations are autonomous; `ask_user_question` is reserved for required input
+that cannot be inferred, not risk review. The earlier two-pool `(user + self-agent)` direction
 and the `<self>`/`<principal>` render zones are collapsed into ordinary tagged
 outline memory.
 
@@ -283,7 +284,7 @@ Worked classification:
   its protected runtime-owned schedule and watermark boundary; ordinary scheduled
   agent work is owned by Issue/Recurring Issue triggers. The policy now lives in
   the private built-in `memory-dream` skill; runtime code still owns triggering,
-  evidence batching, watermarking, restricted tool access, and reflective run
+  evidence batching, watermarking, scoped tool catalogs, and reflective run
   metadata.
 - **Compaction — the boundary marker; NOT skill-able.** Compaction is *substrate
   Neva runs on* (context management that lets a long run continue), not a faculty
@@ -298,7 +299,7 @@ Worked classification:
 
 By this test: Dream / periodic review / triage / import / research → policy is
 skill-able; compaction / tool-result trim / context-budget / the scheduler itself /
-single-writer + transactions / the permission floor → kernel.
+single-writer + transactions / the capability boundary → kernel.
 
 ## Removed multi-agent apparatus
 
@@ -355,7 +356,7 @@ leftover; only the single-agent value is ever assigned.)
 | Timeline memory nodes | ✅ built | durable memory lives in per-day generated-headline `#d-memory` plus optional `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
 | One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` Dream-channel runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; the Dream channel retains the newest 512 run transcripts and prunes older run ledgers/anchor markers/search entries; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
 | Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |
-| Permission gate | ✅ built | ask / allow / deny over the hard A3 floor |
+| Capability boundary | ✅ built | direct execution, persistent folders including `/`, private Tenon control state, user blocks, and scoped tool catalogs |
 
 ## Known tensions / honest caveats
 

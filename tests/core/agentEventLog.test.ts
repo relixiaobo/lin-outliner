@@ -1009,12 +1009,12 @@ describe('notification + attention projection', () => {
         folderCapability: request,
       }),
       {
-        ...base(3, 'tool.permission.resolved'),
+        ...base(3, 'tool.capability.resolved'),
         runId: request.runId,
         requestId: request.requestId,
         toolCallId: request.toolCallId,
         toolName: request.toolName,
-        status: 'approved',
+        status: 'available',
         resolvedBy: 'folder_grant',
         updatedFolders: request.folders,
       },
@@ -1024,7 +1024,7 @@ describe('notification + attention projection', () => {
     expect(state.folderCapabilityRequests[request.requestId]).toMatchObject({
       ...request,
       conversationId,
-      status: 'approved',
+      status: 'granted',
       createdAt: 1_700_000_000_002,
       updatedAt: 1_700_000_000_003,
     });

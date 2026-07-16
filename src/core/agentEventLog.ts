@@ -13,32 +13,28 @@ import { assertValidRunExecutionStatusTransition } from './agentRunStateMachine'
 
 export const AGENT_EVENT_VERSION = 1;
 
-export type AgentPermissionDeniedReason =
-  | 'configured_deny'
-  | 'policy_denied'
-  | 'platform_hard_block'
+export type AgentCapabilityResolutionReason =
+  | 'user_blocked'
+  | 'control_plane'
   | 'run_aborted'
   | 'runtime'
   | 'user_cancelled';
 
-export type AgentToolPermissionEventSource =
+export type AgentToolCapabilityEventSource =
   | 'default'
   | 'folder_capability'
   | 'user_blocklist'
-  | 'configured_deny'
-  | 'policy_denied'
+  | 'control_plane'
   | 'user'
-  | 'platform_hard_block'
   | 'runtime';
 
-export type AgentToolPermissionResolvedBy =
+export type AgentToolCapabilityResolvedBy =
   | 'default'
   | 'folder_capability'
   | 'folder_grant'
   | 'user_cancelled'
-  | 'configured_deny'
-  | 'policy_denied'
-  | 'platform_hard_block'
+  | 'user_blocklist'
+  | 'control_plane'
   | 'runtime'
   | 'system_abort';
 
@@ -54,7 +50,6 @@ export type AgentPayloadRole =
   | 'preview'
   | 'text_extract'
   | 'tool_output'
-  | 'approval'
   | 'debug';
 
 export interface AgentPayloadDisplayMetadata {
@@ -339,8 +334,8 @@ export type AgentRunLogEventType =
   | 'tool_call.completed'
   | 'tool_call.failed'
   | 'tool_result.created'
-  | 'tool.permission.checked'
-  | 'tool.permission.resolved'
+  | 'tool.capability.checked'
+  | 'tool.capability.resolved'
   | 'user_question.requested'
   | 'user_question.answered'
   | 'user_question.cancelled'
@@ -453,26 +448,26 @@ export type AgentRunLogEvent =
   | (AgentRunEventBase & { type: 'tool_call.failed'; toolCallId: string; error: { code: string; message: string } })
   | (AgentRunEventBase & { type: 'tool_result.created'; toolCallId: string; content: AgentPersistedContent[]; isError?: boolean })
   | (AgentRunEventBase & {
-      type: 'tool.permission.checked';
+      type: 'tool.capability.checked';
       requestId: string;
       toolCallId: string;
       toolName: string;
       primaryActionKind?: string;
       actionKinds: string[];
-      outcome: 'allow' | 'folder_required' | 'blocked';
-      source: AgentToolPermissionEventSource;
+      outcome: 'allow' | 'capability_required' | 'unavailable';
+      source: AgentToolCapabilityEventSource;
       requiredFolders?: string[];
       descriptorRef?: AgentPayloadRef;
     })
   | (AgentRunEventBase & {
-      type: 'tool.permission.resolved';
+      type: 'tool.capability.resolved';
       requestId: string;
       toolCallId: string;
       toolName: string;
-      status: 'approved' | 'denied' | 'aborted';
-      resolvedBy: AgentToolPermissionResolvedBy;
+      status: 'available' | 'unavailable' | 'cancelled';
+      resolvedBy: AgentToolCapabilityResolvedBy;
       updatedFolders?: string[];
-      deniedReason?: AgentPermissionDeniedReason;
+      reason?: AgentCapabilityResolutionReason;
     })
   | (AgentRunEventBase & {
       type: 'user_question.requested';
@@ -600,14 +595,12 @@ export type AgentEventType =
   | 'tool_call.failed'
   | 'tool_result.created'
   | 'tool_result.replaced'
-  | 'tool.permission.checked'
-  | 'tool.permission.resolved'
+  | 'tool.capability.checked'
+  | 'tool.capability.resolved'
   | 'user_question.requested'
   | 'user_question.answered'
   | 'user_question.cancelled'
   | 'widget_state.updated'
-  | 'approval.requested'
-  | 'approval.resolved'
   | 'follow_up.queued'
   | 'follow_up.applied'
   | 'notification.created'
@@ -816,28 +809,28 @@ export interface ToolResultReplacedEvent extends AgentEventBase {
   outputRef?: AgentPayloadRef;
 }
 
-export interface ToolPermissionCheckedEvent extends AgentEventBase {
-  type: 'tool.permission.checked';
+export interface ToolCapabilityCheckedEvent extends AgentEventBase {
+  type: 'tool.capability.checked';
   requestId: string;
   toolCallId: string;
   toolName: string;
   primaryActionKind?: string;
   actionKinds: string[];
-  outcome: 'allow' | 'folder_required' | 'blocked';
-  source: AgentToolPermissionEventSource;
+  outcome: 'allow' | 'capability_required' | 'unavailable';
+  source: AgentToolCapabilityEventSource;
   requiredFolders?: string[];
   descriptorRef?: AgentPayloadRef;
 }
 
-export interface ToolPermissionResolvedEvent extends AgentEventBase {
-  type: 'tool.permission.resolved';
+export interface ToolCapabilityResolvedEvent extends AgentEventBase {
+  type: 'tool.capability.resolved';
   requestId: string;
   toolCallId: string;
   toolName: string;
-  status: 'approved' | 'denied' | 'aborted';
-  resolvedBy: AgentToolPermissionResolvedBy;
+  status: 'available' | 'unavailable' | 'cancelled';
+  resolvedBy: AgentToolCapabilityResolvedBy;
   updatedFolders?: string[];
-  deniedReason?: AgentPermissionDeniedReason;
+  reason?: AgentCapabilityResolutionReason;
 }
 
 export interface UserQuestionRequestedEvent extends AgentEventBase {
@@ -868,19 +861,6 @@ export interface WidgetStateUpdatedEvent extends AgentEventBase {
   toolCallId: string;
   messageId: string;
   currentState: unknown;
-}
-
-export interface ApprovalRequestedEvent extends AgentEventBase {
-  type: 'approval.requested';
-  requestId: string;
-  summary: string;
-  payloadRef?: AgentPayloadRef;
-}
-
-export interface ApprovalResolvedEvent extends AgentEventBase {
-  type: 'approval.resolved';
-  requestId: string;
-  approved: boolean;
 }
 
 export interface FollowUpQueuedEvent extends AgentEventBase {
@@ -1093,14 +1073,12 @@ export type AgentEvent =
   | ToolCallFailedEvent
   | ToolResultCreatedEvent
   | ToolResultReplacedEvent
-  | ToolPermissionCheckedEvent
-  | ToolPermissionResolvedEvent
+  | ToolCapabilityCheckedEvent
+  | ToolCapabilityResolvedEvent
   | UserQuestionRequestedEvent
   | UserQuestionAnsweredEvent
   | UserQuestionCancelledEvent
   | WidgetStateUpdatedEvent
-  | ApprovalRequestedEvent
-  | ApprovalResolvedEvent
   | FollowUpQueuedEvent
   | FollowUpAppliedEvent
   | NotificationCreatedEvent
@@ -1289,7 +1267,7 @@ export interface AgentNotificationRecord {
 
 export interface AgentFolderCapabilityRequestRecord extends AgentFolderCapabilityRequest {
   conversationId: string;
-  status: 'pending' | 'approved' | 'cancelled';
+  status: 'pending' | 'granted' | 'cancelled';
   createdAt: number;
   updatedAt: number;
 }
@@ -1774,10 +1752,8 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       return;
     case 'thinking.delta':
     case 'tool_call.delta':
-    case 'tool.permission.checked':
+    case 'tool.capability.checked':
     case 'widget_state.updated':
-    case 'approval.requested':
-    case 'approval.resolved':
     case 'follow_up.queued':
     case 'follow_up.applied':
     case 'skill.created':
@@ -1789,10 +1765,10 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'skill.curation.updated':
     case 'checkpoint.created':
       return;
-    case 'tool.permission.resolved': {
+    case 'tool.capability.resolved': {
       const request = state.folderCapabilityRequests[event.requestId];
       if (!request) return;
-      request.status = event.status === 'approved' ? 'approved' : 'cancelled';
+      request.status = event.status === 'available' ? 'granted' : 'cancelled';
       request.updatedAt = event.createdAt;
       return;
     }

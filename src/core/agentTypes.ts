@@ -538,41 +538,41 @@ export interface AgentToolResultEvent {
   timestamp: number;
 }
 
-export type AgentApprovalRequestKind = 'folder_capability';
+export type AgentCapabilityRequestKind = 'folder';
 
-export interface AgentApprovalRequestDetail {
+export interface AgentCapabilityRequestDetail {
   label: string;
   value: string;
 }
 
-export interface AgentApprovalRequestView {
+export interface AgentCapabilityRequestView {
   requestId: string;
   conversationId: string;
-  kind: AgentApprovalRequestKind;
+  kind: AgentCapabilityRequestKind;
   toolCallId: string;
   toolName: string;
   title: string;
   target: string;
   reason: string;
-  details: AgentApprovalRequestDetail[];
-  folders?: string[];
+  details: AgentCapabilityRequestDetail[];
+  folders: string[];
   /** Agent id when a separate consulted agent requested the folder. */
   requestedByAgentId?: string;
 }
 
-export interface AgentApprovalResolvedEvent {
-  type: 'approval_resolved';
+export interface AgentCapabilityResolvedEvent {
+  type: 'capability_resolved';
   conversationId: string;
   requestId: string;
-  approved: boolean;
+  resolution: 'granted' | 'cancelled';
   timestamp: number;
 }
 
-export interface AgentApprovalRequestEvent {
-  type: 'approval_request';
+export interface AgentCapabilityRequestEvent {
+  type: 'capability_request';
   conversationId: string;
   requestId: string;
-  request: AgentApprovalRequestView;
+  request: AgentCapabilityRequestView;
   timestamp: number;
 }
 
@@ -624,8 +624,8 @@ export type AgentRuntimeEvent =
   | AgentProviderRetryEvent
   | AgentToolCallEvent
   | AgentToolResultEvent
-  | AgentApprovalRequestEvent
-  | AgentApprovalResolvedEvent
+  | AgentCapabilityRequestEvent
+  | AgentCapabilityResolvedEvent
   | AgentUserQuestionRequestEvent
   | AgentUserQuestionResolvedEvent
   | AgentConversationAttentionEvent;

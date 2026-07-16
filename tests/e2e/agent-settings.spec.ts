@@ -51,7 +51,7 @@ test.describe('agent settings window', () => {
     // toolbar title names the pane; assert the content by its grouped inset list,
     // symmetric with the Providers check below.
     await settings.getByRole('button', { name: /^Security/ }).click();
-    await expect(settings.getByRole('list', { name: 'System protections' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'System boundary' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
@@ -63,7 +63,7 @@ test.describe('agent settings window', () => {
 
     // Forward replays the visit.
     await forward.click();
-    await expect(settings.getByRole('list', { name: 'System protections' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'System boundary' })).toBeVisible();
     await expect(forward).toBeDisabled();
   });
 
@@ -151,19 +151,19 @@ test.describe('agent settings window', () => {
     });
   }
 
-  test('shows delegated-operator permissions without mode or exception controls', async ({ page }) => {
+  test('shows folder capabilities, user blocks, and the system boundary', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Security/ }).click();
-    await expect(settings.getByRole('list', { name: 'System protections' })).toContainText('Non-overridable safety floor');
-    await expect(settings.getByText('Routine, network, install, publish, and message actions run directly when their folder capabilities are available.')).toBeVisible();
-    await expect(settings.getByText('Host-wide destruction, permission or credential self-modification, unsupported payments, explicit blocks, and restricted-Run ceilings are denied without an override.')).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'System boundary' })).toContainText('Tenon control state');
+    await expect(settings.getByText('Private to Tenon; agent file tools and processes cannot read or change it.')).toBeVisible();
+    await expect(settings.getByText('Other host operations run under your macOS account and use native authorization or service sign-in when required.')).toBeVisible();
     await expect(settings.getByRole('radio', { name: 'Full Access' })).toHaveCount(0);
     await expect(settings.getByText('Add an exception')).toHaveCount(0);
-    await expect(settings.locator('.settings-permissions-section .select-popup-input')).toHaveCount(0);
+    await expect(settings.locator('.settings-security-section .select-popup-input')).toHaveCount(0);
     await expect(settings.getByRole('list', { name: 'Your blocks' })).toContainText('No explicit blocks.');
     await expect(settings.getByRole('list', { name: 'Folder access' })).toContainText('No additional folders.');
 
-    const modeRowMetrics = await settings.locator('.settings-permission-mode-row').evaluate((row) => {
+    const modeRowMetrics = await settings.locator('.settings-system-boundary-row').evaluate((row) => {
       const sublabel = row.querySelector<HTMLElement>('.inset-row-sublabel');
       if (!sublabel) {
         return null;
@@ -181,7 +181,7 @@ test.describe('agent settings window', () => {
 
   test('removes user block rules through the Security pane', async ({ page }) => {
     const settings = await openSettings(page, '', {
-      permissionBlocks: ['Command(git push origin main)', 'Action(git.publish_remote)'],
+      capabilityBlocks: ['Command(git push origin main)', 'Action(git.publish_remote)'],
     });
     await settings.getByRole('button', { name: /^Security/ }).click();
     const blocks = settings.getByRole('list', { name: 'Your blocks' });
@@ -193,7 +193,7 @@ test.describe('agent settings window', () => {
 
     await settings.getByRole('button', { name: 'Save', exact: true }).click();
     await expect.poll(async () => {
-      const updateCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_update_tool_permission_settings');
+      const updateCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_update_capability_settings');
       return updateCall?.args.settings;
     }).toEqual({
       folders: [],
@@ -203,7 +203,7 @@ test.describe('agent settings window', () => {
 
   test('hands a folder to Tenon as a remembered folder capability', async ({ page }) => {
     const settings = await openSettings(page, '', {
-      permissionFolders: ['/tmp/project'],
+      capabilityFolders: ['/tmp/project'],
     });
     await settings.getByRole('button', { name: /^Security/ }).click();
 
@@ -214,7 +214,7 @@ test.describe('agent settings window', () => {
     await expect(boundaries).toContainText('/mock/handoff-folder');
     await expect(settings.getByText('Folder handed to Tenon: /mock/handoff-folder')).toBeVisible();
     await expect.poll(async () => {
-      const pickCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_pick_scope_folder');
+      const pickCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_pick_capability_folder');
       const settings = pickCall?.args.settings as { folders?: string[]; blocks?: string[] } | undefined;
       return settings ? {
         folders: settings.folders,

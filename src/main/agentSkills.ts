@@ -74,9 +74,9 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - Prefer a focused `file_edit` patch for existing skills. Use `file_write` for new skills, major rewrites, or malformed files that cannot be safely patched.',
     '',
     '5. Treat `allowed-tools` as an authored runtime contract.',
-    '   - Separate authoring tools from runtime tools: tools used to create the skill are not automatically tools the future skill should preapprove.',
-    '   - Omit `allowed-tools` when the future workflow does not need preapproval.',
-    '   - Prefer narrow read/search rules. Keep writes, bash, external actions, and irreversible operations out of preapproval unless the workflow requires them and the rule can be narrow.',
+    '   - Separate authoring tools from runtime tools: tools used to create the skill are not automatically visible to a future isolated Run.',
+    '   - For `execution: isolated`, list every tool the Run needs; omitted `allowed-tools` creates a tool-free Run.',
+    '   - `allowed-tools` selects whole tools, not command patterns. Inline skills keep the parent Run catalog unchanged.',
     '   - Flag broad `allowed-tools` in the preview summary.',
     '',
     '6. Resolve ambiguity, then write.',
@@ -1482,7 +1482,7 @@ function targetInsideSkillsDir(
 /**
  * The single source of truth for "is this file a skill-content write, and which skill?".
  * Both the loader (via the registry) and write governance (the file-tool gateway and the
- * permission layer) resolve through this, so the two can never disagree. Built-in skills
+ * capability layer) resolve through this, so the two can never disagree. Built-in skills
  * are code-registered and have no writable directory, so a target is never `built-in`.
  */
 export function resolveSkillContentTarget(

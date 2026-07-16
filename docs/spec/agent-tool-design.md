@@ -34,43 +34,43 @@ role.
 
 These tools are required for the first useful local agent.
 
-| Tool | Kind | Mutates | Approval | Purpose |
+| Tool | Kind | Mutates | Capability behavior | Purpose |
 |---|---|---:|---|---|
-| `node_search` | outliner | No | No | Execute temporary search outlines or saved search node queries. |
-| `node_read` | outliner | No | No | Read node raw type/data, fields, and bounded children. |
-| `node_create` | outliner | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
-| `node_edit` | outliner | Yes | Usually yes | Edit one known node's own content, fields, field values, or saved-search config using exact string replacement, or perform explicit by-id operations such as move and merge. |
-| `node_delete` | outliner | Yes | Usually yes | Trash or restore one or more nodes. |
-| `outline_undo_stack` | outliner | Yes for undo/redo | Usually yes | Inspect, undo, or redo user and agent outline operations. |
-| `file_read` | local | No | Usually no | Read local files with bounded output. |
-| `file_glob` | local | No | No | Find files by glob or path pattern. |
-| `file_grep` | local | No | No | Search file contents under allowed roots. |
-| `file_edit` | local | Yes | Yes | Apply exact string replacements to files. |
-| `file_write` | local | Yes | Yes | Create files or rewrite whole files. |
-| `file_delete` | local | Yes | Yes | Move local files or directories to agent trash. |
-| `bash` | local | Depends | Usually yes | Run local commands with timeout and output limits. |
-| `bash_stop` | local | Yes | Usually yes | Stop background commands created by `bash`. |
-| `web_search` | web | No | Depends | Search the web for current external information, or for images with `kind: "image"`. |
-| `web_fetch` | web | No | Depends | Fetch and read a specific URL with pagination or snippet search. |
+| `node_search` | outliner | No | Direct | Execute temporary search outlines or saved search node queries. |
+| `node_read` | outliner | No | Direct | Read node raw type/data, fields, and bounded children. |
+| `node_create` | outliner | Yes | Direct | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
+| `node_edit` | outliner | Yes | Direct | Edit one known node's own content, fields, field values, or saved-search config using exact string replacement, or perform explicit by-id operations such as move and merge. |
+| `node_delete` | outliner | Yes | Direct | Trash or restore one or more nodes. |
+| `outline_undo_stack` | outliner | Yes for undo/redo | Direct | Inspect, undo, or redo user and agent outline operations. |
+| `file_read` | local | No | Folder if uncovered | Read local files with bounded output. |
+| `file_glob` | local | No | Folder if uncovered | Find files by glob or path pattern. |
+| `file_grep` | local | No | Folder if uncovered | Search file contents under allowed roots. |
+| `file_edit` | local | Yes | Folder if uncovered | Apply exact string replacements to files. |
+| `file_write` | local | Yes | Folder if uncovered | Create files or rewrite whole files. |
+| `file_delete` | local | Yes | Folder if uncovered | Move local files or directories to agent trash. |
+| `bash` | local | Depends | Declared folder if uncovered | Run local commands with timeout and output limits. |
+| `bash_stop` | local | Yes | Direct | Stop background commands created by `bash`. |
+| `web_search` | web | No | Direct | Search the web for current external information, or for images with `kind: "image"`. |
+| `web_fetch` | web | No | Direct | Fetch and read a specific HTTP(S) URL with pagination or snippet search. |
 
 ### P1 Agent Tools
 
 These agent-level tools are active on top of the core local/document tool
 surface.
 
-| Tool | Kind | Mutates | Approval | Purpose |
+| Tool | Kind | Mutates | Capability behavior | Purpose |
 |---|---|---:|---|---|
-| `past_chats` | agent | No | No | Read/search visible prior conversation history and raw cited spans. |
-| `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
-| `generate_image` | agent | Creates image files | Usually yes | Generate or edit raster images through enabled image-capable providers. |
-| `issue_search` | agent | No | No | Search concrete Issues and Recurring Issues by canonical work fields, execution state, node/tag scope, Activity state, and ordering fields. |
-| `issue_read` | agent | No | No | Read one Issue or Recurring Issue with requested detail slices for sessions, Activity, generated Issues, or verification evidence. |
-| `issue_create` | agent | Yes | No | Create an Issue or Recurring Issue with objective, criteria, trigger, input scope, delegate profile, and verification policy. |
-| `issue_update` | agent | Yes | Destructive changes only | Update field, status, trigger, recurrence, relations, or lifecycle changes on existing Issues and Recurring Issues. |
-| `agent_session_start` | agent | Runtime execution | No | Start one Agent Session for an Issue from the Issue input snapshot. |
-| `agent_session_read` | agent | No | No | Read an Agent Session's status, latest output, Activity, and executor-facing state without exposing a Run id. |
-| `agent_session_send_message` | agent | Runtime execution | No | Send soft guidance or requested input to a live Agent Session. |
-| `agent_session_stop` | agent | Runtime execution | Destructive cancellation only | Request cancellation of a live Agent Session. |
+| `past_chats` | agent | No | Direct | Read/search visible prior conversation history and raw cited spans. |
+| `ask_user_question` | agent | No | Separate product-input flow | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
+| `generate_image` | agent | Creates image files | Direct | Generate or edit raster images through enabled image-capable providers. |
+| `issue_search` | agent | No | Direct | Search concrete Issues and Recurring Issues by canonical work fields, execution state, node/tag scope, Activity state, and ordering fields. |
+| `issue_read` | agent | No | Direct | Read one Issue or Recurring Issue with requested detail slices for sessions, Activity, generated Issues, or verification evidence. |
+| `issue_create` | agent | Yes | Direct | Create an Issue or Recurring Issue with objective, criteria, trigger, input scope, delegate profile, and verification policy. |
+| `issue_update` | agent | Yes | Direct | Update field, status, trigger, recurrence, relations, or lifecycle changes on existing Issues and Recurring Issues. |
+| `agent_session_start` | agent | Runtime execution | Direct | Start one Agent Session for an Issue from the Issue input snapshot. |
+| `agent_session_read` | agent | No | Direct | Read an Agent Session's status, latest output, Activity, and executor-facing state without exposing a Run id. |
+| `agent_session_send_message` | agent | Runtime execution | Direct | Send soft guidance or requested input to a live Agent Session. |
+| `agent_session_stop` | agent | Runtime execution | Direct | Request cancellation of a live Agent Session. |
 
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
@@ -115,8 +115,8 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   `previousAgentSessionId` and `intent`; the Store repeats that validation at its
   trust boundary before building a Session objective;
 - Local Issue lifecycle and Agent Session control tools do not have a separate
-  Issue-specific authorization classifier in V1; the ordinary tool permission
-  layer still blocks destructive or platform-risky downstream tools. The
+  Issue-specific authorization classifier in V1; downstream tools use the
+  ordinary capability and control-plane boundary. The
   model-facing schema carries no authorization token, capability id, or
   `userActionId`;
 - `src/main/agentIssueInputResolver.ts` resolves an Issue's input
@@ -632,7 +632,7 @@ internal executor ids as the product contract.
 
 Browser automation, MCP tools, skills, and sub-agents should wait until Lin has a
 specific workflow for them. A larger registry increases prompt cost and makes
-permission behavior harder to reason about.
+tool-catalog scope harder to reason about.
 
 ## Naming Rules
 
@@ -647,7 +647,7 @@ permission behavior harder to reason about.
   Search/recent results are navigation; the model must read by `message_id` or
   `source` before relying on details.
 - Use `ask_user_question` only for decisions or missing context that cannot be
-  inferred, never for permission. Folder capability requests answer "which local
+  inferred, never for authorization. Folder capability requests answer "which local
   folder may the agent access"; this tool answers "what information or direction
   should the agent use next".
 - Use `generate_image` for raster image generation/editing only; normal
@@ -665,7 +665,7 @@ permission behavior harder to reason about.
 ## `ask_user_question`
 
 `ask_user_question` is a run-scoped, blocking user-interaction tool. It is not a
-permission request and does not reuse approval cards or approval events.
+capability request and does not reuse folder capability cards or events.
 
 Input:
 
@@ -763,7 +763,7 @@ fresh request.
 `generate_image` is a run-scoped image generation and image-editing tool. It is
 the product surface for generated raster images; Tenon may use pi-ai
 `ImagesModels` internally, but the agent sees a Tenon-owned tool with Tenon-owned
-permissions and local-file persistence.
+provider handling and local-file persistence.
 
 The tool is available only when the runtime has at least one enabled,
 credentialed image-capable provider. Provider records do not store a default
@@ -904,9 +904,10 @@ file or node tools after the image result exists.
 Bulk cleaned-data import is a Tenon-owned CLI/API workflow, not a default
 model-visible tool. `/data-cleanup` and future local clients produce an Import
 Pack v1 JSON file, validate it, generate a preview report, run
-`tenon-import preview`, show the returned stats/warnings/preview id to the user,
-and only then run `tenon-import commit --preview-id <preview:id>` after user
-approval.
+`tenon-import preview`, inspect the returned stats/warnings/preview id, and run
+`tenon-import commit --preview-id <preview:id>` directly when the original
+request authorizes import and validation passes. Ask only for a material cleanup
+choice that cannot be inferred.
 
 Canonical CLI surface:
 
@@ -999,7 +1000,7 @@ Tool results have three separate audiences:
 - pi-agent-core result: every tool `execute` returns native
   `AgentToolResult<T>` with `content`, `details`, and optional `terminate`.
 - Runtime envelope: Lin stores the common envelope in `details` for status,
-  metrics, debugging, permissions, UI rendering, export, and tests.
+  metrics, debugging, capability audit, UI rendering, export, and tests.
 - Model-visible result: the smallest stable protocol the agent needs for the
   next action.
 - UI detail view: optional rich rendering derived from `details`, not from the
@@ -1188,7 +1189,7 @@ Dynamic guidance is first-class:
 - `instructions`: the current state, recommended next action, boundary, and
   recovery guidance in one field.
 
-Use `instructions` for unknown tags, unresolved fields, permission denials,
+Use `instructions` for unknown tags, unresolved fields, capability gaps,
 dynamic recovery, and ambiguous targets. Successful node results do not repeat
 static rules about edit markers, final-answer references, previews, count mode,
 pagination parameters, or Trash semantics; those rules live in the tool schema.
@@ -2089,8 +2090,7 @@ Outline edit semantics:
   text, or a reference target is rejected before mutation; delete the old value id
   and create the replacement value explicitly.
 - TypeScript replaces the matched fragment, parses the resulting single-node
-  outline, validates it, renders a preview, and then applies it after approval
-  when needed.
+  outline, validates it, renders a preview, and then applies it directly.
 - The root line maps to `node_id`. If the root would become ambiguous, return an
   error.
 - If the root line has a marker, it must match the `node_id` parameter.
@@ -2410,8 +2410,7 @@ interface OutlineUndoStackItem {
 Result behavior:
 
 - Omitted `action` means `list`.
-- `list` is read-only, defaults to `origin: "all"`, and should not require
-  approval.
+- `list` is read-only, defaults to `origin: "all"`, and executes directly.
 - `undo` and `redo` are stack operations. Agent v1 does not support arbitrary
   history jumping.
 - `steps` defaults to 1 and should stay small. Initial maximum: 10.
@@ -2419,7 +2418,7 @@ Result behavior:
 - `origin: "agent"` means undo/redo the nearest stack operation whose origin is
   agent, stopping at unsafe dependencies.
 - `origin: "user"` means undo/redo the nearest user-origin stack operation and
-  is still logged through the permission layer.
+  is still logged through the capability audit layer.
 - `operation_id` is only a guard for the current stack target or a continuous
   stack range. If it would require skipping unrelated later operations, return
   `boundary` and do nothing.
@@ -2498,7 +2497,6 @@ validate operation === "replace_outline" and reject fields from other operations
   -> reject child-structure edits outside saved-search query config
   -> reject annotated field value kind/target changes before mutation
   -> render preview
-  -> wait for approval when required
   -> apply the single-node edit as one transaction and one undo group
 ```
 
@@ -3168,11 +3166,11 @@ Result behavior:
 
 - Creating a new file does not require a prior `file_read`.
 - Updating an existing file requires a prior `file_read` freshness record.
-- Overwriting a file should be treated as a high-signal mutation in logs; the
-  global permission policy may still allow it by default.
+- Overwriting a file is a high-signal mutation in logs and executes directly
+  when its folder capability is available.
 - Do not use `file_write` to append small changes; use `file_edit`.
 - Writes under self-definition directories are validated by the file-tool gateway
-  after the ordinary permission decision. Skill writes validate `SKILL.md` /
+  after ordinary capability preflight. Skill writes validate `SKILL.md` /
   support-file shape and hot-reload the skill registry. The self-definition gate
   guards **skills only** (`.agents/skills`) — agent-definition (`AGENT.md`) writes
   are no longer a self-definition surface (`single-agent-finish-collapse`): the one
@@ -3307,20 +3305,16 @@ Web tools are read-only retrieval tools. Follow lin-agent's split: `web_search`
 discovers sources, `web_fetch` reads one known URL. Do not merge them into a
 generic `web` tool, and do not route routine web reads through `bash`.
 
-They should be disabled or approval-gated if the workspace is configured for
-offline/private mode. Permission scope is host-based:
-
-- `web_fetch`: `Web(<url host>)`
-- `web_search`: `Web(<site host>)` when `site` is set, otherwise
-  `Web(<search provider host>)`
+If a Run is configured without web access, the tools are absent from its tool
+catalog. There is no host-by-host approval policy.
 
 Shared behavior:
 
 - Tools are `isReadOnly: true`, `isConcurrencySafe: true`, and should use a
   `maxResultSizeChars` budget around `100_000`.
-- Prefer an embedded browser/session-backed fetch path when available so normal
-  user cookies and proxy settings work. A TypeScript HTTP client is acceptable for v1
-  if browser session plumbing is not ready.
+- `web_fetch` is an unprivileged, credential-free HTTP(S) client. Public,
+  loopback, private, link-local, and metadata targets share the same URL
+  contract; URLs with embedded username/password credentials are invalid.
 - Return content separately from telemetry. The `data.content` or
   `data.results` fields carry what the model needs; status, bytes, final URL,
   duration, hints, and pagination metadata stay in structured fields.
@@ -3346,7 +3340,7 @@ type WebErrorCode =
   | "invalid_args"
   | "invalid_url"
   | "unsupported_scheme"
-  | "permission_denied"
+  | "operation_unavailable"
   | "offline_mode"
   | "no_session"
   | "network_error"
@@ -3774,7 +3768,7 @@ self-configuration through a different mechanism. The standing safety principle
 survives the removal:
 
 - The agent must not use `file_edit`, `file_write`, or `bash` to mutate provider
-  settings, permission config, hook config, skill registry metadata, or
+  settings, capability config, hook config, skill registry metadata, or
   last-known-good recovery state. Runtime-owned configuration changes only
   through runtime-owned APIs or Settings, never as ordinary file writes.
 - Skill maintenance does not add a separate model-facing CRUD tool family in v1.
@@ -3783,15 +3777,16 @@ survives the removal:
   the one agent (Neva) is a built-in edited only via Settings → Agent; the
   `/create-agent` skill and file-backed `.agents/agents/*` definitions are removed
   (`single-agent-finish-collapse`).
-- Skill files use the ordinary `file_write` / `file_edit` permission decision.
-  After that decision, the file-tool gateway recognizes writes under registered
+- Skill files use ordinary `file_write` / `file_edit` capability preflight.
+  After that preflight, the file-tool gateway recognizes writes under registered
   skill directories, validates frontmatter/support files, carries rollback
   metadata in tool details, emits `skill.created` / `skill.patched` /
   `skill.replaced` audit events on success, records provenance hashes, and
   hot-reloads the skill registry.
-- Shell writes are not a skill-authoring route. The permission floor and process
-  sandbox deny writes under governed `.agents/skills`; validated skill authoring
-  uses `file_write` / `file_edit` only.
+- Shell and external-editor writes under `.agents/skills` are ordinary user-data
+  writes. They are validated when the registry discovers or reloads them;
+  invalid definitions remain unloaded with diagnostics. Typed `file_write` /
+  `file_edit` additionally provide provenance, rollback metadata, and hot reload.
 
 ## Mapping to Current Lin Commands
 
@@ -3813,7 +3808,7 @@ coverage maps as follows:
 | `file_write` | Implemented TypeScript create/rewrite command with read-before-write freshness checks for existing files. |
 | `bash` | Implemented TypeScript command runner with timeout, output caps, background task support, and output persistence. |
 | `bash_stop` | Implemented TypeScript background task stop command scoped to Lin-created bash tasks. |
-| `web_search` | Needed web search adapter: provider-backed search or embedded-browser SERP extraction, host permission scope, rate limiting, structured hints. |
+| `web_search` | Implemented provider-backed search with rate limiting and structured hints. |
 | `web_fetch` | Needed URL fetch adapter: TypeScript HTTP and/or embedded browser session fetch, HTML-to-markdown extraction, pagination, find mode, structured hints. |
 | `generate_image` | Implemented TypeScript image-generation adapter that resolves enabled image-capable providers, writes generated image files, and returns model-visible local paths. |
 
@@ -3821,15 +3816,15 @@ Lin should prefer adding semantic TypeScript core commands where the current com
 set is too UI-shaped. For example, semantic target/source merge is better for
 agents than only `merge_node_into_previous`.
 
-## Permission Policy
+## Capability Boundary
 
-The permission **policy** — `allow | folder_required | blocked`, persistent
-folder capabilities, process containment, direct hard blocks, explicit user
-blocks, restricted Runs, and events — is specified in
-`agent-tool-permissions.md`. This section only classifies each tool as read-only
-vs mutating, one input to that policy.
+The capability model — `allow | capability_required | unavailable`, persistent
+folder roots, control-plane isolation, user blocks, process containment, scoped
+tool catalogs, and events — is specified in `agent-tool-permissions.md`. This
+section classifies tools as read-only or mutating for catalog construction and
+audit only.
 
-Read-only tools run immediately when their permission scope is already allowed:
+Read-only tools run immediately when their required resources are available:
 
 - `node_search`
 - `node_read`
@@ -3839,12 +3834,13 @@ Read-only tools run immediately when their permission scope is already allowed:
 - `past_chats`
 - `outline_undo_stack(action: "list")`
 
-Web tools are also read-only, but can return direct host/offline/SSRF errors:
+Web tools are also read-only and can return direct URL, network, provider, or
+offline errors:
 
 - `web_search`
 - `web_fetch`
 
-Mutating tools still pass through the global permission layer:
+Mutating tools use the same capability boundary:
 
 - `node_create`
 - `node_edit`
@@ -3856,10 +3852,11 @@ Mutating tools still pass through the global permission layer:
 - `bash_stop`
 - `generate_image`
 
-Ordinary reads and mutations run immediately when their folder capabilities are
-available. Missing folders request one persistent capability; hard floors,
-explicit user blocks, and restricted-Run ceilings reject directly. The exact
-rules are owned by `agent-tool-permissions.md`.
+Ordinary reads and mutations run immediately when their resources are present.
+Missing folders request one persistent capability. Explicit user blocks and
+private Tenon control-state access return unavailable; scoped Runs exclude tools
+from the catalog before model execution. The exact rules are owned by
+`agent-tool-permissions.md`.
 
 ## Implementation Notes
 
@@ -3868,7 +3865,7 @@ rules are owned by `agent-tool-permissions.md`.
 - The pi-mono tool adapter should remain thin: normalize parameters, invoke the
   gateway, and convert gateway responses into `ToolResult`.
 - TypeScript should own outliner parsing, tag resolution, field resolution, operation
-  grouping, permissions, and persistence.
+  grouping, capability checks, and persistence.
 - All document mutations should create an operation history entry with origin,
   summary, affected nodes, and undo group id.
 - Active UI context is injected every user turn and should not be fetched with a

@@ -21,7 +21,7 @@ describe('folder capability service', () => {
   test('canonicalizes, deduplicates, and persists folder capabilities privately', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'tenon-folder-capability-'));
     const nested = path.join(root, 'nested');
-    const storePath = path.join(root, 'state', 'agent-tool-permissions.json');
+    const storePath = path.join(root, 'state', 'agent-capabilities.json');
     roots.push(root);
     await mkdir(nested);
     const service = new FolderCapabilityService(storePath);

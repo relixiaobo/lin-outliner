@@ -58,7 +58,7 @@ async function pendingQuestionMetrics(page: Page) {
     const surface = card.closest('.agent-composer-surface');
     const option = card.querySelector('.agent-question-option');
     const textarea = card.querySelector('.agent-question-text');
-    const button = card.querySelector('.agent-approval-button.is-primary');
+    const button = card.querySelector('.agent-request-button.is-primary');
     if (
       !(card instanceof HTMLElement)
       || !(surface instanceof HTMLElement)
@@ -807,13 +807,13 @@ test.describe('agent composer controls', () => {
 
   test('renders folder capability requests as grant-and-remember cards', async ({ page }) => {
     await emitAgentEvent(page, {
-      type: 'approval_request',
+      type: 'capability_request',
       conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'folder-capability-e2e',
       request: {
         requestId: 'folder-capability-e2e',
         conversationId: DEFAULT_CONVERSATION_ID,
-        kind: 'folder_capability',
+        kind: 'folder',
         toolCallId: 'tool-folder-capability-e2e',
         toolName: 'file_read',
         title: 'Folder access required',
@@ -825,7 +825,7 @@ test.describe('agent composer controls', () => {
       timestamp: 1_800_000_003_000,
     });
 
-    const card = page.locator('.agent-approval-card');
+    const card = page.locator('.agent-capability-card');
     await expect(card).toBeVisible();
     await expect(card.getByText('Folder access required')).toBeVisible();
     await expect(card.getByText('/Users/example/Research')).toBeVisible();
@@ -835,23 +835,23 @@ test.describe('agent composer controls', () => {
     await page.getByRole('button', { name: 'Grant and remember' }).click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.find((call) => call.cmd === 'agent_resolve_approval' && call.args.requestId === 'folder-capability-e2e')?.args;
+      return calls.find((call) => call.cmd === 'agent_resolve_capability' && call.args.requestId === 'folder-capability-e2e')?.args;
     }).toMatchObject({
       conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'folder-capability-e2e',
-      approved: true,
+      resolution: 'granted',
     });
   });
 
-  test('cancels a folder capability request without adding an approval scope', async ({ page }) => {
+  test('cancels a folder capability request without adding a folder grant', async ({ page }) => {
     await emitAgentEvent(page, {
-      type: 'approval_request',
+      type: 'capability_request',
       conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'folder-cancel-e2e',
       request: {
         requestId: 'folder-cancel-e2e',
         conversationId: DEFAULT_CONVERSATION_ID,
-        kind: 'folder_capability',
+        kind: 'folder',
         toolCallId: 'tool-folder-cancel-e2e',
         toolName: 'file_write',
         title: 'Folder access required',
@@ -866,23 +866,23 @@ test.describe('agent composer controls', () => {
     await page.getByRole('button', { name: 'Cancel' }).click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.find((call) => call.cmd === 'agent_resolve_approval' && call.args.requestId === 'folder-cancel-e2e')?.args;
+      return calls.find((call) => call.cmd === 'agent_resolve_capability' && call.args.requestId === 'folder-cancel-e2e')?.args;
     }).toMatchObject({
       conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'folder-cancel-e2e',
-      approved: false,
+      resolution: 'cancelled',
     });
   });
 
-  test('attributes a consulted agent\'s approval to the consultee', async ({ page }) => {
+  test('attributes a consulted agent\'s capability request to the consultee', async ({ page }) => {
     await emitAgentEvent(page, {
-      type: 'approval_request',
+      type: 'capability_request',
       conversationId: DEFAULT_CONVERSATION_ID,
-      requestId: 'consultee-approval-e2e',
+      requestId: 'consultee-capability-e2e',
       request: {
-        requestId: 'consultee-approval-e2e',
+        requestId: 'consultee-capability-e2e',
         conversationId: DEFAULT_CONVERSATION_ID,
-        kind: 'folder_capability',
+        kind: 'folder',
         toolCallId: 'tool-consultee-e2e',
         toolName: 'file_read',
         title: 'Folder access required',
@@ -895,11 +895,11 @@ test.describe('agent composer controls', () => {
       timestamp: 1_800_000_003_200,
     });
 
-    const card = page.locator('.agent-approval-card');
+    const card = page.locator('.agent-capability-card');
     await expect(card).toBeVisible();
     await expect(card.getByText('Folder access required')).toBeVisible();
     // The consultee is named via its canonical mention token — the parent's own agent is not the requester.
-    await expect(card.locator('.agent-approval-attribution')).toHaveText('Requested by @researcher');
+    await expect(card.locator('.agent-capability-attribution')).toHaveText('Requested by @researcher');
   });
 
   test('pastes multi-line text as multiple lines instead of collapsing to one', async ({ page }) => {

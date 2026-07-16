@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const userData = '/tmp/lin-agent-tool-permission-store-test';
+const userData = '/tmp/tenon-agent-capability-store-test';
 
 mock.module('electron', () => ({
   app: { getPath: () => userData },
@@ -17,13 +17,13 @@ mock.module('electron', () => ({
 }));
 
 const {
-  appendAgentToolPermissionBlock,
+  appendAgentCapabilityBlock,
   grantAgentFolderCapability,
-  readAgentToolPermissionSettings,
-  removeAgentToolPermissionBlock,
+  readAgentCapabilitySettings,
+  removeAgentCapabilityBlock,
   resetFolderCapabilityServiceForTests,
-  writeAgentToolPermissionSettings,
-} = await import('../../src/main/agentToolPermissionStore');
+  writeAgentCapabilitySettings,
+} = await import('../../src/main/agentCapabilityStore');
 
 describe('agent folder capability store', () => {
   beforeEach(async () => {
@@ -40,13 +40,13 @@ describe('agent folder capability store', () => {
     const folder = path.join(userData, 'project');
     await fs.mkdir(folder, { recursive: true });
     const canonicalFolder = await fs.realpath(folder);
-    await writeAgentToolPermissionSettings({
+    await writeAgentCapabilitySettings({
       folders: [canonicalFolder],
       blocks: ['Action(git.publish_remote)'],
     });
 
-    const filePath = path.join(userData, 'agent-tool-permissions.json');
-    expect(await readAgentToolPermissionSettings()).toEqual({
+    const filePath = path.join(userData, 'agent-capabilities.json');
+    expect(await readAgentCapabilitySettings()).toEqual({
       folders: [canonicalFolder],
       blocks: ['Action(git.publish_remote)'],
     });
@@ -65,10 +65,10 @@ describe('agent folder capability store', () => {
     const canonicalFolder = await fs.realpath(folder);
     await Promise.all([
       grantAgentFolderCapability(folder),
-      appendAgentToolPermissionBlock('Command(git push origin main)'),
+      appendAgentCapabilityBlock('Command(git push origin main)'),
     ]);
 
-    expect(await readAgentToolPermissionSettings()).toEqual({
+    expect(await readAgentCapabilitySettings()).toEqual({
       folders: [canonicalFolder],
       blocks: ['Command(git push origin main)'],
     });
@@ -78,14 +78,14 @@ describe('agent folder capability store', () => {
     const folder = path.join(userData, 'project');
     await fs.mkdir(folder, { recursive: true });
     const canonicalFolder = await fs.realpath(folder);
-    await writeAgentToolPermissionSettings({
+    await writeAgentCapabilitySettings({
       folders: [canonicalFolder],
       blocks: ['Command(git push origin main)', 'Action(git.publish_remote)'],
     });
 
-    await removeAgentToolPermissionBlock('Command(git push origin main)');
+    await removeAgentCapabilityBlock('Command(git push origin main)');
 
-    expect(await readAgentToolPermissionSettings()).toEqual({
+    expect(await readAgentCapabilitySettings()).toEqual({
       folders: [canonicalFolder],
       blocks: ['Action(git.publish_remote)'],
     });

@@ -2,14 +2,14 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
-import { evaluateAgentToolPermission } from '../../src/main/agentPermissions';
+import { evaluateAgentToolCapability } from '../../src/main/agentCapabilities';
 import {
-  permissionDeniedReasonForDecision,
-  permissionDeniedToolResultMessage,
-  permissionEventSourceForDecision,
-  permissionResolvedByForAllowDecision,
-} from '../../src/main/agentPermissionEvents';
-import { parseGlobalToolPermissionSettings } from '../../src/main/agentToolPermissionRules';
+  capabilityResolutionReasonForDecision,
+  unavailableToolResultMessage,
+  capabilityEventSourceForDecision,
+  capabilityResolvedByForAllowDecision,
+} from '../../src/main/agentCapabilityEvents';
+import { parseAgentCapabilitySettings } from '../../src/main/agentCapabilityRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agentSkillShell';
 
 const roots: string[] = [];
@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 async function workspaceFixture() {
-  const root = await mkdtemp(path.join(tmpdir(), 'tenon-permissions-'));
+  const root = await mkdtemp(path.join(tmpdir(), 'tenon-capabilities-'));
   const workspace = path.join(root, 'workspace');
   const outside = path.join(root, 'outside');
   await mkdir(workspace);
@@ -32,7 +32,7 @@ async function workspaceFixture() {
   };
 }
 
-describe('agent permissions', () => {
+describe('agent capabilities', () => {
   test('executes ordinary, external, install, publish, and unclassified shell work directly', async () => {
     const { workspace } = await workspaceFixture();
     const filePath = path.join(workspace, 'notes.txt');
@@ -49,7 +49,7 @@ describe('agent permissions', () => {
     ] as const;
 
     for (const [toolName, args] of cases) {
-      expect(evaluateAgentToolPermission({ toolName, args, policy: { workspaceRoot: workspace } }).behavior, toolName).toBe('allow');
+      expect(evaluateAgentToolCapability({ toolName, args, policy: { workspaceRoot: workspace } }).behavior, toolName).toBe('allow');
     }
   });
 
@@ -63,10 +63,11 @@ describe('agent permissions', () => {
       ['file_write', { file_path: path.join(outside, 'new.md'), content: 'new' }],
       ['file_glob', { path: outside, pattern: '**/*.md' }],
     ] as const) {
-      const decision = evaluateAgentToolPermission({ toolName, args, policy: { workspaceRoot: workspace } });
-      expect(decision.behavior, toolName).toBe('folder_required');
-      if (decision.behavior !== 'folder_required') throw new Error('Expected folder capability request.');
+      const decision = evaluateAgentToolCapability({ toolName, args, policy: { workspaceRoot: workspace } });
+      expect(decision.behavior, toolName).toBe('capability_required');
+      if (decision.behavior !== 'capability_required') throw new Error('Expected folder capability request.');
       expect(decision.code).toBe('folder_access_required');
+      expect(decision.request.kind).toBe('folder');
       expect(decision.request.folders).toEqual([outside]);
       expect(decision.request.details).toEqual([{ label: 'Folder', value: outside }]);
     }
@@ -76,38 +77,38 @@ describe('agent permissions', () => {
     const { workspace, outside } = await workspaceFixture();
     const nested = path.join(outside, 'nested');
     await mkdir(nested);
-    const config = parseGlobalToolPermissionSettings({ folders: [outside], blocks: [] });
+    const config = parseAgentCapabilitySettings({ folders: [outside], blocks: [] });
 
     for (const [toolName, args] of [
       ['file_read', { file_path: path.join(nested, 'notes.md') }],
       ['file_write', { file_path: path.join(nested, 'notes.md'), content: 'notes' }],
       ['file_delete', { file_path: nested }],
     ] as const) {
-      const decision = evaluateAgentToolPermission({
+      const decision = evaluateAgentToolCapability({
         toolName,
         args,
-        policy: { workspaceRoot: workspace, globalPermissions: config },
+        policy: { workspaceRoot: workspace, capabilityConfig: config },
       });
       expect(decision.behavior, toolName).toBe('allow');
       if (decision.behavior !== 'allow') throw new Error('Expected allow.');
-      expect(decision.permissionSource).toBe('folder_capability');
-      expect(permissionEventSourceForDecision(decision)).toBe('folder_capability');
-      expect(permissionResolvedByForAllowDecision(decision)).toBe('folder_capability');
+      expect(decision.source).toBe('folder_capability');
+      expect(capabilityEventSourceForDecision(decision)).toBe('folder_capability');
+      expect(capabilityResolvedByForAllowDecision(decision)).toBe('folder_capability');
     }
   });
 
   test('preflights declared bash required_folders without parsing the command', async () => {
     const { workspace, outside } = await workspaceFixture();
     const input = { command: 'opaque-command "$TARGET"', required_folders: [outside, outside] };
-    const missing = evaluateAgentToolPermission({ toolName: 'bash', args: input, policy: { workspaceRoot: workspace } });
-    expect(missing.behavior).toBe('folder_required');
-    if (missing.behavior !== 'folder_required') throw new Error('Expected folder capability request.');
+    const missing = evaluateAgentToolCapability({ toolName: 'bash', args: input, policy: { workspaceRoot: workspace } });
+    expect(missing.behavior).toBe('capability_required');
+    if (missing.behavior !== 'capability_required') throw new Error('Expected folder capability request.');
     expect(missing.request.folders).toEqual([outside]);
 
-    const allowed = evaluateAgentToolPermission({
+    const allowed = evaluateAgentToolCapability({
       toolName: 'bash',
       args: input,
-      policy: { workspaceRoot: workspace, globalPermissions: { folders: [outside], blocks: [] } },
+      policy: { workspaceRoot: workspace, capabilityConfig: { folders: [outside], blocks: [] } },
     });
     expect(allowed.behavior).toBe('allow');
   });
@@ -121,11 +122,11 @@ describe('agent permissions', () => {
       'VAR=value unknown-tool --flag',
     ];
     for (const command of commands) {
-      expect(evaluateAgentToolPermission({ toolName: 'bash', args: { command }, policy: { workspaceRoot: workspace } }).behavior).toBe('allow');
+      expect(evaluateAgentToolCapability({ toolName: 'bash', args: { command }, policy: { workspaceRoot: workspace } }).behavior).toBe('allow');
     }
   });
 
-  test('does not turn host, payment, skill, or control-plane shell syntax into permission policy', async () => {
+  test('does not turn host, payment, skill, or control-plane shell syntax into capability policy', async () => {
     const { root, workspace } = await workspaceFixture();
     const protectedStoreRoot = path.join(root, 'user-data');
     await mkdir(protectedStoreRoot);
@@ -136,19 +137,19 @@ describe('agent permissions', () => {
       'diskutil eraseDisk JHFS+ X disk2',
       'dd if=/tmp/image of=/dev/disk2',
       'shutdown -h now',
-      `printf "{}" > ${JSON.stringify(path.join(protectedStoreRoot, 'agent-tool-permissions.json'))}`,
+      `printf "{}" > ${JSON.stringify(path.join(protectedStoreRoot, 'agent-capabilities.json'))}`,
       'printf "name: skill" > .agents/skills/unsafe/SKILL.md',
     ];
 
     for (const command of cases) {
-      const decision = evaluateAgentToolPermission({
+      const decision = evaluateAgentToolCapability({
         toolName: 'bash',
         args: { command },
         policy: { workspaceRoot: workspace, protectedStoreRoot },
       });
       expect(decision.behavior, command).toBe('allow');
     }
-    expect(evaluateAgentToolPermission({
+    expect(evaluateAgentToolCapability({
       toolName: 'payment',
       args: { amount: 10 },
       policy: { workspaceRoot: workspace },
@@ -164,18 +165,18 @@ describe('agent permissions', () => {
 
     for (const command of [
       'rg shutdown src',
-      'printf "agent-tool-permissions.json" > report.txt',
+      'printf "agent-capabilities.json" > report.txt',
       'rg workflow .agents/skills > report.txt',
       'printf "rm -rf /" > safety-notes.txt',
     ]) {
-      expect(evaluateAgentToolPermission({
+      expect(evaluateAgentToolCapability({
         toolName: 'bash',
         args: { command },
         policy: { workspaceRoot: workspace, protectedStoreRoot },
       }).behavior, command).toBe('allow');
     }
 
-    expect(evaluateAgentToolPermission({
+    expect(evaluateAgentToolCapability({
       toolName: 'file_write',
       args: { file_path: path.join(workspace, 'agent-providers.json'), content: '{}' },
       policy: { workspaceRoot: workspace, protectedStoreRoot },
@@ -184,34 +185,34 @@ describe('agent permissions', () => {
       ['file_read', { file_path: path.join(protectedStoreRoot, 'agent-secrets.json') }],
       ['file_write', { file_path: path.join(protectedStoreRoot, 'workspace.json'), content: '{}' }],
     ] as const) {
-      expect(evaluateAgentToolPermission({
+      expect(evaluateAgentToolCapability({
         toolName,
         args,
         policy: {
           workspaceRoot: workspace,
           protectedStoreRoot,
-          globalPermissions: { folders: [root], blocks: [] },
+          capabilityConfig: { folders: [root], blocks: [] },
         },
-      })).toMatchObject({ behavior: 'blocked', code: 'control_plane_unavailable' });
+      })).toMatchObject({ behavior: 'unavailable', code: 'control_plane_unavailable', source: 'control_plane' });
     }
   });
 
-  test('denies explicit user blocks directly without an exception path', async () => {
+  test('makes explicit user blocks unavailable without an exception path', async () => {
     const { workspace } = await workspaceFixture();
     const command = 'git   push origin   main';
-    const decision = evaluateAgentToolPermission({
+    const decision = evaluateAgentToolCapability({
       toolName: 'bash',
       args: { command },
       policy: {
         workspaceRoot: workspace,
-        globalPermissions: { folders: [], blocks: ['Command(git push origin main)'] },
+        capabilityConfig: { folders: [], blocks: ['Command(git push origin main)'] },
       },
     });
-    expect(decision.behavior).toBe('blocked');
-    if (decision.behavior !== 'blocked') throw new Error('Expected user block.');
-    expect(decision.code).toBe('configured_deny');
-    expect(decision.permissionSource).toBe('user_blocklist');
-    expect(permissionEventSourceForDecision(decision)).toBe('user_blocklist');
+    expect(decision.behavior).toBe('unavailable');
+    if (decision.behavior !== 'unavailable') throw new Error('Expected unavailable operation.');
+    expect(decision.code).toBe('user_blocked');
+    expect(decision.source).toBe('user_blocklist');
+    expect(capabilityEventSourceForDecision(decision)).toBe('user_blocklist');
   });
 
   test('treats active skill resources as read-only implicit capabilities', async () => {
@@ -220,16 +221,16 @@ describe('agent permissions', () => {
     await mkdir(path.dirname(reference));
     await writeFile(reference, 'workflow');
 
-    expect(evaluateAgentToolPermission({
+    expect(evaluateAgentToolCapability({
       toolName: 'file_read',
       args: { file_path: reference },
       policy: { workspaceRoot: workspace, trustedReadRoots: [skillRoot] },
     }).behavior).toBe('allow');
-    expect(evaluateAgentToolPermission({
+    expect(evaluateAgentToolCapability({
       toolName: 'file_write',
       args: { file_path: reference, content: 'changed' },
       policy: { workspaceRoot: workspace, trustedReadRoots: [skillRoot] },
-    }).behavior).toBe('folder_required');
+    }).behavior).toBe('capability_required');
   });
 
   test('classifies shell actions for audit without changing authorization', async () => {
@@ -241,7 +242,7 @@ describe('agent permissions', () => {
       ['unknown-tool --flag', 'shell.unknown'],
     ] as const;
     for (const [command, actionKind] of cases) {
-      const decision = evaluateAgentToolPermission({ toolName: 'bash', args: { command }, policy: { workspaceRoot: workspace } });
+      const decision = evaluateAgentToolCapability({ toolName: 'bash', args: { command }, policy: { workspaceRoot: workspace } });
       expect(decision.behavior).toBe('allow');
       expect(decision.descriptor?.actionKind).toBe(actionKind);
     }
@@ -249,7 +250,7 @@ describe('agent permissions', () => {
 
   test('parses only folders and explicit block rules', async () => {
     const { outside } = await workspaceFixture();
-    const config = parseGlobalToolPermissionSettings({
+    const config = parseAgentCapabilitySettings({
       folders: [outside, outside],
       blocks: ['Action(git.publish_remote)', 'Command(git push origin main)', 'Action(unknown.action)', 42],
     });
@@ -265,22 +266,22 @@ describe('agent permissions', () => {
     const { root, workspace } = await workspaceFixture();
     const protectedStoreRoot = path.join(root, 'user-data');
     await mkdir(protectedStoreRoot);
-    const decision = evaluateAgentToolPermission({
+    const decision = evaluateAgentToolCapability({
       toolName: 'file_read',
       args: { file_path: path.join(protectedStoreRoot, 'agent-secrets.json') },
       policy: {
         workspaceRoot: workspace,
         protectedStoreRoot,
-        globalPermissions: { folders: [root], blocks: [] },
+        capabilityConfig: { folders: [root], blocks: [] },
       },
     });
-    if (decision.behavior !== 'blocked') throw new Error('Expected control-plane denial.');
-    const result = JSON.parse(permissionDeniedToolResultMessage({
+    if (decision.behavior !== 'unavailable') throw new Error('Expected control-plane unavailability.');
+    const result = JSON.parse(unavailableToolResultMessage({
       toolName: 'bash',
-      reason: permissionDeniedReasonForDecision(decision),
+      reason: capabilityResolutionReasonForDecision(decision),
       message: decision.reason,
     }));
-    expect(result.error).toMatchObject({ code: 'permission_denied', recoverable: false });
+    expect(result.error).toMatchObject({ code: 'operation_unavailable', recoverable: false });
   });
 
   test('routes embedded skill shell through the same folder and process boundary', async () => {
@@ -291,13 +292,13 @@ describe('agent permissions', () => {
     await expect(executeAgentSkillShellCommand({
       command: 'printf skill-shell-ok',
       localRoot: workspace,
-      globalPermissions: parseGlobalToolPermissionSettings({ folders: [], blocks: [] }),
+      capabilityConfig: parseAgentCapabilitySettings({ folders: [], blocks: [] }),
     })).resolves.toBe('skill-shell-ok');
 
     await expect(executeAgentSkillShellCommand({
       command: `cat ${JSON.stringify(path.join(outside, 'source.txt'))}`,
       localRoot: workspace,
-      globalPermissions: parseGlobalToolPermissionSettings({ folders: [], blocks: [] }),
+      capabilityConfig: parseAgentCapabilitySettings({ folders: [], blocks: [] }),
     })).rejects.toMatchObject({ code: 'command_failed' });
   });
 });

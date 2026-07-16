@@ -19,7 +19,7 @@ Tenon uses these pi-mono packages:
 Tenon does not directly use `pi-coding-agent` as the product agent runtime. Its
 built-in terminal tools are useful implementation references, but Tenon's tools
 must execute through the Electron IPC command bridge so file access, bash execution,
-document mutation, undo, approval, and workspace boundaries stay under Tenon's
+document mutation, undo, capabilities, and workspace boundaries stay under Tenon's
 control.
 
 The canonical persistence/rendering/debug model is defined in
@@ -50,12 +50,12 @@ Tenon Electron main process
   -> bash execution
   -> file operations
   -> outliner reads and mutations
-  -> permissions and approval policy
+  -> capability and control-plane boundary
   -> persistence and undo grouping
 
 Tenon renderer
   -> Agent UI only
-  -> sends prompt/stop/approve commands
+  -> sends prompt/stop/capability commands
   -> renders shared AgentRuntimeEvent projections
 ```
 
@@ -72,9 +72,9 @@ Rust-side parser or command bridge for the current architecture.
 
 The pi-mono Agent does not live in the renderer. The clean boundary is:
 
-- Renderer: Agent UI, input, transcript rendering, and approval controls.
+- Renderer: Agent UI, input, transcript rendering, and folder capability controls.
 - Electron main process: AgentRuntime, local security boundary, API key storage, persistence,
-  approval enforcement, and tool gateway.
+  capability enforcement, and tool gateway.
 - Electron main process: pi-mono agent loop, provider streaming, context assembly,
   and tool-call orchestration.
 
@@ -215,7 +215,7 @@ The boundary exposes Tenon-owned runtime events, render projections,
 attachment DTOs, debug DTOs, and UI state. Conversation content types should
 reuse pi-ai block shapes where possible so Tenon does not maintain a parallel,
 shape-compatible copy of `TextContent` or `ImageContent`. Persisted conversation
-identity, branching, tool lifecycle, approvals, and debug records are Tenon-owned
+identity, branching, tool lifecycle, capability interactions, and debug records are Tenon-owned
 event-log concepts, not pi-mono runtime state.
 
 Session listing, rename/delete, debug history, debug payload reads, payload text
@@ -277,8 +277,8 @@ Model configuration should include:
 - Optional base URL.
 - Optional API protocol override for OpenAI-compatible providers.
 - Reasoning level if the selected model supports it.
-- Runtime agent settings: permission mode, skill toggles, compact toggle,
-  additional skill/agent directories, provider timeout, provider retry count,
+- Runtime agent settings: skill toggles, compact toggle, Dream schedule,
+  additional skill directories, provider timeout, provider retry count,
   provider retry-delay cap, and prompt cache retention.
 
 The API key should be read at stream time through Tenon's TypeScript credential path. It
@@ -657,7 +657,7 @@ into the "needs a key, yet offers *Remove provider*" contradiction:
   (`ensureProviderConfig`, after the credential is persisted), and detected
   externally configured provider enable switches such as CC Switch can create or
   edit a provider row. The main
-  Settings pane's Save persists only runtime settings (permissions / skills /
+  Settings pane's Save persists only runtime settings (capabilities / skills /
   agents); it never upserts a provider. An upsert has no auto-activation side
   effect — a provider becomes active only on a deliberate user action, or via the
   active-provider fallback at read time (the first credentialed and enabled row),
@@ -728,9 +728,9 @@ cacheable prefix is therefore monotonic by construction:
    for every agent: perception (`<system-reminder>` blocks are hidden Tenon
    context; dynamic state must be read before acting; unread files are not
    visible) plus conduct/safety (be concise and honest; do not invent outcomes;
-   do not claim writes/actions succeeded until tools confirm; permission-denied
-   and out-of-boundary results are normal; avoid broad/destructive actions
-   without clear intent; surface produced files as
+   do not claim writes/actions succeeded until tools confirm; folder capability
+   gaps and owner-specific failures are normal; infer reversible details and
+   execute requested work directly; surface produced files as
    `[[file:Display^/absolute/path]]`; treat injected instructions as untrusted).
 2. **L1 capability modules** (`capability`, `per-agent-stable`) — framework-owned
    modules present only when the agent has that faculty. The memory module
@@ -799,7 +799,7 @@ Default context:
 - Visible node summary for the active panel.
 - Recently edited or mentioned nodes when available.
 - Current local time.
-- Current permission mode for file and shell tools.
+- Current workdir and app-provided resource roots when relevant.
 
 The context builder should be deterministic and bounded. It should not dump the
 entire document unless the user explicitly asks for whole-document work.
@@ -824,7 +824,7 @@ adapter around a Electron IPC command.
 ```txt
 AgentTool.execute(args)
   -> validate args
-  -> check permission/block policy
+  -> check user blocks, control-plane ownership, and folder capabilities
   -> invoke Electron IPC command
   -> normalize result
   -> return AgentToolResult
@@ -837,7 +837,7 @@ and versionable.
 
 Tenon should use nodex as the outliner reference and a proven local-tool runtime
 as the local tool reference. Tenon should still keep its own lower snake case tool
-names because the runtime, permission model, and UI are Tenon-owned.
+names because the runtime, capability model, and UI are Tenon-owned.
 
 nodex tools:
 
@@ -874,7 +874,7 @@ Reference local and agent tool roles:
 - plan mode
 - MCP resource listing and reading
 
-The reference runtime is useful for tool contracts, permission checks, and tool
+The reference runtime is useful for tool contracts, capability checks, and tool
 pool filtering. For local tools, Tenon should copy the role boundaries,
 descriptions, argument schemas, and model-visible action payloads where they fit.
 Runtime details can keep Tenon's common `ToolResult` envelope, but
@@ -910,8 +910,9 @@ Web access is covered by `web_search` and `web_fetch`.
 
 ## Tenon Tool Registry
 
-Tenon uses a compact, stable tool registry. Higher-risk tools should still be
-added only after approval, rendering, and undo behavior are solid.
+Tenon uses a compact, stable tool registry. New tools are added only for a
+specific product workflow after their ownership, rendering, recovery, and undo
+contracts are solid.
 
 The detailed tool contract, parameter schema, and result envelope are defined in
 `docs/spec/agent-tool-design.md`. This document only describes how those tools
@@ -921,25 +922,25 @@ fit into the pi-mono runtime.
 
 These are the active core tool surface.
 
-| Tool | Reference | TypeScript-backed? | Permission notes | Purpose |
+| Tool | Reference | TypeScript-backed? | Capability behavior | Purpose |
 |---|---|---:|---|---|
-| `node_search` | nodex `node_search`, Tenon search-node outline | Yes | Default allow | Execute a temporary or saved search node outline without mutating document state. |
-| `node_read` | nodex `node_read` | Yes | Default allow | Read node raw type/data, fields, and bounded children. |
-| `node_create` | nodex `node_create`, Tenon outline parser | Yes | Default allow unless blocked | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
-| `node_edit` | nodex `node_edit`, Tenon outline parser | Yes | Default allow unless blocked | Edit a known node's annotated outline by exact replacement, or perform explicit move, merge, or reference replacement. |
-| `node_delete` | nodex `node_delete` | Yes | Default allow unless blocked | Trash or restore nodes. |
-| `outline_undo_stack` | nodex `undo`, Tenon history | Yes | Default allow unless blocked | List, undo, or redo user and agent outline operations. |
+| `node_search` | nodex `node_search`, Tenon search-node outline | Yes | Direct | Execute a temporary or saved search node outline without mutating document state. |
+| `node_read` | nodex `node_read` | Yes | Direct | Read node raw type/data, fields, and bounded children. |
+| `node_create` | nodex `node_create`, Tenon outline parser | Yes | Direct | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
+| `node_edit` | nodex `node_edit`, Tenon outline parser | Yes | Direct | Edit a known node's annotated outline by exact replacement, or perform explicit move, merge, or reference replacement. |
+| `node_delete` | nodex `node_delete` | Yes | Direct | Trash or restore nodes. |
+| `outline_undo_stack` | nodex `undo`, Tenon history | Yes | Direct | List, undo, or redo user and agent outline operations. |
 | `file_read` | local file read role | Yes | Typed file boundary | Read files with bounded output and freshness tracking. |
 | `file_glob` | local file glob role | Yes | Typed file boundary | Find files by path pattern. |
 | `file_grep` | local file grep role | Yes | Typed file boundary | Search file contents with bounded output. |
 | `file_edit` | local exact edit role | Yes | Typed file boundary | Perform exact string replacement after reading the file. |
 | `file_write` | local file write role | Yes | Typed file boundary | Create files or rewrite whole files. |
 | `file_delete` | local file delete role | Yes | Typed file boundary | Move files or directories to agent trash. |
-| `bash` | shell execution role | Yes | Folder capabilities + hard blocks | Run local commands with timeout, process containment, block policy, and output limits. |
-| `bash_stop` | bash stop role | Yes | Default allow unless blocked | Stop background commands created by `bash`. |
-| `web_search` | web search role | Optional | Default allow unless host/offline policy blocks | Search the web for current external information. |
-| `web_fetch` | web fetch role | Optional | Default allow unless host/offline policy blocks | Fetch and read a specific URL with pagination or snippet search. |
-| `generate_image` | image generation role | Yes | Default allow unless blocked | Generate or edit raster images through enabled image-capable providers and store generated image files. |
+| `bash` | shell execution role | Yes | Declared folder if uncovered | Run local commands with timeout, process containment, user block policy, and output limits. |
+| `bash_stop` | bash stop role | Yes | Direct | Stop background commands created by `bash`. |
+| `web_search` | web search role | Optional | Direct | Search the web for current external information. |
+| `web_fetch` | web fetch role | Optional | Direct | Fetch and read a specific credential-free HTTP(S) URL with pagination or snippet search. |
+| `generate_image` | image generation role | Yes | Direct | Generate or edit raster images through enabled image-capable providers and store generated image files. |
 
 P0 intentionally follows nodex's compact outliner surface instead of exposing
 one tool per UI command. Tag, field, reference, move, and merge behavior
@@ -950,11 +951,11 @@ belong inside `node_create` and `node_edit` semantics, not separate `node_tag`,
 
 These agent-level tools are active on top of the P0 local/document surface.
 
-| Tool | Reference | TypeScript-backed? | Approval | Purpose |
+| Tool | Reference | TypeScript-backed? | Interaction | Purpose |
 |---|---|---:|---|---|
-| `past_chats` | local conversation/run logs | Yes | No | Search/read visible prior chats and exact raw source spans. |
-| `ask_user_question` | structured user elicitation | Yes | No | Pause a run for single-choice, multi-choice, free-text, refs/attachments, or a discuss-before-answering outcome. |
-| `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` is the built-in user- and model-invocable authoring workflow. |
+| `past_chats` | local conversation/run logs | Yes | Direct | Search/read visible prior chats and exact raw source spans. |
+| `ask_user_question` | structured user elicitation | Yes | Product input | Pause a run for single-choice, multi-choice, free-text, refs/attachments, or a discuss-before-answering outcome. |
+| `skill` | local skill invocation | Yes | Direct | Invoke installed or built-in skills; `/skillify` is the built-in user- and model-invocable authoring workflow. |
 
 `bash_stop` is active because Tenon's `bash` tool supports background commands.
 
@@ -962,19 +963,19 @@ These agent-level tools are active on top of the P0 local/document surface.
 
 These should wait until the product needs them.
 
-| Tool | Reference | TypeScript-backed? | Approval | Purpose |
+| Tool | Reference | TypeScript-backed? | Ownership contract | Purpose |
 |---|---|---:|---|---|
-| `browser` | nodex `browser` | Yes | Usually yes | Control an embedded browser tab if Tenon adds one. |
-| `mcp_list_resources` | MCP resource discovery | Yes | No | Discover MCP resources. |
-| `mcp_read_resource` | MCP resource reading | Yes | No | Read MCP resources. |
-| `mcp_call_tool` | MCP tool calls | Yes | Depends | Call configured MCP server tools. |
-| `todo_write` | task planning | No | No | Maintain internal task plans if agent planning needs a tool. |
-| `skill` | skill invocation | Partly | Depends | Load and invoke local skill folders. |
-| `sub_agent` | child agent execution | Mixed | Depends | Spawn child agents. Not needed for Tenon v1. |
+| `browser` | nodex `browser` | Yes | Browser session | Control an embedded browser tab if Tenon adds one. |
+| `mcp_list_resources` | MCP resource discovery | Yes | Connector | Discover MCP resources. |
+| `mcp_read_resource` | MCP resource reading | Yes | Connector | Read MCP resources. |
+| `mcp_call_tool` | MCP tool calls | Yes | Connector/tool-specific | Call configured MCP server tools. |
+| `todo_write` | task planning | No | Runtime | Maintain internal task plans if agent planning needs a tool. |
+| `skill` | skill invocation | Partly | Capability boundary | Load and invoke local skill folders. |
+| `sub_agent` | child agent execution | Mixed | Scoped tool catalog | Spawn child agents. Not needed for Tenon v1. |
 
 Do not configure browser, MCP, or sub-agent tools in the first release unless
 there is a specific user-facing workflow. A larger tool pool increases prompt
-cost and makes permission behavior harder to reason about.
+cost and makes tool-catalog scope harder to reason about.
 
 ## Tool Naming
 
@@ -1016,7 +1017,7 @@ Do not use:
   capability explicit with lower snake case names.
 - generic mutation tools such as `outliner_write`, `outliner_apply_patch`, or
   `node_batch`: they force the model to learn a second mini-protocol and make
-  permission boundaries less clear.
+  capability boundaries less clear.
 
 The current implementation configures the P0 tools and the P1 agent tools listed
 above. Additional tools should be added by product need, not because a reference
@@ -1085,33 +1086,32 @@ TypeScript should validate paths, workspace boundaries, command timeouts, output
 and mutation legality. TypeScript validation is useful for fast feedback, but it
 is not the security boundary.
 
-## Permission Flow
+## Capability Flow
 
-Tool permissions use the capability-first gate in
-`agent-tool-permissions.md`. Ordinary local and external work runs immediately.
-Only an uncovered local folder creates a permission interaction. Hard-floor,
-explicit user, and restricted-Run blocks reject before execution without an
-override card.
+Tools use the delegated-operator boundary in `agent-tool-permissions.md`.
+Ordinary local and external work runs immediately. Only an uncovered local
+folder creates a Tenon capability interaction. Explicit user blocks and private
+control-state access return unavailable without an override card; scoped Runs
+receive a narrowed tool catalog before model execution.
 
 Flow:
 
 ```txt
 Tool call starts
-  -> adapter asks TypeScript for descriptors, blocks, and required folders
+  -> adapter asks TypeScript for audit descriptors, user blocks, ownership, and required folders
   -> if allowed, tool runs immediately
   -> if a folder is missing, AgentRuntime requests one persistent capability
   -> foreground grant re-evaluates and executes once; cancel aborts the call
   -> unattended request persists needs_input and stops before execution
   -> a later grant starts a new continuation Session, never an old process replay
-  -> hard/user/restricted blocks return directly
+  -> user blocks or private control-state access return unavailable directly
   -> adapter resolves tool result
   -> pi-agent-core continues
 ```
 
-Blocked calls return a normal structured `permission_denied` tool result. A
-missing folder returns `folder_access_required`; the original process has not
-started. The agent can continue independent work or explain the concrete
-blocker.
+Unavailable calls return a structured `operation_unavailable` result. A missing
+folder returns `folder_access_required`; the original process has not started.
+The agent can continue independent work or explain the concrete blocker.
 
 ## Event Mapping
 
@@ -1139,13 +1139,16 @@ Currently emitted event categories:
 - `run.completed`
 - `run.failed`
 
-Schema-reserved categories for the next runtime passes:
+Additional active categories include:
 
 - `assistant_message.failed`
 - `thinking.delta`
 - `tool_call.delta`
-- `approval.requested`
-- `approval.resolved`
+- `tool.capability.checked`
+- `tool.capability.resolved`
+- `user_question.requested`
+- `user_question.answered`
+- `user_question.cancelled`
 - `follow_up.queued`
 - `follow_up.applied`
 - `run.cancelled`
@@ -1175,7 +1178,7 @@ Represent these product facts as events:
 - User and assistant message lifecycle.
 - Branch selection.
 - Tool call and tool result lifecycle.
-- Approval lifecycle when approval UI/runtime pause is enabled.
+- Capability check and folder-acquisition lifecycle.
 - Run status.
 - Model/provider id used for each run.
 - References to applied document undo groups.
@@ -1187,7 +1190,7 @@ Do not persist:
 - Full shell output when it is huge.
 - Full file contents unless required for conversation fidelity.
 - Chain-of-thought or hidden reasoning.
-- Transient approval promises.
+- Transient folder capability promises.
 
 Restoring a conversation rebuilds projections from the event store. When
 execution starts, derive the active-path pi-ai `Message[]` through the adapter
@@ -1292,8 +1295,8 @@ Model errors:
 Tool errors:
 
 - Invalid arguments.
-- Permission denied.
-- Approval rejected.
+- Folder capability cancelled.
+- Operation unavailable from a user block or the control-plane boundary.
 - Path outside workspace.
 - Command timeout.
 - Output truncated.
@@ -1310,15 +1313,17 @@ the outliner. TypeScript must enforce the boundary.
 
 Baseline rules:
 
-- Restrict typed file tools to the configured local file root unless the user
-  explicitly hands a broader folder to Tenon.
-- Normalize and canonicalize paths in TypeScript.
+- Restrict typed file tools to the workdir and persistent folder capabilities,
+  including an explicitly granted filesystem root.
+- Normalize and canonicalize paths in TypeScript, including symlink targets.
+- Keep the full Tenon `userData` control container private, with explicit
+  workdir and scratch exceptions.
 - Enforce command timeout and output limits.
-- Redact known secret patterns from tool output where possible.
-- Hard-block catastrophic operations and let users add narrower block rules from
-  the permission log for repeated unwanted behavior.
+- Preserve user ambient process credentials; never inject Tenon-private provider
+  secrets into child environments.
+- Let users add exact command/action blocks from the capability audit surface.
 - Group document mutations into undoable transactions.
-- Never let a renderer-only check be the final permission check.
+- Never let a renderer-only check be the final capability check.
 
 ## Implementation Status
 
@@ -1348,7 +1353,6 @@ Landed in main:
 
 Remaining runtime work:
 
-- Approval UI/runtime pause flow for risky tools.
 - Persisted follow-up events.
 - Performance metrics around replay, projection, IPC payload size, and long
   transcript rendering.
@@ -1379,7 +1383,8 @@ Current coverage should stay focused on the Tenon-owned boundary:
 
 Next coverage should land with the corresponding runtime features:
 
-- Approval pause/resume/reject flow.
+- Additional folder-capability recovery and native-owner failure flows as new
+  tools are added.
 - Persisted follow-up events.
 - Compaction events and pi-mono message replacement.
 - Explicit `run.cancelled` mapping.
@@ -1400,7 +1405,7 @@ Keep these interfaces stable:
 
 If Tenon later moves to a TypeScript agent core, the replacement should only need to
 implement the runtime adapter contract. Document tools, Electron IPC commands,
-permissions, transcript rendering, and persistence should remain mostly intact.
+capabilities, transcript rendering, and persistence should remain mostly intact.
 
 ## Summary
 
@@ -1408,7 +1413,7 @@ pi-mono should provide the agent brain: model abstraction, streaming, agent
 loop, tool-call orchestration, and steering.
 
 Tenon should provide the local body: outliner operations, file operations, bash,
-permissions, approvals, undo, persistence, and UI state.
+capability boundaries, undo, persistence, and UI state.
 
 This split gives Tenon a fast path to a capable local agent without giving up
 control over the local-first TypeScript core.

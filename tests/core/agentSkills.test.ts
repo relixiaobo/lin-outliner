@@ -642,7 +642,8 @@ describe('agent skills', () => {
     expect(body).not.toContain('Save, revise, or cancel choices');
 
     expect(body).toContain('Separate authoring tools from runtime tools');
-    expect(body).toContain('Omit `allowed-tools` when the future workflow does not need preapproval');
+    expect(body).toContain('omitted `allowed-tools` creates a tool-free Run');
+    expect(body).toContain('`allowed-tools` selects whole tools, not command patterns');
     expect(body).toContain('Flag broad `allowed-tools` in the preview summary');
     expect(body).toContain('Default to `execution: inline`');
     expect(body).toContain('Use `execution: isolated` only for self-contained work');

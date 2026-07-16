@@ -7,7 +7,7 @@
 
 export const WINDOW_SURFACE_QUERY_PARAM = 'surface';
 export type WindowSurface = 'main' | 'settings' | 'provider-config' | 'agent-config' | 'channel-config';
-export type SettingsCategoryTarget = 'general' | 'providers' | 'permissions' | 'memory' | 'skills' | 'agents';
+export type SettingsCategoryTarget = 'general' | 'providers' | 'security' | 'memory' | 'skills' | 'agents';
 
 export interface SettingsOpenTarget {
   category?: SettingsCategoryTarget;
@@ -30,7 +30,7 @@ export function windowSurfaceFromSearch(search: string): WindowSurface {
 export function isSettingsCategoryTarget(value: unknown): value is SettingsCategoryTarget {
   return value === 'general'
     || value === 'providers'
-    || value === 'permissions'
+    || value === 'security'
     || value === 'memory'
     || value === 'skills'
     || value === 'agents';

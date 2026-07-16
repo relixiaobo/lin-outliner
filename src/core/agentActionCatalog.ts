@@ -1,6 +1,3 @@
-export type AgentPermissionFloorKind =
-  | 'permission_self_mod';
-
 export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'file.read.allowed_file_area',
   'file.read.outside_allowed_file_area',
@@ -39,7 +36,7 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'agent.session.read',
   'agent.session.send',
   'agent.session.stop',
-  'agent.permission.modify',
+  'agent.capability.modify',
 ] as const;
 
 export type AgentToolActionKind = typeof SUPPORTED_AGENT_TOOL_ACTION_KINDS[number];
@@ -82,7 +79,7 @@ const READ_ONLY_ACTION_KIND_FLAGS = {
   'agent.session.read': true,
   'agent.session.send': false,
   'agent.session.stop': false,
-  'agent.permission.modify': false,
+  'agent.capability.modify': false,
 } satisfies Record<AgentToolActionKind, boolean>;
 
 export const AGENT_TOOL_ACTION_KIND_PROFILES = {
