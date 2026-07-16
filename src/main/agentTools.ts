@@ -46,7 +46,7 @@ import {
   buildGoogleSearchUrl,
   buildWebFetchSuccessEnvelopeFromPage,
   extractFetchedPageContent,
-  isPublicWebFetchUrl,
+  isWebFetchUrl,
   normalizeWebFetchParams,
   normalizeWebSearchParams,
   webFetchModelData,
@@ -736,11 +736,10 @@ async function fetchTextWithRedirects(
       });
     }
     // Follow redirects across hosts (shorteners, trackers, regional/mobile
-    // subdomains), preserving the server's literal scheme — an http→https upgrade
-    // here would break an http-only target. A redirect to a local/private host is
-    // the one case we refuse (isPublicWebFetchUrl); a cross-host landing is
-    // surfaced later as a non-fatal redirected_host hint, not a failure.
-    if (!isPublicWebFetchUrl(redirectUrl)) {
+    // subdomains), preserving the server's literal scheme. Only invalid or
+    // credential-bearing redirect URLs are refused; a cross-host landing is
+    // surfaced later as a non-fatal redirected_host hint.
+    if (!isWebFetchUrl(redirectUrl)) {
       throw redirectedHostFailure(startedUrl, redirectUrl, response.status);
     }
     const secFetchSite = nextSecFetchSite(redirect?.secFetchSite, currentUrl, redirectUrl);
@@ -988,13 +987,11 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
   const blockedNavigationPromise = new Promise<never>((_resolve, reject) => {
     rejectBlockedNavigation = reject;
   });
-  // Follow public cross-host navigation (shorteners, regional fronts) just like
-  // the HTTP path, but refuse a hop to a local/private host — the one SSRF guard
-  // kept even under the local-only, success-rate-first focus. A renderer can
-  // navigate via 3xx, meta-refresh, or JS, none of which the HTTP-path redirect
-  // check sees, so the guard lives here too.
-  const blockNonPublicNavigation = (targetUrl: string, event: { preventDefault(): void }) => {
-    if (isPublicWebFetchUrl(targetUrl)) return;
+  // Follow cross-host navigation just like the HTTP path. A renderer can
+  // navigate via 3xx, meta-refresh, or JS, so invalid or credential-bearing
+  // targets are checked here as well.
+  const blockInvalidNavigation = (targetUrl: string, event: { preventDefault(): void }) => {
+    if (isWebFetchUrl(targetUrl)) return;
     blockedNavigation = redirectedHostFailure(url, targetUrl, 0);
     event.preventDefault();
     try {
@@ -1011,7 +1008,7 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
     isMainFrame: boolean,
   ) => {
     if (!isMainFrame) return;
-    blockNonPublicNavigation(event.url || redirectUrl, event);
+    blockInvalidNavigation(event.url || redirectUrl, event);
   };
   const onWillNavigate = (
     event: ElectronEvent<WebContentsWillNavigateEventParams>,
@@ -1020,7 +1017,7 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
     isMainFrame: boolean,
   ) => {
     if (!isMainFrame) return;
-    blockNonPublicNavigation(event.url || navigateUrl, event);
+    blockInvalidNavigation(event.url || navigateUrl, event);
   };
   const onAbort = () => {
     try {
@@ -1064,8 +1061,8 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
     }
     const finalUrl = window.webContents.getURL() || url;
     // Re-validate the landing URL: a navigation the guard never saw (e.g. a
-    // same-tick replace) could still have parked us on a non-public host.
-    if (!isPublicWebFetchUrl(finalUrl)) {
+    // same-tick replace) could still have parked us on an invalid target.
+    if (!isWebFetchUrl(finalUrl)) {
       throw redirectedHostFailure(url, finalUrl, 0);
     }
     const redirectedHostHint = crossHostRedirectHint(url, finalUrl);

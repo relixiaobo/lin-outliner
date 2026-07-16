@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { agentToolResult } from '../../src/main/agentToolEnvelope';
 import {
   buildWebFetchSuccessEnvelope,
-  isPublicWebFetchUrl,
+  isWebFetchUrl,
   normalizeWebFetchParams,
   normalizeWebSearchParams,
   webFetchModelData,
@@ -89,60 +89,46 @@ describe('agent web tools', () => {
     expect(invalidKind.message).toContain('unsupported kind');
   });
 
-  test('upgrades http web_fetch URLs to https during normalization', () => {
+  test('preserves literal http URLs during normalization', () => {
     const params = expectParams(normalizeWebFetchParams({
       url: ' http://example.com/path?q=lin#section ',
     }));
 
-    expect(params.url).toBe('https://example.com/path?q=lin#section');
+    expect(params.url).toBe('http://example.com/path?q=lin#section');
     expect(params.format).toBe('markdown');
     expect(params.mode).toBe('read');
   });
 
-  test('rejects web_fetch URLs with credentials or local hosts', () => {
+  test('rejects embedded URL credentials while accepting local and private hosts', () => {
     const credentialUrl = normalizeWebFetchParams({ url: 'https://user:pass@example.com/docs' });
     expect(credentialUrl.ok).toBe(false);
     if (credentialUrl.ok) throw new Error('Expected credential URL rejection');
     expect(credentialUrl.message).toContain('username or password');
 
     const localhostUrl = normalizeWebFetchParams({ url: 'https://localhost/docs' });
-    expect(localhostUrl.ok).toBe(false);
-    if (localhostUrl.ok) throw new Error('Expected localhost URL rejection');
-    expect(localhostUrl.message).toContain('local host');
+    expect(localhostUrl.ok).toBe(true);
 
     const privateUrl = normalizeWebFetchParams({ url: 'https://192.168.1.10/docs' });
-    expect(privateUrl.ok).toBe(false);
-    if (privateUrl.ok) throw new Error('Expected private IP URL rejection');
-    expect(privateUrl.message).toContain('private or local IPv4');
+    expect(privateUrl.ok).toBe(true);
+    expect(normalizeWebFetchParams({ url: 'http://devbox:5173/docs' }).ok).toBe(true);
   });
 
-  test('isPublicWebFetchUrl refuses SSRF redirect targets that earlier classifiers missed', () => {
-    // IPv4-mapped IPv6 (the URL parser normalizes these to hex) must be decoded
-    // back to the embedded IPv4 and blocked — cloud metadata, loopback, private.
-    expect(isPublicWebFetchUrl('http://[::ffff:169.254.169.254]/latest/meta-data/')).toBe(false);
-    expect(isPublicWebFetchUrl('http://[::ffff:127.0.0.1]/')).toBe(false);
-    expect(isPublicWebFetchUrl('http://[::ffff:10.0.0.5]/')).toBe(false);
-    // Real unique-local (fc00::/7), link-local (fe80::/10), site-local (fec0::/10),
-    // and loopback — the old /^(fc|fd|fe80):/ regex matched none of these.
-    expect(isPublicWebFetchUrl('http://[fc00::1]/')).toBe(false);
-    expect(isPublicWebFetchUrl('http://[fd12:3456:789a::1]/')).toBe(false);
-    expect(isPublicWebFetchUrl('http://[fe80::1]/')).toBe(false);
-    expect(isPublicWebFetchUrl('http://[fec0::1]/')).toBe(false);
-    expect(isPublicWebFetchUrl('http://[::1]/')).toBe(false);
-    // Deprecated IPv4-compatible (`::x.x.x.x` → `::a9fe:a9fe`, no ffff) and NAT64
-    // well-known prefix (`64:ff9b::x.x.x.x`) both embed an IPv4 and must decode.
-    expect(isPublicWebFetchUrl('http://[::169.254.169.254]/')).toBe(false);
-    expect(isPublicWebFetchUrl('http://[::ffff:127.0.0.1]/')).toBe(false);
-    expect(isPublicWebFetchUrl('http://[64:ff9b::169.254.169.254]/')).toBe(false);
-    expect(isPublicWebFetchUrl('http://[64:ff9b::a9fe:a9fe]/')).toBe(false);
-    // Trailing-dot FQDN-root forms of loopback / mDNS hosts.
-    expect(isPublicWebFetchUrl('http://localhost./admin')).toBe(false);
-    expect(isPublicWebFetchUrl('http://router.local./')).toBe(false);
-    // Public hosts still pass, and the literal http scheme is preserved (no
-    // upgrade) so an http-only redirect target keeps working.
-    expect(isPublicWebFetchUrl('http://example.com/x')).toBe(true);
-    expect(isPublicWebFetchUrl('https://example.com/x')).toBe(true);
-    expect(isPublicWebFetchUrl('https://[2606:4700:4700::1111]/')).toBe(true);
+  test('isWebFetchUrl accepts every uncredentialed http(s) host', () => {
+    for (const url of [
+      'http://[::ffff:169.254.169.254]/latest/meta-data/',
+      'http://[::ffff:127.0.0.1]/',
+      'http://[fc00::1]/',
+      'http://[::1]/',
+      'http://localhost./admin',
+      'http://router.local./',
+      'http://devbox:5173/',
+      'http://example.com/x',
+      'https://[2606:4700:4700::1111]/',
+    ]) {
+      expect(isWebFetchUrl(url), url).toBe(true);
+    }
+    expect(isWebFetchUrl('ftp://localhost/file')).toBe(false);
+    expect(isWebFetchUrl('http://user:pass@localhost/')).toBe(false);
   });
 
   test('builds read-mode paginated fetch envelopes', async () => {
