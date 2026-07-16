@@ -107,6 +107,49 @@ describe('preview source commands', () => {
     });
   });
 
+  test('resolves EPUB assets through an opaque fetchable stream', async () => {
+    const filePath = join(root, 'book.epub');
+    await writeFile(filePath, new Uint8Array([0x50, 0x4b, 0x03, 0x04]));
+    const streamCalls: Array<{ filePath: string; mimeType: string }> = [];
+    const assetService = {
+      lookup: async () => ({
+        id: 'asset-book',
+        mimeType: 'application/epub+zip',
+        byteSize: 4,
+        originalFilename: 'book.epub',
+        createdAt: 1,
+      }),
+      pathFor: async () => filePath,
+    };
+    const context = previewContext({
+      assetService,
+      assetFileStreamUrl: async (resolvedPath, mimeType) => {
+        streamCalls.push({ filePath: resolvedPath, mimeType });
+        return `${PREVIEW_LOCAL_URL_SCHEME}://epub-token`;
+      },
+    });
+
+    const resolved = await handlePreviewCommand('preview_resolve_source', {
+      target: { kind: 'asset', assetId: 'asset-book' },
+    }, context) as PreviewResolveSourceResult;
+
+    expect(resolved.source).toMatchObject({
+      kind: 'file',
+      sourceKind: 'asset',
+      name: 'book.epub',
+      streamUrl: `${PREVIEW_LOCAL_URL_SCHEME}://epub-token`,
+    });
+    expect(streamCalls).toEqual([{ filePath, mimeType: 'application/epub+zip' }]);
+
+    const fallback = await handlePreviewCommand('preview_resolve_source', {
+      target: { kind: 'asset', assetId: 'asset-book' },
+    }, previewContext({
+      assetService,
+      assetFileStreamUrl: async () => null,
+    })) as PreviewResolveSourceResult;
+    expect(fallback.source?.kind === 'file' ? fallback.source.streamUrl : 'unexpected-source').toBeUndefined();
+  });
+
   test('keeps agent payload preview conversation/run scoped', async () => {
     const calls: Array<[conversationId: string, payloadId: string, runId: string | undefined]> = [];
     const payload: AgentPayloadRef = {

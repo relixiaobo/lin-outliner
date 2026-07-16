@@ -1114,10 +1114,8 @@ test.describe('file attachments', () => {
     await expect(epubPreview.locator('.file-preview-epub-host')).toHaveAttribute('aria-hidden', 'false');
     await expect(epubPreview.locator('.file-preview-epub-section')).toHaveCount(1);
     await expect(epubPreview.locator('.file-preview-metadata')).toHaveCount(0);
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.some((call) => call.cmd === 'preview_read_bytes');
-    }).toBe(true);
+    const previewCalls = await commandCalls(page);
+    expect(previewCalls.some((call) => call.cmd === 'preview_read_bytes')).toBe(false);
 
     const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
     await expectConcentricPreviewCorners(epubPreview, '.file-preview-epub-host');

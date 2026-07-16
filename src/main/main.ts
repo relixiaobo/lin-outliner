@@ -260,7 +260,18 @@ app.commandLine.appendSwitch('use-mock-keychain');
 // preview streams with regular <img>/<video> tags.
 protocol.registerSchemesAsPrivileged([
   { scheme: ASSET_URL_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
-  { scheme: PREVIEW_LOCAL_URL_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
+  // Only opaque, main-issued UUID tokens use this CORS-enabled scheme. It is
+  // registered on the default app session, not the remote URL-preview partition.
+  {
+    scheme: PREVIEW_LOCAL_URL_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      stream: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
 ]);
 
 // Image file extensions for the native "insert image" picker. The filter's display
@@ -291,7 +302,8 @@ const nodeAccessStore = new NodeAccessStore(join(app.getPath('userData'), 'node-
     error,
   }),
 });
-const assetService = new AssetService(() => join(app.getPath('userData'), 'assets'));
+const assetRoot = () => join(app.getPath('userData'), 'assets');
+const assetService = new AssetService(assetRoot);
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let providerConfigWindow: BrowserWindow | null = null;
@@ -360,7 +372,11 @@ const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
 const pageTranslationService = new PageTranslationService({
   onError: () => reportError(pageTranslationErrorReport()),
 });
-const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [agentLocalFileRoot, agentScratchRoot]);
+const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
+  agentLocalFileRoot,
+  agentScratchRoot,
+  assetRoot(),
+]);
 
 documentService.onProjectionChanged((event) => {
   mainWindow?.webContents.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
@@ -1509,6 +1525,10 @@ function registerIpc() {
           agentGeneratedImageRoots: [agentScratchRoot],
           agentRuntime,
           assetService,
+          assetFileStreamUrl: async (filePath, mimeType) => {
+            const token = await localFilePreviewStreams.issuePath(filePath, mimeType);
+            return token ? previewLocalUrl(token) : null;
+          },
           inferMimeType,
           localFileStreamUrl: async (file, mimeType) => {
             const token = await localFilePreviewStreams.issue(file, mimeType);

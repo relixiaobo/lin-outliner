@@ -44,6 +44,7 @@ export interface PreviewCommandContext {
   agentGeneratedImageRoots: readonly string[];
   agentRuntime: Pick<AgentRuntime, 'previewPayload' | 'previewPayloadBytes'>;
   assetService: Pick<AssetService, 'lookup' | 'pathFor'>;
+  assetFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
   inferMimeType: (filePath: string) => string;
   localFileStreamUrl?: (file: TrustedLocalFileReference, mimeType: string) => Promise<string | null>;
   localFileReferencePreview: (file: TrustedLocalFileReference) => Promise<LocalFilePreviewMetadata>;
@@ -129,6 +130,10 @@ async function previewSourceForTarget(
     const name = previewLabel(target.label)
       ?? metadata.originalFilename
       ?? `${target.assetId}${extensionForMimeType(metadata.mimeType)}`;
+    const isEpub = metadata.mimeType === 'application/epub+zip';
+    const streamUrl = isEpub
+      ? await context.assetFileStreamUrl?.(filePath, metadata.mimeType)
+      : assetUrl(target.assetId);
     return {
       kind: 'file',
       sourceKind: 'asset',
@@ -140,7 +145,7 @@ async function previewSourceForTarget(
       entryKind: 'file',
       sizeBytes: metadata.byteSize,
       ...(fileStats ? { lastModified: fileStats.mtimeMs } : {}),
-      streamUrl: assetUrl(target.assetId),
+      ...(streamUrl ? { streamUrl } : {}),
     };
   }
 

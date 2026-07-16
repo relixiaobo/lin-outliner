@@ -16,6 +16,8 @@ files.
   both directions, and never submit an entire book eagerly.
 - Preserve the reader's position while injected translations change section
   and iframe heights.
+- Let image-heavy EPUBs use the existing trusted preview stream instead of
+  failing at the generic 20 MiB binary IPC limit.
 - Skip blocks whose declared EPUB, section, or nearest element language already
   matches the target language.
 - Send local book text to a configured provider only after manual translation
@@ -33,6 +35,7 @@ files.
   available from the EPUB file panel and dedicated reader, where the existing
   header control has a stable home.
 - Executing model-produced markup or weakening the EPUB iframe sandbox/CSP.
+- Unbounded EPUB package loading or changing limits for other preview formats.
 
 ## Design
 
@@ -59,6 +62,22 @@ EPUB section iframe. Show original hides injected translations, removes
 transient loading/error controls, cancels queued work, and retains completed
 translations for the mounted book session. Re-enabling restores cached results
 without another provider call.
+
+### Book package loading
+
+Asset and trusted-local EPUBs load from a main-validated internal stream URL
+rather than copying the whole package through `preview_read_bytes`. Stable
+`asset://` ids remain unavailable to cross-origin Fetch; EPUB assets receive an
+opaque, bounded-registry `preview-local://` UUID token registered only in the
+app's default session, while the remote URL-preview partition has no handler.
+The renderer requests a bounded range, validates response and Blob size against
+a 128 MiB compressed-package limit, and aborts the fetch when the preview
+changes or unmounts. `foliate-js` still receives the complete `File` its ZIP
+loader requires; its lazy section mounting continues to bound live document
+work after the package opens. Sources without a stream URL retain the generic
+bounded byte-read fallback. The foliate module and package transfer start in
+parallel, and a book that finishes parsing after unmount is destroyed
+immediately.
 
 ### EPUB document adapter
 
@@ -172,6 +191,11 @@ configuration before it can update the DOM.
   - **AC-12:** The implementation never sends an unvisited whole-book
     transcript, executes EPUB or model-produced script/markup, or inserts model
     output with an HTML parsing API.
+- **NFR-2 — Bounded package loading.** Common image-heavy EPUBs do not inherit
+  the generic binary IPC limit.
+  - **AC-13:** A 29 MiB asset or trusted-local EPUB opens through its internal
+    stream without calling `preview_read_bytes`; a package above the EPUB limit
+    is rejected before its full body is buffered.
 
 ## Files And Verification
 
@@ -180,7 +204,9 @@ Expected production scope:
 - `src/core/urlPageTranslation.ts`
 - `src/main/pageTranslation.ts`
 - `src/main/appPreferences.ts`
+- `src/main/localFilePreviewStream.ts`
 - `src/main/main.ts`
+- `src/main/previewSource.ts`
 - `src/preload/index.ts`
 - `src/renderer/api/client.ts`
 - `src/renderer/ui/preview/EpubPreview.tsx`

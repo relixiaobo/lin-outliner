@@ -14,7 +14,7 @@ import { EpubTranslationDomAdapter } from './epubTranslationDom';
 
 type EpubState =
   | { status: 'loading' }
-  | { status: 'ready'; blob: Blob }
+  | { status: 'ready'; file: File; makeBook: EpubMakeBook }
   | { status: 'error'; error?: string };
 
 type EpubReaderState =
@@ -88,6 +88,10 @@ const EPUB_LAZY_ROOT_MARGIN = '800px';
 // (a screenful per section). Without it every placeholder would collapse to ~0, drop
 // all sections inside the lazy margin at once, and defeat the lazy mounting.
 const EPUB_PLACEHOLDER_SECTION_HEIGHT = 720;
+// foliate-js needs a complete Blob/File before it can inspect the ZIP directory.
+// Keep that renderer allocation bounded independently from the much smaller generic
+// preview-bytes IPC limit, while still covering image-heavy books.
+const EPUB_PREVIEW_BYTE_LIMIT = 128 * 1024 * 1024;
 
 let foliateMakeBookPromise: Promise<EpubMakeBook> | null = null;
 
@@ -98,6 +102,51 @@ function loadFoliateMakeBook(): Promise<EpubMakeBook> {
     return makeBook as EpubMakeBook;
   });
   return foliateMakeBookPromise;
+}
+
+async function loadEpubFile(
+  source: PreviewRendererProps['source'],
+  signal: AbortSignal,
+): Promise<File> {
+  if (source.sizeBytes > EPUB_PREVIEW_BYTE_LIMIT) throw new Error('too-large');
+
+  if (!source.streamUrl) {
+    const result = await api.readPreviewBytes(source.target);
+    if (!result.bytes) throw new Error(result.error ?? 'missing');
+    return new File([result.bytes], source.name || 'book.epub', {
+      type: result.mimeType || source.mimeType || 'application/epub+zip',
+    });
+  }
+
+  // Ask for one byte beyond the cap. Range-capable internal protocols can reject an
+  // oversized current file from Content-Range without sending or buffering the rest;
+  // the Blob-size check also covers a handler that ignores Range.
+  const response = await fetch(source.streamUrl, {
+    headers: { Range: `bytes=0-${EPUB_PREVIEW_BYTE_LIMIT}` },
+    signal,
+  });
+  if (!response.ok) throw new Error('missing');
+
+  const responseSize = previewResponseSize(response);
+  if (responseSize !== null && responseSize > EPUB_PREVIEW_BYTE_LIMIT) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error('too-large');
+  }
+
+  const blob = await response.blob();
+  if (blob.size > EPUB_PREVIEW_BYTE_LIMIT) throw new Error('too-large');
+  return new File([blob], source.name || 'book.epub', {
+    type: blob.type || source.mimeType || 'application/epub+zip',
+  });
+}
+
+function previewResponseSize(response: Response): number | null {
+  const contentRange = response.headers.get('content-range');
+  const rangeMatch = contentRange?.match(/^bytes \d+-\d+\/(\d+)$/iu);
+  const rawSize = rangeMatch?.[1] ?? response.headers.get('content-length');
+  if (!rawSize) return null;
+  const size = Number(rawSize);
+  return Number.isSafeInteger(size) && size >= 0 ? size : null;
 }
 
 export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, source }: PreviewRendererProps) {
@@ -123,22 +172,24 @@ export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, sourc
 
   useEffect(() => {
     let cancelled = false;
+    const abortController = new AbortController();
     setState({ status: 'loading' });
 
-    void (async () => {
-      const result = await api.readPreviewBytes(source.target);
-      if (!result.bytes) throw new Error(result.error ?? 'missing');
-      const blob = new Blob([result.bytes], { type: result.mimeType ?? source.mimeType });
-
-      if (!cancelled) setState({ status: 'ready', blob });
-    })().catch((error: unknown) => {
+    void Promise.all([
+      loadFoliateMakeBook(),
+      loadEpubFile(source, abortController.signal),
+    ]).then(([makeBook, file]) => {
+      if (!cancelled) setState({ status: 'ready', file, makeBook });
+    }).catch((error: unknown) => {
+      abortController.abort();
       if (!cancelled) setState({ status: 'error', error: error instanceof Error ? error.message : undefined });
     });
 
     return () => {
       cancelled = true;
+      abortController.abort();
     };
-  }, [source.mimeType, source.target]);
+  }, [source.mimeType, source.name, source.sizeBytes, source.streamUrl, source.target]);
 
   if (state.status === 'loading') return <PreviewMessage>{labels.loading}</PreviewMessage>;
   if (state.status === 'error') {
@@ -152,9 +203,10 @@ export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, sourc
 
   return (
     <EpubReader
-      blob={state.blob}
       displayMode={displayMode}
+      file={state.file}
       initialReadingPosition={savedReadingPositionRef.current.position}
+      makeBook={state.makeBook}
       name={source.name}
       onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}
       onReadingPositionChange={persistReadingPosition}
@@ -163,16 +215,18 @@ export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, sourc
 }
 
 function EpubReader({
-  blob,
   displayMode,
+  file,
   initialReadingPosition,
+  makeBook,
   name,
   onEpubTranslationSurfaceChange,
   onReadingPositionChange,
 }: {
-  blob: Blob;
   displayMode: PreviewRendererProps['displayMode'];
+  file: File;
   initialReadingPosition: EpubReadingPosition | null;
+  makeBook: EpubMakeBook;
   name: string;
   onEpubTranslationSurfaceChange?: (surface: EpubTranslationDomAdapter | null) => void;
   onReadingPositionChange: (position: EpubReadingPosition) => void;
@@ -205,16 +259,24 @@ function EpubReader({
     setState({ status: 'loading' });
 
     void (async () => {
-      const makeBook = await loadFoliateMakeBook();
-      if (cancelled) return;
+      const loadedBook = await makeBook(file);
+      if (cancelled) {
+        loadedBook.destroy?.();
+        return;
+      }
 
-      book = await makeBook(new File([blob], name || 'book.epub', { type: 'application/epub+zip' }));
+      book = loadedBook;
       releaseTransform = registerEpubCssTransform(book);
       const sections = readableEpubSections(book);
       if (sections.length === 0) throw new Error('empty-epub');
       if (!cancelled) setState({ status: 'ready', book, sections });
     })().catch(() => {
-      if (!cancelled) setState({ status: 'error' });
+      if (cancelled) return;
+      releaseTransform?.();
+      releaseTransform = null;
+      book?.destroy?.();
+      book = null;
+      setState({ status: 'error' });
     });
 
     return () => {
@@ -224,11 +286,11 @@ function EpubReader({
       frameRefs.current.clear();
       measuredSectionsRef.current.clear();
     };
-  }, [blob, name]);
+  }, [file, makeBook]);
 
   useEffect(() => {
     if (displayMode === 'full') fullSessionRef.current += 1;
-  }, [blob, displayMode]);
+  }, [displayMode, file]);
 
   const registerFrame = useCallback((sectionIndex: number, frame: HTMLIFrameElement | null) => {
     if (frame) frameRefs.current.set(sectionIndex, frame);

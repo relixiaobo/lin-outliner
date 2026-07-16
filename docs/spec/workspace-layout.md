@@ -371,8 +371,8 @@ resolve it through the preload preview API:
 - `preview_resolve_source` returns source metadata and never exposes raw payload
   filesystem paths to the renderer.
 - `preview_read_text` is capped to bounded text reads.
-- `preview_read_bytes` is capped to bounded binary reads for image/PDF/EPUB
-  previews.
+- `preview_read_bytes` is capped to bounded binary reads for preview sources
+  that have no direct internal stream.
 - `preview_list_directory` lists trusted local-file directories with a capped
   result set.
 
@@ -380,11 +380,15 @@ Source authority stays source-specific:
 
 - `local-file` targets are validated in main through the local-file reference
   policy before reads or external open.
-- `asset` targets resolve by `assetId` inside the asset jail. Image rendering may
-  use the existing `asset://` URL; open/reveal/copy stay on the existing asset
-  commands. A standalone `asset` preview is only valid when the view is bound to a
-  file node via `nodeId`; a persisted `file-preview` view whose target is an
-  `asset` but has no `nodeId` is dropped on restore (pre-launch — no migration).
+- `asset` targets resolve by `assetId` inside the asset jail. Image and media
+  rendering may use the existing no-CORS `asset://` URL. Fetch-based EPUB
+  loading instead receives an opaque `preview-local://` UUID backed by the
+  bounded trusted-file registry; that scheme is registered only in the app's
+  default session, not the remote URL-preview partition. Open/reveal/copy stay
+  on the existing asset commands. A standalone `asset` preview is only valid
+  when the view is bound to a file node via `nodeId`; a persisted `file-preview`
+  view whose target is an `asset` but has no `nodeId` is dropped on restore
+  (pre-launch — no migration).
 - `agent-payload` targets resolve only through the active replay state for the
   referenced conversation and payload id. Normal conversation payloads can be
   previewed; debug-only payloads are not exposed through the normal preview
@@ -663,7 +667,10 @@ rendered frame — into one continuous vertical scrollport with page-like gaps.
 Each section's wrapper is always present (reserving a placeholder height) but its
 iframe mounts lazily as the section nears the scroll viewport and stays mounted
 thereafter, so opening a long book never spins up every section's document at
-once; book bytes load only through the capped preview bytes API; file-only reader
+once; asset and trusted-local book packages load through their existing
+main-validated internal stream with a cancelable bounded range request and a
+128 MiB compressed-package cap, while sources without a stream URL retain the
+capped preview-bytes fallback; file-only reader
 panes fill the available pane height while preserving the EPUB document
 viewport/inset), sandboxed static HTML (`.html`, `.htm`, or
 `text/html`) with a rendered iframe that fills file-only reader panes plus a
