@@ -272,9 +272,11 @@ describe('EPUB translation DOM adapter', () => {
     fixture.adapter.setEnabled(true);
     const batch = fixture.adapter.nextBatch({ maxBlocks: 2, maxChars: 2_000, visibleOnly: true });
     fixture.adapter.apply(batch.blocks.map(({ id }) => ({ id, translation: 'Cached translation' })));
+    expect(fixture.adapter.completedRecordCount()).toBe(1);
 
     fixture.adapter.unregisterSection(0);
     expect(fixture.chapter.querySelector('[data-tenon-epub-translation]')).toBeNull();
+    expect(fixture.adapter.completedRecordCount()).toBe(1);
 
     const replacement = chapterDocument();
     setChapterRects(replacement.document, fixture);
@@ -282,7 +284,34 @@ describe('EPUB translation DOM adapter', () => {
     fixture.adapter.registerSection(0, replacementFrame);
     expect(replacement.document.querySelector('[data-tenon-epub-translation]')?.textContent)
       .toBe('Cached translation');
+    expect(fixture.adapter.completedRecordCount()).toBe(1);
     expect(fixture.adapter.nextBatch({ maxBlocks: 2, maxChars: 2_000, visibleOnly: true }).blocks).toEqual([]);
+    fixture.cleanup();
+  });
+
+  test('counts only valid cached translations as source eligibility changes', async () => {
+    const fixture = createFixture();
+    fixture.adapter.setEnabled(true);
+    const batch = fixture.adapter.nextBatch({ maxBlocks: 1, maxChars: 2_000, visibleOnly: true });
+    fixture.adapter.apply(batch.blocks.map(({ id }) => ({ id, translation: 'Cached translation' })));
+    expect(fixture.adapter.completedRecordCount()).toBe(1);
+
+    const source = fixture.chapter.getElementById('current');
+    if (!source) throw new Error('Missing current EPUB source');
+    source.setAttribute('lang', 'zh-Hans');
+    await Promise.resolve();
+    expect(fixture.adapter.completedRecordCount()).toBe(0);
+    expect(fixture.chapter.querySelector('[data-tenon-epub-translation]')).toBeNull();
+
+    source.removeAttribute('lang');
+    await Promise.resolve();
+    expect(fixture.adapter.completedRecordCount()).toBe(1);
+    expect(fixture.chapter.querySelector('[data-tenon-epub-translation]')?.textContent)
+      .toBe('Cached translation');
+
+    source.remove();
+    await Promise.resolve();
+    expect(fixture.adapter.completedRecordCount()).toBe(0);
     fixture.cleanup();
   });
 

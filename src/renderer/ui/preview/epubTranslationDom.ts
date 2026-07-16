@@ -144,6 +144,7 @@ export interface EpubTranslationBatch {
 
 export interface EpubTranslationSurface {
   apply(items: readonly UrlPageTranslationItem[]): number;
+  completedRecordCount(): number;
   fail(ids: readonly string[]): string[];
   failedRecordIds(): string[];
   languages(): string[];
@@ -456,6 +457,20 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
       }
     });
     return inserted;
+  }
+
+  completedRecordCount(): number {
+    this.scanDirtySections();
+    let count = 0;
+    for (const record of this.records.values()) {
+      if (
+        record.completed
+        && record.translation
+        && record.translation !== normalizeText(record.text)
+        && !(record.language && languageTagMatchesTranslationLanguage(record.language, this.targetLanguage))
+      ) count += 1;
+    }
+    return count;
   }
 
   fail(ids: readonly string[]): string[] {

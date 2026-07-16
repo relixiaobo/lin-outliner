@@ -254,6 +254,29 @@ describe('EpubTranslationController', () => {
     controller.destroy();
   });
 
+  test('clears completion when the surface loses its last valid cached translation', async () => {
+    const surface = new FakeSurface([batch(['Translated once'], 0)]);
+    const completionStates: boolean[] = [];
+    const controller = new EpubTranslationController(surface, {
+      targetLanguage: 'zh-Hans',
+      pollIntervalMs: 5,
+      cancel: async () => undefined,
+      translate: async (request) => success(request),
+      onCompletionChange: (completed) => completionStates.push(completed),
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+    });
+    controller.enable();
+    await waitFor(() => controller.hasCompletedTranslations);
+
+    surface.completedCount = 0;
+    surface.wake();
+    await waitFor(() => !controller.hasCompletedTranslations);
+
+    expect(completionStates).toEqual([true, false]);
+    controller.destroy();
+  });
+
   test('resumes normal scheduling when a failed source record becomes obsolete', async () => {
     const surface = new FakeSurface([batch(['Old text'], 0)]);
     let requestCount = 0;
@@ -355,6 +378,43 @@ describe('EpubTranslationController', () => {
     controller.destroy();
   });
 
+  test('keeps configuration work blocked when the failed EPUB record is stale', async () => {
+    const surface = new FakeSurface([batch(['Stale configuration source'], 0)]);
+    surface.failReturnsIds = false;
+    const requests: UrlPageTranslationRequest[] = [];
+    let configured = false;
+    const controller = new EpubTranslationController(surface, {
+      targetLanguage: 'zh-Hans',
+      pollIntervalMs: 5,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        return configured
+          ? success(request)
+          : { ok: false, requestId: request.requestId, error: 'not-configured' };
+      },
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+    });
+    controller.enable();
+    await waitFor(() => controller.currentStatus === 'error');
+
+    surface.enqueue({ ...batch(['New visible text'], 0), requiresRetry: false });
+    surface.wake();
+    await delay(30);
+    expect(requests).toHaveLength(1);
+    expect(controller.currentStatus).toBe('error');
+    const firstRetryCall = surface.nextBatchCalls.findIndex((call) => call.retryOnly);
+    expect(firstRetryCall).toBeGreaterThanOrEqual(0);
+    expect(surface.nextBatchCalls.slice(firstRetryCall).every((call) => call.retryOnly)).toBe(true);
+
+    configured = true;
+    controller.setTranslationModel('openai::gpt-5.4-mini');
+    await waitFor(() => requests.length === 2);
+    expect(requests[1]?.blocks[0]?.text).toBe('New visible text');
+    controller.destroy();
+  });
+
   test('wakes immediately when a new EPUB section or scroll makes work available', async () => {
     const surface = new FakeSurface([]);
     const requests: UrlPageTranslationRequest[] = [];
@@ -417,8 +477,10 @@ class FakeSurface implements EpubTranslationSurface {
   activeFailedIds = new Set<string>();
   applied: Array<ReadonlyArray<{ id: string; translation: string }>> = [];
   applyInsertedCount = 1;
+  completedCount = 0;
   detectedLanguages: string[] = [];
   enabledStates: boolean[] = [];
+  failReturnsIds = true;
   failed: string[][] = [];
   nextBatchCalls: EpubTranslationBatchOptions[] = [];
   released: string[][] = [];
@@ -434,11 +496,17 @@ class FakeSurface implements EpubTranslationSurface {
   apply(items: ReadonlyArray<{ id: string; translation: string }>): number {
     this.applied.push(items);
     for (const { id } of items) this.activeFailedIds.delete(id);
+    if (this.applyInsertedCount > 0) this.completedCount += this.applyInsertedCount;
     return this.applyInsertedCount;
+  }
+
+  completedRecordCount(): number {
+    return this.completedCount;
   }
 
   fail(ids: readonly string[]): string[] {
     this.failed.push([...ids]);
+    if (!this.failReturnsIds) return [];
     for (const id of ids) this.activeFailedIds.add(id);
     return [...ids];
   }
@@ -472,6 +540,7 @@ class FakeSurface implements EpubTranslationSurface {
 
   reset(targetLanguage: Parameters<EpubTranslationSurface['reset']>[0]): void {
     this.activeFailedIds.clear();
+    this.completedCount = 0;
     this.resetTargets.push(targetLanguage);
   }
 

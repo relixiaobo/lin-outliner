@@ -103,7 +103,9 @@ Every submitted source block immediately gets the existing fixed-size inline
 loading control. Successful output is inserted with `textContent` only. Failure
 turns that block's loader into a keyboard- and pointer-operable retry control.
 Unchanged model output does not create a translation node or a false completed
-header state.
+header state. The completed header treatment is derived from the current valid
+book-session cache: a temporarily unmounted section keeps its recoverable cache,
+while removed, stale, ineligible, or target-language records stop contributing.
 
 ### Viewport scheduler and anchoring
 
@@ -167,13 +169,15 @@ configuration failures do not retry.
 After automatic retries are exhausted, only that batch becomes an accessible
 local error. Other active and queued batches continue; an offscreen failure can
 never freeze the document. Clicking an error prioritizes only that failed work.
-If a failed source disappears, the trusted surface reconciles the header state
-instead of retaining an orphaned error.
+If a failed source disappears, the trusted surface removes its orphaned per-block
+error while retaining any independent configuration latch.
 Successful requests restore normal pool capacity, while terminal provider
 failures temporarily reduce new concurrency so a broad outage cannot turn the
 whole lookahead window into errors. Configuration failures block new provider
 work until configuration changes or the user explicitly retries, but preserve
-completed translations.
+completed translations. That configuration latch is independent from DOM failure
+records, so source removal, section unload, or caption revision changes cannot
+silently resume unrelated provider requests.
 
 ### Lifecycle and provider boundary
 

@@ -714,17 +714,14 @@ export class UrlPageTranslationController {
       )
     ) {
       this.failedIds.clear();
-      if (batch.blocks.length === 0 && this.activeRequests.size === 0) {
-        this.blockedForConfiguration = false;
+      if (
+        !this.blockedForConfiguration
+        && batch.blocks.length === 0
+        && this.activeRequests.size === 0
+      ) {
         this.currentConcurrencyLimit = this.maxConcurrentRequests;
       }
-      this.setStatus(
-        this.hasCompletedTranslations
-          ? 'on'
-          : batch.blocks.length > 0 || this.activeRequests.size > 0
-            ? 'starting'
-            : 'idle',
-      );
+      this.setStatus(this.statusForObservedBatch(batch));
     }
     if (this.observedCaptionRevision === batch.captionRevision) return;
     const previousRevision = this.observedCaptionRevision;
@@ -745,15 +742,20 @@ export class UrlPageTranslationController {
       ) this.failedIds.delete(id);
     }
     this.emitCompletionChange();
-    this.setStatus(
+    this.setStatus(this.statusForObservedBatch(batch));
+  }
+
+  private statusForObservedBatch(batch: UrlPageTranslationGuestBatch): UrlPageTranslationStatus {
+    if (
       this.failedIds.size > 0
-        ? 'error'
-        : this.hasCompletedTranslations
-          ? 'on'
-          : batch.blocks.length > 0 || this.activeRequests.size > 0
-            ? 'starting'
-            : 'idle',
-    );
+      || (
+        this.blockedForConfiguration
+        && batch.blocks.length === 0
+        && this.activeRequests.size === 0
+      )
+    ) return 'error';
+    if (this.hasCompletedTranslations) return 'on';
+    return batch.blocks.length > 0 || this.activeRequests.size > 0 ? 'starting' : 'idle';
   }
 
   private markRequestCompleted(request: ActivePageTranslationRequest): void {

@@ -630,6 +630,65 @@ describe('UrlPageTranslationController', () => {
     controller.destroy();
   });
 
+  test('keeps configuration work blocked when the failed guest record disappears', async () => {
+    const guest = new FakeGuest([{
+      blocks: [{ id: 'b1', text: 'Needs configuration' }],
+      priority: 0,
+    }]);
+    const requests: UrlPageTranslationRequest[] = [];
+    let configured = false;
+    const controller = new UrlPageTranslationController(fakeWebview(), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        return configured
+          ? {
+              ok: true,
+              requestId: request.requestId,
+              translations: request.blocks.map(({ id }) => ({ id, translation: 'Recovered' })),
+            }
+          : { ok: false, requestId: request.requestId, error: 'not-configured' };
+      },
+    });
+
+    controller.enable();
+    dispatch(controller, 'dom-ready');
+    await waitFor(() => controller.currentStatus === 'error');
+
+    guest.discardFailures();
+    guest.queueBatch({
+      blocks: [],
+      captionRevision: 1,
+      hasActiveFailures: false,
+      priority: null,
+      requiresRetry: true,
+    });
+    guest.queueBatch({
+      blocks: [{ id: 'b2', text: 'New visible text' }],
+      captionRevision: 1,
+      priority: 0,
+      requiresRetry: false,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(requests).toHaveLength(1);
+    expect(controller.currentStatus).toBe('error');
+    const firstRetryCall = guest.nextBatchCalls.findIndex((call) => call.retryOnly);
+    expect(firstRetryCall).toBeGreaterThanOrEqual(0);
+    expect(guest.nextBatchCalls.slice(firstRetryCall).every((call) => call.retryOnly)).toBe(true);
+
+    configured = true;
+    controller.setTranslationModel('openai::gpt-5.4-mini');
+    await waitFor(() => requests.length === 2);
+    expect(requests[1]?.blocks[0]?.id).toBe('b2');
+    controller.destroy();
+  });
+
   test('uses the selected target language independently of the UI locale', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'Hello' }], priority: 0 },

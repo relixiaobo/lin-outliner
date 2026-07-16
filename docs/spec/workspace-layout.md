@@ -524,8 +524,9 @@ visible, using abortable 200/400ms exponential backoff with jitter and a bounded
 Exhausted failures remain local and never pause unrelated visible or prefetch
 work; a provider failure temporarily reduces new concurrency until a success.
 Configuration failure blocks only new provider work until configuration changes
-or the user retries an affected paragraph. The existing localized toast
-announces each terminal failure wave.
+or the user retries an affected paragraph. Removing that paragraph or replacing
+the active caption timeline does not clear the configuration latch. The existing
+localized toast announces each terminal failure wave.
 When the current page window contains no eligible untranslated blocks,
 translation stays enabled in an idle state without showing the completed fill;
 a later eligible block returns the control to loading before its request starts.
@@ -645,7 +646,9 @@ A lazy section remount therefore restores matching cached translations, while a
 changed source record removes obsolete loading/error/translation nodes and cannot
 accept or retain the old request result. Nearest valid element language wins,
 then section-root language, then validated book metadata; target-language records
-receive no loader or provider request.
+receive no loader or provider request. The completed header treatment is derived
+from valid cached records: lazy-unmounted sections retain recoverable completion,
+while removed, stale, ineligible, or target-language records no longer count.
 
 EPUB scheduling follows the reader scrollport without loading the full spine.
 It uses the same complete-viewport queue, eight-block / 2,000-character visible
