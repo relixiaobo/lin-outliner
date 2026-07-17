@@ -67,6 +67,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Event-sourced Issue persistence (PR #407, codex)** — Issues, Recurring
+  Issues, Agent Sessions, Activity, execution bindings, stop intents, terminal
+  deliveries, and schedule state now persist as versioned atomic JSONL operation
+  batches with deterministic projections. Strict codecs reject invalid generated
+  state before append, serialized expected-revision checks preserve concurrent
+  mutation semantics, entity tombstones prevent stale resurrection, and only a
+  malformed physical EOF record is repaired as a torn tail. **Gate (main):**
+  three review passes closed descendant tombstone, generated-batch validation,
+  malformed-tail classification, and cadence schema/codec findings; the final
+  pass found no reportable issues. Verified with typecheck, 128 focused Core
+  tests, 901 renderer tests, docs check, and diff check; the full Core suite
+  reached 1654 pass and retained only the existing `pi-ai` OAuth export baseline
+  error.
 - **GitHub-managed skills (PR #406, codex-2)** — Settings now provides the
   complete lifecycle for Linlab catalog recommendations and compatible skills
   discovered from public GitHub repositories or tree URLs: review, install

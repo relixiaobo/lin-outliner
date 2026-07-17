@@ -21,19 +21,22 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | `codex/issue-event-persistence` | PR #407 ready for main review (sync-readiness-foundation Unit 4) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped url-preview-persistent-session #400, agent-capability-permissions #401) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407) |
+| Codex 2 | `lin-outliner-codex-2/` | `codex-2/agent-full-access-default` | Draft PR #410 (Default agent Full Access) |
+| Codex 3 | `lin-outliner-codex-3/` | `codex-3/table-view` | Draft PR #409 (Table view) |
+| Codex 4 | `lin-outliner-codex-4/` | `codex-4/preview-translation-persistent-cache` | PR #408 ready for main review |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-17).** Open PR queue: #407
-(`codex/issue-event-persistence`), ready for main review as
-sync-readiness-foundation Unit 4. Recently merged: #406
+**In flight (2026-07-17).** Open PR queue: #408
+(`codex-4/preview-translation-persistent-cache`), ready for main review; Draft
+#409 (`codex-3/table-view`) and #410
+(`codex-2/agent-full-access-default`). Recently merged: #407
+(`codex/issue-event-persistence`) merged 2026-07-17 after three main review
+passes; see *Recently completed*. #406
 (`codex-2/github-managed-skills`) merged 2026-07-17 after four main review
 passes; see *Recently completed*. #405
 (`codex/agent-ledger-portability`) merged 2026-07-17 after three main review
@@ -476,20 +479,6 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
-- **sync-readiness-foundation** (`in-progress`, plan-track; Units 1–3 shipped in
-  PRs #402/#404/#405) — Unit 1 established stable installation, workspace,
-  document, and replica identities, the atomic v3 shared/local workspace
-  envelope, fresh Loro peers per Core session, durable dependency-pending
-  updates, and
-  provider-neutral snapshot/version/update/import primitives. Unit 2 versioned
-  Outliner asset sidecars with exact byte length and SHA-256, added verified
-  portable reads, and kept large-file hashing responsive in Electron main. Unit
-  3 added deterministic private Agent ledger catalogs, portable event/payload
-  filtering, durable deletion tombstones, write/read/rebuild precedence,
-  recoverable retention, and deletion-watermarked derived indexes. The final
-  independent complete unit, event-sourced Issue persistence, is ready for main
-  review in PR #407. See
-  `docs/plans/sync-readiness-foundation.md`.
 - **renderer-state-hygiene** (P3, *fast-track, no plan file*, **PM-ratified**) — three
   small renderer items in one PR: (1) `useWorkspaceLayout.ts` localStorage key says
   `:v4` (`STORAGE_KEY`) but the persisted `version` int is `3` — align key↔int (drop
@@ -524,6 +513,24 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **sync-readiness-foundation Unit 4** (`codex/issue-event-persistence`, PR
+  #407, codex, merged 2026-07-17, plan-track) — Issue, Recurring Issue, Agent
+  Session, Activity, execution-binding, stop-intent, terminal-delivery, and
+  schedule state now persists as versioned atomic JSONL operation batches with
+  deterministic projections. Serialized expected-revision checks preserve
+  concurrent mutation semantics; strict codecs reject invalid generated state
+  before append; entity tombstones prevent stale ancestor, descendant, and
+  recurring-definition resurrection; and only a malformed physical EOF record
+  is treated as a repairable torn tail. **Gate (main):** three review passes
+  closed four findings covering descendant tombstone precedence, generated-batch
+  codec validation, malformed-tail classification, and cadence schema/codec
+  drift. The final pass found no reportable issues. Verified on final head
+  `2127448f` and the latest-`main` merge result with typecheck, 128 focused Core
+  tests, 901 renderer tests, `docs:check`, and diff check; the full Core suite
+  reached 1654 pass and retained only the existing `pi-ai` OAuth export baseline
+  error. The complete four-unit plan is archived `done`:
+  `docs/plans/archive/sync-readiness-foundation.md`.
 
 - **github-managed-skills** (`codex-2/github-managed-skills`, PR #406, codex-2,
   merged 2026-07-17, plan-track) — Settings now supports the complete lifecycle
@@ -563,8 +570,8 @@ anything.
   to their captured watermark and added scan/write retry guards; the final pass
   found no reportable issues. Verified on final head `6f26a462` and the
   latest-`main` merge result with typecheck, 104 focused Core tests,
-  `docs:check`, and diff check. The plan remains `in-progress` for independent
-  Unit 4: `docs/plans/sync-readiness-foundation.md`.
+  `docs:check`, and diff check. The complete plan is archived `done`:
+  `docs/plans/archive/sync-readiness-foundation.md`.
 
 - **agent-capability-permissions**
   (`codex-3/agent-capability-permissions`, PR #401, codex-3, merged 2026-07-16,
@@ -621,8 +628,8 @@ anything.
   final head `7364305a` with typecheck, 25 focused asset/hash tests, Electron
   success/failure probe paths, `docs:check`, and diff check; unchanged broader
   PR surfaces had already passed 33 focused tests, 73 Agent local-tool tests, and
-  838 renderer tests. The plan remains `in-progress` for independent Units 3–4:
-  `docs/plans/sync-readiness-foundation.md`.
+  838 renderer tests. The complete plan is archived `done`:
+  `docs/plans/archive/sync-readiness-foundation.md`.
 
 - **sync-readiness-foundation Unit 1** (`codex/sync-readiness-foundation`, PR
   #402, codex, merged 2026-07-16, plan-track) — local document persistence is
@@ -639,8 +646,8 @@ anything.
   found no reportable issues. Verified on final head `4678b023` with typecheck,
   241 focused Core tests, 838 renderer tests, `docs:check`, and diff check; the
   full Core suite reached 1558 pass and retained only the existing external
-  Presentation skill failures. The plan remains `in-progress` for independent
-  Units 2–4: `docs/plans/sync-readiness-foundation.md`.
+  Presentation skill failures. The complete plan is archived `done`:
+  `docs/plans/archive/sync-readiness-foundation.md`.
 
 - **url-video-bilingual-subtitles**
   (`codex-4/url-video-bilingual-subtitles`, PR #399, codex-4, merged
