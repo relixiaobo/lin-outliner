@@ -493,8 +493,11 @@ does not add `task_*`, `run_*`, `project_*`, `cron_*`, or `logbook_*` tools.
 
 Recurring Issue materialization is store-owned and due-time only. Active
 Recurring Issues can create concrete Issues when a cadence is due; paused or
-archived Recurring Issues do not. Daily, weekly, and monthly cadence times are
-interpreted as wall-clock values in the persisted IANA `timeZone`, including
+archived Recurring Issues do not. Daily, weekly, and monthly cadences use exact
+discriminated shapes: daily carries only `type` and `time`, weekly also
+requires `weekdays`, and monthly also requires `dayOfMonth`; fields from another
+cadence variant are rejected before persistence. Times are interpreted as
+wall-clock values in the persisted IANA `timeZone`, including
 daylight-saving transitions; a missing spring-forward time shifts forward and a
 repeated fall-back time fires once at the earlier occurrence. The same time zone
 determines the generated Issue title's covered local date. Repeated sweeps do not

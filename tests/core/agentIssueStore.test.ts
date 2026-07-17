@@ -544,6 +544,7 @@ describe('agent issue store', () => {
   for (const [label, cadence, timeZone, expectedCode] of [
     ['time', { type: 'daily', time: '9:00' }, 'UTC', 'invalid_cadence_time'],
     ['time zone', { type: 'daily', time: '09:00' }, 'Not/A_Time_Zone', 'invalid_time_zone'],
+    ['daily fields', { type: 'daily', time: '09:00', weekdays: [1] }, 'UTC', 'invalid_cadence'],
     ['weekdays', { type: 'weekly', weekdays: [], time: '09:00' }, 'UTC', 'invalid_weekdays'],
     ['duplicate weekdays', { type: 'weekly', weekdays: [1, 1], time: '09:00' }, 'UTC', 'invalid_weekdays'],
     ['day of month', { type: 'monthly', dayOfMonth: 0, time: '09:00' }, 'UTC', 'invalid_day_of_month'],
@@ -592,6 +593,18 @@ describe('agent issue store', () => {
       }, actor, 110);
       expect(invalidCadence.status).toBe('blocked');
       expect(invalidCadence.validation?.map((entry) => entry.code)).toContain('invalid_weekdays');
+
+      const crossVariantCadence = await store.update({
+        target: { type: 'recurring-issue', id: original.target.id, expectedRevision: original.revision },
+        change: {
+          type: 'patch',
+          patch: { cadence: { type: 'daily', time: '09:00', weekdays: [1] } as never },
+        },
+        request: { mode: 'request' },
+        reason: 'Reject fields from another cadence variant.',
+      }, actor, 115);
+      expect(crossVariantCadence.status).toBe('blocked');
+      expect(crossVariantCadence.validation?.map((entry) => entry.code)).toContain('invalid_cadence');
 
       const invalidTimeZone = await store.update({
         target: { type: 'recurring-issue', id: original.target.id, expectedRevision: original.revision },

@@ -84,11 +84,12 @@ describe('agent issue manager tool contracts', () => {
       .toEqual(['previousAgentSessionId', 'intent']);
   });
 
-  test('uses discriminated input, output, and evidence schemas with required variant fields', () => {
+  test('uses discriminated input, output, evidence, and cadence schemas with required variant fields', () => {
     const fields = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_create.properties.fields.properties;
     const inputVariants = fields.input.oneOf;
     const outputVariants = fields.output.oneOf;
     const evidenceVariants = fields.evidence.items.oneOf;
+    const cadenceVariants = fields.cadence.oneOf;
 
     expect(inputVariants.map((variant) => variant.properties.type.enum[0])).toEqual([
       'none',
@@ -136,10 +137,23 @@ describe('agent issue manager tool contracts', () => {
     expect(evidenceVariants.find((variant) => variant.properties.type.enum[0] === 'url')?.required)
       .toEqual(['type', 'url']);
     expect(evidenceVariants.every((variant) => variant.additionalProperties === false)).toBe(true);
-    expect(fields.cadence.properties.weekdays).toMatchObject({
-      minItems: 1,
-      uniqueItems: true,
-    });
+    expect(cadenceVariants.map((variant) => variant.properties.type.enum[0])).toEqual([
+      'daily',
+      'weekly',
+      'monthly',
+    ]);
+    expect(cadenceVariants.find((variant) => variant.properties.type.enum[0] === 'daily')?.required)
+      .toEqual(['type', 'time']);
+    expect(cadenceVariants.find((variant) => variant.properties.type.enum[0] === 'weekly')?.required)
+      .toEqual(['type', 'weekdays', 'time']);
+    expect(cadenceVariants.find((variant) => variant.properties.type.enum[0] === 'monthly')?.required)
+      .toEqual(['type', 'dayOfMonth', 'time']);
+    expect(cadenceVariants.every((variant) => variant.additionalProperties === false)).toBe(true);
+    expect(cadenceVariants.find((variant) => variant.properties.type.enum[0] === 'weekly')?.properties.weekdays)
+      .toMatchObject({
+        minItems: 1,
+        uniqueItems: true,
+      });
   });
 
   test('classifies read, mutation, runtime-control, and destructive behavior', () => {

@@ -69,6 +69,9 @@ export function validateRecurringIssueSchedule(
   }
   switch (cadence.type) {
     case 'daily':
+      if (!hasOnlyCadenceFields(cadence, ['type', 'time'])) {
+        validation.push({ path: 'cadence', code: 'invalid_cadence', message: 'Daily cadence accepts only type and time.' });
+      }
       break;
     case 'weekly':
       if (!Array.isArray(cadence.weekdays)
@@ -77,16 +80,29 @@ export function validateRecurringIssueSchedule(
         || new Set(cadence.weekdays).size !== cadence.weekdays.length) {
         validation.push({ path: 'cadence.weekdays', code: 'invalid_weekdays', message: 'Weekly cadence requires unique weekdays from 0 through 6.' });
       }
+      if (!hasOnlyCadenceFields(cadence, ['type', 'weekdays', 'time'])) {
+        validation.push({ path: 'cadence', code: 'invalid_cadence', message: 'Weekly cadence accepts only type, weekdays, and time.' });
+      }
       break;
     case 'monthly':
       if (!validDayOfMonth(cadence.dayOfMonth)) {
         validation.push({ path: 'cadence.dayOfMonth', code: 'invalid_day_of_month', message: 'Monthly cadence dayOfMonth must be an integer from 1 through 31.' });
+      }
+      if (!hasOnlyCadenceFields(cadence, ['type', 'dayOfMonth', 'time'])) {
+        validation.push({ path: 'cadence', code: 'invalid_cadence', message: 'Monthly cadence accepts only type, dayOfMonth, and time.' });
       }
       break;
     default:
       validation.push({ path: 'cadence', code: 'invalid_cadence', message: 'Recurring Issue cadence type must be daily, weekly, or monthly.' });
   }
   return validation;
+}
+
+function hasOnlyCadenceFields(
+  cadence: RecurringIssueCadence,
+  allowedFields: readonly string[],
+): boolean {
+  return Object.keys(cadence).every((field) => allowedFields.includes(field));
 }
 
 export function normalizeRecurringIssueTimeZone(timeZone: string): string | null {

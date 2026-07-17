@@ -410,36 +410,57 @@ const ISSUE_FIELDS_SCHEMA = {
   },
 } as const;
 
+const CADENCE_TIME_SCHEMA = {
+  type: 'string',
+  minLength: 1,
+  description: 'Local time in HH:mm form.',
+} as const;
+
 const CADENCE_SCHEMA = {
   type: 'object',
-  additionalProperties: false,
-  required: ['type', 'time'],
   description: 'Calendar cadence for a Recurring Issue. V1 supports daily, weekly, and monthly schedules.',
-  properties: {
-    type: {
-      type: 'string',
-      enum: ['daily', 'weekly', 'monthly'],
-      description: 'Cadence type.',
+  oneOf: [
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'time'],
+      properties: {
+        type: { type: 'string', enum: ['daily'], description: 'Daily cadence.' },
+        time: CADENCE_TIME_SCHEMA,
+      },
     },
-    time: {
-      type: 'string',
-      minLength: 1,
-      description: 'Local time in HH:mm form for daily, weekly, or monthly cadence.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'weekdays', 'time'],
+      properties: {
+        type: { type: 'string', enum: ['weekly'], description: 'Weekly cadence.' },
+        weekdays: {
+          type: 'array',
+          minItems: 1,
+          uniqueItems: true,
+          items: { type: 'integer', minimum: 0, maximum: 6 },
+          description: 'Weekday numbers, where 0 is Sunday.',
+        },
+        time: CADENCE_TIME_SCHEMA,
+      },
     },
-    weekdays: {
-      type: 'array',
-      minItems: 1,
-      uniqueItems: true,
-      items: { type: 'integer', minimum: 0, maximum: 6 },
-      description: 'Weekday numbers for weekly cadence, where 0 is Sunday.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'dayOfMonth', 'time'],
+      properties: {
+        type: { type: 'string', enum: ['monthly'], description: 'Monthly cadence.' },
+        dayOfMonth: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 31,
+          description: 'Calendar day of the month.',
+        },
+        time: CADENCE_TIME_SCHEMA,
+      },
     },
-    dayOfMonth: {
-      type: 'integer',
-      minimum: 1,
-      maximum: 31,
-      description: 'Calendar day for monthly cadence.',
-    },
-  },
+  ],
 } as const;
 
 const MISSED_POLICY_SCHEMA = {
