@@ -287,6 +287,91 @@ export interface Activity {
   createdAt: number;
 }
 
+export interface AgentSessionExecutionBinding {
+  engine: 'delegation';
+  conversationId: string;
+  executionId: string;
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface AgentSessionStopIntent {
+  token: string;
+  createdAt: number;
+}
+
+export interface AgentIssueTerminalDelivery {
+  id: string;
+  issueId: AgentIssueId;
+  agentSessionId?: AgentSessionId;
+  origin: AgentIssueOrigin;
+  state: 'complete' | 'error' | 'canceled';
+  title: string;
+  body?: string;
+  terminalAt: number;
+  status: 'pending' | 'dispatching' | 'delivered';
+  dispatchOwnerId?: string;
+  attemptCount: number;
+  lastError?: string;
+  createdAt: number;
+  updatedAt: number;
+  deliveredAt?: number;
+}
+
+export const AGENT_ISSUE_OPERATION_VERSION = 1;
+
+export type AgentIssueDeletionEntity =
+  | { type: 'issue'; issueId: AgentIssueId }
+  | { type: 'recurring-issue'; recurringIssueId: AgentRecurringIssueId };
+
+export interface AgentIssueDeletionTombstone<
+  TEntity extends AgentIssueDeletionEntity = AgentIssueDeletionEntity,
+> {
+  deletionId: string;
+  entity: TEntity;
+  actor: ActorRef;
+  deletedAt: number;
+  lastKnownRevision: ObjectRevisionValue;
+}
+
+export type AgentIssueOperation =
+  | { type: 'issue.upserted'; issue: AgentIssue }
+  | {
+      type: 'issue.deleted';
+      tombstone: AgentIssueDeletionTombstone<{ type: 'issue'; issueId: AgentIssueId }>;
+    }
+  | { type: 'recurring-issue.upserted'; recurringIssue: AgentRecurringIssue }
+  | {
+      type: 'recurring-issue.deleted';
+      tombstone: AgentIssueDeletionTombstone<{
+        type: 'recurring-issue';
+        recurringIssueId: AgentRecurringIssueId;
+      }>;
+    }
+  | { type: 'agent-session.upserted'; agentSession: AgentSession }
+  | {
+      type: 'session-execution.upserted';
+      agentSessionId: AgentSessionId;
+      binding: AgentSessionExecutionBinding;
+    }
+  | {
+      type: 'session-stop-intent.upserted';
+      agentSessionId: AgentSessionId;
+      intent: AgentSessionStopIntent;
+    }
+  | { type: 'session-stop-intent.cleared'; agentSessionId: AgentSessionId }
+  | { type: 'terminal-delivery.upserted'; delivery: AgentIssueTerminalDelivery }
+  | { type: 'activity.appended'; activity: Activity };
+
+export interface AgentIssueOperationBatch {
+  v: typeof AGENT_ISSUE_OPERATION_VERSION;
+  seq: number;
+  operationId: string;
+  actor: ActorRef;
+  committedAt: number;
+  operations: AgentIssueOperation[];
+}
+
 const GENERIC_AGENT_SESSION_PROGRESS_BODIES = new Set([
   'Agent Session created and waiting for runtime execution.',
   'Agent Session execution started.',

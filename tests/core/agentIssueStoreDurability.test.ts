@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -9,7 +9,12 @@ import type {
   IssueUpdateChange,
   TenonAgentToolResult,
 } from '../../src/core/agentIssue';
-import { AGENT_ISSUE_STORE_FILE, AgentIssueStore } from '../../src/main/agentIssueStore';
+import { AGENT_ISSUE_OPERATION_LOG_FILE, AgentIssueStore } from '../../src/main/agentIssueStore';
+import {
+  buildAgentIssueOperationBatch,
+  parseAgentIssueOperationBatchesJsonl,
+  replayAgentIssueOperationBatches,
+} from '../../src/main/agentIssueOperationLog';
 
 const actor: ActorRef = { type: 'agent', agentId: 'built-in:tenon:assistant' };
 const source: AgentSessionSource = { type: 'runtime-action', actor };
@@ -52,6 +57,13 @@ async function startIssueSession(store: AgentIssueStore, issue: AgentIssue, now 
   }, source, actor, now);
   expect(started.status).toBe('applied');
   return sessionIdFrom(started);
+}
+
+async function readOperationBatches(root: string) {
+  return parseAgentIssueOperationBatchesJsonl(
+    await readFile(path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE), 'utf8'),
+    AGENT_ISSUE_OPERATION_LOG_FILE,
+  );
 }
 
 async function createParentWithChild(
@@ -97,6 +109,536 @@ async function createParentWithChild(
 }
 
 describe('agent issue store durability guards', () => {
+  test('rebuilds the complete projection from atomic workflow operation batches', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-operation-replay-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const created = await store.create({
+        issueType: 'issue',
+        fields: { title: 'Replay workflow' },
+        request: { mode: 'request' },
+        reason: 'Create replay workflow.',
+      }, actor, 10, { origin: { type: 'conversation', conversationId: 'conversation:origin' } });
+      const issueId = created.targets.find((target) => target.type === 'issue')?.id;
+      if (!issueId) throw new Error('Replay workflow Issue was not created.');
+      const issue = (await store.read({ target: { type: 'issue', id: issueId } })).issue;
+      if (!issue) throw new Error('Replay workflow Issue could not be read.');
+      const sessionId = await startIssueSession(store, issue, 20);
+      await store.bindSessionExecution(sessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:replay-workflow',
+        executionId: 'execution:replay-workflow',
+        startedAt: 30,
+      }, actor, 30);
+      await store.failSessionStart(sessionId, 'Provider unavailable.', actor, 40);
+
+      const batches = await readOperationBatches(root);
+      expect(batches.map((batch) => batch.seq)).toEqual([1, 2, 3, 4]);
+      expect(batches[0]?.operations.map((operation) => operation.type)).toEqual([
+        'issue.upserted',
+        'activity.appended',
+      ]);
+      expect(batches[1]?.operations.map((operation) => operation.type)).toEqual([
+        'agent-session.upserted',
+        'activity.appended',
+        'activity.appended',
+      ]);
+      expect(batches[2]?.operations.map((operation) => operation.type)).toEqual([
+        'issue.upserted',
+        'agent-session.upserted',
+        'session-execution.upserted',
+        'activity.appended',
+        'activity.appended',
+      ]);
+      expect(batches[3]?.operations.map((operation) => operation.type)).toEqual([
+        'agent-session.upserted',
+        'terminal-delivery.upserted',
+        'activity.appended',
+      ]);
+
+      const current = await store.state();
+      expect(replayAgentIssueOperationBatches(batches).state).toEqual(current);
+      expect(await new AgentIssueStore(store.coordinationKey()).state()).toEqual(current);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('records schedule materialization as one Issue, recurrence, and Activity batch', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-schedule-log-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const createdAt = Date.parse('2026-07-07T09:00:00Z');
+      await store.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Logged schedule',
+          cadence: { type: 'daily', time: '18:00' },
+          timeZone: 'Asia/Shanghai',
+          issueTemplate: { permissionMode: 'unattended' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create logged schedule.',
+      }, actor, createdAt);
+
+      const materialized = await store.materializeDueRecurringIssues(
+        Date.parse('2026-07-07T10:05:00Z'),
+        actor,
+      );
+      expect(materialized).toHaveLength(1);
+      const batches = await readOperationBatches(root);
+      expect(batches).toHaveLength(2);
+      expect(batches[1]?.operations.map((operation) => operation.type)).toEqual([
+        'issue.upserted',
+        'recurring-issue.upserted',
+        'activity.appended',
+        'activity.appended',
+      ]);
+      expect(batches[1]?.operations).toContainEqual(expect.objectContaining({
+        type: 'activity.appended',
+        activity: expect.objectContaining({
+          content: expect.objectContaining({ type: 'agent-action', action: 'materialize' }),
+        }),
+      }));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects generated operation batches that the replay codec cannot read', async () => {
+    await withStore(async (store) => {
+      const issue = await createIssue(store, 'Writer codec guard', 10);
+      const previous = await store.state();
+      const next = structuredClone(previous);
+      next.issues[issue.id]!.evidence = [{ type: 'file' } as never];
+
+      expect(() => buildAgentIssueOperationBatch(previous, next, {
+        actor,
+        committedAt: 20,
+      }, 2)).toThrow('failed persistence validation');
+      expect(await new AgentIssueStore(store.coordinationKey()).state()).toEqual(previous);
+    });
+  });
+
+  test('blocks codec-invalid inputs before creating an operation log', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-writer-validation-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const duplicateWeekdays = await store.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Invalid weekly routine',
+          cadence: { type: 'weekly', weekdays: [1, 1], time: '09:00' },
+          timeZone: 'UTC',
+          issueTemplate: { permissionMode: 'unattended' },
+        },
+        request: { mode: 'request' },
+        reason: 'Reject duplicate weekdays.',
+      }, actor, 10);
+      expect(duplicateWeekdays.status).toBe('blocked');
+      expect(duplicateWeekdays.validation?.map((entry) => entry.code)).toContain('invalid_weekdays');
+
+      const incompleteEvidence = await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Invalid evidence',
+          evidence: [{ type: 'file' }],
+        },
+        request: { mode: 'request' },
+        reason: 'Reject incomplete evidence.',
+      } as never, actor, 20);
+      expect(incompleteEvidence.status).toBe('blocked');
+      expect(incompleteEvidence.validation?.map((entry) => entry.code)).toContain('invalid_evidence');
+
+      const logPath = path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE);
+      expect(await access(logPath).then(() => true, () => false)).toBe(false);
+
+      const valid = await store.create({
+        issueType: 'issue',
+        fields: {
+          title: 'Readable evidence',
+          evidence: [{ type: 'file', path: '/tmp/readable-evidence.txt' }],
+        },
+        request: { mode: 'request' },
+        reason: 'Persist codec-valid evidence.',
+      }, actor, 30);
+      expect(valid.status).toBe('applied');
+      expect(await new AgentIssueStore(store.coordinationKey()).state()).toEqual(await store.state());
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('persists and clears Session stop intents through explicit operations', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-stop-intent-log-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const issue = await createIssue(store, 'Stop intent replay', 10);
+      const sessionId = await startIssueSession(store, issue, 20);
+      const reservation = await store.reserveSessionStop({
+        agentSessionId: sessionId,
+        request: { mode: 'request' },
+        reason: 'Reserve stop.',
+      }, 30);
+      expect(reservation.token).toBeDefined();
+      expect((await readOperationBatches(root)).at(-1)?.operations).toEqual([
+        expect.objectContaining({
+          type: 'session-stop-intent.upserted',
+          agentSessionId: sessionId,
+          intent: { token: reservation.token, createdAt: 30 },
+        }),
+      ]);
+
+      const restarted = new AgentIssueStore(store.coordinationKey());
+      expect((await restarted.state()).sessionStopIntents[sessionId]?.token).toBe(reservation.token);
+      await restarted.releaseSessionStop(sessionId, reservation.token!);
+      expect((await readOperationBatches(root)).at(-1)?.operations).toEqual([
+        { type: 'session-stop-intent.cleared', agentSessionId: sessionId },
+      ]);
+      expect((await new AgentIssueStore(store.coordinationKey()).state()).sessionStopIntents).toEqual({});
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps tombstoned entities deleted when stale and duplicate operations arrive later', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-tombstone-log-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const issue = await createIssue(store, 'Delete permanently', 10);
+      const deleted = await store.update({
+        target: { type: 'issue', id: issue.id, expectedRevision: issue.revision },
+        change: { type: 'delete' },
+        request: { mode: 'request' },
+        reason: 'Delete the Issue.',
+      }, actor, 20);
+      expect(deleted.status).toBe('applied');
+
+      const initialBatches = await readOperationBatches(root);
+      const creationBatch = initialBatches[0]!;
+      const deletionBatch = initialBatches[1]!;
+      expect(deletionBatch.operations).toContainEqual(expect.objectContaining({
+        type: 'issue.deleted',
+        tombstone: expect.objectContaining({
+          entity: { type: 'issue', issueId: issue.id },
+          actor,
+          deletedAt: 20,
+          lastKnownRevision: issue.revision,
+        }),
+      }));
+
+      const staleBatch = {
+        ...structuredClone(creationBatch),
+        seq: deletionBatch.seq + 1,
+        operationId: 'stale-replica-operation',
+      };
+      const duplicateBatch = {
+        ...structuredClone(creationBatch),
+        seq: deletionBatch.seq + 2,
+      };
+      const logPath = path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE);
+      await appendFile(logPath, `${JSON.stringify(staleBatch)}\n${JSON.stringify(duplicateBatch)}\n`, 'utf8');
+      await writeFile(path.join(root, 'issue-manager.json'), JSON.stringify({
+        v: 5,
+        issues: { [issue.id]: issue },
+      }), 'utf8');
+
+      expect((await store.search({ targets: ['issue'] })).rows).toEqual([]);
+      const restarted = new AgentIssueStore(store.coordinationKey());
+      expect((await restarted.search({ targets: ['issue'] })).rows).toEqual([]);
+      expect(replayAgentIssueOperationBatches(await readOperationBatches(root)).state.issues[issue.id]).toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('gives Recurring Issue tombstones precedence over stale definition operations', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-recurring-issue-tombstone-log-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      await store.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Delete recurring definition',
+          cadence: { type: 'daily', time: '09:00' },
+          timeZone: 'UTC',
+          issueTemplate: { permissionMode: 'unattended' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create recurring definition.',
+      }, actor, 10);
+      const recurring = (await store.search({ targets: ['recurring-issue'] })).rows[0]!;
+      await store.update({
+        target: {
+          type: 'recurring-issue',
+          id: recurring.target.id,
+          expectedRevision: recurring.revision,
+        },
+        change: { type: 'delete' },
+        request: { mode: 'request' },
+        reason: 'Delete recurring definition.',
+      }, actor, 20);
+
+      const batches = await readOperationBatches(root);
+      expect(batches[1]?.operations).toContainEqual(expect.objectContaining({
+        type: 'recurring-issue.deleted',
+        tombstone: expect.objectContaining({
+          entity: { type: 'recurring-issue', recurringIssueId: recurring.target.id },
+          deletedAt: 20,
+          lastKnownRevision: recurring.revision,
+        }),
+      }));
+      const staleBatch = {
+        ...structuredClone(batches[0]!),
+        seq: 3,
+        operationId: 'stale-recurring-issue-operation',
+      };
+      await appendFile(
+        path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE),
+        `${JSON.stringify(staleBatch)}\n`,
+        'utf8',
+      );
+
+      expect((await new AgentIssueStore(store.coordinationKey()).search({
+        targets: ['recurring-issue'],
+      })).rows).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects stale materialization derived from a tombstoned Recurring Issue', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-recurring-materialization-primary-'));
+    const staleRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-recurring-materialization-stale-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const createdAt = Date.parse('2026-07-07T09:00:00Z');
+      const materializedAt = Date.parse('2026-07-07T10:05:00Z');
+      await store.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Deleted offline schedule',
+          cadence: { type: 'daily', time: '18:00' },
+          timeZone: 'Asia/Shanghai',
+          issueTemplate: { permissionMode: 'unattended' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create a schedule before the replica goes offline.',
+      }, actor, createdAt);
+      await writeFile(
+        path.join(staleRoot, AGENT_ISSUE_OPERATION_LOG_FILE),
+        await readFile(path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE)),
+      );
+
+      const recurring = (await store.search({ targets: ['recurring-issue'] })).rows[0]!;
+      await store.update({
+        target: {
+          type: 'recurring-issue',
+          id: recurring.target.id,
+          expectedRevision: recurring.revision,
+        },
+        change: { type: 'delete' },
+        request: { mode: 'request' },
+        reason: 'Delete the schedule while the other replica is offline.',
+      }, actor, materializedAt - 1);
+
+      const staleStore = AgentIssueStore.forAgentDataRoot(staleRoot);
+      expect(await staleStore.materializeDueRecurringIssues(materializedAt, actor)).toHaveLength(1);
+      const staleMaterialization = (await readOperationBatches(staleRoot))[1]!;
+      const deletion = (await readOperationBatches(root))[1]!;
+      await appendFile(
+        path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE),
+        `${JSON.stringify({ ...staleMaterialization, seq: deletion.seq + 1 })}\n`,
+        'utf8',
+      );
+
+      const restarted = AgentIssueStore.forAgentDataRoot(root);
+      expect((await restarted.search({ targets: ['recurring-issue'] })).rows).toEqual([]);
+      expect((await restarted.search({ targets: ['issue'] })).rows).toEqual([]);
+      expect(await restarted.listReadyIssuesForExecution(materializedAt)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(staleRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects stale descendant creation derived from a tombstoned parent Issue', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-primary-'));
+    const staleRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-stale-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const parent = await createIssue(store, 'Deleted parent', 10);
+      const parentSessionId = await startIssueSession(store, parent, 20);
+      await store.bindSessionExecution(parentSessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:deleted-parent',
+        executionId: 'execution:deleted-parent',
+        startedAt: 25,
+      }, actor, 25);
+      const sharedBatchCount = (await readOperationBatches(root)).length;
+      await writeFile(
+        path.join(staleRoot, AGENT_ISSUE_OPERATION_LOG_FILE),
+        await readFile(path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE)),
+      );
+
+      await store.markInterruptedSessionsStale(actor, 30);
+      const currentParent = (await store.read({ target: { type: 'issue', id: parent.id } })).issue!;
+      expect((await store.update({
+        target: { type: 'issue', id: parent.id, expectedRevision: currentParent.revision },
+        change: { type: 'delete' },
+        request: { mode: 'request' },
+        reason: 'Delete the parent while the other replica is offline.',
+      }, actor, 40)).status).toBe('applied');
+
+      const staleStore = AgentIssueStore.forAgentDataRoot(staleRoot);
+      const childCreation = await staleStore.create({
+        issueType: 'issue',
+        fields: { title: 'Late child' },
+        request: { mode: 'request' },
+        reason: 'Create a child from stale parent state.',
+      }, actor, 35, {
+        origin: { type: 'agent-session', agentSessionId: parentSessionId },
+      });
+      expect(childCreation.status).toBe('applied');
+      const childId = childCreation.targets.find((target) => target.type === 'issue')?.id;
+      if (!childId) throw new Error('Late child Issue was not created.');
+      const child = (await staleStore.read({ target: { type: 'issue', id: childId } })).issue;
+      if (!child) throw new Error('Late child Issue could not be read.');
+      const childSessionId = await startIssueSession(staleStore, child, 36);
+      await staleStore.bindSessionExecution(childSessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:late-child',
+        executionId: 'execution:late-child',
+        startedAt: 37,
+      }, actor, 37);
+      const grandchildCreation = await staleStore.create({
+        issueType: 'issue',
+        fields: { title: 'Late grandchild' },
+        request: { mode: 'request' },
+        reason: 'Create a grandchild from the rejected child state.',
+      }, actor, 38, {
+        origin: { type: 'agent-session', agentSessionId: childSessionId },
+      });
+      expect(grandchildCreation.status).toBe('applied');
+      const grandchildId = grandchildCreation.targets.find((target) => target.type === 'issue')?.id;
+      if (!grandchildId) throw new Error('Late grandchild Issue was not created.');
+
+      const staleDescendantBatches = (await readOperationBatches(staleRoot)).slice(sharedBatchCount);
+      const primaryTail = (await readOperationBatches(root)).at(-1)!;
+      await appendFile(
+        path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE),
+        `${staleDescendantBatches
+          .map((batch, index) => JSON.stringify({ ...batch, seq: primaryTail.seq + index + 1 }))
+          .join('\n')}\n`,
+        'utf8',
+      );
+
+      const restarted = AgentIssueStore.forAgentDataRoot(root);
+      expect((await restarted.search({ targets: ['issue'] })).rows).toEqual([]);
+      expect(await restarted.listReadyIssuesForExecution(50)).toEqual([]);
+      const replayed = replayAgentIssueOperationBatches(await readOperationBatches(root));
+      expect(replayed.state.issues[childId]).toBeUndefined();
+      expect(replayed.state.issues[grandchildId]).toBeUndefined();
+      expect([...replayed.suppressedIssueIds]).toEqual(expect.arrayContaining([
+        parent.id,
+        childId,
+        grandchildId,
+      ]));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(staleRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects conflicting operation identities and malformed middle records', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-corrupt-log-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      await createIssue(store, 'Corruption guard', 10);
+      const first = (await readOperationBatches(root))[0]!;
+      const conflicting = {
+        ...structuredClone(first),
+        seq: 2,
+        committedAt: 11,
+      };
+      expect(() => replayAgentIssueOperationBatches([first, conflicting]))
+        .toThrow('Conflicting Agent Issue operation id');
+
+      const later = {
+        ...structuredClone(first),
+        seq: 3,
+        operationId: 'later-operation',
+      };
+      expect(() => parseAgentIssueOperationBatchesJsonl(
+        `${JSON.stringify(first)}\nnot-json\n${JSON.stringify(later)}\n`,
+        'corrupt-middle.jsonl',
+      )).toThrow('Invalid Agent Issue operation JSON at corrupt-middle.jsonl:2');
+
+      expect(() => parseAgentIssueOperationBatchesJsonl(`${JSON.stringify({
+        v: 1,
+        seq: 1,
+        operationId: 'malformed-entity',
+        actor: { type: 'system' },
+        committedAt: 1,
+        operations: [{ type: 'issue.upserted', issue: { id: 'issue:malformed' } }],
+      })}\n`, 'malformed-entity.jsonl'))
+        .toThrow('Invalid Agent Issue operation at malformed-entity.jsonl:1');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a newline-terminated malformed tail before another mutation can append', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-complete-corrupt-tail-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const issue = await createIssue(store, 'Before complete corrupt tail', 10);
+      const logPath = path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE);
+      await appendFile(logPath, 'not-json\n   ', 'utf8');
+      const corrupted = await readFile(logPath, 'utf8');
+
+      await expect(store.state()).rejects.toThrow('Invalid Agent Issue operation JSON');
+      await expect(store.update({
+        target: { type: 'issue', id: issue.id, expectedRevision: issue.revision },
+        change: { type: 'patch', patch: { title: 'Must not append' } },
+        request: { mode: 'request' },
+        reason: 'Do not write past a complete corrupt record.',
+      }, actor, 20)).rejects.toThrow('Invalid Agent Issue operation JSON');
+      expect(await readFile(logPath, 'utf8')).toBe(corrupted);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('drops and repairs a torn final operation before the next append', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-torn-log-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const issue = await createIssue(store, 'Before torn append', 10);
+      const logPath = path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE);
+      await appendFile(logPath, '{"v":1,"seq":2,"operationId":"torn', 'utf8');
+
+      expect((await store.read({ target: { type: 'issue', id: issue.id } })).issue?.title).toBe('Before torn append');
+      const updated = await store.update({
+        target: { type: 'issue', id: issue.id, expectedRevision: issue.revision },
+        change: { type: 'patch', patch: { title: 'After torn append' } },
+        request: { mode: 'request' },
+        reason: 'Repair and update.',
+      }, actor, 20);
+      expect(updated.status).toBe('applied');
+
+      const raw = await readFile(logPath, 'utf8');
+      expect(raw.endsWith('\n')).toBe(true);
+      expect(raw).not.toContain('"operationId":"torn');
+      expect((await new AgentIssueStore(store.coordinationKey()).read({
+        target: { type: 'issue', id: issue.id },
+      })).issue?.title).toBe('After torn append');
+      expect((await readOperationBatches(root)).map((batch) => batch.seq)).toEqual([1, 2]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('checks expected revisions inside the serialized update transaction', async () => {
     await withStore(async (store) => {
       const issue = await createIssue(store, 'Concurrent update');
@@ -784,7 +1326,7 @@ describe('agent issue store durability guards', () => {
 
   test('does not create or rewrite the store when no terminal delivery is claimable', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-empty-delivery-'));
-    const storePath = path.join(root, AGENT_ISSUE_STORE_FILE);
+    const storePath = path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE);
     try {
       const store = AgentIssueStore.forAgentDataRoot(root);
       expect(await store.claimTerminalDeliveries('owner:idle', 10, 100)).toEqual([]);

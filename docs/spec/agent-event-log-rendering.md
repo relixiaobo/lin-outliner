@@ -270,6 +270,7 @@ Current filesystem layout:
 
 ```txt
 <userData>/agent/
+  issue-operations.jsonl
   agents/
     <agentId>/
       identity.json
@@ -300,6 +301,8 @@ Current filesystem layout:
 
 Authoritative:
 
+- `issue-operations.jsonl` for Issue/Recurring Issue, Agent Session, Activity,
+  schedule, and terminal-delivery state
 - `conversations/<id>/segments/*.jsonl`
 - `runs/<id>/events.jsonl`
 - `agents/<id>/identity.json`
@@ -324,9 +327,10 @@ sentinel:
 - A stale `v` or a MISSING sentinel is positive proof of another generation:
   event-log owned paths are hard-deleted (logged with the old generation) —
   identities, conversations, runs, principal sidecars, indexes — and the layout
-  is recreated lazily with a fresh sentinel. Sibling agent stores such as Issue
-  state are not part of this event-log clean-cut. There is no legacy reader,
-  adapter, or migration.
+  is recreated lazily with a fresh sentinel. The sibling Issue operation ledger
+  has its own versioned records and is not part of this event-log clean-cut. The
+  obsolete mutable `issue-manager.json` file is ignored. There is no legacy
+  reader, adapter, or migration.
 - An unreadable or corrupt sentinel is AMBIGUITY, not proof: the store fails
   open onto the current layout (warn + re-probe next launch) — a permissions or
   I/O error can never trip a wipe.
@@ -357,6 +361,33 @@ longer hold a memory event log; they only hold the derived reflective-run index
 for runs anchored to that principal. Delegated-run ledgers use the tolerant
 sidecar torn-tail policy (drop a torn FINAL line on read, truncate it on the next
 append's repair; mid-file corruption still fails loudly).
+
+The Issue ledger uses the same physical JSONL append/repair primitive but a
+transaction-shaped record. One line is one atomic business mutation containing
+typed upserts, Activity appends, stop-intent clears, or entity tombstones. Its
+stable `operationId` is the deduplication identity; `seq` is local replay order,
+not a future global sync sequence. Projection caches are derived only and are
+invalidated by the file identity/size/time fingerprint. Full replay is the
+authority after restart or any external file replacement. A duplicate operation
+with identical content is a no-op, and the record codec rejects malformed nested
+entity payloads before append and projection. Writers and readers use the same
+strict codec. A newline-terminated malformed record fails loudly at any position,
+including when later whitespace reaches the physical EOF. Only a malformed
+fragment that itself occupies the physical EOF without its terminating newline is
+treated as a torn batch, dropped on read, and repaired before the next append.
+
+Issue and Recurring Issue tombstones are applied before accepting later upserts
+for the same entity id. This makes stale appended operations and restored legacy
+snapshots unable to revive deleted work. They also fence later Issue upserts
+derived from a tombstoned parent Issue or Recurring Issue. Every rejected child id
+joins the same suppression closure, so the fence propagates through descendants
+at any depth. Stale child creation and schedule materialization therefore cannot
+create runnable work after deletion, while retaining deletion Activity as audit
+evidence. Session execution bindings, stop intents, scheduler ownership, and
+terminal-delivery claim owners remain local runtime state even though their
+restart transitions share the atomic ledger. A future online transport must
+filter or replace those local authority fields rather than treating replay as an
+execution lease.
 
 ```ts
 interface AgentEventBase {

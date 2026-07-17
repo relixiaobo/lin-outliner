@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { AGENT_ISSUE_STORE_FILE, AgentIssueStore } from '../../src/main/agentIssueStore';
+import { AGENT_ISSUE_OPERATION_LOG_FILE, AgentIssueStore } from '../../src/main/agentIssueStore';
+import { parseAgentIssueOperationBatchesJsonl } from '../../src/main/agentIssueOperationLog';
 import type { ActorRef, AgentSessionSource, IssueDraftFields } from '../../src/core/agentIssue';
 
 const actor: ActorRef = { type: 'agent', agentId: 'built-in:tenon:assistant' };
@@ -17,10 +18,10 @@ async function withStore<T>(fn: (store: AgentIssueStore) => Promise<T>): Promise
 }
 
 describe('agent issue store', () => {
-  test('treats older Issue store generations as a clean empty state', async () => {
+  test('ignores the obsolete mutable snapshot and starts a fresh operation log', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-store-legacy-'));
     try {
-      await writeFile(path.join(root, AGENT_ISSUE_STORE_FILE), JSON.stringify({
+      await writeFile(path.join(root, 'issue-manager.json'), JSON.stringify({
         v: 1,
         issues: {
           'issue:legacy': {
@@ -47,9 +48,26 @@ describe('agent issue store', () => {
         reason: 'Create current work.',
       }, actor, 10);
 
-      const persisted = JSON.parse(await readFile(path.join(root, AGENT_ISSUE_STORE_FILE), 'utf8'));
-      expect(persisted.v).toBe(5);
-      expect(Object.keys(persisted.issues)).toHaveLength(1);
+      const batches = parseAgentIssueOperationBatchesJsonl(
+        await readFile(path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE), 'utf8'),
+        AGENT_ISSUE_OPERATION_LOG_FILE,
+      );
+      expect(batches).toHaveLength(1);
+      expect(batches[0]).toMatchObject({
+        v: 1,
+        seq: 1,
+        actor,
+        committedAt: 10,
+      });
+      expect(batches[0]?.operations.map((operation) => operation.type)).toEqual([
+        'issue.upserted',
+        'activity.appended',
+      ]);
+      if (process.platform !== 'win32') {
+        const logPath = path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE);
+        expect((await stat(logPath)).mode & 0o777).toBe(0o600);
+        expect((await stat(root)).mode & 0o777).toBe(0o700);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -526,7 +544,9 @@ describe('agent issue store', () => {
   for (const [label, cadence, timeZone, expectedCode] of [
     ['time', { type: 'daily', time: '9:00' }, 'UTC', 'invalid_cadence_time'],
     ['time zone', { type: 'daily', time: '09:00' }, 'Not/A_Time_Zone', 'invalid_time_zone'],
+    ['daily fields', { type: 'daily', time: '09:00', weekdays: [1] }, 'UTC', 'invalid_cadence'],
     ['weekdays', { type: 'weekly', weekdays: [], time: '09:00' }, 'UTC', 'invalid_weekdays'],
+    ['duplicate weekdays', { type: 'weekly', weekdays: [1, 1], time: '09:00' }, 'UTC', 'invalid_weekdays'],
     ['day of month', { type: 'monthly', dayOfMonth: 0, time: '09:00' }, 'UTC', 'invalid_day_of_month'],
   ] as const) {
     test(`rejects an invalid Recurring Issue ${label}`, async () => {
@@ -573,6 +593,18 @@ describe('agent issue store', () => {
       }, actor, 110);
       expect(invalidCadence.status).toBe('blocked');
       expect(invalidCadence.validation?.map((entry) => entry.code)).toContain('invalid_weekdays');
+
+      const crossVariantCadence = await store.update({
+        target: { type: 'recurring-issue', id: original.target.id, expectedRevision: original.revision },
+        change: {
+          type: 'patch',
+          patch: { cadence: { type: 'daily', time: '09:00', weekdays: [1] } as never },
+        },
+        request: { mode: 'request' },
+        reason: 'Reject fields from another cadence variant.',
+      }, actor, 115);
+      expect(crossVariantCadence.status).toBe('blocked');
+      expect(crossVariantCadence.validation?.map((entry) => entry.code)).toContain('invalid_cadence');
 
       const invalidTimeZone = await store.update({
         target: { type: 'recurring-issue', id: original.target.id, expectedRevision: original.revision },
@@ -2988,7 +3020,7 @@ describe('agent issue store', () => {
         request: { mode: 'request' },
         reason: 'Start scoped parent work.',
       }, { type: 'runtime-action', actor }, actor, 20, {
-        resolveInput: async (input, _issue, now) => ({ scope: input, resolvedAt: now, nodeIds: ['node:read-only-input'] }),
+        resolveInput: (input, _issue, now) => ({ scope: input, resolvedAt: now, nodeIds: ['node:read-only-input'] }),
       });
       const parentSessionId = parentStarted.targets.find((target) => target.type === 'agent-session')!.id;
       await store.bindSessionExecution(parentSessionId, {

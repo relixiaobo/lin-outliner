@@ -173,6 +173,12 @@ describe('Agent Issue recurring schedules', () => {
       expect.objectContaining({ code: 'invalid_weekdays', path: 'cadence.weekdays' }),
     ]);
     expect(validateRecurringIssueSchedule(
+      { type: 'daily', time: '09:00', weekdays: [1] } as never,
+      'UTC',
+    )).toEqual([
+      expect.objectContaining({ code: 'invalid_cadence', path: 'cadence' }),
+    ]);
+    expect(validateRecurringIssueSchedule(
       { type: 'monthly', dayOfMonth: 32, time: '09:00' },
       'UTC',
     )).toEqual([

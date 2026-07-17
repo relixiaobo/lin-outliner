@@ -15,6 +15,7 @@ import {
   STORAGE_LAYOUT_VERSION,
   type AgentRunMetaProjection,
 } from '../../src/main/agentEventStore';
+import { AGENT_ISSUE_OPERATION_LOG_FILE } from '../../src/main/agentIssueStore';
 
 const systemActor: AgentActor = { type: 'system' };
 const userActor: AgentActor = { type: 'user', userId: 'user-1' };
@@ -697,7 +698,7 @@ describe('agent event store', () => {
   test('pre-sentinel data (no layout.json) is positive proof and wipes event paths + writes the sentinel', async () => {
     await withStore(async (store, root) => {
       const { conversationId, agentPrincipal, userPrincipal } = await seedCurrentLayout(store);
-      await writeFile(path.join(root, 'issue-manager.json'), '{"v":1,"issues":{}}\n', 'utf8');
+      await writeFile(path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE), '{"sibling":"issue-ledger"}\n', 'utf8');
       // Simulate a pre-sentinel generation: data exists but the sentinel does not.
       await rm(path.join(root, LAYOUT_SENTINEL_FILE), { force: true });
 
@@ -707,7 +708,8 @@ describe('agent event store', () => {
       await expect(restarted.listPrincipalRunMetaProjections(agentPrincipal)).resolves.toEqual([]);
       await expect(restarted.listPrincipalRunMetaProjections(userPrincipal)).resolves.toEqual([]);
       expect(JSON.parse(await readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8'))).toEqual({ v: STORAGE_LAYOUT_VERSION });
-      await expect(readFile(path.join(root, 'issue-manager.json'), 'utf8')).resolves.toContain('"issues"');
+      await expect(readFile(path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE), 'utf8'))
+        .resolves.toContain('"issue-ledger"');
     });
   });
 

@@ -140,6 +140,19 @@ remains an Issue/Recurring Issue origin or an execution carrier required for
 pending one-hop routing. Conversation reset is likewise rejected while it would
 delete the Run ledger of an active Agent Session routing carrier.
 
+Issue work has its own canonical operation ledger at
+`<userData>/agent/issue-operations.jsonl`; it is not stored in the conversation
+or Run ledgers and has no mutable whole-file snapshot. Each successful business
+mutation is one versioned append-only batch, and the Issue/Recurring Issue,
+Session, Activity, schedule, and terminal-delivery projection is derived by
+deterministic replay. Batches carry stable operation ids for idempotence and a
+local monotonic sequence for replay order. Issue and Recurring Issue deletion
+adds an entity tombstone in the same atomic batch as its audit Activity, so a
+later stale upsert cannot recreate the deleted work. Execution bindings, stop
+intents, active scheduler ownership, and terminal-delivery claims remain local
+execution state; replaying or transporting facts never grants authority to run
+work on another device.
+
 The Session-to-Run binding is durable before the first `run.started` event, and a
 Session-owned `controller` Run returns only through the Issue outbox, never through
 generic notifications or detached-child aggregation. Closing a conversation view

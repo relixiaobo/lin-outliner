@@ -259,6 +259,43 @@ durable `scope` and `budget` before any continuation or re-plan starts. The
 restored agent tool catalog and every nested runtime therefore retain the same
 resource and budget ceilings as the original execution.
 
+## Issue Ledger Durability
+
+`AgentIssueStore` serializes every mutation for one
+`issue-operations.jsonl` path. Under that boundary it replays the canonical log
+or reuses a derived projection bound to the log fingerprint, clones it, runs the
+existing validation and lifecycle reducer, derives and validates typed entity
+operations with the same strict codec used by replay, and only then appends one
+JSONL batch.
+Multi-entity transitions therefore remain atomic: Session terminal state, Issue
+completion, Activity, delivery
+enqueue/acknowledgement, schedule cursor movement, and materialized Issue creation
+cannot be split across commits. A blocked or semantic no-op request appends
+nothing.
+
+Each batch has schema version `1`, a stable `operationId`, local monotonic `seq`,
+actor, commit time, and one or more typed operations. Duplicate ids with the same
+content are ignored during replay; conflicting reuse is corruption. The storage
+codec validates every nested entity field before append and replay. A malformed
+fragment is treated as torn only when it occupies the physical EOF and lacks its
+terminating newline; trailing whitespace cannot turn an earlier newline-terminated
+malformed record into a torn tail. Such complete malformed records fail loudly
+before another append can move them into the middle of the log. Restart discards
+the in-memory projection and derives the same state from the ledger. Issue and
+Recurring Issue tombstones permanently win over later stale definition
+operations. A later child-Issue upsert whose parent is tombstoned, or a
+materialized-Issue upsert whose Recurring Issue source is tombstoned, is also
+ignored and joins a transitive suppression closure. Its later descendants are
+suppressed in turn, so stale offline work cannot become runnable at any depth.
+Activity remains append-only audit evidence. The pre-release format has no
+`issue-manager.json` reader.
+
+The ledger records local Session execution bindings, stop reservations, and
+terminal-delivery claim transitions because restart must preserve them. They do
+not authorize remote execution. Future synchronization must keep execution
+handles, scheduler/dispatch ownership, and live claim owners device-local until
+a strongly consistent lease with fencing is designed.
+
 ## Verification
 
 Verification remains an execution policy, not a separate model-facing tool.

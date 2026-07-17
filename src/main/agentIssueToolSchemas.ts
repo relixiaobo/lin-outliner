@@ -142,23 +142,64 @@ const DUE_DATE_SCHEMA = {
 
 const EVIDENCE_REF_SCHEMA = {
   type: 'object',
-  additionalProperties: false,
-  required: ['type'],
   description: 'Evidence link that supports Issue completion or verification.',
-  properties: {
-    type: {
-      type: 'string',
-      enum: ['issue', 'agent-session', 'activity', 'node', 'file', 'url'],
-      description: 'Evidence target kind.',
+  oneOf: [
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'issueId'],
+      properties: {
+        type: { type: 'string', enum: ['issue'], description: 'Issue evidence.' },
+        issueId: { type: 'string', minLength: 1, description: 'Issue evidence id.' },
+      },
     },
-    issueId: { type: 'string', minLength: 1, description: 'Issue evidence id when type is issue.' },
-    agentSessionId: { type: 'string', minLength: 1, description: 'Agent Session evidence id when type is agent-session.' },
-    activityId: { type: 'string', minLength: 1, description: 'Activity evidence id when type is activity.' },
-    nodeId: { type: 'string', minLength: 1, description: 'Outliner node evidence id when type is node.' },
-    path: { type: 'string', minLength: 1, description: 'Local file path evidence when type is file.' },
-    url: { type: 'string', minLength: 1, description: 'URL evidence when type is url.' },
-    label: { type: 'string', minLength: 1, description: 'Optional display label for URL evidence.' },
-  },
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'agentSessionId'],
+      properties: {
+        type: { type: 'string', enum: ['agent-session'], description: 'Agent Session evidence.' },
+        agentSessionId: { type: 'string', minLength: 1, description: 'Agent Session evidence id.' },
+      },
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'activityId'],
+      properties: {
+        type: { type: 'string', enum: ['activity'], description: 'Activity evidence.' },
+        activityId: { type: 'string', minLength: 1, description: 'Activity evidence id.' },
+      },
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'nodeId'],
+      properties: {
+        type: { type: 'string', enum: ['node'], description: 'Outliner node evidence.' },
+        nodeId: { type: 'string', minLength: 1, description: 'Outliner node evidence id.' },
+      },
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'path'],
+      properties: {
+        type: { type: 'string', enum: ['file'], description: 'Local file evidence.' },
+        path: { type: 'string', minLength: 1, description: 'Local file path.' },
+      },
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'url'],
+      properties: {
+        type: { type: 'string', enum: ['url'], description: 'URL evidence.' },
+        url: { type: 'string', minLength: 1, description: 'Evidence URL.' },
+        label: { type: 'string', minLength: 1, description: 'Optional display label.' },
+      },
+    },
+  ],
 } as const;
 
 const COMPLETION_CRITERION_SCHEMA = {
@@ -369,34 +410,57 @@ const ISSUE_FIELDS_SCHEMA = {
   },
 } as const;
 
+const CADENCE_TIME_SCHEMA = {
+  type: 'string',
+  minLength: 1,
+  description: 'Local time in HH:mm form.',
+} as const;
+
 const CADENCE_SCHEMA = {
   type: 'object',
-  additionalProperties: false,
-  required: ['type', 'time'],
   description: 'Calendar cadence for a Recurring Issue. V1 supports daily, weekly, and monthly schedules.',
-  properties: {
-    type: {
-      type: 'string',
-      enum: ['daily', 'weekly', 'monthly'],
-      description: 'Cadence type.',
+  oneOf: [
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'time'],
+      properties: {
+        type: { type: 'string', enum: ['daily'], description: 'Daily cadence.' },
+        time: CADENCE_TIME_SCHEMA,
+      },
     },
-    time: {
-      type: 'string',
-      minLength: 1,
-      description: 'Local time in HH:mm form for daily, weekly, or monthly cadence.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'weekdays', 'time'],
+      properties: {
+        type: { type: 'string', enum: ['weekly'], description: 'Weekly cadence.' },
+        weekdays: {
+          type: 'array',
+          minItems: 1,
+          uniqueItems: true,
+          items: { type: 'integer', minimum: 0, maximum: 6 },
+          description: 'Weekday numbers, where 0 is Sunday.',
+        },
+        time: CADENCE_TIME_SCHEMA,
+      },
     },
-    weekdays: {
-      type: 'array',
-      items: { type: 'integer', minimum: 0, maximum: 6 },
-      description: 'Weekday numbers for weekly cadence, where 0 is Sunday.',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'dayOfMonth', 'time'],
+      properties: {
+        type: { type: 'string', enum: ['monthly'], description: 'Monthly cadence.' },
+        dayOfMonth: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 31,
+          description: 'Calendar day of the month.',
+        },
+        time: CADENCE_TIME_SCHEMA,
+      },
     },
-    dayOfMonth: {
-      type: 'integer',
-      minimum: 1,
-      maximum: 31,
-      description: 'Calendar day for monthly cadence.',
-    },
-  },
+  ],
 } as const;
 
 const MISSED_POLICY_SCHEMA = {
