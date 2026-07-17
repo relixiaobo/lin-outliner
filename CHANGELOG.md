@@ -67,6 +67,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **GitHub-managed skills (PR #406, codex-2)** — Settings now provides the
+  complete lifecycle for Linlab catalog recommendations and compatible skills
+  discovered from public GitHub repositories or tree URLs: review, install
+  disabled, enable, update preview/apply, rollback, disable, and uninstall.
+  Managed versions are validated, pinned to an immutable Git commit and
+  whole-subtree hash, executed from an offline local copy, and constrained by
+  the existing capability and control-plane boundaries. English/Chinese states
+  cover discovery, compatibility, integrity, updates, and failures; optional
+  Linlab skills are no longer bundled. **Gate (main):** four review passes
+  closed index-restoration content deletion, typed/localized lifecycle error
+  handling, path-depth GitHub request amplification, and longest-ref ambiguity.
+  Verified with typecheck, 139 focused Core/renderer tests, docs check, and diff
+  check.
 - **Agent ledger portability (PR #405, codex)** — private Agent conversation and
   Run history now exposes deterministic versioned portable catalogs and stream
   reads with an explicit event and payload allow-list. A workspace deletion

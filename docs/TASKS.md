@@ -21,8 +21,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398, sync-readiness-foundation Units 1–3 #402/#404/#405**) |
-| Codex 2 | `lin-outliner-codex-2/` | `codex-2/github-managed-skills` | PR #406 ready for main review; rebase after #405 |
+| Codex | `lin-outliner-codex/` | `codex/issue-event-persistence` | PR #407 ready for main review (sync-readiness-foundation Unit 4) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped url-preview-persistent-session #400, agent-capability-permissions #401) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -31,10 +31,13 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-17).** Open PR queue: #406
-(`codex-2/github-managed-skills`), ready for main review after rebasing #405.
-Recently merged: #405 (`codex/agent-ledger-portability`) merged 2026-07-17 after
-three main review passes; see *Recently completed*. #401
+**In flight (2026-07-17).** Open PR queue: #407
+(`codex/issue-event-persistence`), ready for main review as
+sync-readiness-foundation Unit 4. Recently merged: #406
+(`codex-2/github-managed-skills`) merged 2026-07-17 after four main review
+passes; see *Recently completed*. #405
+(`codex/agent-ledger-portability`) merged 2026-07-17 after three main review
+passes; see *Recently completed*. #401
 (`codex-3/agent-capability-permissions`) merged 2026-07-16 after two main review
 passes; see *Recently completed*. #403 (`codex-4/epub-bilingual-translation`)
 merged 2026-07-16 after two main review passes; see *Recently completed*. #404
@@ -168,8 +171,8 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
 
-**Needs design / escalation before build** (not in the queue yet): `third-party-skill-import` (write
-the plan first), `launcher-provider-expansion`, the directional agent tails
+**Needs design / escalation before build** (not in the queue yet):
+`launcher-provider-expansion`, the directional agent tails
 (`agent-self-modification` · `agent-generative-ui` — escalate the capability
 boundary), `agent-browser-control` / `agent-computer-control` (plans merged #361; settle the hard
 prohibition, browser-adoption, and helper-packaging decisions before implementation), and
@@ -330,16 +333,6 @@ before any directional/security-sensitive build.
   decisions before code. See `docs/plans/agent-computer-control.md`.
 Standalone agent items (not part of the program):
 
-- **third-party-skill-import** (P2, *no plan file yet — draft, to be drafted*) —
-  the **frontmatter-conformance + importer** half of "standard skills" that
-  `bundled-built-in-skill-resources` deliberately scopes out. Goal: let Lin import
-  another developer's standard SKILL.md skill (and decide on round-trip/export).
-  Concretely: respect an incoming `name:` on read with a **directory-name
-  fallback** + reconcile when folder-name ≠ `name:`; keep tolerating unknown
-  frontmatter keys; decide whether Lin-authored skills should **emit `name:`** so
-  they validate on claude.ai / Claude Code. **Distinct from `agent-import-skill`**,
-  which is *note/data* import (Tana/Roam/Obsidian), not skill import. PM decision
-  2026-06-15: split out from #268 as its own plan. Write the plan before building.
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
   plaintext `agent-secrets.json` is hardened to `0600`/`0700` on POSIX only;
   Windows currently falls back to the user-profile ACL with no extra restriction.
@@ -493,8 +486,9 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   portable reads, and kept large-file hashing responsive in Electron main. Unit
   3 added deterministic private Agent ledger catalogs, portable event/payload
   filtering, durable deletion tombstones, write/read/rebuild precedence,
-  recoverable retention, and deletion-watermarked derived indexes. The remaining
-  independent complete unit is event-sourced Issue persistence. See
+  recoverable retention, and deletion-watermarked derived indexes. The final
+  independent complete unit, event-sourced Issue persistence, is ready for main
+  review in PR #407. See
   `docs/plans/sync-readiness-foundation.md`.
 - **renderer-state-hygiene** (P3, *fast-track, no plan file*, **PM-ratified**) — three
   small renderer items in one PR: (1) `useWorkspaceLayout.ts` localStorage key says
@@ -530,6 +524,25 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **github-managed-skills** (`codex-2/github-managed-skills`, PR #406, codex-2,
+  merged 2026-07-17, plan-track) — Settings now supports the complete lifecycle
+  for Linlab catalog recommendations and compatible skills discovered from
+  public GitHub repositories or tree URLs: review, install disabled, enable,
+  update preview/apply, rollback, disable, and uninstall. Every runtime version
+  is validated, pinned to an immutable commit and whole-subtree hash, executed
+  from its offline local copy, and kept inside the existing capability,
+  process, user-block, and control-plane boundaries. The English/Chinese UI
+  covers catalog, discovery, selection, compatibility, integrity, update, and
+  failure states; optional Linlab skills are no longer bundled. **Gate (main):**
+  four review passes closed index-restoration cleanup that could delete newly
+  committed content, untyped internal lifecycle errors crossing IPC, GitHub ref
+  request amplification with path depth, and longest-ref ambiguity where a
+  default branch could hide a slash-named tag. The final pass found no
+  reportable issues. Verified on final head `fcf78f31` and the latest-`main`
+  merge result with typecheck, 139 focused Core/renderer tests, `docs:check`,
+  and diff check. Plan archived `done`:
+  `docs/plans/archive/github-managed-skills.md`.
 
 - **sync-readiness-foundation Unit 3** (`codex/agent-ledger-portability`, PR
   #405, codex, merged 2026-07-17, plan-track) — Agent conversation and Run
