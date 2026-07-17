@@ -163,6 +163,64 @@ test.describe('table view', () => {
     expect((await commandCalls(page)).some((call) => call.cmd === 'indent_node')).toBe(false);
   });
 
+  test('serializes empty field materialization and replays rapid input', async ({ page }) => {
+    await configureRootTable(page);
+    await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        lin?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+      };
+      const originalInvoke = win.lin!.invoke.bind(win.lin);
+      let delayed = false;
+      win.lin!.invoke = async (cmd, args) => {
+        if (cmd === 'create_inline_field' && !delayed) {
+          delayed = true;
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+        }
+        return originalInvoke(cmd, args);
+      };
+    });
+
+    const statusCell = rootGrid(page)
+      .locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`)
+      .first();
+    const before = (await commandCalls(page)).filter((call) => call.cmd === 'create_inline_field').length;
+    await statusCell.focus();
+    await page.keyboard.type('ab');
+
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
+      call.cmd === 'create_inline_field'
+      && call.args.parentId === ids.alpha
+      && call.args.targetDefId === ids.statusField
+    )).length).toBe(before + 1);
+    await expect(statusCell.locator('.field-value-outliner')).toContainText('ab');
+  });
+
+  test('starts real and draft Title editors with printable input', async ({ page }) => {
+    await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
+    const grid = rootGrid(page);
+    const alphaCell = grid.locator(
+      `.outliner-table-title-cell[data-table-row-id="${ids.alpha}"]`,
+    );
+
+    await alphaCell.focus();
+    await alphaCell.press('Z');
+    await expect(rowEditor(page, ids.alpha)).toBeFocused();
+    await expect(rowEditor(page, ids.alpha)).toContainText('AlphaZ');
+    await page.keyboard.press('Escape');
+
+    const draftCell = grid.locator('.outliner-table-title-cell').last();
+    const draftId = await draftCell.getAttribute('data-table-row-id');
+    expect(draftId).toBeTruthy();
+    await draftCell.focus();
+    await draftCell.press('Q');
+    const draftEditor = grid.locator(
+      `.outliner-table-title-cell[data-table-row-id="${draftId}"] .ProseMirror`,
+    );
+    await expect(draftEditor).toBeFocused();
+    await expect(draftEditor).toContainText('Q');
+  });
+
   test('projects title-node selection across the complete table record', async ({ page }) => {
     await configureRootTable(page);
     await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
@@ -242,6 +300,9 @@ test.describe('table view', () => {
     await titleNode.locator(':scope > .row > .row-leading > .row-chevron-button').click();
 
     const nested = titleCell.locator('..').locator('..').locator(':scope > .outliner-table-nested');
+    await expect(nested).toHaveRole('tree');
+    await expect(nested).toHaveAccessibleName('Alpha');
+    await expect(nested).toHaveAttribute('aria-multiselectable', 'true');
     await expect(nested.locator('[data-node-id="table-record-child"]')).toContainText('Nested child');
     await expect(nested.locator(`[data-node-id="${entry!.id}"]`)).toHaveCount(0);
     await expect(statusCell).toContainText('Column value');
@@ -426,22 +487,58 @@ test.describe('table view', () => {
     await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
 
     const grid = rootGrid(page);
-    await grid.getByRole('button', { name: 'Due column menu' }).click();
+    const configuredProjection = await e2eProjection(page);
+    const dueDisplay = configuredProjection.nodes.find((node) => (
+      node.type === 'displayField' && node.displayField === ids.dueField
+    ));
+    expect(dueDisplay).toBeTruthy();
+    const dueMenuButton = grid.getByRole('button', { name: 'Due column menu' });
+    await dueMenuButton.focus();
+    await dueMenuButton.press('Enter');
+    const dueMenu = page.getByRole('menu', { name: 'Due column menu' });
+    await expect(dueMenu.getByRole('menuitem', { name: 'Rename for this view' })).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(dueMenu.getByRole('menuitem', { name: 'Move left' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dueMenuButton).toBeFocused();
+
+    await dueMenuButton.click();
     await page.getByRole('menuitem', { name: 'Move left' }).click();
     await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Due', 'Status']);
 
-    await grid.getByRole('button', { name: 'Due column menu' }).click();
+    await dueMenuButton.click();
     await page.getByRole('menuitem', { name: 'Rename for this view' }).click();
     const rename = page.getByLabel('Rename for this view');
+    await expect(rename).toBeFocused();
+    await rename.fill('Discard me');
+    await rename.press('Escape');
+    await expect(dueMenuButton).toBeFocused();
+    await expect(grid.getByRole('columnheader').nth(1)).toContainText('Due');
+
+    await dueMenuButton.click();
+    await page.getByRole('menuitem', { name: 'Rename for this view' }).click();
     await rename.fill('Deadline');
     await rename.press('Enter');
     await expect(grid.getByRole('columnheader').nth(1)).toContainText('Deadline');
+    await expect(grid.getByRole('button', { name: 'Deadline column menu' })).toBeFocused();
 
     const deadlineHeader = grid.getByRole('columnheader').nth(1);
     const widthBefore = await deadlineHeader.evaluate((element) => element.getBoundingClientRect().width);
     await grid.getByRole('separator', { name: 'Resize Deadline column' }).press('ArrowRight');
     await expect.poll(() => deadlineHeader.evaluate((element) => element.getBoundingClientRect().width))
       .toBeGreaterThan(widthBefore);
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const display = projection.nodes.find((node) => node.id === dueDisplay!.id);
+      return display?.type === 'displayField' ? display.displayWidth : null;
+    }).toBe(102);
+
+    await invokeCommands(page, [{
+      cmd: 'update_display_field',
+      args: { displayFieldId: dueDisplay!.id, width: 200 },
+    }]);
+    await expect.poll(() => deadlineHeader.evaluate((element) => element.getBoundingClientRect().width))
+      .toBeCloseTo(200, 0);
 
     await grid.getByRole('button', { name: 'Add column' }).click();
     await page.getByRole('dialog', { name: 'Add column' }).getByRole('button', { name: 'Done', exact: true }).click();
@@ -521,6 +618,26 @@ test.describe('table view', () => {
     await expect.poll(async () => (await commandCalls(page)).filter((call) => (
       call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
     )).length).toBe(2);
+  });
+
+  test('gives a nested search table a single refresh owner', async ({ page }) => {
+    await invokeCommands(page, [
+      { cmd: 'move_node', args: { nodeId: ids.recents, parentId: ids.alpha, index: null } },
+      { cmd: 'set_view_mode', args: { nodeId: ids.recents, mode: 'table' } },
+    ]);
+
+    await row(page, ids.alpha).locator('.row-chevron-button').click({ force: true });
+    const recentsRow = row(page, ids.recents);
+    await expect(recentsRow).toBeVisible();
+    const refreshesBefore = (await commandCalls(page)).filter((call) => (
+      call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
+    )).length;
+
+    await recentsRow.locator('.row-chevron-button').click({ force: true });
+    await expect(page.getByRole('grid', { name: 'Recents table' })).toBeVisible();
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
+      call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
+    )).length - refreshesBefore).toBe(2);
   });
 });
 

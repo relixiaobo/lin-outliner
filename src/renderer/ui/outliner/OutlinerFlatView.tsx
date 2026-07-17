@@ -602,9 +602,13 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   // effect, gathered across the whole flattened tree.
   const searchParentIds = useMemo(() => {
     const ids = new Set<NodeId>();
-    if (byId.get(props.parentId)?.type === 'search') ids.add(props.parentId);
+    const ownsSearchRefresh = (nodeId: NodeId) => {
+      const node = byId.get(nodeId);
+      return node?.type === 'search' && readViewConfig(node, byId).viewMode !== 'table';
+    };
+    if (ownsSearchRefresh(props.parentId)) ids.add(props.parentId);
     for (const row of rows) {
-      if (row.kind === 'content' && !row.draft && ui.expanded.has(row.nodeId) && byId.get(row.nodeId)?.type === 'search') {
+      if (row.kind === 'content' && !row.draft && ui.expanded.has(row.nodeId) && ownsSearchRefresh(row.nodeId)) {
         ids.add(row.nodeId);
       }
     }

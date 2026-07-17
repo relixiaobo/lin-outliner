@@ -110,7 +110,9 @@ no independently shipped scaffold.
   expanded in Table, they render under the same column grid and remain visually
   distinguished without changing their data.
 - A search node may render results in Table, including filters and sorting, but
-  does not show a create-child draft row because search results are derived.
+  does not show a create-child draft row because search results are derived. A
+  visible search scope has exactly one refresh owner: its Table renderer in Table
+  mode, or its surrounding Outline renderer otherwise.
 
 ### Columns
 
@@ -132,7 +134,9 @@ no independently shipped scaffold.
   live field title is used.
 - `displayWidth` is clamped to a usable token-derived minimum and a documented
   maximum. Dragging a header divider previews locally and persists one final
-  width on pointer release; double-click restores automatic width.
+  width on pointer release; double-click restores automatic width. The local
+  preview exists only during the drag and pending commit, then yields to the
+  latest projection so undo, collaboration, and external commands remain visible.
 - The header menu exposes Rename for this view, Hide, Move left, Move right, and
   Remove from view. Renaming changes `displayLabel`, never the field definition.
 - **Add column** opens an anchored searchable menu of active field definitions,
@@ -150,13 +154,18 @@ no independently shipped scaffold.
   printable key creates an entry attached to the selected field definition and
   enters the correct editor. Escape before a meaningful value is committed
   removes a newly created empty entry when the existing draft semantics allow it.
+- One cell materialization remains single-flight. Printable input received while
+  its attach command is pending is buffered and delivered to the new editor in
+  order, without issuing duplicate create commands or dropping characters.
 - Read-only system fields remain read-only. Done retains its existing direct
   toggle behavior; table view does not invent editors for Created, Updated, or
   other derived values.
 - Selecting or hovering a cell is UI state only. It does not create an undo step,
   update timestamps, or dirty the document.
-- Title editing keeps existing rich-text and trigger behavior. Field cells keep
-  the existing value model rather than accepting arbitrary rich text.
+- Title editing keeps existing rich-text and trigger behavior. Enter or a
+  printable key starts the inactive stored or trailing-draft Title editor
+  directly, seeding printable input into that editor. Field cells keep the
+  existing value model rather than accepting arbitrary rich text.
 
 ## Flows And Screens
 
@@ -270,7 +279,9 @@ width. The panel's vertical scroller remains authoritative.
 
 - **BR-1:** A table uses `role="grid"`; headers use `columnheader`; data cells use
   `gridcell`; each logical record uses `row`. Nested tables are separately named
-  grids rather than one invalid nested row set.
+  grids rather than one invalid nested row set. An expanded nested Outline owns a
+  separately named, multi-selectable `tree`, so its `treeitem` rows never sit
+  under a presentation-only container.
 - **BR-2:** Exactly one cell participates in the tab order. Arrow keys move the
   active cell without entering edit mode. Home/End move to first/last cell in a
   row; Cmd/Ctrl+Home and Cmd/Ctrl+End move to the first/last available cell. The
@@ -289,7 +300,9 @@ width. The panel's vertical scroller remains authoritative.
   by the grid resolver.
 - **BR-6:** Column resize handles are keyboard operable in fixed increments and
   expose current width; header menus provide every resize/reorder action that is
-  otherwise pointer accessible.
+  otherwise pointer accessible. Opening a header menu moves focus into it;
+  Arrow/Home/End navigate items, rename traps focus as a small dialog, and Escape
+  or Tab closes the menu and restores its trigger. Escape from rename cancels it.
 - **BR-7:** The grid exposes multi-selection semantics and every data row exposes
   its boolean `aria-selected` state. A selected record paints one continuous
   neutral selection surface across Title, field, and action columns; the nested
@@ -311,7 +324,8 @@ width. The panel's vertical scroller remains authoritative.
   Removing the final row moves focus to the draft Title cell when available.
 - Concurrent column changes converge through the stored display-field nodes.
   Duplicate or missing order values use the deterministic fallback rather than
-  triggering a write loop.
+  triggering a write loop. A settled resize preview never masks a newer projected
+  width.
 - Invalid stored widths clamp at render time. They are normalized on the next
   explicit user resize, not on read.
 - A failed command leaves the prior projection and active logical cell intact
@@ -337,7 +351,9 @@ width. The panel's vertical scroller remains authoritative.
   reached with arrow keys, then no command runs and no field entry appears.
 - **AC-5:** Given that same absent field, when the user presses Enter,
   double-clicks, or types a printable key, then exactly one field entry attaches
-  to the selected definition and the correct typed editor receives focus.
+  to the selected definition and the correct typed editor receives focus. Rapid
+  printable input during attachment produces one create command and reaches the
+  editor in order without character loss.
 - **AC-6:** Given an existing active field, when it is added as a column, then no
   child row is mutated and the column is available after restart. If its existing
   display field was hidden, Add column restores that same display field without
@@ -347,21 +363,26 @@ width. The panel's vertical scroller remains authoritative.
   no row entries are created.
 - **AC-8:** Given optional columns, when a user moves, resizes, auto-resets,
   relabels, hides, or removes one, then the table updates immediately and the
-  result survives restart.
+  result survives restart; a later projected width supersedes any settled local
+  resize preview.
 - **AC-9:** Given a stored group field, when Table is active, then no grouped
   sections or Group control appear; when Outline is restored, then the previous
   grouping reappears.
 - **AC-10:** Given keyboard-only use, when focus traverses cells, editors,
   headers, resize handles, and menus, then every command is reachable, focus is
-  visible, and Tab can leave the table.
+  visible, menu focus enters and restores predictably, rename can be cancelled,
+  and Tab can leave the table.
 - **AC-11:** Given 5,000 text-only child rows, when the user scrolls through Table,
   then only a bounded window plus required focus rows is mounted and scroll
   anchoring does not jump after row measurement.
 - **AC-12:** Given an expanded child configured as Table, when its owner is shown
   inside an Outline or another Table, then the nested grid has independent
-  columns, controls, horizontal scrolling, and an accessible name.
+  columns, controls, horizontal scrolling, and an accessible name. Given an
+  expanded child configured as Outline inside a Table, its rows belong to a
+  separately named `tree`.
 - **AC-13:** Given a derived search-result node in Table mode, when results
-  render, then filtering/sorting/editing work but no new-row draft is offered.
+  render, then filtering/sorting/editing work, no new-row draft is offered, and
+  exactly the Table renderer owns its refresh lifecycle.
 - **AC-14:** Given light/dark and accessibility preference variants at desktop
   and narrow split-panel widths, when visually inspected, then the table is
   unframed, dense, token-correct, aligned, non-overlapping, and locally scrollable.

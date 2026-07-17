@@ -339,10 +339,12 @@ deterministic fallbacks. `displayLabel` overrides the live field label,
 `displayWidth` is clamped to the supported range, and `displayVisible` controls
 visibility. Header menus rename a column for this view, move it left or right,
 hide it, or remove it. The resize separator supports pointer drag, keyboard
-increments, and double-click reset. The default geometry follows the compact
-Tana composition: a 152px Title column, 86px authored fields, and an 82px
-trailing `+ Add` slot. The data strip does not expand merely because its panel is
-wider.
+increments, and double-click reset. A resize preview exists only while dragging
+or awaiting that commit; once the command settles it yields to the latest
+projected width, so undo, collaboration, and external updates cannot be masked by
+stale renderer state. The default geometry follows the compact Tana composition:
+a 152px Title column, 86px authored fields, and an 82px trailing `+ Add` slot.
+The data strip does not expand merely because its panel is wider.
 
 An authored column's field-kind icon opens that field definition in the current
 pane, providing direct access to its configuration surface. Hover visibly
@@ -368,10 +370,14 @@ chevron and bullet slots in both Title and authored-value cells.
 An absent value is a quiet empty cell and remains absent on hover, selection,
 focus, and arrow navigation. Enter, double-click, or a printable key begins
 editing and attaches exactly one entry to the chosen existing definition before
-focusing its editor. Read-only system fields remain derived; Done keeps its
-direct toggle behavior. The trailing Title draft creates an ordinary direct
-child, and Enter at the end of the final stored Title creates and focuses the
-next record.
+focusing its editor. Attachment is single-flight per logical cell: printable
+characters received while the command is pending are buffered in order and
+delivered to the new editor without duplicate create commands or input loss.
+Enter or a printable key on an inactive stored or trailing-draft Title cell opens
+its ordinary rich-text editor directly and seeds printable input there. Read-only
+system fields remain derived; Done keeps its direct toggle behavior. The trailing
+Title draft creates an ordinary direct child, and Enter at the end of the final
+stored Title creates and focuses the next record.
 
 Expanding a table record shows its ordinary child outline without duplicating
 authored field entries already represented by visible columns. Those entries and
@@ -382,8 +388,10 @@ entries for hidden or undisplayed columns remain ordinary expanded child rows so
 hiding a column never makes its data unreachable.
 
 Each table is an independently named ARIA `grid` with `row`, `columnheader`, and
-`gridcell` descendants and one roving tab stop. Arrow keys move one cell, Home
-and End move to row edges, and Cmd/Ctrl+Home or Cmd/Ctrl+End move to grid edges.
+`gridcell` descendants and one roving tab stop. An expanded nested Outline inside
+a record owns a separately named, multi-selectable `tree`, so its `treeitem` rows
+always have a valid tree container. Arrow keys move one cell, Home and End move
+to row edges, and Cmd/Ctrl+Home or Cmd/Ctrl+End move to grid edges.
 Those navigation keys operate only while the cell wrapper owns focus. Tab and
 Shift+Tab traverse wrappers, and native Tab leaves at the outer boundary. Once
 an authored node editor owns focus, Enter, Tab, Shift+Tab, drag, and other node
@@ -393,6 +401,12 @@ editor focus leaves the wrapper transparent, including while its node subtree is
 expanded. Escape closes editor-local state and, after the editor releases focus,
 returns focus to the same logical cell. IME composition, modifier shortcuts,
 and dead keys are not consumed as printable table input.
+
+Column menus move focus to the first item on keyboard or pointer open. Arrow keys,
+Home, and End navigate menu items; Tab or Escape closes and restores the column
+trigger. Rename switches the same surface to dialog focus behavior, focuses its
+input, traps Tab within the dialog, commits once on Enter or blur, and cancels
+without a write on Escape.
 
 Selecting a record's Title node keeps the ordinary node selection identity and
 commands, but Table projects its visual selection and `aria-selected` state onto
@@ -410,6 +424,9 @@ with overscan; focused rows and the trailing draft stay mountable, and height
 corrections above the viewport compensate `scrollTop` before paint. Expanded
 children may own independent nested Outline or Table scopes with their own
 columns, filters, sorting, toolbar, accessible name, and horizontal scroll.
+Visible saved searches have one refresh owner: Table owns Table-mode search
+scopes, while the surrounding flat Outline renderer excludes those scopes and
+continues to own visible Outline-mode searches.
 
 ## Search Nodes
 

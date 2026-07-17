@@ -63,6 +63,7 @@ import { MenuSurface } from '../primitives/MenuSurface';
 import { SelectControl } from '../primitives/SelectControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { FIELD_TYPE_OPTIONS, outlinerChildren } from '../shared';
 import { useT } from '../../i18n/I18nProvider';
@@ -116,6 +117,10 @@ interface TableLayoutItem {
 interface TableLayout {
   items: TableLayoutItem[];
   totalHeight: number;
+}
+
+interface PendingFieldMaterialization {
+  input: string;
 }
 
 type TableRenderRow =
@@ -372,7 +377,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   );
   const draftRow = useMemo(() => showDraft ? {
     kind: 'data' as const,
-    key: `draft:${draftId}`,
+    key: `row:${draftId}`,
     id: draftId,
     filtered: false,
     draft: true,
@@ -402,6 +407,10 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   const gridRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const previewsRef = useRef(new Map<string, number>());
+  const widthCommitTokensRef = useRef(new Map<string, symbol>());
+  const columnsRef = useRef(columns);
+  columnsRef.current = columns;
+  const pendingFieldMaterializationsRef = useRef(new Map<string, PendingFieldMaterialization>());
 
   const effectiveActiveCell = nearestTableCell(rowIds, columnIds, activeCell);
   useEffect(() => {
@@ -414,10 +423,10 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   const applyGridTemplate = useCallback(() => {
     const grid = gridRef.current;
     if (!grid) return;
-    grid.style.setProperty('--table-columns', tableGridTemplate(columns, previewsRef.current));
-    grid.style.setProperty('--table-min-width', `${tableGridMinWidth(columns, previewsRef.current)}px`);
-  }, [columns]);
-  useLayoutEffect(() => applyGridTemplate(), [applyGridTemplate]);
+    grid.style.setProperty('--table-columns', tableGridTemplate(columnsRef.current, previewsRef.current));
+    grid.style.setProperty('--table-min-width', `${tableGridMinWidth(columnsRef.current, previewsRef.current)}px`);
+  }, []);
+  useLayoutEffect(() => applyGridTemplate(), [applyGridTemplate, columns]);
 
   const focusCell = useCallback((cell: TableCellAddress) => {
     setActiveCell(cell);
@@ -462,21 +471,36 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
       return;
     }
 
+    const materializationKey = cellKey(address);
+    const existingMaterialization = pendingFieldMaterializationsRef.current.get(materializationKey);
+    if (existingMaterialization) {
+      if (seed) existingMaterialization.input += seed;
+      return;
+    }
+    const materialization: PendingFieldMaterialization = { input: seed ?? '' };
+    pendingFieldMaterializationsRef.current.set(materializationKey, materialization);
+
     let createdEntryId: NodeId | undefined;
-    await props.run(async () => {
-      const outcome = await api.createInlineField(ownerId, null, '', 'plain', column.field);
-      createdEntryId = outcome.focus?.nodeId;
-      return outcome;
-    }, {
-      applyFocus: false,
-      beforeApply: () => {
-        if (!createdEntryId) return;
-        const target = focusTarget(createdEntryId, createdEntryId, props.panelId, 'trailing');
-        props.setUi((previous) => seed
-          ? requestPendingInputState(previous, target, seed, cursorEnd())
-          : requestFocusState(previous, target, cursorEnd()));
-      },
-    });
+    try {
+      await props.run(async () => {
+        const outcome = await api.createInlineField(ownerId, null, '', 'plain', column.field);
+        createdEntryId = outcome.focus?.nodeId;
+        return outcome;
+      }, {
+        applyFocus: false,
+        beforeApply: () => {
+          if (!createdEntryId) return;
+          const target = focusTarget(createdEntryId, createdEntryId, props.panelId, 'trailing');
+          props.setUi((previous) => materialization.input
+            ? requestPendingInputState(previous, target, materialization.input, cursorEnd())
+            : requestFocusState(previous, target, cursorEnd()));
+        },
+      });
+    } finally {
+      if (pendingFieldMaterializationsRef.current.get(materializationKey) === materialization) {
+        pendingFieldMaterializationsRef.current.delete(materializationKey);
+      }
+    }
   }, [focusFieldValue, props.index.byId, props.panelId, props.run, props.setUi]);
 
   const onGridKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -524,12 +548,15 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     }
     const row = renderRows.find((candidate) => candidate.kind === 'data' && candidate.id === rowId);
     if (!row || row.kind !== 'data') return;
+    const titleTarget = row.draft
+      ? focusTarget(props.parentId, props.parentId, props.panelId, 'trailing')
+      : rowFocusTarget(row.id, props.parentId, props.panelId);
     if (event.key === 'Enter') {
       event.preventDefault();
       if (columnId === TABLE_TITLE_COLUMN_ID) {
         props.setUi((previous) => requestFocusState(
           previous,
-          rowFocusTarget(row.id, props.parentId, props.panelId),
+          titleTarget,
           cursorEnd(),
         ));
       } else {
@@ -543,24 +570,40 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
       && !event.altKey
       && !event.ctrlKey
       && !event.metaKey
-      && columnId !== TABLE_TITLE_COLUMN_ID
     ) {
+      event.preventDefault();
+      if (columnId === TABLE_TITLE_COLUMN_ID) {
+        props.setUi((previous) => requestPendingInputState(
+          previous,
+          titleTarget,
+          event.key,
+          cursorEnd(),
+        ));
+        return;
+      }
       const column = columns.find((candidate) => candidate.id === columnId);
       if (!column) return;
-      event.preventDefault();
       void beginFieldEdit(row.id, column, event.key);
     }
   };
 
   const updatePreviewWidth = useCallback((columnId: string, width: number) => {
+    widthCommitTokensRef.current.delete(columnId);
     previewsRef.current.set(columnId, clampColumnWidth(width));
     applyGridTemplate();
   }, [applyGridTemplate]);
   const commitWidth = useCallback((column: ViewDisplayField, width: number | null) => {
+    const token = Symbol(column.id);
+    widthCommitTokensRef.current.set(column.id, token);
     if (width === null) previewsRef.current.delete(column.id);
     else previewsRef.current.set(column.id, clampColumnWidth(width));
     applyGridTemplate();
-    void props.run(() => api.updateDisplayField(column.id, { width }));
+    void props.run(() => api.updateDisplayField(column.id, { width })).finally(() => {
+      if (widthCommitTokensRef.current.get(column.id) !== token) return;
+      widthCommitTokensRef.current.delete(column.id);
+      previewsRef.current.delete(column.id);
+      applyGridTemplate();
+    });
   }, [applyGridTemplate, props.run]);
 
   const [searchRefreshing, setSearchRefreshing] = useState(false);
@@ -700,6 +743,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
       })
       : [];
     const nestedView = childParent ? readViewConfig(childParent, props.index.byId) : null;
+    const nestedIsTable = nestedView?.viewMode === 'table';
     const focusedId = props.ui.focusedId;
     const nestedDraftFocused = Boolean(childParent) && props.ui.focusedPanelId === props.panelId && (
       (focusedId === ownerId && props.ui.focusSurface === 'trailing')
@@ -800,7 +844,12 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
           <div className="outliner-table-row-actions" role="presentation" />
         </div>
         {showNested && childParent ? (
-          <div className="outliner-table-nested" role="presentation">
+          <div
+            aria-label={nestedIsTable ? undefined : childParent.content.text.trim() || t.common.untitled}
+            aria-multiselectable={nestedIsTable ? undefined : 'true'}
+            className="outliner-table-nested"
+            role={nestedIsTable ? 'presentation' : 'tree'}
+          >
             <OutlinerView
               panelId={props.panelId}
               parentId={ownerId}
@@ -1134,24 +1183,40 @@ function TableColumnHeader({
   const openFieldLabel = `${t.outliner.field.openField}: ${label}`;
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const cancelRenameRef = useRef(false);
+  const renameCommitStartedRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(label);
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setRenaming(false);
+  }, []);
   const menuStyle = useAnchoredOverlay(menuRef, {
     anchorRef: buttonRef,
     disabled: !open,
     placement: 'bottom-start',
     width: 220,
   });
-  useDismissibleOverlay(menuRef, () => {
-    setOpen(false);
-    setRenaming(false);
-  }, { disabled: !open });
+  useDismissibleOverlay(menuRef, closeMenu, { disabled: !open });
+  const { onKeyDown: onMenuKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: closeMenu,
+    kind: renaming ? 'dialog' : 'menu',
+    active: open,
+    getRestoreTarget: () => buttonRef.current,
+    focusKey: renaming ? 'rename' : 'menu',
+  });
 
   const commitRename = () => {
+    if (cancelRenameRef.current) {
+      cancelRenameRef.current = false;
+      return;
+    }
+    if (renameCommitStartedRef.current) return;
+    renameCommitStartedRef.current = true;
     void run(() => api.updateDisplayField(column.id, { label: renameDraft.trim() || null }));
-    setRenaming(false);
-    setOpen(false);
+    closeMenu();
   };
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1191,7 +1256,16 @@ function TableColumnHeader({
         aria-label={tt.columnMenu({ label })}
         aria-expanded={open}
         className="outliner-table-column-menu-button"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          if (open) {
+            closeMenu();
+            return;
+          }
+          cancelRenameRef.current = false;
+          renameCommitStartedRef.current = false;
+          setRenameDraft(label);
+          setOpen(true);
+        }}
         ref={buttonRef}
       >
         <MoreIcon size={ICON_SIZE.menu} />
@@ -1217,6 +1291,7 @@ function TableColumnHeader({
         <MenuSurface
           aria-label={tt.columnMenu({ label })}
           className="outliner-table-column-menu"
+          onKeyDown={onMenuKeyDown}
           preserveSelection
           ref={menuRef}
           role={renaming ? 'dialog' : 'menu'}
@@ -1232,10 +1307,13 @@ function TableColumnHeader({
               onChange={(event) => setRenameDraft(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (isImeComposingEvent(event)) return;
-                if (event.key === 'Enter') commitRename();
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  commitRename();
+                }
                 if (event.key === 'Escape') {
+                  cancelRenameRef.current = true;
                   setRenameDraft(label);
-                  setRenaming(false);
                 }
               }}
             />
@@ -1245,7 +1323,12 @@ function TableColumnHeader({
                 className="node-context-item"
                 icon={<PencilIcon size={ICON_SIZE.menu} />}
                 label={tt.renameColumn}
-                onClick={() => setRenaming(true)}
+                onClick={() => {
+                  cancelRenameRef.current = false;
+                  renameCommitStartedRef.current = false;
+                  setRenameDraft(label);
+                  setRenaming(true);
+                }}
                 role="menuitem"
               />
               <MenuItem
@@ -1255,7 +1338,7 @@ function TableColumnHeader({
                 label={tt.moveColumnLeft}
                 onClick={() => {
                   void run(() => api.updateDisplayField(column.id, { move: 'left' }));
-                  setOpen(false);
+                  closeMenu();
                 }}
                 role="menuitem"
               />
@@ -1266,7 +1349,7 @@ function TableColumnHeader({
                 label={tt.moveColumnRight}
                 onClick={() => {
                   void run(() => api.updateDisplayField(column.id, { move: 'right' }));
-                  setOpen(false);
+                  closeMenu();
                 }}
                 role="menuitem"
               />
@@ -1276,7 +1359,7 @@ function TableColumnHeader({
                 label={tt.hideColumn}
                 onClick={() => {
                   void run(() => api.updateDisplayField(column.id, { visible: false }));
-                  setOpen(false);
+                  closeMenu();
                 }}
                 role="menuitem"
               />
@@ -1286,7 +1369,7 @@ function TableColumnHeader({
                 label={tt.removeColumn}
                 onClick={() => {
                   void run(() => api.removeDisplayField(column.id));
-                  setOpen(false);
+                  closeMenu();
                 }}
                 role="menuitem"
               />
