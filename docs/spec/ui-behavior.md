@@ -405,8 +405,10 @@ and dead keys are not consumed as printable table input.
 Column menus move focus to the first item on keyboard or pointer open. Arrow keys,
 Home, and End navigate menu items; Tab or Escape closes and restores the column
 trigger. Rename switches the same surface to dialog focus behavior, focuses its
-input, traps Tab within the dialog, commits once on Enter or blur, and cancels
-without a write on Escape.
+input, and traps Tab within the dialog. Enter, blur, outside-pointer dismissal,
+or a second trigger click commits once; only Escape cancels without a write. The
+trigger is excluded from outside-pointer capture so its own click closes rather
+than dismissing and immediately reopening the menu.
 
 Selecting a record's Title node keeps the ordinary node selection identity and
 commands, but Table projects its visual selection and `aria-selected` state onto

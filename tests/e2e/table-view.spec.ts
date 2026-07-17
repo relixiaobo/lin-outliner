@@ -584,6 +584,51 @@ test.describe('table view', () => {
     await expect(grid.getByRole('columnheader').filter({ hasText: 'Done' })).toHaveCount(0);
   });
 
+  test('toggles a column menu from its trigger and commits rename on outside dismissal', async ({ page }) => {
+    await configureRootTable(page);
+    await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
+
+    const grid = rootGrid(page);
+    const dueMenuButton = grid.getByRole('button', { name: 'Due column menu' });
+    const dueMenu = page.getByRole('menu', { name: 'Due column menu' });
+    await dueMenuButton.click();
+    await expect(dueMenu).toBeVisible();
+    await dueMenuButton.click();
+    await expect(dueMenu).toHaveCount(0);
+
+    await dueMenuButton.click();
+    await dueMenu.getByRole('menuitem', { name: 'Rename for this view' }).click();
+    const rename = page.getByLabel('Rename for this view');
+    await rename.fill('Outside commit');
+    const commitsBefore = (await commandCalls(page)).filter((call) => (
+      call.cmd === 'update_display_field' && call.args.label === 'Outside commit'
+    )).length;
+
+    await grid.getByRole('columnheader').first().click();
+    await expect(grid.getByRole('columnheader').filter({ hasText: 'Outside commit' })).toBeVisible();
+    await expect(page.getByLabel('Rename for this view')).toHaveCount(0);
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
+      call.cmd === 'update_display_field' && call.args.label === 'Outside commit'
+    )).length).toBe(commitsBefore + 1);
+
+    const outsideCommitButton = grid.getByRole('button', { name: 'Outside commit column menu' });
+    await outsideCommitButton.click();
+    await page.getByRole('menu', { name: 'Outside commit column menu' })
+      .getByRole('menuitem', { name: 'Rename for this view' })
+      .click();
+    await rename.fill('Trigger commit');
+    const triggerCommitsBefore = (await commandCalls(page)).filter((call) => (
+      call.cmd === 'update_display_field' && call.args.label === 'Trigger commit'
+    )).length;
+
+    await outsideCommitButton.click();
+    await expect(page.getByRole('menu', { name: 'Outside commit column menu' })).toHaveCount(0);
+    await expect(grid.getByRole('columnheader').filter({ hasText: 'Trigger commit' })).toBeVisible();
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
+      call.cmd === 'update_display_field' && call.args.label === 'Trigger commit'
+    )).length).toBe(triggerCommitsBefore + 1);
+  });
+
   test('renders an expanded child table as an independent named grid', async ({ page }) => {
     await invokeCommands(page, [
       { cmd: 'create_node', args: { parentId: ids.alpha, index: null, text: 'Nested task', id: 'nested-table-task' } },

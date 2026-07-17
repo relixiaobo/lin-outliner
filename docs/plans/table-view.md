@@ -302,7 +302,9 @@ width. The panel's vertical scroller remains authoritative.
   expose current width; header menus provide every resize/reorder action that is
   otherwise pointer accessible. Opening a header menu moves focus into it;
   Arrow/Home/End navigate items, rename traps focus as a small dialog, and Escape
-  or Tab closes the menu and restores its trigger. Escape from rename cancels it.
+  or Tab closes the menu and restores its trigger. The trigger is excluded from
+  outside-pointer dismissal so its own second click closes once. Outside-pointer
+  dismissal while renaming commits once; only Escape cancels the rename.
 - **BR-7:** The grid exposes multi-selection semantics and every data row exposes
   its boolean `aria-selected` state. A selected record paints one continuous
   neutral selection surface across Title, field, and action columns; the nested

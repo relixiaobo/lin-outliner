@@ -1188,27 +1188,12 @@ function TableColumnHeader({
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(label);
+  const dismissIgnoreRefs = useMemo(() => [buttonRef], []);
   const closeMenu = useCallback(() => {
     setOpen(false);
     setRenaming(false);
   }, []);
-  const menuStyle = useAnchoredOverlay(menuRef, {
-    anchorRef: buttonRef,
-    disabled: !open,
-    placement: 'bottom-start',
-    width: 220,
-  });
-  useDismissibleOverlay(menuRef, closeMenu, { disabled: !open });
-  const { onKeyDown: onMenuKeyDown } = useMenuKeyboard({
-    surfaceRef: menuRef,
-    onClose: closeMenu,
-    kind: renaming ? 'dialog' : 'menu',
-    active: open,
-    getRestoreTarget: () => buttonRef.current,
-    focusKey: renaming ? 'rename' : 'menu',
-  });
-
-  const commitRename = () => {
+  const commitRename = useCallback(() => {
     if (cancelRenameRef.current) {
       cancelRenameRef.current = false;
       return;
@@ -1217,7 +1202,33 @@ function TableColumnHeader({
     renameCommitStartedRef.current = true;
     void run(() => api.updateDisplayField(column.id, { label: renameDraft.trim() || null }));
     closeMenu();
-  };
+  }, [closeMenu, column.id, renameDraft, run]);
+  const dismissMenu = useCallback(() => {
+    if (renaming) {
+      commitRename();
+      return;
+    }
+    closeMenu();
+  }, [closeMenu, commitRename, renaming]);
+  const menuStyle = useAnchoredOverlay(menuRef, {
+    anchorRef: buttonRef,
+    disabled: !open,
+    placement: 'bottom-start',
+    width: 220,
+  });
+  useDismissibleOverlay(menuRef, dismissMenu, {
+    disabled: !open,
+    escape: false,
+    ignoreRefs: dismissIgnoreRefs,
+  });
+  const { onKeyDown: onMenuKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose: closeMenu,
+    kind: renaming ? 'dialog' : 'menu',
+    active: open,
+    getRestoreTarget: () => buttonRef.current,
+    focusKey: renaming ? 'rename' : 'menu',
+  });
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1258,7 +1269,8 @@ function TableColumnHeader({
         className="outliner-table-column-menu-button"
         onClick={() => {
           if (open) {
-            closeMenu();
+            if (renaming) commitRename();
+            else closeMenu();
             return;
           }
           cancelRenameRef.current = false;
@@ -1303,7 +1315,10 @@ function TableColumnHeader({
               className="outliner-table-column-rename"
               label={tt.renameColumn}
               value={renameDraft}
-              onBlur={commitRename}
+              onBlur={(event) => {
+                if (event.relatedTarget === buttonRef.current) return;
+                commitRename();
+              }}
               onChange={(event) => setRenameDraft(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (isImeComposingEvent(event)) return;
