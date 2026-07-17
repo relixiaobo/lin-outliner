@@ -168,12 +168,19 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   entirely from every scoped Run because its global journal and undo/redo cursor
   cannot be narrowed to one node-resource set safely.
 - `src/main/agentIssueStore.ts` persists Issues, Recurring Issues, Agent
-  Sessions, and Activity in `issue-manager.json`, including request-mode
-  creation, origin-derived parent/child Issue relationships, Issue relations,
-  revision conflicts, session message/stop Activity,
-  due-time Recurring Issue materialization, internal Session-to-executor
-  bindings, durable terminal-delivery outbox entries, and execution status sync
-  into `active`, `complete`, `error`, or `canceled`;
+  Sessions, and Activity in the versioned append-only
+  `issue-operations.jsonl` ledger. One successful request mutation appends one
+  atomic batch containing every affected Issue/Recurring Issue, Session,
+  execution binding or stop intent, terminal-delivery entry, and Activity item.
+  The query projection is rebuilt only by replaying those batches; it is never a
+  separately mutable source of truth. Stable operation ids make repeated batches
+  idempotent, local `seq` preserves replay order, and Issue/Recurring Issue delete
+  operations carry permanent entity tombstones that take precedence over stale
+  upserts. The obsolete `issue-manager.json` snapshot is ignored with no legacy
+  reader or migration. Existing request-mode creation, origin-derived
+  parent/child relationships, relations, revision conflicts, message/stop
+  Activity, due-time materialization, internal Session-to-executor bindings,
+  durable terminal delivery, and execution-state rules are unchanged;
 - `src/main/agentRuntime.ts` owns the Issue store lifecycle and runs a
   lightweight Issue scheduler tick. The tick materializes due active Recurring
   Issues into concrete Issues, then starts one Agent Session for each unattended

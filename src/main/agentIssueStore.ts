@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { chmod, mkdir, open, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { isActiveAgentSessionState, isUserVisibleIssueActivity } from '../core/agentIssue';
@@ -13,13 +14,16 @@ import type {
   AgentRef,
   AgentRecurringIssue,
   AgentSession,
+  AgentSessionExecutionBinding,
   AgentSessionId,
   AgentSessionReadInput,
   AgentSessionReadResult,
   AgentSessionSendMessageInput,
   AgentSessionSource,
   AgentSessionStartInput,
+  AgentSessionStopIntent,
   AgentSessionStopInput,
+  AgentIssueTerminalDelivery,
   ActorRef,
   IssueCreateInput,
   IssueDraftFields,
@@ -43,6 +47,7 @@ import type {
   TenonAgentToolResult,
   ValidationMessage,
 } from '../core/agentIssue';
+import { AppendOnlySeqLog } from './appendOnlySeqLog';
 import type { ChildIssueScopeDefinition } from './agentIssueScopeAuthorization';
 import type { PreparedIssueExecution } from './agentIssueExecutionPreparation';
 import {
@@ -51,11 +56,15 @@ import {
   issueOutputNodeIds,
   issueWritableNodeIds,
 } from './agentIssueSessionScope';
+import { withFileWriteLock } from './jsonFileStore';
 import {
-  PRIVATE_JSON_FILE_OPTIONS,
-  readJsonOrDefault,
-  updateJsonFile,
-} from './jsonFileStore';
+  applyAgentIssueOperationBatch,
+  buildAgentIssueOperationBatch,
+  parseAgentIssueOperationBatchesJsonl,
+  replayAgentIssueOperationBatches,
+  type AgentIssueOperationProjection,
+  type AgentIssueStoreState,
+} from './agentIssueOperationLog';
 import {
   formatRecurringIssueWindowDate,
   mostRecentRecurringIssueDueAtOrBefore,
@@ -65,7 +74,6 @@ import {
   validateRecurringIssueSchedule,
 } from './agentIssueSchedule';
 
-const STORE_VERSION = 5;
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 const MAX_ACTIVITY_BODY_CHARS = 1_200;
@@ -116,50 +124,14 @@ const RECURRING_ISSUE_TEMPLATE_FIELD_KEYS = new Set([
   'permissionMode',
 ]);
 
-export const AGENT_ISSUE_STORE_FILE = 'issue-manager.json';
+export const AGENT_ISSUE_OPERATION_LOG_FILE = 'issue-operations.jsonl';
 
-export interface AgentIssueStoreState {
-  v: typeof STORE_VERSION;
-  issues: Record<string, AgentIssue>;
-  recurringIssues: Record<string, AgentRecurringIssue>;
-  sessions: Record<string, AgentSession>;
-  sessionExecutions: Record<string, AgentSessionExecutionBinding>;
-  sessionStopIntents: Record<string, AgentSessionStopIntent>;
-  terminalDeliveries: Record<string, AgentIssueTerminalDelivery>;
-  activity: Record<string, Activity>;
-  activityOrder: string[];
-}
-
-export interface AgentIssueTerminalDelivery {
-  id: string;
-  issueId: string;
-  agentSessionId?: AgentSessionId;
-  origin: AgentIssueOrigin;
-  state: 'complete' | 'error' | 'canceled';
-  title: string;
-  body?: string;
-  terminalAt: number;
-  status: 'pending' | 'dispatching' | 'delivered';
-  dispatchOwnerId?: string;
-  attemptCount: number;
-  lastError?: string;
-  createdAt: number;
-  updatedAt: number;
-  deliveredAt?: number;
-}
-
-export interface AgentSessionExecutionBinding {
-  engine: 'delegation';
-  conversationId: string;
-  executionId: string;
-  startedAt: number;
-  updatedAt: number;
-}
-
-export interface AgentSessionStopIntent {
-  token: string;
-  createdAt: number;
-}
+export type {
+  AgentIssueTerminalDelivery,
+  AgentSessionExecutionBinding,
+  AgentSessionStopIntent,
+} from '../core/agentIssue';
+export type { AgentIssueStoreState } from './agentIssueOperationLog';
 
 export interface AgentSessionStopReservation {
   result: TenonAgentToolResult;
@@ -199,18 +171,67 @@ export type ChildIssueScopeAuthorizer = (
 ) => ValidationMessage[];
 
 export class AgentIssueStore {
-  constructor(private readonly filePath: string) {}
+  private readonly operationLog = new AppendOnlySeqLog(
+    'Agent Issue operation',
+    parseAgentIssueOperationBatchesJsonl,
+  );
+  private projectionCache: {
+    fingerprint: string;
+    projection: AgentIssueOperationProjection;
+  } | null = null;
+
+  constructor(private readonly operationLogPath: string) {}
 
   static forAgentDataRoot(agentDataRoot: string): AgentIssueStore {
-    return new AgentIssueStore(path.join(agentDataRoot, AGENT_ISSUE_STORE_FILE));
+    return new AgentIssueStore(path.join(agentDataRoot, AGENT_ISSUE_OPERATION_LOG_FILE));
   }
 
   coordinationKey(): string {
-    return path.resolve(this.filePath);
+    return path.resolve(this.operationLogPath);
   }
 
   async state(): Promise<AgentIssueStoreState> {
-    return readJsonOrDefault(this.filePath, emptyState(), parseState);
+    return withFileWriteLock(this.operationLogPath, async () => (
+      structuredClone((await this.loadProjectionUnlocked()).state)
+    ));
+  }
+
+  private async updateState(
+    mutator: (state: AgentIssueStoreState) => AgentIssueStoreState | void,
+    context: { actor?: ActorRef; committedAt?: number } = {},
+  ): Promise<AgentIssueStoreState> {
+    return withFileWriteLock(this.operationLogPath, async () => {
+      const projection = await this.loadProjectionUnlocked();
+      const current = structuredClone(projection.state);
+      const next = mutator(current) ?? current;
+      const batch = buildAgentIssueOperationBatch(
+        projection.state,
+        next,
+        {
+          actor: context.actor ?? DEFAULT_ACTOR,
+          committedAt: context.committedAt ?? Date.now(),
+        },
+        projection.lastSeq + 1,
+      );
+      if (!batch) return structuredClone(projection.state);
+
+      await preparePrivateOperationLog(this.operationLogPath);
+      await this.operationLog.append(this.operationLogPath, [batch]);
+      applyAgentIssueOperationBatch(projection, batch);
+      const fingerprint = await operationLogFingerprint(this.operationLogPath).catch(() => null);
+      this.projectionCache = fingerprint === null ? null : { fingerprint, projection };
+      return structuredClone(projection.state);
+    });
+  }
+
+  private async loadProjectionUnlocked(): Promise<AgentIssueOperationProjection> {
+    const fingerprint = await operationLogFingerprint(this.operationLogPath);
+    if (this.projectionCache?.fingerprint === fingerprint) return this.projectionCache.projection;
+    const projection = replayAgentIssueOperationBatches(
+      await this.operationLog.readIfExists(this.operationLogPath),
+    );
+    this.projectionCache = { fingerprint, projection };
+    return projection;
   }
 
   async conversationRoutingReferences(
@@ -345,7 +366,7 @@ export class AgentIssueStore {
     let createdTarget: RelatedTargetRef | null = null;
     let createdActivityId: string | null = null;
     let creationFailure: TenonAgentToolResult | null = null;
-    return updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    return this.updateState((state) => {
       const preflight = preflightIssueCreate(state, input, options);
       if (preflight.validation.length > 0) {
         creationFailure = { status: 'blocked', targets: [], validation: preflight.validation };
@@ -392,7 +413,7 @@ export class AgentIssueStore {
       createdTarget = { type: 'recurring-issue', id: recurringIssue.id };
       createdActivityId = activity.id;
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS).then((state) => {
+    }, { actor, committedAt: now }).then((state) => {
       if (creationFailure) return creationFailure;
       const target = createdTarget;
       if (!target || !createdActivityId) return { status: 'blocked', targets: [], validation: [{ code: 'not_found', message: 'Created target was not found.' }] };
@@ -429,10 +450,10 @@ export class AgentIssueStore {
     }
 
     let outcome: TenonAgentToolResult | null = null;
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       outcome = applyIssueUpdateToState(state, input, actor, now, options);
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { actor, committedAt: now });
     return outcome ?? {
       status: 'blocked',
       targets: [target],
@@ -506,7 +527,7 @@ export class AgentIssueStore {
 
     const issueTarget: RelatedTargetRef = { type: 'issue', id: input.issueId };
     let outcome: TenonAgentToolResult | null = null;
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const issue = state.issues[input.issueId];
       if (!issue) {
         outcome = {
@@ -584,7 +605,7 @@ export class AgentIssueStore {
           : {}),
       };
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { actor, committedAt: now });
     return outcome ?? {
       status: 'blocked',
       targets: [issueTarget],
@@ -607,7 +628,7 @@ export class AgentIssueStore {
   ): Promise<TenonAgentToolResult> {
     const issueTarget: RelatedTargetRef = { type: 'issue', id: input.issueId };
     let outcome: TenonAgentToolResult | null = null;
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const issue = state.issues[input.issueId];
       if (!issue) {
         outcome = {
@@ -730,7 +751,7 @@ export class AgentIssueStore {
         revisions: [{ target: sessionTarget, revision: session.revision }],
       };
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { actor, committedAt: now });
     return outcome ?? {
       status: 'blocked',
       targets: [issueTarget],
@@ -781,7 +802,7 @@ export class AgentIssueStore {
   ): Promise<TenonAgentToolResult> {
     const target: RelatedTargetRef = { type: 'agent-session', id: agentSessionId };
     let outcome: TenonAgentToolResult | null = null;
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const session = state.sessions[agentSessionId];
       if (!session) {
         outcome = { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
@@ -859,7 +880,7 @@ export class AgentIssueStore {
         revisions: [{ target, revision: session.revision }],
       };
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { actor, committedAt: now });
     return outcome ?? { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
   }
 
@@ -870,7 +891,7 @@ export class AgentIssueStore {
     now = Date.now(),
   ): Promise<TenonAgentToolResult> {
     const target: RelatedTargetRef = { type: 'agent-session', id: agentSessionId };
-    return updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    return this.updateState((state) => {
       const session = state.sessions[agentSessionId];
       if (!session) return state;
       if (isTerminalSessionState(session.state)) return state;
@@ -892,7 +913,7 @@ export class AgentIssueStore {
       });
       enqueueSessionErrorDelivery(state, session, now);
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS).then((state) => {
+    }, { actor, committedAt: now }).then((state) => {
       const session = state.sessions[agentSessionId];
       if (!session) {
         return { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
@@ -914,7 +935,7 @@ export class AgentIssueStore {
     let becameTerminal = false;
     let issueBecameCompleted = false;
     let acknowledgedTerminalDeliveryIds: string[] = [];
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const entry = Object.entries(state.sessionExecutions).find(([, binding]) => (
         binding.engine === input.engine && binding.executionId === input.executionId
       ));
@@ -1033,7 +1054,7 @@ export class AgentIssueStore {
         enqueueSessionErrorDelivery(state, session, now);
       }
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { actor, committedAt: now });
     if (!syncedSessionId) return null;
     const session = (await this.readSession({ agentSessionId: syncedSessionId }))?.agentSession;
     return session ? {
@@ -1062,7 +1083,7 @@ export class AgentIssueStore {
   ): Promise<AgentSessionStopReservation> {
     const target: RelatedTargetRef = { type: 'agent-session', id: input.agentSessionId };
     let reservation: AgentSessionStopReservation | null = null;
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const session = state.sessions[input.agentSessionId];
       if (!session) {
         reservation = {
@@ -1106,7 +1127,7 @@ export class AgentIssueStore {
         result: { status: 'applied', targets: [target], revisions: [{ target, revision: session.revision }] },
       };
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { committedAt: now });
     return reservation ?? {
       result: { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] },
     };
@@ -1116,12 +1137,12 @@ export class AgentIssueStore {
     agentSessionId: string,
     token: string,
   ): Promise<void> {
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       if (state.sessionStopIntents[agentSessionId]?.token === token) {
         delete state.sessionStopIntents[agentSessionId];
       }
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    });
   }
 
   async commitReservedSessionStop(
@@ -1132,7 +1153,7 @@ export class AgentIssueStore {
   ): Promise<TenonAgentToolResult> {
     const target: RelatedTargetRef = { type: 'agent-session', id: input.agentSessionId };
     let outcome: TenonAgentToolResult | null = null;
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const session = state.sessions[input.agentSessionId];
       if (!session) {
         outcome = { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
@@ -1170,7 +1191,7 @@ export class AgentIssueStore {
         revisions: [{ target, revision: session.revision }],
       };
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { actor, committedAt: now });
     return outcome ?? {
       status: 'blocked',
       targets: [target],
@@ -1188,7 +1209,7 @@ export class AgentIssueStore {
     }
 
     let outcome: TenonAgentToolResult | null = null;
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const preflight = preflightSessionMessageFromState(state, input);
       if (preflight.status !== 'applied') {
         outcome = preflight;
@@ -1210,7 +1231,7 @@ export class AgentIssueStore {
         revisions: [{ target, revision: session.revision }],
       };
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { actor, committedAt: now });
     return outcome ?? { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
   }
 
@@ -1224,7 +1245,7 @@ export class AgentIssueStore {
     }
 
     let outcome: TenonAgentToolResult | null = null;
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const session = state.sessions[input.agentSessionId];
       const preflight = preflightSessionStopFromState(state, input);
       if (preflight.status !== 'applied') {
@@ -1246,7 +1267,7 @@ export class AgentIssueStore {
         revisions: [{ target, revision: session!.revision }],
       };
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { actor, committedAt: now });
     return outcome ?? { status: 'blocked', targets: [target], validation: [{ code: 'not_found', message: 'Agent Session was not found.' }] };
   }
 
@@ -1261,7 +1282,7 @@ export class AgentIssueStore {
     }
     const claimedIds: string[] = [];
     const claimLimit = clampLimit(limit);
-    const state = await updateJsonFile(this.filePath, emptyState(), parseState, (current) => {
+    const state = await this.updateState((current) => {
       const candidates = Object.values(current.terminalDeliveries)
         .filter((delivery) => isTerminalDeliveryClaimable(delivery, now))
         .sort((left, right) => left.terminalAt - right.terminalAt || left.createdAt - right.createdAt)
@@ -1274,7 +1295,7 @@ export class AgentIssueStore {
         claimedIds.push(delivery.id);
       }
       return current;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { committedAt: now });
     return claimedIds
       .map((id) => state.terminalDeliveries[id])
       .filter((delivery): delivery is AgentIssueTerminalDelivery => Boolean(delivery))
@@ -1283,7 +1304,7 @@ export class AgentIssueStore {
 
   async completeTerminalDelivery(deliveryId: string, ownerId: string, now = Date.now()): Promise<boolean> {
     let completed = false;
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const delivery = state.terminalDeliveries[deliveryId];
       if (!delivery || delivery.status !== 'dispatching' || delivery.dispatchOwnerId !== ownerId) return state;
       delivery.status = 'delivered';
@@ -1293,7 +1314,7 @@ export class AgentIssueStore {
       delivery.updatedAt = now;
       completed = true;
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { committedAt: now });
     return completed;
   }
 
@@ -1304,7 +1325,7 @@ export class AgentIssueStore {
     now = Date.now(),
   ): Promise<boolean> {
     let released = false;
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const delivery = state.terminalDeliveries[deliveryId];
       if (!delivery || delivery.status !== 'dispatching' || delivery.dispatchOwnerId !== ownerId) return state;
       delivery.status = 'pending';
@@ -1313,13 +1334,13 @@ export class AgentIssueStore {
       delivery.updatedAt = now;
       released = true;
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { committedAt: now });
     return released;
   }
 
   async materializeDueRecurringIssues(now = Date.now(), actor: ActorRef = DEFAULT_ACTOR): Promise<AgentIssue[]> {
     const materialized: AgentIssue[] = [];
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       for (const recurringIssue of Object.values(state.recurringIssues)) {
         if (recurringIssue.status !== 'active' || recurringIssue.archivedAt !== undefined) continue;
         const scheduleCursor = recurringIssue.nextMaterializationAt;
@@ -1408,7 +1429,7 @@ export class AgentIssueStore {
         materialized.push(issue);
       }
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { actor, committedAt: now });
     return materialized;
   }
 
@@ -1425,7 +1446,7 @@ export class AgentIssueStore {
     sessionIds?: ReadonlySet<string>,
   ): Promise<AgentSession[]> {
     const staleSessions: AgentSession[] = [];
-    await updateJsonFile(this.filePath, emptyState(), parseState, (state) => {
+    await this.updateState((state) => {
       const candidateIds = sessionIds ? [...sessionIds] : Object.keys(state.sessions);
       for (const sessionId of candidateIds) {
         delete state.sessionStopIntents[sessionId];
@@ -1448,42 +1469,32 @@ export class AgentIssueStore {
         staleSessions.push(session);
       }
       return state;
-    }, PRIVATE_JSON_FILE_OPTIONS);
+    }, { actor, committedAt: now });
     return staleSessions;
   }
 }
 
-function emptyState(): AgentIssueStoreState {
-  return {
-    v: STORE_VERSION,
-    issues: {},
-    recurringIssues: {},
-    sessions: {},
-    sessionExecutions: {},
-    sessionStopIntents: {},
-    terminalDeliveries: {},
-    activity: {},
-    activityOrder: [],
-  };
+async function preparePrivateOperationLog(filePath: string): Promise<void> {
+  const directory = path.dirname(filePath);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') await chmod(directory, 0o700);
+  const handle = await open(filePath, 'a', 0o600);
+  await handle.close();
+  if (process.platform !== 'win32') await chmod(filePath, 0o600);
 }
 
-function parseState(value: unknown): AgentIssueStoreState {
-  if (!isRecord(value) || value.v !== STORE_VERSION) return emptyState();
-  return {
-    v: STORE_VERSION,
-    issues: isRecord(value.issues) ? value.issues as Record<string, AgentIssue> : {},
-    recurringIssues: isRecord(value.recurringIssues) ? value.recurringIssues as Record<string, AgentRecurringIssue> : {},
-    sessions: isRecord(value.sessions) ? value.sessions as Record<string, AgentSession> : {},
-    sessionExecutions: isRecord(value.sessionExecutions) ? value.sessionExecutions as Record<string, AgentSessionExecutionBinding> : {},
-    sessionStopIntents: isRecord(value.sessionStopIntents)
-      ? value.sessionStopIntents as Record<string, AgentSessionStopIntent>
-      : {},
-    terminalDeliveries: isRecord(value.terminalDeliveries)
-      ? value.terminalDeliveries as Record<string, AgentIssueTerminalDelivery>
-      : {},
-    activity: isRecord(value.activity) ? value.activity as Record<string, Activity> : {},
-    activityOrder: Array.isArray(value.activityOrder) ? value.activityOrder.filter((id): id is string => typeof id === 'string') : [],
-  };
+async function operationLogFingerprint(filePath: string): Promise<string> {
+  try {
+    const metadata = await stat(filePath, { bigint: true });
+    return [metadata.dev, metadata.ino, metadata.size, metadata.mtimeNs, metadata.ctimeNs].join(':');
+  } catch (error) {
+    if (isNotFoundError(error)) return 'missing';
+    throw error;
+  }
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }
 
 function buildIssue(

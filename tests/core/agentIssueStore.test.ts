@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { AGENT_ISSUE_STORE_FILE, AgentIssueStore } from '../../src/main/agentIssueStore';
+import { AGENT_ISSUE_OPERATION_LOG_FILE, AgentIssueStore } from '../../src/main/agentIssueStore';
+import { parseAgentIssueOperationBatchesJsonl } from '../../src/main/agentIssueOperationLog';
 import type { ActorRef, AgentSessionSource, IssueDraftFields } from '../../src/core/agentIssue';
 
 const actor: ActorRef = { type: 'agent', agentId: 'built-in:tenon:assistant' };
@@ -17,10 +18,10 @@ async function withStore<T>(fn: (store: AgentIssueStore) => Promise<T>): Promise
 }
 
 describe('agent issue store', () => {
-  test('treats older Issue store generations as a clean empty state', async () => {
+  test('ignores the obsolete mutable snapshot and starts a fresh operation log', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-store-legacy-'));
     try {
-      await writeFile(path.join(root, AGENT_ISSUE_STORE_FILE), JSON.stringify({
+      await writeFile(path.join(root, 'issue-manager.json'), JSON.stringify({
         v: 1,
         issues: {
           'issue:legacy': {
@@ -47,9 +48,26 @@ describe('agent issue store', () => {
         reason: 'Create current work.',
       }, actor, 10);
 
-      const persisted = JSON.parse(await readFile(path.join(root, AGENT_ISSUE_STORE_FILE), 'utf8'));
-      expect(persisted.v).toBe(5);
-      expect(Object.keys(persisted.issues)).toHaveLength(1);
+      const batches = parseAgentIssueOperationBatchesJsonl(
+        await readFile(path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE), 'utf8'),
+        AGENT_ISSUE_OPERATION_LOG_FILE,
+      );
+      expect(batches).toHaveLength(1);
+      expect(batches[0]).toMatchObject({
+        v: 1,
+        seq: 1,
+        actor,
+        committedAt: 10,
+      });
+      expect(batches[0]?.operations.map((operation) => operation.type)).toEqual([
+        'issue.upserted',
+        'activity.appended',
+      ]);
+      if (process.platform !== 'win32') {
+        const logPath = path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE);
+        expect((await stat(logPath)).mode & 0o777).toBe(0o600);
+        expect((await stat(root)).mode & 0o777).toBe(0o700);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
