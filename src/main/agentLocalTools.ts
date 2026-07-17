@@ -829,7 +829,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
     label: 'File Read',
     description: [
       'Reads a local file.',
-      'The file_path parameter must be an absolute path.',
+      'Use an absolute file_path when known; relative paths resolve from the Run workdir.',
       `By default, it reads up to ${DEFAULT_FILE_READ_LIMIT} lines starting from the beginning of the file.`,
       'You can optionally specify a line offset and limit, especially for long files.',
       'This tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. PDFs are read as extracted text by default; use pages when page images or layout inspection are needed. It can only read files, not directories.',
@@ -839,9 +839,10 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
     executionMode: 'parallel',
     execute: async (_toolCallId, rawParams: unknown) => {
       const started = Date.now();
+      let filePath: string | undefined;
       try {
         const params = normalizeFileReadParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path);
+        filePath = resolveWorkspacePath(workspace, params.file_path);
         const fileStat = await stat(filePath);
         if (fileStat.isDirectory()) {
           throw new LocalToolFailure('is_directory', `Path is a directory: ${filePath}`, 'Use file_glob to discover files under a directory.');
@@ -997,7 +998,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           metrics: { ...metrics(started, data), truncated: partial },
         }), visible);
       } catch (error) {
-        return localErrorResult('file_read', error, started);
+        return localErrorResult('file_read', error, started, filePath);
       }
     },
   };
@@ -1087,9 +1088,10 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
     executionMode: 'sequential',
     execute: async (_toolCallId, rawParams: unknown) => {
       const started = Date.now();
+      let filePath: string | undefined;
       try {
         const params = normalizeFileEditParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path);
+        filePath = resolveWorkspacePath(workspace, params.file_path);
         if (path.extname(filePath).toLowerCase() === '.ipynb') {
           throw new LocalToolFailure(
             'notebook_edit_required',
@@ -1167,7 +1169,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           metrics: metrics(started, data),
         }), visibleFileEdit(data));
       } catch (error) {
-        return localErrorResult('file_edit', error, started);
+        return localErrorResult('file_edit', error, started, filePath);
       }
     },
   };
@@ -1187,9 +1189,10 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
     executionMode: 'sequential',
     execute: async (_toolCallId, rawParams: unknown) => {
       const started = Date.now();
+      let filePath: string | undefined;
       try {
         const params = normalizeFileWriteParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path);
+        filePath = resolveWorkspacePath(workspace, params.file_path);
         let original: TextFileRead | null = null;
         try {
           original = await readWorkspaceText(filePath);
@@ -1242,7 +1245,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
           metrics: metrics(started, data),
         }), visibleFileWrite(data));
       } catch (error) {
-        return localErrorResult('file_write', error, started);
+        return localErrorResult('file_write', error, started, filePath);
       }
     },
   };
@@ -1261,9 +1264,10 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
     executionMode: 'sequential',
     execute: async (_toolCallId, rawParams: unknown) => {
       const started = Date.now();
+      let filePath: string | undefined;
       try {
         const params = normalizeFileDeleteParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path);
+        filePath = resolveWorkspacePath(workspace, params.file_path);
         if (isSelfDefinitionWritePath(workspace, filePath)) {
           throw new LocalToolFailure(
             'self_definition_delete_not_supported',
@@ -1278,9 +1282,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
         if (isResolvedPathInside(trashRoot, path.resolve(filePath))) {
           throw new LocalToolFailure('trash_delete_forbidden', 'Cannot delete the agent trash directory with file_delete.', 'Leave trash cleanup to the app or delete a specific non-trash path.');
         }
-        const fileStat = await stat(filePath).catch((error: unknown) => {
-          throw localFsError(error, filePath);
-        });
+        const fileStat = await stat(filePath);
         const trashPath = await nextTrashPath(workspace, filePath);
         await mkdir(path.dirname(trashPath), { recursive: true });
         await rename(filePath, trashPath);
@@ -1296,7 +1298,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
           metrics: metrics(started, data),
         }), visibleFileDelete(data));
       } catch (error) {
-        return localErrorResult('file_delete', error, started);
+        return localErrorResult('file_delete', error, started, filePath);
       }
     },
   };
@@ -3178,18 +3180,27 @@ function localFsError(error: unknown, filePath: string): LocalToolFailure {
   if (isNodeError(error) && error.code === 'ENOENT') {
     return new LocalToolFailure('file_not_found', `File not found: ${filePath}`, 'Use file_glob to find the current path, or file_write if you need to create a new file.');
   }
-  if (isNodeError(error) && error.code === 'EACCES') {
-    return new LocalToolFailure('permission_denied', `Permission denied: ${filePath}`, 'Choose another path or update file access settings.');
+  if (isNodeError(error) && (error.code === 'EACCES' || error.code === 'EPERM')) {
+    return new LocalToolFailure(
+      'permission_denied',
+      `Permission denied: ${filePath}`,
+      'Check the path ownership and permissions and macOS Privacy & Security access for Tenon. Obtain any required native authorization or choose another path, then retry.',
+    );
   }
   return new LocalToolFailure('filesystem_error', errorMessage(error));
 }
 
-function localErrorResult<TData>(tool: string, error: unknown, started: number) {
-  const failure = error instanceof LocalToolFailure
-    ? error
-    : error instanceof AgentFileIngestionFailure
-      ? new LocalToolFailure(error.code, error.message, error.instructions)
-    : new LocalToolFailure('unexpected_error', errorMessage(error), 'Retry if this looks transient; otherwise inspect the input and tool state.');
+function localErrorResult<TData>(tool: string, error: unknown, started: number, filePath?: string) {
+  const normalizedError = filePath
+    && isNodeError(error)
+    && (error.code === 'ENOENT' || error.code === 'EACCES' || error.code === 'EPERM')
+    ? localFsError(error, filePath)
+    : error;
+  const failure = normalizedError instanceof LocalToolFailure
+    ? normalizedError
+    : normalizedError instanceof AgentFileIngestionFailure
+      ? new LocalToolFailure(normalizedError.code, normalizedError.message, normalizedError.instructions)
+      : new LocalToolFailure('unexpected_error', errorMessage(normalizedError), 'Retry if this looks transient; otherwise inspect the input and tool state.');
   return agentToolResult(errorEnvelope<TData>(tool, failure.code, failure.message, {
     instructions: failure.instructions,
     metrics: { durationMs: elapsed(started) },

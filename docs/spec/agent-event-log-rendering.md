@@ -513,7 +513,8 @@ notification only routes the attention signal to the origin conversation.
 refs, local-file refs, and answer attachment payload refs, or a `discussed`
 payload with a short message that closes the card and returns the run to normal
 conversation. Path-backed answer attachments are materialized through the same
-local-root jail as normal composer attachments before the event is appended.
+trusted local-file reference gate and scratch path as normal composer attachments
+before the event is appended.
 
 Replay projects two derived structures on `AgentEventReplayState`:
 

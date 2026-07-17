@@ -756,8 +756,9 @@ interface AskUserQuestionResult {
 options, free text, structured refs, or attachments for questions that allow
 them. Node refs and local-file refs are preserved as structured fields instead of
 being flattened into answer text only. Path-backed answer attachments use the
-same realpath-based local-root jail and materialization path as the main agent
-composer; `ask_user_question` must not become a file-read bypass. Text/image
+same realpath-based trusted local-file reference gate over the workdir/scratch
+roots and materialization path as the main agent composer; `ask_user_question`
+must not become a renderer file-read bypass. Text/image
 answer attachments are persisted as payload refs before the `user_question`
 resolution event is appended.
 
@@ -2682,13 +2683,17 @@ files, and reserve `bash` for commands that actually need a shell.
 
 Path rules:
 
-- Concrete file tools use `file_path`.
-- Search tools use `path` as an optional search root.
-- Model-facing `file_path` input values should be absolute paths. Search outputs
-  such as `file_glob.filenames` and `file_grep.filenames` are local-root-relative
-  to save tokens and keep path output compact.
-- TypeScript must enforce the configured local file root unless the user
-  explicitly hands Tenon a broader root.
+- Concrete file tools use `file_path`. Relative values resolve against the Run
+  workdir; absolute values address the host filesystem directly with the
+  current OS account's authority.
+- Search tools use `path` as an optional search root. An omitted or relative
+  value starts from the Run workdir; an absolute value can target any host path
+  available to the current OS account.
+- Search outputs such as `file_glob.filenames` and `file_grep.filenames` are
+  rendered relative to the Run workdir to save tokens and keep path output
+  compact. They may contain `..` when a result is outside the workdir.
+- The Run workdir is a path base, not a containment boundary. TypeScript does
+  not maintain or enforce a configured local filesystem root.
 
 Document and image conversion is not a dedicated tool. It runs through `bash`
 invoking the installed converter binaries directly — LibreOffice-compatible
@@ -2713,8 +2718,7 @@ stable system prompt. This follows the agent runtime pattern:
   `node_create` defaults to today.
 - Uploaded files, folders, and images are represented in model-facing user text
   as `[[file:<label>^<path>]]` markers. The path is rewritten to the
-  materialized local-root path when the original path is outside the agent local
-  root.
+  materialized scratch snapshot when a file originates outside the Run workdir.
 - Attachment payloads are runtime transport state, not the normal model-visible
   resource index. Historical `<user-attachments>` markers may still be parsed
   for replay, but new normal turns should rely on file markers.
@@ -2722,7 +2726,7 @@ stable system prompt. This follows the agent runtime pattern:
   `[[file:<label>^<path>]]` in its own final answer to surface a file it produced
   for the user — a deliverable they asked for or should review (whether written via
   `file_write` or `bash`), not an intermediate/scratch file — using an absolute path
-  inside the agent local root. Generated image answers use the returned standard
+  inside the Run workdir. Generated image answers use the returned standard
   Markdown image string with a `file:^...` target instead. The renderer resolves
   file markers and Markdown image file targets through the trusted-local-file
   gate (`resolveTrustedLocalFileReference`) and renders an inline file chip or
@@ -3009,7 +3013,7 @@ Parameters:
 ```ts
 interface FileGlobParams {
   pattern: string; // for example "**/*.rs" or "src/**/*.ts"
-  path?: string;   // optional absolute search root, default local file root
+  path?: string;   // optional search root, default Run workdir
 }
 ```
 
@@ -3027,7 +3031,7 @@ interface FileGlobData {
 Result behavior:
 
 - Results should be sorted by modified time, newest first.
-- Returned filenames are local-root-relative, matching `file_grep` and saving
+- Returned filenames are Run-workdir-relative, matching `file_grep` and saving
   model tokens.
 - Candidate enumeration may use Tenon's ripgrep provider for the fast path, but
   `file_glob` keeps a TypeScript directory-walk fallback when ripgrep is
@@ -3048,7 +3052,7 @@ Parameters:
 ```ts
 interface FileGrepParams {
   pattern: string; // regular expression
-  path?: string;   // file or directory root, default local file root
+  path?: string;   // file or directory search root, default Run workdir
   glob?: string;   // include filter, for example "**/*.rs"
   output_mode?: "content" | "files_with_matches" | "count"; // default files_with_matches
   "-B"?: number;
@@ -3082,7 +3086,7 @@ interface FileGrepData {
 Result behavior:
 
 - Default to `files_with_matches` so broad searches stay cheap.
-- Results paths are local-root-relative to reduce tokens and keep
+- Result paths are Run-workdir-relative to reduce tokens and keep
   output.
 - `content` mode should include file paths and line numbers when useful.
 - Multiline search should be explicit because it is more expensive.
@@ -3232,11 +3236,9 @@ interface BashData {
 
 Result behavior:
 
-- Commands run in the local file root by default. Lin should not expose a
-  model-facing `cwd` parameter initially; the agent can use shell syntax when a
-  command truly needs another directory.
-- Commands spawn directly under the host account. Relative paths start from the
-  Run workdir; shell syntax can select another directory when needed.
+- Commands spawn directly under the host account with the Run workdir as their
+  default cwd. Lin does not expose a model-facing `cwd` parameter; shell syntax
+  can select another directory when needed.
 - Every agent-driven process uses the shared process executor for direct spawn,
   environment construction, process-tree termination, and output handling. It
   does not apply a process sandbox.

@@ -70,7 +70,7 @@ truth.
     missing Poppler or MarkItDown errors tell the agent to use `bash`
     to detect available local tooling, install the dependency without assuming
     Homebrew, then retry the same file tool call
-  - `file_glob` and `file_grep` return local-root-relative paths
+  - `file_glob` and `file_grep` return Run-workdir-relative paths
   - `file_grep` backed by Tenon's ripgrep provider with streamed paginated
     output modes
   - `file_edit` narrowed to exact non-empty replacements after a full read
@@ -88,8 +88,8 @@ truth.
     monochrome icon + text) — the same rendering as the outliner; see
     [`design-system/surfaces.md`](./design-system/surfaces.md#references)
   - model-facing text preserves files/folders/images with
-    `[[file:<label>^<path>]]`; pathless attachments are staged under the agent
-    local file root first
+    `[[file:<label>^<path>]]`; pathless attachments are staged under the
+    app-owned scratch root first
   - image bytes remain available as inline image content blocks while the file
     marker gives tools a readable path
 - [x] Lin-specific stable system prompt module for agent identity, tool

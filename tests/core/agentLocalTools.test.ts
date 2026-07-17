@@ -67,6 +67,7 @@ const pdfTextTest = hasPdfTextTools ? test : test.skip;
 const hasBundledRipgrep = Boolean(getBundledRipgrepExecutablePath());
 const ripgrepTest = hasBundledRipgrep ? test : test.skip;
 const posixBashProcessTest = process.platform === 'win32' ? test.skip : test;
+const filePermissionTest = process.platform === 'win32' || process.getuid?.() === 0 ? test.skip : test;
 
 function commandExists(command: string): boolean {
   return !spawnSync(command, ['--version'], { stdio: 'ignore' }).error;
@@ -352,6 +353,24 @@ describe('agent local tools', () => {
     });
   });
 
+  filePermissionTest('file_read reports native permission recovery instead of removed access settings', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'private.txt');
+      await writeFile(filePath, 'private', 'utf8');
+      await chmod(filePath, 0o000);
+      try {
+        const result = await executeTool(workspaceRoot, 'file_read', { file_path: filePath });
+
+        expect(result.error?.code).toBe('permission_denied');
+        expect(result.instructions).toContain('path ownership and permissions');
+        expect(result.instructions).toContain('macOS Privacy & Security access for Tenon');
+        expect(result.instructions).not.toContain('file access settings');
+      } finally {
+        await chmod(filePath, 0o600);
+      }
+    });
+  });
+
   test('a materialized attachment in a separate scratch root is readable by file_read (production layout)', async () => {
     // Production wires workdir and scratch as independent siblings (`<userData>/agent-workdir`
     // and `<userData>/agent-scratch`), unlike the `<workdir>/tmp` default the other tests inherit.
@@ -515,7 +534,7 @@ describe('agent local tools', () => {
     const bash = tools.find((tool) => tool.name === 'bash')!;
     const bashStop = tools.find((tool) => tool.name === 'bash_stop')!;
 
-    expect(fileRead.description).toContain('The file_path parameter must be an absolute path');
+    expect(fileRead.description).toContain('relative paths resolve from the Run workdir');
     expect(JSON.stringify(fileRead.parameters)).toContain('The line number to start reading from');
     expect(JSON.stringify(fileRead.parameters)).toContain('Maximum 20 pages per request');
     expect(fileEdit.description).toContain('Performs exact string replacements in files');

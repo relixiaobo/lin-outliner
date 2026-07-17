@@ -230,7 +230,7 @@ tokens. Path-backed local files and folders use structured model-facing
 positional markers: `[[file:<label>^<path>]]`. The `path` value is
 percent-encoded in the marker. Images also get a normal file marker; their
 image bytes are sent separately as pi-ai image content blocks. Attachments
-without a stable local path are staged under the agent local file root first, so
+without a stable local path are staged under the app-owned scratch root first, so
 the model-facing marker still points at a path that local file tools can read.
 
 `label` is a stable, human-readable reference for one user turn. It is derived
@@ -906,8 +906,9 @@ The runtime persists pending question events, exposes the pending question to th
 renderer, and resumes the blocked tool call when the user submits an answer or
 chooses the dedicated `discussed` outcome. Answer inputs use the same structured
 node-ref, local-file-ref, and attachment model as the main composer; path-backed
-answer attachments still pass through the realpath-based local-root jail and
-materialization path before they are persisted in `user_question.answered`.
+answer attachments still pass through the realpath-based trusted local-file
+reference gate over the workdir/scratch roots and the normal materialization path
+before they are persisted in `user_question.answered`.
 Web access is covered by `web_search` and `web_fetch`.
 
 ## Tenon Tool Registry
