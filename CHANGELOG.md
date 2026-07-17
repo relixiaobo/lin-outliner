@@ -67,6 +67,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent Full Access (PR #410, codex-2)** — the Main Agent, delegated Runs,
+  Dream, and Skills now use one host-account filesystem model: typed file tools
+  and Agent-launched processes execute directly with the current OS account.
+  Explicit user blocks, scoped tool catalogs, native OS/provider authorization,
+  and typed-tool correctness remain; folder acquisition, access-mode switching,
+  process sandboxing, control-plane path isolation, and their renderer recovery
+  UI are removed. **Gate (main):** iterative review closed retained folder-grant
+  settlement, incomplete prompt propagation, stale configured-root recovery and
+  specs, and file-search permission handling that could return empty success or
+  misclassify regex errors. The final pass found no reportable issues. Verified
+  with typecheck, 77 Agent local-tool tests, 917 renderer tests, 41 focused
+  Settings/security E2E cases, `docs:check`, and diff check; a real 10.1 MiB Tana
+  export completed inspect through API preview with zero unaccounted coverage.
 - **Table view (PR #409, codex-3)** — Outline owners and saved searches can now
   switch persistently to a compact Table projection over the same child nodes,
   with a fixed Title column, ordered and resizable field columns, lazy atomic

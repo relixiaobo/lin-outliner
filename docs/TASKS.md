@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407) |
-| Codex 2 | `lin-outliner-codex-2/` | `codex-2/agent-full-access-default` | Draft PR #410 (Default agent Full Access) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -31,10 +31,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-17).** Open PR queue: Draft #410
-(`codex-2/agent-full-access-default`). Recently merged: #409
-(`codex-3/table-view`) merged 2026-07-17 after three main review passes; see
-*Recently completed*. #408 (`codex-4/preview-translation-persistent-cache`)
+**In flight (2026-07-17).** Open PR queue: none. Recently merged: #410
+(`codex-2/agent-full-access-default`) merged 2026-07-17 after iterative main
+review; see *Recently completed*. #409 (`codex-3/table-view`) merged 2026-07-17
+after three main review passes; see *Recently completed*. #408
+(`codex-4/preview-translation-persistent-cache`)
 merged 2026-07-17 after two main review passes; see *Recently completed*. #407
 (`codex/issue-event-persistence`) merged 2026-07-17 after three main review
 passes; see *Recently completed*. #406
@@ -514,6 +515,25 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-full-access-default** (`codex-2/agent-full-access-default`, PR #410,
+  codex-2, merged 2026-07-17, plan-track) — removed Restricted access and left
+  one host-account Full Access model for the Main Agent, delegated Runs, Dream,
+  and Skills. Typed file tools and Agent-launched processes now run directly
+  with the current OS account; explicit user blocks, scoped tool catalogs,
+  native authorization, and typed-tool correctness contracts remain. Folder
+  acquisition, access-mode switching, the process sandbox, control-plane path
+  isolation, and their renderer recovery surfaces are gone. **Gate (main):**
+  iterative review closed retained folder-grant settlement, incomplete Full
+  Access prompt propagation, stale configured-root recovery/spec language, and
+  file-search permission defects covering empty-success fallback and broad
+  ripgrep stderr misclassification. The final pass found no reportable issues.
+  Verified on final head `59d79f50` and the latest-`main` merge result with
+  typecheck, 77 Agent local-tool tests, 917 renderer tests, 41 focused
+  Settings/security E2E cases, `docs:check`, and diff check. A real 10.1 MiB Tana
+  export completed inspect, transform, validate, and API preview with 38,551
+  records, 12,959 imported nodes, and zero unaccounted coverage. Plan archived
+  `done`: `docs/plans/archive/agent-full-access-default.md`.
 
 - **table-view** (`codex-3/table-view`, PR #409, codex-3, merged 2026-07-17,
   plan-track) — Outline owners and saved searches can now persistently switch to
