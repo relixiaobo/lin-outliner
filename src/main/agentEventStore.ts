@@ -52,6 +52,46 @@ import {
   objectiveRoleForRun,
   runProfileFromStartedRun,
 } from './agentRunProfiles';
+import {
+  AGENT_DELETION_LOG_FILE,
+  AGENT_DELETION_VERSION,
+  AGENT_PORTABLE_CATALOG_VERSION,
+  applyDeletionTombstone,
+  cloneAgentActor,
+  cloneDeletionEntity,
+  cloneDeletionTombstone,
+  comparePortableStreamIdentities,
+  deletionEntityIsDeleted,
+  deletionEntityKey,
+  emptyDeletionState,
+  parseDeletionTombstonesJsonl,
+  portableAgentEvent,
+  portablePayloadCatalog,
+  portableStreamCatalogEntry,
+  portableStreamIsDeleted,
+  type AgentDeletionContext,
+  type AgentDeletionEntity,
+  type AgentDeletionState,
+  type AgentDeletionTombstone,
+  type AgentEventIdentity,
+  type AgentPortableCatalog,
+  type AgentPortableStreamCatalogEntry,
+  type AgentPortableStreamIdentity,
+} from './agentLedgerPortability';
+
+export { AGENT_DELETION_LOG_FILE } from './agentLedgerPortability';
+export type {
+  AgentDeletionContext,
+  AgentDeletionEntity,
+  AgentDeletionReason,
+  AgentDeletionTombstone,
+  AgentEventIdentity,
+  AgentPortableCatalog,
+  AgentPortablePayloadCatalogEntry,
+  AgentPortablePayloadRole,
+  AgentPortableStreamCatalogEntry,
+  AgentPortableStreamIdentity,
+} from './agentLedgerPortability';
 
 const CONVERSATION_SEGMENT_FILE = '000001.jsonl';
 const CONVERSATION_RUN_INDEX_FILE = 'runs.json';
@@ -61,6 +101,8 @@ const RUN_META_FILE = 'meta.json';
 const AGENT_IDENTITY_FILE = 'identity.json';
 const CONVERSATION_INDEX_FILE = 'conversation-index.json';
 const SEARCH_INDEX_FILE = 'search-index.json';
+const AGENT_DELETION_LOG_KEY = 'workspace-deletions';
+const CONVERSATION_INDEX_VERSION = 1;
 // The storage-generation sentinel ([[agent-run-unification]] Design 6): ONE
 // event-store root file `layout.json {v}` written once per on-disk format generation.
 // Startup reads this single line — current generation proceeds with no
@@ -92,7 +134,7 @@ export const STORAGE_LAYOUT_VERSION = 7;
 // Checkpoints are disposable replay caches. Bump this whenever a required
 // AgentEventReplayState field changes so older shapes fall back to full replay.
 const CHECKPOINT_VERSION = 6;
-const SEARCH_INDEX_VERSION = 2;
+const SEARCH_INDEX_VERSION = 3;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
 const MAX_CHECKPOINTS_PER_CONVERSATION = 3;
 const MAX_SEARCH_INDEX_TEXT_CHARS = 20_000;
@@ -100,6 +142,7 @@ const SEARCH_INDEX_PREVIEW_CHARS = 240;
 const EVENT_STORE_CLEAN_CUT_PATHS = [
   'agents',
   'conversations',
+  AGENT_DELETION_LOG_FILE,
   'indexes',
   'principals',
   'runs',
@@ -181,6 +224,12 @@ export interface AgentConversationIndexEntry {
   unreadCount: number;
 }
 
+interface AgentConversationIndex {
+  v: typeof CONVERSATION_INDEX_VERSION;
+  deletionSeq: number;
+  conversations: Record<string, AgentConversationIndexEntry>;
+}
+
 export interface AgentEventCheckpoint {
   v: typeof CHECKPOINT_VERSION;
   conversationId: string;
@@ -249,9 +298,15 @@ export interface AgentEventUserMessageIndexEntry extends AgentEventSearchIndexEn
 
 interface AgentEventSearchIndex {
   v: typeof SEARCH_INDEX_VERSION;
+  deletionSeq: number;
   messages: Record<string, AgentEventSearchIndexEntry>;
   userMessages: Record<string, AgentEventUserMessageIndexEntry>;
   latestSeqByConversationId: Record<string, number>;
+}
+
+interface PendingAgentDeletion {
+  entity: AgentDeletionEntity;
+  lastKnownEvent: AgentEventIdentity | null;
 }
 
 export class AgentEventStore {
@@ -265,8 +320,13 @@ export class AgentEventStore {
   // before-append repair truncate the fragment so a resume can append again.
   // Mid-file corruption still fails loudly on both logs.
   private readonly runEventLog = new AppendOnlySeqLog<AgentEvent>('agent run event', parseRunEventsJsonl);
+  private readonly deletionLog = new AppendOnlySeqLog<AgentDeletionTombstone>(
+    'agent deletion tombstone',
+    parseDeletionTombstonesJsonl,
+  );
   private indexQueue = Promise.resolve();
   private storageLayoutPromise: Promise<void> | null = null;
+  private deletionStatePromise: Promise<AgentDeletionState> | null = null;
 
   constructor(
     private readonly rootDir: string,
@@ -353,6 +413,10 @@ export class AgentEventStore {
     await this.ensureStorageLayout();
     this.assertEventBatch(conversationId, events);
     await this.agentEventLog.enqueue(conversationId, async () => {
+      await this.assertConversationWritable(conversationId);
+      for (const runId of runIdsReferencedByEvents(events)) {
+        await this.assertRunWritable(conversationId, runId);
+      }
       const latestSeq = await this.getLatestSeq(conversationId);
       const firstSeq = events[0]!.seq;
       if (firstSeq <= latestSeq) {
@@ -377,6 +441,7 @@ export class AgentEventStore {
 
   async readEvents(conversationId: string): Promise<AgentEvent[]> {
     await this.ensureStorageLayout();
+    if (await this.isConversationDeleted(conversationId)) return [];
     const paths = this.paths(conversationId);
     const events = [
       ...await this.agentEventLog.readIfExists(paths.conversationEventsPath),
@@ -403,6 +468,8 @@ export class AgentEventStore {
     }
     const runPaths = this.runPaths(runId);
     await this.runEventLog.enqueue(runStreamLogKey(runId), async () => {
+      await this.assertConversationWritable(conversationId);
+      await this.assertRunWritable(conversationId, runId);
       const latestSeq = await this.runEventLog.latestSeq(runStreamLogKey(runId), () => [runPaths.runEventsPath]);
       const firstSeq = events[0]!.seq;
       if (firstSeq <= latestSeq) {
@@ -410,18 +477,23 @@ export class AgentEventStore {
       }
       await this.runEventLog.append(runPaths.runEventsPath, events);
       this.runEventLog.setLatestSeq(runStreamLogKey(runId), events.at(-1)!.seq);
+      await this.removeRunWriteIfDeleted(conversationId, runId);
       const metaEvents = events.filter((event) => !isStreamingDeltaEvent(event));
       if (metaEvents.length > 0) {
         const meta = await this.updateRunMeta(conversationId, runId, metaEvents);
         if (meta) await this.updateRunIndexes(meta);
       }
+      await this.removeRunWriteIfDeleted(conversationId, runId);
     });
   }
 
   /** Read a delegated run's own ledger (its independent event stream). */
   async readRunStreamEvents(runId: string): Promise<AgentEvent[]> {
     await this.ensureStorageLayout();
-    return this.runEventLog.readIfExists(this.runPaths(runId).runEventsPath);
+    if (await this.isRunDeleted(runId)) return [];
+    const events = await this.runEventLog.readIfExists(this.runPaths(runId).runEventsPath);
+    const conversationId = events[0]?.conversationId;
+    return conversationId && await this.isConversationDeleted(conversationId) ? [] : events;
   }
 
   /**
@@ -433,6 +505,7 @@ export class AgentEventStore {
    */
   async readConversationStreamEvents(conversationId: string): Promise<AgentEvent[]> {
     await this.ensureStorageLayout();
+    if (await this.isConversationDeleted(conversationId)) return [];
     return this.agentEventLog.readIfExists(this.paths(conversationId).conversationEventsPath);
   }
 
@@ -443,6 +516,7 @@ export class AgentEventStore {
 
   async replay(conversationId: string): Promise<AgentEventReplayState> {
     await this.ensureStorageLayout();
+    if (await this.isConversationDeleted(conversationId)) return replayAgentEvents([]);
     const checkpointed = await this.replayFromCheckpoint(conversationId);
     if (checkpointed) return checkpointed;
     return replayAgentEvents(await this.readEvents(conversationId));
@@ -452,6 +526,7 @@ export class AgentEventStore {
     if (!state.conversation || state.conversation.id !== conversationId || state.latestSeq <= 0) return null;
     await this.ensureStorageLayout();
     return this.agentEventLog.enqueue(conversationId, async () => {
+      await this.assertConversationWritable(conversationId);
       const tail = await this.readEventFileTail(conversationId);
       if (tail.seq !== state.latestSeq || tail.eventId !== state.latestEventId) return null;
       const checkpoint: AgentEventCheckpoint = {
@@ -485,33 +560,47 @@ export class AgentEventStore {
 
   async writePayload(conversationId: string, input: AgentPayloadWriteInput): Promise<AgentPayloadRef> {
     await this.ensureStorageLayout();
-    const bytes = typeof input.data === 'string'
-      ? Buffer.from(input.data, input.encoding ?? 'utf8')
-      : Buffer.from(input.data);
-    const payload: AgentPayloadRef = {
-      kind: 'payload_ref',
-      id: input.id ?? `payload-${randomUUID()}`,
-      storage: 'file',
-      mimeType: input.mimeType,
-      byteLength: bytes.byteLength,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-      scope: input.runId
-        ? { type: 'run', conversationId: conversationId, runId: input.runId }
-        : { type: 'conversation', conversationId: conversationId },
-      role: input.role,
-      summary: input.summary,
-      truncated: input.truncated,
-      display: input.display,
-    };
+    const write = async () => {
+      await this.assertConversationWritable(conversationId);
+      if (input.runId) await this.assertRunWritable(conversationId, input.runId);
+      const bytes = typeof input.data === 'string'
+        ? Buffer.from(input.data, input.encoding ?? 'utf8')
+        : Buffer.from(input.data);
+      const payload: AgentPayloadRef = {
+        kind: 'payload_ref',
+        id: input.id ?? `payload-${randomUUID()}`,
+        storage: 'file',
+        mimeType: input.mimeType,
+        byteLength: bytes.byteLength,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        scope: input.runId
+          ? { type: 'run', conversationId: conversationId, runId: input.runId }
+          : { type: 'conversation', conversationId: conversationId },
+        role: input.role,
+        summary: input.summary,
+        truncated: input.truncated,
+        display: input.display,
+      };
 
-    const payloadDir = input.runId ? this.runPaths(input.runId).payloadsDir : this.paths(conversationId).conversationPayloadsDir;
-    await mkdir(payloadDir, { recursive: true });
-    await writeFile(this.payloadPath(conversationId, payload), bytes);
-    return payload;
+      const payloadDir = input.runId ? this.runPaths(input.runId).payloadsDir : this.paths(conversationId).conversationPayloadsDir;
+      await mkdir(payloadDir, { recursive: true });
+      await writeFile(this.payloadPath(conversationId, payload), bytes);
+      if (input.runId) await this.removeRunWriteIfDeleted(conversationId, input.runId);
+      return payload;
+    };
+    return input.runId
+      ? this.runEventLog.enqueue(runStreamLogKey(input.runId), write)
+      : this.agentEventLog.enqueue(conversationId, write);
   }
 
   async readPayload(conversationId: string, payload: AgentPayloadRef): Promise<Buffer> {
     await this.ensureStorageLayout();
+    if (await this.isConversationDeleted(conversationId)) {
+      throw new Error(`Agent conversation ${conversationId} was deleted`);
+    }
+    if (payload.scope?.type === 'run' && await this.isRunDeleted(payload.scope.runId)) {
+      throw new Error(`Agent run ${payload.scope.runId} was deleted`);
+    }
     return readFile(this.payloadPath(conversationId, payload));
   }
 
@@ -526,31 +615,126 @@ export class AgentEventStore {
     return path.join(payloadDir, agentPayloadFileName(payload.id, payload.mimeType));
   }
 
-  async deleteConversation(conversationId: string): Promise<void> {
+  async deleteConversation(conversationId: string, context: AgentDeletionContext): Promise<void> {
     await this.ensureStorageLayout();
-    const runIds = await this.listRunIdsForConversation(conversationId);
-    await rm(this.paths(conversationId).conversationDir, { recursive: true, force: true });
-    await Promise.all(runIds.map((runId) => (
-      rm(this.runPaths(runId).runDir, { recursive: true, force: true })
-    )));
-    this.agentEventLog.deleteKey(conversationId);
-    for (const runId of runIds) {
-      this.agentEventLog.deleteKey(runStreamLogKey(runId));
-      this.runEventLog.deleteKey(runStreamLogKey(runId));
-    }
-    await this.removeConversationFromIndex(conversationId);
-    await this.removeConversationFromSearchIndex(conversationId);
+    await this.agentEventLog.enqueue(conversationId, async () => {
+      const runIds = await this.runIdsForConversationDeletion(conversationId);
+      await this.appendDeletionTombstones([
+        {
+          entity: { type: 'conversation', conversationId },
+          lastKnownEvent: await this.lastKnownEvent(this.paths(conversationId).conversationEventsPath),
+        },
+        ...await Promise.all(runIds.map(async (runId): Promise<PendingAgentDeletion> => ({
+          entity: { type: 'run', conversationId, runId },
+          lastKnownEvent: await this.lastKnownEvent(this.runPaths(runId).runEventsPath, true),
+        }))),
+      ], context);
+      await this.removeConversationStorage(conversationId, runIds);
+    });
+  }
+
+  /**
+   * Reset preserves the conversation identity, so only the discarded Run
+   * entities receive tombstones. The caller recreates the conversation stream
+   * after this method returns.
+   */
+  async resetConversationStorage(conversationId: string, context: AgentDeletionContext): Promise<void> {
+    await this.ensureStorageLayout();
+    await this.agentEventLog.enqueue(conversationId, async () => {
+      await this.assertConversationWritable(conversationId);
+      const runIds = await this.runIdsForConversationDeletion(conversationId);
+      await this.appendDeletionTombstones(
+        await Promise.all(runIds.map(async (runId): Promise<PendingAgentDeletion> => ({
+          entity: { type: 'run', conversationId, runId },
+          lastKnownEvent: await this.lastKnownEvent(this.runPaths(runId).runEventsPath, true),
+        }))),
+        context,
+      );
+      await this.removeConversationStorage(conversationId, runIds);
+    });
   }
 
   async listConversationIds(): Promise<string[]> {
     await this.ensureStorageLayout();
     try {
       const entries = await readdir(this.paths('__placeholder__').conversationsDir, { withFileTypes: true });
-      return entries.filter((entry) => entry.isDirectory()).map((entry) => decodeAgentConversationDirName(entry.name));
+      const state = await this.deletionState();
+      return entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => decodeAgentConversationDirName(entry.name))
+        .filter((conversationId) => !state.conversationIds.has(conversationId))
+        .sort((left, right) => left.localeCompare(right));
     } catch (error) {
       if (isNotFoundError(error)) return [];
       throw error;
     }
+  }
+
+  async readPortableStream(identity: AgentPortableStreamIdentity): Promise<AgentEvent[]> {
+    await this.ensureStorageLayout();
+    if (identity.type === 'conversation') {
+      if (await this.isConversationDeleted(identity.conversationId)) return [];
+      const events = await this.agentEventLog.readIfExists(this.paths(identity.conversationId).conversationEventsPath);
+      return events
+        .filter((event) => event.conversationId === identity.conversationId)
+        .flatMap((event) => {
+          const portable = portableAgentEvent(event);
+          return portable ? [portable] : [];
+        });
+    }
+
+    if (await this.isRunDeleted(identity.runId) || await this.isConversationDeleted(identity.conversationId)) return [];
+    const events = await this.runEventLog.readIfExists(this.runPaths(identity.runId).runEventsPath);
+    return events
+      .filter((event) => event.conversationId === identity.conversationId && event.runId === identity.runId)
+      .flatMap((event) => {
+        const portable = portableAgentEvent(event);
+        return portable ? [portable] : [];
+      });
+  }
+
+  async buildPortableCatalog(): Promise<AgentPortableCatalog> {
+    await this.ensureStorageLayout();
+    const streamsWithEvents: Array<{
+      entry: AgentPortableStreamCatalogEntry;
+      events: AgentEvent[];
+    }> = [];
+
+    for (const conversationId of await this.listConversationIds()) {
+      const identity: AgentPortableStreamIdentity = { type: 'conversation', conversationId };
+      const events = await this.readPortableStream(identity);
+      const entry = portableStreamCatalogEntry(identity, events);
+      if (entry) streamsWithEvents.push({ entry, events });
+    }
+
+    for (const runId of await this.listStoredRunIds()) {
+      if (await this.isRunDeleted(runId)) continue;
+      const rawEvents = await this.runEventLog.readIfExists(this.runPaths(runId).runEventsPath);
+      const conversationId = rawEvents.find((event) => event.runId === runId)?.conversationId;
+      if (!conversationId || await this.isConversationDeleted(conversationId)) continue;
+      const identity: AgentPortableStreamIdentity = { type: 'run', conversationId, runId };
+      const events = rawEvents
+        .filter((event) => event.conversationId === conversationId && event.runId === runId)
+        .flatMap((event) => {
+          const portable = portableAgentEvent(event);
+          return portable ? [portable] : [];
+        });
+      const entry = portableStreamCatalogEntry(identity, events);
+      if (entry) streamsWithEvents.push({ entry, events });
+    }
+
+    const finalDeletionState = await this.deletionState();
+    const visibleStreams = streamsWithEvents
+      .filter(({ entry }) => !portableStreamIsDeleted(entry.identity, finalDeletionState))
+      .sort((left, right) => comparePortableStreamIdentities(left.entry.identity, right.entry.identity));
+    const payloads = portablePayloadCatalog(visibleStreams.flatMap(({ events }) => events));
+
+    return {
+      v: AGENT_PORTABLE_CATALOG_VERSION,
+      streams: visibleStreams.map(({ entry }) => entry),
+      payloads,
+      tombstones: finalDeletionState.tombstones.map(cloneDeletionTombstone),
+    };
   }
 
   async listConversationIndexEntries(): Promise<AgentConversationIndexEntry[]> {
@@ -616,14 +800,26 @@ export class AgentEventStore {
     await this.ensureStorageLayout();
     const normalized = normalizeRunMeta(meta);
     if (!normalized) throw new Error('Invalid agent run meta.');
-    const runPaths = this.runPaths(normalized.id);
-    await mkdir(runPaths.runDir, { recursive: true });
-    await atomicWriteFile(runPaths.runMetaPath, `${JSON.stringify(normalized)}\n`);
-    await this.updateRunIndexes(normalized);
+    const write = async () => {
+      const conversationId = conversationIdOfRun(normalized);
+      if (conversationId) await this.assertConversationWritable(conversationId);
+      await this.assertRunWritable(conversationId, normalized.id);
+      const runPaths = this.runPaths(normalized.id);
+      await mkdir(runPaths.runDir, { recursive: true });
+      await atomicWriteFile(runPaths.runMetaPath, `${JSON.stringify(normalized)}\n`);
+      await this.updateRunIndexes(normalized);
+    };
+    const conversationId = conversationIdOfRun(normalized);
+    if (conversationId) {
+      await this.agentEventLog.enqueue(conversationId, write);
+    } else {
+      await this.runEventLog.enqueue(runStreamLogKey(normalized.id), write);
+    }
   }
 
   async readRunMetaProjection(runId: string): Promise<AgentRunMetaProjection | null> {
     await this.ensureStorageLayout();
+    if (await this.isRunDeleted(runId)) return null;
     return this.readConsistentRunMeta(runId);
   }
 
@@ -661,25 +857,47 @@ export class AgentEventStore {
   async retainRecentConversationRuns(
     conversationId: string,
     retainRunCount: number,
+    context: AgentDeletionContext,
   ): Promise<{ prunedRunIds: string[]; retainedRunIds: string[] }> {
     await this.ensureStorageLayout();
     const retainCount = Number.isFinite(retainRunCount) ? Math.max(0, Math.trunc(retainRunCount)) : 0;
     return this.agentEventLog.enqueue(conversationId, async () => {
+      await this.assertConversationWritable(conversationId);
       const paths = this.paths(conversationId);
-      const existing = await this.ensureConversationRunIndex(conversationId);
-      if (existing.runIds.length <= retainCount) {
-        return { prunedRunIds: [], retainedRunIds: existing.runIds.slice() };
+      const deletionState = await this.deletionState();
+      const existing = await this.readRawConversationRunIndex(conversationId)
+        ?? await this.rebuildConversationRunIndex(conversationId);
+      const active = filterConversationRunIndex(existing, deletionState.runIds);
+      const storedRunIds = new Set(await this.listStoredRunIds());
+      const existingRunIds = new Set(existing.runIds);
+      const retentionTombstonedRunIds = uniqueStrings(deletionState.tombstones.flatMap((tombstone) => (
+        tombstone.entity.type === 'run'
+        && tombstone.entity.conversationId === conversationId
+        && tombstone.reason === 'retention_pruned'
+          ? [tombstone.entity.runId]
+          : []
+      )));
+      const pendingRetentionRunIds = retentionTombstonedRunIds.filter((runId) => (
+        existingRunIds.has(runId) || storedRunIds.has(runId)
+      ));
+      const retainedRunIds = retainCount === 0 ? [] : active.runIds.slice(-retainCount);
+      const retainedRunIdSet = new Set(retainedRunIds);
+      const newlyPrunedRunIds = active.runIds.filter((runId) => !retainedRunIdSet.has(runId));
+      const cleanupRunIdSet = new Set([...pendingRetentionRunIds, ...newlyPrunedRunIds]);
+      const prunedRunIds = [
+        ...existing.runIds.filter((runId) => cleanupRunIdSet.has(runId)),
+        ...pendingRetentionRunIds.filter((runId) => !existingRunIds.has(runId)),
+      ];
+      if (prunedRunIds.length === 0) {
+        return { prunedRunIds: [], retainedRunIds };
       }
 
-      const retainedRunIds = retainCount === 0 ? [] : existing.runIds.slice(-retainCount);
-      const retainedRunIdSet = new Set(retainedRunIds);
-      const prunedRunIds = existing.runIds.filter((runId) => !retainedRunIdSet.has(runId));
       const prunedRunIdSet = new Set(prunedRunIds);
       const conversationEvents = await this.agentEventLog.readIfExists(paths.conversationEventsPath);
-      const retainedRunEvents = await this.readRunEventsByRunId(existing, retainedRunIds);
+      const retainedRunEvents = await this.readRunEventsByRunId(active, retainedRunIds);
       const prunedRunEvents = await this.readRunEventsByRunId(existing, prunedRunIds);
       const prunedMessageIds = new Set<string>();
-      for (const meta of await Promise.all(prunedRunIds.map((runId) => this.readRunMeta(runId)))) {
+      for (const meta of await Promise.all(prunedRunIds.map((runId) => this.readStoredRunMeta(runId)))) {
         if (meta?.trigger.type === 'message') prunedMessageIds.add(meta.trigger.messageId);
       }
       for (const events of prunedRunEvents.values()) collectMessageIdsFromEvents(events, prunedMessageIds);
@@ -697,15 +915,23 @@ export class AgentEventStore {
         runIds: retainedRunIds,
         latestSeqByRunId: Object.fromEntries(retainedRunIds.map((runId) => [
           runId,
-          existing.latestSeqByRunId[runId] ?? 0,
+          active.latestSeqByRunId[runId] ?? 0,
         ])),
-        delegationRunIds: existing.delegationRunIds.filter((runId) => retainedRunIdSet.has(runId)),
+        delegationRunIds: active.delegationRunIds.filter((runId) => retainedRunIdSet.has(runId)),
       };
       const retainedEvents = [
         ...retainedConversationEvents,
         ...retainedRunIds.flatMap((runId) => retainedRunEvents.get(runId) ?? []),
       ].sort(compareAgentEventsForReplay);
       const replayState = replayAgentEvents(retainedEvents);
+
+      await this.appendDeletionTombstones(
+        await Promise.all(prunedRunIds.map(async (runId): Promise<PendingAgentDeletion> => ({
+          entity: { type: 'run', conversationId, runId },
+          lastKnownEvent: await this.lastKnownEvent(this.runPaths(runId).runEventsPath, true),
+        }))),
+        context,
+      );
 
       await mkdir(paths.conversationSegmentsDir, { recursive: true });
       await atomicWriteFile(paths.conversationEventsPath, serializeJsonl(retainedConversationEvents));
@@ -733,6 +959,7 @@ export class AgentEventStore {
    */
   async readConversationMetaProjection(conversationId: string): Promise<AgentConversationMetaProjection | null> {
     await this.ensureStorageLayout();
+    if (await this.isConversationDeleted(conversationId)) return null;
     return this.readConversationMeta(conversationId);
   }
 
@@ -839,6 +1066,8 @@ export class AgentEventStore {
     await this.cleanCutEventStorePaths();
     this.agentEventLog.clear();
     this.runEventLog.clear();
+    this.deletionLog.clear();
+    this.deletionStatePromise = null;
     await mkdir(this.rootDir, { recursive: true });
     await atomicWriteFile(sentinelPath, `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION })}\n`);
   }
@@ -848,6 +1077,159 @@ export class AgentEventStore {
     await Promise.all(EVENT_STORE_CLEAN_CUT_PATHS.map((name) => (
       rm(path.join(this.rootDir, name), { recursive: true, force: true })
     )));
+  }
+
+  private deletionState(): Promise<AgentDeletionState> {
+    this.deletionStatePromise ??= this.deletionLog
+      .readIfExists(path.join(this.rootDir, AGENT_DELETION_LOG_FILE))
+      .then((tombstones) => {
+        const state = emptyDeletionState();
+        for (const tombstone of tombstones) applyDeletionTombstone(state, tombstone);
+        this.deletionLog.setLatestSeq(AGENT_DELETION_LOG_KEY, tombstones.at(-1)?.seq ?? 0);
+        return state;
+      });
+    return this.deletionStatePromise;
+  }
+
+  private async currentDeletionSeq(): Promise<number> {
+    return deletionLedgerTailSeq(await this.deletionState());
+  }
+
+  private async appendDeletionTombstones(
+    pending: readonly PendingAgentDeletion[],
+    context: AgentDeletionContext,
+  ): Promise<AgentDeletionTombstone[]> {
+    if (pending.length === 0) return [];
+    return this.deletionLog.enqueue(AGENT_DELETION_LOG_KEY, async () => {
+      const state = await this.deletionState();
+      const unique = new Map<string, PendingAgentDeletion>();
+      for (const item of pending) unique.set(deletionEntityKey(item.entity), item);
+      const newItems = [...unique.values()].filter(({ entity }) => !deletionEntityIsDeleted(entity, state));
+      if (newItems.length === 0) return [];
+
+      const firstSeq = (state.tombstones.at(-1)?.seq ?? 0) + 1;
+      const deletedAt = Date.now();
+      const tombstones = newItems.map((item, index): AgentDeletionTombstone => ({
+        v: AGENT_DELETION_VERSION,
+        seq: firstSeq + index,
+        deletionId: randomUUID(),
+        entity: cloneDeletionEntity(item.entity),
+        actor: cloneAgentActor(context.actor),
+        reason: context.reason,
+        deletedAt,
+        lastKnownEvent: item.lastKnownEvent ? { ...item.lastKnownEvent } : null,
+      }));
+      await this.deletionLog.appendForKey(
+        AGENT_DELETION_LOG_KEY,
+        path.join(this.rootDir, AGENT_DELETION_LOG_FILE),
+        tombstones,
+      );
+      for (const tombstone of tombstones) applyDeletionTombstone(state, tombstone);
+      return tombstones.map(cloneDeletionTombstone);
+    });
+  }
+
+  private async isConversationDeleted(conversationId: string): Promise<boolean> {
+    return (await this.deletionState()).conversationIds.has(conversationId);
+  }
+
+  private async isRunDeleted(runId: string, conversationId?: string | null): Promise<boolean> {
+    const state = await this.deletionState();
+    return state.runIds.has(runId)
+      || (typeof conversationId === 'string' && state.conversationIds.has(conversationId));
+  }
+
+  private async assertConversationWritable(conversationId: string): Promise<void> {
+    if (await this.isConversationDeleted(conversationId)) {
+      throw new Error(`Agent conversation ${conversationId} was deleted`);
+    }
+  }
+
+  private async assertRunWritable(conversationId: string | null, runId: string): Promise<void> {
+    if (await this.isRunDeleted(runId, conversationId)) {
+      throw new Error(`Agent run ${runId} was deleted`);
+    }
+  }
+
+  private async removeRunWriteIfDeleted(conversationId: string, runId: string): Promise<void> {
+    const state = await this.deletionState();
+    if (!state.runIds.has(runId) && !state.conversationIds.has(conversationId)) return;
+    if (!state.runIds.has(runId)) {
+      const conversationDeletion = [...state.tombstones].reverse().find((tombstone) => (
+        tombstone.entity.type === 'conversation'
+        && tombstone.entity.conversationId === conversationId
+      ));
+      if (conversationDeletion) {
+        await this.appendDeletionTombstones([{
+          entity: { type: 'run', conversationId, runId },
+          lastKnownEvent: await this.lastKnownEvent(this.runPaths(runId).runEventsPath, true),
+        }], {
+          actor: conversationDeletion.actor,
+          reason: conversationDeletion.reason,
+        });
+      }
+    }
+    try {
+      await rm(this.runPaths(runId).runDir, { recursive: true, force: true });
+    } finally {
+      // This method runs inside the Run's queue. Preserve the queue entry while
+      // clearing only its stale physical-tail cache.
+      this.runEventLog.setLatestSeq(runStreamLogKey(runId), 0);
+    }
+    throw new Error(`Agent run ${runId} was deleted`);
+  }
+
+  private async lastKnownEvent(filePath: string, tolerantRunTail = false): Promise<AgentEventIdentity | null> {
+    const tail = await (tolerantRunTail ? this.runEventLog : this.agentEventLog).latestTailForFiles([filePath]);
+    return tail.seq > 0 && tail.eventId ? { seq: tail.seq, eventId: tail.eventId } : null;
+  }
+
+  private async runIdsForConversationDeletion(conversationId: string): Promise<string[]> {
+    const state = await this.deletionState();
+    const indexedRunIds = await this.listRunIdsForConversation(conversationId);
+    const storedRunIds: string[] = [];
+    for (const runId of await this.listStoredRunIds()) {
+      try {
+        const meta = normalizeRunMeta(JSON.parse(await readFile(this.runPaths(runId).runMetaPath, 'utf8')));
+        if (meta && conversationIdOfRun(meta) === conversationId) storedRunIds.push(runId);
+      } catch (error) {
+        if (!isNotFoundError(error) && !(error instanceof SyntaxError)) throw error;
+      }
+    }
+    return [...new Set([
+      ...indexedRunIds,
+      ...storedRunIds,
+      ...(state.runIdsByConversationId.get(conversationId) ?? []),
+    ])].sort((left, right) => left.localeCompare(right));
+  }
+
+  private async removeConversationStorage(conversationId: string, runIds: readonly string[]): Promise<void> {
+    await Promise.all([
+      rm(this.paths(conversationId).conversationDir, { recursive: true, force: true }),
+      ...runIds.map((runId) => rm(this.runPaths(runId).runDir, { recursive: true, force: true })),
+    ]);
+    // Keep the active per-conversation queue entry intact until this queued
+    // deletion/reset operation settles; only its persisted-tail cache resets.
+    this.agentEventLog.setLatestSeq(conversationId, 0);
+    for (const runId of runIds) {
+      this.agentEventLog.deleteKey(runStreamLogKey(runId));
+      this.runEventLog.deleteKey(runStreamLogKey(runId));
+    }
+    await this.removeConversationFromIndex(conversationId);
+    await this.removeConversationFromSearchIndex(conversationId);
+  }
+
+  private async listStoredRunIds(): Promise<string[]> {
+    try {
+      const entries = await readdir(this.paths('__placeholder__').runsDir, { withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => decodeAgentRunDirName(entry.name))
+        .sort((left, right) => left.localeCompare(right));
+    } catch (error) {
+      if (isNotFoundError(error)) return [];
+      throw error;
+    }
   }
 
   private async replayFromCheckpoint(conversationId: string): Promise<AgentEventReplayState | null> {
@@ -981,6 +1363,7 @@ export class AgentEventStore {
   }
 
   private async ensureConversationRunIndex(conversationId: string): Promise<AgentConversationRunIndex> {
+    if (await this.isConversationDeleted(conversationId)) return emptyConversationRunIndex();
     const index = await this.readConversationRunIndex(conversationId);
     if (index) return index;
     if (!await this.conversationDirExists(conversationId)) {
@@ -996,6 +1379,7 @@ export class AgentEventStore {
   }
 
   private async conversationDirExists(conversationId: string): Promise<boolean> {
+    if (await this.isConversationDeleted(conversationId)) return false;
     try {
       await readdir(this.paths(conversationId).conversationDir);
       return true;
@@ -1006,9 +1390,11 @@ export class AgentEventStore {
   }
 
   private async rebuildConversationRunIndex(conversationId: string): Promise<AgentConversationRunIndex> {
+    if (await this.isConversationDeleted(conversationId)) return emptyConversationRunIndex();
     const paths = this.paths(conversationId);
     const latestSeqByRunId: Record<string, number> = {};
     const delegationRunIds: string[] = [];
+    const deletionState = await this.deletionState();
     try {
       const entries = await readdir(paths.runsDir, { withFileTypes: true });
       for (const entry of entries) {
@@ -1017,6 +1403,7 @@ export class AgentEventStore {
         try {
           const meta = normalizeRunMeta(JSON.parse(await readFile(path.join(runDir, RUN_META_FILE), 'utf8')));
           if (!meta || conversationIdOfRun(meta) !== conversationId) continue;
+          if (deletionState.runIds.has(meta.id)) continue;
           latestSeqByRunId[meta.id] = Math.max(latestSeqByRunId[meta.id] ?? 0, meta.latestSeq);
           if (deriveAgentRunKind(meta) === 'delegation') delegationRunIds.push(meta.id);
         } catch (error) {
@@ -1040,6 +1427,7 @@ export class AgentEventStore {
   private async rebuildPrincipalRunIndex(principal: AgentPrincipal): Promise<AgentPrincipalRunIndex> {
     const updatedAtByRunId: Record<string, number> = {};
     const paths = this.paths('__placeholder__');
+    const deletionState = await this.deletionState();
     try {
       const entries = await readdir(paths.runsDir, { withFileTypes: true });
       for (const entry of entries) {
@@ -1048,6 +1436,7 @@ export class AgentEventStore {
         try {
           const meta = normalizeRunMeta(JSON.parse(await readFile(path.join(runDir, RUN_META_FILE), 'utf8')));
           if (!meta || meta.anchor.type !== 'principal' || !samePrincipal(meta.anchor.principal, principal)) continue;
+          if (deletionState.runIds.has(meta.id)) continue;
           updatedAtByRunId[meta.id] = Math.max(updatedAtByRunId[meta.id] ?? 0, meta.updatedAt);
         } catch (error) {
           if (isNotFoundError(error) || error instanceof SyntaxError) continue;
@@ -1115,6 +1504,13 @@ export class AgentEventStore {
   }
 
   private async readRunMeta(runId: string): Promise<AgentRunMetaProjection | null> {
+    if (await this.isRunDeleted(runId)) return null;
+    const meta = await this.readStoredRunMeta(runId);
+    const conversationId = meta ? conversationIdOfRun(meta) : null;
+    return meta && !await this.isRunDeleted(runId, conversationId) ? meta : null;
+  }
+
+  private async readStoredRunMeta(runId: string): Promise<AgentRunMetaProjection | null> {
     try {
       const raw = await readFile(this.runPaths(runId).runMetaPath, 'utf8');
       return normalizeRunMeta(JSON.parse(raw));
@@ -1126,6 +1522,12 @@ export class AgentEventStore {
   }
 
   private async readConversationRunIndex(conversationId: string): Promise<AgentConversationRunIndex | null> {
+    if (await this.isConversationDeleted(conversationId)) return emptyConversationRunIndex();
+    const index = await this.readRawConversationRunIndex(conversationId);
+    return index ? filterConversationRunIndex(index, (await this.deletionState()).runIds) : null;
+  }
+
+  private async readRawConversationRunIndex(conversationId: string): Promise<AgentConversationRunIndex | null> {
     try {
       const raw = await readFile(this.paths(conversationId).conversationRunIndexPath, 'utf8');
       return normalizeConversationRunIndex(JSON.parse(raw));
@@ -1139,7 +1541,9 @@ export class AgentEventStore {
   private async readPrincipalRunIndex(principal: AgentPrincipal): Promise<AgentPrincipalRunIndex | null> {
     try {
       const raw = await readFile(this.principalPaths(principal).runIndexPath, 'utf8');
-      return normalizePrincipalRunIndex(JSON.parse(raw), principalKey(principal));
+      const index = normalizePrincipalRunIndex(JSON.parse(raw), principalKey(principal));
+      if (!index) return null;
+      return filterPrincipalRunIndex(index, (await this.deletionState()).runIds);
     } catch (error) {
       if (isNotFoundError(error)) return null;
       if (error instanceof SyntaxError) return null;
@@ -1149,6 +1553,7 @@ export class AgentEventStore {
 
   private async updateRunIndexes(meta: AgentRunMetaProjection) {
     const conversationId = conversationIdOfRun(meta);
+    if (await this.isRunDeleted(meta.id, conversationId)) return;
     if (conversationId) {
       await this.updateConversationRunIndex(conversationId, meta);
     }
@@ -1165,6 +1570,7 @@ export class AgentEventStore {
   // replay then silently misses that run's events; the index only self-heals
   // on a missing FILE, not a missing entry).
   private async updateConversationRunIndex(conversationId: string, meta: AgentRunMetaProjection) {
+    if (await this.isConversationDeleted(conversationId) || await this.isRunDeleted(meta.id, conversationId)) return;
     await this.enqueueIndexWrite(async () => {
       const paths = this.paths(conversationId);
       const existing = await this.ensureConversationRunIndex(conversationId);
@@ -1187,6 +1593,7 @@ export class AgentEventStore {
   }
 
   private async updatePrincipalRunIndex(principal: AgentPrincipal, runId: string, updatedAt: number) {
+    if (await this.isRunDeleted(runId)) return;
     await this.enqueueIndexWrite(async () => {
       const principalPaths = this.principalPaths(principal);
       const existing = await this.ensurePrincipalRunIndex(principal);
@@ -1209,8 +1616,10 @@ export class AgentEventStore {
   }
 
   private async readConsistentRunMeta(runId: string): Promise<AgentRunMetaProjection | null> {
+    if (await this.isRunDeleted(runId)) return null;
     const runPaths = this.runPaths(runId);
     return this.runEventLog.enqueue(runStreamLogKey(runId), async () => {
+      if (await this.isRunDeleted(runId)) return null;
       const existing = await this.readRunMeta(runId);
       const latestLedgerSeq = await this.runEventLog.latestSeq(
         runStreamLogKey(runId),
@@ -1222,6 +1631,7 @@ export class AgentEventStore {
       const latestMetaEvent = metaEvents.at(-1);
       if (!latestMetaEvent || (existing && latestMetaEvent.seq <= existing.latestSeq)) return existing;
       const conversationId = latestMetaEvent.conversationId;
+      if (await this.isRunDeleted(runId, conversationId)) return null;
       const rebuilt = await this.updateRunMeta(conversationId, runId, metaEvents, null);
       if (rebuilt) await this.updateRunIndexes(rebuilt);
       return rebuilt;
@@ -1234,6 +1644,7 @@ export class AgentEventStore {
     events: readonly AgentEvent[],
     existingOverride?: AgentRunMetaProjection | null,
   ): Promise<AgentRunMetaProjection | null> {
+    if (await this.isRunDeleted(runId, conversationId)) return null;
     const existing = existingOverride === undefined ? await this.readRunMeta(runId) : existingOverride;
     const latest = events.at(-1);
     if (!latest) return null;
@@ -1419,6 +1830,7 @@ export class AgentEventStore {
   }
 
   private async readConversationMeta(conversationId: string): Promise<AgentConversationMetaProjection | null> {
+    if (await this.isConversationDeleted(conversationId)) return null;
     try {
       const raw = await readFile(this.paths(conversationId).conversationMetaPath, 'utf8');
       return normalizeConversationMeta(JSON.parse(raw));
@@ -1436,8 +1848,10 @@ export class AgentEventStore {
   }
 
   private async updateConversationIndex(conversationId: string, events: readonly AgentEvent[]) {
+    if (await this.isConversationDeleted(conversationId)) return;
     await this.enqueueIndexWrite(async () => {
-      const index = await this.readConversationIndex() ?? { conversations: {} };
+      const index = await this.readConversationIndex()
+        ?? createEmptyConversationIndex(await this.currentDeletionSeq());
       let entry: AgentConversationIndexEntry | null = index.conversations[conversationId] ?? null;
       for (const event of events) {
         if (event.type === 'conversation.created') {
@@ -1473,24 +1887,37 @@ export class AgentEventStore {
 
   private async removeConversationFromIndex(conversationId: string) {
     await this.enqueueIndexWrite(async () => {
-      const index = await this.readConversationIndex();
-      if (!index || !index.conversations[conversationId]) return;
+      const index = await this.readConversationIndex()
+        ?? createEmptyConversationIndex(await this.currentDeletionSeq());
       delete index.conversations[conversationId];
       await this.writeConversationIndex(index);
     });
   }
 
   private async rebuildConversationIndex(): Promise<AgentConversationIndexEntry[]> {
-    const ids = await this.listConversationIds();
-    const entries: AgentConversationIndexEntry[] = [];
-    for (const id of ids) {
-      const state = await this.replay(id);
-      const entry = conversationIndexEntryFromReplayState(id, state);
-      if (entry) entries.push(entry);
+    while (true) {
+      const index = await this.buildConversationIndexFromEventLogs();
+      await this.writeConversationIndex(index);
+      if (index.deletionSeq === await this.currentDeletionSeq()) {
+        return Object.values(index.conversations).sort((left, right) => right.updatedAt - left.updatedAt);
+      }
     }
-    const conversations = Object.fromEntries(entries.map((entry) => [entry.id, entry]));
-    await this.writeConversationIndex({ conversations });
-    return entries.sort((left, right) => right.updatedAt - left.updatedAt);
+  }
+
+  private async buildConversationIndexFromEventLogs(): Promise<AgentConversationIndex> {
+    while (true) {
+      const deletionSeq = await this.currentDeletionSeq();
+      const ids = await this.listConversationIds();
+      const entries: AgentConversationIndexEntry[] = [];
+      for (const id of ids) {
+        const state = await this.replay(id);
+        const entry = conversationIndexEntryFromReplayState(id, state);
+        if (entry) entries.push(entry);
+      }
+      if (deletionSeq !== await this.currentDeletionSeq()) continue;
+      const conversations = Object.fromEntries(entries.map((entry) => [entry.id, entry]));
+      return createEmptyConversationIndex(deletionSeq, conversations);
+    }
   }
 
   private async getSearchIndex(): Promise<AgentEventSearchIndex> {
@@ -1498,8 +1925,13 @@ export class AgentEventStore {
   }
 
   private async updateSearchIndex(_conversationId: string, events: readonly AgentEvent[]) {
+    if (await this.isConversationDeleted(_conversationId)) return;
     await this.enqueueIndexWrite(async () => {
-      const index = await this.readSearchIndex() ?? await this.buildSearchIndexFromEventLogs();
+      const index = await this.readSearchIndex();
+      if (!index) {
+        await this.writeSearchIndex(await this.buildSearchIndexFromEventLogs());
+        return;
+      }
       for (const event of events) applyAgentEventToSearchIndex(index, event);
       await this.writeSearchIndex(index);
     });
@@ -1508,7 +1940,10 @@ export class AgentEventStore {
   private async removeConversationFromSearchIndex(conversationId: string) {
     await this.enqueueIndexWrite(async () => {
       const index = await this.readSearchIndex();
-      if (!index) return;
+      if (!index) {
+        await this.writeSearchIndex(await this.buildSearchIndexFromEventLogs());
+        return;
+      }
       removeConversationEntriesFromSearchIndex(index, conversationId);
       await this.writeSearchIndex(index);
     });
@@ -1520,7 +1955,8 @@ export class AgentEventStore {
     events: readonly AgentEvent[],
   ) {
     await this.enqueueIndexWrite(async () => {
-      const conversationIndex = await this.readConversationIndex() ?? { conversations: {} };
+      const conversationIndex = await this.readConversationIndex()
+        ?? createEmptyConversationIndex(await this.currentDeletionSeq());
       const conversationEntry = conversationIndexEntryFromReplayState(conversationId, state);
       if (conversationEntry) {
         conversationIndex.conversations[conversationId] = conversationEntry;
@@ -1529,31 +1965,41 @@ export class AgentEventStore {
       }
       await this.writeConversationIndex(conversationIndex);
 
-      const searchIndex = await this.readSearchIndex() ?? createEmptySearchIndex();
-      removeConversationEntriesFromSearchIndex(searchIndex, conversationId);
-      for (const event of events) applyAgentEventToSearchIndex(searchIndex, event);
-      await this.writeSearchIndex(searchIndex);
+      const searchIndex = await this.readSearchIndex();
+      if (searchIndex) {
+        removeConversationEntriesFromSearchIndex(searchIndex, conversationId);
+        for (const event of events) applyAgentEventToSearchIndex(searchIndex, event);
+        await this.writeSearchIndex(searchIndex);
+      } else {
+        await this.writeSearchIndex(await this.buildSearchIndexFromEventLogs());
+      }
     });
   }
 
   private async rebuildSearchIndex(): Promise<AgentEventSearchIndex> {
-    const index = await this.buildSearchIndexFromEventLogs();
-    await this.writeSearchIndex(index);
-    return index;
+    while (true) {
+      const index = await this.buildSearchIndexFromEventLogs();
+      await this.writeSearchIndex(index);
+      if (index.deletionSeq === await this.currentDeletionSeq()) return index;
+    }
   }
 
   private async buildSearchIndexFromEventLogs(): Promise<AgentEventSearchIndex> {
-    const index = createEmptySearchIndex();
-    const ids = await this.listConversationIds();
-    for (const id of ids) {
-      for (const event of await this.readEvents(id)) {
-        applyAgentEventToSearchIndex(index, event);
+    while (true) {
+      const deletionSeq = await this.currentDeletionSeq();
+      const index = createEmptySearchIndex(deletionSeq);
+      const ids = await this.listConversationIds();
+      for (const id of ids) {
+        for (const event of await this.readEvents(id)) {
+          applyAgentEventToSearchIndex(index, event);
+        }
       }
+      if (deletionSeq === await this.currentDeletionSeq()) return index;
     }
-    return index;
   }
 
   private async readLatestCheckpoint(conversationId: string): Promise<AgentEventCheckpoint | null> {
+    if (await this.isConversationDeleted(conversationId)) return null;
     const paths = this.paths(conversationId);
     let entries: string[] = [];
     try {
@@ -1630,13 +2076,30 @@ export class AgentEventStore {
     return path.join(this.rootDir, 'indexes', SEARCH_INDEX_FILE);
   }
 
-  private async readConversationIndex(): Promise<{ conversations: Record<string, AgentConversationIndexEntry> } | null> {
+  private async readConversationIndex(): Promise<AgentConversationIndex | null> {
     const indexPath = this.conversationIndexPath();
     try {
       const raw = await readFile(indexPath, 'utf8');
-      const parsed = JSON.parse(raw) as { conversations?: unknown };
+      const parsed = JSON.parse(raw) as unknown;
+      if (
+        !isRecord(parsed)
+        || parsed.v !== CONVERSATION_INDEX_VERSION
+        || typeof parsed.deletionSeq !== 'number'
+        || !Number.isSafeInteger(parsed.deletionSeq)
+        || parsed.deletionSeq < 0
+        || !isRecord(parsed.conversations)
+      ) return null;
+      const deletionState = await this.deletionState();
+      const deletionSeq = deletionLedgerTailSeq(deletionState);
+      if (parsed.deletionSeq !== deletionSeq) return null;
+      const conversations = {
+        ...(parsed.conversations as Record<string, AgentConversationIndexEntry>),
+      };
+      for (const conversationId of deletionState.conversationIds) delete conversations[conversationId];
       return {
-        conversations: isRecord(parsed.conversations) ? parsed.conversations as Record<string, AgentConversationIndexEntry> : {},
+        v: CONVERSATION_INDEX_VERSION,
+        deletionSeq,
+        conversations,
       };
     } catch (error) {
       if (isNotFoundError(error)) return null;
@@ -1645,9 +2108,7 @@ export class AgentEventStore {
     }
   }
 
-  private async conversationIndexMatchesConversations(index: {
-    conversations: Record<string, AgentConversationIndexEntry>;
-  }): Promise<boolean> {
+  private async conversationIndexMatchesConversations(index: AgentConversationIndex): Promise<boolean> {
     const indexedIds = new Set(Object.keys(index.conversations));
     const conversationIds = new Set(await this.listConversationIds());
     if (indexedIds.size !== conversationIds.size) return false;
@@ -1658,7 +2119,7 @@ export class AgentEventStore {
     return true;
   }
 
-  private async writeConversationIndex(index: { conversations: Record<string, AgentConversationIndexEntry> }) {
+  private async writeConversationIndex(index: AgentConversationIndex) {
     const indexPath = this.conversationIndexPath();
     await mkdir(path.dirname(indexPath), { recursive: true });
     await atomicWriteFile(indexPath, `${JSON.stringify(index)}\n`);
@@ -1668,7 +2129,14 @@ export class AgentEventStore {
     const indexPath = this.searchIndexPath();
     try {
       const raw = await readFile(indexPath, 'utf8');
-      return normalizeSearchIndex(JSON.parse(raw));
+      const index = normalizeSearchIndex(JSON.parse(raw));
+      if (!index) return null;
+      const deletionState = await this.deletionState();
+      if (index.deletionSeq !== deletionLedgerTailSeq(deletionState)) return null;
+      for (const conversationId of deletionState.conversationIds) {
+        removeConversationEntriesFromSearchIndex(index, conversationId);
+      }
+      return index;
     } catch (error) {
       if (isNotFoundError(error)) return null;
       if (error instanceof SyntaxError) return null;
@@ -1681,6 +2149,52 @@ export class AgentEventStore {
     await mkdir(path.dirname(indexPath), { recursive: true });
     await atomicWriteFile(indexPath, `${JSON.stringify(index)}\n`);
   }
+}
+
+function createEmptyConversationIndex(
+  deletionSeq: number,
+  conversations: Record<string, AgentConversationIndexEntry> = {},
+): AgentConversationIndex {
+  return {
+    v: CONVERSATION_INDEX_VERSION,
+    deletionSeq,
+    conversations,
+  };
+}
+
+function deletionLedgerTailSeq(state: AgentDeletionState): number {
+  return state.tombstones.at(-1)?.seq ?? 0;
+}
+
+function emptyConversationRunIndex(): AgentConversationRunIndex {
+  return { v: 2, runIds: [], latestSeqByRunId: {}, delegationRunIds: [] };
+}
+
+function filterConversationRunIndex(
+  index: AgentConversationRunIndex,
+  deletedRunIds: ReadonlySet<string>,
+): AgentConversationRunIndex {
+  const runIds = index.runIds.filter((runId) => !deletedRunIds.has(runId));
+  const runIdSet = new Set(runIds);
+  return {
+    v: 2,
+    runIds,
+    latestSeqByRunId: Object.fromEntries(runIds.map((runId) => [runId, index.latestSeqByRunId[runId] ?? 0])),
+    delegationRunIds: index.delegationRunIds.filter((runId) => runIdSet.has(runId)),
+  };
+}
+
+function filterPrincipalRunIndex(
+  index: AgentPrincipalRunIndex,
+  deletedRunIds: ReadonlySet<string>,
+): AgentPrincipalRunIndex {
+  const runIds = index.runIds.filter((runId) => !deletedRunIds.has(runId));
+  return {
+    v: 1,
+    principalKey: index.principalKey,
+    runIds,
+    updatedAtByRunId: Object.fromEntries(runIds.map((runId) => [runId, index.updatedAtByRunId[runId] ?? 0])),
+  };
 }
 
 function updateConversationIndexEntry(
@@ -1817,9 +2331,10 @@ function persistedTextContent(content: readonly AgentPersistedContent[]): string
     .trim();
 }
 
-function createEmptySearchIndex(): AgentEventSearchIndex {
+function createEmptySearchIndex(deletionSeq: number): AgentEventSearchIndex {
   return {
     v: SEARCH_INDEX_VERSION,
+    deletionSeq,
     messages: {},
     userMessages: {},
     latestSeqByConversationId: {},
@@ -2013,12 +2528,18 @@ function indexDetailsFromContent(content: readonly AgentPersistedContent[]): {
 
 function normalizeSearchIndex(value: unknown): AgentEventSearchIndex | null {
   if (!isRecord(value) || value.v !== SEARCH_INDEX_VERSION) return null;
+  if (
+    typeof value.deletionSeq !== 'number'
+    || !Number.isSafeInteger(value.deletionSeq)
+    || value.deletionSeq < 0
+  ) return null;
   if (!isRecord(value.messages) || !isRecord(value.userMessages)) return null;
   const latestSeqByConversationId = isRecord(value.latestSeqByConversationId)
     ? value.latestSeqByConversationId as Record<string, number>
     : {};
   return {
     v: SEARCH_INDEX_VERSION,
+    deletionSeq: value.deletionSeq,
     messages: value.messages as Record<string, AgentEventSearchIndexEntry>,
     userMessages: value.userMessages as Record<string, AgentEventUserMessageIndexEntry>,
     latestSeqByConversationId,
@@ -2066,6 +2587,21 @@ function compareAgentEventsForReplay(left: AgentEvent, right: AgentEvent): numbe
 
 function agentRunIdForEvent(event: AgentEvent): string | null {
   return typeof event.runId === 'string' && event.runId.length > 0 ? event.runId : null;
+}
+
+function runIdsReferencedByEvents(events: readonly AgentEvent[]): string[] {
+  const runIds = new Set<string>();
+  for (const event of events) {
+    const eventRunId = agentRunIdForEvent(event);
+    if (eventRunId) runIds.add(eventRunId);
+    if (
+      (event.type === 'payload.created' || event.type === 'payload.derived')
+      && event.payload.scope?.type === 'run'
+    ) {
+      runIds.add(event.payload.scope.runId);
+    }
+  }
+  return [...runIds].sort((left, right) => left.localeCompare(right));
 }
 
 function collectMessageIdsFromEvents(events: Iterable<AgentEvent>, target: Set<string>): void {

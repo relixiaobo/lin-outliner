@@ -83,6 +83,8 @@ The current main branch implements this architecture through these modules:
   conversation and run logs, scoped payload files, agent identity records, write
   queues, rebuildable indexes, seq-based checkpoint replay, and checkpoint
   retention.
+- `src/main/agentLedgerPortability.ts`: owns portable catalog DTOs and event/
+  payload filtering plus the deletion-tombstone codec and pure precedence state.
 - `src/main/agentDomainEvents.ts`: owns the internal domain-event bus. It is
   separate from renderer IPC and exposes persisted-log, renderer-projection,
   trusted-observer, and hook-interceptor lanes.
@@ -1749,6 +1751,77 @@ Storage policy:
 - The Dream channel is the current explicit conversation-run retention policy:
   only its latest 512 run transcripts stay in the channel log/search index; older
   Dream run ledgers and their launch/terminal markers are pruned.
+
+## Portable Ledger Boundary
+
+Raw Agent storage is not a synchronization API. Conversation segments and Run
+ledgers mix device-sensitive diagnostics with durable history, while neighboring
+files include replay caches and local projections. Future transports must use
+`AgentEventStore.buildPortableCatalog()` and `readPortableStream()`, plus
+`readPayload()` for cataloged payload refs, instead of enumerating filesystem
+paths.
+
+The version-1 portable catalog is deterministic across restart and has no build
+timestamp. It contains:
+
+- conversation and Run stream identities, event counts, and first/last
+  `{seq, eventId}` boundaries;
+- referenced payload identity, scope, role, MIME type, byte length, and SHA-256;
+  and
+- the ordered workspace deletion ledger.
+
+Portable event reads omit `debug.run_snapshot.created`,
+`tool.capability.checked`, `tool.capability.resolved`, and
+`checkpoint.created`. A `notification.created` carrying `folderCapability` is
+also omitted as one unit because both its structured grant request and its
+free-form body may disclose device paths. Payload events and nested payload
+references are retained only for the `source`, `preview`, `text_extract`, and
+`tool_output` roles.
+`thumbnail`, `debug`, and unclassified payloads are local/derived and excluded.
+Portable payload refs also drop their free-form local summary field.
+The catalog never contains absolute storage paths, payload summaries, indexes,
+checkpoints, cursors, Run meta, or conversation meta. Local `seq` orders one
+stream only; a future transport deduplicates records by stable `eventId` and may
+assign a separate server sequence.
+
+`<agent-event-root>/deletions.jsonl` is the append-only, versioned deletion
+authority. Each tombstone records a monotonic ledger `seq`, unique `deletionId`,
+conversation or Run identity, actor, reason, deletion time, and last-known event
+identity. A hard conversation deletion appends the conversation and all known
+Run tombstones in one batch before any directory removal. Dream retention
+validates its retained replay, then appends pruned Run tombstones before rewriting
+the conversation stream or removing Run directories. A conversation reset keeps
+the conversation entity alive and tombstones only the discarded Runs.
+
+Tombstones take precedence over restored bytes and derived state. Tombstoned
+entities are excluded from directory listing, portable catalogs, explicit stream
+and meta reads, conversation/search projections, and every Run-index rebuild;
+new event, payload, checkpoint, and Run-meta writes are rejected. A conversation
+event batch preflights every top-level Run ID and Run-scoped payload before any
+event file is written. Retention reconciliation reads the unfiltered stored Run
+index internally, combines it with `retention_pruned` tombstones and remaining
+Run directories, and resumes every incomplete rewrite/index/removal step without
+appending duplicate tombstones. Ordinary readers continue to use the filtered
+Run index.
+
+`conversation-index.json` and `search-index.json` persist the deletion-ledger
+tail as `deletionSeq`. An absent or mismatched watermark makes the whole derived
+index stale and forces canonical reconstruction; restoring an index snapshot
+from before a tombstone cannot expose deleted Run content. A full index rebuild
+captures `deletionSeq` before reading canonical logs, carries that exact value in
+the in-memory index, and retries if the ledger advances during the scan or index
+write. Index writers never replace the captured value with a newer tail; an
+incremental write that races a deletion can therefore produce only a detectably
+stale index, never old content labeled with the current watermark. Physical
+cleanup may be retried idempotently after a failure, and restoring a deleted
+directory or obsolete derived index cannot resurrect it.
+
+Conversation reset is currently a local stream replacement, not a portable
+multi-device operation. It protects discarded Run entities with tombstones, but
+the future online-sync design must add a conversation stream generation or
+ordered reset operation before reset can propagate between devices. Hard
+conversation deletion already has complete non-resurrection semantics and does
+not depend on that future operation.
 
 ## Runtime Flow
 

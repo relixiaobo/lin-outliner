@@ -2227,7 +2227,10 @@ export class AgentRuntime {
       this.emitConversationRuntimeEvent(conversationId, { type: 'closed' });
     }
     this.cleanupProviderConversationResources(conversationId);
-    await this.getEventStore().deleteConversation(conversationId);
+    await this.getEventStore().deleteConversation(conversationId, {
+      actor: userActor(),
+      reason: 'conversation_deleted',
+    });
     this.userViewContextReminderTracker.reset(conversationId);
   }
 
@@ -2575,7 +2578,10 @@ export class AgentRuntime {
     this.userViewContextReminderTracker.reset(conversationId);
     await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_reset');
     const previousConversation = conversation.eventState.conversation;
-    await this.getEventStore().deleteConversation(conversationId);
+    await this.getEventStore().resetConversationStorage(conversationId, {
+      actor: systemActor(),
+      reason: 'conversation_reset',
+    });
     const eventState = createEmptyAgentEventReplayState();
     const events = this.buildEvents(eventState, conversationId, [{
       type: 'conversation.created',
@@ -5311,6 +5317,7 @@ export class AgentRuntime {
     const result = await this.getEventStore().retainRecentConversationRuns(
       DEFAULT_DREAM_CHANNEL_ID,
       DREAM_CHANNEL_RETAINED_RUNS,
+      { actor: systemActor(), reason: 'retention_pruned' },
     );
     if (result.prunedRunIds.length === 0) return;
     this.emitProjection(DEFAULT_DREAM_CHANNEL_ID, 'dream_channel_history_pruned');
