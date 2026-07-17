@@ -5,12 +5,15 @@ import type {
   ManagedSkillCatalogView,
   ManagedSkillCompatibilityView,
   ManagedSkillDiscoveryView,
+  ManagedSkillErrorCode,
+  ManagedSkillErrorView,
   ManagedSkillUpdatePreviewView,
   ManagedSkillVersionView,
   ManagedSkillView,
 } from '../core/types';
 import {
   ManagedSkillGitHubClient,
+  ManagedSkillNetworkError,
   validateGitHubTrackingRef,
   type ManagedSkillGitHubDiscovery,
 } from './managedSkillGitHub';
@@ -23,6 +26,7 @@ import {
 } from './managedSkillStore';
 import {
   MANAGED_SKILL_LIMITS,
+  ManagedSkillValidationError,
   resolveManagedSkillCompatibility,
   type ManagedSkillFile,
   type ValidatedManagedSkill,
@@ -38,10 +42,26 @@ const MAX_DIFF_LINES = 240;
 const MAX_DIFF_CHARS = 24_000;
 
 export class ManagedSkillServiceError extends Error {
-  constructor(readonly code: string, message: string) {
+  constructor(
+    readonly code: ManagedSkillErrorCode,
+    message: string,
+    readonly detail?: string,
+  ) {
     super(message);
     this.name = 'ManagedSkillServiceError';
   }
+}
+
+export function managedSkillErrorView(error: unknown): ManagedSkillErrorView {
+  if (
+    error instanceof ManagedSkillServiceError
+    || error instanceof ManagedSkillNetworkError
+    || error instanceof ManagedSkillValidationError
+  ) {
+    const detail = normalizedErrorDetail(error.detail);
+    return { code: error.code, ...(detail ? { detail } : {}) };
+  }
+  return { code: 'unexpected_error' };
 }
 
 export interface ManagedSkillNameConflict {
@@ -126,7 +146,7 @@ export class ManagedSkillService {
 
   async loadCatalog(): Promise<ManagedSkillCatalogView> {
     await this.ready;
-    let refreshError: string | undefined;
+    let refreshError: ManagedSkillErrorView | undefined;
     try {
       const remote = parseCatalogDocument(await this.github.fetchJsonFromRaw(MANAGED_SKILL_CATALOG_URL, MANAGED_SKILL_LIMITS.catalogBytes));
       const refreshedAt = this.now();
@@ -134,7 +154,7 @@ export class ManagedSkillService {
       await this.options.store.writeCatalogCache({ schemaVersion: CATALOG_SCHEMA_VERSION, refreshedAt, catalog: remote } satisfies CatalogCache);
       return this.catalogView(remote, 'fresh', refreshedAt);
     } catch (error) {
-      refreshError = errorMessage(error);
+      refreshError = managedSkillErrorView(error);
     }
 
     try {
@@ -183,6 +203,7 @@ export class ManagedSkillService {
         throw new ManagedSkillServiceError(
           'catalog_entry_mismatch',
           `Catalog entry ${catalogId} no longer resolves to skill "${catalogSkillName}" at ${subdirectory}.`,
+          `${catalogId} @ ${subdirectory}`,
         );
       }
       discovery = { ...discovery, candidates: [candidate] };
@@ -220,7 +241,11 @@ export class ManagedSkillService {
       catalogCompatibilityRange: session.catalogCompatibilityRange,
     });
     if (validated.name !== candidate.view.name) {
-      throw new ManagedSkillServiceError('candidate_changed', 'The selected skill identity changed while downloading. Discover it again.');
+      throw new ManagedSkillServiceError(
+        'candidate_changed',
+        'The selected skill identity changed while downloading. Discover it again.',
+        `${candidate.view.name} -> ${validated.name}`,
+      );
     }
 
     return this.withMutation(async () => {
@@ -249,8 +274,8 @@ export class ManagedSkillService {
         await this.options.store.updateIndex((index) => ({ ...index, skills: [...index.skills, record] }));
         await this.options.onChanged?.();
       } catch (error) {
-        await this.restoreIndex(before);
-        if (!indexReferencesVersion(before, record.id, active.contentHash)) {
+        const restored = await this.restoreIndex(before);
+        if (restored && !indexReferencesVersion(before, record.id, active.contentHash)) {
           await this.options.store.removeVersion(record.id, active.contentHash).catch(() => undefined);
         }
         throw error;
@@ -296,14 +321,18 @@ export class ManagedSkillService {
     if (record.active.contentHash !== expectedContentHash) {
       throw new ManagedSkillServiceError('stale_skill_version', `Managed skill ${record.name} changed versions. Invoke it again.`);
     }
-    if (record.diagnostic?.code === 'modified') throw new ManagedSkillServiceError('skill_modified', record.diagnostic.message);
-    if (record.diagnostic?.code === 'name_conflict') throw new ManagedSkillServiceError('duplicate_skill_name', record.diagnostic.message);
+    if (record.diagnostic?.code === 'modified') throw new ManagedSkillServiceError('skill_modified', record.diagnostic.message, record.name);
+    if (record.diagnostic?.code === 'name_conflict') throw new ManagedSkillServiceError('duplicate_skill_name', record.diagnostic.message, record.name);
     this.assertVersionCompatible(record.name, record.active);
     await this.assertExternalNameAvailable(record.name, record.id);
     const integrity = await this.options.store.verifyVersion(record.id, record.active);
     if (!integrity.ok) {
       await this.markModified(record.id, record.active.contentHash, integrity.reason);
-      throw new ManagedSkillServiceError('skill_modified', `Managed skill ${record.name} was modified locally and has been disabled for invocation.`);
+      throw new ManagedSkillServiceError(
+        'skill_modified',
+        `Managed skill ${record.name} was modified locally and has been disabled for invocation.`,
+        record.name,
+      );
     }
   }
 
@@ -331,7 +360,7 @@ export class ManagedSkillService {
           }));
         });
       } catch (error) {
-        await this.recordUpdateFailure(target, `Update check failed: ${errorMessage(error)}`);
+        await this.recordUpdateFailure(target, error, 'Update check failed');
       }
     }
     return this.list();
@@ -353,11 +382,15 @@ export class ManagedSkillService {
         catalogCompatibilityRange: await this.compatibilityRangeForRecord(record),
       });
       if (discovery.origin.commit === record.active.commit) {
-        throw new ManagedSkillServiceError('no_update', `${record.name} is already at the tracked commit.`);
+        throw new ManagedSkillServiceError('no_update', `${record.name} is already at the tracked commit.`, record.name);
       }
       const candidate = discovery.candidates.find((entry) => entry.view.subdirectory === record.origin.subdirectory);
       if (!candidate) {
-        throw new ManagedSkillServiceError('skill_moved', 'The tracked skill folder no longer contains its root SKILL.md.');
+        throw new ManagedSkillServiceError(
+          'skill_moved',
+          'The tracked skill folder no longer contains its root SKILL.md.',
+          record.origin.subdirectory,
+        );
       }
       const validated = await this.github.downloadCandidate({
         origin: discovery.origin,
@@ -366,7 +399,11 @@ export class ManagedSkillService {
         catalogCompatibilityRange: await this.compatibilityRangeForRecord(record),
       });
       if (validated.name !== record.name) {
-        throw new ManagedSkillServiceError('skill_renamed', `The update declares skill name "${validated.name}" instead of "${record.name}".`);
+        throw new ManagedSkillServiceError(
+          'skill_renamed',
+          `The update declares skill name "${validated.name}" instead of "${record.name}".`,
+          `${record.name} -> ${validated.name}`,
+        );
       }
       await this.assertExternalNameAvailable(record.name, record.id);
       const storedVersion = storedVersionFromValidated(discovery.origin.commit, this.now(), validated);
@@ -404,7 +441,7 @@ export class ManagedSkillService {
       return view;
     } catch (error) {
       if (!(error instanceof ManagedSkillServiceError && error.code === 'no_update')) {
-        await this.recordUpdateFailure(record, `Update preview failed: ${errorMessage(error)}`);
+        await this.recordUpdateFailure(record, error, 'Update preview failed');
       }
       throw error;
     }
@@ -443,6 +480,7 @@ export class ManagedSkillService {
           throw new ManagedSkillServiceError(
             'previous_version_modified',
             `The retained previous version of ${record.name} was modified locally and will not be removed automatically. Uninstall and reinstall the skill to continue.`,
+            record.name,
           );
         }
       }
@@ -466,8 +504,8 @@ export class ManagedSkillService {
         }));
         await this.options.onChanged?.();
       } catch (error) {
-        await this.restoreIndex(before);
-        if (!indexReferencesVersion(before, record.id, appliedVersion.contentHash)) {
+        const restored = await this.restoreIndex(before);
+        if (restored && !indexReferencesVersion(before, record.id, appliedVersion.contentHash)) {
           await this.options.store.removeVersion(record.id, appliedVersion.contentHash).catch(() => undefined);
         }
         throw error;
@@ -526,14 +564,26 @@ export class ManagedSkillService {
       this.assertVersionCompatible(record.name, record.previous);
       await this.assertRecordClean(record);
       const previousIntegrity = await this.options.store.verifyVersion(record.id, record.previous);
-      if (!previousIntegrity.ok) throw new ManagedSkillServiceError('previous_version_modified', previousIntegrity.reason ?? 'The previous version failed integrity validation.');
+      if (!previousIntegrity.ok) {
+        throw new ManagedSkillServiceError(
+          'previous_version_modified',
+          previousIntegrity.reason ?? 'The previous version failed integrity validation.',
+          record.name,
+        );
+      }
       await this.assertExternalNameAvailable(record.name, record.id);
       const nextRecord: ManagedSkillRecord = {
         ...record,
         active: record.previous,
         previous: record.active,
         updateCommit: record.active.commit,
-        diagnostic: { code: 'rolled_back', message: `Rolled back from ${record.active.commit.slice(0, 12)}.`, at: this.now() },
+        diagnostic: {
+          code: 'rolled_back',
+          message: `Rolled back from ${record.active.commit.slice(0, 12)}.`,
+          errorCode: 'rolled_back',
+          detail: record.active.commit.slice(0, 12),
+          at: this.now(),
+        },
       };
       try {
         await this.options.store.updateIndex((current) => ({
@@ -660,18 +710,29 @@ export class ManagedSkillService {
   }
 
   private async assertRecordClean(record: ManagedSkillRecord): Promise<void> {
-    if (record.diagnostic?.code === 'modified') throw new ManagedSkillServiceError('skill_modified', record.diagnostic.message);
+    if (record.diagnostic?.code === 'modified') throw new ManagedSkillServiceError('skill_modified', record.diagnostic.message, record.name);
     const integrity = await this.options.store.verifyVersion(record.id, record.active);
     if (!integrity.ok) {
       await this.markModified(record.id, record.active.contentHash, integrity.reason);
-      throw new ManagedSkillServiceError('skill_modified', `Managed skill ${record.name} was modified locally. Uninstall and reinstall it before continuing.`);
+      throw new ManagedSkillServiceError(
+        'skill_modified',
+        `Managed skill ${record.name} was modified locally. Uninstall and reinstall it before continuing.`,
+        record.name,
+      );
     }
   }
 
   private async assertNameAvailable(index: ManagedSkillIndex, name: string): Promise<void> {
     const managed = index.skills.find((record) => record.name === name);
     if (managed) {
-      throw new ManagedSkillServiceError('duplicate_skill_name', `A managed skill named "${name}" is already installed from ${managed.origin.repository}/${managed.origin.subdirectory}.`);
+      const location = managed.origin.subdirectory
+        ? `${managed.origin.repository}/${managed.origin.subdirectory}`
+        : managed.origin.repository;
+      throw new ManagedSkillServiceError(
+        'duplicate_skill_name',
+        `A managed skill named "${name}" is already installed from ${location}.`,
+        `${name} @ ${location}`,
+      );
     }
     await this.assertExternalNameAvailable(name);
   }
@@ -679,7 +740,11 @@ export class ManagedSkillService {
   private async assertExternalNameAvailable(name: string, excludingManagedSkillId?: string): Promise<void> {
     const conflict = await this.options.findNameConflict?.(name, excludingManagedSkillId);
     if (conflict) {
-      throw new ManagedSkillServiceError('duplicate_skill_name', `Skill name "${name}" conflicts with a ${conflict.source} skill at ${conflict.location}.`);
+      throw new ManagedSkillServiceError(
+        'duplicate_skill_name',
+        `Skill name "${name}" conflicts with a ${conflict.source} skill at ${conflict.location}.`,
+        `${name} @ ${conflict.source}:${conflict.location}`,
+      );
     }
   }
 
@@ -695,11 +760,14 @@ export class ManagedSkillService {
       throw new ManagedSkillServiceError(
         'incompatible_tenon',
         `Managed skill ${name} is not compatible with this Tenon version. ${compatibility.error}`,
+        compatibility.view.declaredRange,
       );
     }
   }
 
-  private async recordUpdateFailure(expected: ManagedSkillRecord, message: string): Promise<void> {
+  private async recordUpdateFailure(expected: ManagedSkillRecord, error: unknown, prefix: string): Promise<void> {
+    const view = managedSkillErrorView(error);
+    const message = `${prefix}: ${errorMessage(error)}`;
     await this.withMutation(async () => {
       await this.options.store.updateIndex((index) => ({
         ...index,
@@ -707,7 +775,13 @@ export class ManagedSkillService {
           && record.diagnostic?.code !== 'modified'
           && record.diagnostic?.code !== 'name_conflict' ? {
           ...record,
-          diagnostic: { code: 'update_failed' as const, message, at: this.now() },
+          diagnostic: {
+            code: 'update_failed' as const,
+            message,
+            errorCode: view.code,
+            ...(view.detail ? { detail: view.detail } : {}),
+            at: this.now(),
+          },
         } : record),
       }));
     });
@@ -717,12 +791,14 @@ export class ManagedSkillService {
     return record.catalogCompatibilityRange;
   }
 
-  private async restoreIndex(index: ManagedSkillIndex): Promise<void> {
+  private async restoreIndex(index: ManagedSkillIndex): Promise<boolean> {
     try {
       await this.options.store.replaceIndex(index);
       await this.options.onChanged?.();
+      return true;
     } catch {
       // Preserve the operation failure; persisted state is re-read before every invocation.
+      return false;
     }
   }
 
@@ -735,13 +811,13 @@ export class ManagedSkillService {
       } catch {
         const loaded = await this.loadCatalog();
         if (loaded.status === 'unavailable' || !this.lastCatalog) {
-          throw new ManagedSkillServiceError('catalog_unavailable', loaded.error ?? 'The Linlab Catalog is unavailable.');
+          throw new ManagedSkillServiceError('catalog_unavailable', 'The Linlab Catalog is unavailable.');
         }
         catalog = this.lastCatalog;
       }
     }
     const entry = catalog.entries.find((candidate) => candidate.id === id);
-    if (!entry) throw new ManagedSkillServiceError('catalog_entry_not_found', `Catalog skill "${id}" is unavailable.`);
+    if (!entry) throw new ManagedSkillServiceError('catalog_entry_not_found', `Catalog skill "${id}" is unavailable.`, id);
     return entry;
   }
 
@@ -749,7 +825,7 @@ export class ManagedSkillService {
     catalog: CatalogDocument,
     status: 'fresh' | 'cached',
     refreshedAt: number,
-    error?: string,
+    error?: ManagedSkillErrorView,
   ): Promise<ManagedSkillCatalogView> {
     const installed = await this.options.store.readIndex();
     return {
@@ -814,6 +890,7 @@ function discoveryView(session: DiscoverySession): ManagedSkillDiscoveryView {
 
 function managedSkillView(record: ManagedSkillRecord, appVersion: string): ManagedSkillView {
   const compatibility = currentCompatibility(record.active, appVersion);
+  const diagnostic = managedSkillDiagnosticView(record, compatibility);
   const status = record.diagnostic?.code === 'modified'
     ? 'modified'
     : record.diagnostic?.code === 'update_failed' || record.diagnostic?.code === 'name_conflict' || compatibility.error
@@ -838,12 +915,35 @@ function managedSkillView(record: ManagedSkillRecord, appVersion: string): Manag
     ...(record.previous ? { previous: versionView(record.previous, appVersion) } : {}),
     ...(record.updateCommit ? { updateCommit: record.updateCommit } : {}),
     scripts: [...record.active.scripts],
-    ...(record.diagnostic
-      ? { diagnostic: record.diagnostic.message }
-      : compatibility.error
-        ? { diagnostic: compatibility.error }
-        : {}),
+    ...(diagnostic ? { diagnostic } : {}),
   };
+}
+
+function managedSkillDiagnosticView(
+  record: ManagedSkillRecord,
+  compatibility: ReturnType<typeof currentCompatibility>,
+): ManagedSkillErrorView | undefined {
+  if (record.diagnostic?.code === 'modified') return { code: 'skill_modified', detail: record.name };
+  if (record.diagnostic?.code === 'name_conflict') return { code: 'duplicate_skill_name', detail: record.name };
+  if (record.diagnostic?.code === 'update_failed') {
+    return {
+      code: record.diagnostic.errorCode ?? 'update_failed',
+      ...(record.diagnostic.detail ? { detail: record.diagnostic.detail } : {}),
+    };
+  }
+  if (record.diagnostic?.code === 'rolled_back') {
+    return {
+      code: 'rolled_back',
+      ...(record.diagnostic.detail ? { detail: record.diagnostic.detail } : {}),
+    };
+  }
+  if (compatibility.error) {
+    return {
+      code: 'incompatible_tenon',
+      ...(compatibility.view.declaredRange ? { detail: compatibility.view.declaredRange } : {}),
+    };
+  }
+  return undefined;
 }
 
 function versionView(version: ManagedSkillStoredVersion, appVersion = version.compatibility.appVersion): ManagedSkillVersionView {
@@ -887,7 +987,7 @@ function currentCompatibility(
 
 function requireRecord(index: ManagedSkillIndex, skillId: string): ManagedSkillRecord {
   const record = index.skills.find((candidate) => candidate.id === skillId);
-  if (!record) throw new ManagedSkillServiceError('managed_skill_not_found', `Managed skill "${skillId}" is not installed.`);
+  if (!record) throw new ManagedSkillServiceError('managed_skill_not_found', `Managed skill "${skillId}" is not installed.`, skillId);
   return record;
 }
 
@@ -1062,6 +1162,11 @@ function hashBytes(bytes: Uint8Array): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizedErrorDetail(detail: string | undefined): string | undefined {
+  const normalized = detail?.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  return normalized ? normalized.slice(0, 512) : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

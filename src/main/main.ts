@@ -10,7 +10,11 @@ import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService, mimeTypeForFilename } from './assetService';
 import { AgentRuntime } from './agentRuntime';
-import { ManagedSkillService } from './managedSkillService';
+import {
+  ManagedSkillService,
+  ManagedSkillServiceError,
+  managedSkillErrorView,
+} from './managedSkillService';
 import { ManagedSkillStore } from './managedSkillStore';
 import { AgentImportService } from './agentImportService';
 import { AgentImportApiServer } from './agentImportApi';
@@ -128,7 +132,12 @@ import { oauthLoginManager } from './agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import { resolveRipgrepCommand } from './agentRipgrep';
 import { buildAgentLocalToolProcessEnv } from './agentToolProcess';
-import type { AgentImageGenerationSettingsInput, AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
+import type {
+  AgentImageGenerationSettingsInput,
+  AgentProviderConfigInput,
+  AgentRuntimeSettingsInput,
+  ManagedSkillCommandResult,
+} from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
 import {
   loadAppPreferences,
@@ -2765,6 +2774,14 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   '.txt',
 ]);
 
+async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<ManagedSkillCommandResult<T>> {
+  try {
+    return { ok: true, value: await operation() };
+  } catch (error) {
+    return { ok: false, error: managedSkillErrorView(error) };
+  }
+}
+
 async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   const conversationId = () => String(args.conversationId);
   switch (command) {
@@ -2968,53 +2985,57 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_undo_skill_agent_edit':
       return agentRuntime.undoLastAgentSkillEdit(conversationId(), String(args.skillName));
     case 'agent_managed_skill_catalog':
-      return managedSkillService.loadCatalog();
+      return managedSkillCommand(() => managedSkillService.loadCatalog());
     case 'agent_managed_skill_discover':
-      return managedSkillService.discover({
+      return managedSkillCommand(() => managedSkillService.discover({
         sourceUrl: typeof args.sourceUrl === 'string' ? args.sourceUrl : undefined,
         catalogId: typeof args.catalogId === 'string' ? args.catalogId : undefined,
-      });
+      }));
     case 'agent_managed_skill_install':
-      return managedSkillService.install({
+      return managedSkillCommand(() => managedSkillService.install({
         discoveryId: String(args.discoveryId ?? ''),
         candidateId: String(args.candidateId ?? ''),
         expectedCommit: String(args.expectedCommit ?? ''),
-      });
+      }));
     case 'agent_managed_skill_list':
-      return managedSkillService.list();
+      return managedSkillCommand(() => managedSkillService.list());
     case 'agent_managed_skill_check_updates':
-      return managedSkillService.checkUpdates(typeof args.skillId === 'string' ? args.skillId : undefined);
+      return managedSkillCommand(() => managedSkillService.checkUpdates(typeof args.skillId === 'string' ? args.skillId : undefined));
     case 'agent_managed_skill_preview_update':
-      return managedSkillService.previewUpdate({
+      return managedSkillCommand(() => managedSkillService.previewUpdate({
         skillId: String(args.skillId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
-      });
+      }));
     case 'agent_managed_skill_apply_update':
-      return managedSkillService.applyUpdate({
+      return managedSkillCommand(() => managedSkillService.applyUpdate({
         skillId: String(args.skillId ?? ''),
         previewId: String(args.previewId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
         expectedCandidateHash: String(args.expectedCandidateHash ?? ''),
-      });
+      }));
     case 'agent_managed_skill_set_enabled': {
-      if (typeof args.enabled !== 'boolean') throw new Error('Managed skill enabled state must be boolean.');
-      return managedSkillService.setEnabled({
-        skillId: String(args.skillId ?? ''),
-        enabled: args.enabled,
-        expectedActiveHash: String(args.expectedActiveHash ?? ''),
+      return managedSkillCommand(() => {
+        if (typeof args.enabled !== 'boolean') {
+          throw new ManagedSkillServiceError('invalid_request', 'Managed skill enabled state must be boolean.');
+        }
+        return managedSkillService.setEnabled({
+          skillId: String(args.skillId ?? ''),
+          enabled: args.enabled,
+          expectedActiveHash: String(args.expectedActiveHash ?? ''),
+        });
       });
     }
     case 'agent_managed_skill_rollback':
-      return managedSkillService.rollback({
+      return managedSkillCommand(() => managedSkillService.rollback({
         skillId: String(args.skillId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
         expectedPreviousHash: String(args.expectedPreviousHash ?? ''),
-      });
+      }));
     case 'agent_managed_skill_uninstall':
-      return managedSkillService.uninstall({
+      return managedSkillCommand(() => managedSkillService.uninstall({
         skillId: String(args.skillId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
-      });
+      }));
     case 'agent_update_agent_definition':
       return agentRuntime.updateAgentDefinition(
         conversationId(),

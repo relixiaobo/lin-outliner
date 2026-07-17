@@ -823,6 +823,80 @@ export interface SkillDefinition {
 
 export type ManagedSkillCompatibilityStatus = 'compatible' | 'unknown' | 'incompatible';
 
+export const MANAGED_SKILL_ERROR_CODES = [
+  'invalid_github_url',
+  'unsupported_github_url',
+  'github_not_found',
+  'github_rate_limited',
+  'github_unavailable',
+  'github_response_too_large',
+  'github_invalid_response',
+  'github_redirect_rejected',
+  'github_timeout',
+  'github_tree_truncated',
+  'too_many_tree_entries',
+  'too_many_skill_candidates',
+  'too_many_matching_refs',
+  'duplicate_skill_name',
+  'invalid_path',
+  'hidden_file',
+  'nested_git_data',
+  'symlink',
+  'submodule',
+  'executable_file',
+  'unsupported_entry',
+  'file_count_exceeded',
+  'file_size_exceeded',
+  'total_size_exceeded',
+  'missing_skill_file',
+  'duplicate_skill_file',
+  'invalid_frontmatter',
+  'invalid_skill_name',
+  'invalid_description',
+  'embedded_shell',
+  'invalid_text',
+  'unsupported_binary',
+  'secret_content',
+  'invalid_compatibility',
+  'incompatible_tenon',
+  'missing_source',
+  'catalog_entry_mismatch',
+  'stale_discovery',
+  'candidate_not_found',
+  'candidate_changed',
+  'skill_disabled',
+  'stale_skill_version',
+  'skill_modified',
+  'no_update',
+  'skill_moved',
+  'skill_renamed',
+  'stale_update_preview',
+  'previous_version_missing',
+  'previous_version_modified',
+  'catalog_unavailable',
+  'catalog_entry_not_found',
+  'discovery_expired',
+  'update_preview_expired',
+  'managed_skill_not_found',
+  'invalid_catalog',
+  'invalid_catalog_cache',
+  'invalid_request',
+  'update_failed',
+  'rolled_back',
+  'unexpected_error',
+] as const;
+
+export type ManagedSkillErrorCode = typeof MANAGED_SKILL_ERROR_CODES[number];
+
+export interface ManagedSkillErrorView {
+  code: ManagedSkillErrorCode;
+  detail?: string;
+}
+
+export type ManagedSkillCommandResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: ManagedSkillErrorView };
+
 export interface ManagedSkillCompatibilityView {
   status: ManagedSkillCompatibilityStatus;
   appVersion: string;
@@ -845,7 +919,7 @@ export interface ManagedSkillCatalogView {
   status: 'fresh' | 'cached' | 'unavailable';
   entries: ManagedSkillCatalogEntryView[];
   refreshedAt?: number;
-  error?: string;
+  error?: ManagedSkillErrorView;
 }
 
 export interface ManagedSkillDiscoveryCandidateView {
@@ -901,7 +975,7 @@ export interface ManagedSkillView {
   previous?: ManagedSkillVersionView;
   updateCommit?: string;
   scripts: string[];
-  diagnostic?: string;
+  diagnostic?: ManagedSkillErrorView;
 }
 
 export interface ManagedSkillUpdatePreviewView {

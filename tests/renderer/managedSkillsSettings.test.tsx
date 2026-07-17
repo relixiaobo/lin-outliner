@@ -4,9 +4,13 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type {
   ManagedSkillCatalogView,
+  ManagedSkillCommandResult,
   ManagedSkillDiscoveryView,
+  ManagedSkillErrorCode,
   ManagedSkillView,
 } from '../../src/core/types';
+import type { Locale } from '../../src/core/locale';
+import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { ManagedSkillsSettings } from '../../src/renderer/ui/agent/ManagedSkillsSettings';
 
 interface Rendered {
@@ -41,7 +45,7 @@ describe('ManagedSkillsSettings', () => {
   test('keeps catalog failure separate from the installed empty state', async () => {
     const rendered = renderComponent(async (command) => {
       if (command === 'agent_managed_skill_catalog') {
-        return { status: 'unavailable', entries: [], error: 'offline' } satisfies ManagedSkillCatalogView;
+        return { status: 'unavailable', entries: [], error: { code: 'github_unavailable' } } satisfies ManagedSkillCatalogView;
       }
       if (command === 'agent_managed_skill_list') return [];
       throw new Error(`Unexpected command: ${command}`);
@@ -49,7 +53,7 @@ describe('ManagedSkillsSettings', () => {
     await flush();
 
     expect(rendered.document.body.textContent).toContain('Catalog unavailable');
-    expect(rendered.document.body.textContent).toContain('offline');
+    expect(rendered.document.body.textContent).toContain('GitHub is unavailable');
     expect(rendered.document.body.textContent).toContain('No managed skills installed.');
     expect(rendered.document.body.textContent).toContain('Public repository or skill URL');
   });
@@ -117,7 +121,7 @@ describe('ManagedSkillsSettings', () => {
       name: 'modified-skill',
       recommended: false,
       status: 'modified' as const,
-      diagnostic: 'Managed skill modified-skill was modified locally.',
+      diagnostic: { code: 'skill_modified' as const, detail: 'modified-skill' },
     };
     const rendered = renderComponent(async (command) => {
       if (command === 'agent_managed_skill_catalog') return { status: 'fresh', entries: [] } satisfies ManagedSkillCatalogView;
@@ -138,7 +142,7 @@ describe('ManagedSkillsSettings', () => {
       if (command === 'agent_managed_skill_catalog') return catalog(false);
       if (command === 'agent_managed_skill_list') return [];
       if (command === 'agent_managed_skill_discover') return discovery();
-      if (command === 'agent_managed_skill_install') throw new Error('Executable support files are not allowed.');
+      if (command === 'agent_managed_skill_install') return managedFailure('executable_file', 'scripts/run.py');
       throw new Error(`Unexpected command: ${command}`);
     });
     await flush();
@@ -159,7 +163,37 @@ describe('ManagedSkillsSettings', () => {
     });
 
     const dialogAlert = rendered.document.querySelector('.managed-skill-dialog [role="alert"]');
-    expect(dialogAlert?.textContent).toContain('Executable support files are not allowed.');
+    expect(dialogAlert?.textContent).toContain('Executable support files are not allowed. (scripts/run.py)');
+  });
+
+  test('localizes managed skill command errors in Simplified Chinese', async () => {
+    const rendered = renderComponent(async (command) => {
+      if (command === 'agent_managed_skill_catalog') return catalog(false);
+      if (command === 'agent_managed_skill_list') return [];
+      if (command === 'agent_managed_skill_discover') return discovery();
+      if (command === 'agent_managed_skill_install') return managedFailure('github_not_found');
+      throw new Error(`Unexpected command: ${command}`);
+    }, 'zh-Hans');
+    await flush();
+
+    const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === '安装');
+    if (!catalogInstall) throw new Error('Missing localized catalog install button');
+    await act(async () => {
+      catalogInstall.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const reviewInstall = buttons(rendered.document).filter((button) => button.textContent?.trim() === '安装').at(-1);
+    if (!reviewInstall) throw new Error('Missing localized reviewed install button');
+    await act(async () => {
+      reviewInstall.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const text = rendered.document.body.textContent ?? '';
+    expect(text).toContain('未找到对应的 GitHub 仓库、引用或技能路径。');
+    expect(text).not.toContain('GitHub resource was not found');
   });
 
   test('requires an explicit candidate choice for a multi-skill repository', async () => {
@@ -216,14 +250,29 @@ describe('ManagedSkillsSettings', () => {
   });
 });
 
-function renderComponent(invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>): Rendered {
+function renderComponent(
+  invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>,
+  locale: Locale = 'en',
+): Rendered {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
-  Object.assign(window, { lin: { invoke } });
+  Object.assign(window, {
+    lin: {
+      initialLanguage: locale,
+      invoke: async (command: string, args?: Record<string, unknown>) => {
+        const value = await invoke(command, args);
+        return isManagedCommandResult(value) ? value : { ok: true, value };
+      },
+    },
+  });
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);
-  act(() => root.render(<ManagedSkillsSettings onApplied={async () => undefined} />));
+  act(() => root.render(
+    <I18nProvider>
+      <ManagedSkillsSettings onApplied={async () => undefined} />
+    </I18nProvider>,
+  ));
   const rendered = { cleanup: () => act(() => root.unmount()), document };
   mounted.push(rendered);
   return rendered;
@@ -255,6 +304,14 @@ function installDomGlobals(window: Window): void {
 
 function buttons(document: Document): HTMLButtonElement[] {
   return [...document.querySelectorAll<HTMLButtonElement>('button')];
+}
+
+function managedFailure(code: ManagedSkillErrorCode, detail?: string): ManagedSkillCommandResult<never> {
+  return { ok: false, error: { code, ...(detail ? { detail } : {}) } };
+}
+
+function isManagedCommandResult(value: unknown): value is ManagedSkillCommandResult<unknown> {
+  return typeof value === 'object' && value !== null && 'ok' in value && typeof value.ok === 'boolean';
 }
 
 function catalog(installed: boolean): ManagedSkillCatalogView {

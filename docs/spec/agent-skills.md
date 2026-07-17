@@ -177,6 +177,10 @@ resolved to a 40-character commit before discovery. Repository URLs may expose
 multiple `SKILL.md` folders; the user must explicitly select one. Install IPC
 then carries the discovery id, candidate id, and expected commit, never a local
 filesystem path.
+Default-branch tree URLs use repository metadata plus one exact-ref lookup.
+Other branch/tag tree URLs use one bounded matching-ref lookup per namespace,
+select the longest ref that prefixes the URL path, and cap the combined result;
+request count never grows with subdirectory depth.
 
 Before install or update, Tenon validates the complete selected subtree. It
 requires strict YAML frontmatter, a canonical lowercase skill name, and a
@@ -207,7 +211,10 @@ revalidated as normal directories before managed reads, writes, or deletion, so
 a locally inserted symlink cannot redirect an operation outside the managed
 store. The content address becomes active only after an atomic index write. A failed install,
 validation, update, or registry refresh leaves or restores the prior index and
-usable version. Updates may resolve a tracking ref automatically, but they only
+usable version. New content is removed after a failed activation only when index
+restoration and registry refresh both succeed; if restoration itself fails, the
+content remains so whichever index persisted cannot reference deleted bytes, and
+later store initialization may prune it as an orphan. Updates may resolve a tracking ref automatically, but they only
 record **Update available**. Preview downloads and validates the candidate and
 shows commits, hashes, changed paths, scripts, and a bounded `SKILL.md` diff.
 Only an explicit Apply flips the active hash. One clean prior version is retained
@@ -233,6 +240,13 @@ that becomes incompatible stays installed but is excluded from runtime until a
 compatible update or rollback is explicitly applied. Only an enabled, clean,
 compatible version enters the skill registry, and invocation revalidates its
 expected subtree hash immediately before rendering.
+
+Managed lifecycle commands cross IPC as typed success/error envelopes. Errors
+contain only a stable code and an optional bounded path/name/ref detail; internal
+English exception messages never cross the process seam. Settings maps those
+codes and persisted diagnostics through the active English or Simplified Chinese
+message surface, including catalog fallback, validation, network, update,
+modified, rollback, and uninstall failures.
 
 ## Frontmatter
 

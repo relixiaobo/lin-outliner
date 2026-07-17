@@ -20,6 +20,7 @@ const API_JSON_LIMIT = 512 * 1024;
 const MAX_REDIRECTS = 2;
 const MAX_TREE_URL_PARTS = 20;
 const MAX_TAG_PEELS = 4;
+const MAX_MATCHING_REFS = 100;
 const DOWNLOAD_CONCURRENCY = 6;
 const DEFAULT_TIMEOUT_MS = 12_000;
 
@@ -36,6 +37,7 @@ export type ManagedSkillNetworkErrorCode =
   | 'github_tree_truncated'
   | 'too_many_tree_entries'
   | 'too_many_skill_candidates'
+  | 'too_many_matching_refs'
   | 'duplicate_skill_name';
 
 export class ManagedSkillNetworkError extends Error {
@@ -77,6 +79,11 @@ interface GitHubCommitObjectResponse {
 }
 
 interface GitHubRefResponse {
+  object?: unknown;
+}
+
+interface GitHubMatchingRefResponse {
+  ref?: unknown;
   object?: unknown;
 }
 
@@ -227,9 +234,7 @@ export class ManagedSkillGitHubClient {
       };
     }
     if (parsed.kind === 'repository') {
-      const response = await this.apiJson(`/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`) as GitHubRepositoryResponse;
-      const trackingRef = typeof response.default_branch === 'string' ? validateGitHubTrackingRef(response.default_branch) : '';
-      if (!trackingRef) throw new ManagedSkillNetworkError('github_invalid_response', 'GitHub did not return a default branch for this repository.');
+      const trackingRef = await this.readDefaultBranch(parsed.owner, parsed.repo);
       const commit = await this.resolveCommit(parsed.owner, parsed.repo, trackingRef);
       return {
         owner: parsed.owner,
@@ -270,12 +275,55 @@ export class ManagedSkillGitHubClient {
       const ref = (tail[0] ?? '').toLowerCase();
       return { parts: 1, ref, commit: await this.resolveCommit(owner, repo, ref) };
     }
-    for (let parts = tail.length; parts >= 1; parts -= 1) {
-      const ref = tail.slice(0, parts).join('/');
-      const commit = await this.tryResolveCommit(owner, repo, ref);
-      if (commit) return { parts, ref, commit };
+    const defaultBranch = await this.readDefaultBranch(owner, repo);
+    if (refPrefixesTail(defaultBranch, tail)) {
+      const branch = await this.tryReadRef(owner, repo, 'heads', defaultBranch);
+      if (branch) {
+        return {
+          parts: defaultBranch.split('/').length,
+          ref: defaultBranch,
+          commit: await this.peelToCommit(owner, repo, branch),
+        };
+      }
+    }
+    const prefix = validateGitHubTrackingRef(tail[0] ?? '');
+    const [branches, tags] = await Promise.all([
+      this.readMatchingRefs(owner, repo, 'heads', prefix),
+      this.readMatchingRefs(owner, repo, 'tags', prefix),
+    ]);
+    if (branches.length + tags.length > MAX_MATCHING_REFS) {
+      throw new ManagedSkillNetworkError(
+        'too_many_matching_refs',
+        `GitHub returned more than ${MAX_MATCHING_REFS} matching branches and tags.`,
+      );
+    }
+    const match = [
+      ...branches.map((candidate) => ({ ...candidate, priority: 0 })),
+      ...tags.map((candidate) => ({ ...candidate, priority: 1 })),
+    ]
+      .filter((candidate) => refPrefixesTail(candidate.ref, tail))
+      .sort((left, right) => right.parts - left.parts || left.priority - right.priority)[0];
+    if (match) {
+      return {
+        parts: match.parts,
+        ref: match.ref,
+        commit: await this.peelToCommit(owner, repo, match.object),
+      };
     }
     throw new ManagedSkillNetworkError('github_not_found', 'The branch, tag, or commit in this GitHub URL could not be resolved.');
+  }
+
+  private async readDefaultBranch(owner: string, repo: string): Promise<string> {
+    const response = await this.apiJson(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+    ) as GitHubRepositoryResponse;
+    const branch = typeof response.default_branch === 'string'
+      ? validateGitHubTrackingRef(response.default_branch)
+      : '';
+    if (!branch) {
+      throw new ManagedSkillNetworkError('github_invalid_response', 'GitHub did not return a default branch for this repository.');
+    }
+    return branch;
   }
 
   private async resolveCommit(owner: string, repo: string, ref: string): Promise<string> {
@@ -315,6 +363,47 @@ export class ManagedSkillGitHubClient {
       if (error instanceof ManagedSkillNetworkError && error.code === 'github_not_found') return null;
       throw error;
     }
+  }
+
+  private async readMatchingRefs(
+    owner: string,
+    repo: string,
+    namespace: 'heads' | 'tags',
+    prefix: string,
+  ): Promise<Array<{ ref: string; parts: number; object: GitHubObjectReference }>> {
+    const response = await this.apiJson(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/matching-refs/${namespace}/${encodeRefPath(prefix)}`,
+    );
+    if (!Array.isArray(response)) {
+      throw new ManagedSkillNetworkError('github_invalid_response', 'GitHub returned an invalid matching-ref response.');
+    }
+    if (response.length > MAX_MATCHING_REFS) {
+      throw new ManagedSkillNetworkError(
+        'too_many_matching_refs',
+        `GitHub returned more than ${MAX_MATCHING_REFS} matching ${namespace}.`,
+      );
+    }
+    const namespacePrefix = `refs/${namespace}/`;
+    return response.map((value): { ref: string; parts: number; object: GitHubObjectReference } => {
+      if (!isRecord(value)) {
+        throw new ManagedSkillNetworkError('github_invalid_response', 'GitHub returned an invalid matching ref.');
+      }
+      const entry = value as GitHubMatchingRefResponse;
+      if (typeof entry.ref !== 'string' || !entry.ref.startsWith(namespacePrefix)) {
+        throw new ManagedSkillNetworkError('github_invalid_response', 'GitHub returned an invalid matching ref.');
+      }
+      const ref = entry.ref.slice(namespacePrefix.length);
+      try {
+        validateGitHubTrackingRef(ref);
+      } catch {
+        throw new ManagedSkillNetworkError('github_invalid_response', 'GitHub returned an invalid matching ref.');
+      }
+      return {
+        ref,
+        parts: ref.split('/').length,
+        object: parseGitHubObjectReference(entry.object, 'GitHub returned an invalid matching ref object.'),
+      };
+    });
   }
 
   private async peelToCommit(
@@ -505,6 +594,11 @@ function encodeRefPath(ref: string): string {
   return ref.split('/').map(encodeURIComponent).join('/');
 }
 
+function refPrefixesTail(ref: string, tail: readonly string[]): boolean {
+  const parts = ref.split('/');
+  return parts.length <= tail.length && parts.every((part, index) => part === tail[index]);
+}
+
 function parseCommitSha(value: unknown, message: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{40}$/i.test(value)) {
     throw new ManagedSkillNetworkError('github_invalid_response', message);
@@ -566,7 +660,7 @@ function rejectDuplicateCandidateNames(candidates: readonly ManagedSkillGitHubCa
       throw new ManagedSkillNetworkError(
         'duplicate_skill_name',
         `Repository candidates ${previous || '(root)'} and ${candidate.view.subdirectory || '(root)'} both declare skill name "${candidate.view.name}".`,
-        candidate.view.name,
+        `${candidate.view.name} @ ${previous || '/'} | ${candidate.view.subdirectory || '/'}`,
       );
     }
     byName.set(candidate.view.name, candidate.view.subdirectory);
@@ -618,7 +712,7 @@ async function readBoundedBody(response: Response, maxBytes: number): Promise<Ui
 
 function githubStatusError(response: Response, url: URL): ManagedSkillNetworkError {
   if (response.status === 404 || response.status === 422) {
-    return new ManagedSkillNetworkError('github_not_found', `GitHub resource was not found: ${url.pathname}`);
+    return new ManagedSkillNetworkError('github_not_found', `GitHub resource was not found: ${url.pathname}`, url.pathname);
   }
   if (response.status === 403 || response.status === 429) {
     const reset = response.headers.get('x-ratelimit-reset');

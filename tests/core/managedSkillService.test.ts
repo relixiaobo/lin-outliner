@@ -2,8 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmod, lstat, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { ManagedSkillGitHubClient, ManagedSkillGitHubDiscovery } from '../../src/main/managedSkillGitHub';
-import { ManagedSkillService } from '../../src/main/managedSkillService';
+import {
+  ManagedSkillNetworkError,
+  type ManagedSkillGitHubClient,
+  type ManagedSkillGitHubDiscovery,
+} from '../../src/main/managedSkillGitHub';
+import { ManagedSkillService, managedSkillErrorView } from '../../src/main/managedSkillService';
 import { ManagedSkillStore } from '../../src/main/managedSkillStore';
 import { validateManagedSkillFiles, type ValidatedManagedSkill } from '../../src/main/managedSkillValidation';
 
@@ -17,6 +21,15 @@ afterEach(async () => {
 });
 
 describe('managed skill service', () => {
+  test('exports stable error views without leaking unexpected error messages', () => {
+    expect(managedSkillErrorView(new ManagedSkillNetworkError(
+      'github_not_found',
+      'GitHub resource was not found: /repos/private/repo',
+      '/repos/public/repo',
+    ))).toEqual({ code: 'github_not_found', detail: '/repos/public/repo' });
+    expect(managedSkillErrorView(new Error('internal path and token'))).toEqual({ code: 'unexpected_error' });
+  });
+
   test('installs disabled, enables explicitly, discovers updates without activation, then applies and rolls back', async () => {
     const root = await temporaryRoot();
     const github = new FakeGitHub();
@@ -80,7 +93,7 @@ describe('managed skill service', () => {
       expectedPreviousHash: installed.active.contentHash,
     });
     expect(rolledBack.active.contentHash).toBe(installed.active.contentHash);
-    expect(rolledBack.diagnostic).toContain('Rolled back');
+    expect(rolledBack.diagnostic).toMatchObject({ code: 'rolled_back' });
     expect(changes).toBeGreaterThanOrEqual(4);
   });
 
@@ -106,6 +119,31 @@ describe('managed skill service', () => {
     const [checked] = await service.checkUpdates(installed.id);
     expect(checked?.status).toBe('failed');
     expect(checked?.active.contentHash).toBe(installed.active.contentHash);
+    expect(checked?.diagnostic).toEqual({ code: 'unexpected_error' });
+  });
+
+  test('keeps newly installed content when index restoration cannot be persisted', async () => {
+    const root = await temporaryRoot();
+    const store = new ManagedSkillStore(root);
+    const github = new FakeGitHub();
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store,
+      github: github as unknown as ManagedSkillGitHubClient,
+      onChanged: () => { throw new Error('registry refresh failed'); },
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    store.replaceIndex = async () => { throw new Error('index restoration failed'); };
+
+    await expect(service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    })).rejects.toThrow('registry refresh failed');
+
+    const [persisted] = (await store.readIndex()).skills;
+    expect(persisted).toBeDefined();
+    expect(await store.verifyVersion(persisted!.id, persisted!.active)).toEqual({ ok: true });
   });
 
   test('does not project a stale update check onto a reinstalled same-name skill', async () => {
@@ -180,7 +218,7 @@ describe('managed skill service', () => {
       enabled: true,
       compatibility: { status: 'incompatible', appVersion: '0.2.0' },
     });
-    expect(incompatible?.diagnostic).toContain('requires Tenon');
+    expect(incompatible?.diagnostic).toMatchObject({ code: 'incompatible_tenon' });
     expect(await upgraded.activeRuntimeRoots()).toEqual([]);
     await expect(upgraded.assertInvocable(installed.id, installed.active.contentHash))
       .rejects.toThrow('not compatible with this Tenon version');
@@ -232,6 +270,45 @@ describe('managed skill service', () => {
       contentHash: enabled.active.contentHash,
     });
     await service.assertInvocable(enabled.id, enabled.active.contentHash);
+  });
+
+  test('keeps newly active update content when index restoration cannot be persisted', async () => {
+    const root = await temporaryRoot();
+    const store = new ManagedSkillStore(root);
+    const github = new FakeGitHub();
+    let rejectRefresh = false;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store,
+      github: github as unknown as ManagedSkillGitHubClient,
+      onChanged: () => {
+        if (rejectRefresh) throw new Error('registry refresh failed');
+      },
+    });
+    const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+    github.version = 2;
+    const preview = await service.previewUpdate({
+      skillId: installed.id,
+      expectedActiveHash: installed.active.contentHash,
+    });
+    store.replaceIndex = async () => { throw new Error('index restoration failed'); };
+    rejectRefresh = true;
+
+    await expect(service.applyUpdate({
+      skillId: installed.id,
+      previewId: preview.id,
+      expectedActiveHash: installed.active.contentHash,
+      expectedCandidateHash: preview.candidate.contentHash,
+    })).rejects.toThrow('registry refresh failed');
+
+    const [persisted] = (await store.readIndex()).skills;
+    expect(persisted?.active.contentHash).toBe(preview.candidate.contentHash);
+    expect(await store.verifyVersion(persisted!.id, persisted!.active)).toEqual({ ok: true });
   });
 
   test('rejects an update preview created before a same-hash reinstall', async () => {
@@ -437,8 +514,7 @@ describe('managed skill service', () => {
 
     const [modified] = await service.list();
     expect(modified).toMatchObject({ status: 'modified' });
-    expect(modified?.diagnostic).toContain('modified locally');
-    expect(modified?.diagnostic).not.toContain('suppressed');
+    expect(modified?.diagnostic).toEqual({ code: 'skill_modified', detail: 'demo-skill' });
   });
 
   test('caches the last valid catalog and falls back to it when refresh validation fails', async () => {
@@ -478,7 +554,7 @@ describe('managed skill service', () => {
       refreshedAt: 42_000,
       entries: [{ id: 'demo-skill' }],
     });
-    expect(cached.error).toContain('duplicate');
+    expect(cached.error).toEqual({ code: 'invalid_catalog' });
   });
 
   test('installs a catalog discovery as recommended and reports it installed', async () => {
@@ -556,7 +632,7 @@ describe('managed skill service', () => {
     const catalog = await service.loadCatalog();
     expect(catalog.status).toBe('unavailable');
     expect(catalog.entries).toEqual([]);
-    expect(catalog.error).toContain('compatibilityRange');
+    expect(catalog.error).toEqual({ code: 'invalid_catalog' });
   });
 
   test('accepts the repository catalog as the six optional Linlab recommendations', async () => {

@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { ManagedSkillCompatibilityView } from '../core/types';
+import {
+  MANAGED_SKILL_ERROR_CODES,
+  type ManagedSkillCompatibilityView,
+  type ManagedSkillErrorCode,
+} from '../core/types';
 import {
   PRIVATE_JSON_FILE_OPTIONS,
   readJsonOrDefault,
@@ -58,6 +62,8 @@ export interface ManagedSkillRecord {
   diagnostic?: {
     code: 'modified' | 'name_conflict' | 'update_failed' | 'rolled_back';
     message: string;
+    errorCode?: ManagedSkillErrorCode;
+    detail?: string;
     at: number;
   };
 }
@@ -332,11 +338,15 @@ function parseManagedSkillRecord(value: unknown): ManagedSkillRecord {
     trackingRef: requiredString(value.origin.trackingRef, 'origin.trackingRef'),
   };
   const diagnosticValue = value.diagnostic;
+  const diagnosticErrorCode = isRecord(diagnosticValue) ? managedSkillErrorCode(diagnosticValue.errorCode) : undefined;
+  const diagnosticDetail = isRecord(diagnosticValue) ? boundedOptionalString(diagnosticValue.detail) : undefined;
   const diagnostic: ManagedSkillRecord['diagnostic'] = isRecord(diagnosticValue)
     && (diagnosticValue.code === 'modified' || diagnosticValue.code === 'name_conflict' || diagnosticValue.code === 'update_failed' || diagnosticValue.code === 'rolled_back')
     ? {
         code: diagnosticValue.code,
         message: requiredString(diagnosticValue.message, 'diagnostic.message'),
+        ...(diagnosticErrorCode ? { errorCode: diagnosticErrorCode } : {}),
+        ...(diagnosticDetail ? { detail: diagnosticDetail } : {}),
         at: requiredNumber(diagnosticValue.at, 'diagnostic.at'),
       }
     : undefined;
@@ -502,6 +512,18 @@ function assertSafeIdentity(skillId: string, contentHash: string): void {
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`Managed skill index field ${field} is invalid.`);
   return value;
+}
+
+function managedSkillErrorCode(value: unknown): ManagedSkillErrorCode | undefined {
+  return typeof value === 'string' && (MANAGED_SKILL_ERROR_CODES as readonly string[]).includes(value)
+    ? value as ManagedSkillErrorCode
+    : undefined;
+}
+
+function boundedOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 512) return undefined;
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  return normalized || undefined;
 }
 
 function requiredNumber(value: unknown, field: string): number {

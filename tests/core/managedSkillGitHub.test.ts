@@ -53,7 +53,7 @@ describe('managed skill GitHub client', () => {
       appVersion: '0.1.0',
     })).rejects.toMatchObject({
       code: 'duplicate_skill_name',
-      detail: 'alpha-skill',
+      detail: 'alpha-skill @ skills/alpha | skills/beta',
     });
   });
 
@@ -62,10 +62,14 @@ describe('managed skill GitHub client', () => {
     const commit = 'b'.repeat(40);
     const fetchImpl: typeof fetch = async (input) => {
       const url = new URL(requestUrl(input));
-      if (url.hostname === 'api.github.com' && url.pathname.includes('/git/ref/heads/')) {
-        return url.pathname.endsWith('/git/ref/heads/feature/one')
-          ? jsonResponse({ object: { type: 'commit', sha: commit } })
-          : jsonResponse({ message: 'not found' }, 404);
+      if (url.hostname === 'api.github.com' && url.pathname === '/repos/public/repo') {
+        return jsonResponse({ default_branch: 'main' });
+      }
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/heads/feature')) {
+        return jsonResponse([{ ref: 'refs/heads/feature/one', object: { type: 'commit', sha: commit } }]);
+      }
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/tags/feature')) {
+        return jsonResponse([]);
       }
       if (url.hostname === 'api.github.com' && url.pathname.includes('/git/trees/')) {
         return jsonResponse({ truncated: false, tree: [treeEntry('skills/alpha/SKILL.md', skill)] });
@@ -88,23 +92,57 @@ describe('managed skill GitHub client', () => {
     expect(discovery.candidates).toHaveLength(1);
   });
 
+  test('resolves a default-branch tree URL with a fixed API request count', async () => {
+    const skill = skillMarkdown('default-skill', 'Default branch skill.');
+    const commit = '9'.repeat(40);
+    const requestedApiPaths: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(requestUrl(input));
+      if (url.hostname === 'api.github.com') requestedApiPaths.push(url.pathname);
+      if (url.hostname === 'api.github.com' && url.pathname === '/repos/public/repo') {
+        return jsonResponse({ default_branch: 'main' });
+      }
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/ref/heads/main')) {
+        return jsonResponse({ object: { type: 'commit', sha: commit } });
+      }
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith(`/git/trees/${commit}`)) {
+        return jsonResponse({ truncated: false, tree: [treeEntry('skills/default/SKILL.md', skill)] });
+      }
+      if (url.hostname === 'raw.githubusercontent.com') return bytesResponse(skill);
+      return jsonResponse({ message: 'not found' }, 404);
+    };
+    const client = new ManagedSkillGitHubClient({ fetchImpl });
+
+    const discovery = await client.discover({
+      sourceUrl: 'https://github.com/public/repo/tree/main/skills/default',
+      appVersion: '0.1.0',
+    });
+
+    expect(discovery.origin).toMatchObject({ trackingRef: 'main', subdirectory: 'skills/default', commit });
+    expect(requestedApiPaths).toEqual([
+      '/repos/public/repo',
+      '/repos/public/repo/git/ref/heads/main',
+      `/repos/public/repo/git/trees/${commit}`,
+    ]);
+  });
+
   test('resolves an annotated tag to its pinned commit', async () => {
     const skill = skillMarkdown('tagged-skill', 'Tagged skill.');
     const tagObject = 'c'.repeat(40);
     const commit = 'd'.repeat(40);
     const fetchImpl: typeof fetch = async (input) => {
       const url = new URL(requestUrl(input));
-      if (url.hostname === 'api.github.com' && url.pathname.includes('/git/ref/heads/')) {
-        return jsonResponse({ message: 'not found' }, 404);
+      if (url.hostname === 'api.github.com' && url.pathname === '/repos/public/repo') {
+        return jsonResponse({ default_branch: 'main' });
       }
-      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/ref/tags/v1.0.0')) {
-        return jsonResponse({ object: { type: 'tag', sha: tagObject } });
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/heads/v1.0.0')) {
+        return jsonResponse([]);
+      }
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/tags/v1.0.0')) {
+        return jsonResponse([{ ref: 'refs/tags/v1.0.0', object: { type: 'tag', sha: tagObject } }]);
       }
       if (url.hostname === 'api.github.com' && url.pathname.endsWith(`/git/tags/${tagObject}`)) {
         return jsonResponse({ object: { type: 'commit', sha: commit } });
-      }
-      if (url.hostname === 'api.github.com' && url.pathname.includes('/git/ref/tags/')) {
-        return jsonResponse({ message: 'not found' }, 404);
       }
       if (url.hostname === 'api.github.com' && url.pathname.includes('/git/trees/')) {
         return jsonResponse({ truncated: false, tree: [treeEntry('skills/tagged/SKILL.md', skill)] });
@@ -120,6 +158,27 @@ describe('managed skill GitHub client', () => {
     });
 
     expect(discovery.origin).toMatchObject({ trackingRef: 'v1.0.0', commit });
+  });
+
+  test('rejects an excessive matching-ref response', async () => {
+    const refs = Array.from({ length: 101 }, (_, index) => ({
+      ref: `refs/heads/feature/${index}`,
+      object: { type: 'commit', sha: 'a'.repeat(40) },
+    }));
+    const client = new ManagedSkillGitHubClient({
+      fetchImpl: async (input) => {
+        const url = new URL(requestUrl(input));
+        if (url.pathname === '/repos/public/repo') return jsonResponse({ default_branch: 'main' });
+        if (url.pathname.endsWith('/git/matching-refs/heads/feature')) return jsonResponse(refs);
+        if (url.pathname.endsWith('/git/matching-refs/tags/feature')) return jsonResponse([]);
+        return jsonResponse({ message: 'not found' }, 404);
+      },
+    });
+
+    await expect(client.discover({
+      sourceUrl: 'https://github.com/public/repo/tree/feature/one/skills/demo',
+      appVersion: '0.1.0',
+    })).rejects.toMatchObject({ code: 'too_many_matching_refs' });
   });
 
   test('verifies a full commit SHA through the bounded Git object endpoint', async () => {

@@ -3,10 +3,11 @@ import type {
   ManagedSkillCatalogView,
   ManagedSkillDiscoveryCandidateView,
   ManagedSkillDiscoveryView,
+  ManagedSkillErrorView,
   ManagedSkillUpdatePreviewView,
   ManagedSkillView,
 } from '../../api/types';
-import { api } from '../../api/client';
+import { api, managedSkillErrorFromUnknown } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import {
   AddIcon,
@@ -47,7 +48,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
   const [sourceUrl, setSourceUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ManagedSkillErrorView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [selection, setSelection] = useState<ManagedSkillDiscoveryView | null>(null);
@@ -82,10 +83,10 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
       if (checkUpdates && installed.length > 0) {
         void api.agentManagedSkillCheckUpdates()
           .then((checked) => { if (mounted.current) setSkills(checked); })
-          .catch((cause) => { if (mounted.current) setError(errorMessage(cause)); });
+          .catch((cause) => { if (mounted.current) setError(managedSkillErrorFromUnknown(cause)); });
       }
     } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
+      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
     } finally {
       if (mounted.current) setLoading(false);
     }
@@ -103,11 +104,14 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
         setSelectedCandidateId(null);
       } else {
         const candidate = discovery.candidates[0];
-        if (!candidate) throw new Error(t.settings.skills.managedNoCandidates);
+        if (!candidate) {
+          setError({ code: 'candidate_not_found' });
+          return;
+        }
         setInstallReview({ discovery, candidate });
       }
     } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
+      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
     } finally {
       if (mounted.current) setBusy(null);
     }
@@ -139,7 +143,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
       await loadAll(false);
       await onApplied();
     } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
+      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
     } finally {
       if (mounted.current) setBusy(null);
     }
@@ -157,7 +161,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
         : t.settings.skills.managedDisabledNotice({ name: skill.name }));
       await onApplied();
     } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
+      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
     } finally {
       if (mounted.current) setBusy(null);
     }
@@ -172,7 +176,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
       setSkills(next);
       setNotice(t.settings.skills.managedCheckedNotice);
     } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
+      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
     } finally {
       if (mounted.current) setBusy(null);
     }
@@ -185,7 +189,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
       const preview = await api.agentManagedSkillPreviewUpdate(skill.id, skill.active.contentHash);
       if (mounted.current) setUpdatePreview(preview);
     } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
+      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
     } finally {
       if (mounted.current) setBusy(null);
     }
@@ -209,7 +213,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
       setNotice(t.settings.skills.managedUpdatedNotice({ name: next.name }));
       await onApplied();
     } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
+      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
     } finally {
       if (mounted.current) setBusy(null);
     }
@@ -222,7 +226,10 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
     clearFeedback();
     try {
       if (action.kind === 'rollback') {
-        if (!action.skill.previous) throw new Error(t.settings.skills.managedPreviousMissing);
+        if (!action.skill.previous) {
+          setError({ code: 'previous_version_missing' });
+          return;
+        }
         const next = await api.agentManagedSkillRollback(
           action.skill.id,
           action.skill.active.contentHash,
@@ -249,7 +256,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
       setConfirmAction(null);
       await onApplied();
     } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
+      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
     } finally {
       if (mounted.current) setBusy(null);
     }
@@ -278,7 +285,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
         ) : catalog?.status === 'unavailable' ? (
           <InsetRow
             label={t.settings.skills.managedCatalogUnavailable}
-            sublabel={catalog.error}
+            sublabel={catalog.error ? managedSkillErrorMessage(catalog.error, t) : undefined}
             trailing={(
               <Button disabled={busy !== null} onClick={() => void loadAll(false)} size="sm" variant="secondary">
                 <RefreshIcon size={ICON_SIZE.menu} />
@@ -312,7 +319,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
         {catalog?.status === 'cached' ? (
           <InsetRow
             label={t.settings.skills.managedCatalogCached}
-            sublabel={catalog.error}
+            sublabel={catalog.error ? managedSkillErrorMessage(catalog.error, t) : undefined}
             trailing={(
               <Button disabled={busy !== null} onClick={() => void loadAll(false)} size="sm" variant="ghost">
                 <RefreshIcon size={ICON_SIZE.menu} />
@@ -393,7 +400,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
                 </>
               )}
               leading={<SkillIcon size={ICON_SIZE.menu} />}
-              sublabel={skill.diagnostic ?? skill.description}
+              sublabel={skill.diagnostic ? managedSkillErrorMessage(skill.diagnostic, t) : skill.description}
               trailing={(
                 <>
                   <SettingsRowMenu
@@ -421,7 +428,7 @@ export function ManagedSkillsSettings({ onApplied }: ManagedSkillsSettingsProps)
       {error && !installReview && !updatePreview && !confirmAction ? (
         <div className="agent-settings-alert" role="alert">
           <WarningIcon size={ICON_SIZE.menu} />
-          <span>{error}</span>
+          <span>{managedSkillErrorMessage(error, t)}</span>
         </div>
       ) : null}
       {notice ? <div className="agent-settings-notice">{notice}</div> : null}
@@ -520,7 +527,7 @@ function InstallReviewDialog({
   review,
 }: {
   busy: boolean;
-  error: string | null;
+  error: ManagedSkillErrorView | null;
   onCancel: () => void;
   onInstall: () => void;
   review: InstallReview;
@@ -565,7 +572,7 @@ function UpdatePreviewDialog({
   preview,
 }: {
   busy: boolean;
-  error: string | null;
+  error: ManagedSkillErrorView | null;
   onApply: () => void;
   onCancel: () => void;
   preview: ManagedSkillUpdatePreviewView;
@@ -658,7 +665,7 @@ function ManagedSkillActionDialog({
 }: {
   action: ConfirmAction;
   busy: boolean;
-  error: string | null;
+  error: ManagedSkillErrorView | null;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -718,11 +725,12 @@ function ManagedSkillActionDialog({
   );
 }
 
-function ManagedSkillDialogError({ error }: { error: string | null }) {
+function ManagedSkillDialogError({ error }: { error: ManagedSkillErrorView | null }) {
+  const t = useT();
   return error ? (
     <div className="agent-settings-alert" role="alert">
       <WarningIcon size={ICON_SIZE.menu} />
-      <span>{error}</span>
+      <span>{managedSkillErrorMessage(error, t)}</span>
     </div>
   ) : null;
 }
@@ -755,6 +763,131 @@ function shortHash(hash: string): string {
   return hash.slice(0, 12);
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function managedSkillErrorMessage(error: ManagedSkillErrorView, t: ReturnType<typeof useT>): string {
+  let message: string;
+  switch (error.code) {
+    case 'invalid_github_url':
+    case 'unsupported_github_url':
+      message = t.settings.skills.managedErrorInvalidGitHubUrl;
+      break;
+    case 'github_not_found':
+      message = t.settings.skills.managedErrorGitHubNotFound;
+      break;
+    case 'github_rate_limited':
+      message = t.settings.skills.managedErrorGitHubRateLimited;
+      break;
+    case 'github_timeout':
+      message = t.settings.skills.managedErrorGitHubTimeout;
+      break;
+    case 'github_unavailable':
+      message = t.settings.skills.managedErrorGitHubUnavailable;
+      break;
+    case 'github_invalid_response':
+    case 'github_redirect_rejected':
+      message = t.settings.skills.managedErrorGitHubResponse;
+      break;
+    case 'github_response_too_large':
+    case 'github_tree_truncated':
+    case 'too_many_tree_entries':
+    case 'too_many_skill_candidates':
+    case 'too_many_matching_refs':
+      message = t.settings.skills.managedErrorRepositoryLimits;
+      break;
+    case 'duplicate_skill_name':
+      message = t.settings.skills.managedErrorDuplicateName;
+      break;
+    case 'missing_skill_file':
+      message = t.settings.skills.managedErrorMissingSkill;
+      break;
+    case 'duplicate_skill_file':
+    case 'invalid_frontmatter':
+    case 'invalid_skill_name':
+    case 'invalid_description':
+    case 'invalid_compatibility':
+      message = t.settings.skills.managedErrorInvalidManifest;
+      break;
+    case 'executable_file':
+      message = t.settings.skills.managedErrorExecutableFiles;
+      break;
+    case 'embedded_shell':
+      message = t.settings.skills.managedErrorEmbeddedShell;
+      break;
+    case 'secret_content':
+      message = t.settings.skills.managedErrorSecretContent;
+      break;
+    case 'file_count_exceeded':
+    case 'file_size_exceeded':
+    case 'total_size_exceeded':
+      message = t.settings.skills.managedErrorFileLimits;
+      break;
+    case 'invalid_path':
+    case 'hidden_file':
+    case 'nested_git_data':
+    case 'symlink':
+    case 'submodule':
+    case 'unsupported_entry':
+    case 'invalid_text':
+    case 'unsupported_binary':
+      message = t.settings.skills.managedErrorUnsafeFiles;
+      break;
+    case 'incompatible_tenon':
+      message = t.settings.skills.managedErrorIncompatible;
+      break;
+    case 'missing_source':
+      message = t.settings.skills.managedErrorSourceRequired;
+      break;
+    case 'catalog_unavailable':
+    case 'invalid_catalog':
+    case 'invalid_catalog_cache':
+      message = t.settings.skills.managedErrorCatalogUnavailable;
+      break;
+    case 'catalog_entry_mismatch':
+    case 'catalog_entry_not_found':
+      message = t.settings.skills.managedErrorCatalogChanged;
+      break;
+    case 'stale_discovery':
+    case 'candidate_not_found':
+    case 'candidate_changed':
+    case 'discovery_expired':
+      message = t.settings.skills.managedErrorSelectionChanged;
+      break;
+    case 'stale_skill_version':
+    case 'stale_update_preview':
+    case 'update_preview_expired':
+      message = t.settings.skills.managedErrorStateChanged;
+      break;
+    case 'managed_skill_not_found':
+      message = t.settings.skills.managedErrorSkillMissing;
+      break;
+    case 'skill_disabled':
+      message = t.settings.skills.managedErrorDisabled;
+      break;
+    case 'skill_modified':
+      message = t.settings.skills.managedErrorModified;
+      break;
+    case 'no_update':
+      message = t.settings.skills.managedErrorNoUpdate;
+      break;
+    case 'skill_moved':
+    case 'skill_renamed':
+      message = t.settings.skills.managedErrorUpdateSourceChanged;
+      break;
+    case 'previous_version_missing':
+      message = t.settings.skills.managedErrorPreviousMissing;
+      break;
+    case 'previous_version_modified':
+      message = t.settings.skills.managedErrorPreviousModified;
+      break;
+    case 'rolled_back':
+      message = t.settings.skills.managedErrorRolledBack;
+      break;
+    case 'invalid_request':
+      message = t.settings.skills.managedErrorInvalidRequest;
+      break;
+    case 'update_failed':
+    case 'unexpected_error':
+      message = t.settings.skills.managedErrorUnexpected;
+      break;
+  }
+  return error.detail ? `${message} (${error.detail})` : message;
 }
