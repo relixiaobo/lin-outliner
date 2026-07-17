@@ -40,9 +40,10 @@ from cache, while a cache miss behaves exactly like translation does today.
 
 - **DEC-1 — Automatic local persistence:** every validated successful result
   from the existing translation command is eligible for caching. This includes
-  unchanged output used as a successful same-language no-op, so an undeclared
-  same-language passage does not repeatedly call the provider. Failures,
-  cancellations, malformed output, and pending state are never cached.
+  unchanged output used as a successful same-language no-op, persisted as an
+  explicit sentinel rather than copied source text, so an undeclared same-language
+  passage does not repeatedly call the provider. Failures, cancellations,
+  malformed output, and pending state are never cached.
 - **DEC-2 — All existing surfaces:** URL page blocks, finite prerecorded URL
   captions, and reflowable EPUB blocks use the same main-owned cache. Their
   automatic-translation preferences remain separate and default off; cache
@@ -77,19 +78,22 @@ trusted renderer controller:
 - URL pages use the normalized top-level URL without its fragment plus a key
   derived from normalized block text. Query parameters remain part of the
   scope, favoring correctness over reuse across tracking variants.
-- Captions add the adapter/video/track identity and use cue timing plus
+- Captions add a stable adapter/video/track fingerprint and use cue timing plus
   normalized cue text, so track replacement or video navigation cannot attach
-  old output to a new timeline.
+  old output to a new timeline. Fingerprints retain content-selecting URL query
+  parameters while removing known short-lived signature and authorization
+  parameters. Standard captions without a reliable HTTP(S) media or track
+  resource remain translatable but are ineligible for persistence.
 - EPUB uses the resolved preview-source identity, size/modified fingerprint,
   section identity, semantic ordinal, and normalized source-text fingerprint.
   A replaced local file or changed section therefore misses safely.
 
 Main canonicalizes and hashes the complete identity together with target,
 resolved model, content kind, and prompt revision. The persisted key is opaque;
-the store retains only that digest, validated translated text, and recency
-metadata. Source text, URL, local path, and model configuration are not written
-as cache metadata. All caller strings remain length-bounded and are never used
-as filesystem paths.
+the store retains only that digest, validated translated text or an explicit
+unchanged-output sentinel, and recency metadata. Source text, URL, local path,
+and model configuration are not written as cache metadata. All caller strings
+remain length-bounded and are never used as filesystem paths.
 
 ### FLOW-1: Restore While Reading
 
@@ -172,7 +176,8 @@ no IPC access to either cache operation.
     applied; returning to a prior valid configuration can restore it.
   - **AC-4:** When a validated result equals its source text, reopening that
     unchanged block does not call the provider and does not create a visible
-    translation or false completed state.
+    translation or false completed state; the durable entry contains an
+    unchanged-output sentinel and no source-text copy.
 - **FR-2 — Disposable private persistence.** Cache storage is bounded and can
   fail without affecting translation correctness.
   - **AC-5:** When entry count or logical bytes crosses the configured bound,

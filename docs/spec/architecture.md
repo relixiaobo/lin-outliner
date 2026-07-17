@@ -56,9 +56,10 @@ the renderer can only submit validated translation batches through the existing
 translation command, and the preload exposes only a Settings-window clear action,
 not arbitrary cache reads. Webpage, prerecorded-caption, and reflowable-EPUB
 source/configuration identities are hashed before persistence. Cache shards store
-opaque digests, validated translated text, and recency metadata, never source
-text, URLs, local paths, readable model configuration, credentials, pending work,
-or failures. The cache does not participate in document persistence, Loro
+opaque digests, validated translated text or explicit unchanged-output sentinels,
+and recency metadata, never source text, URLs, local paths, readable model
+configuration, credentials, pending work, or failures. The cache does not
+participate in document persistence, Loro
 replication, asset export, diagnostics export, or backup portability; loss or
 corruption is an ordinary cache miss.
 

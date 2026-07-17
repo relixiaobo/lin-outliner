@@ -567,8 +567,9 @@ ordinary local loaders, then settles cache hits without invoking the provider.
 For a mixed batch, main returns the validated hits immediately; the controller
 applies them, leaves only misses loading, and continues those misses through the
 same request session. A valid result equal to its source is cached as a completed
-no-op so undeclared same-language content does not repeatedly call the model,
-while still producing neither a bilingual node nor a false completed header.
+no-op sentinel, rather than a copy of the source text, so undeclared same-language
+content does not repeatedly call the model while still producing neither a
+bilingual node nor a false completed header.
 
 Cache identity combines the target language, content kind, translation-prompt
 revision, actual resolved provider/model, bounded source scope, stable block key,
@@ -576,7 +577,11 @@ and normalized source text. `Follow Agent` therefore follows Neva's currently
 resolved model rather than sharing one generic namespace. URL scope is the
 normalized top-level URL including its query and excluding its fragment; page
 keys derive from normalized block text. Caption keys additionally bind the
-adapter/video/track identity, language, and cue timing. EPUB scope binds the
+adapter/video/track identity, language, and cue timing. A stable caption-track
+fingerprint retains content-selecting URL parameters while removing known
+short-lived authorization and signature parameters. Standard captions require a
+reliable HTTP(S) media or track resource; adapters without a reliable identity
+still translate normally but do not persist those cues. EPUB scope binds the
 resolved source id, byte size, and modified time; its block key binds the section
 index, semantic ordinal, and source-text fingerprint. Source, target, model,
 track, prompt, or text changes miss safely, while returning to a prior matching
@@ -586,8 +591,9 @@ The cache lives under Electron's isolated `userData` directory and is disposable
 local derived data, outside the workspace document, replication, portable assets,
 exports, and diagnostics. Main hashes each complete scope and block identity with
 SHA-256 before persistence. Disk shards contain only opaque digests, validated
-translated text, and access times; they contain no source text, URL, local path,
-or readable model configuration. Private directory/file modes and atomic JSON
+translated text or unchanged-output sentinels, and access times; they contain no
+source text, URL, local path, or readable model configuration. Private
+directory/file modes and atomic JSON
 writes match the other local stores. Corrupt, missing, unreadable, or unwritable
 cache state degrades to an ordinary miss and only emits fixed, content-free
 diagnostics. Writes are debounced off the visible apply path and join the bounded

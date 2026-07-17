@@ -253,7 +253,7 @@ describe('URL page translation guest runtime', () => {
     fixture.runtime.setEnabled(true, 'zh-Hans');
     const pending = nextBatch(fixture.runtime);
     expect(pending.blocks.map((block) => block.text)).toEqual(['Resume this caption']);
-    expect(pending.blocks[0]?.cacheKey).toMatch(/^caption:[a-z0-9]+:0:8000$/u);
+    expect(pending.blocks[0]?.cacheKey).toBeUndefined();
 
     fixture.runtime.setEnabled(false, 'zh-Hans');
     fixture.runtime.setEnabled(true, 'zh-Hans');
@@ -280,6 +280,8 @@ describe('URL page translation guest runtime', () => {
     expect(cacheKeyFor('https://media.example.test/lesson-1.mp4')).toBe(first);
     expect(cacheKeyFor('https://media.example.test/lesson-1.mp4?signature=renewed')).toBe(first);
     expect(cacheKeyFor('https://media.example.test/lesson-2.mp4')).not.toBe(first);
+    expect(cacheKeyFor('https://media.example.test/lesson-1.mp4?edition=main'))
+      .not.toBe(cacheKeyFor('https://media.example.test/lesson-1.mp4?edition=alternate'));
   });
 
   test('detects a standard caption language without adding a synthetic track', async () => {
@@ -962,6 +964,55 @@ describe('URL page translation guest runtime', () => {
       translation: 'STALE YOUTUBE TRANSLATION',
     }])).toBe(0);
     expect(fixture.document.documentElement.hasAttribute('data-tenon-bilingual-youtube-captions')).toBe(false);
+    fixture.runtime.destroy();
+    restorePerformance();
+  });
+
+  test('binds YouTube cache keys to stable same-language track identity', async () => {
+    const fixture = createFixture();
+    const mainUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en&track=main&signature=expired';
+    const renewedUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en&track=main&signature=renewed';
+    const alternateUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en&track=alternate&signature=fresh';
+    setWindowLocation(fixture.window, 'https://www.youtube.com/watch?v=video123');
+    const player = fixture.document.createElement('div');
+    player.id = 'movie_player';
+    fixture.document.body.append(player);
+    addCaptionVideo(fixture.document, fixture.window, { player, cues: [], language: null });
+    const script = fixture.document.createElement('script');
+    script.textContent = `var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: { videoId: 'video123' },
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [{ baseUrl: mainUrl, languageCode: 'en' }],
+        },
+      },
+    })};`;
+    fixture.document.head.append(script);
+    const resources: string[] = [];
+    const restorePerformance = setWindowPerformanceResources(fixture.window, resources);
+    setWindowFetch(fixture.window, async () => new Response(JSON.stringify({
+      events: [{
+        tStartMs: 0,
+        dDurationMs: 10_000,
+        segs: [{ utf8: 'Shared cue text' }],
+      }],
+    }), { status: 200 }));
+
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const first = await waitForCaptionBatch(fixture.runtime);
+    resources.push(renewedUrl);
+    expect(await fixture.runtime.captionLanguage()).toBe('en');
+    const renewed = await waitForCaptionBatch(fixture.runtime);
+    expect(renewed.blocks[0]?.cacheKey).toBe(first.blocks[0]?.cacheKey);
+
+    resources.push(alternateUrl);
+    expect(await fixture.runtime.captionLanguage()).toBe('en');
+    const alternate = await waitForCaptionBatch(fixture.runtime);
+    expect(alternate.blocks[0]?.cacheKey).not.toBe(first.blocks[0]?.cacheKey);
+    expect(fixture.runtime.apply([{
+      id: renewed.blocks[0]!.id,
+      translation: 'STALE SAME-LANGUAGE TRACK TRANSLATION',
+    }])).toBe(0);
     fixture.runtime.destroy();
     restorePerformance();
   });

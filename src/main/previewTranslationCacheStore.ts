@@ -10,7 +10,7 @@ import {
 } from '../core/urlPageTranslation';
 import { PRIVATE_JSON_FILE_OPTIONS, writeJsonFile } from './jsonFileStore';
 
-const CACHE_DIRECTORY_VERSION = 1;
+const CACHE_DIRECTORY_VERSION = 2;
 const CACHE_INDEX_FILE = 'index.json';
 const CACHE_SHARD_SUFFIX = '.json';
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
@@ -52,13 +52,21 @@ export interface PreviewTranslationCacheStoreOptions {
   onError?: (operation: PreviewTranslationCacheOperation) => void;
 }
 
-interface PersistedCacheEntry {
+interface PersistedTranslatedCacheEntry {
   accessedAt: number;
+  kind: 'translated';
   translation: string;
 }
 
+interface PersistedUnchangedCacheEntry {
+  accessedAt: number;
+  kind: 'unchanged';
+}
+
+type PersistedCacheEntry = PersistedTranslatedCacheEntry | PersistedUnchangedCacheEntry;
+
 interface PersistedCacheShard {
-  version: 1;
+  version: 2;
   entries: Record<string, PersistedCacheEntry>;
 }
 
@@ -69,7 +77,7 @@ interface CacheManifestEntry {
 }
 
 interface PersistedCacheManifest {
-  version: 1;
+  version: 2;
   scopes: Record<string, CacheManifestEntry>;
 }
 
@@ -135,7 +143,10 @@ export class PreviewTranslationCacheStore {
         const entry = shard.entries.get(cacheBlockDigest(block));
         if (!entry) continue;
         entry.accessedAt = accessedAt;
-        hits.push({ id: block.id, translation: entry.translation });
+        hits.push({
+          id: block.id,
+          translation: entry.kind === 'unchanged' ? block.text : entry.translation,
+        });
       }
       if (hits.length > 0) {
         this.touchHotShard(scopeDigest, shard);
@@ -165,8 +176,11 @@ export class PreviewTranslationCacheStore {
         if (!translation) continue;
         const digest = cacheBlockDigest(block);
         const previous = shard.entries.get(digest);
-        if (!previous || previous.translation !== translation || previous.accessedAt !== accessedAt) {
-          shard.entries.set(digest, { accessedAt, translation });
+        const next: PersistedCacheEntry = translation === block.text
+          ? { accessedAt, kind: 'unchanged' }
+          : { accessedAt, kind: 'translated', translation };
+        if (!previous || !cacheEntryEquals(previous, next)) {
+          shard.entries.set(digest, next);
           changed = true;
         }
       }
@@ -549,12 +563,26 @@ function parseShard(value: unknown): ParsedShard {
       continue;
     }
     const entryAccessedAt = finiteNonNegative(raw.accessedAt);
-    const translation = normalizedTranslation(raw.translation);
-    if (entryAccessedAt === null || !translation) {
+    if (entryAccessedAt === null) {
       dirty = true;
       continue;
     }
-    entries.set(digest, { accessedAt: entryAccessedAt, translation });
+    if (raw.kind === 'unchanged') {
+      if ('translation' in raw) {
+        dirty = true;
+        continue;
+      }
+      entries.set(digest, { accessedAt: entryAccessedAt, kind: 'unchanged' });
+      continue;
+    }
+    const translation = raw.kind === 'translated'
+      ? normalizedTranslation(raw.translation)
+      : null;
+    if (!translation) {
+      dirty = true;
+      continue;
+    }
+    entries.set(digest, { accessedAt: entryAccessedAt, kind: 'translated', translation });
   }
   return {
     dirty,
@@ -605,6 +633,15 @@ function cacheManifestEntryEquals(left: CacheManifestEntry, right: CacheManifest
     && left.oldestAccessedAt === right.oldestAccessedAt;
 }
 
+function cacheEntryEquals(left: PersistedCacheEntry, right: PersistedCacheEntry): boolean {
+  return left.accessedAt === right.accessedAt
+    && left.kind === right.kind
+    && (left.kind === 'unchanged' || (
+      right.kind === 'translated'
+      && left.translation === right.translation
+    ));
+}
+
 function cacheManifestTotals(manifest: ReadonlyMap<string, CacheManifestEntry>): {
   totalBytes: number;
   totalEntries: number;
@@ -651,7 +688,9 @@ function shardLogicalBytes(entries: ReadonlyMap<string, PersistedCacheEntry>): n
 }
 
 function cacheEntryLogicalBytes(digest: string, entry: PersistedCacheEntry): number {
-  return Buffer.byteLength(digest) + Buffer.byteLength(entry.translation) + 32;
+  return Buffer.byteLength(digest)
+    + (entry.kind === 'translated' ? Buffer.byteLength(entry.translation) : 0)
+    + 32;
 }
 
 function finiteNonNegative(value: unknown): number | null {

@@ -407,6 +407,7 @@ export function installUrlPageTranslationRuntime(
     adapter: 'standard' | 'youtube';
     bilingualElement: HTMLTrackElement | null;
     bilingualTrack: TextTrack | null;
+    cacheIdentity: string | null;
     currentRecordId: string | null;
     key: string;
     language: string | null;
@@ -419,6 +420,7 @@ export function installUrlPageTranslationRuntime(
     sourceTrack: TextTrack | null;
   };
   type YoutubeCaptionMetadata = {
+    cacheIdentity: string | null;
     key: string;
     language: string;
     url: string;
@@ -1136,33 +1138,47 @@ export function installUrlPageTranslationRuntime(
     return candidates.length === 1 ? candidates[0] ?? null : null;
   };
 
-  const stableMediaResource = (value: string | null | undefined): string => {
-    if (!value || value.length > 8_192) return '';
+  const stableCaptionResource = (value: string | null | undefined): string | null => {
+    if (!value || value.length > 8_192) return null;
     try {
       const url = new URL(value, host.location?.href);
-      return url.protocol === 'http:' || url.protocol === 'https:'
-        ? `${url.origin}${url.pathname}`.slice(0, 4_096)
-        : '';
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+      const params = Array.from(url.searchParams.entries())
+        .filter(([name]) => !(
+          /^(?:access_token|auth|authorization|ei|expire|expires|expiry|hdnea|hdnts|ip|ipbits|key-pair-id|lsig|policy|pot|sig|signature|sp|sparams|token)$/iu.test(name)
+          || /^(?:x-amz-|x-goog-)/iu.test(name)
+        ))
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+      const normalized = JSON.stringify([url.origin, url.pathname, params]);
+      return normalized.length <= 4_096 ? normalized : null;
     } catch {
-      return '';
+      return null;
     }
   };
 
-  const standardCaptionKey = (media: HTMLMediaElement, sourceTrack: TextTrack): string => {
+  const standardCaptionCacheIdentity = (
+    media: HTMLMediaElement,
+    sourceTrack: TextTrack,
+  ): string | null => {
     const sourceElement = Array.from(media.querySelectorAll('source'))
       .find((element) => Boolean(element.src || element.getAttribute('src')));
     const trackElement = Array.from(media.querySelectorAll('track'))
       .find((element) => element.track === sourceTrack);
+    const mediaResource = stableCaptionResource(
+      media.getAttribute('src') || media.currentSrc || sourceElement?.src || sourceElement?.getAttribute('src'),
+    );
+    const trackResource = stableCaptionResource(trackElement?.src || trackElement?.getAttribute('src'));
+    if (!mediaResource && !trackResource) return null;
     const mediaIndex = Array.from(doc.querySelectorAll('video, audio')).indexOf(media);
     return `standard:${cacheHash(JSON.stringify([
       mediaIndex,
-      stableMediaResource(
-        media.getAttribute('src') || media.currentSrc || sourceElement?.src || sourceElement?.getAttribute('src'),
-      ),
-      stableMediaResource(trackElement?.src || trackElement?.getAttribute('src')),
+      captionTrackList(media).indexOf(sourceTrack),
+      mediaResource,
+      trackResource,
       sourceTrack.id.slice(0, 512),
       sourceTrack.label.slice(0, 512),
       sourceTrack.language.slice(0, 64),
+      sourceTrack.kind,
     ]))}`;
   };
 
@@ -1213,7 +1229,8 @@ export function installUrlPageTranslationRuntime(
       if (captionState?.adapter === 'standard') setCaptionPresentationEnabled(captionState, false);
       return true;
     }
-    const key = standardCaptionKey(media, sourceTrack);
+    const cacheIdentity = standardCaptionCacheIdentity(media, sourceTrack);
+    const key = cacheIdentity ?? 'standard';
     if (
       captionState?.adapter !== 'standard'
       || captionState.media !== media
@@ -1231,6 +1248,7 @@ export function installUrlPageTranslationRuntime(
         adapter: 'standard',
         bilingualElement: bilingual.element,
         bilingualTrack: bilingual.track,
+        cacheIdentity,
         currentRecordId: null,
         key,
         language: detectedCaptionLanguage,
@@ -1557,7 +1575,13 @@ export function installUrlPageTranslationRuntime(
         || !/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(language)
       ) return null;
       url.searchParams.delete('fmt');
-      return { key: `youtube:${videoId}`, language, url: url.href };
+      const resource = stableCaptionResource(url.href);
+      return {
+        cacheIdentity: resource ? `youtube:${cacheHash(`${language}:${resource}`)}` : null,
+        key: `youtube:${videoId}`,
+        language,
+        url: url.href,
+      };
     } catch {
       return null;
     }
@@ -1652,7 +1676,7 @@ export function installUrlPageTranslationRuntime(
     return selected
       ? {
           status: 'found',
-          metadata: { key: `youtube:${videoId}`, language: selected.language, url: selected.url },
+          metadata: selected,
         }
       : { status: 'absent' };
   };
@@ -1809,6 +1833,7 @@ export function installUrlPageTranslationRuntime(
       adapter: 'youtube',
       bilingualElement: null,
       bilingualTrack: null,
+      cacheIdentity: metadata.cacheIdentity,
       currentRecordId: null,
       key: identity.key,
       language: metadata.language,
@@ -2133,15 +2158,21 @@ export function installUrlPageTranslationRuntime(
         entry.record.pending = true;
         if (contentKind === 'page') (entry.record as RecordEntry).queued = false;
         entry.record.retryRequested = false;
-        const cacheKey = contentKind === 'caption' && activeCaptionState
-          ? [
-              'caption',
-              cacheHash(`${activeCaptionState.key}:${activeCaptionState.language ?? ''}`),
-              Math.round((entry.record as CaptionRecord).startTime * 1_000),
-              Math.round((entry.record as CaptionRecord).endTime * 1_000),
-            ].join(':')
+        const cacheKey = contentKind === 'caption'
+          ? activeCaptionState?.cacheIdentity
+            ? [
+                'caption',
+                cacheHash(activeCaptionState.cacheIdentity),
+                Math.round((entry.record as CaptionRecord).startTime * 1_000),
+                Math.round((entry.record as CaptionRecord).endTime * 1_000),
+              ].join(':')
+            : undefined
           : `page:${cacheHash(entry.record.text)}`;
-        blocks.push({ id: entry.record.id, text: entry.record.text, cacheKey });
+        blocks.push({
+          id: entry.record.id,
+          text: entry.record.text,
+          ...(cacheKey ? { cacheKey } : {}),
+        });
         if (contentKind === 'caption') selectedCaptions.push(entry.record as CaptionRecord);
         else selectedPage.push(entry.record as RecordEntry);
         chars += entry.record.text.length;
@@ -2308,7 +2339,8 @@ export function installUrlPageTranslationRuntime(
 export function urlPageTranslationRuntimeSource(): string {
   return installUrlPageTranslationRuntime.toString()
     .replace(/^[ \t]+/gmu, '')
-    .replace(/;\n/gu, ';');
+    .replace(/([;{},])\n/gu, '$1')
+    .replace(/\n(?=[;}])/gu, '');
 }
 
 function validatedGuestBatch(

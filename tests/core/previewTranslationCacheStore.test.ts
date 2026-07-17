@@ -106,8 +106,16 @@ describe('PreviewTranslationCacheStore', () => {
       [{ id: 'b1', translation: 'Private source phrase.' }],
       lookup.epoch,
     );
+    await store.flushNow();
 
-    expect((await store.lookup(scope(), [block()])).hits).toEqual([
+    const persisted = (await Promise.all(
+      (await readdir(root)).map((name) => readFile(path.join(root, name), 'utf8')),
+    )).join('\n');
+    expect(persisted).toContain('"kind":"unchanged"');
+    expect(persisted).not.toContain('Private source phrase.');
+
+    const reloaded = new PreviewTranslationCacheStore(root, { flushDelayMs: 60_000 });
+    expect((await reloaded.lookup(scope(), [block()])).hits).toEqual([
       { id: 'b1', translation: 'Private source phrase.' },
     ]);
   });
@@ -406,7 +414,7 @@ describe('PreviewTranslationCacheStore', () => {
 
 function scopeDigest(value: PreviewTranslationCacheScope): string {
   return createHash('sha256').update(JSON.stringify([
-    1,
+    2,
     value.promptRevision,
     value.sourceId,
     value.targetLanguage,
