@@ -375,7 +375,9 @@ function classifyShellSegment(segmentInput: string, fullCommand: string): ToolAc
     return values('shell.project_script', 'project script', segment);
   }
   if (/\btenon-import\s+commit\b/i.test(segment)) {
-    return values('outline.edit', 'outline import', segment);
+    // electron-vite 5's ESM shim scanner misreads this title as a static import
+    // when the words are one literal, corrupting the packaged main-process chunk.
+    return values('outline.edit', ['outline', 'import'].join(' '), segment);
   }
   if (/\b(?:python(?:3)?|node|deno|bun|ruby|perl|php|osascript|bash|sh|zsh)\b(?:\s|$)/i.test(segment)) {
     return values('shell.local_code_execution', 'local code execution', segment);

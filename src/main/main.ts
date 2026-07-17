@@ -10,6 +10,12 @@ import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService, mimeTypeForFilename } from './assetService';
 import { AgentRuntime } from './agentRuntime';
+import {
+  ManagedSkillService,
+  ManagedSkillServiceError,
+  managedSkillErrorView,
+} from './managedSkillService';
+import { ManagedSkillStore } from './managedSkillStore';
 import { AgentImportService } from './agentImportService';
 import { AgentImportApiServer } from './agentImportApi';
 import { configureTenonImportRuntime } from './tenonImportRuntime';
@@ -126,7 +132,12 @@ import { oauthLoginManager } from './agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
 import { resolveRipgrepCommand } from './agentRipgrep';
 import { buildAgentLocalToolProcessEnv } from './agentToolProcess';
-import type { AgentImageGenerationSettingsInput, AgentProviderConfigInput, AgentRuntimeSettingsInput } from '../core/types';
+import type {
+  AgentImageGenerationSettingsInput,
+  AgentProviderConfigInput,
+  AgentRuntimeSettingsInput,
+  ManagedSkillCommandResult,
+} from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
 import {
   loadAppPreferences,
@@ -360,9 +371,21 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
 }
 ensureAgentDir(agentScratchRoot);
 const folderCapabilityService = getFolderCapabilityService();
+const managedSkillStore = new ManagedSkillStore(resolvedUserDataDir);
+const managedSkillService: ManagedSkillService = new ManagedSkillService({
+  appVersion: app.getVersion(),
+  store: managedSkillStore,
+  onChanged: (): Promise<void> => agentRuntime.managedSkillsChanged(),
+  findNameConflict: (name, excludingManagedSkillId) => (
+    agentRuntime.findSkillNameConflict(name, excludingManagedSkillId)
+  ),
+});
 const agentProcessControlPlaneProtections = createFolderCapabilitySnapshot({
   workspaceRoot: agentLocalFileRoot,
   scratchRoot: agentScratchRoot,
+  // This is only the process-policy upper bound. Each invocation snapshot must
+  // still name one exact active hash root before the intersection allows reads.
+  activeSkillReadRoots: [managedSkillStore.contentRoot],
   protectedRoots: [resolvedUserDataDir],
 }, []).protectedRoots;
 bindAgentProcessCapabilities(folderCapabilityService, agentProcessControlPlaneProtections);
@@ -372,10 +395,11 @@ bindAgentProcessCapabilities(folderCapabilityService, agentProcessControlPlanePr
 void pruneAgentScratch(agentScratchRoot).catch((error) => {
   console.error('[agent] failed to prune scratch root at startup', error);
 });
-const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
+const agentRuntime: AgentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: agentLocalFileRoot,
   scratchRoot: agentScratchRoot,
   protectedStoreRoot: resolvedUserDataDir,
+  managedSkillService,
   assetResolver: assetService,
   dreamMemoryExtractionEnabled: true,
   errorReporter: reportError,
@@ -2750,6 +2774,14 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   '.txt',
 ]);
 
+async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<ManagedSkillCommandResult<T>> {
+  try {
+    return { ok: true, value: await operation() };
+  } catch (error) {
+    return { ok: false, error: managedSkillErrorView(error) };
+  }
+}
+
 async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   const conversationId = () => String(args.conversationId);
   switch (command) {
@@ -2952,6 +2984,58 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.revokeSkillAcceptance(conversationId(), String(args.skillName));
     case 'agent_undo_skill_agent_edit':
       return agentRuntime.undoLastAgentSkillEdit(conversationId(), String(args.skillName));
+    case 'agent_managed_skill_catalog':
+      return managedSkillCommand(() => managedSkillService.loadCatalog());
+    case 'agent_managed_skill_discover':
+      return managedSkillCommand(() => managedSkillService.discover({
+        sourceUrl: typeof args.sourceUrl === 'string' ? args.sourceUrl : undefined,
+        catalogId: typeof args.catalogId === 'string' ? args.catalogId : undefined,
+      }));
+    case 'agent_managed_skill_install':
+      return managedSkillCommand(() => managedSkillService.install({
+        discoveryId: String(args.discoveryId ?? ''),
+        candidateId: String(args.candidateId ?? ''),
+        expectedCommit: String(args.expectedCommit ?? ''),
+      }));
+    case 'agent_managed_skill_list':
+      return managedSkillCommand(() => managedSkillService.list());
+    case 'agent_managed_skill_check_updates':
+      return managedSkillCommand(() => managedSkillService.checkUpdates(typeof args.skillId === 'string' ? args.skillId : undefined));
+    case 'agent_managed_skill_preview_update':
+      return managedSkillCommand(() => managedSkillService.previewUpdate({
+        skillId: String(args.skillId ?? ''),
+        expectedActiveHash: String(args.expectedActiveHash ?? ''),
+      }));
+    case 'agent_managed_skill_apply_update':
+      return managedSkillCommand(() => managedSkillService.applyUpdate({
+        skillId: String(args.skillId ?? ''),
+        previewId: String(args.previewId ?? ''),
+        expectedActiveHash: String(args.expectedActiveHash ?? ''),
+        expectedCandidateHash: String(args.expectedCandidateHash ?? ''),
+      }));
+    case 'agent_managed_skill_set_enabled': {
+      return managedSkillCommand(() => {
+        if (typeof args.enabled !== 'boolean') {
+          throw new ManagedSkillServiceError('invalid_request', 'Managed skill enabled state must be boolean.');
+        }
+        return managedSkillService.setEnabled({
+          skillId: String(args.skillId ?? ''),
+          enabled: args.enabled,
+          expectedActiveHash: String(args.expectedActiveHash ?? ''),
+        });
+      });
+    }
+    case 'agent_managed_skill_rollback':
+      return managedSkillCommand(() => managedSkillService.rollback({
+        skillId: String(args.skillId ?? ''),
+        expectedActiveHash: String(args.expectedActiveHash ?? ''),
+        expectedPreviousHash: String(args.expectedPreviousHash ?? ''),
+      }));
+    case 'agent_managed_skill_uninstall':
+      return managedSkillCommand(() => managedSkillService.uninstall({
+        skillId: String(args.skillId ?? ''),
+        expectedActiveHash: String(args.expectedActiveHash ?? ''),
+      }));
     case 'agent_update_agent_definition':
       return agentRuntime.updateAgentDefinition(
         conversationId(),

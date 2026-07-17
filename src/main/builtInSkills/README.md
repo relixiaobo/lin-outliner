@@ -11,11 +11,10 @@ Each Tenon-owned resource-backed skill lives in a child directory:
 ```
 
 The Electron package does not copy this directory directly. `bun run skills:sync`
-stages these Tenon-owned skills plus enabled external linlab skills into
-`build/generated/built-in-skills`, then `electron-builder` copies that generated
-root to `Resources/built-in-skills`.
+stages only these Tenon-owned skills into `build/generated/built-in-skills`, then
+`electron-builder` copies that generated root to `Resources/built-in-skills`.
 
 Keep built-in skill files immutable at runtime; user and agent-authored skills
 belong under `.agents/skills` instead. Shared reusable skills that are not
-Tenon-specific belong in the `linlab-skills` repository and should be enabled
-through the build-time staging list rather than forked here.
+Tenon-specific are distributed through the managed-skill catalog and are never
+part of packaged built-in resources.

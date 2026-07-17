@@ -784,11 +784,13 @@ export interface AgentDefinition {
   body: string;
 }
 
+export type SkillSourceKind = 'built-in' | 'managed' | 'user' | 'project';
+
 export interface SkillDefinition {
   name: string;
   identity?: string;
   displayName?: string;
-  source: 'built-in' | 'user' | 'project';
+  source: SkillSourceKind;
   rootDir: string;
   skillFile: string;
   description: string;
@@ -796,14 +798,7 @@ export interface SkillDefinition {
   whenToUse?: string;
   userInvocable: boolean;
   modelInvocable: boolean;
-  /**
-   * Trust state, derived (never stored). Project skills are false until the user
-   * accepts the current content hash. User-source skills are false while the current
-   * content hash matches the last agent-written hash AND the user has not accepted
-   * those bytes. Unratified skills are excluded from the model skill listing and
-   * refuse model-triggered invocation; slash invocation always works (the user's
-   * command is per-run consent). Built-ins are always true.
-   */
+  /** Trust state derived from the current bytes and source-specific policy. */
   ratified: boolean;
   /** True when the user explicitly accepted exactly these bytes for automatic model use. */
   accepted?: boolean;
@@ -811,6 +806,8 @@ export interface SkillDefinition {
   canUndoLastAgentEdit?: boolean;
   /** sha256 of the raw SKILL.md content; absent for code-registered built-ins. */
   contentHash?: string;
+  /** Whole-subtree hash for a pinned Tenon-managed skill version. */
+  managedContentHash?: string;
   allowedTools: string[];
   argumentHint?: string;
   argumentNames: string[];
@@ -822,6 +819,178 @@ export interface SkillDefinition {
   paths?: string[];
   contentLength: number;
   body: string;
+}
+
+export type ManagedSkillCompatibilityStatus = 'compatible' | 'unknown' | 'incompatible';
+
+export const MANAGED_SKILL_ERROR_CODES = [
+  'invalid_github_url',
+  'unsupported_github_url',
+  'github_not_found',
+  'github_rate_limited',
+  'github_unavailable',
+  'github_response_too_large',
+  'github_invalid_response',
+  'github_redirect_rejected',
+  'github_timeout',
+  'github_tree_truncated',
+  'too_many_tree_entries',
+  'too_many_skill_candidates',
+  'too_many_matching_refs',
+  'duplicate_skill_name',
+  'invalid_path',
+  'hidden_file',
+  'nested_git_data',
+  'symlink',
+  'submodule',
+  'executable_file',
+  'unsupported_entry',
+  'file_count_exceeded',
+  'file_size_exceeded',
+  'total_size_exceeded',
+  'missing_skill_file',
+  'duplicate_skill_file',
+  'invalid_frontmatter',
+  'invalid_skill_name',
+  'invalid_description',
+  'embedded_shell',
+  'invalid_text',
+  'unsupported_binary',
+  'secret_content',
+  'invalid_compatibility',
+  'incompatible_tenon',
+  'missing_source',
+  'catalog_entry_mismatch',
+  'stale_discovery',
+  'candidate_not_found',
+  'candidate_changed',
+  'skill_disabled',
+  'stale_skill_version',
+  'skill_modified',
+  'no_update',
+  'skill_moved',
+  'skill_renamed',
+  'stale_update_preview',
+  'previous_version_missing',
+  'previous_version_modified',
+  'catalog_unavailable',
+  'catalog_entry_not_found',
+  'discovery_expired',
+  'update_preview_expired',
+  'managed_skill_not_found',
+  'invalid_catalog',
+  'invalid_catalog_cache',
+  'invalid_request',
+  'update_failed',
+  'rolled_back',
+  'unexpected_error',
+] as const;
+
+export type ManagedSkillErrorCode = typeof MANAGED_SKILL_ERROR_CODES[number];
+
+export interface ManagedSkillErrorView {
+  code: ManagedSkillErrorCode;
+  detail?: string;
+}
+
+export type ManagedSkillCommandResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: ManagedSkillErrorView };
+
+export interface ManagedSkillCompatibilityView {
+  status: ManagedSkillCompatibilityStatus;
+  appVersion: string;
+  declaredRange?: string;
+  declaredRanges?: string[];
+}
+
+export interface ManagedSkillCatalogEntryView {
+  id: string;
+  name: string;
+  description: string;
+  repository: string;
+  subdirectory: string;
+  trackingRef: string;
+  compatibilityRange?: string;
+  installedSkillId?: string;
+}
+
+export interface ManagedSkillCatalogView {
+  status: 'fresh' | 'cached' | 'unavailable';
+  entries: ManagedSkillCatalogEntryView[];
+  refreshedAt?: number;
+  error?: ManagedSkillErrorView;
+}
+
+export interface ManagedSkillDiscoveryCandidateView {
+  id: string;
+  name: string;
+  description: string;
+  subdirectory: string;
+  version?: string;
+  compatibility: ManagedSkillCompatibilityView;
+  scripts: string[];
+}
+
+export interface ManagedSkillDiscoveryView {
+  id: string;
+  repository: string;
+  trackingRef: string;
+  resolvedCommit: string;
+  recommended: boolean;
+  selectionRequired: boolean;
+  candidates: ManagedSkillDiscoveryCandidateView[];
+}
+
+export interface ManagedSkillVersionView {
+  commit: string;
+  contentHash: string;
+  installedAt: number;
+  fileCount: number;
+  totalBytes: number;
+  version?: string;
+  compatibility?: ManagedSkillCompatibilityView;
+  scripts?: string[];
+}
+
+export type ManagedSkillStatus =
+  | 'installed-disabled'
+  | 'enabled'
+  | 'update-available'
+  | 'modified'
+  | 'failed';
+
+export interface ManagedSkillView {
+  id: string;
+  name: string;
+  description: string;
+  repository: string;
+  subdirectory: string;
+  trackingRef: string;
+  recommended: boolean;
+  enabled: boolean;
+  status: ManagedSkillStatus;
+  compatibility: ManagedSkillCompatibilityView;
+  active: ManagedSkillVersionView;
+  previous?: ManagedSkillVersionView;
+  updateCommit?: string;
+  scripts: string[];
+  diagnostic?: ManagedSkillErrorView;
+}
+
+export interface ManagedSkillUpdatePreviewView {
+  id: string;
+  skillId: string;
+  repository: string;
+  subdirectory: string;
+  recommended: boolean;
+  current: ManagedSkillVersionView;
+  candidate: ManagedSkillVersionView;
+  compatibility: ManagedSkillCompatibilityView;
+  scripts: string[];
+  changedPaths: string[];
+  skillDiff: string;
+  diffTruncated: boolean;
 }
 
 export type AgentSlashCommandKind = 'runtime' | 'skill';

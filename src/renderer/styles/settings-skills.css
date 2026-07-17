@@ -14,3 +14,121 @@
 .settings-skill-accept:disabled {
   color: var(--text-tertiary);
 }
+
+.managed-skill-source-control {
+  display: flex;
+  width: min(390px, 46vw);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.managed-skill-source-control .input-control {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.managed-skill-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: auto;
+  border-radius: var(--radius-overlay-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--overlay-shadow-level-2);
+  padding: var(--space-6);
+}
+
+.managed-skill-update-dialog {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.managed-skill-dialog .inset-group {
+  margin-top: var(--space-5);
+}
+
+.managed-skill-candidate-list .inset-card {
+  max-height: min(400px, calc(100vh - 200px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.managed-skill-details {
+  display: grid;
+  gap: 0;
+  margin: var(--space-5) 0 0;
+}
+
+.managed-skill-details > div {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.35fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  border-bottom: var(--inset-hairline) solid var(--separator);
+  padding: var(--space-3) 0;
+}
+
+.managed-skill-details dt,
+.managed-skill-changed-paths > span:first-child {
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+.managed-skill-details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-meta);
+  overflow-wrap: anywhere;
+}
+
+.managed-skill-changed-paths {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.35fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.managed-skill-changed-paths > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.managed-skill-diff {
+  max-height: 260px;
+  overflow: auto;
+  margin: var(--space-4) 0 0;
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-meta);
+  padding: var(--space-4);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .settings-skills-section .inset-row {
+    flex-wrap: wrap;
+  }
+
+  .settings-skills-section .inset-row-trailing,
+  .managed-skill-source-control {
+    width: 100%;
+  }
+
+  .settings-skills-section .inset-row-trailing {
+    padding: 0 var(--space-4) var(--space-4);
+  }
+
+  .managed-skill-details > div,
+  .managed-skill-changed-paths {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+}

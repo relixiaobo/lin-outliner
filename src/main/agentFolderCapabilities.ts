@@ -243,8 +243,10 @@ export function createFolderCapabilitySnapshot(
       roots.push({ access: 'write', origin: 'output', root: path.join(scratchRoot, child) });
     }
   }
-  for (const root of context.activeSkillReadRoots ?? []) {
-    roots.push({ access: 'read', origin: 'skill', root: canonicalPathPreservingSuffix(root) });
+  const activeSkillReadRoots = (context.activeSkillReadRoots ?? [])
+    .map((root) => canonicalPathPreservingSuffix(root));
+  for (const root of activeSkillReadRoots) {
+    roots.push({ access: 'read', origin: 'skill', root });
   }
   for (const root of userFolders) {
     roots.push({ access: 'write', origin: 'user', root: canonicalPathPreservingSuffix(root) });
@@ -264,6 +266,7 @@ export function createFolderCapabilitySnapshot(
       readExceptions: compactPaths([
         workspaceRoot,
         ...(scratchRoot ? [scratchRoot] : []),
+        ...activeSkillReadRoots,
       ].filter((candidate) => isPathInside(root, candidate))),
       writeExceptions: compactPaths([
         workspaceRoot,

@@ -58,6 +58,7 @@ import {
 } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import { WebsiteDataSettingsGroup } from './WebsiteDataSettingsGroup';
+import { ManagedSkillsSettings } from './ManagedSkillsSettings';
 import {
   capabilitySettingsRemovalPatch,
   rebaseCapabilityDraft,
@@ -1262,13 +1263,15 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   />
                 </InsetGroup>
 
+                <ManagedSkillsSettings onApplied={onApplied} />
+
                 {loadingSkills ? (
                   <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" size="inline" title={t.settings.skills.loadingInstalled} />
-                ) : allSkills.length === 0 ? (
+                ) : allSkills.filter((skill) => skill.source !== 'managed').length === 0 ? (
                   <EmptyState className="agent-settings-empty" size="inline" title={t.settings.skills.noneInstalled} />
                 ) : (
                   <InsetGroup ariaLabel={t.settings.skills.installedAriaLabel} label={t.settings.skills.installedGroup}>
-                    {allSkills.map((skill) => {
+                    {allSkills.filter((skill) => skill.source !== 'managed').map((skill) => {
                       const disabled = isSkillDisabled(skill.name);
                       // Trust state is derived in main. Mutable skills are model-usable
                       // by default; acceptedHash is only a retained management fact.
