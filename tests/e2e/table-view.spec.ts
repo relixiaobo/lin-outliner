@@ -257,7 +257,21 @@ test.describe('table view', () => {
     const grid = rootGrid(page);
     await expect(grid.locator('.outliner-table-column-kind')).toHaveCount(3);
     await expect(grid.getByRole('button', { name: 'Open field: Done' })).toHaveCount(0);
-    await grid.getByRole('button', { name: 'Open field: Status' }).click();
+    const authoredKind = grid.getByRole('button', { name: 'Open field: Status' });
+    const authoredIcon = authoredKind.locator('svg');
+    const authoredHeader = authoredKind.locator('..');
+    const idleIconColor = await authoredIcon.evaluate((element) => getComputedStyle(element).color);
+    await expect(authoredHeader).toHaveCSS('box-shadow', 'none');
+
+    await authoredKind.hover();
+    await expect.poll(() => authoredIcon.evaluate((element) => getComputedStyle(element).color)).not.toBe(idleIconColor);
+    await expect(authoredHeader).not.toHaveCSS('box-shadow', 'none');
+
+    const systemHeader = grid.getByText('Done', { exact: true }).locator('..');
+    await systemHeader.locator('.outliner-table-column-kind').hover();
+    await expect(systemHeader).toHaveCSS('box-shadow', 'none');
+
+    await authoredKind.click();
 
     await expect(page.locator('.panel-title-editor').first()).toContainText('Status');
     await expect(page.getByRole('region', { name: 'Definition configuration' })).toBeVisible();

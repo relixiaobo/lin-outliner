@@ -345,9 +345,11 @@ trailing `+ Add` slot. The data strip does not expand merely because its panel i
 wider.
 
 An authored column's field-kind icon opens that field definition in the current
-pane, providing direct access to its configuration surface. A derived system
-field has no definition node, so its kind icon remains non-interactive. Column
-labels and menus keep their existing view-local behavior.
+pane, providing direct access to its configuration surface. Hover visibly
+strengthens the icon and outlines only its owning header without moving column
+geometry. A derived system field has no definition node, so its kind icon remains
+non-interactive and does not expose that hover state. Column labels and menus keep
+their existing view-local behavior.
 
 **Add column** lists active reusable definitions not already displayed and the
 supported system fields. Selecting one creates only a display-field node. The

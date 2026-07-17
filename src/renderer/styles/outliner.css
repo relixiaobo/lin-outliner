@@ -417,6 +417,10 @@
   height: var(--row-bullet-width);
 }
 
+.outliner-table-column-kind > .view-toolbar-field-kind {
+  color: inherit;
+}
+
 button.outliner-table-column-kind {
   appearance: none;
   border-radius: var(--radius-pill);
@@ -424,8 +428,14 @@ button.outliner-table-column-kind {
 }
 
 button.outliner-table-column-kind:hover,
-button.outliner-table-column-kind:active {
+button.outliner-table-column-kind:active,
+button.outliner-table-column-kind:focus-visible {
   color: var(--text-primary);
+}
+
+.outliner-table-column-header:has(> button.outliner-table-column-kind:hover),
+.outliner-table-column-header:has(> button.outliner-table-column-kind:active) {
+  box-shadow: var(--outline-emphasis);
 }
 
 .outliner-table-column-label {
