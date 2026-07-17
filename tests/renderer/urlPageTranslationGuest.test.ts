@@ -118,6 +118,7 @@ describe('URL page translation guest runtime', () => {
     const visibleTexts = visibleBatch.blocks.map((block) => block.text);
 
     expect(visibleBatch.priority).toBe(0);
+    expect(visibleBatch.blocks.every((block) => block.cacheKey?.startsWith('page:'))).toBe(true);
     expect(visibleTexts).toContain('Above the viewport');
     expect(visibleTexts).toContain('Current paragraph');
     expect(visibleTexts).not.toContain('Prefetched paragraph');
@@ -252,6 +253,7 @@ describe('URL page translation guest runtime', () => {
     fixture.runtime.setEnabled(true, 'zh-Hans');
     const pending = nextBatch(fixture.runtime);
     expect(pending.blocks.map((block) => block.text)).toEqual(['Resume this caption']);
+    expect(pending.blocks[0]?.cacheKey).toBeUndefined();
 
     fixture.runtime.setEnabled(false, 'zh-Hans');
     fixture.runtime.setEnabled(true, 'zh-Hans');
@@ -259,6 +261,27 @@ describe('URL page translation guest runtime', () => {
 
     expect(resumed.contentKind).toBe('caption');
     expect(resumed.blocks).toEqual(pending.blocks);
+  });
+
+  test('binds standard caption cache keys to the stable media source', () => {
+    const cacheKeyFor = (src: string): string | undefined => {
+      const fixture = createFixture();
+      const caption = addCaptionVideo(fixture.document, fixture.window, {
+        language: 'en',
+        cues: [{ startTime: 0, endTime: 8, text: 'Shared cue text' }],
+      });
+      caption.media.setAttribute('src', src);
+      fixture.runtime.setEnabled(true, 'zh-Hans');
+      return nextBatch(fixture.runtime).blocks[0]?.cacheKey;
+    };
+
+    const first = cacheKeyFor('https://media.example.test/lesson-1.mp4');
+    expect(first).toMatch(/^caption:[a-z0-9]+:0:8000$/u);
+    expect(cacheKeyFor('https://media.example.test/lesson-1.mp4')).toBe(first);
+    expect(cacheKeyFor('https://media.example.test/lesson-1.mp4?signature=renewed')).toBe(first);
+    expect(cacheKeyFor('https://media.example.test/lesson-2.mp4')).not.toBe(first);
+    expect(cacheKeyFor('https://media.example.test/lesson-1.mp4?edition=main'))
+      .not.toBe(cacheKeyFor('https://media.example.test/lesson-1.mp4?edition=alternate'));
   });
 
   test('detects a standard caption language without adding a synthetic track', async () => {
@@ -639,6 +662,7 @@ describe('URL page translation guest runtime', () => {
     const batch = await waitForCaptionBatch(fixture.runtime);
     expect(batch.contentKind).toBe('caption');
     expect(batch.blocks).toHaveLength(1);
+    expect(batch.blocks[0]?.cacheKey).toMatch(/^caption:[a-z0-9]+:0:10000$/u);
     expect(fetched).toHaveLength(1);
     expect(new URL(fetched[0]!.url).pathname).toBe('/api/timedtext');
     expect(fetched[0]!.redirect).toBe('error');
@@ -940,6 +964,55 @@ describe('URL page translation guest runtime', () => {
       translation: 'STALE YOUTUBE TRANSLATION',
     }])).toBe(0);
     expect(fixture.document.documentElement.hasAttribute('data-tenon-bilingual-youtube-captions')).toBe(false);
+    fixture.runtime.destroy();
+    restorePerformance();
+  });
+
+  test('binds YouTube cache keys to stable same-language track identity', async () => {
+    const fixture = createFixture();
+    const mainUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en&track=main&signature=expired';
+    const renewedUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en&track=main&signature=renewed';
+    const alternateUrl = 'https://www.youtube.com/api/timedtext?v=video123&lang=en&track=alternate&signature=fresh';
+    setWindowLocation(fixture.window, 'https://www.youtube.com/watch?v=video123');
+    const player = fixture.document.createElement('div');
+    player.id = 'movie_player';
+    fixture.document.body.append(player);
+    addCaptionVideo(fixture.document, fixture.window, { player, cues: [], language: null });
+    const script = fixture.document.createElement('script');
+    script.textContent = `var ytInitialPlayerResponse = ${JSON.stringify({
+      videoDetails: { videoId: 'video123' },
+      captions: {
+        playerCaptionsTracklistRenderer: {
+          captionTracks: [{ baseUrl: mainUrl, languageCode: 'en' }],
+        },
+      },
+    })};`;
+    fixture.document.head.append(script);
+    const resources: string[] = [];
+    const restorePerformance = setWindowPerformanceResources(fixture.window, resources);
+    setWindowFetch(fixture.window, async () => new Response(JSON.stringify({
+      events: [{
+        tStartMs: 0,
+        dDurationMs: 10_000,
+        segs: [{ utf8: 'Shared cue text' }],
+      }],
+    }), { status: 200 }));
+
+    fixture.runtime.setEnabled(true, 'zh-Hans');
+    const first = await waitForCaptionBatch(fixture.runtime);
+    resources.push(renewedUrl);
+    expect(await fixture.runtime.captionLanguage()).toBe('en');
+    const renewed = await waitForCaptionBatch(fixture.runtime);
+    expect(renewed.blocks[0]?.cacheKey).toBe(first.blocks[0]?.cacheKey);
+
+    resources.push(alternateUrl);
+    expect(await fixture.runtime.captionLanguage()).toBe('en');
+    const alternate = await waitForCaptionBatch(fixture.runtime);
+    expect(alternate.blocks[0]?.cacheKey).not.toBe(first.blocks[0]?.cacheKey);
+    expect(fixture.runtime.apply([{
+      id: renewed.blocks[0]!.id,
+      translation: 'STALE SAME-LANGUAGE TRACK TRANSLATION',
+    }])).toBe(0);
     fixture.runtime.destroy();
     restorePerformance();
   });

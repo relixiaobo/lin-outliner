@@ -18,6 +18,7 @@ describe('EPUB translation DOM adapter', () => {
     const batch = fixture.adapter.nextBatch({ maxBlocks: 4, maxChars: 4_000, visibleOnly: true });
     expect(batch.priority).toBe(0);
     expect(batch.blocks.map(({ text }) => text)).toEqual(['Current paragraph']);
+    expect(batch.blocks[0]?.cacheKey).toBe(batch.blocks[0]?.id);
     expect(fixture.chapter.querySelectorAll('[data-tenon-epub-translation-status="loading"]')).toHaveLength(1);
     expect(fixture.chapter.querySelector('#same-language [data-tenon-epub-translation-status]')).toBeNull();
     expect(fixture.chapter.querySelector('#code [data-tenon-epub-translation-status]')).toBeNull();

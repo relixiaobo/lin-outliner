@@ -405,7 +405,7 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
       .sort((left, right) => left.geometry.top - right.geometry.top)
       .map(({ record }) => record);
     return {
-      blocks: recordsInDocumentOrder.map(({ id, text }) => ({ id, text })),
+      blocks: recordsInDocumentOrder.map(({ id, text }) => ({ id, text, cacheKey: id })),
       preemptRequestId,
       priority: selectedPriority,
     };

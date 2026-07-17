@@ -152,6 +152,60 @@ describe('UrlPageTranslationController', () => {
     controller.destroy();
   });
 
+  test('applies partial persistent-cache hits before continuing only the misses', async () => {
+    const blocks = [
+      { id: 'b1', text: 'Cached paragraph', cacheKey: 'page:cached' },
+      { id: 'b2', text: 'Missing paragraph', cacheKey: 'page:missing' },
+    ];
+    const guest = new FakeGuest([{ blocks, priority: 0 }]);
+    const requests: UrlPageTranslationRequest[] = [];
+    let resolveProvider: ((response: UrlPageTranslationResponse) => void) | null = null;
+    const controller = new UrlPageTranslationController(fakeWebview('https://example.test/article#section'), {
+      targetLanguage: 'zh-Hans',
+      guest,
+      pollIntervalMs: 5,
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        if (requests.length === 1) {
+          return {
+            ok: true,
+            requestId: request.requestId,
+            cacheHit: true,
+            translations: [{ id: 'b1', translation: '缓存段落' }],
+            remainingBlockIds: ['b2'],
+          };
+        }
+        return await new Promise((resolve) => {
+          resolveProvider = resolve;
+        });
+      },
+    });
+
+    controller.enable();
+    await waitFor(() => requests.length === 2);
+    expect(guest.applied).toEqual([[{ id: 'b1', translation: '缓存段落' }]]);
+    expect(controller.currentStatus).toBe('starting');
+    expect(requests[0]?.blocks).toEqual(blocks);
+    expect(requests[1]?.blocks).toEqual([blocks[1]]);
+    expect(requests[1]?.sessionId).toBe(requests[0]?.sessionId);
+    expect(requests[1]?.requestId).toBe(requests[0]?.requestId);
+    expect(requests[0]?.cacheSourceId).toBe('["url","https://example.test/article"]');
+    expect(requests[1]?.cacheSourceId).toBe(requests[0]?.cacheSourceId);
+
+    resolveProvider?.({
+      ok: true,
+      requestId: requests[1]!.requestId,
+      translations: [{ id: 'b2', translation: '模型段落' }],
+    });
+    await waitFor(() => guest.applied.length === 2);
+    expect(guest.applied[1]).toEqual([{ id: 'b2', translation: '模型段落' }]);
+    expect(controller.currentStatus).toBe('on');
+    controller.destroy();
+  });
+
   test('does not report completion when the guest inserts no visible translation', async () => {
     const guest = new FakeGuest([
       { blocks: [{ id: 'b1', text: 'Already translated' }], priority: 0 },
@@ -1545,8 +1599,15 @@ class FakeGuest implements UrlPageTranslationGuestBridge {
   }
 }
 
-function fakeWebview(): Electron.WebviewTag {
-  return new window.EventTarget() as Electron.WebviewTag;
+function fakeWebview(url?: string): Electron.WebviewTag {
+  const webview = new window.EventTarget() as Electron.WebviewTag;
+  if (url) {
+    Object.defineProperties(webview, {
+      getURL: { value: () => url },
+      isLoadingMainFrame: { value: () => false },
+    });
+  }
+  return webview;
 }
 
 function dispatch(controller: UrlPageTranslationController, type: string): void {

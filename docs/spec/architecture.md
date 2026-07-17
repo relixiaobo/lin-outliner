@@ -50,6 +50,19 @@ A digest never replaces `assetId`; it is an integrity and future object-store
 idempotency key, not user-visible identity. The pre-release v1 sidecar has no
 legacy reader.
 
+Preview translation persistence is a separate local-derived-data boundary, not
+an asset or workspace fact. Electron main owns a bounded cache under `userData`;
+the renderer can only submit validated translation batches through the existing
+translation command, and the preload exposes only a Settings-window clear action,
+not arbitrary cache reads. Webpage, prerecorded-caption, and reflowable-EPUB
+source/configuration identities are hashed before persistence. Cache shards store
+opaque digests, validated translated text or explicit unchanged-output sentinels,
+and recency metadata, never source text, URLs, local paths, readable model
+configuration, credentials, pending work, or failures. The cache does not
+participate in document persistence, Loro
+replication, asset export, diagnostics export, or backup portability; loss or
+corruption is an ordinary cache miss.
+
 Derived metadata is extracted at ingest from the bytes alone — PDF page count by
 scanning for page objects, audio/video duration parsed from WAV/MP4 container
 headers. PDF thumbnails are an exception: they shell out to poppler's `pdftoppm`

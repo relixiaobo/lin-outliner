@@ -4,6 +4,7 @@ import {
   type TranslationLanguage,
 } from '../../../core/translationLanguage';
 import type {
+  UrlPageTranslationBlock,
   UrlPageTranslationFailureCode,
   UrlPageTranslationRequest,
   UrlPageTranslationResponse,
@@ -20,6 +21,7 @@ import {
   PreviewTranslationLatencyTracker,
   VISIBLE_TRANSLATION_BATCH_LIMITS,
 } from './previewTranslationScheduling';
+import { previewTranslationCacheResponsePlan } from './previewTranslationCache';
 
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const AUTO_EVALUATION_INTERVAL_MS = 1_000;
@@ -28,6 +30,7 @@ let fallbackId = 1;
 
 export interface EpubTranslationControllerOptions {
   autoTranslate?: boolean;
+  cacheSourceId?: string;
   cancel?: (sessionId: string) => Promise<unknown>;
   maxConcurrentRequests?: number;
   model?: string | null;
@@ -40,6 +43,7 @@ export interface EpubTranslationControllerOptions {
 }
 
 interface ActiveEpubTranslationRequest {
+  blocks: UrlPageTranslationBlock[];
   generation: number;
   ids: string[];
   priority: number;
@@ -62,6 +66,7 @@ export class EpubTranslationController {
   private readonly failedIds = new Set<string>();
   private generation = 0;
   private blockedForConfiguration = false;
+  private cacheSourceId: string | undefined;
   private currentConcurrencyLimit: number;
   private readonly latency = new PreviewTranslationLatencyTracker();
   private readonly maxConcurrentRequests: number;
@@ -81,6 +86,7 @@ export class EpubTranslationController {
     private readonly options: EpubTranslationControllerOptions,
   ) {
     this.autoTranslate = options.autoTranslate ?? false;
+    this.cacheSourceId = options.cacheSourceId;
     this.cancel = options.cancel ?? api.cancelUrlPageTranslation;
     this.maxConcurrentRequests = Math.min(
       PREVIEW_TRANSLATION_MAX_CONCURRENT_REQUESTS,
@@ -150,6 +156,12 @@ export class EpubTranslationController {
   setTranslationModel(model: string | null): void {
     if (this.destroyed || this.model === model) return;
     this.model = model;
+    this.resetForConfigurationChange();
+  }
+
+  setCacheSourceId(cacheSourceId: string | undefined): void {
+    if (this.destroyed || this.cacheSourceId === cacheSourceId) return;
+    this.cacheSourceId = cacheSourceId;
     this.resetForConfigurationChange();
   }
 
@@ -359,6 +371,7 @@ export class EpubTranslationController {
     if (this.status === 'idle') this.setStatus('starting');
     const requestId = nextId('request');
     const activeRequest: ActiveEpubTranslationRequest = {
+      blocks: [...batch.blocks],
       generation,
       ids: batch.blocks.map(({ id }) => id),
       priority: Math.max(0, batch.priority ?? 0),
@@ -368,15 +381,24 @@ export class EpubTranslationController {
       startedAt: Date.now(),
     };
     this.activeRequests.set(requestId, activeRequest);
-    const response = this.translate({
+    const response = this.translate(this.translationRequest(activeRequest));
+    void this.finishRequest(activeRequest, response);
+  }
+
+  private translationRequest(activeRequest: ActiveEpubTranslationRequest): UrlPageTranslationRequest {
+    const cacheSourceId = this.cacheSourceId
+      && activeRequest.blocks.every((block) => Boolean(block.cacheKey))
+      ? this.cacheSourceId
+      : undefined;
+    return {
       sessionId: activeRequest.sessionId,
-      requestId,
+      requestId: activeRequest.requestId,
       targetLanguage: this.targetLanguage,
       contentKind: 'document',
       ...(this.model ? { model: this.model } : {}),
-      blocks: batch.blocks,
-    });
-    void this.finishRequest(activeRequest, response);
+      ...(cacheSourceId ? { cacheSourceId } : {}),
+      blocks: activeRequest.blocks,
+    };
   }
 
   private async finishRequest(
@@ -391,7 +413,6 @@ export class EpubTranslationController {
       return;
     }
     if (!this.isActiveRequest(activeRequest)) return;
-    this.latency.record(Date.now() - activeRequest.startedAt);
     if (response.requestId !== activeRequest.requestId) {
       this.failRequest(activeRequest, 'invalid-response');
       return;
@@ -408,6 +429,15 @@ export class EpubTranslationController {
       return;
     }
 
+    const cachePlan = response.cacheHit
+      ? previewTranslationCacheResponsePlan(response, activeRequest.blocks)
+      : null;
+    if ((response.cacheHit && !cachePlan) || (!response.cacheHit && response.remainingBlockIds)) {
+      this.failRequest(activeRequest, 'invalid-response');
+      return;
+    }
+    if (!response.cacheHit) this.latency.record(Date.now() - activeRequest.startedAt);
+
     try {
       this.surface.apply(response.translations);
     } catch {
@@ -415,6 +445,16 @@ export class EpubTranslationController {
       return;
     }
     if (!this.isActiveRequest(activeRequest)) return;
+    if (cachePlan && cachePlan.remainingBlocks.length > 0) {
+      this.reconcileCompletedRecords();
+      for (const { id } of response.translations) this.failedIds.delete(id);
+      activeRequest.blocks = cachePlan.remainingBlocks;
+      activeRequest.ids = cachePlan.remainingBlocks.map((block) => block.id);
+      activeRequest.startedAt = Date.now();
+      this.setStatus(this.failedIds.size > 0 ? 'error' : 'starting');
+      void this.finishRequest(activeRequest, this.translate(this.translationRequest(activeRequest)));
+      return;
+    }
     this.activeRequests.delete(activeRequest.requestId);
     this.blockedForConfiguration = false;
     this.currentConcurrencyLimit = this.maxConcurrentRequests;

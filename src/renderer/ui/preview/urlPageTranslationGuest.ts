@@ -2,6 +2,7 @@ import type { TranslationLanguage } from '../../../core/translationLanguage';
 import {
   URL_CAPTION_TRANSLATION_MAX_BATCH_CHARS,
   URL_CAPTION_TRANSLATION_MAX_BLOCKS,
+  PREVIEW_TRANSLATION_CACHE_MAX_BLOCK_KEY_CHARS,
   URL_PAGE_TRANSLATION_MAX_BATCH_CHARS,
   URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS,
   URL_PAGE_TRANSLATION_MAX_BLOCKS,
@@ -406,6 +407,7 @@ export function installUrlPageTranslationRuntime(
     adapter: 'standard' | 'youtube';
     bilingualElement: HTMLTrackElement | null;
     bilingualTrack: TextTrack | null;
+    cacheIdentity: string | null;
     currentRecordId: string | null;
     key: string;
     language: string | null;
@@ -418,6 +420,7 @@ export function installUrlPageTranslationRuntime(
     sourceTrack: TextTrack | null;
   };
   type YoutubeCaptionMetadata = {
+    cacheIdentity: string | null;
     key: string;
     language: string;
     url: string;
@@ -516,6 +519,14 @@ export function installUrlPageTranslationRuntime(
   host.addEventListener('scroll', handleViewportScroll, { capture: true, passive: true });
 
   const normalizeText = (value: string) => value.replace(/\s+/g, ' ').trim();
+  const cacheHash = (value: string): string => {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(36);
+  };
   const nativeCueText = (value: string) => value
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;');
@@ -1127,6 +1138,50 @@ export function installUrlPageTranslationRuntime(
     return candidates.length === 1 ? candidates[0] ?? null : null;
   };
 
+  const stableCaptionResource = (value: string | null | undefined): string | null => {
+    if (!value || value.length > 8_192) return null;
+    try {
+      const url = new URL(value, host.location?.href);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+      const params = Array.from(url.searchParams.entries())
+        .filter(([name]) => !(
+          /^(?:access_token|auth|authorization|ei|expire|expires|expiry|hdnea|hdnts|ip|ipbits|key-pair-id|lsig|policy|pot|sig|signature|sp|sparams|token)$/iu.test(name)
+          || /^(?:x-amz-|x-goog-)/iu.test(name)
+        ))
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+      const normalized = JSON.stringify([url.origin, url.pathname, params]);
+      return normalized.length <= 4_096 ? normalized : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const standardCaptionCacheIdentity = (
+    media: HTMLMediaElement,
+    sourceTrack: TextTrack,
+  ): string | null => {
+    const sourceElement = Array.from(media.querySelectorAll('source'))
+      .find((element) => Boolean(element.src || element.getAttribute('src')));
+    const trackElement = Array.from(media.querySelectorAll('track'))
+      .find((element) => element.track === sourceTrack);
+    const mediaResource = stableCaptionResource(
+      media.getAttribute('src') || media.currentSrc || sourceElement?.src || sourceElement?.getAttribute('src'),
+    );
+    const trackResource = stableCaptionResource(trackElement?.src || trackElement?.getAttribute('src'));
+    if (!mediaResource && !trackResource) return null;
+    const mediaIndex = Array.from(doc.querySelectorAll('video, audio')).indexOf(media);
+    return `standard:${cacheHash(JSON.stringify([
+      mediaIndex,
+      captionTrackList(media).indexOf(sourceTrack),
+      mediaResource,
+      trackResource,
+      sourceTrack.id.slice(0, 512),
+      sourceTrack.label.slice(0, 512),
+      sourceTrack.language.slice(0, 64),
+      sourceTrack.kind,
+    ]))}`;
+  };
+
   const createBilingualTrack = (
     media: HTMLMediaElement,
   ): { element: HTMLTrackElement | null; track: TextTrack } | null => {
@@ -1174,7 +1229,8 @@ export function installUrlPageTranslationRuntime(
       if (captionState?.adapter === 'standard') setCaptionPresentationEnabled(captionState, false);
       return true;
     }
-    const key = `standard:${sourceTrack.id || sourceTrack.label}:${sourceTrack.language}`;
+    const cacheIdentity = standardCaptionCacheIdentity(media, sourceTrack);
+    const key = cacheIdentity ?? 'standard';
     if (
       captionState?.adapter !== 'standard'
       || captionState.media !== media
@@ -1192,6 +1248,7 @@ export function installUrlPageTranslationRuntime(
         adapter: 'standard',
         bilingualElement: bilingual.element,
         bilingualTrack: bilingual.track,
+        cacheIdentity,
         currentRecordId: null,
         key,
         language: detectedCaptionLanguage,
@@ -1518,7 +1575,13 @@ export function installUrlPageTranslationRuntime(
         || !/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(language)
       ) return null;
       url.searchParams.delete('fmt');
-      return { key: `youtube:${videoId}`, language, url: url.href };
+      const resource = stableCaptionResource(url.href);
+      return {
+        cacheIdentity: resource ? `youtube:${cacheHash(`${language}:${resource}`)}` : null,
+        key: `youtube:${videoId}`,
+        language,
+        url: url.href,
+      };
     } catch {
       return null;
     }
@@ -1613,7 +1676,7 @@ export function installUrlPageTranslationRuntime(
     return selected
       ? {
           status: 'found',
-          metadata: { key: `youtube:${videoId}`, language: selected.language, url: selected.url },
+          metadata: selected,
         }
       : { status: 'absent' };
   };
@@ -1770,6 +1833,7 @@ export function installUrlPageTranslationRuntime(
       adapter: 'youtube',
       bilingualElement: null,
       bilingualTrack: null,
+      cacheIdentity: metadata.cacheIdentity,
       currentRecordId: null,
       key: identity.key,
       language: metadata.language,
@@ -2094,7 +2158,21 @@ export function installUrlPageTranslationRuntime(
         entry.record.pending = true;
         if (contentKind === 'page') (entry.record as RecordEntry).queued = false;
         entry.record.retryRequested = false;
-        blocks.push({ id: entry.record.id, text: entry.record.text });
+        const cacheKey = contentKind === 'caption'
+          ? activeCaptionState?.cacheIdentity
+            ? [
+                'caption',
+                cacheHash(activeCaptionState.cacheIdentity),
+                Math.round((entry.record as CaptionRecord).startTime * 1_000),
+                Math.round((entry.record as CaptionRecord).endTime * 1_000),
+              ].join(':')
+            : undefined
+          : `page:${cacheHash(entry.record.text)}`;
+        blocks.push({
+          id: entry.record.id,
+          text: entry.record.text,
+          ...(cacheKey ? { cacheKey } : {}),
+        });
         if (contentKind === 'caption') selectedCaptions.push(entry.record as CaptionRecord);
         else selectedPage.push(entry.record as RecordEntry);
         chars += entry.record.text.length;
@@ -2255,11 +2333,14 @@ export function installUrlPageTranslationRuntime(
 }
 
 /**
- * Preserve readable runtime source while removing formatting-only indentation from
+ * Preserve readable runtime source while removing formatting-only whitespace from
  * the isolated-world payload. Serialized execution tests cover the exact result.
  */
 export function urlPageTranslationRuntimeSource(): string {
-  return installUrlPageTranslationRuntime.toString().replace(/^[ \t]+/gmu, '');
+  return installUrlPageTranslationRuntime.toString()
+    .replace(/^[ \t]+/gmu, '')
+    .replace(/([;{},])\n/gu, '$1')
+    .replace(/\n(?=[;}])/gu, '');
 }
 
 function validatedGuestBatch(
@@ -2301,7 +2382,12 @@ function validatedGuestBatch(
     if (chars + text.length > maxChars && !allowSingleLongCaption) break;
     ids.add(id);
     chars += text.length;
-    blocks.push({ id, text });
+    const cacheKey = typeof item.cacheKey === 'string' ? item.cacheKey.trim() : '';
+    blocks.push({
+      id,
+      text,
+      ...(cacheKey && cacheKey.length <= PREVIEW_TRANSLATION_CACHE_MAX_BLOCK_KEY_CHARS ? { cacheKey } : {}),
+    });
     if (chars > maxChars) break;
     if (blocks.length >= maxBlocks) break;
   }

@@ -4,6 +4,7 @@ import {
   type TranslationLanguage,
 } from '../../../core/translationLanguage';
 import type {
+  UrlPageTranslationBlock,
   UrlPageTranslationFailureCode,
   UrlPageTranslationRequest,
   UrlPageTranslationResponse,
@@ -21,6 +22,10 @@ import {
   PreviewTranslationLatencyTracker,
   VISIBLE_TRANSLATION_BATCH_LIMITS,
 } from './previewTranslationScheduling';
+import {
+  previewTranslationCacheResponsePlan,
+  previewTranslationCacheSourceId,
+} from './previewTranslationCache';
 
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const FIRST_CAPTION_MAX_BLOCKS = 6;
@@ -53,6 +58,8 @@ interface UrlPageTranslationControllerOptions {
 }
 
 interface ActivePageTranslationRequest {
+  blocks: UrlPageTranslationBlock[];
+  cacheSourceId?: string;
   captionRevision: number;
   contentKind: 'caption' | 'page';
   generation: number;
@@ -547,7 +554,12 @@ export class UrlPageTranslationController {
     if (!this.isCurrent(generation) || batch.blocks.length === 0) return;
     if (this.status === 'idle') this.setStatus('starting');
     const requestId = nextId('request');
+    const cacheSourceId = this.pageIdentity && batch.blocks.every((block) => Boolean(block.cacheKey))
+      ? previewTranslationCacheSourceId('url', [this.pageIdentity])
+      : undefined;
     const activeRequest: ActivePageTranslationRequest = {
+      blocks: [...batch.blocks],
+      ...(cacheSourceId ? { cacheSourceId } : {}),
       captionRevision: batch.captionRevision,
       contentKind: batch.contentKind ?? 'page',
       generation,
@@ -559,15 +571,20 @@ export class UrlPageTranslationController {
       startedAt: Date.now(),
     };
     this.activeRequests.set(requestId, activeRequest);
-    const response = this.translate({
+    const response = this.translate(this.translationRequest(activeRequest));
+    void this.finishRequest(activeRequest, response);
+  }
+
+  private translationRequest(activeRequest: ActivePageTranslationRequest): UrlPageTranslationRequest {
+    return {
       sessionId: activeRequest.sessionId,
-      requestId,
+      requestId: activeRequest.requestId,
       targetLanguage: this.targetLanguage,
       contentKind: activeRequest.contentKind,
       ...(this.model ? { model: this.model } : {}),
-      blocks: batch.blocks,
-    });
-    void this.finishRequest(activeRequest, response);
+      ...(activeRequest.cacheSourceId ? { cacheSourceId: activeRequest.cacheSourceId } : {}),
+      blocks: activeRequest.blocks,
+    };
   }
 
   private markBatchStarted(batch: UrlPageTranslationGuestBatch): void {
@@ -586,7 +603,6 @@ export class UrlPageTranslationController {
       return;
     }
     if (!this.isActiveRequest(activeRequest)) return;
-    this.latency.record(Date.now() - activeRequest.startedAt);
 
     if (response.requestId !== activeRequest.requestId) {
       await this.failRequest(activeRequest, 'invalid-response');
@@ -604,6 +620,15 @@ export class UrlPageTranslationController {
       return;
     }
 
+    const cachePlan = response.cacheHit
+      ? previewTranslationCacheResponsePlan(response, activeRequest.blocks)
+      : null;
+    if ((response.cacheHit && !cachePlan) || (!response.cacheHit && response.remainingBlockIds)) {
+      await this.failRequest(activeRequest, 'invalid-response');
+      return;
+    }
+    if (!response.cacheHit) this.latency.record(Date.now() - activeRequest.startedAt);
+
     let insertedCount: number;
     try {
       insertedCount = await this.runGuest(() => this.guest.apply(response.translations));
@@ -612,6 +637,16 @@ export class UrlPageTranslationController {
       return;
     }
     if (!this.isActiveRequest(activeRequest)) return;
+    if (cachePlan && cachePlan.remainingBlocks.length > 0) {
+      if (insertedCount > 0) this.markRequestCompleted(activeRequest);
+      for (const translation of response.translations) this.failedIds.delete(translation.id);
+      activeRequest.blocks = cachePlan.remainingBlocks;
+      activeRequest.ids = cachePlan.remainingBlocks.map((block) => block.id);
+      activeRequest.startedAt = Date.now();
+      this.setStatus(this.failedIds.size > 0 ? 'error' : 'starting');
+      void this.finishRequest(activeRequest, this.translate(this.translationRequest(activeRequest)));
+      return;
+    }
     this.activeRequests.delete(activeRequest.requestId);
     this.blockedForConfiguration = false;
     this.currentConcurrencyLimit = this.maxConcurrentRequests;

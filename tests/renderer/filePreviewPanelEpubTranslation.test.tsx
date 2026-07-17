@@ -10,6 +10,7 @@ import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { DocumentIndex, UiState } from '../../src/renderer/state/document';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { FilePreviewPanel } from '../../src/renderer/ui/preview/FilePreviewPanel';
+import { epubPreviewTranslationCacheSourceId } from '../../src/renderer/ui/preview/previewTranslationCache';
 import { resetUrlPageTranslationPreferencesForTests } from '../../src/renderer/ui/preview/urlPageTranslationPreferences';
 
 const makeBookInputs: unknown[] = [];
@@ -47,6 +48,21 @@ afterEach(() => {
 });
 
 describe('FilePreviewPanel EPUB translation chrome', () => {
+  test('changes the persistent translation scope when the resolved EPUB changes', () => {
+    const source = {
+      id: 'epub:test',
+      lastModified: 1_000,
+      sizeBytes: 1_024,
+    };
+    const identity = epubPreviewTranslationCacheSourceId(source);
+
+    expect(identity).toBe('["epub","epub:test",1024,1000]');
+    expect(epubPreviewTranslationCacheSourceId({ ...source })).toBe(identity);
+    expect(epubPreviewTranslationCacheSourceId({ ...source, id: 'epub:replacement' })).not.toBe(identity);
+    expect(epubPreviewTranslationCacheSourceId({ ...source, sizeBytes: 2_048 })).not.toBe(identity);
+    expect(epubPreviewTranslationCacheSourceId({ ...source, lastModified: 2_000 })).not.toBe(identity);
+  });
+
   test('shows the shared control while keeping local automatic translation independent', async () => {
     const rendered = renderEpubPanel({
       translationModel: null,

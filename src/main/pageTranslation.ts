@@ -12,6 +12,9 @@ import {
   URL_PAGE_TRANSLATION_MAX_BLOCKS,
   URL_PAGE_TRANSLATION_MAX_OUTPUT_CHARS,
   URL_PAGE_TRANSLATION_MAX_TRANSLATION_CHARS,
+  PREVIEW_TRANSLATION_CACHE_MAX_BLOCK_KEY_CHARS,
+  PREVIEW_TRANSLATION_CACHE_MAX_SOURCE_ID_CHARS,
+  PREVIEW_TRANSLATION_PROMPT_REVISION,
   isUrlPageTranslationModel,
   type UrlPageTranslationBlock,
   type UrlPageTranslationCancelRequest,
@@ -48,6 +51,11 @@ import {
 } from './agentModelResolution';
 import { customOpenAIResponsesPayloadProfileOption } from './openAIResponsesCompat';
 import { piCompleteSimple, piExternalProviderId } from './piModels';
+import type {
+  PreviewTranslationCacheBlock,
+  PreviewTranslationCacheScope,
+  PreviewTranslationCacheStore,
+} from './previewTranslationCacheStore';
 
 const ID_PATTERN = /^[A-Za-z0-9:_-]{1,96}$/;
 const PAGE_TRANSLATION_MAX_TOKENS = 8_192;
@@ -66,14 +74,29 @@ interface PageTranslationCompletionInput {
   signal: AbortSignal;
   maxTokens: number;
   model?: string;
+  resolvedModel?: PageTranslationResolvedModel;
 }
 
 type PageTranslationComplete = (input: PageTranslationCompletionInput) => Promise<string>;
 
 interface PageTranslationServiceOptions {
+  cache?: Pick<PreviewTranslationCacheStore, 'lookup' | 'record'>;
   complete?: PageTranslationComplete;
   onError?: (error: unknown) => void;
+  resolveModel?: (model?: string) => Promise<PageTranslationResolvedModel>;
   retryDelayMs?: (retryCount: number, error: unknown) => number;
+}
+
+interface PageTranslationResolvedModel {
+  cacheIdentity: string;
+  model?: Model<Api>;
+  providerConfig?: NonNullable<Awaited<ReturnType<typeof getProviderRuntimeConfig>>>;
+}
+
+interface PageTranslationCacheContext {
+  blocks: PreviewTranslationCacheBlock[];
+  epoch: number;
+  scope: PreviewTranslationCacheScope;
 }
 
 interface ActiveTranslationRequest {
@@ -105,14 +128,18 @@ class PageTranslationResponseError extends Error {
   }
 }
 
-/** Main-owned, non-persisted model requests for preview translation. */
+/** Main-owned model request service for preview translation. */
 export class PageTranslationService {
   private readonly active = new Map<string, ActiveTranslationRequest>();
+  private readonly cache?: Pick<PreviewTranslationCacheStore, 'lookup' | 'record'>;
   private readonly complete: PageTranslationComplete;
+  private readonly resolveModel: (model?: string) => Promise<PageTranslationResolvedModel>;
   private readonly retryDelayMs: (retryCount: number, error: unknown) => number;
 
   constructor(private readonly options: PageTranslationServiceOptions = {}) {
+    this.cache = options.cache;
     this.complete = options.complete ?? completePageTranslationWithConfiguredModel;
+    this.resolveModel = options.resolveModel ?? resolvePageTranslationModel;
     this.retryDelayMs = options.retryDelayMs ?? ((retryCount, error) => (
       pageTranslationRetryDelayMs(retryCount, Math.random, providerRetryAfterMs(error))
     ));
@@ -156,6 +183,37 @@ export class PageTranslationService {
     const controller = new AbortController();
     this.active.set(request.sessionId, { controller, requestId: request.requestId });
     try {
+      let resolvedModel: PageTranslationResolvedModel | undefined;
+      let cacheContext: PageTranslationCacheContext | null = null;
+      if (this.cache && request.cacheSourceId) {
+        resolvedModel = await this.resolveModel(request.model);
+        throwIfAborted(controller.signal);
+        cacheContext = await this.lookupCache(request, resolvedModel);
+        throwIfAborted(controller.signal);
+        if (cacheContext) {
+          try {
+            const lookup = await this.cache.lookup(cacheContext.scope, cacheContext.blocks);
+            throwIfAborted(controller.signal);
+            cacheContext.epoch = lookup.epoch;
+            if (lookup.hits.length > 0) {
+              const hitIds = new Set(lookup.hits.map((item) => item.id));
+              const remainingBlockIds = request.blocks
+                .filter((block) => !hitIds.has(block.id))
+                .map((block) => block.id);
+              return {
+                ok: true,
+                requestId: request.requestId,
+                translations: lookup.hits,
+                cacheHit: true,
+                ...(remainingBlockIds.length > 0 ? { remainingBlockIds } : {}),
+              };
+            }
+          } catch (error) {
+            throwIfAborted(controller.signal);
+            cacheContext = null;
+          }
+        }
+      }
       const prompts = buildPageTranslationPrompts(
         request.targetLanguage,
         request.blocks,
@@ -167,13 +225,23 @@ export class PageTranslationService {
         signal: controller.signal,
         maxTokens: PAGE_TRANSLATION_MAX_TOKENS,
         ...(request.model ? { model: request.model } : {}),
+        ...(resolvedModel ? { resolvedModel } : {}),
       };
       const output = await this.completeWithRetries(completionInput);
       throwIfAborted(controller.signal);
+      const translations = parsePageTranslationResponse(output, request.blocks);
+      if (cacheContext) {
+        void this.cache?.record(
+          cacheContext.scope,
+          cacheContext.blocks,
+          translations,
+          cacheContext.epoch,
+        ).catch(() => undefined);
+      }
       return {
         ok: true,
         requestId: request.requestId,
-        translations: parsePageTranslationResponse(output, request.blocks),
+        translations,
       };
     } catch (error) {
       if (controller.signal.aborted || isAbortError(error, controller.signal)) {
@@ -190,8 +258,28 @@ export class PageTranslationService {
       return failure(request.requestId, 'provider-error');
     } finally {
       const current = this.active.get(request.sessionId);
-      if (current?.requestId === request.requestId) this.active.delete(request.sessionId);
+      if (current?.controller === controller) this.active.delete(request.sessionId);
     }
+  }
+
+  private async lookupCache(
+    request: UrlPageTranslationRequest,
+    resolvedModel: PageTranslationResolvedModel,
+  ): Promise<PageTranslationCacheContext | null> {
+    if (!request.cacheSourceId) return null;
+    const blocks: PreviewTranslationCacheBlock[] = [];
+    for (const block of request.blocks) {
+      if (!block.cacheKey) return null;
+      blocks.push({ cacheKey: block.cacheKey, id: block.id, text: block.text });
+    }
+    const scope: PreviewTranslationCacheScope = {
+      contentKind: request.contentKind ?? 'page',
+      modelIdentity: resolvedModel.cacheIdentity,
+      promptRevision: PREVIEW_TRANSLATION_PROMPT_REVISION,
+      sourceId: request.cacheSourceId,
+      targetLanguage: request.targetLanguage,
+    };
+    return { blocks, epoch: 0, scope };
   }
 
   private async completeWithRetries(input: PageTranslationCompletionInput): Promise<string> {
@@ -266,7 +354,7 @@ export function buildPageTranslationPrompts(
     userPrompt: JSON.stringify({
       contentKind,
       targetLanguage: translationLanguagePromptName(targetLanguage),
-      blocks,
+      blocks: blocks.map(({ id, text }) => ({ id, text })),
     }),
   };
 }
@@ -315,11 +403,12 @@ async function completePageTranslationWithConfiguredModel(
   input: PageTranslationCompletionInput,
 ): Promise<string> {
   throwIfAborted(input.signal);
-  const resolved = input.model
-    ? await resolveExplicitTranslationModel(input.model)
-    : await resolveFollowAgentTranslationModel();
+  const resolved = input.resolvedModel ?? await resolvePageTranslationModel(input.model);
   throwIfAborted(input.signal);
   const { model, providerConfig } = resolved;
+  if (!model || !providerConfig) {
+    throw new PageTranslationConfigurationError('The selected translation model is unavailable.');
+  }
 
   const runtimeSettings = await getAgentRuntimeSettings();
   const reasoning = lowestThinkingLevel(model);
@@ -349,10 +438,11 @@ async function completePageTranslationWithConfiguredModel(
   return text;
 }
 
-async function resolveFollowAgentTranslationModel(): Promise<{
-  model: Model<Api>;
-  providerConfig: NonNullable<Awaited<ReturnType<typeof getActiveProviderRuntimeConfig>>>;
-}> {
+async function resolvePageTranslationModel(model?: string): Promise<PageTranslationResolvedModel> {
+  return model ? resolveExplicitTranslationModel(model) : resolveFollowAgentTranslationModel();
+}
+
+async function resolveFollowAgentTranslationModel(): Promise<PageTranslationResolvedModel> {
   const providerConfig = await getActiveProviderRuntimeConfig();
   if (!providerConfig) {
     throw new PageTranslationConfigurationError('No enabled agent provider is configured.');
@@ -361,12 +451,14 @@ async function resolveFollowAgentTranslationModel(): Promise<{
   const agentId = agentDefinitionAgentId(definition);
   const profile = await getBuiltInAgentProfile(agentId);
   try {
+    const model = resolveAgentModel(
+      profile.model ?? definition.model,
+      providerConfig,
+      () => tryResolveProviderModel(providerConfig),
+    );
     return {
-      model: resolveAgentModel(
-        profile.model ?? definition.model,
-        providerConfig,
-        () => tryResolveProviderModel(providerConfig),
-      ),
+      cacheIdentity: pageTranslationModelCacheIdentity(model, providerConfig.providerId),
+      model,
       providerConfig,
     };
   } catch (error) {
@@ -374,10 +466,7 @@ async function resolveFollowAgentTranslationModel(): Promise<{
   }
 }
 
-async function resolveExplicitTranslationModel(qualifiedModel: string): Promise<{
-  model: Model<Api>;
-  providerConfig: NonNullable<Awaited<ReturnType<typeof getProviderRuntimeConfig>>>;
-}> {
+async function resolveExplicitTranslationModel(qualifiedModel: string): Promise<PageTranslationResolvedModel> {
   const selection = parseProviderQualifiedModel(qualifiedModel, () => false);
   if (!selection) throw new PageTranslationConfigurationError('Translation model must include its provider.');
   const providerConfig = await getProviderRuntimeConfig(selection.providerId, selection.modelId);
@@ -389,10 +478,24 @@ async function resolveExplicitTranslationModel(qualifiedModel: string): Promise<
     if (!model) {
       throw new Error(`Translation model is unavailable: ${qualifiedModel}`);
     }
-    return { model, providerConfig };
+    return {
+      cacheIdentity: pageTranslationModelCacheIdentity(model, providerConfig.providerId),
+      model,
+      providerConfig,
+    };
   } catch (error) {
     throw configurationError(error);
   }
+}
+
+function pageTranslationModelCacheIdentity(model: Model<Api>, providerId: string): string {
+  return JSON.stringify([
+    providerId,
+    model.provider,
+    model.api,
+    model.id,
+    model.baseUrl ?? '',
+  ]);
 }
 
 function validateTranslationRequest(args: Record<string, unknown>): UrlPageTranslationRequest {
@@ -409,6 +512,7 @@ function validateTranslationRequest(args: Record<string, unknown>): UrlPageTrans
   if (!Array.isArray(args.blocks) || args.blocks.length === 0 || args.blocks.length > maxBlocks) {
     throw new Error('Invalid page translation block count.');
   }
+  const cacheSourceId = validateOptionalCacheSourceId(args.cacheSourceId);
 
   let totalChars = 0;
   const ids = new Set<string>();
@@ -422,7 +526,8 @@ function validateTranslationRequest(args: Record<string, unknown>): UrlPageTrans
       throw new Error('Invalid page translation block text.');
     }
     totalChars += text.length;
-    return { id, text };
+    const cacheKey = cacheSourceId ? validateCacheBlockKey(entry.cacheKey) : undefined;
+    return { id, text, ...(cacheKey ? { cacheKey } : {}) };
   });
   if (totalChars > maxBatchChars) {
     throw new Error('Page translation batch is too large.');
@@ -434,8 +539,34 @@ function validateTranslationRequest(args: Record<string, unknown>): UrlPageTrans
     targetLanguage: args.targetLanguage,
     contentKind,
     ...(model ? { model } : {}),
+    ...(cacheSourceId ? { cacheSourceId } : {}),
     blocks,
   };
+}
+
+function validateOptionalCacheSourceId(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (
+    typeof value !== 'string'
+    || !value.trim()
+    || value.trim() !== value
+    || value.length > PREVIEW_TRANSLATION_CACHE_MAX_SOURCE_ID_CHARS
+  ) {
+    throw new Error('Invalid page translation cache source id.');
+  }
+  return value;
+}
+
+function validateCacheBlockKey(value: unknown): string {
+  if (
+    typeof value !== 'string'
+    || !value.trim()
+    || value.trim() !== value
+    || value.length > PREVIEW_TRANSLATION_CACHE_MAX_BLOCK_KEY_CHARS
+  ) {
+    throw new Error('Invalid page translation cache block key.');
+  }
+  return value;
 }
 
 function validateContentKind(value: unknown): UrlPageTranslationContentKind {
