@@ -14,6 +14,7 @@ import {
   type AgentSessionExecutionBinding,
   type AgentSessionStopIntent,
 } from '../core/agentIssue';
+import { normalizeAgentIssueOperationBatch } from './agentIssueOperationCodec';
 
 const AGENT_ISSUE_PROJECTION_VERSION = 1;
 
@@ -149,6 +150,7 @@ export function parseAgentIssueOperationBatchesJsonl(
   const batches: AgentIssueOperationBatch[] = [];
   const signatures = new Map<string, string>();
   const lines = raw.split(/\r?\n/);
+  const hasTornTrailingLine = raw.length > 0 && !raw.endsWith('\n');
   let lastContentIndex = -1;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     if (lines[index]!.trim()) {
@@ -164,7 +166,7 @@ export function parseAgentIssueOperationBatchesJsonl(
     try {
       parsed = JSON.parse(line) as unknown;
     } catch (error) {
-      if (index === lastContentIndex) {
+      if (index === lastContentIndex && hasTornTrailingLine) {
         console.warn(`Dropping torn trailing Agent Issue operation at ${source}:${index + 1}`);
         break;
       }
@@ -321,7 +323,10 @@ function applyAgentIssueOperation(
   const state = projection.state;
   switch (operation.type) {
     case 'issue.upserted':
-      if (!projection.issueTombstones[operation.issue.id]) {
+      if (
+        !projection.issueTombstones[operation.issue.id]
+        && !issueDependsOnTombstonedEntity(projection, operation.issue)
+      ) {
         state.issues[operation.issue.id] = structuredClone(operation.issue);
       }
       return;
@@ -372,162 +377,17 @@ function applyAgentIssueOperation(
   }
 }
 
-function normalizeAgentIssueOperationBatch(value: unknown): AgentIssueOperationBatch | null {
-  if (!isRecord(value) || value.v !== AGENT_ISSUE_OPERATION_VERSION) return null;
-  if (!isPositiveSafeInteger(value.seq) || !isNonEmptyString(value.operationId)) return null;
-  const actor = normalizeActorRef(value.actor);
-  if (!actor || !isFiniteNumber(value.committedAt)) return null;
-  if (!Array.isArray(value.operations) || value.operations.length === 0) return null;
-  const operations: AgentIssueOperation[] = [];
-  for (const operation of value.operations) {
-    const normalized = normalizeAgentIssueOperation(operation);
-    if (!normalized) return null;
-    operations.push(normalized);
-  }
-  return {
-    v: AGENT_ISSUE_OPERATION_VERSION,
-    seq: value.seq,
-    operationId: value.operationId,
-    actor,
-    committedAt: value.committedAt,
-    operations,
-  };
-}
-
-function normalizeAgentIssueOperation(value: unknown): AgentIssueOperation | null {
-  if (!isRecord(value) || typeof value.type !== 'string') return null;
-  switch (value.type) {
-    case 'issue.upserted':
-      return isEntity(value.issue, 'id')
-        ? { type: value.type, issue: value.issue as unknown as AgentIssue }
-        : null;
-    case 'issue.deleted': {
-      const tombstone = normalizeDeletionTombstone(value.tombstone, 'issue');
-      return tombstone?.entity.type === 'issue'
-        ? {
-            type: value.type,
-            tombstone: tombstone as AgentIssueDeletionTombstone<{
-              type: 'issue';
-              issueId: string;
-            }>,
-          }
-        : null;
-    }
-    case 'recurring-issue.upserted':
-      return isEntity(value.recurringIssue, 'id')
-        ? { type: value.type, recurringIssue: value.recurringIssue as unknown as AgentRecurringIssue }
-        : null;
-    case 'recurring-issue.deleted': {
-      const tombstone = normalizeDeletionTombstone(value.tombstone, 'recurring-issue');
-      return tombstone?.entity.type === 'recurring-issue'
-        ? {
-            type: value.type,
-            tombstone: tombstone as AgentIssueDeletionTombstone<{
-              type: 'recurring-issue';
-              recurringIssueId: string;
-            }>,
-          }
-        : null;
-    }
-    case 'agent-session.upserted':
-      return isEntity(value.agentSession, 'id')
-        ? { type: value.type, agentSession: value.agentSession as unknown as AgentSession }
-        : null;
-    case 'session-execution.upserted':
-      return isNonEmptyString(value.agentSessionId) && isExecutionBinding(value.binding)
-        ? { type: value.type, agentSessionId: value.agentSessionId, binding: value.binding }
-        : null;
-    case 'session-stop-intent.upserted':
-      return isNonEmptyString(value.agentSessionId) && isStopIntent(value.intent)
-        ? { type: value.type, agentSessionId: value.agentSessionId, intent: value.intent }
-        : null;
-    case 'session-stop-intent.cleared':
-      return isNonEmptyString(value.agentSessionId)
-        ? { type: value.type, agentSessionId: value.agentSessionId }
-        : null;
-    case 'terminal-delivery.upserted':
-      return isTerminalDelivery(value.delivery)
-        ? { type: value.type, delivery: value.delivery }
-        : null;
-    case 'activity.appended':
-      return isEntity(value.activity, 'id')
-        ? { type: value.type, activity: value.activity as unknown as Activity }
-        : null;
-    default:
-      return null;
-  }
-}
-
-function normalizeDeletionTombstone(
-  value: unknown,
-  expectedType: 'issue' | 'recurring-issue',
-): AgentIssueDeletionTombstone | null {
-  if (!isRecord(value) || !isNonEmptyString(value.deletionId)) return null;
-  const actor = normalizeActorRef(value.actor);
-  if (!actor || !isFiniteNumber(value.deletedAt) || !isNonEmptyString(value.lastKnownRevision)) {
-    return null;
-  }
-  if (!isRecord(value.entity) || value.entity.type !== expectedType) return null;
-  if (expectedType === 'issue' && isNonEmptyString(value.entity.issueId)) {
-    return {
-      deletionId: value.deletionId,
-      entity: { type: 'issue', issueId: value.entity.issueId },
-      actor,
-      deletedAt: value.deletedAt,
-      lastKnownRevision: value.lastKnownRevision,
-    };
-  }
-  if (expectedType === 'recurring-issue' && isNonEmptyString(value.entity.recurringIssueId)) {
-    return {
-      deletionId: value.deletionId,
-      entity: { type: 'recurring-issue', recurringIssueId: value.entity.recurringIssueId },
-      actor,
-      deletedAt: value.deletedAt,
-      lastKnownRevision: value.lastKnownRevision,
-    };
-  }
-  return null;
-}
-
-function isExecutionBinding(value: unknown): value is AgentSessionExecutionBinding {
-  return isRecord(value)
-    && value.engine === 'delegation'
-    && isNonEmptyString(value.conversationId)
-    && isNonEmptyString(value.executionId)
-    && isFiniteNumber(value.startedAt)
-    && isFiniteNumber(value.updatedAt);
-}
-
-function isStopIntent(value: unknown): value is AgentSessionStopIntent {
-  return isRecord(value) && isNonEmptyString(value.token) && isFiniteNumber(value.createdAt);
-}
-
-function isTerminalDelivery(value: unknown): value is AgentIssueTerminalDelivery {
-  return isRecord(value)
-    && isNonEmptyString(value.id)
-    && isNonEmptyString(value.issueId)
-    && isFiniteNumber(value.terminalAt)
-    && (value.status === 'pending' || value.status === 'dispatching' || value.status === 'delivered')
-    && isFiniteNumber(value.attemptCount)
-    && isFiniteNumber(value.createdAt)
-    && isFiniteNumber(value.updatedAt)
-    && isRecord(value.origin);
-}
-
-function normalizeActorRef(value: unknown): ActorRef | null {
-  if (!isRecord(value)) return null;
-  if (value.type === 'system') return { type: 'system' };
-  if (value.type === 'user' && isNonEmptyString(value.userId)) {
-    return { type: 'user', userId: value.userId };
-  }
-  if (value.type === 'agent' && isNonEmptyString(value.agentId)) {
-    return { type: 'agent', agentId: value.agentId };
-  }
-  return null;
-}
-
-function isEntity(value: unknown, idKey: string): value is Record<string, unknown> {
-  return isRecord(value) && isNonEmptyString(value[idKey]);
+function issueDependsOnTombstonedEntity(
+  projection: AgentIssueOperationProjection,
+  issue: AgentIssue,
+): boolean {
+  return Boolean(
+    (issue.parentIssueId && projection.issueTombstones[issue.parentIssueId])
+    || (
+      issue.recurrence
+      && projection.recurringIssueTombstones[issue.recurrence.recurringIssueId]
+    ),
+  );
 }
 
 function sortedUnionKeys<TValue>(
@@ -568,16 +428,4 @@ function compareCodeUnits(left: string, right: string): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }

@@ -342,6 +342,115 @@ describe('agent issue store durability guards', () => {
     }
   });
 
+  test('rejects stale materialization derived from a tombstoned Recurring Issue', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-recurring-materialization-primary-'));
+    const staleRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-recurring-materialization-stale-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const createdAt = Date.parse('2026-07-07T09:00:00Z');
+      const materializedAt = Date.parse('2026-07-07T10:05:00Z');
+      await store.create({
+        issueType: 'recurring-issue',
+        fields: {
+          titleTemplate: 'Deleted offline schedule',
+          cadence: { type: 'daily', time: '18:00' },
+          timeZone: 'Asia/Shanghai',
+          issueTemplate: { permissionMode: 'unattended' },
+        },
+        request: { mode: 'request' },
+        reason: 'Create a schedule before the replica goes offline.',
+      }, actor, createdAt);
+      await writeFile(
+        path.join(staleRoot, AGENT_ISSUE_OPERATION_LOG_FILE),
+        await readFile(path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE)),
+      );
+
+      const recurring = (await store.search({ targets: ['recurring-issue'] })).rows[0]!;
+      await store.update({
+        target: {
+          type: 'recurring-issue',
+          id: recurring.target.id,
+          expectedRevision: recurring.revision,
+        },
+        change: { type: 'delete' },
+        request: { mode: 'request' },
+        reason: 'Delete the schedule while the other replica is offline.',
+      }, actor, materializedAt - 1);
+
+      const staleStore = AgentIssueStore.forAgentDataRoot(staleRoot);
+      expect(await staleStore.materializeDueRecurringIssues(materializedAt, actor)).toHaveLength(1);
+      const staleMaterialization = (await readOperationBatches(staleRoot))[1]!;
+      const deletion = (await readOperationBatches(root))[1]!;
+      await appendFile(
+        path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE),
+        `${JSON.stringify({ ...staleMaterialization, seq: deletion.seq + 1 })}\n`,
+        'utf8',
+      );
+
+      const restarted = AgentIssueStore.forAgentDataRoot(root);
+      expect((await restarted.search({ targets: ['recurring-issue'] })).rows).toEqual([]);
+      expect((await restarted.search({ targets: ['issue'] })).rows).toEqual([]);
+      expect(await restarted.listReadyIssuesForExecution(materializedAt)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(staleRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects stale child creation derived from a tombstoned parent Issue', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-primary-'));
+    const staleRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-stale-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const parent = await createIssue(store, 'Deleted parent', 10);
+      const parentSessionId = await startIssueSession(store, parent, 20);
+      await store.bindSessionExecution(parentSessionId, {
+        engine: 'delegation',
+        conversationId: 'conversation:deleted-parent',
+        executionId: 'execution:deleted-parent',
+        startedAt: 25,
+      }, actor, 25);
+      await writeFile(
+        path.join(staleRoot, AGENT_ISSUE_OPERATION_LOG_FILE),
+        await readFile(path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE)),
+      );
+
+      await store.markInterruptedSessionsStale(actor, 30);
+      const currentParent = (await store.read({ target: { type: 'issue', id: parent.id } })).issue!;
+      expect((await store.update({
+        target: { type: 'issue', id: parent.id, expectedRevision: currentParent.revision },
+        change: { type: 'delete' },
+        request: { mode: 'request' },
+        reason: 'Delete the parent while the other replica is offline.',
+      }, actor, 40)).status).toBe('applied');
+
+      const staleStore = AgentIssueStore.forAgentDataRoot(staleRoot);
+      const childCreation = await staleStore.create({
+        issueType: 'issue',
+        fields: { title: 'Late child' },
+        request: { mode: 'request' },
+        reason: 'Create a child from stale parent state.',
+      }, actor, 35, {
+        origin: { type: 'agent-session', agentSessionId: parentSessionId },
+      });
+      expect(childCreation.status).toBe('applied');
+      const staleChildBatch = (await readOperationBatches(staleRoot)).at(-1)!;
+      const primaryTail = (await readOperationBatches(root)).at(-1)!;
+      await appendFile(
+        path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE),
+        `${JSON.stringify({ ...staleChildBatch, seq: primaryTail.seq + 1 })}\n`,
+        'utf8',
+      );
+
+      const restarted = AgentIssueStore.forAgentDataRoot(root);
+      expect((await restarted.search({ targets: ['issue'] })).rows).toEqual([]);
+      expect(await restarted.listReadyIssuesForExecution(50)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(staleRoot, { recursive: true, force: true });
+    }
+  });
+
   test('rejects conflicting operation identities and malformed middle records', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-corrupt-log-'));
     try {
@@ -365,6 +474,38 @@ describe('agent issue store durability guards', () => {
         `${JSON.stringify(first)}\nnot-json\n${JSON.stringify(later)}\n`,
         'corrupt-middle.jsonl',
       )).toThrow('Invalid Agent Issue operation JSON at corrupt-middle.jsonl:2');
+
+      expect(() => parseAgentIssueOperationBatchesJsonl(`${JSON.stringify({
+        v: 1,
+        seq: 1,
+        operationId: 'malformed-entity',
+        actor: { type: 'system' },
+        committedAt: 1,
+        operations: [{ type: 'issue.upserted', issue: { id: 'issue:malformed' } }],
+      })}\n`, 'malformed-entity.jsonl'))
+        .toThrow('Invalid Agent Issue operation at malformed-entity.jsonl:1');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a newline-terminated malformed tail before another mutation can append', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-agent-issue-complete-corrupt-tail-'));
+    try {
+      const store = AgentIssueStore.forAgentDataRoot(root);
+      const issue = await createIssue(store, 'Before complete corrupt tail', 10);
+      const logPath = path.join(root, AGENT_ISSUE_OPERATION_LOG_FILE);
+      await appendFile(logPath, 'not-json\n', 'utf8');
+      const corrupted = await readFile(logPath, 'utf8');
+
+      await expect(store.state()).rejects.toThrow('Invalid Agent Issue operation JSON');
+      await expect(store.update({
+        target: { type: 'issue', id: issue.id, expectedRevision: issue.revision },
+        change: { type: 'patch', patch: { title: 'Must not append' } },
+        request: { mode: 'request' },
+        reason: 'Do not write past a complete corrupt record.',
+      }, actor, 20)).rejects.toThrow('Invalid Agent Issue operation JSON');
+      expect(await readFile(logPath, 'utf8')).toBe(corrupted);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

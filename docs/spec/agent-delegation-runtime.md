@@ -274,12 +274,17 @@ nothing.
 
 Each batch has schema version `1`, a stable `operationId`, local monotonic `seq`,
 actor, commit time, and one or more typed operations. Duplicate ids with the same
-content are ignored during replay; conflicting reuse is corruption. A torn final
-line is omitted on read and truncated before the next append, while malformed
-mid-log data fails loudly. Restart discards the in-memory projection and derives
-the same state from the ledger. Issue and Recurring Issue tombstones permanently
-win over later stale definition operations; Activity remains append-only audit
-evidence. The pre-release format has no `issue-manager.json` reader.
+content are ignored during replay; conflicting reuse is corruption. The storage
+codec validates every nested entity field before replay. A malformed final line
+is treated as torn only when the physical file lacks its terminating newline; a
+newline-terminated malformed record fails loudly before another append can move
+it into the middle of the log. Restart discards the in-memory projection and
+derives the same state from the ledger. Issue and Recurring Issue tombstones
+permanently win over later stale definition operations. A later child-Issue
+upsert whose parent is tombstoned, or a materialized-Issue upsert whose Recurring
+Issue source is tombstoned, is also ignored so stale offline work cannot become
+runnable. Activity remains append-only audit evidence. The pre-release format
+has no `issue-manager.json` reader.
 
 The ledger records local Session execution bindings, stop reservations, and
 terminal-delivery claim transitions because restart must preserve them. They do

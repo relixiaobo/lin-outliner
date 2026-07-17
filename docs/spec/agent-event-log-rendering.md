@@ -369,18 +369,22 @@ stable `operationId` is the deduplication identity; `seq` is local replay order,
 not a future global sync sequence. Projection caches are derived only and are
 invalidated by the file identity/size/time fingerprint. Full replay is the
 authority after restart or any external file replacement. A duplicate operation
-with identical content is a no-op, conflicting duplicate content and malformed
-mid-log records fail loudly, and a torn final batch is dropped then repaired on
-the next append.
+with identical content is a no-op, and the record codec rejects malformed nested
+entity payloads before projection. A newline-terminated malformed record fails
+loudly at any position. Only a malformed final fragment without its terminating
+newline is treated as a torn batch, dropped on read, and repaired before the next
+append.
 
 Issue and Recurring Issue tombstones are applied before accepting later upserts
 for the same entity id. This makes stale appended operations and restored legacy
-snapshots unable to revive deleted work while retaining deletion Activity as
-audit evidence. Session execution bindings, stop intents, scheduler ownership,
-and terminal-delivery claim owners remain local runtime state even though their
-restart transitions share the atomic ledger. A future online transport must
-filter or replace those local authority fields rather than treating replay as an
-execution lease.
+snapshots unable to revive deleted work. They also fence later Issue upserts
+derived from a tombstoned parent Issue or Recurring Issue, so stale child creation
+and schedule materialization cannot create runnable work after deletion, while
+retaining deletion Activity as audit evidence. Session execution bindings, stop
+intents, scheduler ownership, and terminal-delivery claim owners remain local
+runtime state even though their restart transitions share the atomic ledger. A
+future online transport must filter or replace those local authority fields
+rather than treating replay as an execution lease.
 
 ```ts
 interface AgentEventBase {
