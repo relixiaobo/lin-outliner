@@ -226,7 +226,10 @@ Batch appends preflight top-level Run IDs and Run-scoped payloads before writing
 any event. Retention recovery reconciles its raw stored Run index with existing
 `retention_pruned` tombstones and remaining Run directories, so a failure after
 the tombstone can resume cleanup. Workspace conversation/search indexes record
-the deletion-ledger tail and rebuild whenever that watermark is stale.
+the deletion-ledger tail and rebuild whenever that watermark is stale. Full
+rebuilds capture the tail before reading logs, persist that captured value
+unchanged, and retry when the ledger advances during the scan or write; a writer
+must never stamp pre-tombstone content with a newer deletion watermark.
 
 Replace mutable whole-file `issue-manager.json` truth with versioned append-only
 Issue operations and a rebuildable projection. Operations cover Issue and

@@ -1091,6 +1091,10 @@ export class AgentEventStore {
     return this.deletionStatePromise;
   }
 
+  private async currentDeletionSeq(): Promise<number> {
+    return deletionLedgerTailSeq(await this.deletionState());
+  }
+
   private async appendDeletionTombstones(
     pending: readonly PendingAgentDeletion[],
     context: AgentDeletionContext,
@@ -1846,7 +1850,8 @@ export class AgentEventStore {
   private async updateConversationIndex(conversationId: string, events: readonly AgentEvent[]) {
     if (await this.isConversationDeleted(conversationId)) return;
     await this.enqueueIndexWrite(async () => {
-      const index = await this.readConversationIndex() ?? createEmptyConversationIndex();
+      const index = await this.readConversationIndex()
+        ?? createEmptyConversationIndex(await this.currentDeletionSeq());
       let entry: AgentConversationIndexEntry | null = index.conversations[conversationId] ?? null;
       for (const event of events) {
         if (event.type === 'conversation.created') {
@@ -1882,28 +1887,37 @@ export class AgentEventStore {
 
   private async removeConversationFromIndex(conversationId: string) {
     await this.enqueueIndexWrite(async () => {
-      const index = await this.readConversationIndex() ?? createEmptyConversationIndex();
+      const index = await this.readConversationIndex()
+        ?? createEmptyConversationIndex(await this.currentDeletionSeq());
       delete index.conversations[conversationId];
       await this.writeConversationIndex(index);
     });
   }
 
   private async rebuildConversationIndex(): Promise<AgentConversationIndexEntry[]> {
-    const index = await this.buildConversationIndexFromEventLogs();
-    await this.writeConversationIndex(index);
-    return Object.values(index.conversations).sort((left, right) => right.updatedAt - left.updatedAt);
+    while (true) {
+      const index = await this.buildConversationIndexFromEventLogs();
+      await this.writeConversationIndex(index);
+      if (index.deletionSeq === await this.currentDeletionSeq()) {
+        return Object.values(index.conversations).sort((left, right) => right.updatedAt - left.updatedAt);
+      }
+    }
   }
 
   private async buildConversationIndexFromEventLogs(): Promise<AgentConversationIndex> {
-    const ids = await this.listConversationIds();
-    const entries: AgentConversationIndexEntry[] = [];
-    for (const id of ids) {
-      const state = await this.replay(id);
-      const entry = conversationIndexEntryFromReplayState(id, state);
-      if (entry) entries.push(entry);
+    while (true) {
+      const deletionSeq = await this.currentDeletionSeq();
+      const ids = await this.listConversationIds();
+      const entries: AgentConversationIndexEntry[] = [];
+      for (const id of ids) {
+        const state = await this.replay(id);
+        const entry = conversationIndexEntryFromReplayState(id, state);
+        if (entry) entries.push(entry);
+      }
+      if (deletionSeq !== await this.currentDeletionSeq()) continue;
+      const conversations = Object.fromEntries(entries.map((entry) => [entry.id, entry]));
+      return createEmptyConversationIndex(deletionSeq, conversations);
     }
-    const conversations = Object.fromEntries(entries.map((entry) => [entry.id, entry]));
-    return createEmptyConversationIndex(conversations);
   }
 
   private async getSearchIndex(): Promise<AgentEventSearchIndex> {
@@ -1941,7 +1955,8 @@ export class AgentEventStore {
     events: readonly AgentEvent[],
   ) {
     await this.enqueueIndexWrite(async () => {
-      const conversationIndex = await this.readConversationIndex() ?? createEmptyConversationIndex();
+      const conversationIndex = await this.readConversationIndex()
+        ?? createEmptyConversationIndex(await this.currentDeletionSeq());
       const conversationEntry = conversationIndexEntryFromReplayState(conversationId, state);
       if (conversationEntry) {
         conversationIndex.conversations[conversationId] = conversationEntry;
@@ -1962,20 +1977,25 @@ export class AgentEventStore {
   }
 
   private async rebuildSearchIndex(): Promise<AgentEventSearchIndex> {
-    const index = await this.buildSearchIndexFromEventLogs();
-    await this.writeSearchIndex(index);
-    return index;
+    while (true) {
+      const index = await this.buildSearchIndexFromEventLogs();
+      await this.writeSearchIndex(index);
+      if (index.deletionSeq === await this.currentDeletionSeq()) return index;
+    }
   }
 
   private async buildSearchIndexFromEventLogs(): Promise<AgentEventSearchIndex> {
-    const index = createEmptySearchIndex();
-    const ids = await this.listConversationIds();
-    for (const id of ids) {
-      for (const event of await this.readEvents(id)) {
-        applyAgentEventToSearchIndex(index, event);
+    while (true) {
+      const deletionSeq = await this.currentDeletionSeq();
+      const index = createEmptySearchIndex(deletionSeq);
+      const ids = await this.listConversationIds();
+      for (const id of ids) {
+        for (const event of await this.readEvents(id)) {
+          applyAgentEventToSearchIndex(index, event);
+        }
       }
+      if (deletionSeq === await this.currentDeletionSeq()) return index;
     }
-    return index;
   }
 
   private async readLatestCheckpoint(conversationId: string): Promise<AgentEventCheckpoint | null> {
@@ -2101,13 +2121,8 @@ export class AgentEventStore {
 
   private async writeConversationIndex(index: AgentConversationIndex) {
     const indexPath = this.conversationIndexPath();
-    const deletionSeq = deletionLedgerTailSeq(await this.deletionState());
     await mkdir(path.dirname(indexPath), { recursive: true });
-    await atomicWriteFile(indexPath, `${JSON.stringify({
-      ...index,
-      v: CONVERSATION_INDEX_VERSION,
-      deletionSeq,
-    })}\n`);
+    await atomicWriteFile(indexPath, `${JSON.stringify(index)}\n`);
   }
 
   private async readSearchIndex(): Promise<AgentEventSearchIndex | null> {
@@ -2131,22 +2146,18 @@ export class AgentEventStore {
 
   private async writeSearchIndex(index: AgentEventSearchIndex) {
     const indexPath = this.searchIndexPath();
-    const deletionSeq = deletionLedgerTailSeq(await this.deletionState());
     await mkdir(path.dirname(indexPath), { recursive: true });
-    await atomicWriteFile(indexPath, `${JSON.stringify({
-      ...index,
-      v: SEARCH_INDEX_VERSION,
-      deletionSeq,
-    })}\n`);
+    await atomicWriteFile(indexPath, `${JSON.stringify(index)}\n`);
   }
 }
 
 function createEmptyConversationIndex(
+  deletionSeq: number,
   conversations: Record<string, AgentConversationIndexEntry> = {},
 ): AgentConversationIndex {
   return {
     v: CONVERSATION_INDEX_VERSION,
-    deletionSeq: 0,
+    deletionSeq,
     conversations,
   };
 }
@@ -2320,10 +2331,10 @@ function persistedTextContent(content: readonly AgentPersistedContent[]): string
     .trim();
 }
 
-function createEmptySearchIndex(): AgentEventSearchIndex {
+function createEmptySearchIndex(deletionSeq: number): AgentEventSearchIndex {
   return {
     v: SEARCH_INDEX_VERSION,
-    deletionSeq: 0,
+    deletionSeq,
     messages: {},
     userMessages: {},
     latestSeqByConversationId: {},

@@ -579,4 +579,80 @@ describe('agent event store portability', () => {
       expect(searchIndex.deletionSeq).toBe(1);
     });
   });
+
+  test.each([
+    ['conversation', 'conversation-index.json'],
+    ['search', 'search-index.json'],
+  ] as const)('restarts a concurrent %s index rebuild when retention advances the deletion ledger', async (
+    indexKind,
+    indexFileName,
+  ) => {
+    await withStore(async (store, root) => {
+      const conversationId = `retention-concurrent-${indexKind}-index`;
+      const { oldRunId, retainedRunId } = await appendRetentionFixture(store, conversationId);
+      const oldRunEventsPath = store.runPaths(oldRunId).runEventsPath;
+      await rm(path.join(root, 'indexes', indexFileName), { force: true });
+
+      let releaseOldRunRead = (): void => undefined;
+      const oldRunReadReleased = new Promise<void>((resolve) => {
+        releaseOldRunRead = resolve;
+      });
+      let markOldRunReadCaptured = (): void => undefined;
+      const oldRunReadCaptured = new Promise<void>((resolve) => {
+        markOldRunReadCaptured = resolve;
+      });
+      const readStoredFile = fsPromises.readFile;
+      let capturedOldRunRead = false;
+      const readFileSpy = spyOn(fsPromises, 'readFile').mockImplementation(async (target, options) => {
+        if (!capturedOldRunRead && target === oldRunEventsPath) {
+          capturedOldRunRead = true;
+          const oldRunEvents = await readStoredFile(target, options);
+          markOldRunReadCaptured();
+          await oldRunReadReleased;
+          return oldRunEvents;
+        }
+        return readStoredFile(target, options);
+      });
+
+      let rebuildPromise: Promise<unknown> | null = null;
+      try {
+        rebuildPromise = indexKind === 'conversation'
+          ? store.listConversationIndexEntries()
+          : store.searchMessages('obsolete-retention-token', { conversationId });
+        await oldRunReadCaptured;
+
+        await expect(store.retainRecentConversationRuns(conversationId, 1, {
+          actor: systemActor,
+          reason: 'retention_pruned',
+        })).resolves.toEqual({ prunedRunIds: [oldRunId], retainedRunIds: [retainedRunId] });
+        releaseOldRunRead();
+
+        const rebuilt = await rebuildPromise;
+        if (indexKind === 'conversation') {
+          expect(rebuilt).toMatchObject([{ id: conversationId, messageCount: 2 }]);
+        } else {
+          expect(rebuilt).toEqual([]);
+        }
+      } finally {
+        releaseOldRunRead();
+        readFileSpy.mockRestore();
+        await rebuildPromise?.catch(() => undefined);
+      }
+
+      const persistedIndex = JSON.parse(
+        await readFile(path.join(root, 'indexes', indexFileName), 'utf8'),
+      ) as { deletionSeq?: number };
+      expect(persistedIndex.deletionSeq).toBe(1);
+
+      const restarted = new AgentEventStore(root);
+      if (indexKind === 'conversation') {
+        expect(await restarted.listConversationIndexEntries()).toMatchObject([{
+          id: conversationId,
+          messageCount: 2,
+        }]);
+      } else {
+        expect(await restarted.searchMessages('obsolete-retention-token', { conversationId })).toEqual([]);
+      }
+    });
+  });
 });

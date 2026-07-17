@@ -1807,8 +1807,13 @@ Run index.
 `conversation-index.json` and `search-index.json` persist the deletion-ledger
 tail as `deletionSeq`. An absent or mismatched watermark makes the whole derived
 index stale and forces canonical reconstruction; restoring an index snapshot
-from before a tombstone cannot expose deleted Run content. Physical cleanup may
-therefore be retried idempotently after a failure, and restoring a deleted
+from before a tombstone cannot expose deleted Run content. A full index rebuild
+captures `deletionSeq` before reading canonical logs, carries that exact value in
+the in-memory index, and retries if the ledger advances during the scan or index
+write. Index writers never replace the captured value with a newer tail; an
+incremental write that races a deletion can therefore produce only a detectably
+stale index, never old content labeled with the current watermark. Physical
+cleanup may be retried idempotently after a failure, and restoring a deleted
 directory or obsolete derived index cannot resurrect it.
 
 Conversation reset is currently a local stream replacement, not a portable
