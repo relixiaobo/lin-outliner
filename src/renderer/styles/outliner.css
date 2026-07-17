@@ -433,11 +433,6 @@ button.outliner-table-column-kind:focus-visible {
   color: var(--text-primary);
 }
 
-.outliner-table-column-header:has(> button.outliner-table-column-kind:hover),
-.outliner-table-column-header:has(> button.outliner-table-column-kind:active) {
-  box-shadow: var(--outline-emphasis);
-}
-
 .outliner-table-column-label {
   min-width: 0;
   flex: 1;

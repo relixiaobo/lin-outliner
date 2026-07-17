@@ -261,15 +261,17 @@ test.describe('table view', () => {
     const authoredIcon = authoredKind.locator('svg');
     const authoredHeader = authoredKind.locator('..');
     const idleIconColor = await authoredIcon.evaluate((element) => getComputedStyle(element).color);
-    await expect(authoredHeader).toHaveCSS('box-shadow', 'none');
 
     await authoredKind.hover();
     await expect.poll(() => authoredIcon.evaluate((element) => getComputedStyle(element).color)).not.toBe(idleIconColor);
-    await expect(authoredHeader).not.toHaveCSS('box-shadow', 'none');
+    await expect(authoredHeader).toHaveCSS('box-shadow', 'none');
 
     const systemHeader = grid.getByText('Done', { exact: true }).locator('..');
-    await systemHeader.locator('.outliner-table-column-kind').hover();
-    await expect(systemHeader).toHaveCSS('box-shadow', 'none');
+    const systemKind = systemHeader.locator('.outliner-table-column-kind');
+    const systemIcon = systemKind.locator('svg');
+    const idleSystemIconColor = await systemIcon.evaluate((element) => getComputedStyle(element).color);
+    await systemKind.hover();
+    await expect.poll(() => systemIcon.evaluate((element) => getComputedStyle(element).color)).toBe(idleSystemIconColor);
 
     await authoredKind.click();
 

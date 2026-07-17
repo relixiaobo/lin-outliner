@@ -370,10 +370,10 @@ width. The panel's vertical scroller remains authoritative.
   order, its cell value nodes remain selectable, and undisplayed fields plus
   ordinary children remain available below the record.
 - **AC-17:** Given an authored field column, when the user hovers its kind icon,
-  then the glyph visibly strengthens and its owning header gains a fixed inset
-  outline without changing geometry; activating it navigates the current pane to
-  that field definition and exposes its configuration surface. A system-field
-  glyph exposes neither the hover outline nor false navigation.
+  then only the glyph visibly strengthens without a background or owning-header
+  outline; activating it navigates the current pane to that field definition and
+  exposes its configuration surface. A system-field glyph exposes neither the
+  hover state nor false navigation.
 
 ## Suggested Implementation Boundaries
 

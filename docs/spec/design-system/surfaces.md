@@ -160,10 +160,10 @@ not repeat as field rows beneath it. Ordinary children and fields not represente
 by visible columns keep their normal outline presentation; the Title node's
 child/disclosure state follows that same visible child set.
 An authored field's header glyph is an icon-only navigation control into that
-field definition's configuration page. Hover deepens the glyph and draws a fixed
-inset outline around its owning header without adding a background box or
-changing geometry. System-field glyphs remain informational and expose neither
-state because they have no definition page.
+field definition's configuration page. Hover deepens only the glyph without a
+background box, owning-header outline, or geometry change. System-field glyphs
+remain informational and expose no hover state because they have no definition
+page.
 Column menu and add-column icon controls deepen colour without a rounded-square
 hover box. The resize separator expands its invisible hit target without changing
 column geometry and exposes a visible neutral line/focus ring only on interaction.
