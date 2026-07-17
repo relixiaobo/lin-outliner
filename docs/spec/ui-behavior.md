@@ -339,7 +339,10 @@ deterministic fallbacks. `displayLabel` overrides the live field label,
 `displayWidth` is clamped to the supported range, and `displayVisible` controls
 visibility. Header menus rename a column for this view, move it left or right,
 hide it, or remove it. The resize separator supports pointer drag, keyboard
-increments, and double-click reset.
+increments, and double-click reset. The default geometry follows the compact
+Tana composition: a 152px Title column, 86px authored fields, and an 82px
+trailing `+ Add` slot. The data strip does not expand merely because its panel is
+wider.
 
 **Add column** lists active reusable definitions not already displayed and the
 supported system fields. Selecting one creates only a display-field node. The
@@ -347,7 +350,8 @@ new-field path accepts a localized field type and atomically creates the field
 definition plus its display-field node. Neither path bulk-creates empty values
 on records.
 
-An existing value renders through the established type-aware field behavior.
+An existing authored value renders with its node bullet and established
+type-aware field behavior rather than as unadorned cell text.
 An absent value is a quiet empty cell and remains absent on hover, selection,
 focus, and arrow navigation. Enter, double-click, or a printable key begins
 editing and attaches exactly one entry to the chosen existing definition before
@@ -368,7 +372,9 @@ dead keys are not consumed as printable table input.
 
 The grid uses the panel as its vertical scroll owner and a local native
 horizontal scroll area for overflowing columns. Header and mounted rows share
-one column template. More than 60 logical rows use a bounded measured window
+one content-sized column template. Only data columns receive quiet horizontal
+separators; `+ Add` remains outside those lines, while a vertical hierarchy guide
+aligns with the owning row bullet. More than 60 logical rows use a bounded measured window
 with overscan; focused rows and the trailing draft stay mountable, and height
 corrections above the viewport compensate `scrollTop` before paint. Expanded
 children may own independent nested Outline or Table scopes with their own

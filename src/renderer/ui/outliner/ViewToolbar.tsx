@@ -101,7 +101,7 @@ const KIND_ICONS: Record<FilterKind, IconComponent> = {
 
 // Field-type glyph shown beside a field name so date/text/option fields read
 // apart at a glance.
-function FieldKindIcon({ fieldId, byId }: { fieldId: string; byId: DocumentIndex['byId'] }) {
+export function FieldKindIcon({ fieldId, byId }: { fieldId: string; byId: DocumentIndex['byId'] }) {
   const Icon = fieldId === TAGS_FIELD ? HashIcon : KIND_ICONS[filterFieldKind(fieldId, byId)];
   return <Icon className="view-toolbar-field-kind" size={ICON_SIZE.menu} />;
 }

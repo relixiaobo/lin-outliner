@@ -59,8 +59,38 @@ test.describe('table view', () => {
     await expect(grid).toHaveAccessibleName('2026-05-13 table');
     await expect(grid).toHaveAttribute('aria-colcount', '3');
     await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Status', 'Due']);
+    await expect(grid.locator('.outliner-table-column-kind')).toHaveCount(2);
+    await expect(grid.getByRole('button', { name: 'Add column' })).toHaveText('Add');
     await expect(grid.getByRole('row')).toHaveCount(5);
     await expect(grid.locator(`[data-table-row-id="${ids.alpha}"][data-table-column-id="__title__"]`)).toContainText('Alpha');
+
+    const geometry = await grid.evaluate((element) => {
+      const scroll = element as HTMLElement;
+      const header = scroll.querySelector<HTMLElement>('.outliner-table-header')!;
+      const title = scroll.querySelector<HTMLElement>('.outliner-table-title-header')!;
+      const fields = [...scroll.querySelectorAll<HTMLElement>('.outliner-table-column-header')];
+      const add = scroll.querySelector<HTMLElement>('.outliner-table-add-column')!;
+      const firstCell = scroll.querySelector<HTMLElement>('.outliner-table-title-cell')!;
+      return {
+        addBorderBottom: getComputedStyle(add).borderBottomWidth,
+        addWidth: add.getBoundingClientRect().width,
+        fieldWidths: fields.map((field) => field.getBoundingClientRect().width),
+        firstCellBackground: getComputedStyle(firstCell).backgroundColor,
+        firstCellBorderRight: getComputedStyle(firstCell).borderRightWidth,
+        headerBorderTop: getComputedStyle(header).borderTopWidth,
+        headerWidth: header.getBoundingClientRect().width,
+        scrollWidth: scroll.getBoundingClientRect().width,
+        titleWidth: title.getBoundingClientRect().width,
+      };
+    });
+    expect(geometry.titleWidth).toBeCloseTo(152, 0);
+    expect(geometry.fieldWidths).toEqual([86, 86]);
+    expect(geometry.addWidth).toBeCloseTo(82, 0);
+    expect(geometry.headerWidth).toBeLessThan(geometry.scrollWidth - 100);
+    expect(geometry.headerBorderTop).toBe('0px');
+    expect(geometry.firstCellBorderRight).toBe('0px');
+    expect(geometry.addBorderBottom).toBe('0px');
+    expect(geometry.firstCellBackground).toBe('rgba(0, 0, 0, 0)');
 
     const toolbar = page.locator('.view-toolbar').first();
     await expect(toolbar.getByRole('button', { name: 'Group by', exact: true })).toHaveCount(0);
@@ -121,8 +151,13 @@ test.describe('table view', () => {
       .locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`)
       .nth(1);
     await expect(statusCell.locator('.ProseMirror')).toBeFocused();
+    await expect(statusCell.locator('.field-value-outliner .row-bullet-dot')).toBeVisible();
+    await page.keyboard.type('3');
     await page.keyboard.press('Tab');
     await expect(dueCell).toBeFocused();
+    await expect(statusCell.locator('[data-table-value-preview]')).toContainText('3');
+    await expect(statusCell.locator('.outliner-table-value-dot')).toBeVisible();
+    await expect(dueCell.locator('.outliner-table-empty-cell .outliner-table-value-dot')).toBeVisible();
     expect((await commandCalls(page)).some((call) => call.cmd === 'indent_node')).toBe(false);
   });
 

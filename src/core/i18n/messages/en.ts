@@ -708,6 +708,7 @@ commandPalette: {
       ariaLabel: ({ title }: { title: string }) => `${title} table`,
       title: 'Title',
       addColumn: 'Add column',
+      add: 'Add',
       searchFields: 'Search fields',
       noMatchingFields: 'No matching fields',
       newField: 'New field',

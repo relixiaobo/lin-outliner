@@ -126,19 +126,26 @@ the same row geometry and renders that toggle in place of editable text.
 ### Table View
 
 Table is a dense, unframed content surface, never a card or a stack of row cards.
-At the panel root it uses the full usable content width instead of the prose
-column maximum. Optional columns overflow through a table-local native horizontal
-scroller without widening the panel or adjacent panes; the panel remains the only
-vertical scroller.
+Its scroll scope may use the full panel width, but the data strip remains
+content-sized instead of stretching empty columns across the pane. Optional
+columns overflow through a table-local native horizontal scroller without
+widening the panel or adjacent panes; the panel remains the only vertical
+scroller.
 
-Header and body use one shared grid template. Title is a flexible first column;
-field columns use clamped persisted widths; the final add-column slot has stable
-icon-control geometry. The opaque content base, quiet token separator on every
-row/column edge, `--field-row-min-height` rhythm, content type scale, and neutral
-text hierarchy keep the surface scannable in light and dark mode. The header may
-stick inside the panel but does not become translucent chrome.
+Header and body use one shared grid template. Title has a compact fixed default;
+field columns use narrower clamped persisted widths; the trailing `+ Add` command
+sits outside the data separators. The opaque content base, quiet horizontal row
+separators, a hierarchy guide aligned with the owner bullet,
+`--field-row-min-height` rhythm, content type scale, and neutral text hierarchy
+keep the surface scannable in light and dark mode. Vertical cell borders and a
+top frame are absent at rest. The header may stick inside the panel but does not
+become translucent chrome.
 
-An active cell uses the neutral fill ladder plus the shared focus outline.
+An active cell uses the neutral fill ladder plus the shared focus outline only
+while focus is actually within its grid; an idle table never paints a synthetic
+first-cell selection. Authored field values retain a compact node bullet before
+their text, including inside the editor, rather than flattening into bare cell
+copy.
 Column menu and add-column icon controls deepen colour without a rounded-square
 hover box. The resize separator expands its invisible hit target without changing
 column geometry and exposes a visible neutral line/focus ring only on interaction.

@@ -655,6 +655,7 @@ commandPalette: {
       ariaLabel: ({ title }: { title: string }) => `${title}表格`,
       title: '标题',
       addColumn: '添加列',
+      add: '添加',
       searchFields: '搜索字段',
       noMatchingFields: '没有匹配的字段',
       newField: '新建字段',

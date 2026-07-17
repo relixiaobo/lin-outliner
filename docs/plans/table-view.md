@@ -77,9 +77,11 @@ no independently shipped scaffold.
   Filter, Sort, and Display; Group is not offered. Sort rule order defines
   precedence.
 - **EVD-4:** Tana's table is a dense, unframed content surface: approximately
-  32px rows, quiet separators, compact anchored menus, inline editors, and no
-  decorative outer card. Tenon should reproduce that information architecture,
-  not Tana's blue functional-state color.
+  32px rows, content-sized columns, quiet horizontal separators, a hierarchy
+  guide aligned to the owner bullet, compact anchored menus, inline editors, and
+  no decorative outer card or resting vertical cell borders. Tenon should
+  reproduce that information architecture, not Tana's blue functional-state
+  color.
 - **EVD-5:** Tana creates a child from the bottom row or from Enter at the end of
   the Title cell. Empty field cells do not need eager materialization.
 - **EVD-6:** Official reference:
@@ -112,9 +114,9 @@ no independently shipped scaffold.
 
 ### Columns
 
-- Title is always visible, first, non-removable, and wide enough to remain the
-  primary node identity. It contains the node bullet/disclosure affordance,
-  editable title, reference treatment, and existing row context-menu entry.
+- Title is always visible, first, non-removable, and uses Tana's compact fixed
+  width. It contains the node bullet/disclosure affordance, editable title,
+  reference treatment, and existing row context-menu entry.
 - Each visible display-field node contributes one column. Duplicate field
   definitions are rejected in Add column and remain deterministic if old data
   already contains duplicates.
@@ -204,10 +206,10 @@ no independently shipped scaffold.
    Write a new item...
 ```
 
-The toolbar appears only when the stored toolbar flag is on. The table itself is
-full-width within the panel content area, unframed, and horizontally scrolls in
-that panel when columns exceed available width. The panel's vertical scroller
-remains authoritative.
+The toolbar appears only when the stored toolbar flag is on. The table's scroll
+scope is full-width within the panel content area, but its column strip remains
+content-sized and unframed; it horizontally scrolls when columns exceed available
+width. The panel's vertical scroller remains authoritative.
 
 ## Functional Requirements
 

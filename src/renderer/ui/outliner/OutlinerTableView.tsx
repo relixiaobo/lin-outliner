@@ -70,7 +70,7 @@ import { FieldValueOutliner } from './FieldValueOutliner';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { OutlinerView } from './OutlinerView';
-import { ViewToolbar } from './ViewToolbar';
+import { FieldKindIcon, ViewToolbar } from './ViewToolbar';
 import { RowHost } from './RowHost';
 import {
   buildOutlinerRows,
@@ -98,11 +98,11 @@ import {
 const TABLE_VIRTUALIZE_MIN_ROWS = 60;
 const TABLE_ROW_ESTIMATE_PX = 34;
 const TABLE_OVERSCAN_PX = 800;
-const TABLE_TITLE_WIDTH = 260;
-const TABLE_COLUMN_DEFAULT_WIDTH = 180;
-const TABLE_COLUMN_MIN_WIDTH = 112;
+const TABLE_TITLE_WIDTH = 152;
+const TABLE_COLUMN_DEFAULT_WIDTH = 86;
+const TABLE_COLUMN_MIN_WIDTH = 72;
 const TABLE_COLUMN_MAX_WIDTH = 520;
-const TABLE_ACTION_WIDTH = 34;
+const TABLE_ACTION_WIDTH = 82;
 
 type TableMessages = Messages['outliner']['table'];
 
@@ -165,7 +165,7 @@ function clampColumnWidth(width: number | undefined): number {
 
 function tableGridTemplate(columns: readonly ViewDisplayField[], previews: ReadonlyMap<string, number>): string {
   const fields = columns.map((column) => `${clampColumnWidth(previews.get(column.id) ?? column.width)}px`);
-  return [`minmax(${TABLE_TITLE_WIDTH}px, 1fr)`, ...fields, `${TABLE_ACTION_WIDTH}px`].join(' ');
+  return [`${TABLE_TITLE_WIDTH}px`, ...fields, `${TABLE_ACTION_WIDTH}px`].join(' ');
 }
 
 function tableGridMinWidth(columns: readonly ViewDisplayField[], previews: ReadonlyMap<string, number>): number {
@@ -952,6 +952,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
             <TableColumnHeader
               key={column.id}
               column={column}
+              fieldIcon={<FieldKindIcon byId={props.index.byId} fieldId={column.field} />}
               index={index}
               isFirst={index === 0}
               isLast={index === columns.length - 1}
@@ -1031,15 +1032,27 @@ function TableFieldCell(props: TableFieldCellProps) {
     ? fieldEntryForViewCell(props.rowNode, props.column.field, props.index.byId)
     : undefined;
   const field = props.index.byId.get(props.column.field);
-  const valueText = owner
-    ? viewFieldValuesFor(owner, props.column.field, props.index.byId, { referenceSummary: props.referenceSummary }).join(', ')
-    : '';
+  const valueTexts = owner
+    ? viewFieldValuesFor(owner, props.column.field, props.index.byId, { referenceSummary: props.referenceSummary })
+    : [];
+  const valueText = valueTexts.join(', ');
 
   const setElement = useCallback((element: HTMLDivElement | null) => {
     props.register({ rowId: props.address.rowId, columnId: props.address.columnId }, element);
   }, [props.address.columnId, props.address.rowId, props.register]);
 
-  let content: ReactNode = valueText;
+  let content: ReactNode = valueTexts.length > 0 ? (
+    <span className="outliner-table-value-list">
+      {valueTexts.map((text, index) => (
+        <span className="outliner-table-value-preview" data-table-value-preview key={`${text}:${index}`}>
+          <span className="outliner-table-value-marker" aria-hidden="true">
+            <span className="outliner-table-value-dot" />
+          </span>
+          <span className="outliner-table-value-text">{text}</span>
+        </span>
+      ))}
+    </span>
+  ) : null;
   if (owner && isSystemFieldId(props.column.field)) {
     const display = systemFieldDisplay(owner, props.column.field, props.index.byId, {
       referenceSummary: props.referenceSummary,
@@ -1088,7 +1101,7 @@ function TableFieldCell(props: TableFieldCellProps) {
   return (
     <div
       aria-colindex={props.ariaColIndex}
-      aria-label={props.label}
+      aria-label={valueText ? `${props.label}: ${valueText}` : props.label}
       className={`outliner-table-cell ${props.active ? 'is-active' : ''} ${props.editing ? 'is-editing' : ''}`}
       data-table-cell
       data-table-column-id={props.address.columnId}
@@ -1101,13 +1114,20 @@ function TableFieldCell(props: TableFieldCellProps) {
       role="gridcell"
       tabIndex={props.tabIndex}
     >
-      {content || <span className="outliner-table-empty-cell" aria-hidden="true" />}
+      {content || (
+        <span className="outliner-table-empty-cell" aria-hidden="true">
+          <span className="outliner-table-value-marker">
+            <span className="outliner-table-value-dot" />
+          </span>
+        </span>
+      )}
     </div>
   );
 }
 
 function TableColumnHeader({
   column,
+  fieldIcon,
   index,
   isFirst,
   isLast,
@@ -1117,6 +1137,7 @@ function TableColumnHeader({
   run,
 }: {
   column: ViewDisplayField;
+  fieldIcon: ReactNode;
   index: number;
   isFirst: boolean;
   isLast: boolean;
@@ -1168,6 +1189,7 @@ function TableColumnHeader({
 
   return (
     <div className="outliner-table-column-header" role="columnheader" aria-colindex={index + 2}>
+      <span className="outliner-table-column-kind" aria-hidden="true">{fieldIcon}</span>
       <span className="outliner-table-column-label">{label}</span>
       <ButtonControl
         aria-label={tt.columnMenu({ label })}
@@ -1334,6 +1356,7 @@ function TableAddColumn({
         ref={buttonRef}
       >
         <AddIcon size={ICON_SIZE.menu} />
+        <span>{tt.add}</span>
       </ButtonControl>
       {open ? createPortal(
         <MenuSurface
