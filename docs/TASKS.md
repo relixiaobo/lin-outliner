@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407) |
 | Codex 2 | `lin-outliner-codex-2/` | `codex-2/agent-full-access-default` | Draft PR #410 (Default agent Full Access) |
-| Codex 3 | `lin-outliner-codex-3/` | `codex-3/table-view` | PR #409 ready for main review (Table view) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,10 +31,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-17).** Open PR queue: #409 (`codex-3/table-view`), ready
-for main review; Draft #410 (`codex-2/agent-full-access-default`). Recently
-merged: #408 (`codex-4/preview-translation-persistent-cache`) merged 2026-07-17
-after two main review passes; see *Recently completed*. #407
+**In flight (2026-07-17).** Open PR queue: Draft #410
+(`codex-2/agent-full-access-default`). Recently merged: #409
+(`codex-3/table-view`) merged 2026-07-17 after three main review passes; see
+*Recently completed*. #408 (`codex-4/preview-translation-persistent-cache`)
+merged 2026-07-17 after two main review passes; see *Recently completed*. #407
 (`codex/issue-event-persistence`) merged 2026-07-17 after three main review
 passes; see *Recently completed*. #406
 (`codex-2/github-managed-skills`) merged 2026-07-17 after four main review
@@ -513,6 +514,24 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **table-view** (`codex-3/table-view`, PR #409, codex-3, merged 2026-07-17,
+  plan-track) — Outline owners and saved searches can now persistently switch to
+  a compact Table projection over the same child nodes. Tables provide a fixed
+  Title column, ordered/resizable authored and system-field columns, lazy atomic
+  field materialization, existing node editors and interactions, filtering and
+  sorting, read-only search results, nested Outline/Table scopes, keyboard grid
+  navigation, row selection, and bounded row windowing. **Gate (main):** three
+  review passes closed seven findings covering rapid-input materialization,
+  printable Title entry, shared menu focus and dismissal, stale width previews,
+  duplicate nested-search refresh ownership, and invalid nested tree semantics;
+  the final pass found no reportable issues. Verified on final head `56e68f5b`
+  and the latest-`main` merge result with typecheck, 103 focused Core tests, 921
+  renderer tests, 15 Table E2E tests, light/dark runtime and visual QA,
+  `docs:check`, merge-tree, and diff check. The full Core suite retained only the
+  repository-known cross-file OAuth mock isolation failure after 1,642 passes;
+  that test passes alone. Plan archived `done`:
+  `docs/plans/archive/table-view.md`.
 
 - **preview-translation-persistent-cache**
   (`codex-4/preview-translation-persistent-cache`, PR #408, codex-4, merged

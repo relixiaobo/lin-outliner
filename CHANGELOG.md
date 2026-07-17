@@ -67,6 +67,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Table view (PR #409, codex-3)** — Outline owners and saved searches can now
+  switch persistently to a compact Table projection over the same child nodes,
+  with a fixed Title column, ordered and resizable field columns, lazy atomic
+  field materialization, ordinary node editors and interactions, filtering and
+  sorting, read-only search results, independent nested Outline/Table scopes,
+  keyboard grid navigation, row selection, and bounded row windowing. **Gate
+  (main):** three review passes closed seven findings covering rapid input,
+  direct Title entry, menu focus/dismissal, width projection precedence, search
+  refresh ownership, and nested ARIA structure; the final pass found no
+  reportable issues. Verified with typecheck, 103 focused Core tests, 921
+  renderer tests, 15 Table E2E tests, light/dark runtime and visual QA,
+  `docs:check`, merge-tree, and diff check; the full Core suite retained only the
+  known cross-file OAuth mock isolation failure after 1,642 passes, while that
+  test passes alone.
 - **Persistent preview translation cache (PR #408, codex-4)** — webpage blocks,
   finite prerecorded captions, and reflowable EPUB passages now restore saved
   translations from a private, bounded main-owned cache keyed by source,
