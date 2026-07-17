@@ -417,6 +417,17 @@
   height: var(--row-bullet-width);
 }
 
+button.outliner-table-column-kind {
+  appearance: none;
+  border-radius: var(--radius-pill);
+  padding: 0;
+}
+
+button.outliner-table-column-kind:hover,
+button.outliner-table-column-kind:active {
+  color: var(--text-primary);
+}
+
 .outliner-table-column-label {
   min-width: 0;
   flex: 1;

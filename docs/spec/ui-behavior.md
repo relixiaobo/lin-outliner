@@ -344,6 +344,11 @@ Tana composition: a 152px Title column, 86px authored fields, and an 82px
 trailing `+ Add` slot. The data strip does not expand merely because its panel is
 wider.
 
+An authored column's field-kind icon opens that field definition in the current
+pane, providing direct access to its configuration surface. A derived system
+field has no definition node, so its kind icon remains non-interactive. Column
+labels and menus keep their existing view-local behavior.
+
 **Add column** lists active reusable definitions not already displayed and the
 supported system fields. Selecting one creates only a display-field node. The
 new-field path accepts a localized field type and atomically creates the field

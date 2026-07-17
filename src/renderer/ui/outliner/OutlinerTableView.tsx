@@ -933,20 +933,24 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
       >
         <div className="outliner-table-header" role="row" aria-rowindex={1}>
           <div className="outliner-table-title-header" role="columnheader" aria-colindex={1}>{tt.title}</div>
-          {columns.map((column, index) => (
-            <TableColumnHeader
-              key={column.id}
-              column={column}
-              fieldIcon={<FieldKindIcon byId={props.index.byId} fieldId={column.field} />}
-              index={index}
-              isFirst={index === 0}
-              isLast={index === columns.length - 1}
-              label={columnLabels.get(column.id) ?? column.field}
-              onCommitWidth={(width) => commitWidth(column, width)}
-              onPreviewWidth={(width) => updatePreviewWidth(column.id, width)}
-              run={props.run}
-            />
-          ))}
+          {columns.map((column, index) => {
+            const fieldNode = props.index.byId.get(column.field);
+            return (
+              <TableColumnHeader
+                key={column.id}
+                column={column}
+                fieldIcon={<FieldKindIcon byId={props.index.byId} fieldId={column.field} />}
+                index={index}
+                isFirst={index === 0}
+                isLast={index === columns.length - 1}
+                label={columnLabels.get(column.id) ?? column.field}
+                onCommitWidth={(width) => commitWidth(column, width)}
+                onOpenField={fieldNode?.type === 'fieldDef' ? () => props.onRoot(fieldNode.id) : undefined}
+                onPreviewWidth={(width) => updatePreviewWidth(column.id, width)}
+                run={props.run}
+              />
+            );
+          })}
           <TableAddColumn
             choices={fieldChoices}
             nodeId={props.parentId}
@@ -1110,6 +1114,7 @@ function TableColumnHeader({
   isLast,
   label,
   onCommitWidth,
+  onOpenField,
   onPreviewWidth,
   run,
 }: {
@@ -1120,10 +1125,13 @@ function TableColumnHeader({
   isLast: boolean;
   label: string;
   onCommitWidth: (width: number | null) => void;
+  onOpenField?: () => void;
   onPreviewWidth: (width: number) => void;
   run: CommandRunner;
 }) {
-  const tt = useT().outliner.table;
+  const t = useT();
+  const tt = t.outliner.table;
+  const openFieldLabel = `${t.outliner.field.openField}: ${label}`;
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -1166,7 +1174,18 @@ function TableColumnHeader({
 
   return (
     <div className="outliner-table-column-header" role="columnheader" aria-colindex={index + 2}>
-      <span className="outliner-table-column-kind" aria-hidden="true">{fieldIcon}</span>
+      {onOpenField ? (
+        <ButtonControl
+          aria-label={openFieldLabel}
+          className="outliner-table-column-kind"
+          onClick={onOpenField}
+          title={openFieldLabel}
+        >
+          {fieldIcon}
+        </ButtonControl>
+      ) : (
+        <span className="outliner-table-column-kind" aria-hidden="true">{fieldIcon}</span>
+      )}
       <span className="outliner-table-column-label">{label}</span>
       <ButtonControl
         aria-label={tt.columnMenu({ label })}

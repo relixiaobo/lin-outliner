@@ -259,6 +259,8 @@ width. The panel's vertical scroller remains authoritative.
 - **FR-18:** Expanding a table record shall omit field entries already projected
   by visible columns while retaining ordinary child nodes and field entries for
   hidden or undisplayed columns.
+- **FR-19:** An authored field column's kind icon shall navigate to that field
+  definition's configuration page; derived system-field icons remain inert.
 
 ## Keyboard And Accessibility
 
@@ -366,6 +368,9 @@ width. The panel's vertical scroller remains authoritative.
   its cell, its entry wrapper is absent from expanded child rows and selectable
   order, its cell value nodes remain selectable, and undisplayed fields plus
   ordinary children remain available below the record.
+- **AC-17:** Given an authored field column, when the user activates its kind
+  icon, then the current pane navigates to that field definition and exposes its
+  configuration surface; a system-field glyph exposes no false navigation.
 
 ## Suggested Implementation Boundaries
 

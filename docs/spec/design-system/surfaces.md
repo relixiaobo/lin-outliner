@@ -159,6 +159,10 @@ When a record expands, authored fields already represented by visible columns do
 not repeat as field rows beneath it. Ordinary children and fields not represented
 by visible columns keep their normal outline presentation; the Title node's
 child/disclosure state follows that same visible child set.
+An authored field's header glyph is an icon-only navigation control into that
+field definition's configuration page and deepens colour on hover without a
+background box. System-field glyphs remain informational because they have no
+definition page.
 Column menu and add-column icon controls deepen colour without a rounded-square
 hover box. The resize separator expands its invisible hit target without changing
 column geometry and exposes a visible neutral line/focus ring only on interaction.

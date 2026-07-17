@@ -247,6 +247,22 @@ test.describe('table view', () => {
     await expect(statusCell).toContainText('Column value');
   });
 
+  test('opens an authored field definition from its column kind icon', async ({ page }) => {
+    await configureRootTable(page);
+    await invokeCommands(page, [
+      { cmd: 'add_display_field', args: { nodeId: ids.today, field: 'sys:done' } },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+    ]);
+
+    const grid = rootGrid(page);
+    await expect(grid.locator('.outliner-table-column-kind')).toHaveCount(3);
+    await expect(grid.getByRole('button', { name: 'Open field: Done' })).toHaveCount(0);
+    await grid.getByRole('button', { name: 'Open field: Status' }).click();
+
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Status');
+    await expect(page.getByRole('region', { name: 'Definition configuration' })).toBeVisible();
+  });
+
   test('renders an existing authored value as an ordinary interactive node', async ({ page }) => {
     await configureRootTable(page);
     await invokeCommands(page, [{
