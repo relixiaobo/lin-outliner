@@ -67,6 +67,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent ledger portability (PR #405, codex)** — private Agent conversation and
+  Run history now exposes deterministic versioned portable catalogs and stream
+  reads with an explicit event and payload allow-list. A workspace deletion
+  ledger records conversation and Run tombstones before physical cleanup, and
+  tombstone precedence now covers reads, appends, payload/checkpoint/meta writes,
+  catalogs, retention, reset, and derived-index rebuilds. Retention resumes after
+  partial failures, while conversation/search indexes bind content to the exact
+  deletion-ledger watermark captured before scanning. **Gate (main):** three
+  review passes closed capability-notification path leakage, top-level Run
+  resurrection, non-retryable retention, stale restored indexes, and a concurrent
+  rebuild race that could label pre-tombstone content with the latest watermark.
+  Verified with typecheck, 104 focused Core tests, docs check, and diff check.
 - **Agent capability permissions (PR #401, codex-3)** — replaced action-risk
   confirmations and safety modes with an ownership-based contract: existing
   resources execute immediately, missing external folders acquire persistent

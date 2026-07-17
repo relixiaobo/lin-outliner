@@ -21,8 +21,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398, sync-readiness-foundation Units 1–2 #402/#404**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped semantic-ingest-pipeline #397) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368, design-system-calibration-audit #377, structured-field-resolution #385, pi-ai-0.80.6-upgrade #390, queued-steer-consumption #391, provider-transient-request-retry #395, agent-issue-execution-preflight #398, sync-readiness-foundation Units 1–3 #402/#404/#405**) |
+| Codex 2 | `lin-outliner-codex-2/` | `codex-2/github-managed-skills` | PR #406 ready for main review; rebase after #405 |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped url-preview-persistent-session #400, agent-capability-permissions #401) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -31,7 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-16).** Open PR queue: none. Recently merged: #401
+**In flight (2026-07-17).** Open PR queue: #406
+(`codex-2/github-managed-skills`), ready for main review after rebasing #405.
+Recently merged: #405 (`codex/agent-ledger-portability`) merged 2026-07-17 after
+three main review passes; see *Recently completed*. #401
 (`codex-3/agent-capability-permissions`) merged 2026-07-16 after two main review
 passes; see *Recently completed*. #403 (`codex-4/epub-bilingual-translation`)
 merged 2026-07-16 after two main review passes; see *Recently completed*. #404
@@ -480,15 +483,18 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
-- **sync-readiness-foundation** (`in-progress`, plan-track; Units 1–2 shipped in
-  PRs #402/#404) — Unit 1 established stable installation, workspace, document,
-  and replica identities, the atomic v3 shared/local workspace envelope, fresh
-  Loro peers per Core session, durable dependency-pending updates, and
+- **sync-readiness-foundation** (`in-progress`, plan-track; Units 1–3 shipped in
+  PRs #402/#404/#405) — Unit 1 established stable installation, workspace,
+  document, and replica identities, the atomic v3 shared/local workspace
+  envelope, fresh Loro peers per Core session, durable dependency-pending
+  updates, and
   provider-neutral snapshot/version/update/import primitives. Unit 2 versioned
   Outliner asset sidecars with exact byte length and SHA-256, added verified
-  portable reads, and kept large-file hashing responsive in Electron main.
-  Remaining independent complete units cover Agent ledger portability and
-  event-sourced Issue persistence; each requires its own claim and PR. See
+  portable reads, and kept large-file hashing responsive in Electron main. Unit
+  3 added deterministic private Agent ledger catalogs, portable event/payload
+  filtering, durable deletion tombstones, write/read/rebuild precedence,
+  recoverable retention, and deletion-watermarked derived indexes. The remaining
+  independent complete unit is event-sourced Issue persistence. See
   `docs/plans/sync-readiness-foundation.md`.
 - **renderer-state-hygiene** (P3, *fast-track, no plan file*, **PM-ratified**) — three
   small renderer items in one PR: (1) `useWorkspaceLayout.ts` localStorage key says
@@ -524,6 +530,28 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **sync-readiness-foundation Unit 3** (`codex/agent-ledger-portability`, PR
+  #405, codex, merged 2026-07-17, plan-track) — Agent conversation and Run
+  history now exposes deterministic versioned portable catalogs and stream
+  reads, catalogs only referenced allow-listed payloads, and excludes local
+  debug, capability, and checkpoint events plus nonportable payload roles and
+  summaries. A workspace deletion
+  ledger tombstones conversations and Runs before cleanup; reads, appends,
+  payload/checkpoint/meta writes, catalogs, and index rebuilds all honor those
+  tombstones. Reset preserves conversation identity, retention resumes after
+  partial failure, and conversation/search indexes bind their contents to a
+  stable deletion-ledger watermark. **Gate (main):** the initial review found
+  four defects: capability notifications leaked local paths, top-level Run
+  appends bypassed tombstones, retention could not resume after its tombstone,
+  and restored derived indexes exposed pruned history. The first fix round
+  closed those paths, but the second review found that a concurrent rebuild
+  could stamp pre-tombstone content with the new watermark. Codex bound rebuilds
+  to their captured watermark and added scan/write retry guards; the final pass
+  found no reportable issues. Verified on final head `6f26a462` and the
+  latest-`main` merge result with typecheck, 104 focused Core tests,
+  `docs:check`, and diff check. The plan remains `in-progress` for independent
+  Unit 4: `docs/plans/sync-readiness-foundation.md`.
 
 - **agent-capability-permissions**
   (`codex-3/agent-capability-permissions`, PR #401, codex-3, merged 2026-07-16,
