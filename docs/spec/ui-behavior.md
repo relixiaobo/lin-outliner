@@ -350,8 +350,11 @@ new-field path accepts a localized field type and atomically creates the field
 definition plus its display-field node. Neither path bulk-creates empty values
 on records.
 
-An existing authored value renders with its node bullet and established
-type-aware field behavior rather than as unadorned cell text.
+An existing authored value renders through the ordinary node surface, including
+the standard bullet, single-click editing, disclosure, children, context menu,
+and established type-aware field behavior. There is no separate read-only cell
+preview mode. Table preserves the ordinary leading geometry, with distinct
+chevron and bullet slots in both Title and authored-value cells.
 An absent value is a quiet empty cell and remains absent on hover, selection,
 focus, and arrow navigation. Enter, double-click, or a printable key begins
 editing and attaches exactly one entry to the chosen existing definition before
@@ -363,12 +366,13 @@ next record.
 Each table is an independently named ARIA `grid` with `row`, `columnheader`, and
 `gridcell` descendants and one roving tab stop. Arrow keys move one cell, Home
 and End move to row edges, and Cmd/Ctrl+Home or Cmd/Ctrl+End move to grid edges.
-Tab and Shift+Tab commit an active editor and traverse cells without invoking
-outline indent/outdent; at either outer boundary native Tab leaves the grid.
-Enter opens an inactive editor and exits an active field editor vertically.
-Escape first closes editor-local state and, after the editor releases focus,
-returns focus to the same logical cell. IME composition, modifier shortcuts, and
-dead keys are not consumed as printable table input.
+Those navigation keys operate only while the cell wrapper owns focus. Tab and
+Shift+Tab traverse wrappers, and native Tab leaves at the outer boundary. Once
+an authored node editor owns focus, Enter, Tab, Shift+Tab, drag, and other node
+commands retain ordinary outliner semantics rather than being captured by the
+grid. Escape closes editor-local state and, after the editor releases focus,
+returns focus to the same logical cell. IME composition, modifier shortcuts,
+and dead keys are not consumed as printable table input.
 
 The grid uses the panel as its vertical scroll owner and a local native
 horizontal scroll area for overflowing columns. Header and mounted rows share

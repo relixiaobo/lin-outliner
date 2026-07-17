@@ -153,12 +153,119 @@ test.describe('table view', () => {
     await expect(statusCell.locator('.ProseMirror')).toBeFocused();
     await expect(statusCell.locator('.field-value-outliner .row-bullet-dot')).toBeVisible();
     await page.keyboard.type('3');
+    await page.keyboard.press('Escape');
+    await expect(statusCell).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(dueCell).toBeFocused();
-    await expect(statusCell.locator('[data-table-value-preview]')).toContainText('3');
-    await expect(statusCell.locator('.outliner-table-value-dot')).toBeVisible();
-    await expect(dueCell.locator('.outliner-table-empty-cell .outliner-table-value-dot')).toBeVisible();
+    await expect(statusCell.locator('.field-value-outliner')).toContainText('3');
+    await expect(statusCell.locator('.row-bullet-shape.content .row-bullet-dot')).toBeVisible();
+    await expect(dueCell.locator('.outliner-table-empty-cell .row-bullet-dot')).toBeVisible();
     expect((await commandCalls(page)).some((call) => call.cmd === 'indent_node')).toBe(false);
+  });
+
+  test('renders an existing authored value as an ordinary interactive node', async ({ page }) => {
+    await configureRootTable(page);
+    await invokeCommands(page, [{
+      cmd: 'create_inline_field',
+      args: {
+        parentId: ids.alpha,
+        index: null,
+        name: '',
+        fieldType: 'plain',
+        targetDefId: ids.statusField,
+      },
+    }]);
+    const projection = await e2eProjection(page);
+    const alpha = projection.nodes.find((node) => node.id === ids.alpha)!;
+    const entry = projection.nodes.find((node) => (
+      alpha.children.includes(node.id)
+      && node.type === 'fieldEntry'
+      && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.statusField
+    ));
+    expect(entry).toBeTruthy();
+    await invokeCommands(page, [
+      {
+        cmd: 'set_field_free_text_value',
+        args: { fieldEntryId: entry!.id, text: 'Existing value', id: 'table-interactive-value' },
+      },
+      {
+        cmd: 'set_field_free_text_value',
+        args: { fieldEntryId: entry!.id, text: 'Second value', id: 'table-interactive-value-2' },
+      },
+      {
+        cmd: 'create_node',
+        args: { parentId: 'table-interactive-value', index: null, text: 'Nested value' },
+      },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+    ]);
+
+    const grid = rootGrid(page);
+    const titleCell = grid.locator(
+      `[data-table-row-id="${ids.alpha}"][data-table-column-id="__title__"]`,
+    );
+    const valueCell = grid.locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`).first();
+    const valueRow = valueCell.locator('[data-node-id="table-interactive-value"]');
+    const valueEditor = valueRow.locator('.ProseMirror').first();
+
+    await expect(valueRow).toContainText('Existing value');
+    await expect(valueEditor).toBeVisible();
+    await valueEditor.click();
+    await expect(valueEditor).toBeFocused();
+
+    const bulletGeometry = await grid.evaluate((element, alphaId) => {
+      const titleDot = element.querySelector<HTMLElement>(
+        `[data-table-row-id="${alphaId}"][data-table-column-id="__title__"] .row-bullet-dot`,
+      )!;
+      const valueDot = element.querySelector<HTMLElement>(
+        `[data-node-id="table-interactive-value"] .row-bullet-dot`,
+      )!;
+      const emptyDot = element.querySelector<HTMLElement>(
+        `.outliner-table-cell[data-table-row-id="${alphaId}"] .outliner-table-empty-cell .row-bullet-dot`,
+      )!;
+      return [titleDot, valueDot, emptyDot].map((dot) => ({
+        height: dot.getBoundingClientRect().height,
+        width: dot.getBoundingClientRect().width,
+      }));
+    }, ids.alpha);
+    expect(bulletGeometry[1]).toEqual(bulletGeometry[0]);
+    expect(bulletGeometry[2]).toEqual(bulletGeometry[0]);
+
+    await valueRow.locator(':scope > .row').click({ button: 'right' });
+    await expect(page.locator('.node-context-menu')).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    await valueRow.locator(':scope > .row').hover();
+    const disclosure = valueRow.locator(':scope > .row > .row-leading > .row-chevron-button');
+    await expect(disclosure).toBeVisible();
+    await expect(valueRow.locator(':scope > .row > .row-leading > .row-bullet-button')).toBeVisible();
+    const leadingGeometry = await valueRow.evaluate((element) => {
+      const row = element.querySelector<HTMLElement>(':scope > .row')!;
+      const chevron = row.querySelector<HTMLElement>(':scope > .row-leading > .row-chevron-button')!;
+      const bullet = row.querySelector<HTMLElement>(':scope > .row-leading > .row-bullet-button')!;
+      const content = row.querySelector<HTMLElement>(':scope > .row-content-line')!;
+      const rowRect = row.getBoundingClientRect();
+      const chevronRect = chevron.getBoundingClientRect();
+      const bulletRect = bullet.getBoundingClientRect();
+      const contentRect = content.getBoundingClientRect();
+      return {
+        bulletLeft: bulletRect.left - rowRect.left,
+        chevronLeft: chevronRect.left - rowRect.left,
+        chevronRight: chevronRect.right - rowRect.left,
+        contentLeft: contentRect.left - rowRect.left,
+      };
+    });
+    expect(leadingGeometry.bulletLeft - leadingGeometry.chevronLeft).toBeCloseTo(19, 0);
+    expect(leadingGeometry.contentLeft - leadingGeometry.chevronLeft).toBeCloseTo(42, 0);
+    expect(leadingGeometry.bulletLeft).toBeGreaterThanOrEqual(leadingGeometry.chevronRight);
+    await disclosure.click();
+    await expect(valueCell.getByText('Nested value', { exact: true })).toBeVisible();
+
+    const secondEditor = valueCell.locator('[data-node-id="table-interactive-value-2"] .ProseMirror').first();
+    await secondEditor.click();
+    await page.keyboard.press('Tab');
+    await expect.poll(async () => (await commandCalls(page)).some((call) => (
+      call.cmd === 'indent_node' && call.args.nodeId === 'table-interactive-value-2'
+    ))).toBe(true);
   });
 
   test('enters a title editor and creates the next row from the final title cell', async ({ page }) => {

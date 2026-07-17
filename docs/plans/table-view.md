@@ -80,8 +80,8 @@ no independently shipped scaffold.
   32px rows, content-sized columns, quiet horizontal separators, a hierarchy
   guide aligned to the owner bullet, compact anchored menus, inline editors, and
   no decorative outer card or resting vertical cell borders. Tenon should
-  reproduce that information architecture, not Tana's blue functional-state
-  color.
+  reproduce that information architecture and reuse its ordinary node renderer
+  inside authored value cells, not Tana's blue functional-state color.
 - **EVD-5:** Tana creates a child from the bottom row or from Enter at the end of
   the Title cell. Empty field cells do not need eager materialization.
 - **EVD-6:** Official reference:
@@ -120,6 +120,11 @@ no independently shipped scaffold.
 - Each visible display-field node contributes one column. Duplicate field
   definitions are rejected in Add column and remain deterministic if old data
   already contains duplicates.
+- An existing authored value is an ordinary node surface, not a table-specific
+  text preview. It keeps the standard bullet, single-click editing, disclosure,
+  children, context menu, and node operations inside the cell. The disclosure
+  chevron and bullet retain their separate standard leading slots; one never
+  replaces the other on hover.
 - Columns sort by finite `displayOrder`, then by their child order under the view
   definition, then by id. Missing orders are normalized only after the user
   reorders; merely opening a table does not rewrite data.
@@ -176,13 +181,14 @@ no independently shipped scaffold.
 
 ### FLOW-3: Edit An Existing Or Empty Cell
 
-1. Click a cell to establish a single active grid cell.
-2. Enter or double-click starts editing; a printable key starts editing and
-   seeds the editor with that key.
-3. If the field is absent, one command attaches an entry to the existing field
+1. Clicking an existing authored value focuses its ordinary node editor directly.
+2. A missing value remains an inert cell; Enter, double-click, or a printable key
+   starts editing and a printable key seeds the editor with that key.
+3. For that missing value, one command attaches an entry to the existing field
    definition before the editor opens.
-4. Commit and cancellation reuse the field editor's existing semantics. Focus
-   returns to the same logical cell after projection refresh.
+4. Existing node editing, disclosure, context-menu, drag, and structure commands
+   reuse the ordinary outliner semantics. Escape returns to the same logical cell
+   after the editor releases focus.
 
 ### FLOW-4: Create Rows
 
@@ -256,12 +262,14 @@ width. The panel's vertical scroller remains authoritative.
 - **BR-2:** Exactly one cell participates in the tab order. Arrow keys move the
   active cell without entering edit mode. Home/End move to first/last cell in a
   row; Cmd/Ctrl+Home and Cmd/Ctrl+End move to the first/last available cell.
-- **BR-3:** Tab and Shift+Tab commit the current edit and move forward/backward
-  through editable cells. At the final cell, Tab reaches the next normal UI
-  control instead of trapping keyboard focus.
-- **BR-4:** Enter starts editing an inactive cell, commits an active editor, or
-  moves vertically according to the current editor contract. Escape cancels an
-  editor first; a second Escape returns focus to the owning table surface.
+- **BR-3:** Tab and Shift+Tab move forward/backward through cells only while the
+  roving cell wrapper owns focus. Inside an authored node editor they retain the
+  ordinary node indent/outdent behavior. At the final wrapper cell, Tab reaches
+  the next normal UI control instead of trapping keyboard focus.
+- **BR-4:** Enter starts editing an inactive cell. Once an ordinary authored node
+  editor owns focus, Enter and the remaining structure keys keep their existing
+  node behavior. Escape releases editor-local state and returns focus to the
+  logical cell wrapper.
 - **BR-5:** A printable key on an editable inactive cell starts editing with that
   character. Command shortcuts, dead keys, and IME composition are not consumed
   by the grid resolver.

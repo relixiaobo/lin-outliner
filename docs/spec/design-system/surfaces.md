@@ -143,9 +143,13 @@ become translucent chrome.
 
 An active cell uses the neutral fill ladder plus the shared focus outline only
 while focus is actually within its grid; an idle table never paints a synthetic
-first-cell selection. Authored field values retain a compact node bullet before
-their text, including inside the editor, rather than flattening into bare cell
-copy.
+first-cell selection. Authored field values always use the ordinary node
+renderer, including its standard bullet, single-click editor, disclosure,
+children, and context menu. Table never substitutes bare cell copy or a bespoke
+bullet for those nodes. A missing value may show the same standard marker in a
+quiet inert state without materializing data. The disclosure chevron and bullet
+always occupy their separate standard leading slots; hover never swaps one for
+the other.
 Column menu and add-column icon controls deepen colour without a rounded-square
 hover box. The resize separator expands its invisible hit target without changing
 column geometry and exposes a visible neutral line/focus ring only on interaction.

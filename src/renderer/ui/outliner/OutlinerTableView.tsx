@@ -72,6 +72,7 @@ import { OutlinerItem } from './OutlinerItem';
 import { OutlinerView } from './OutlinerView';
 import { FieldKindIcon, ViewToolbar } from './ViewToolbar';
 import { RowHost } from './RowHost';
+import { RowMarker } from './RowMarker';
 import {
   buildOutlinerRows,
   fieldChoiceLabel,
@@ -379,7 +380,6 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     [columns],
   );
   const [activeCell, setActiveCell] = useState<TableCellAddress | null>(null);
-  const [editingCellKey, setEditingCellKey] = useState<string | null>(null);
   const cellRefs = useRef(new Map<string, HTMLElement>());
   const referencePath = props.referencePath ?? [props.parentId];
   const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
@@ -400,11 +400,6 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     ) return;
     setActiveCell(effectiveActiveCell);
   }, [activeCell, effectiveActiveCell]);
-  useEffect(() => {
-    if (!editingCellKey || !effectiveActiveCell) return;
-    if (editingCellKey !== cellKey(effectiveActiveCell)) setEditingCellKey(null);
-  }, [editingCellKey, effectiveActiveCell]);
-
   const applyGridTemplate = useCallback(() => {
     const grid = gridRef.current;
     if (!grid) return;
@@ -451,14 +446,13 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     const field = props.index.byId.get(column.field);
     if (field?.type !== 'fieldDef') return;
     const existing = fieldEntryForViewCell(rowNode, column.field, props.index.byId);
-    setEditingCellKey(cellKey(address));
     if (existing) {
       focusFieldValue(existing, seed);
       return;
     }
 
     let createdEntryId: NodeId | undefined;
-    const result = await props.run(async () => {
+    await props.run(async () => {
       const outcome = await api.createInlineField(ownerId, null, '', 'plain', column.field);
       createdEntryId = outcome.focus?.nodeId;
       return outcome;
@@ -472,7 +466,6 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
           : requestFocusState(previous, target, cursorEnd()));
       },
     });
-    if (!result) setEditingCellKey(null);
   }, [focusFieldValue, props.index.byId, props.panelId, props.run, props.setUi]);
 
   const onGridKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -491,7 +484,6 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
           const cell = cellRefs.current.get(cellKey(current));
           const focused = document.activeElement;
           if (cell && focused instanceof Node && cell.contains(focused) && focused !== cell) return;
-          setEditingCellKey((key) => key === cellKey(current) ? null : key);
           cell?.focus();
         });
       }
@@ -546,51 +538,6 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
       if (!column) return;
       event.preventDefault();
       void beginFieldEdit(row.id, column, event.key);
-    }
-  };
-
-  const onGridKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (isImeComposingEvent(event)) return;
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) return;
-    const cellElement = target.closest<HTMLElement>('[data-table-cell]');
-    if (!cellElement || target === cellElement) return;
-    const rowId = cellElement.dataset.tableRowId;
-    const columnId = cellElement.dataset.tableColumnId;
-    if (!rowId || !columnId) return;
-    const current = { rowId, columnId };
-
-    if (event.key === 'Tab') {
-      const next = resolveTableCellNavigation({
-        rows: rowIds,
-        columns: columnIds,
-        current,
-        key: 'Tab',
-        shiftKey: event.shiftKey,
-      });
-      event.stopPropagation();
-      setEditingCellKey((key) => key === cellKey(current) ? null : key);
-      if (!next) return;
-      event.preventDefault();
-      focusCell(next);
-      return;
-    }
-
-    if (
-      event.key === 'Enter'
-      && columnId !== TABLE_TITLE_COLUMN_ID
-      && editingCellKey === cellKey(current)
-    ) {
-      event.preventDefault();
-      event.stopPropagation();
-      setEditingCellKey(null);
-      const next = resolveTableCellNavigation({
-        rows: rowIds,
-        columns: columnIds,
-        current,
-        key: 'ArrowDown',
-      });
-      focusCell(next ?? current);
     }
   };
 
@@ -789,8 +736,8 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
                 active={effectiveActiveCell?.rowId === row.id && effectiveActiveCell.columnId === column.id}
                 address={address}
                 column={column}
+                dragId={props.dragId}
                 label={columnLabels.get(column.id) ?? column.field}
-                editing={editingCellKey === cellKey(address)}
                 index={props.index}
                 isNodePinned={props.isNodePinned}
                 onBeginEdit={(seed) => void beginFieldEdit(row.id, column, seed)}
@@ -943,7 +890,6 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
         aria-rowcount={renderRows.length + 1}
         className="outliner-table-scroll"
         onKeyDown={onGridKeyDown}
-        onKeyDownCapture={onGridKeyDownCapture}
         role="grid"
       >
         <div className="outliner-table-header" role="row" aria-rowindex={1}>
@@ -999,8 +945,8 @@ interface TableFieldCellProps {
   address: TableCellAddress;
   ariaColIndex: number;
   column: ViewDisplayField;
+  dragId: NodeId | null;
   label: string;
-  editing: boolean;
   index: DocumentIndex;
   isNodePinned: (nodeId: NodeId) => boolean;
   onBeginEdit: (seed?: string) => void;
@@ -1032,6 +978,7 @@ function TableFieldCell(props: TableFieldCellProps) {
     ? fieldEntryForViewCell(props.rowNode, props.column.field, props.index.byId)
     : undefined;
   const field = props.index.byId.get(props.column.field);
+  const hasNodeValue = Boolean(entry && field?.type === 'fieldDef');
   const valueTexts = owner
     ? viewFieldValuesFor(owner, props.column.field, props.index.byId, { referenceSummary: props.referenceSummary })
     : [];
@@ -1041,18 +988,7 @@ function TableFieldCell(props: TableFieldCellProps) {
     props.register({ rowId: props.address.rowId, columnId: props.address.columnId }, element);
   }, [props.address.columnId, props.address.rowId, props.register]);
 
-  let content: ReactNode = valueTexts.length > 0 ? (
-    <span className="outliner-table-value-list">
-      {valueTexts.map((text, index) => (
-        <span className="outliner-table-value-preview" data-table-value-preview key={`${text}:${index}`}>
-          <span className="outliner-table-value-marker" aria-hidden="true">
-            <span className="outliner-table-value-dot" />
-          </span>
-          <span className="outliner-table-value-text">{text}</span>
-        </span>
-      ))}
-    </span>
-  ) : null;
+  let content: ReactNode = null;
   if (owner && isSystemFieldId(props.column.field)) {
     const display = systemFieldDisplay(owner, props.column.field, props.index.byId, {
       referenceSummary: props.referenceSummary,
@@ -1069,7 +1005,7 @@ function TableFieldCell(props: TableFieldCellProps) {
             : undefined}
         />
       );
-  } else if (props.editing && entry && field?.type === 'fieldDef') {
+  } else if (entry && field?.type === 'fieldDef') {
     const fieldType = projectFieldTypeById(props.index.byId, field.id);
     const placeholder = fieldType === 'options' || fieldType === 'options_from_supertag'
       ? tt.selectOption
@@ -1089,7 +1025,7 @@ function TableFieldCell(props: TableFieldCellProps) {
         onTogglePin={props.onTogglePin}
         trigger={props.trigger}
         setTrigger={props.setTrigger}
-        dragId={null}
+        dragId={props.dragId}
         setDragId={props.setDragId}
         optionField={field}
         placeholder={placeholder}
@@ -1102,12 +1038,12 @@ function TableFieldCell(props: TableFieldCellProps) {
     <div
       aria-colindex={props.ariaColIndex}
       aria-label={valueText ? `${props.label}: ${valueText}` : props.label}
-      className={`outliner-table-cell ${props.active ? 'is-active' : ''} ${props.editing ? 'is-editing' : ''}`}
+      className={`outliner-table-cell ${props.active ? 'is-active' : ''} ${hasNodeValue ? 'has-node-value' : ''}`}
       data-table-cell
       data-table-column-id={props.address.columnId}
       data-table-row-id={props.address.rowId}
       onDoubleClick={() => {
-        if (!isSystemFieldId(props.column.field)) props.onBeginEdit();
+        if (!isSystemFieldId(props.column.field) && !hasNodeValue) props.onBeginEdit();
       }}
       onFocus={props.onFocus}
       ref={setElement}
@@ -1116,8 +1052,10 @@ function TableFieldCell(props: TableFieldCellProps) {
     >
       {content || (
         <span className="outliner-table-empty-cell" aria-hidden="true">
-          <span className="outliner-table-value-marker">
-            <span className="outliner-table-value-dot" />
+          <span className="row-leading outliner-table-empty-leading">
+            <span className="row-bullet-button inert">
+              <RowMarker className="dimmed" expanded={false} hasChildren={false} variant="content" />
+            </span>
           </span>
         </span>
       )}

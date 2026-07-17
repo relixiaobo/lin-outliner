@@ -338,8 +338,6 @@
 }
 
 .outliner-table-scope {
-  --table-value-leading-width: calc(var(--row-bullet-width) + var(--space-4));
-
   width: 100%;
   min-width: 0;
   margin: var(--space-2) 0 var(--space-6);
@@ -551,29 +549,10 @@
 
 .outliner-table-title-cell .row {
   min-height: var(--field-row-min-height);
-  grid-template-columns: var(--table-value-leading-width) minmax(0, 1fr) auto;
+  grid-template-columns: var(--row-leading-width) minmax(0, 1fr) auto;
   border-radius: var(--radius-none);
   padding-left: var(--row-edge);
   padding-right: var(--space-3);
-}
-
-.outliner-table-title-cell .row-leading,
-.outliner-table-cell .field-value-outliner .row-leading {
-  position: relative;
-  width: var(--table-value-leading-width);
-  grid-template-columns: 0 0 var(--row-bullet-width) var(--space-4);
-}
-
-.outliner-table-title-cell .row-chevron-spacer,
-.outliner-table-cell .field-value-outliner .row-chevron-spacer {
-  display: none;
-}
-
-.outliner-table-title-cell .row-chevron-button {
-  position: absolute;
-  left: 0;
-  z-index: var(--z-raised);
-  background: var(--bg-content);
 }
 
 .outliner-table-cell {
@@ -587,7 +566,7 @@
   white-space: nowrap;
 }
 
-.outliner-table-cell.is-editing {
+.outliner-table-cell.has-node-value {
   align-items: stretch;
   overflow: visible;
   padding: 0;
@@ -613,7 +592,7 @@
 
 .outliner-table-cell .field-value-outliner > .row-wrap > .row {
   min-height: calc(var(--field-row-min-height) - 2 * var(--space-hairline));
-  grid-template-columns: var(--table-value-leading-width) minmax(0, 1fr) auto;
+  grid-template-columns: var(--row-leading-width) minmax(0, 1fr) auto;
   border-radius: var(--radius-none);
   padding: var(--space-hairline) 0 var(--space-hairline) var(--row-edge);
 }
@@ -623,51 +602,16 @@
   min-height: var(--field-row-min-height);
 }
 
-.outliner-table-value-list {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.outliner-table-value-preview {
-  display: flex;
-  min-width: 0;
-  min-height: var(--row-leading-height);
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.outliner-table-value-marker {
-  display: inline-flex;
-  width: var(--row-bullet-width);
-  height: var(--row-leading-height);
-  flex: 0 0 var(--row-bullet-width);
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-}
-
-.outliner-table-value-dot {
-  width: var(--row-bullet-dot-size);
-  height: var(--row-bullet-dot-size);
-  border-radius: var(--radius-pill);
-  background: currentColor;
-}
-
-.outliner-table-value-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .outliner-table-empty-cell {
   display: flex;
   width: 100%;
   min-height: var(--field-row-min-height);
   align-items: center;
   color: var(--text-quaternary);
+}
+
+.outliner-table-empty-leading {
+  flex: 0 0 var(--row-leading-width);
 }
 
 .outliner-table-row-actions {
