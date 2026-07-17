@@ -62,9 +62,6 @@ describe('managed skill GitHub client', () => {
     const commit = 'b'.repeat(40);
     const fetchImpl: typeof fetch = async (input) => {
       const url = new URL(requestUrl(input));
-      if (url.hostname === 'api.github.com' && url.pathname === '/repos/public/repo') {
-        return jsonResponse({ default_branch: 'main' });
-      }
       if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/heads/feature')) {
         return jsonResponse([{ ref: 'refs/heads/feature/one', object: { type: 'commit', sha: commit } }]);
       }
@@ -99,11 +96,11 @@ describe('managed skill GitHub client', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = new URL(requestUrl(input));
       if (url.hostname === 'api.github.com') requestedApiPaths.push(url.pathname);
-      if (url.hostname === 'api.github.com' && url.pathname === '/repos/public/repo') {
-        return jsonResponse({ default_branch: 'main' });
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/heads/main')) {
+        return jsonResponse([{ ref: 'refs/heads/main', object: { type: 'commit', sha: commit } }]);
       }
-      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/ref/heads/main')) {
-        return jsonResponse({ object: { type: 'commit', sha: commit } });
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/tags/main')) {
+        return jsonResponse([]);
       }
       if (url.hostname === 'api.github.com' && url.pathname.endsWith(`/git/trees/${commit}`)) {
         return jsonResponse({ truncated: false, tree: [treeEntry('skills/default/SKILL.md', skill)] });
@@ -120,10 +117,80 @@ describe('managed skill GitHub client', () => {
 
     expect(discovery.origin).toMatchObject({ trackingRef: 'main', subdirectory: 'skills/default', commit });
     expect(requestedApiPaths).toEqual([
-      '/repos/public/repo',
-      '/repos/public/repo/git/ref/heads/main',
+      '/repos/public/repo/git/matching-refs/heads/main',
+      '/repos/public/repo/git/matching-refs/tags/main',
       `/repos/public/repo/git/trees/${commit}`,
     ]);
+  });
+
+  test('prefers a longer tag over a default branch that prefixes the same tree URL', async () => {
+    const skill = skillMarkdown('tagged-skill', 'Long tag skill.');
+    const branchCommit = '8'.repeat(40);
+    const tagCommit = '7'.repeat(40);
+    const requestedTreeCommits: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(requestUrl(input));
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/heads/main')) {
+        return jsonResponse([{ ref: 'refs/heads/main', object: { type: 'commit', sha: branchCommit } }]);
+      }
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/tags/main')) {
+        return jsonResponse([{ ref: 'refs/tags/main/v1', object: { type: 'commit', sha: tagCommit } }]);
+      }
+      if (url.hostname === 'api.github.com' && url.pathname.includes('/git/trees/')) {
+        requestedTreeCommits.push(url.pathname.split('/').at(-1) ?? '');
+        return url.pathname.endsWith(`/git/trees/${tagCommit}`)
+          ? jsonResponse({ truncated: false, tree: [treeEntry('skills/tagged/SKILL.md', skill)] })
+          : jsonResponse({ truncated: false, tree: [] });
+      }
+      if (url.hostname === 'raw.githubusercontent.com') return bytesResponse(skill);
+      return jsonResponse({ message: 'not found' }, 404);
+    };
+    const client = new ManagedSkillGitHubClient({ fetchImpl });
+
+    const discovery = await client.discover({
+      sourceUrl: 'https://github.com/public/repo/tree/main/v1/skills/tagged',
+      appVersion: '0.1.0',
+    });
+
+    expect(discovery.origin).toMatchObject({
+      trackingRef: 'main/v1',
+      subdirectory: 'skills/tagged',
+      commit: tagCommit,
+    });
+    expect(requestedTreeCommits).toEqual([tagCommit]);
+  });
+
+  test('prefers a branch only when matching branch and tag refs have equal length', async () => {
+    const skill = skillMarkdown('branch-skill', 'Equal ref branch skill.');
+    const branchCommit = '6'.repeat(40);
+    const tagCommit = '5'.repeat(40);
+    const requestedTreeCommits: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(requestUrl(input));
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/heads/release')) {
+        return jsonResponse([{ ref: 'refs/heads/release/v1', object: { type: 'commit', sha: branchCommit } }]);
+      }
+      if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/tags/release')) {
+        return jsonResponse([{ ref: 'refs/tags/release/v1', object: { type: 'commit', sha: tagCommit } }]);
+      }
+      if (url.hostname === 'api.github.com' && url.pathname.includes('/git/trees/')) {
+        requestedTreeCommits.push(url.pathname.split('/').at(-1) ?? '');
+        return url.pathname.endsWith(`/git/trees/${branchCommit}`)
+          ? jsonResponse({ truncated: false, tree: [treeEntry('skills/branch/SKILL.md', skill)] })
+          : jsonResponse({ truncated: false, tree: [] });
+      }
+      if (url.hostname === 'raw.githubusercontent.com') return bytesResponse(skill);
+      return jsonResponse({ message: 'not found' }, 404);
+    };
+    const client = new ManagedSkillGitHubClient({ fetchImpl });
+
+    const discovery = await client.discover({
+      sourceUrl: 'https://github.com/public/repo/tree/release/v1/skills/branch',
+      appVersion: '0.1.0',
+    });
+
+    expect(discovery.origin).toMatchObject({ trackingRef: 'release/v1', commit: branchCommit });
+    expect(requestedTreeCommits).toEqual([branchCommit]);
   });
 
   test('resolves an annotated tag to its pinned commit', async () => {
@@ -132,9 +199,6 @@ describe('managed skill GitHub client', () => {
     const commit = 'd'.repeat(40);
     const fetchImpl: typeof fetch = async (input) => {
       const url = new URL(requestUrl(input));
-      if (url.hostname === 'api.github.com' && url.pathname === '/repos/public/repo') {
-        return jsonResponse({ default_branch: 'main' });
-      }
       if (url.hostname === 'api.github.com' && url.pathname.endsWith('/git/matching-refs/heads/v1.0.0')) {
         return jsonResponse([]);
       }
@@ -168,7 +232,6 @@ describe('managed skill GitHub client', () => {
     const client = new ManagedSkillGitHubClient({
       fetchImpl: async (input) => {
         const url = new URL(requestUrl(input));
-        if (url.pathname === '/repos/public/repo') return jsonResponse({ default_branch: 'main' });
         if (url.pathname.endsWith('/git/matching-refs/heads/feature')) return jsonResponse(refs);
         if (url.pathname.endsWith('/git/matching-refs/tags/feature')) return jsonResponse([]);
         return jsonResponse({ message: 'not found' }, 404);

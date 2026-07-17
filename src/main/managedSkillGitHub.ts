@@ -275,17 +275,6 @@ export class ManagedSkillGitHubClient {
       const ref = (tail[0] ?? '').toLowerCase();
       return { parts: 1, ref, commit: await this.resolveCommit(owner, repo, ref) };
     }
-    const defaultBranch = await this.readDefaultBranch(owner, repo);
-    if (refPrefixesTail(defaultBranch, tail)) {
-      const branch = await this.tryReadRef(owner, repo, 'heads', defaultBranch);
-      if (branch) {
-        return {
-          parts: defaultBranch.split('/').length,
-          ref: defaultBranch,
-          commit: await this.peelToCommit(owner, repo, branch),
-        };
-      }
-    }
     const prefix = validateGitHubTrackingRef(tail[0] ?? '');
     const [branches, tags] = await Promise.all([
       this.readMatchingRefs(owner, repo, 'heads', prefix),

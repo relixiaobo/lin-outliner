@@ -176,11 +176,12 @@ tag, or commit through bounded `api.github.com` requests. Every mutable ref is
 resolved to a 40-character commit before discovery. Repository URLs may expose
 multiple `SKILL.md` folders; the user must explicitly select one. Install IPC
 then carries the discovery id, candidate id, and expected commit, never a local
-filesystem path.
-Default-branch tree URLs use repository metadata plus one exact-ref lookup.
-Other branch/tag tree URLs use one bounded matching-ref lookup per namespace,
-select the longest ref that prefixes the URL path, and cap the combined result;
-request count never grows with subdirectory depth.
+filesystem path. Repository-root URLs use metadata plus one exact default-branch
+lookup. Tree/blob URLs use one bounded matching-ref lookup per branch/tag
+namespace, include the default branch in those candidates, select the longest ref
+that prefixes the URL path, and prefer a branch only when candidate lengths tie.
+The combined result is capped, and request count never grows with subdirectory
+depth.
 
 Before install or update, Tenon validates the complete selected subtree. It
 requires strict YAML frontmatter, a canonical lowercase skill name, and a
