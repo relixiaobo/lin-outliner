@@ -1498,6 +1498,7 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
     const detail = `${ripgrep.mode} provider at ${ripgrep.source} failed to start: ${result.error.message}`;
     throw new LocalToolFailure('ripgrep_unavailable', detail, ripgrepRecoveryInstructions(detail));
   }
+  if (isNativeFilePermissionMessage(result.stderr)) throw localPermissionError(target);
   if (result.exitCode !== 0 && result.exitCode !== 1 && !result.truncated) {
     const message = result.stderr.trim() || `rg exited with code ${result.exitCode}.`;
     throw new LocalToolFailure('ripgrep_failed', message, 'Fix the regular expression, path, glob, or type filter and retry.');
@@ -1976,6 +1977,7 @@ async function collectFilesWithRipgrep(searchRoot: string, pattern: string): Pro
 
   const result = await runProcessItems(ripgrep.command, [...ripgrep.argsPrefix, ...args], searchRoot, '\0', FILE_GLOB_CANDIDATE_LIMIT, 30_000);
   if (result.error || result.timedOut) return null;
+  if (isNativeFilePermissionMessage(result.stderr)) throw localPermissionError(searchRoot);
   if (result.exitCode !== 0 && result.exitCode !== 1 && !result.truncated) return null;
   return {
     files: result.items.map((item) => path.resolve(searchRoot, item)),
@@ -2007,7 +2009,8 @@ async function collectFilesFallback(root: string, limit: number): Promise<FileGl
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      if (isNativeFilePermissionError(error)) throw localPermissionError(dir);
       return;
     }
     for (const entry of entries) {
@@ -2033,7 +2036,8 @@ async function statFileForGlob(filePath: string): Promise<{ filePath: string; mt
   try {
     const fileStat = await stat(filePath);
     return fileStat.isFile() ? { filePath, mtimeMs: fileStat.mtimeMs } : null;
-  } catch {
+  } catch (error) {
+    if (isNativeFilePermissionError(error)) throw localPermissionError(filePath);
     return null;
   }
 }
@@ -3180,20 +3184,30 @@ function localFsError(error: unknown, filePath: string): LocalToolFailure {
   if (isNodeError(error) && error.code === 'ENOENT') {
     return new LocalToolFailure('file_not_found', `File not found: ${filePath}`, 'Use file_glob to find the current path, or file_write if you need to create a new file.');
   }
-  if (isNodeError(error) && (error.code === 'EACCES' || error.code === 'EPERM')) {
-    return new LocalToolFailure(
-      'permission_denied',
-      `Permission denied: ${filePath}`,
-      'Check the path ownership and permissions and macOS Privacy & Security access for Tenon. Obtain any required native authorization or choose another path, then retry.',
-    );
-  }
+  if (isNativeFilePermissionError(error)) return localPermissionError(filePath);
   return new LocalToolFailure('filesystem_error', errorMessage(error));
+}
+
+function localPermissionError(filePath: string): LocalToolFailure {
+  return new LocalToolFailure(
+    'permission_denied',
+    `Permission denied: ${filePath}`,
+    'Check the path ownership and permissions and macOS Privacy & Security access for Tenon. Obtain any required native authorization or choose another path, then retry.',
+  );
+}
+
+function isNativeFilePermissionError(error: unknown): error is NodeJS.ErrnoException {
+  return isNodeError(error) && (error.code === 'EACCES' || error.code === 'EPERM');
+}
+
+function isNativeFilePermissionMessage(message: string): boolean {
+  return /\b(?:permission denied|operation not permitted|EACCES|EPERM|os error (?:1|13))\b/i.test(message);
 }
 
 function localErrorResult<TData>(tool: string, error: unknown, started: number, filePath?: string) {
   const normalizedError = filePath
     && isNodeError(error)
-    && (error.code === 'ENOENT' || error.code === 'EACCES' || error.code === 'EPERM')
+    && (error.code === 'ENOENT' || isNativeFilePermissionError(error))
     ? localFsError(error, filePath)
     : error;
   const failure = normalizedError instanceof LocalToolFailure

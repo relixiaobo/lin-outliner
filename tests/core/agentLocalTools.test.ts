@@ -68,6 +68,7 @@ const hasBundledRipgrep = Boolean(getBundledRipgrepExecutablePath());
 const ripgrepTest = hasBundledRipgrep ? test : test.skip;
 const posixBashProcessTest = process.platform === 'win32' ? test.skip : test;
 const filePermissionTest = process.platform === 'win32' || process.getuid?.() === 0 ? test.skip : test;
+const fileSearchPermissionTest = hasBundledRipgrep && process.platform !== 'win32' && process.getuid?.() !== 0 ? test : test.skip;
 
 function commandExists(command: string): boolean {
   return !spawnSync(command, ['--version'], { stdio: 'ignore' }).error;
@@ -367,6 +368,28 @@ describe('agent local tools', () => {
         expect(result.instructions).not.toContain('file access settings');
       } finally {
         await chmod(filePath, 0o600);
+      }
+    });
+  });
+
+  fileSearchPermissionTest('file search tools share native permission recovery for unreadable directories', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const directoryPath = path.join(workspaceRoot, 'private');
+      await mkdir(directoryPath);
+      await writeFile(path.join(directoryPath, 'secret.txt'), 'secret', 'utf8');
+      await chmod(directoryPath, 0o000);
+      try {
+        const glob = await executeTool(workspaceRoot, 'file_glob', { path: directoryPath, pattern: '**/*' });
+        const grep = await executeTool(workspaceRoot, 'file_grep', { path: directoryPath, pattern: 'secret' });
+
+        for (const result of [glob, grep]) {
+          expect(result.ok).toBe(false);
+          expect(result.error?.code).toBe('permission_denied');
+          expect(result.instructions).toContain('macOS Privacy & Security access for Tenon');
+        }
+        expect(glob.instructions).toBe(grep.instructions);
+      } finally {
+        await chmod(directoryPath, 0o700);
       }
     });
   });

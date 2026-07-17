@@ -2694,6 +2694,9 @@ Path rules:
   compact. They may contain `..` when a result is outside the workdir.
 - The Run workdir is a path base, not a containment boundary. TypeScript does
   not maintain or enforce a configured local filesystem root.
+- Native `EACCES` / `EPERM` failures return `permission_denied` with the same OS
+  authorization recovery instructions across concrete and search tools. Search
+  never converts a permission failure into an empty match set or input error.
 
 Document and image conversion is not a dedicated tool. It runs through `bash`
 invoking the installed converter binaries directly — LibreOffice-compatible
