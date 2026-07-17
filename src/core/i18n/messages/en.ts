@@ -159,6 +159,13 @@ export const en = {
     },
     security: {
       sectionAriaLabel: 'Security',
+      accessGroup: 'Agent Access',
+      accessAriaLabel: 'Agent access',
+      accessModeLabel: 'Filesystem',
+      fullAccessLabel: 'Full Access',
+      restrictedLabel: 'Restricted',
+      fullAccessSublabel: 'Processes and file tools can read and modify everything available to your macOS account.',
+      restrictedSublabel: 'Processes use the macOS sandbox; file access is limited to the workdir and remembered folders.',
       blocksGroup: 'Your Blocks',
       blocksAriaLabel: 'Your blocks',
       noBlocks: 'No explicit blocks.',
@@ -180,6 +187,9 @@ export const en = {
       systemBoundaryLabel: 'Tenon control state',
       systemBoundarySublabel: 'Private to Tenon; agent file tools and processes cannot read or change it.',
       systemBoundaryNote: 'Other host operations run under your macOS account and use native authorization or service sign-in when required.',
+      fullAccessBoundaryLabel: 'macOS account',
+      fullAccessBoundarySublabel: 'The agent has the same filesystem access as Tenon, including Tenon data and stored provider credentials.',
+      fullAccessBoundaryNote: 'Native TCC, administrator authorization, Keychain controls, and service sign-in still apply.',
     },
     memory: {
       sectionAriaLabel: 'Memory & activity',

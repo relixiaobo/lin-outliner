@@ -385,6 +385,7 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
   ),
 });
 const agentProcessControlPlaneProtections = createFolderCapabilitySnapshot({
+  filesystemMode: 'restricted',
   workspaceRoot: agentLocalFileRoot,
   scratchRoot: agentScratchRoot,
   // This is only the process-policy upper bound. Each invocation snapshot must
@@ -409,7 +410,8 @@ const agentRuntime: AgentRuntime = new AgentRuntime(() => mainWindow, documentSe
   errorReporter: reportError,
 });
 folderCapabilityService.onGranted(() => agentRuntime.folderCapabilitiesChanged());
-agentRuntime.folderCapabilitiesChanged();
+folderCapabilityService.onFilesystemModeChanged(() => agentRuntime.folderCapabilitiesChanged());
+void agentRuntime.folderCapabilitiesChanged();
 const previewTranslationCache = new PreviewTranslationCacheStore(
   join(app.getPath('userData'), 'preview-translation-cache'),
   {
@@ -2424,6 +2426,7 @@ async function rgFileNameMatches(query: string, limit: number): Promise<string[]
   const home = safeAppPath('home');
   if (!home) return [];
   const capabilities = createFolderCapabilitySnapshot({
+    filesystemMode: 'full-access',
     workspaceRoot: home,
     includeSystemRoots: true,
     protectedRoots: [resolvedUserDataDir],
@@ -2961,7 +2964,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_get_capability_settings':
       return readAgentCapabilitySettingsView();
     case 'agent_apply_capability_settings_patch':
-      return applyAgentCapabilitySettingsPatchView(args.patch as { revokeFolders?: unknown; removeBlocks?: unknown });
+      return applyAgentCapabilitySettingsPatchView(args.patch as {
+        filesystemMode?: unknown;
+        revokeFolders?: unknown;
+        removeBlocks?: unknown;
+      });
     case 'agent_append_capability_block':
       return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
     case 'agent_pick_capability_folder':

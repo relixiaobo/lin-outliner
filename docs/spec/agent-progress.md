@@ -239,9 +239,10 @@ Finish runtime polish on top of the event log and delegation foundation.
 - [ ] Add richer non-text media payload lazy loading UI in debug/render details.
 - [ ] Add performance instrumentation around replay, projection, IPC payload size,
   and long transcript rendering.
-- [x] Ownership-based capability model wired end to end: direct execution when
-  resources exist; persistent folder acquisition for uncovered roots including
-  `/`; typed-file and process isolation for private Tenon control state; ambient
+- [x] Access-mode capability model wired end to end: Full Access direct execution
+  under the host account by default; optional Restricted persistent folder
+  acquisition for uncovered roots including `/`, with typed-file and process
+  isolation for private Tenon control state; ambient
   user credentials preserved while explicitly private injected values are
   removed; no action-level host/payment/network hard blocks; scoped Runs built
   from narrowed tool catalogs; durable unattended `needs_input` recovery;

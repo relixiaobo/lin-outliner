@@ -5,8 +5,12 @@ import {
   rebaseCapabilityDraft,
 } from '../../src/renderer/ui/agent/agentCapabilitySettings';
 
-function settings(folders: string[], blocks: string[]): AgentCapabilitySettingsView {
-  return { folders, blocks, diagnostics: [] };
+function settings(
+  folders: string[],
+  blocks: string[],
+  filesystemMode: AgentCapabilitySettingsView['filesystemMode'] = 'full-access',
+): AgentCapabilitySettingsView {
+  return { filesystemMode, folders, blocks, diagnostics: [] };
 }
 
 describe('agent capability settings draft', () => {
@@ -39,5 +43,20 @@ describe('agent capability settings draft', () => {
     const current = settings(['/project/a', '/project/picked'], []);
 
     expect(rebaseCapabilityDraft(base, base, current)).toBe(current);
+  });
+
+  test('persists a mode replacement while rebasing concurrent folder grants', () => {
+    const base = settings(['/project/a'], [], 'full-access');
+    const draft = settings(['/project/a'], [], 'restricted');
+    const current = settings(['/project/a', '/project/concurrent'], [], 'full-access');
+
+    expect(capabilitySettingsRemovalPatch(base, draft)).toEqual({
+      filesystemMode: 'restricted',
+      revokeFolders: [],
+      removeBlocks: [],
+    });
+    expect(rebaseCapabilityDraft(base, draft, current)).toEqual(
+      settings(['/project/a', '/project/concurrent'], [], 'restricted'),
+    );
   });
 });

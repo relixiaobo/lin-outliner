@@ -1992,10 +1992,14 @@ export class AgentRuntime {
    */
   private async refreshPrimaryAgentIdentity(): Promise<void> {
     const definition = await this.materializeBuiltInAgentDefinition();
+    const capabilityConfig = await readAgentCapabilityConfig();
     this.agentIdentity = {
       ...this.agentIdentity,
       displayName: agentDefinitionDisplayName(definition),
-      systemPrompt: composeAgentPrompt(definition, { mode: 'main' }),
+      systemPrompt: composeAgentPrompt(definition, {
+        mode: 'main',
+        filesystemMode: capabilityConfig.filesystemMode,
+      }),
       skills: definition.skills ?? [],
     };
   }
@@ -2837,6 +2841,9 @@ export class AgentRuntime {
     if (existing) this.cleanupProviderConversationResources(conversationId);
     this.userViewContextReminderTracker.reset(conversationId);
 
+    // Conversation creation can race the best-effort startup refresh. Resolve the
+    // persisted filesystem mode here so the first Run receives a truthful prompt.
+    await this.refreshPrimaryAgentIdentity();
     const providerConfig = await this.getActiveProviderConfig();
     const runtimeSettings = await this.getRuntimeSettings();
     const activePath = await this.deriveRuntimePiMessages(conversationId, eventState);
@@ -4488,7 +4495,22 @@ export class AgentRuntime {
     this.queueIssueSweep(new Date());
   }
 
-  folderCapabilitiesChanged(): void {
+  async folderCapabilitiesChanged(): Promise<void> {
+    await this.refreshPrimaryAgentIdentity().then(() => {
+      for (const conversation of this.conversations.values()) {
+        if (conversation.defaultAgentId === this.agentIdentity.agentId) {
+          conversation.agent.state.systemPrompt = this.agentIdentity.systemPrompt;
+        }
+      }
+    }).catch((error) => {
+      this.reportWarn(
+        'agent-runtime',
+        `Agent filesystem prompt refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        { operation: 'refreshFilesystemPrompt' },
+        'agent-filesystem-prompt-refresh-failed',
+      );
+    });
     this.queueFolderCapabilityRecovery();
   }
 
@@ -4510,7 +4532,11 @@ export class AgentRuntime {
 
   private async recoverGrantedFolderRequests(): Promise<void> {
     const capabilityConfig = await readAgentCapabilityConfig();
-    this.resolveCoveredForegroundCapabilityAcquisitions(capabilityConfig.folders);
+    this.resolveCoveredForegroundCapabilityAcquisitions(
+      capabilityConfig.filesystemMode === 'full-access'
+        ? [path.parse(this.options.localFileRoot ?? process.cwd()).root]
+        : capabilityConfig.folders,
+    );
     const entries = await this.getEventStore().listConversationIndexEntries();
     for (const entry of entries) {
       if (this.shutdownStarted) return;
@@ -4519,7 +4545,8 @@ export class AgentRuntime {
       const requests = Object.values(eventState.folderCapabilityRequests)
         .filter((request) => request.status === 'pending')
         .filter((request) => request.folders.every((folder) => (
-          capabilityConfig.folders.some((root) => isPathInside(root, folder))
+          capabilityConfig.filesystemMode === 'full-access'
+          || capabilityConfig.folders.some((root) => isPathInside(root, folder))
         )))
         .sort((left, right) => left.createdAt - right.createdAt);
       if (requests.length === 0) continue;
@@ -6786,7 +6813,10 @@ export class AgentRuntime {
     const requestId = input.requestId;
     const folders = [...input.decision.request.folders];
     const capabilityConfig = await readAgentCapabilityConfig();
-    if (folderRequestsCovered(folders, capabilityConfig.folders)) {
+    if (
+      capabilityConfig.filesystemMode === 'full-access'
+      || folderRequestsCovered(folders, capabilityConfig.folders)
+    ) {
       return { status: 'granted' };
     }
     const acquisitionKey = folderCapabilityAcquisitionKey(folders);
@@ -7446,8 +7476,10 @@ export class AgentRuntime {
       () => this.tryResolveProviderModel(providerConfig),
     );
     const skillSections = await this.memberSkillSections(skillRuntime, definition);
+    const capabilityConfig = await readAgentCapabilityConfig();
     const systemPrompt = composeAgentPrompt(definition, {
       mode: 'member',
+      filesystemMode: capabilityConfig.filesystemMode,
       mention: agentMentionToken(agentId),
       profileSkillSections: skillSections,
     });
@@ -9324,9 +9356,14 @@ function createConfiguredAgent(
           ...capabilityConfig.folders.map((root) => ({ access: 'write' as const, root })),
         ];
         const revocationGeneration = capabilityConfig.revocationGeneration ?? 0;
-        const signature = `${revocationGeneration}\0${roots.map((root) => `${root.access}:${root.root}`).join('\0')}`;
+        const signature = `${capabilityConfig.filesystemMode}\0${revocationGeneration}\0${roots.map((root) => `${root.access}:${root.root}`).join('\0')}`;
         if (signature === syncedLocalCapabilityRootSignature) return;
-        setAgentLocalCapabilityRoots(options.localWorkspace, roots, revocationGeneration);
+        setAgentLocalCapabilityRoots(
+          options.localWorkspace,
+          roots,
+          revocationGeneration,
+          capabilityConfig.filesystemMode,
+        );
         syncedLocalCapabilityRootSignature = signature;
       };
       syncLocalCapabilityRoots();

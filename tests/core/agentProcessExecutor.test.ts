@@ -4,18 +4,27 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import {
   FolderCapabilityService,
-  createFolderCapabilitySnapshot,
+  createFolderCapabilitySnapshot as createSnapshot,
   snapshotFromRoots,
+  type FolderCapabilityContext,
 } from '../../src/main/agentFolderCapabilities';
 import {
   AgentProcessExecutor,
   bindAgentProcessCapabilities,
+  getAgentProcessExecutor,
   resetAgentProcessExecutorForTests,
   sanitizeAgentProcessEnv,
 } from '../../src/main/agentProcessExecutor';
 import { runAgentToolProcess } from '../../src/main/agentToolProcess';
 
 const roots: string[] = [];
+
+function createFolderCapabilitySnapshot(
+  context: Omit<FolderCapabilityContext, 'filesystemMode'>,
+  folders: readonly string[],
+) {
+  return createSnapshot({ ...context, filesystemMode: 'restricted' }, folders);
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -95,6 +104,7 @@ describe('agent process executor', () => {
     await writeFile(target, 'revoked');
     const service = new FolderCapabilityService(path.join(root, 'capabilities.json'));
     await service.grant(granted);
+    await service.applyRemovalPatch({ filesystemMode: 'restricted' });
     const snapshot = await service.snapshot({ workspaceRoot: workspace, includeSystemRoots: true });
     resetAgentProcessExecutorForTests();
     const unbind = bindAgentProcessCapabilities(service, []);
@@ -121,6 +131,7 @@ describe('agent process executor', () => {
     await mkdir(granted);
     const service = new FolderCapabilityService(path.join(root, 'capabilities.json'));
     await service.grant(granted);
+    await service.applyRemovalPatch({ filesystemMode: 'restricted' });
     const snapshot = await service.snapshot({ workspaceRoot: workspace, includeSystemRoots: true });
     let preparationStarted!: () => void;
     let finishPreparation!: () => void;
@@ -172,6 +183,81 @@ describe('agent process executor', () => {
       GITHUB_TOKEN: 'secret',
       SAFE_VALUE: 'visible',
     });
+  });
+
+  test('Full Access skips the sandbox adapter and exposes protected host paths', async () => {
+    const root = await mkdtemp(path.join(homedir(), '.tenon-process-full-access-'));
+    roots.push(root);
+    const workspace = path.join(root, 'workspace');
+    const control = path.join(root, 'control');
+    const secret = path.join(control, 'agent-secrets.json');
+    await mkdir(workspace);
+    await mkdir(control);
+    await writeFile(secret, 'visible-in-full-access');
+    const capabilities = createSnapshot({
+      filesystemMode: 'full-access',
+      workspaceRoot: workspace,
+      includeSystemRoots: true,
+      protectedRoots: [control],
+    }, []);
+    let prepared = false;
+    const executor = new AgentProcessExecutor({
+      prepare: async () => {
+        prepared = true;
+        throw new Error('Full Access must not prepare a sandbox.');
+      },
+    });
+
+    const child = await executor.spawn({
+      command: '/bin/cat',
+      args: [secret],
+      cwd: workspace,
+      capabilities,
+    });
+    let stdout = '';
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => { stdout += chunk; });
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe('visible-in-full-access');
+    expect(prepared).toBe(false);
+  });
+
+  test('changing filesystem mode terminates active Full Access processes', async () => {
+    const root = await mkdtemp(path.join(homedir(), '.tenon-process-mode-change-'));
+    roots.push(root);
+    const workspace = path.join(root, 'workspace');
+    await mkdir(workspace);
+    const service = new FolderCapabilityService(path.join(root, 'capabilities.json'));
+    const capabilities = await service.snapshot({ workspaceRoot: workspace, includeSystemRoots: true });
+    resetAgentProcessExecutorForTests();
+    const unbind = bindAgentProcessCapabilities(service, []);
+
+    try {
+      const child = await getAgentProcessExecutor().spawn({
+        command: '/bin/sh',
+        args: ['-c', 'sleep 30'],
+        cwd: workspace,
+        capabilities,
+        detached: true,
+      });
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+        child.once('close', (code, signal) => resolve({ code, signal }));
+      });
+
+      await service.applyRemovalPatch({ filesystemMode: 'restricted' });
+
+      const result = await closed;
+      expect(result.code === null || result.code !== 0).toBe(true);
+      expect(service.currentRevocationGeneration()).toBe(1);
+    } finally {
+      unbind();
+      resetAgentProcessExecutorForTests();
+    }
   });
 
   test('removes only explicitly private injected environment values', async () => {

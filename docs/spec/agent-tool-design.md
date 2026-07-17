@@ -3177,7 +3177,7 @@ Result behavior:
 - Creating a new file does not require a prior `file_read`.
 - Updating an existing file requires a prior `file_read` freshness record.
 - Overwriting a file is a high-signal mutation in logs and executes directly
-  when its folder capability is available.
+  when the selected filesystem mode allows the path.
 - Do not use `file_write` to append small changes; use `file_edit`.
 - Writes under self-definition directories are validated by the file-tool gateway
   after ordinary capability preflight. Skill writes validate `SKILL.md` /
@@ -3236,14 +3236,15 @@ Result behavior:
 - Commands run in the local file root by default. Lin should not expose a
   model-facing `cwd` parameter initially; the agent can use shell syntax when a
   command truly needs another directory.
-- Commands that need local folders outside the implicit capability roots declare
-  them in `required_folders`. Missing folders are requested and persisted before
-  process start. Undeclared access is denied by the process sandbox and remains a
-  `command_failed` result with the native error; the agent must declare the
-  folder in a fresh call. Tenon never infers folder access from stderr and never
-  auto-replays a partially started command.
-- Every agent-driven process uses the shared process executor. On macOS it runs
-  inside the capability-derived Seatbelt profile; there is no sandbox bypass.
+- In Restricted mode, commands that need local folders outside the implicit
+  roots declare them in `required_folders`. Missing folders are requested and
+  persisted before process start. Undeclared access is denied by Seatbelt and
+  remains a `command_failed` result with the native error; the agent must declare
+  the folder in a fresh call. Full Access ignores `required_folders` and spawns
+  directly under the host account.
+- Every agent-driven process uses the shared process executor. On macOS it
+  selects direct spawn for Full Access or the capability-derived Seatbelt profile
+  for Restricted.
 - Long-running commands should use `run_in_background: true` and return
   `backgroundTaskId`. The agent should not append `&`.
 - Foreground commands that outlive Lin's blocking budget may be auto-backgrounded
@@ -3269,8 +3270,8 @@ Result behavior:
 - Completion of a background command should be surfaced through the agent
   runtime event stream with the same output path. Do not add a polling-first
   `TaskOutput` equivalent unless real usage proves `file_read` is insufficient.
-- Risky commands run by default unless they hit a hard redline, a built-in soft
-  block, restricted sandbox rules, or a user blocklist rule.
+- Commands run by default unless they match an explicit user block. Restricted
+  filesystem rules can separately deny a path or process operation.
 - Non-zero command exit is represented through `stdout`, `stderr`, `exitCode`,
   and optional `returnCodeInterpretation`.
 - Do not use `bash` to read, edit, write, glob, or grep files when the dedicated

@@ -45,9 +45,9 @@ are **views, rules, or metadata** of these, not separate primitives.
    `built-in:tenon:assistant`, handle/mention `assistant`). A built-in defined in
    code; user edits layer as a stored overlay. Persona + model/effort + skill
    bindings + tool catalog + timeline memory tools. ✅
-7. **Capability boundary** — direct execution over available resources,
-   persistent folder acquisition, private Tenon control state, and
-   owner-specific unavailable results. ✅
+7. **Capability boundary** — default Full Access under the host account, an
+   optional Restricted mode with persistent folder acquisition and private
+   Tenon control state, plus owner-specific unavailable results. ✅
 
 ### The one agent — Neva
 
@@ -369,7 +369,7 @@ leftover; only the single-agent value is ever assigned.)
 | Timeline memory nodes | ✅ built | durable memory lives in per-day generated-headline `#d-memory` plus optional `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
 | One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` Dream-channel runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; the Dream channel retains the newest 512 run transcripts and prunes older run ledgers/anchor markers/search entries; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
 | Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |
-| Capability boundary | ✅ built | direct execution, persistent folders including `/`, private Tenon control state, user blocks, and scoped tool catalogs |
+| Capability boundary | ✅ built | default Full Access; optional Restricted persistent folders including `/` plus private Tenon control state; user blocks and scoped tool catalogs in both modes |
 
 ## Known tensions / honest caveats
 

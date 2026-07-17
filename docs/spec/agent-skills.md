@@ -307,7 +307,7 @@ User/project and built-in skill bodies may include embedded shell commands using
 fenced blocks that start with ```` ```! ```` or inline `!` command spans.
 Commands are expanded only when the skill is invoked, after argument and
 environment placeholder substitution. They execute through the same local bash
-runner, folder capabilities, and control-plane boundary used by normal agent
+runner and selected Full Access/Restricted filesystem mode used by normal agent
 tool calls. `allowed-tools` does not act as a command-pattern policy. Managed
 skills reject both embedded-shell forms during import, so network-distributed
 instructions can only invoke scripts later through ordinary model tool calls.
@@ -328,7 +328,7 @@ and then install or enable it directly through the ordinary task environment.
 The model must not silently replace the
 dependency-backed route with a hand-written approximation, a different output
 format, or an unrelated tool merely because the dependency is missing. If the
-dependency path is unavailable because of a folder capability, native OS
+dependency path is unavailable because of the selected filesystem mode, native OS
 authorization, provider login, payment flow, network path, or project
 constraint, Neva explains the concrete blocker. It asks only when a real
 fallback choice cannot be inferred. Any unavoidable fallback states what behavior, fidelity,
@@ -557,7 +557,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery for mutable skills. Built-ins load immediately even when they declare `paths`. |
 | `execution: isolated` | Supported through the runtime-owned delegation executor. Isolated skill bodies run in a sidechain worker of the current agent and return only the final result to the parent; they do not require exposing direct delegated-run tools. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
-| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary folder capabilities, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Shell/external-editor writes are validated on discovery and invalid definitions remain unloaded. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
+| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use the selected filesystem mode (Full Access directly; Restricted through ordinary folder capabilities), then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Shell/external-editor writes are validated on discovery and invalid definitions remain unloaded. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
 | Agent-managed agent-definition writes | Not supported. The one-Neva invariant removed agent authoring as a self-definition surface (no `/create-agent` workflow, and the self-definition write gate governs skills only). The single agent, Neva, is configured through the agent-config window (`agentUpdateAgentDefinition`), not by authoring `AGENT.md` files. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | Public GitHub skills | Supported through bounded GitHub discovery, strict subtree validation, immutable commit/hash pinning, explicit install/enable/update/rollback/uninstall, and offline local execution. Private repositories, credentials, GitLab, and other providers are not supported. |

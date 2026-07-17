@@ -1,5 +1,9 @@
 import path from 'node:path';
 import {
+  normalizeAgentFilesystemMode,
+  type AgentFilesystemMode,
+} from '../core/agentFilesystemMode';
+import {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
   actionKindFromRuleValue,
   type AgentToolActionKind,
@@ -9,6 +13,7 @@ export {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
   type AgentToolActionKind,
 } from '../core/agentActionCatalog';
+export type { AgentFilesystemMode } from '../core/agentFilesystemMode';
 
 export type ToolAccessScope = 'allowed_file_area' | 'outside_allowed_file_area' | 'external_system' | 'none';
 
@@ -40,6 +45,7 @@ export interface AgentCapabilityRuleDiagnostic {
 }
 
 export interface AgentCapabilityConfig {
+  filesystemMode: AgentFilesystemMode;
   folders: string[];
   blocks: AgentCapabilityBlockRule[];
   diagnostics: AgentCapabilityRuleDiagnostic[];
@@ -47,8 +53,15 @@ export interface AgentCapabilityConfig {
 }
 
 export interface AgentCapabilitySettings {
+  filesystemMode?: unknown;
   folders?: unknown;
   blocks?: unknown;
+}
+
+export interface NormalizedAgentCapabilitySettings {
+  filesystemMode: AgentFilesystemMode;
+  folders: string[];
+  blocks: string[];
 }
 
 const SUPPORTED_ACTION_KIND_SET = new Set<string>(SUPPORTED_AGENT_TOOL_ACTION_KINDS);
@@ -56,6 +69,7 @@ const SUPPORTED_ACTION_KIND_SET = new Set<string>(SUPPORTED_AGENT_TOOL_ACTION_KI
 export function parseAgentCapabilitySettings(input: unknown): AgentCapabilityConfig {
   if (looksParsedAgentCapabilityConfig(input)) return input;
   const settings = isRecord(input) ? input as AgentCapabilitySettings : {};
+  const filesystemMode = normalizeAgentFilesystemMode(settings.filesystemMode);
   const folders = normalizedStrings(settings.folders).map((folder) => path.resolve(folder));
   const blocks: AgentCapabilityBlockRule[] = [];
   const diagnostics: AgentCapabilityRuleDiagnostic[] = [];
@@ -75,13 +89,14 @@ export function parseAgentCapabilitySettings(input: unknown): AgentCapabilityCon
     else blocks.push(parsed.rule);
   }
 
-  return { folders: compactPaths(folders), blocks, diagnostics };
+  return { filesystemMode, folders: compactPaths(folders), blocks, diagnostics };
 }
 
 export function agentCapabilityConfigToSettings(
   config: AgentCapabilityConfig,
-): Required<AgentCapabilitySettings> {
+): NormalizedAgentCapabilitySettings {
   return {
+    filesystemMode: config.filesystemMode,
     folders: [...config.folders],
     blocks: config.blocks.map((block) => block.ruleValue),
   };
@@ -219,6 +234,7 @@ function normalizeCapabilityConfig(input?: unknown): AgentCapabilityConfig {
 
 function looksParsedAgentCapabilityConfig(value: unknown): value is AgentCapabilityConfig {
   return isRecord(value)
+    && (value.filesystemMode === 'full-access' || value.filesystemMode === 'restricted')
     && Array.isArray(value.folders)
     && Array.isArray(value.blocks)
     && Array.isArray(value.diagnostics)

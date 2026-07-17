@@ -5,13 +5,21 @@ import path from 'node:path';
 import {
   FolderCapabilityService,
   capabilityFolderForTarget,
-  createFolderCapabilitySnapshot,
+  createFolderCapabilitySnapshot as createSnapshot,
   missingFolderCapabilities,
   normalizeRequiredFolders,
   protectedRootForPath,
+  type FolderCapabilityContext,
 } from '../../src/main/agentFolderCapabilities';
 
 const roots: string[] = [];
+
+function createFolderCapabilitySnapshot(
+  context: Omit<FolderCapabilityContext, 'filesystemMode'>,
+  folders: readonly string[],
+) {
+  return createSnapshot({ ...context, filesystemMode: 'restricted' }, folders);
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -31,6 +39,7 @@ describe('folder capability service', () => {
     const canonicalRoot = await realpath(root);
 
     expect(await service.read()).toEqual({
+      filesystemMode: 'full-access',
       folders: [canonicalRoot],
       blocks: ['Action(git.publish_remote)'],
     });
@@ -56,7 +65,7 @@ describe('folder capability service', () => {
     expect(revoked).toEqual([canonicalGranted]);
     expect(service.currentRevocationGeneration()).toBe(1);
     expect(await service.readState()).toEqual({
-      document: { folders: [], blocks: [] },
+      document: { filesystemMode: 'full-access', folders: [], blocks: [] },
       revocationGeneration: 1,
     });
   });
@@ -102,6 +111,26 @@ describe('folder capability service', () => {
       [await realpath(first)],
       [await realpath(second)],
     ]);
+  });
+
+  test('publishes durable mode changes and invalidates process snapshots', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-filesystem-mode-'));
+    roots.push(root);
+    const service = new FolderCapabilityService(path.join(root, 'permissions.json'));
+    const changes: string[] = [];
+    service.onFilesystemModeChanged(async (mode, previousMode) => {
+      changes.push(`${previousMode}->${mode}:${(await service.read()).filesystemMode}`);
+    });
+
+    await service.applyRemovalPatch({ filesystemMode: 'restricted' });
+    await service.applyRemovalPatch({ filesystemMode: 'restricted' });
+    await service.applyRemovalPatch({ filesystemMode: 'full-access' });
+
+    expect(changes).toEqual([
+      'full-access->restricted:restricted',
+      'restricted->full-access:full-access',
+    ]);
+    expect(service.currentRevocationGeneration()).toBe(2);
   });
 
   test('publishes concurrent grants exactly once from their serialized states', async () => {

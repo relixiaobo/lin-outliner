@@ -3,6 +3,12 @@ import { realpath, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  DEFAULT_AGENT_FILESYSTEM_MODE,
+  isAgentFilesystemMode,
+  normalizeAgentFilesystemMode,
+  type AgentFilesystemMode,
+} from '../core/agentFilesystemMode';
+import {
   PRIVATE_JSON_FILE_OPTIONS,
   readJsonOrDefault,
   updateJsonFile,
@@ -30,6 +36,7 @@ export interface FolderCapabilityProtectedRoot {
 }
 
 export interface FolderCapabilitySnapshot {
+  filesystemMode: AgentFilesystemMode;
   revocationGeneration: number;
   roots: readonly FolderCapabilityRoot[];
   readRoots: readonly string[];
@@ -39,16 +46,19 @@ export interface FolderCapabilitySnapshot {
 }
 
 export interface FolderCapabilityDocument {
+  filesystemMode: AgentFilesystemMode;
   folders: string[];
   blocks: string[];
 }
 
 export interface FolderCapabilityRemovalPatch {
+  filesystemMode?: unknown;
   folders?: readonly string[];
   blocks?: readonly string[];
 }
 
 export interface FolderCapabilityContext {
+  filesystemMode: AgentFilesystemMode;
   workspaceRoot: string;
   revocationGeneration?: number;
   scratchRoot?: string;
@@ -60,12 +70,21 @@ export interface FolderCapabilityContext {
 
 type FolderRevocationListener = (folder: string) => void | Promise<void>;
 type FolderGrantListener = (folders: readonly string[]) => void | Promise<void>;
+type FilesystemModeListener = (
+  mode: AgentFilesystemMode,
+  previousMode: AgentFilesystemMode,
+) => void | Promise<void>;
 
-const EMPTY_DOCUMENT: FolderCapabilityDocument = { folders: [], blocks: [] };
+const EMPTY_DOCUMENT: FolderCapabilityDocument = {
+  filesystemMode: DEFAULT_AGENT_FILESYSTEM_MODE,
+  folders: [],
+  blocks: [],
+};
 
 export class FolderCapabilityService {
   private readonly revocationListeners = new Set<FolderRevocationListener>();
   private readonly grantListeners = new Set<FolderGrantListener>();
+  private readonly filesystemModeListeners = new Set<FilesystemModeListener>();
   private revocationGeneration = 0;
 
   constructor(private readonly filePath: string) {}
@@ -96,6 +115,7 @@ export class FolderCapabilityService {
       (current) => {
         previous = current;
         return {
+          filesystemMode: current.filesystemMode,
           folders: compactPaths([...current.folders, folder]),
           blocks: current.blocks,
         };
@@ -116,6 +136,7 @@ export class FolderCapabilityService {
       (current) => {
         previous = current;
         return {
+          filesystemMode: current.filesystemMode,
           folders: compactPaths([...current.folders, ...folders]),
           blocks: current.blocks,
         };
@@ -138,6 +159,7 @@ export class FolderCapabilityService {
         previous = current;
         folder = current.folders.find((candidate) => samePath(candidate, requested)) ?? requested;
         const next = {
+          filesystemMode: current.filesystemMode,
           folders: current.folders.filter((candidate) => !samePath(candidate, folder)),
           blocks: current.blocks,
         };
@@ -155,6 +177,9 @@ export class FolderCapabilityService {
   async applyRemovalPatch(input: FolderCapabilityRemovalPatch): Promise<FolderCapabilityDocument> {
     const folders = (input.folders ?? []).map(canonicalPathPreservingSuffix);
     const blocks = normalizedStrings(input.blocks);
+    const filesystemMode = isAgentFilesystemMode(input.filesystemMode)
+      ? input.filesystemMode
+      : undefined;
     let previous = EMPTY_DOCUMENT;
     const next = await updateJsonFile(
       this.filePath,
@@ -163,15 +188,22 @@ export class FolderCapabilityService {
       (current) => {
         previous = current;
         const patched = {
+          filesystemMode: filesystemMode ?? current.filesystemMode,
           folders: current.folders.filter((folder) => !folders.some((candidate) => samePath(candidate, folder))),
           blocks: current.blocks.filter((block) => !blocks.includes(block)),
         };
-        if (patched.folders.length !== current.folders.length) this.revocationGeneration += 1;
+        if (
+          patched.folders.length !== current.folders.length
+          || patched.filesystemMode !== current.filesystemMode
+        ) {
+          this.revocationGeneration += 1;
+        }
         return patched;
       },
       PRIVATE_JSON_FILE_OPTIONS,
     );
     await this.publishRevokedFolders(previous, next);
+    await this.publishFilesystemModeChange(previous, next);
     return next;
   }
 
@@ -183,6 +215,7 @@ export class FolderCapabilityService {
       EMPTY_DOCUMENT,
       normalizeDocument,
       (current) => ({
+        filesystemMode: current.filesystemMode,
         folders: current.folders,
         blocks: current.blocks.includes(normalized) ? current.blocks : [...current.blocks, normalized],
       }),
@@ -200,10 +233,16 @@ export class FolderCapabilityService {
     return () => this.grantListeners.delete(listener);
   }
 
-  async snapshot(context: FolderCapabilityContext): Promise<FolderCapabilitySnapshot> {
+  onFilesystemModeChanged(listener: FilesystemModeListener): () => void {
+    this.filesystemModeListeners.add(listener);
+    return () => this.filesystemModeListeners.delete(listener);
+  }
+
+  async snapshot(context: Omit<FolderCapabilityContext, 'filesystemMode'>): Promise<FolderCapabilitySnapshot> {
     const state = await this.readState();
     return createFolderCapabilitySnapshot({
       ...context,
+      filesystemMode: state.document.filesystemMode,
       revocationGeneration: state.revocationGeneration,
     }, state.document.folders);
   }
@@ -225,6 +264,16 @@ export class FolderCapabilityService {
     for (const folder of removed) {
       await Promise.allSettled([...this.revocationListeners].map((listener) => listener(folder)));
     }
+  }
+
+  private async publishFilesystemModeChange(
+    previous: FolderCapabilityDocument,
+    next: FolderCapabilityDocument,
+  ): Promise<void> {
+    if (previous.filesystemMode === next.filesystemMode) return;
+    await Promise.allSettled([...this.filesystemModeListeners].map((listener) => (
+      listener(next.filesystemMode, previous.filesystemMode)
+    )));
   }
 }
 
@@ -281,6 +330,7 @@ export function createFolderCapabilitySnapshot(
     context.deniedWrites,
     protectedRoots,
     context.revocationGeneration ?? 0,
+    context.filesystemMode,
   );
 }
 
@@ -289,6 +339,7 @@ export function snapshotFromRoots(
   deniedWrites: readonly FolderCapabilityWriteDeny[] = [],
   protectedRoots: readonly FolderCapabilityProtectedRoot[] = [],
   revocationGeneration = 0,
+  filesystemMode: AgentFilesystemMode = 'restricted',
 ): FolderCapabilitySnapshot {
   const compacted = compactCapabilityRoots(roots);
   const writeRoots = compactPaths(compacted.filter((entry) => entry.access === 'write').map((entry) => entry.root));
@@ -297,6 +348,7 @@ export function snapshotFromRoots(
     ...compacted.filter((entry) => entry.access === 'read').map((entry) => entry.root),
   ]);
   return {
+    filesystemMode,
     revocationGeneration,
     roots: compacted,
     readRoots,
@@ -307,10 +359,11 @@ export function snapshotFromRoots(
 }
 
 export function protectedRootForPath(
-  snapshot: Pick<FolderCapabilitySnapshot, 'protectedRoots'>,
+  snapshot: Pick<FolderCapabilitySnapshot, 'filesystemMode' | 'protectedRoots'>,
   targetPath: string,
   access: FolderCapabilityAccess,
 ): string | null {
+  if (snapshot.filesystemMode === 'full-access') return null;
   const target = canonicalPathPreservingSuffix(targetPath);
   for (const protection of snapshot.protectedRoots) {
     if (!isPathInside(protection.root, target)) continue;
@@ -374,6 +427,7 @@ export async function canonicalExistingDirectory(inputPath: string): Promise<str
 function normalizeDocument(input: unknown): FolderCapabilityDocument {
   if (!isRecord(input)) return { ...EMPTY_DOCUMENT };
   return {
+    filesystemMode: normalizeAgentFilesystemMode(input.filesystemMode),
     folders: compactPaths(normalizedStrings(input.folders).map((folder) => path.resolve(expandHome(folder)))),
     blocks: normalizedStrings(input.blocks),
   };

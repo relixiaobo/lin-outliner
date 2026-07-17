@@ -9,6 +9,7 @@ import type {
   AgentDreamReadiness,
   AgentRenderDreamRunEntity,
   AgentCapabilitySettingsView,
+  AgentFilesystemMode,
   SkillDefinition,
 } from '../../api/types';
 import { api } from '../../api/client';
@@ -227,6 +228,7 @@ const EMPTY_DRAFT: DraftConfig = {
 // Theme segment values and category rail order; their visible labels + hints are
 // localized at render (settings.general.theme* and settings.categories.*).
 const THEME_VALUES: readonly ThemeMode[] = ['system', 'light', 'dark'];
+const FILESYSTEM_MODE_VALUES: readonly AgentFilesystemMode[] = ['full-access', 'restricted'];
 const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'security', 'memory', 'skills', 'agents'];
 const SETTINGS_CATEGORY_ICONS = {
   general: SettingsIcon,
@@ -331,6 +333,14 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     const g = t.settings.general;
     const labels: Record<ThemeMode, string> = { system: g.themeSystem, light: g.themeLight, dark: g.themeDark };
     return THEME_VALUES.map((value) => ({ value, label: labels[value] }));
+  }, [t]);
+  const filesystemModeOptions = useMemo(() => {
+    const security = t.settings.security;
+    const labels: Record<AgentFilesystemMode, string> = {
+      'full-access': security.fullAccessLabel,
+      restricted: security.restrictedLabel,
+    };
+    return FILESYSTEM_MODE_VALUES.map((value) => ({ value, label: labels[value] }));
   }, [t]);
 
   useEffect(() => {
@@ -611,13 +621,20 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
 
   const capabilityFolders = capabilityDraft?.folders ?? capabilitySettings?.folders ?? [];
   const capabilityBlocks = capabilityDraft?.blocks ?? capabilitySettings?.blocks ?? [];
+  const capabilityFilesystemMode = capabilityDraft?.filesystemMode
+    ?? capabilitySettings?.filesystemMode
+    ?? 'full-access';
   const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
   const capabilityPatch = capabilitySettings && capabilityDraft
     ? capabilitySettingsRemovalPatch(capabilitySettings, capabilityDraft)
     : null;
   const capabilityDraftDirty = Boolean(
     capabilityPatch
-    && (capabilityPatch.revokeFolders.length > 0 || capabilityPatch.removeBlocks.length > 0),
+    && (
+      Boolean(capabilityPatch.filesystemMode)
+      || capabilityPatch.revokeFolders.length > 0
+      || capabilityPatch.removeBlocks.length > 0
+    ),
   );
   const showFooterActions = category === 'security'
     ? capabilityDraftDirty || runtimeDraftDirty
@@ -640,6 +657,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   function revokeCapabilityFolder(folder: string) {
     const base = capabilityDraft ?? capabilitySettings ?? emptyCapabilitySettings();
     setCapabilityDraft({ ...base, folders: base.folders.filter((candidate) => candidate !== folder) });
+  }
+
+  function changeFilesystemMode(filesystemMode: AgentFilesystemMode) {
+    const base = capabilityDraft ?? capabilitySettings ?? emptyCapabilitySettings();
+    setCapabilityDraft({ ...base, filesystemMode });
   }
 
   function renderCapabilityRuleRows(
@@ -1109,40 +1131,62 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
               </section>
             ) : category === 'security' ? (
               <section className="agent-settings-section settings-security-section" aria-label={t.settings.security.sectionAriaLabel}>
-                <InsetGroup
-                  ariaLabel={t.settings.security.boundariesAriaLabel}
-                  label={t.settings.security.boundariesGroup}
-                >
+                <InsetGroup ariaLabel={t.settings.security.accessAriaLabel} label={t.settings.security.accessGroup}>
                   <InsetRow
-                    label={t.settings.security.handFolderLabel}
-                    leading={<FolderIcon size={ICON_SIZE.menu} aria-hidden />}
-                    sublabel={t.settings.security.handFolderSublabel}
+                    label={t.settings.security.accessModeLabel}
+                    sublabel={capabilityFilesystemMode === 'full-access'
+                      ? t.settings.security.fullAccessSublabel
+                      : t.settings.security.restrictedSublabel}
                     trailing={(
-                      <Button
-                        disabled={saving || capabilityFolderBusy}
-                        onClick={() => void chooseCapabilityFolder()}
-                        size="sm"
-                        variant="secondary"
-                      >
-                        {capabilityFolderBusy ? t.settings.security.handingFolderAction : t.settings.security.handFolderAction}
-                      </Button>
+                      <SegmentedControl
+                        className="settings-agent-access-control"
+                        disabled={saving}
+                        label={t.settings.security.accessModeLabel}
+                        onChange={changeFilesystemMode}
+                        options={filesystemModeOptions}
+                        value={capabilityFilesystemMode}
+                      />
                     )}
                     wrap
                   />
-                  {capabilityFolders.length === 0 ? <InsetRow disabled label={t.settings.security.noBoundaries} /> : capabilityFolders.map((folder) => (
+                </InsetGroup>
+
+                {capabilityFilesystemMode === 'restricted' ? (
+                  <InsetGroup
+                    ariaLabel={t.settings.security.boundariesAriaLabel}
+                    label={t.settings.security.boundariesGroup}
+                  >
                     <InsetRow
-                      key={folder}
-                      label={folder}
                       leading={<FolderIcon size={ICON_SIZE.menu} aria-hidden />}
+                      label={t.settings.security.handFolderLabel}
+                      sublabel={t.settings.security.handFolderSublabel}
                       trailing={(
-                        <Button onClick={() => revokeCapabilityFolder(folder)} size="sm" variant="ghost">
-                          {t.settings.security.revokeGrant}
+                        <Button
+                          disabled={saving || capabilityFolderBusy}
+                          onClick={() => void chooseCapabilityFolder()}
+                          size="sm"
+                          variant="secondary"
+                        >
+                          {capabilityFolderBusy ? t.settings.security.handingFolderAction : t.settings.security.handFolderAction}
                         </Button>
                       )}
                       wrap
                     />
-                  ))}
-                </InsetGroup>
+                    {capabilityFolders.length === 0 ? <InsetRow disabled label={t.settings.security.noBoundaries} /> : capabilityFolders.map((folder) => (
+                      <InsetRow
+                        key={folder}
+                        label={folder}
+                        leading={<FolderIcon size={ICON_SIZE.menu} aria-hidden />}
+                        trailing={(
+                          <Button onClick={() => revokeCapabilityFolder(folder)} size="sm" variant="ghost">
+                            {t.settings.security.revokeGrant}
+                          </Button>
+                        )}
+                        wrap
+                      />
+                    ))}
+                  </InsetGroup>
+                ) : null}
 
                 <InsetGroup ariaLabel={t.settings.security.blocksAriaLabel} label={t.settings.security.blocksGroup}>
                   {renderCapabilityRuleRows(
@@ -1155,13 +1199,19 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
 
                 <InsetGroup
                   ariaLabel={t.settings.security.systemBoundaryAriaLabel}
-                  footnote={t.settings.security.systemBoundaryNote}
+                  footnote={capabilityFilesystemMode === 'full-access'
+                    ? t.settings.security.fullAccessBoundaryNote
+                    : t.settings.security.systemBoundaryNote}
                   label={t.settings.security.systemBoundaryGroup}
                 >
                   <InsetRow
                     className="settings-system-boundary-row"
-                    label={t.settings.security.systemBoundaryLabel}
-                    sublabel={t.settings.security.systemBoundarySublabel}
+                    label={capabilityFilesystemMode === 'full-access'
+                      ? t.settings.security.fullAccessBoundaryLabel
+                      : t.settings.security.systemBoundaryLabel}
+                    sublabel={capabilityFilesystemMode === 'full-access'
+                      ? t.settings.security.fullAccessBoundarySublabel
+                      : t.settings.security.systemBoundarySublabel}
                     wrap
                   />
                 </InsetGroup>
@@ -1580,7 +1630,7 @@ function capabilityRuleLabel(rule: string, t: Messages): string {
 }
 
 function emptyCapabilitySettings(): AgentCapabilitySettingsView {
-  return { folders: [], blocks: [], diagnostics: [] };
+  return { filesystemMode: 'full-access', folders: [], blocks: [], diagnostics: [] };
 }
 
 function formatSettingsDate(timestamp: number): string {

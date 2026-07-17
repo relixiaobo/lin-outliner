@@ -5,7 +5,7 @@ import {
   agentCapabilityConfigToSettings,
   parseAgentCapabilitySettings,
   type AgentCapabilityConfig,
-  type AgentCapabilitySettings,
+  type NormalizedAgentCapabilitySettings,
 } from './agentCapabilityRules';
 
 const AGENT_CAPABILITIES_FILE = 'agent-capabilities.json';
@@ -25,7 +25,7 @@ export async function readAgentCapabilityConfig(): Promise<AgentCapabilityConfig
   };
 }
 
-export async function readAgentCapabilitySettings(): Promise<Required<AgentCapabilitySettings>> {
+export async function readAgentCapabilitySettings(): Promise<NormalizedAgentCapabilitySettings> {
   return getFolderCapabilityService().read();
 }
 
@@ -54,10 +54,12 @@ export async function appendAgentCapabilityBlockView(ruleValue: string) {
 }
 
 export async function applyAgentCapabilitySettingsPatch(input: {
+  filesystemMode?: unknown;
   revokeFolders?: unknown;
   removeBlocks?: unknown;
 }): Promise<AgentCapabilityConfig> {
   const document = await getFolderCapabilityService().applyRemovalPatch({
+    filesystemMode: input.filesystemMode,
     folders: normalizedRuleList(input.revokeFolders),
     blocks: normalizedRuleList(input.removeBlocks),
   });
@@ -65,6 +67,7 @@ export async function applyAgentCapabilitySettingsPatch(input: {
 }
 
 export async function applyAgentCapabilitySettingsPatchView(input: {
+  filesystemMode?: unknown;
   revokeFolders?: unknown;
   removeBlocks?: unknown;
 }) {

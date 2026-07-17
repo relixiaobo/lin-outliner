@@ -196,6 +196,12 @@ describe('agent runtime Issue tools', () => {
     const { resetFolderCapabilityServiceForTests } = await import('../../src/main/agentCapabilityStore');
     resetFolderCapabilityServiceForTests();
     await rm(electronUserDataRoot, { recursive: true, force: true });
+    await mkdir(electronUserDataRoot, { recursive: true });
+    await writeFile(path.join(electronUserDataRoot, 'agent-capabilities.json'), JSON.stringify({
+      filesystemMode: 'restricted',
+      folders: [],
+      blocks: [],
+    }));
   });
 
   afterEach(async () => {

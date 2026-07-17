@@ -189,7 +189,8 @@ Restricted remains the containment option.
 - **FR-5:** Settings accurately presents and persists both modes without
   deleting remembered folders or blocks.
 - **FR-6:** Tana import can complete through the supported `tenon-import`
-  inspect, transform, validate, preview, and commit path in `dev:main`.
+  inspect, transform, validate, preview, and commit path in the clone-isolated
+  `dev:codex-2` environment.
 
 - **AC-1:** With no `filesystemMode` field, a file tool can read and write an
   absolute path outside the workdir without a capability request.
@@ -206,7 +207,7 @@ Restricted remains the containment option.
 - **AC-7:** Security Settings render the selected mode and truthful boundary
   copy in English and Simplified Chinese, light and dark modes.
 - **AC-8:** The approved Tana export produces valid inspection, pack, coverage,
-  validation, preview, and committed import results in isolated `dev:main`
+  validation, preview, and committed import results in isolated `dev:codex-2`
   data.
 
 ## Files And Collision
@@ -219,25 +220,25 @@ Expected areas:
 - `src/main/agentProcessExecutor.ts`, `agentSkillShell.ts`, `agentRuntime.ts`,
   and `agentSystemPrompt.ts` for process snapshots, transitions, recovery, and
   prompt truthfulness;
+- `src/main/main.ts` for process-policy and post-persistence mode-change wiring;
 - `src/renderer/ui/agent/AgentSettingsView.tsx`, renderer capability settings
   helpers, and `src/core/i18n/messages/*` for the Settings surface;
 - focused core, renderer, and E2E permission tests;
-- `docs/spec/agent-tool-permissions.md` and any directly contradictory agent
-  tool wording.
+- `docs/spec/agent-tool-permissions.md`, its `docs/spec/README.md` index entry,
+  and any directly contradictory agent tool wording.
 
 Collision check at approval time:
 
 - PR #407 (Issue persistence): no overlapping implementation files;
 - PR #409 (Table view): plan-file-only claim, no overlap;
-- PR #408 (preview translation cache): overlaps
-  `AgentSettingsView.tsx` and both i18n message files. This feature is ordered
+- PR #408 (preview translation cache): overlaps `main.ts`,
+  `AgentSettingsView.tsx`, and both i18n message files. This feature is ordered
   after #408 and must rebase it before final verification. It does not modify
   preview translation behavior.
 
-No infrastructure-ownership file or core command/type protocol change is
-planned. If implementation proves that `package.json`, `main.ts`,
-`src/core/commands.ts`, or `src/core/types.ts` must change, stop and coordinate
-that scope before editing.
+The coordinated infrastructure scope is limited to `docs/spec/README.md` and
+the mode-change wiring in `main.ts`. No dependency/build file or core
+command/type protocol change is required.
 
 ## Risks
 

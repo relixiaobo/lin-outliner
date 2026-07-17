@@ -150,6 +150,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
   }
 
   const capabilities = createFolderCapabilitySnapshot({
+    filesystemMode: capabilityConfig.filesystemMode,
     workspaceRoot: input.localRoot ?? process.cwd(),
     scratchRoot: input.scratchRoot,
     activeSkillReadRoots: input.trustedReadRoots,

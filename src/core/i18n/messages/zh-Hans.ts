@@ -130,6 +130,13 @@ export const zhHans: PartialMessages = {
     },
     security: {
       sectionAriaLabel: '安全',
+      accessGroup: '智能体访问权限',
+      accessAriaLabel: '智能体访问权限',
+      accessModeLabel: '文件系统',
+      fullAccessLabel: '完全访问',
+      restrictedLabel: '受限',
+      fullAccessSublabel: '子进程和文件工具可以读取并修改当前 macOS 账户可访问的所有内容。',
+      restrictedSublabel: '子进程使用 macOS 沙箱；文件访问仅限工作目录和已记住的文件夹。',
       blocksGroup: '你的阻断规则',
       blocksAriaLabel: '你的阻断规则',
       noBlocks: '暂无明确阻断规则。',
@@ -151,6 +158,9 @@ export const zhHans: PartialMessages = {
       systemBoundaryLabel: 'Tenon 控制状态',
       systemBoundarySublabel: '仅由 Tenon 管理；智能体文件工具和子进程无法读取或修改。',
       systemBoundaryNote: '其他主机操作使用你的 macOS 账户；需要时，由操作系统原生授权或服务登录流程处理。',
+      fullAccessBoundaryLabel: 'macOS 账户',
+      fullAccessBoundarySublabel: '智能体拥有与 Tenon 相同的文件访问权限，包括 Tenon 数据和已存的服务商凭据。',
+      fullAccessBoundaryNote: '系统原生的 TCC、管理员授权、钥匙串控制和服务登录仍然有效。',
     },
     memory: {
       sectionAriaLabel: '记忆与活动',

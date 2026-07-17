@@ -150,6 +150,16 @@ export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInpu
     );
   }
 
+  if (policy.capabilityConfig.filesystemMode === 'full-access') {
+    return {
+      behavior: 'allow',
+      access,
+      source: 'default',
+      descriptor: descriptors[0],
+      descriptors,
+    };
+  }
+
   const unavailableDescriptor = descriptors.find((descriptor) => descriptor.code === 'control_plane_unavailable');
   if (unavailableDescriptor) {
     return unavailable(
@@ -163,6 +173,7 @@ export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInpu
   }
 
   const snapshot = createFolderCapabilitySnapshot({
+    filesystemMode: policy.capabilityConfig.filesystemMode,
     workspaceRoot: policy.workspaceRoot,
     scratchRoot: policy.scratchRoot,
     activeSkillReadRoots: policy.trustedReadRoots,
@@ -297,6 +308,7 @@ function derivePathToolActionDescriptor(
 
   const targetPath = canonicalPathPreservingSuffix(resolveCapabilityPath(policy.workspaceRoot, rawPath));
   const snapshot = createFolderCapabilitySnapshot({
+    filesystemMode: policy.capabilityConfig.filesystemMode,
     workspaceRoot: policy.workspaceRoot,
     scratchRoot: policy.scratchRoot,
     activeSkillReadRoots: policy.trustedReadRoots,
@@ -314,7 +326,8 @@ function derivePathToolActionDescriptor(
     });
   }
   const roots = write ? snapshot.writeRoots : snapshot.readRoots;
-  const inside = roots.some((root) => isPathInside(root, targetPath));
+  const inside = policy.capabilityConfig.filesystemMode === 'full-access'
+    || roots.some((root) => isPathInside(root, targetPath));
   const sensitive = isSensitivePath(targetPath);
   const scope: ToolAccessScope = inside ? 'allowed_file_area' : 'outside_allowed_file_area';
   const actionKind = fileActionKind(toolName, write, sensitive ? 'sensitive_local_path' : scope);
@@ -322,7 +335,11 @@ function derivePathToolActionDescriptor(
     accessScope: scope,
     title: write ? 'file write' : 'file read',
     summary: `${write ? 'Write' : 'Read'} ${targetPath}.`,
-    consequence: inside ? 'This path is covered by an existing folder capability.' : 'This path needs a folder capability.',
+    consequence: policy.capabilityConfig.filesystemMode === 'full-access'
+      ? 'This path is available through Full Access.'
+      : inside
+        ? 'This path is covered by an existing folder capability.'
+        : 'This path needs a folder capability.',
     targetPath,
   });
 }

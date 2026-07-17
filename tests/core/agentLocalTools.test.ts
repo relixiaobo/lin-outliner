@@ -493,6 +493,44 @@ describe('agent local tools', () => {
     });
   });
 
+  test('Full Access file tools reach outside paths and Tenon control state', async () => {
+    await withWorkspace(async (controlRoot) => {
+      const workspaceRoot = path.join(controlRoot, 'agent-workdir');
+      const outsideRoot = await mkdtemp(path.join(tmpdir(), 'tenon-full-access-tools-'));
+      try {
+        await mkdir(workspaceRoot, { recursive: true });
+        const secretPath = path.join(controlRoot, 'agent-secrets.json');
+        await writeFile(secretPath, 'full-access-secret', 'utf8');
+        const workspace = createAgentLocalWorkspaceContext(
+          workspaceRoot,
+          undefined,
+          undefined,
+          controlRoot,
+        );
+        setAgentLocalCapabilityRoots(workspace, [], 0, 'full-access');
+        const tools = createLocalTools({ workspace });
+        const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+        const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
+
+        const secretRead = (await (fileRead.execute as any)('read-control', {
+          file_path: secretPath,
+        })).details as ToolEnvelope<{ file: { content: string } }>;
+        expect(secretRead.ok).toBe(true);
+        expect(secretRead.data!.file.content).toBe('full-access-secret');
+
+        const outsidePath = path.join(outsideRoot, 'created.txt');
+        const outsideWrite = (await (fileWrite.execute as any)('write-outside', {
+          file_path: outsidePath,
+          content: 'created',
+        })).details as ToolEnvelope<unknown>;
+        expect(outsideWrite.ok).toBe(true);
+        expect(await readFile(outsidePath, 'utf8')).toBe('created');
+      } finally {
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   test('a materialized attachment in a separate scratch root is readable by file_read (production layout)', async () => {
     // Production wires workdir and scratch as independent siblings (`<userData>/agent-workdir`
     // and `<userData>/agent-scratch`), unlike the `<workdir>/tmp` default the other tests inherit.

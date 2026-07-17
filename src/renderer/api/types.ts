@@ -1,3 +1,5 @@
+import type { AgentFilesystemMode } from '../../core/agentFilesystemMode';
+
 export type {
   AssetMetadata,
   AgentProviderConfigInput,
@@ -72,6 +74,8 @@ export type {
   ViewMode,
 } from '../../core/types';
 
+export type { AgentFilesystemMode } from '../../core/agentFilesystemMode';
+
 export type {
   AgentCapabilityRequestView,
   AgentAuthoringInput,
@@ -105,6 +109,7 @@ export type {
 } from '../../core/agentRenderProjection';
 
 export interface AgentCapabilitySettingsView {
+  filesystemMode: AgentFilesystemMode;
   folders: string[];
   blocks: string[];
   diagnostics: Array<{
@@ -115,6 +120,7 @@ export interface AgentCapabilitySettingsView {
 }
 
 export interface AgentCapabilitySettingsPatchInput {
+  filesystemMode?: AgentFilesystemMode;
   revokeFolders: string[];
   removeBlocks: string[];
 }

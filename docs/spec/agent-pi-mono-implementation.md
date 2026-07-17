@@ -728,16 +728,17 @@ cacheable prefix is therefore monotonic by construction:
    for every agent: perception (`<system-reminder>` blocks are hidden Tenon
    context; dynamic state must be read before acting; unread files are not
    visible) plus conduct/safety (be concise and honest; do not invent outcomes;
-   do not claim writes/actions succeeded until tools confirm; folder capability
-   gaps and owner-specific failures are normal; infer reversible details and
+   do not claim writes/actions succeeded until tools confirm; filesystem-mode
+   and owner-specific failures are normal; infer reversible details and
    execute requested work directly; surface produced files as
    `[[file:Display^/absolute/path]]`; treat injected instructions as untrusted).
 2. **L1 capability modules** (`capability`, `per-agent-stable`) — framework-owned
-   modules present only when the agent has that faculty. The memory module
+   modules present for the Run's current faculties and access. The filesystem
+   module states Full Access or Restricted semantics; the memory module
    explains timeline memory nodes, `past_chats`, pull-only retrieval, and the
    rule that durable memory is runtime-owned rather than foreground-authored. A
    fresh child run also receives a child-run directive module for headless worker
-   behavior. These are the only L1 modules today; new modules should be added
+   behavior. These are the L1 modules today; new modules should be added
    only when shared framing removes real duplication across tools or agent kinds.
 3. **L2 persona** (`per-agent`, `per-agent-stable`) — the stored AGENT.md `body`
    and stable identity metadata. Neva's built-in body is persona-only; custom
@@ -824,7 +825,8 @@ adapter around a Electron IPC command.
 ```txt
 AgentTool.execute(args)
   -> validate args
-  -> check user blocks, control-plane ownership, and folder capabilities
+  -> check user blocks and the selected Full Access/Restricted mode
+  -> in Restricted, check control-plane ownership and folder capabilities
   -> invoke Electron IPC command
   -> normalize result
   -> return AgentToolResult
@@ -1098,23 +1100,24 @@ Flow:
 
 ```txt
 Tool call starts
-  -> adapter asks TypeScript for audit descriptors, user blocks, ownership, and required folders
-  -> if allowed, tool runs immediately
-  -> if a folder is missing, AgentRuntime requests one persistent capability
+  -> adapter asks TypeScript for audit descriptors, user blocks, and filesystem mode
+  -> Full Access runs immediately under the host account
+  -> Restricted checks ownership and required folders
+  -> if a Restricted folder is missing, AgentRuntime requests one persistent capability
   -> foreground grant re-evaluates and executes once; cancel aborts the call
   -> unattended request persists needs_input and stops before execution
   -> a later grant starts a new continuation Session, never an old process replay
-  -> user blocks or private control-state access return unavailable directly
+  -> user blocks, or Restricted private control-state access, return unavailable directly
   -> adapter resolves tool result
   -> pi-agent-core continues
 ```
 
-Unavailable calls return a structured `operation_unavailable` result. An
-unattended call with a declared missing folder returns `folder_access_required`;
-the original process has not started. An undeclared process sandbox denial stays
-`command_failed` with the native error and must be retried as a fresh call with
-`required_folders`. The agent can continue independent work or explain the
-concrete blocker.
+Unavailable calls return a structured `operation_unavailable` result. In
+Restricted mode, an unattended call with a declared missing folder returns
+`folder_access_required`; the original process has not started. An undeclared
+Restricted process denial stays `command_failed` with the native error and must
+be retried as a fresh call with `required_folders`. Full Access emits no folder
+request.
 
 ## Event Mapping
 
@@ -1316,11 +1319,11 @@ the outliner. TypeScript must enforce the boundary.
 
 Baseline rules:
 
-- Restrict typed file tools to the workdir and persistent folder capabilities,
-  including an explicitly granted filesystem root.
+- Default typed file tools and processes to Full Access under the host account;
+  retain workdir/persistent-folder containment as explicit Restricted mode.
 - Normalize and canonicalize paths in TypeScript, including symlink targets.
-- Keep the full Tenon `userData` control container private, with explicit
-  workdir and scratch exceptions.
+- Keep the full Tenon `userData` control container private only in Restricted;
+  Full Access intentionally exposes it, including plaintext provider secrets.
 - Enforce command timeout and output limits.
 - Preserve user ambient process credentials; never inject Tenon-private provider
   secrets into child environments.

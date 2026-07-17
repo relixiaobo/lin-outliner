@@ -41,6 +41,7 @@ import {
   type FolderCapabilitySnapshot,
 } from './agentFolderCapabilities';
 import { getAgentProcessExecutor } from './agentProcessExecutor';
+import type { AgentFilesystemMode } from '../core/agentFilesystemMode';
 
 export { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 
@@ -62,6 +63,7 @@ export interface AgentLocalWorkspaceContext {
   // User-handed folders and active read-only skill resources.
   // These widen file-tool containment without changing the relative-path base.
   capabilityRoots: ResolvedAgentLocalCapabilityRoot[];
+  filesystemMode: AgentFilesystemMode;
   processCapabilities: FolderCapabilitySnapshot;
   protectedStoreRoot?: string;
   readFileState: Map<string, ReadFileState>;
@@ -642,6 +644,7 @@ export async function runLocalBashCommand(
   },
 ): Promise<LocalBashRunResult> {
   const workspace = createWorkspaceContext(options.localRoot, options.scratchRoot);
+  workspace.filesystemMode = options.capabilities.filesystemMode;
   workspace.processCapabilities = options.capabilities;
   const params = normalizeBashParams({
     command: options.command,
@@ -694,8 +697,10 @@ function createWorkspaceContext(
     root,
     scratchRoot: resolvedScratchRoot,
     capabilityRoots: [],
+    filesystemMode: 'restricted',
     protectedStoreRoot,
     processCapabilities: createFolderCapabilitySnapshot({
+      filesystemMode: 'restricted',
       workspaceRoot: root,
       scratchRoot: resolvedScratchRoot,
       includeSystemRoots: true,
@@ -719,8 +724,13 @@ export function setAgentLocalCapabilityRoots(
   workspace: AgentLocalWorkspaceContext,
   roots: readonly AgentLocalCapabilityRoot[],
   revocationGeneration = 0,
+  filesystemMode: AgentFilesystemMode = 'restricted',
 ): void {
-  workspace.capabilityRoots = roots
+  const effectiveRoots: readonly AgentLocalCapabilityRoot[] = filesystemMode === 'full-access'
+    ? [{ access: 'write', root: path.parse(workspace.root).root }]
+    : roots;
+  workspace.filesystemMode = filesystemMode;
+  workspace.capabilityRoots = effectiveRoots
     .flatMap((entry): ResolvedAgentLocalCapabilityRoot[] => {
       const root = path.resolve(entry.root);
       const resolved = resolveCanonicalPath(root);
@@ -733,6 +743,7 @@ export function setAgentLocalCapabilityRoots(
       }];
     });
   workspace.processCapabilities = createFolderCapabilitySnapshot({
+    filesystemMode,
     workspaceRoot: workspace.root,
     scratchRoot: workspace.scratchRoot,
     activeSkillReadRoots: workspace.capabilityRoots.filter((entry) => entry.access === 'read').map((entry) => entry.realRoot),

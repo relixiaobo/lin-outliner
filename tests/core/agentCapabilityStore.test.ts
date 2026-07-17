@@ -44,10 +44,12 @@ describe('agent folder capability store', () => {
 
     const filePath = path.join(userData, 'agent-capabilities.json');
     expect(await readAgentCapabilitySettings()).toEqual({
+      filesystemMode: 'full-access',
       folders: [canonicalFolder],
       blocks: ['Action(git.publish_remote)'],
     });
     expect(JSON.parse(await fs.readFile(filePath, 'utf8'))).toEqual({
+      filesystemMode: 'full-access',
       folders: [canonicalFolder],
       blocks: ['Action(git.publish_remote)'],
     });
@@ -66,6 +68,7 @@ describe('agent folder capability store', () => {
     ]);
 
     expect(await readAgentCapabilitySettings()).toEqual({
+      filesystemMode: 'full-access',
       folders: [canonicalFolder],
       blocks: ['Command(git push origin main)'],
     });
@@ -82,6 +85,7 @@ describe('agent folder capability store', () => {
     await applyAgentCapabilitySettingsPatch({ removeBlocks: ['Command(git push origin main)'] });
 
     expect(await readAgentCapabilitySettings()).toEqual({
+      filesystemMode: 'full-access',
       folders: [canonicalFolder],
       blocks: ['Action(git.publish_remote)'],
     });
@@ -105,7 +109,30 @@ describe('agent folder capability store', () => {
     ]);
 
     expect(await readAgentCapabilitySettings()).toEqual({
+      filesystemMode: 'full-access',
       folders: [await fs.realpath(concurrent)],
+      blocks: ['Action(git.publish_remote)'],
+    });
+  });
+
+  test('defaults to Full Access and switches modes without dropping folders or blocks', async () => {
+    const folder = path.join(userData, 'project');
+    await fs.mkdir(folder, { recursive: true });
+    const canonicalFolder = await fs.realpath(folder);
+    await grantAgentFolderCapability(folder);
+    await appendAgentCapabilityBlock('Action(git.publish_remote)');
+
+    await applyAgentCapabilitySettingsPatch({ filesystemMode: 'restricted' });
+    expect(await readAgentCapabilitySettings()).toEqual({
+      filesystemMode: 'restricted',
+      folders: [canonicalFolder],
+      blocks: ['Action(git.publish_remote)'],
+    });
+
+    await applyAgentCapabilitySettingsPatch({ filesystemMode: 'full-access' });
+    expect(await readAgentCapabilitySettings()).toEqual({
+      filesystemMode: 'full-access',
+      folders: [canonicalFolder],
       blocks: ['Action(git.publish_remote)'],
     });
   });

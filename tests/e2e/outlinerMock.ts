@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test';
 import { DEFAULT_DREAM_CHANNEL_ID, DEFAULT_GENERAL_CHANNEL_ID, usesChannelActivitySurface } from '../../src/core/agentChannel';
 import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
+import type { AgentFilesystemMode } from '../../src/core/agentFilesystemMode';
 
 export const ids = {
   workspace: 'workspace',
@@ -44,6 +45,8 @@ interface MockFixtureOptions {
   noProvider?: boolean;
   /** Preloads remembered folder capabilities for settings/security specs. */
   capabilityFolders?: string[];
+  /** Selects the persisted agent filesystem mode. */
+  capabilityFilesystemMode?: AgentFilesystemMode;
   /** Preloads user blocklist rules for settings/security specs. */
   capabilityBlocks?: string[];
   /** Delays initial workspace restoration so startup chrome can be asserted before data arrives. */
@@ -517,6 +520,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       });
     }
     const agentCapabilities = {
+      filesystemMode: options.capabilityFilesystemMode ?? 'full-access' as AgentFilesystemMode,
       folders: [...(options.capabilityFolders ?? [])] as string[],
       blocks: [...(options.capabilityBlocks ?? [])] as string[],
       diagnostics: [] as Array<{ ruleValue: string; code: string; message: string }>,
@@ -2216,9 +2220,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(agentDefinitions) as T;
         }
         if (cmd === 'agent_apply_capability_settings_patch') {
-          const patch = args.patch as { revokeFolders?: string[]; removeBlocks?: string[] };
+          const patch = args.patch as {
+            filesystemMode?: AgentFilesystemMode;
+            revokeFolders?: string[];
+            removeBlocks?: string[];
+          };
           const revoked = Array.isArray(patch.revokeFolders) ? patch.revokeFolders.map(String) : [];
           const removed = Array.isArray(patch.removeBlocks) ? patch.removeBlocks.map(String) : [];
+          if (patch.filesystemMode) agentCapabilities.filesystemMode = patch.filesystemMode;
           agentCapabilities.folders = agentCapabilities.folders.filter((folder) => !revoked.includes(folder));
           agentCapabilities.blocks = agentCapabilities.blocks.filter((block) => !removed.includes(block));
           return clone(agentCapabilities) as T;

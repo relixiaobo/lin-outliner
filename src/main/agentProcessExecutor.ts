@@ -69,14 +69,18 @@ export class AgentProcessExecutor {
 
   async spawn(input: AgentProcessSpawnInput): Promise<ChildProcess> {
     const cwd = path.resolve(input.cwd);
-    const capabilities = this.withControlPlaneProtection(input.capabilities);
+    const capabilities = input.capabilities.filesystemMode === 'restricted'
+      ? this.withControlPlaneProtection(input.capabilities)
+      : input.capabilities;
     this.assertCurrentSnapshot(capabilities);
-    const prepared = await this.sandbox.prepare({
-      command: input.command,
-      args: input.args ?? [],
-      cwd,
-      capabilities,
-    });
+    const prepared = capabilities.filesystemMode === 'restricted'
+      ? await this.sandbox.prepare({
+          command: input.command,
+          args: input.args ?? [],
+          cwd,
+          capabilities,
+        })
+      : { command: input.command, args: [...(input.args ?? [])] };
     this.assertCurrentSnapshot(capabilities);
     const child = spawn(prepared.command, prepared.args, {
       cwd,
@@ -127,11 +131,20 @@ export class AgentProcessExecutor {
   async terminateProcessesUsingFolder(folderInput: string): Promise<void> {
     const folder = path.resolve(folderInput);
     const matches = [...this.active.values()].filter(({ capabilities }) => (
-      capabilities.roots.some((entry) => entry.origin === 'user' && (
+      capabilities.filesystemMode === 'restricted'
+      && capabilities.roots.some((entry) => entry.origin === 'user' && (
         isPathInside(folder, entry.root) || isPathInside(entry.root, folder)
       ))
     ));
-    await Promise.allSettled(matches.map(async ({ child }) => {
+    await this.terminateActiveProcesses(matches);
+  }
+
+  async terminateAllProcesses(): Promise<void> {
+    await this.terminateActiveProcesses([...this.active.values()]);
+  }
+
+  private async terminateActiveProcesses(processes: readonly ActiveAgentProcess[]): Promise<void> {
+    await Promise.allSettled(processes.map(async ({ child }) => {
       terminateProcessTree(child, 'SIGTERM');
       await waitForExit(child, 1_000);
       if (child.exitCode === null && child.signalCode === null) terminateProcessTree(child, 'SIGKILL');
@@ -149,6 +162,7 @@ export class AgentProcessExecutor {
       capabilities.deniedWrites,
       capabilities.protectedRoots,
       capabilities.revocationGeneration,
+      capabilities.filesystemMode,
     );
     const controlPlaneProtections = this.controlPlaneProtections.map((protection) => {
       const declared = normalized.protectedRoots.find((entry) => path.resolve(entry.root) === path.resolve(protection.root));
@@ -205,9 +219,11 @@ export function bindAgentProcessCapabilities(
   const processExecutor = getAgentProcessExecutor();
   const unbindGeneration = processExecutor.bindRevocationGeneration(() => service.currentRevocationGeneration());
   const unbindControlPlaneProtections = processExecutor.bindControlPlaneProtections(controlPlaneProtections);
-  const unsubscribe = service.onRevoked((folder) => processExecutor.terminateProcessesUsingFolder(folder));
+  const unsubscribeRevoked = service.onRevoked((folder) => processExecutor.terminateProcessesUsingFolder(folder));
+  const unsubscribeMode = service.onFilesystemModeChanged(() => processExecutor.terminateAllProcesses());
   return () => {
-    unsubscribe();
+    unsubscribeMode();
+    unsubscribeRevoked();
     unbindControlPlaneProtections();
     unbindGeneration();
   };
@@ -252,6 +268,7 @@ async function probeMacOSSandbox(cwd: string): Promise<void> {
     throw new Error('macOS process sandbox is unavailable; agent processes are disabled.');
   }
   const capabilities = createFolderCapabilitySnapshot({
+    filesystemMode: 'restricted',
     workspaceRoot: cwd,
     includeSystemRoots: true,
   }, []);

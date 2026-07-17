@@ -263,6 +263,12 @@ describe('agent runtime skill integration', () => {
     const { resetFolderCapabilityServiceForTests } = await import('../../src/main/agentCapabilityStore');
     resetFolderCapabilityServiceForTests();
     await rm(electronUserDataRoot, { recursive: true, force: true });
+    await mkdir(electronUserDataRoot, { recursive: true });
+    await writeFile(path.join(electronUserDataRoot, 'agent-capabilities.json'), JSON.stringify({
+      filesystemMode: 'restricted',
+      folders: [],
+      blocks: [],
+    }));
     roots = [electronUserDataRoot];
   });
 
@@ -2073,6 +2079,93 @@ describe('agent runtime skill integration', () => {
     expect(followUpContexts.join('\n')).toContain('folder request was cancelled');
   });
 
+  test('switching to Full Access resumes a pending folder call without storing a grant', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-full-access-root-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-full-access-outside-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-full-access-data-'));
+    roots.push(localRoot, outsideRoot, dataRoot);
+    const outsideFile = path.join(outsideRoot, 'source.txt');
+    await writeFile(outsideFile, 'full-access-runtime-content');
+    const followUpContexts: string[] = [];
+    const script = scriptedStream([
+      fauxAssistantMessage([
+        fauxToolCall('file_read', { file_path: outsideFile }, { id: 'tool-full-access-resume' }),
+      ], { stopReason: 'toolUse' }),
+      (context) => {
+        followUpContexts.push(JSON.stringify(context.messages));
+        return fauxAssistantMessage(fauxText('Full Access read complete.'));
+      },
+    ], () => undefined);
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Read the external file.');
+    await waitFor(() => sink.events.some((event) => event.type === 'capability_request'));
+
+    const { applyAgentCapabilitySettingsPatch } = await import('../../src/main/agentCapabilityStore');
+    await applyAgentCapabilitySettingsPatch({ filesystemMode: 'full-access' });
+    await runtime.folderCapabilitiesChanged();
+    await sendPromise;
+
+    expect(followUpContexts.join('\n')).toContain('full-access-runtime-content');
+    const settings = JSON.parse(await readFile(
+      path.join(electronUserDataRoot, 'agent-capabilities.json'),
+      'utf8',
+    )) as { filesystemMode?: string; folders?: string[] };
+    expect(settings).toMatchObject({ filesystemMode: 'full-access', folders: [] });
+  });
+
+  test('refreshes the filesystem prompt for the next turn in an open conversation', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-mode-prompt-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-mode-prompt-data-'));
+    roots.push(localRoot, dataRoot);
+    const prompts: string[] = [];
+    const script = scriptedStream([
+      fauxAssistantMessage(fauxText('Restricted turn complete.')),
+      fauxAssistantMessage(fauxText('Full Access turn complete.')),
+    ], (_model, context) => {
+      prompts.push(context.systemPrompt ?? '');
+    });
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Use the current access mode.');
+    expect(prompts[0]).toContain('This Run is Restricted');
+    expect(prompts[0]).not.toContain('This Run has Full Access');
+
+    const { applyAgentCapabilitySettingsPatch } = await import('../../src/main/agentCapabilityStore');
+    await applyAgentCapabilitySettingsPatch({ filesystemMode: 'full-access' });
+    await runtime.folderCapabilitiesChanged();
+    await runtime.sendMessage(created.conversationId, 'Use the updated access mode.');
+
+    expect(prompts[1]).toContain('This Run has Full Access');
+    expect(prompts[1]).not.toContain('This Run is Restricted');
+  });
+
   test('executes unclassified shell calls without capability cards', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-data-'));
@@ -2181,7 +2274,11 @@ describe('agent runtime skill integration', () => {
       folders?: string[];
       blocks?: string[];
     };
-    expect(settings).toEqual({ folders: [await realpath(outsideRoot)], blocks: [] });
+    expect(settings).toEqual({
+      filesystemMode: 'restricted',
+      folders: [await realpath(outsideRoot)],
+      blocks: [],
+    });
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     expect(events.find((event) => (
       event.type === 'tool.capability.checked' && event.toolCallId === 'tool-folder-grant-second'
@@ -2235,7 +2332,7 @@ describe('agent runtime skill integration', () => {
 
     const { grantAgentFolderCapability } = await import('../../src/main/agentCapabilityStore');
     await grantAgentFolderCapability(outsideRoot);
-    runtime.folderCapabilitiesChanged();
+    await runtime.folderCapabilitiesChanged();
     await Promise.all(sends);
 
     expect(sink.events.filter((event) => event.type === 'capability_request')).toHaveLength(1);
