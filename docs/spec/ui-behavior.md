@@ -221,9 +221,13 @@ longer derives candidates from nodes carrying that deleted tag.
 
 The node-level view toolbar is the presentation control for a node's child rows
 and for saved-search result views. It lives above the rendered child/result rows
-when the node's `viewDef.toolbarVisible` flag is true. The current supported mode
-is list, with Filter by name, Display, Group by, Sort by, and Filter by
-controls. These controls all read and write `viewDef` child nodes
+when the node's `viewDef.toolbarVisible` flag is true. The supported render modes
+are **Outline** (persisted as `list`) and **Table**, selected through the toolbar's
+compact segmented control or the node context menu's **View as** subview. Filter
+by name, Display, Sort by, and Filter by apply in both modes. Group by applies
+only in Outline: Table hides the control and ignores a saved group rule without
+clearing it, so returning to Outline restores the same grouping. These controls
+all read and write `viewDef` child nodes
 (`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
 than storing renderer-local state.
 
@@ -316,6 +320,59 @@ adapter: dates render as `YYYY-MM-DD`, Done renders as text, and reference-like
 fields render their labels instead of raw ids/count internals. Values render as
 plain text joined by comma for now; typed chips and navigable references are a
 future display-layer enhancement, not a different view model.
+
+## Table View
+
+Table is another projection of a node's direct children, not a copied dataset.
+Each direct content or reference child becomes one record after the shared
+filter and ordered-sort projection. The owner's own field-entry rows remain
+above the grid because they describe the owner rather than its records. A
+filtered-out disclosure remains recoverable inside the grid and reveals rows in
+the same columns. Search nodes can use the same renderer, but never receive a
+writable trailing draft because their result references are derived.
+
+The first column is the synthetic, non-removable **Title** column. It contains
+the ordinary bullet/disclosure, checkbox, rich title editor, reference behavior,
+and row context menu. Each visible `displayField` contributes one additional
+column. Columns use finite `displayOrder` first, then stored child order and id as
+deterministic fallbacks. `displayLabel` overrides the live field label,
+`displayWidth` is clamped to the supported range, and `displayVisible` controls
+visibility. Header menus rename a column for this view, move it left or right,
+hide it, or remove it. The resize separator supports pointer drag, keyboard
+increments, and double-click reset.
+
+**Add column** lists active reusable definitions not already displayed and the
+supported system fields. Selecting one creates only a display-field node. The
+new-field path accepts a localized field type and atomically creates the field
+definition plus its display-field node. Neither path bulk-creates empty values
+on records.
+
+An existing value renders through the established type-aware field behavior.
+An absent value is a quiet empty cell and remains absent on hover, selection,
+focus, and arrow navigation. Enter, double-click, or a printable key begins
+editing and attaches exactly one entry to the chosen existing definition before
+focusing its editor. Read-only system fields remain derived; Done keeps its
+direct toggle behavior. The trailing Title draft creates an ordinary direct
+child, and Enter at the end of the final stored Title creates and focuses the
+next record.
+
+Each table is an independently named ARIA `grid` with `row`, `columnheader`, and
+`gridcell` descendants and one roving tab stop. Arrow keys move one cell, Home
+and End move to row edges, and Cmd/Ctrl+Home or Cmd/Ctrl+End move to grid edges.
+Tab and Shift+Tab commit an active editor and traverse cells without invoking
+outline indent/outdent; at either outer boundary native Tab leaves the grid.
+Enter opens an inactive editor and exits an active field editor vertically.
+Escape first closes editor-local state and, after the editor releases focus,
+returns focus to the same logical cell. IME composition, modifier shortcuts, and
+dead keys are not consumed as printable table input.
+
+The grid uses the panel as its vertical scroll owner and a local native
+horizontal scroll area for overflowing columns. Header and mounted rows share
+one column template. More than 60 logical rows use a bounded measured window
+with overscan; focused rows and the trailing draft stay mountable, and height
+corrections above the viewport compensate `scrollTop` before paint. Expanded
+children may own independent nested Outline or Table scopes with their own
+columns, filters, sorting, toolbar, accessible name, and horizontal scroll.
 
 ## Search Nodes
 

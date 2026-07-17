@@ -48,6 +48,7 @@ import {
 import {
   buildOutlinerRows,
   collectViewFieldChoices,
+  fieldEntryForViewCell,
   hiddenFieldKey,
   readViewConfig,
   viewDisplayValuesFor,
@@ -116,7 +117,7 @@ describe('row interaction resolvers', () => {
     })).toEqual([{ id: 'field', type: 'field' }]);
   });
 
-	  test('keeps panel fields in the normal body row model', () => {
+  test('keeps panel fields in the normal body row model', () => {
 	    const parent = makeNode('parent', 'Parent', {
 	      children: ['view', 'status', 'beta', 'alpha', 'hidden'],
 	    });
@@ -176,6 +177,95 @@ describe('row interaction resolvers', () => {
         ],
       },
     ]);
+  });
+
+  test('orders table columns by display order with child-order fallback', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['view'] });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', {
+        type: 'viewDef',
+        parentId: 'parent',
+        viewMode: 'table',
+        children: ['late', 'first', 'unordered'],
+      })],
+      ['late', makeNode('late', '', {
+        type: 'displayField',
+        parentId: 'view',
+        displayField: 'late-def',
+        displayOrder: 2,
+      })],
+      ['first', makeNode('first', '', {
+        type: 'displayField',
+        parentId: 'view',
+        displayField: 'first-def',
+        displayOrder: 0,
+      })],
+      ['unordered', makeNode('unordered', '', {
+        type: 'displayField',
+        parentId: 'view',
+        displayField: 'unordered-def',
+      })],
+    ]);
+
+    expect(readViewConfig(parent as any, byId).displayFields.map((field) => ({
+      id: field.id,
+      order: field.order,
+    }))).toEqual([
+      { id: 'first', order: 0 },
+      { id: 'late', order: 2 },
+      { id: 'unordered', order: undefined },
+    ]);
+  });
+
+  test('keeps owner fields outside table rows and ignores saved grouping', () => {
+    const parent = makeNode('parent', 'Parent', {
+      children: ['view', 'owner-field', 'beta', 'alpha'],
+    });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', {
+        type: 'viewDef',
+        parentId: 'parent',
+        viewMode: 'table',
+        groupField: NAME_FIELD,
+        children: ['sort'],
+      })],
+      ['sort', makeNode('sort', '', {
+        type: 'sortRule',
+        parentId: 'view',
+        sortField: NAME_FIELD,
+        sortDirection: 'asc',
+      })],
+      ['owner-def', makeNode('owner-def', 'Owner field', { type: 'fieldDef' })],
+      ['owner-field', makeNode('owner-field', '', {
+        type: 'fieldEntry',
+        parentId: 'parent',
+        fieldDefId: 'owner-def',
+      })],
+      ['beta', makeNode('beta', 'Beta', { parentId: 'parent' })],
+      ['alpha', makeNode('alpha', 'Alpha', { parentId: 'parent' })],
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+      { id: 'owner-field', type: 'field' },
+      { id: 'alpha', type: 'content' },
+      { id: 'beta', type: 'content' },
+    ]);
+  });
+
+  test('resolves existing table field entries through references', () => {
+    const target = makeNode('target', 'Target', { children: ['entry'] });
+    const reference = makeNode('reference', '', { type: 'reference', targetId: 'target' });
+    const entry = makeNode('entry', '', { type: 'fieldEntry', parentId: 'target', fieldDefId: 'status' });
+    const byId = new Map<string, any>([
+      ['target', target],
+      ['reference', reference],
+      ['entry', entry],
+    ]);
+
+    expect(fieldEntryForViewCell(reference as any, 'status', byId)?.id).toBe('entry');
+    expect(fieldEntryForViewCell(reference as any, 'missing', byId)).toBeUndefined();
   });
 
   test('hides search query condition nodes from normal outliner rows', () => {

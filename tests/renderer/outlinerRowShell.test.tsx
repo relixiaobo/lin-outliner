@@ -53,6 +53,25 @@ describe('OutlinerRowShell tree ARIA', () => {
     expect(wrap?.getAttribute('aria-level')).toBe('3');
     expect(wrap?.hasAttribute('aria-expanded')).toBe(false);
   });
+
+  test('a table presentation omits tree attributes inside its owning gridcell', () => {
+    const rendered = render(
+      <OutlinerRowShell
+        {...baseProps}
+        hasChildren
+        expanded
+        level={3}
+        selected
+        semanticRole="presentation"
+      />,
+    );
+    const wrap = rendered.document.querySelector('.row-wrap');
+    expect(wrap?.getAttribute('role')).toBe('presentation');
+    expect(wrap?.hasAttribute('aria-colindex')).toBe(false);
+    expect(wrap?.hasAttribute('aria-level')).toBe(false);
+    expect(wrap?.hasAttribute('aria-expanded')).toBe(false);
+    expect(wrap?.hasAttribute('aria-selected')).toBe(false);
+  });
 });
 
 function render(node: React.ReactElement): Rendered {

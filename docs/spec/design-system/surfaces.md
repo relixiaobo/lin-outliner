@@ -123,6 +123,33 @@ or nested field rows, and keeps those descendants inside the value column. An
 empty checkbox field uses a standalone toggle; once stored, its boolean value uses
 the same row geometry and renders that toggle in place of editable text.
 
+### Table View
+
+Table is a dense, unframed content surface, never a card or a stack of row cards.
+At the panel root it uses the full usable content width instead of the prose
+column maximum. Optional columns overflow through a table-local native horizontal
+scroller without widening the panel or adjacent panes; the panel remains the only
+vertical scroller.
+
+Header and body use one shared grid template. Title is a flexible first column;
+field columns use clamped persisted widths; the final add-column slot has stable
+icon-control geometry. The opaque content base, quiet token separator on every
+row/column edge, `--field-row-min-height` rhythm, content type scale, and neutral
+text hierarchy keep the surface scannable in light and dark mode. The header may
+stick inside the panel but does not become translucent chrome.
+
+An active cell uses the neutral fill ladder plus the shared focus outline.
+Column menu and add-column icon controls deepen colour without a rounded-square
+hover box. The resize separator expands its invisible hit target without changing
+column geometry and exposes a visible neutral line/focus ring only on interaction.
+Hover, focus, selection, resizing, and editor entry never change row or control
+dimensions.
+
+Column and add-field overlays are level-1 material popovers with the shared
+reduced-transparency fallback. A nested table is an unframed indented scope with
+one quiet separating edge, not a card inside the parent table. Each nested scope
+owns its own column template and local horizontal overflow.
+
 ### References
 
 Reference nodes and inline references follow nodex interaction semantics while

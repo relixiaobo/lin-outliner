@@ -28,6 +28,7 @@ interface FieldValueOutlinerProps {
   onTogglePin: (nodeId: NodeId) => void;
   optionField?: NodeProjection;
   placeholder: string;
+  embeddedInGridCell?: boolean;
 }
 
 export function FieldValueOutliner(props: FieldValueOutlinerProps) {
@@ -139,6 +140,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           fieldValue={ctx}
           trailingDraft={trailingMode}
           showViewToolbar={false}
+          rowSemanticRole={props.embeddedInGridCell ? 'presentation' : undefined}
         />
       )}
     </div>

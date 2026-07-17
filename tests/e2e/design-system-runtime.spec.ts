@@ -111,6 +111,17 @@ async function showViewToolbar(page: Page, nodeId = ids.today) {
   await page.locator('.view-toolbar').first().waitFor({ state: 'visible' });
 }
 
+async function showTableView(page: Page) {
+  await invokeDocumentCommand(page, 'set_view_toolbar_visible', { nodeId: ids.today, visible: true });
+  await invokeDocumentCommand(page, 'add_display_field', { nodeId: ids.today, field: ids.statusField });
+  await invokeDocumentCommand(page, 'add_display_field', { nodeId: ids.today, field: ids.dueField });
+  await invokeDocumentCommand(page, 'set_view_mode', { nodeId: ids.today, mode: 'table' });
+
+  const grid = page.locator(`[data-table-owner-id="${ids.today}"]`).getByRole('grid');
+  await grid.waitFor({ state: 'visible' });
+  await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Status', 'Due']);
+}
+
 async function showViewToolbarDisplayPopover(page: Page) {
   await showViewToolbar(page);
   const toolbar = page.locator('.view-toolbar').first();
@@ -798,6 +809,13 @@ const surfaces: SurfaceCase[] = [
     },
   },
   {
+    name: 'table view',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    options: { dateField: true },
+    beforeProbe: showTableView,
+  },
+  {
     name: 'main app no-provider onboarding',
     path: '/',
     waitFor: '.agent-empty-state',
@@ -847,7 +865,7 @@ const surfaces: SurfaceCase[] = [
     waitFor: '.settings-window .inset-row',
     beforeProbe: async (page) => {
       await page.getByRole('button', { name: /^Security/ }).click();
-      await page.getByRole('list', { name: 'Default' }).waitFor({ state: 'visible' });
+      await page.getByRole('list', { name: 'Folder access' }).waitFor({ state: 'visible' });
     },
   },
   {

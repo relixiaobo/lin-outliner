@@ -36,6 +36,8 @@ interface MockFixtureOptions {
   dateField?: boolean;
   optionsField?: boolean;
   relatedField?: boolean;
+  /** Appends deterministic content rows under Today for table-windowing specs. */
+  tableRowCount?: number;
   /** Adds an OAuth sign-in provider (GitHub Copilot) to the catalog for the OAuth specs. */
   oauthProvider?: boolean;
   /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
@@ -1419,10 +1421,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         [parent.children[index], parent.children[swapIndex]] = [parent.children[swapIndex], parent.children[index]];
       }
     };
-    const inlineField = (parentId: string, index: number | null, name: string, fieldType: string) => {
-      const fieldDefId = `field-def-${++sequence}`;
-      makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, nullable: true });
-      appendChild(ids.schema, fieldDefId);
+    const inlineField = (
+      parentId: string,
+      index: number | null,
+      name: string,
+      fieldType: string,
+      targetDefId?: string,
+    ) => {
+      const fieldDefId = targetDefId ?? `field-def-${++sequence}`;
+      if (targetDefId) {
+        fieldType = nodes.get(targetDefId)?.fieldType ?? fieldType;
+      } else {
+        makeNode(fieldDefId, name, { type: 'fieldDef', fieldType, parentId: ids.schema, nullable: true });
+        appendChild(ids.schema, fieldDefId);
+      }
       const fieldEntryId = `field-entry-${++sequence}`;
       makeNode(fieldEntryId, '', { type: 'fieldEntry', parentId, fieldDefId, fieldType });
       appendChild(parentId, fieldEntryId, index);
@@ -1605,6 +1617,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.alpha, 'Alpha', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.beta, 'Beta', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.gamma, 'Gamma', { parentId: ids.today, completedAt: 0 });
+    const tableRowIds = Array.from({ length: options.tableRowCount ?? 0 }, (_, index) => {
+      const rowId = `table-row-${String(index).padStart(3, '0')}`;
+      makeNode(rowId, `Table row ${String(index + 1).padStart(3, '0')}`, { parentId: ids.today });
+      return rowId;
+    });
     appendChild(ids.workspace, ids.root);
     for (const childId of [ids.daily, ids.library, ids.schema, ids.searches, ids.trash]) appendChild(ids.root, childId);
 	    appendChild(ids.searches, ids.recents);
@@ -1627,6 +1644,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     if (options.dateField) appendChild(ids.today, ids.dueEntry);
     if (options.relatedField) appendChild(ids.today, ids.referencesEntry);
     for (const childId of [ids.alpha, ids.beta, ids.gamma]) appendChild(ids.today, childId);
+    for (const childId of tableRowIds) appendChild(ids.today, childId);
 
     Object.defineProperty(navigator, 'clipboard', {
       value: {
@@ -2960,13 +2978,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(outcome({ nodeId: String(args.fieldId), selectAll: false }));
         }
         if (cmd === 'create_inline_field') {
-          const fieldEntryId = inlineField(String(args.parentId), args.index as number | null, String(args.name), String(args.fieldType));
+          const targetDefId = typeof args.targetDefId === 'string' ? args.targetDefId : undefined;
+          const fieldEntryId = inlineField(
+            String(args.parentId),
+            args.index as number | null,
+            String(args.name),
+            String(args.fieldType),
+            targetDefId,
+          );
           return clone(outcome({
             nodeId: fieldEntryId,
-            parentId: String(args.parentId),
-            placement: { kind: 'all' },
-            selectAll: true,
-            surface: 'field-name',
+            parentId: targetDefId ? fieldEntryId : String(args.parentId),
+            placement: targetDefId ? { kind: 'end' } : { kind: 'all' },
+            selectAll: !targetDefId,
+            surface: targetDefId ? 'trailing' : 'field-name',
           }));
         }
         if (cmd === 'create_inline_field_after_node') {
@@ -3249,14 +3274,43 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	        if (cmd === 'add_display_field') {
 	          const view = nodes.has(String(args.nodeId)) ? ensureViewDef(String(args.nodeId)) : null;
 	          if (view) {
+	            let fieldId = typeof args.field === 'string' ? args.field : '';
+	            if (typeof args.createFieldName === 'string') {
+	              const name = args.createFieldName.trim();
+	              const existing = [...nodes.values()].find((node) => (
+	                node.type === 'fieldDef'
+	                && node.parentId === ids.schema
+	                && node.content.text.trim().toLowerCase() === name.toLowerCase()
+	              ));
+	              if (existing) fieldId = existing.id;
+	              else {
+	                fieldId = `field-def-${++sequence}`;
+	                makeNode(fieldId, name, {
+	                  type: 'fieldDef',
+	                  fieldType: String(args.createFieldType ?? 'plain'),
+	                  parentId: ids.schema,
+	                  nullable: true,
+	                });
+	                appendChild(ids.schema, fieldId);
+	              }
+	            }
+	            const existingDisplay = directChildrenOfType(view.id, 'displayField')
+	              .find((display) => display.displayField === fieldId);
+	            if (existingDisplay) {
+	              existingDisplay.displayVisible = true;
+	              return clone(outcome({ nodeId: existingDisplay.id, selectAll: false }));
+	            }
 	            const displayId = `display-${++sequence}`;
+	            const displayOrder = directChildrenOfType(view.id, 'displayField').length;
 	            makeNode(displayId, '', {
 	              type: 'displayField',
 	              parentId: view.id,
-	              displayField: String(args.field ?? 'sys:name'),
+	              displayField: fieldId || 'sys:name',
 	              displayVisible: true,
+	              displayOrder,
 	            });
 	            appendChild(view.id, displayId);
+	            return clone(outcome({ nodeId: displayId, selectAll: false }));
 	          }
 	          return clone(outcome());
 	        }
@@ -3265,9 +3319,35 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	          if (display?.type === 'displayField') {
 	            if (args.field != null) display.displayField = String(args.field);
 	            if (args.visible != null) display.displayVisible = Boolean(args.visible);
-	            if (args.width != null) setOptionalNumber(display, 'displayWidth', args.width);
-	            if (args.label != null) setOptionalText(display, 'displayLabel', args.label);
+	            if ('width' in args) setOptionalNumber(display, 'displayWidth', args.width);
+	            if ('label' in args) setOptionalText(display, 'displayLabel', args.label);
 	            if (args.placement != null) display.displayPlacement = String(args.placement);
+	            if (args.move === 'left' || args.move === 'right') {
+	              const parent = display.parentId ? nodes.get(display.parentId) : null;
+	              if (parent) {
+	                const siblings = parent.children
+	                  .map((childId) => nodes.get(childId))
+	                  .filter((child): child is MockNode => child?.type === 'displayField')
+	                  .sort((left, right) => (
+	                    (left.displayOrder ?? Number.MAX_SAFE_INTEGER)
+	                    - (right.displayOrder ?? Number.MAX_SAFE_INTEGER)
+	                  ));
+	                const currentIndex = siblings.findIndex((sibling) => sibling.id === display.id);
+	                const direction = args.move === 'left' ? -1 : 1;
+	                let targetIndex = currentIndex + direction;
+	                while (
+	                  targetIndex >= 0
+	                  && targetIndex < siblings.length
+	                  && siblings[targetIndex]?.displayVisible === false
+	                ) {
+	                  targetIndex += direction;
+	                }
+	                if (currentIndex >= 0 && targetIndex >= 0 && targetIndex < siblings.length) {
+	                  [siblings[currentIndex], siblings[targetIndex]] = [siblings[targetIndex]!, siblings[currentIndex]!];
+	                  siblings.forEach((sibling, order) => { sibling.displayOrder = order; });
+	                }
+	              }
+	            }
 	          }
 	          return clone(outcome());
 	        }

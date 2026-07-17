@@ -31,9 +31,11 @@ import {
   ICON_SIZE,
   OptionsIcon,
   PlainTextIcon,
+  NodeReadToolIcon,
   SearchIcon,
   SortAscIcon,
   SortDescIcon,
+  TableIcon,
 } from '../icons';
 import type { ComponentType } from 'react';
 import { resolveFieldOptions, type FieldOption } from '../interactions/fieldOptions';
@@ -303,7 +305,7 @@ function summarizeView(
       tone: 'display',
     });
   }
-  if (view.groupField) {
+  if (view.groupField && view.viewMode !== 'table') {
     chips.push({
       id: 'group',
       label: t.summaryGroupedBy({ field: labelOf(view.groupField) }),
@@ -385,9 +387,17 @@ export function ViewToolbar({
 
   useEffect(() => {
     if (!dropdownRequest || dropdownRequest.nodeId !== node.id) return;
+    if (dropdownRequest.section === 'group' && view.viewMode === 'table') {
+      onDropdownRequestConsumed(dropdownRequest);
+      return;
+    }
     setOpen(dropdownRequest.section);
     onDropdownRequestConsumed(dropdownRequest);
-  }, [dropdownRequest, node.id, onDropdownRequestConsumed]);
+  }, [dropdownRequest, node.id, onDropdownRequestConsumed, view.viewMode]);
+
+  useEffect(() => {
+    if (view.viewMode === 'table' && open === 'group') setOpen(null);
+  }, [open, view.viewMode]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -528,6 +538,24 @@ export function ViewToolbar({
       onPointerOver={showTooltipFromEvent}
     >
       <div className="view-toolbar-button-row">
+        <div className="view-toolbar-mode" role="group" aria-label={tv.viewMode}>
+          <ButtonControl
+            aria-pressed={view.viewMode !== 'table'}
+            className={`view-toolbar-mode-button ${view.viewMode !== 'table' ? 'is-active' : ''}`}
+            onClick={() => void run(() => api.setViewMode(node.id, 'list'))}
+          >
+            <NodeReadToolIcon size={ICON_SIZE.menu} />
+            <span>{tv.outline}</span>
+          </ButtonControl>
+          <ButtonControl
+            aria-pressed={view.viewMode === 'table'}
+            className={`view-toolbar-mode-button ${view.viewMode === 'table' ? 'is-active' : ''}`}
+            onClick={() => void run(() => api.setViewMode(node.id, 'table'))}
+          >
+            <TableIcon size={ICON_SIZE.menu} />
+            <span>{tv.table}</span>
+          </ButtonControl>
+        </div>
         <NameFilterControl
           nameFilter={nameFilter}
           nodeId={node.id}
@@ -544,14 +572,16 @@ export function ViewToolbar({
         >
           <FieldIcon size={ICON_SIZE.menu} />
         </ToolbarButton>
-        <ToolbarButton
-          ref={groupRef}
-          label={tv.groupBy}
-          open={open === 'group'}
-          onClick={() => toggle('group')}
-        >
-          <GroupIcon size={ICON_SIZE.menu} />
-        </ToolbarButton>
+        {view.viewMode !== 'table' ? (
+          <ToolbarButton
+            ref={groupRef}
+            label={tv.groupBy}
+            open={open === 'group'}
+            onClick={() => toggle('group')}
+          >
+            <GroupIcon size={ICON_SIZE.menu} />
+          </ToolbarButton>
+        ) : null}
         <ToolbarButton
           ref={sortRef}
           active={view.sortRules.length > 0}
@@ -862,7 +892,7 @@ function DisplaySection({
                 variant="checkbox"
                 onSelect={() => {
                   if (entry) {
-                    void run(() => api.removeDisplayField(entry.id));
+                    void run(() => api.updateDisplayField(entry.id, { visible: !entry.visible }));
                   } else {
                     void run(() => api.addDisplayField(node.id, choice.id));
                   }

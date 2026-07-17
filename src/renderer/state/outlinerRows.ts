@@ -66,6 +66,7 @@ export interface ViewDisplayField {
   field: string;
   visible: boolean;
   width?: number;
+  order?: number;
   label?: string;
   placement?: string;
 }
@@ -130,14 +131,26 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
       })),
     displayFields: viewChildren
       .filter((child): child is Extract<NodeProjection, { type: 'displayField' }> => child.type === 'displayField' && Boolean(child.displayField))
-      .map((child) => ({
-        id: child.id,
-        field: child.displayField!,
-        visible: child.displayVisible !== false,
-        width: child.displayWidth,
-        label: child.displayLabel,
-        placement: child.displayPlacement,
-      })),
+      .map((child, sourceIndex) => ({
+        field: {
+          id: child.id,
+          field: child.displayField!,
+          visible: child.displayVisible !== false,
+          width: child.displayWidth,
+          order: child.displayOrder,
+          label: child.displayLabel,
+          placement: child.displayPlacement,
+        },
+        sourceIndex,
+      }))
+      .sort((left, right) => {
+        const leftOrder = Number.isFinite(left.field.order) ? left.field.order! : Number.POSITIVE_INFINITY;
+        const rightOrder = Number.isFinite(right.field.order) ? right.field.order! : Number.POSITIVE_INFINITY;
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+        if (left.sourceIndex !== right.sourceIndex) return left.sourceIndex - right.sourceIndex;
+        return left.field.id.localeCompare(right.field.id);
+      })
+      .map(({ field }) => field),
   };
 }
 
@@ -571,6 +584,24 @@ function applyViewSettings(
 ): OutlinerRowItem[] {
   const view = readViewConfig(parent, byId);
   const systemFieldContext = options.systemFieldContext;
+  if (view.viewMode === 'table') {
+    const fieldRows = rows.filter((row) => row.type === 'field' || row.type === 'hiddenField');
+    const contentRows = rows.filter((row) => row.type !== 'field' && row.type !== 'hiddenField');
+    const sortedRows = sortRows(view, contentRows, byId, systemFieldContext);
+    const { visible, filteredOut } = partitionFilterRows(view, sortedRows, byId, systemFieldContext);
+    if (filteredOut.length === 0) return [...fieldRows, ...visible];
+    const ruleKey = view.filterRules.map((rule) => rule.id).join('|');
+    return [
+      ...fieldRows,
+      ...visible,
+      {
+        id: `filtered:${parent.id}:${ruleKey}`,
+        type: 'filteredOut',
+        count: filteredOut.length,
+        rows: filteredOut,
+      },
+    ];
+  }
   const sortedRows = sortRows(view, rows, byId, systemFieldContext);
   const { visible, filteredOut } = partitionFilterRows(view, sortedRows, byId, systemFieldContext);
   const visibleRows = groupRows(
@@ -630,6 +661,18 @@ export function fieldChoiceLabel(fieldId: string, byId: Map<NodeId, NodeProjecti
 
 export function visibleDisplayFields(view: ViewConfig): ViewDisplayField[] {
   return view.displayFields.filter((field) => field.visible && field.field !== NAME_FIELD);
+}
+
+export function fieldEntryForViewCell(
+  rowNode: NodeProjection,
+  fieldId: string,
+  byId: Map<NodeId, NodeProjection>,
+): NodeProjection | undefined {
+  if (isSystemFieldId(fieldId)) return undefined;
+  const displayed = displayNode(rowNode, byId);
+  return displayed.children
+    .map((childId) => byId.get(childId))
+    .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldId);
 }
 
 export function viewDisplayValuesFor(

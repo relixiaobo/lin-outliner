@@ -238,4 +238,30 @@ describe('buildVisualRows depth and extras', () => {
     expect(withToolbar.find((r) => r.kind === 'toolbar')).toMatchObject({ depth: 0, indentDepth: 0 });
     expect(without.some((r) => r.kind === 'toolbar')).toBe(false);
   });
+
+  test('emits one independently rendered table scope instead of flattening its descendants', () => {
+    const byId = byIdOf([
+      node('lib', { children: ['project'] }),
+      node('project', { parentId: 'lib', children: ['project-view', 'task-a', 'task-b'] }),
+      node('project-view', {
+        parentId: 'project',
+        type: 'viewDef',
+        viewMode: 'table',
+      } as Partial<NodeProjection>),
+      node('task-a', { parentId: 'project' }),
+      node('task-b', { parentId: 'project' }),
+    ]);
+
+    const rows = buildVisualRows('lib', byId, { expanded: new Set(['project']) });
+
+    expect(rows.map((row) => row.kind)).toEqual(['content', 'table']);
+    expect(rows[1]).toMatchObject({
+      kind: 'table',
+      nodeId: 'project',
+      parentId: 'project',
+      depth: 1,
+      referencePath: ['lib', 'project'],
+    });
+    expect(visualRowNodeIds(rows)).toEqual(['project']);
+  });
 });

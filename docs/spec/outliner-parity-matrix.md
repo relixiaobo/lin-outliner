@@ -26,6 +26,7 @@ Reference sources:
 | Trigger menu | `#`, `@`, or `/` menu is open for a focused editor/trailing input. | `trigger` |
 | Batch tag menu | Multi-selection `#` picker is open and must preserve selection. | `ui.batchTagSelectorOpen` |
 | Context menu | Right-click menu operates on selection if opened from a selected row. | `NodeContextMenu` |
+| Active table cell | One logical `(table owner, row id, column id)` address owns the grid tab stop outside an editor. | `OutlinerTableView` local state + `nearestTableCell` recovery |
 | IME composition | Text input is composing and must not fire structural shortcuts or trigger actions. | `isImeComposingEvent` plus editor composition refs |
 
 Selection mode uses the panel-level `buildSelectableRows` order. Visual and
@@ -77,6 +78,25 @@ field row but still appear in the selectable-row order.
 | Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z / Cmd/Ctrl+Y | nodex overloads no-editor Cmd/Ctrl+Z for page history. | Lin keeps these as document undo/redo globally and in editors. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts` |
 | Cmd/Ctrl+[ / Cmd/Ctrl+] | Not the nodex binding. | Navigate the active panel back/forward through page history. | `rowInteractions.test.ts` |
 | Alt+ArrowLeft / Alt+ArrowRight | Not the nodex binding. | Navigate the active panel back/forward through page history only outside editable text; inside editors it remains platform word-navigation. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts` |
+
+## Table View
+
+Table uses the same nodes, typed field editors, commands, and trailing-draft
+materialization as Outline, but owns a two-dimensional focus surface. It does not
+replace or reinterpret the panel-level block-selection model.
+
+| Event | lin-outliner rule | Test coverage |
+| --- | --- | --- |
+| View as > Table / Outline | Persist `table` / `list` on the owner's view definition; never copy or reparent children. A saved group rule is ignored in Table and restored in Outline. | `table-view.spec.ts`, `rowInteractions.test.ts` |
+| Arrow keys on inactive cell | Move within the logical row/column matrix and clamp at edges. | `tableNavigation.test.ts`, `table-view.spec.ts` |
+| Home / End | Move to the first/last cell in the row; Cmd/Ctrl adds first/last row. | `tableNavigation.test.ts` |
+| Tab / Shift+Tab | Move through logical cells. Inside an editor, blur commits before movement and outline indent/outdent is suppressed. Native Tab leaves at the first/last boundary. | `tableNavigation.test.ts`, `table-view.spec.ts` |
+| Enter on inactive Title | Focus the ordinary rich title editor. Enter at the end of the final stored Title creates the next record; otherwise existing row-editing rules apply. | `table-view.spec.ts` |
+| Enter / printable key on absent field | Atomically attach one entry to the configured definition and focus the typed editor; hover, focus, click, and arrows perform no document write. | `table-view.spec.ts`, core tests |
+| Column resize / move / rename / hide / remove | Persist one display-field update; move normalizes the sibling display order atomically. | `table-view.spec.ts`, core tests |
+| Expanded child in Table mode | Emit one independent table visual scope instead of flattening its descendants into the owning Outline. | `visualRows.test.ts`, `table-view.spec.ts` |
+| Long table | Mount a bounded measured row window plus focus/draft rows and preserve the viewport anchor while estimates settle. | `table-view.spec.ts` |
+| Search table | Render derived results without a writable trailing draft. | `table-view.spec.ts` |
 
 ## Row Editing
 

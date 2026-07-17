@@ -433,12 +433,14 @@ Development agents do not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
 
 ## Collision Result
 
-Checked on 2026-07-17 against `origin/main`, `docs/TASKS.md`, and open PR claims.
-Open PR #407 covers event-sourced Issue persistence; #408 covers persistent
-preview translation cache. Neither claims the outliner renderer, field/view
-commands, table styles, localization, or the specs listed above. **No current
-file or behavioral overlap was found.** Re-run the check immediately before the
-Draft PR claim because command and outliner surfaces are shared areas.
+Checked on 2026-07-17 against `origin/main`, `docs/TASKS.md`, and open PR claims,
+then rechecked before readiness after #407 merged. The merged Issue-persistence
+work has no implementation-file overlap. Open PR #408 also edits the English and
+Simplified Chinese message modules for translation-cache settings; open PR #410
+edits those modules for Security copy and `tests/e2e/outlinerMock.ts` for its
+capability fixture. Those hunks are disjoint from this plan's Outliner messages
+and table fixture, with no shared behavior or merge-order dependency. No other
+file or behavioral overlap was found.
 
 ## Open Questions
 

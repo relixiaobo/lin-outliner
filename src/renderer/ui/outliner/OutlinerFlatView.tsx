@@ -26,6 +26,7 @@ import { OutlinerItem } from './OutlinerItem';
 import { ViewToolbar } from './ViewToolbar';
 import { FilteredOutHeading, HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
+import { OutlinerTableView } from './OutlinerTableView';
 import { IndentGuide } from './IndentGuide';
 import {
   captureDisclosureScrollAnchor,
@@ -655,6 +656,33 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           </div>
         );
       }
+      case 'table':
+        return (
+          <div className="outliner-table-flat-scope" style={flatDepthStyle(row.depth)}>
+            <OutlinerTableView
+              panelId={props.panelId}
+              parentId={row.nodeId}
+              rootId={props.rootId}
+              selectionRootId={selectionRootId}
+              onRoot={props.onRoot}
+              depth={0}
+              index={index}
+              isNodePinned={props.isNodePinned}
+              ui={ui}
+              uiRef={props.uiRef}
+              setUi={props.setUi}
+              run={props.run}
+              onTogglePin={props.onTogglePin}
+              trigger={props.trigger}
+              setTrigger={props.setTrigger}
+              dragId={props.dragId}
+              setDragId={props.setDragId}
+              referencePath={row.referencePath}
+              trailingDraft="auto"
+              scrollParentRef={props.scrollParentRef}
+            />
+          </div>
+        );
       case 'group':
         return <ViewGroupHeading label={row.label} />;
       case 'filteredOut':

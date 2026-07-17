@@ -958,6 +958,93 @@ describe('Core', () => {
     expect(() => core.createInlineField(today, null, '', 'plain')).not.toThrow();
   });
 
+  test('attaches an existing field definition in one inline-field mutation', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const source = mustFocus(core.createNode(today, null, 'Source'));
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const sourceEntry = mustFocus(core.createInlineField(source, null, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[sourceEntry]!.fieldDefId!;
+    const fieldDefCount = Object.values(core.state().nodes)
+      .filter((node) => node.type === 'fieldDef').length;
+
+    const outcome = core.createInlineField(target, null, '', 'plain', fieldDefId);
+    const targetEntry = mustFocus(outcome);
+
+    expect(outcome.focus).toMatchObject({
+      nodeId: targetEntry,
+      parentId: targetEntry,
+      surface: 'trailing',
+    });
+    expect(core.state().nodes[targetEntry]).toMatchObject({
+      type: 'fieldEntry',
+      parentId: target,
+      fieldDefId,
+    });
+    expect(Object.values(core.state().nodes).filter((node) => node.type === 'fieldDef')).toHaveLength(fieldDefCount);
+    expect(() => core.createInlineField(target, null, '', 'plain', fieldDefId)).toThrow('duplicate field');
+  });
+
+  test('creates typed display fields atomically and assigns stable order', () => {
+    const core = Core.new();
+    const owner = mustFocus(core.createNode(core.projection().todayId, null, 'Project'));
+
+    const firstDisplayId = mustFocus(core.addDisplayField(owner, null, {
+      name: 'Status',
+      fieldType: 'options',
+    }));
+    const firstDisplay = core.state().nodes[firstDisplayId]!;
+    const firstField = core.state().nodes[firstDisplay.displayField!]!;
+    expect(firstDisplay).toMatchObject({
+      type: 'displayField',
+      displayVisible: true,
+      displayOrder: 0,
+    });
+    expect(firstField).toMatchObject({
+      type: 'fieldDef',
+      content: { text: 'Status' },
+    });
+
+    const secondDisplayId = mustFocus(core.addDisplayField(owner, null, {
+      name: 'Due',
+      fieldType: 'date',
+    }));
+    expect(core.state().nodes[secondDisplayId]).toMatchObject({
+      type: 'displayField',
+      displayOrder: 1,
+    });
+
+    expect(mustFocus(core.addDisplayField(owner, firstDisplay.displayField!))).toBe(firstDisplayId);
+    const viewDef = core.state().nodes[owner]!.children
+      .map((childId) => core.state().nodes[childId])
+      .find((node) => node?.type === 'viewDef')!;
+    expect(viewDef.children.filter((childId) => core.state().nodes[childId]?.type === 'displayField')).toHaveLength(2);
+
+    core.updateDisplayField(secondDisplayId, { move: 'left' });
+    expect(core.state().nodes[secondDisplayId]!.displayOrder).toBe(0);
+    expect(core.state().nodes[firstDisplayId]!.displayOrder).toBe(1);
+
+    const thirdDisplayId = mustFocus(core.addDisplayField(owner, null, {
+      name: 'Owner',
+      fieldType: 'plain',
+    }));
+    core.updateDisplayField(firstDisplayId, { visible: false });
+    core.updateDisplayField(thirdDisplayId, { move: 'left' });
+    expect(core.state().nodes[thirdDisplayId]!.displayOrder).toBe(0);
+    expect(core.state().nodes[firstDisplayId]!).toMatchObject({
+      displayOrder: 1,
+      displayVisible: false,
+    });
+    expect(core.state().nodes[secondDisplayId]!.displayOrder).toBe(2);
+
+    expect(mustFocus(core.addDisplayField(owner, firstDisplay.displayField!))).toBe(firstDisplayId);
+    expect(core.state().nodes[firstDisplayId]!.displayVisible).toBe(true);
+    const updatedViewDef = core.state().nodes[owner]!.children
+      .map((childId) => core.state().nodes[childId])
+      .find((node) => node?.type === 'viewDef')!;
+    expect(updatedViewDef.children.filter((childId) => core.state().nodes[childId]?.type === 'displayField')).toHaveLength(3);
+  });
+
   test('empty draft fields do not reserve the display placeholder name', () => {
     const core = Core.new();
     const today = core.projection().todayId;

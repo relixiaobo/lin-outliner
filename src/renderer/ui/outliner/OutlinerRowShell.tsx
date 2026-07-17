@@ -17,6 +17,7 @@ interface OutlinerRowShellProps {
   onSelectFromPointer: MouseEventHandler<HTMLDivElement>;
   onContextMenu: MouseEventHandler<HTMLDivElement>;
   rowContent: ReactNode;
+  semanticRole?: 'treeitem' | 'presentation';
   children?: ReactNode;
 }
 
@@ -32,9 +33,11 @@ export function OutlinerRowShell({
   onSelectFromPointer,
   onContextMenu,
   rowContent,
+  semanticRole = 'treeitem',
   children,
 }: OutlinerRowShellProps) {
   const isExpandable = expandable ?? hasChildren;
+  const treeSemantic = semanticRole === 'treeitem';
   return (
     <div
       className={`row-wrap ${hasChildren ? 'has-children' : ''} ${expanded ? 'expanded' : ''} ${wrapClassName ?? ''}`.trim()}
@@ -42,10 +45,10 @@ export function OutlinerRowShell({
       // ARIA tree structure (additive — the row stays a div, the sighted keyboard
       // model is unchanged). `aria-expanded` is omitted on non-expandable leaf rows
       // so assistive tech never announces a toggle that does not exist.
-      role="treeitem"
-      aria-level={level}
-      aria-expanded={isExpandable ? expanded : undefined}
-      aria-selected={selected}
+      role={semanticRole}
+      aria-level={treeSemantic ? level : undefined}
+      aria-expanded={treeSemantic && isExpandable ? expanded : undefined}
+      aria-selected={treeSemantic ? selected : undefined}
     >
       <div
         className={rowClassName}
