@@ -13,30 +13,15 @@ import { assertValidRunExecutionStatusTransition } from './agentRunStateMachine'
 
 export const AGENT_EVENT_VERSION = 1;
 
-export type AgentCapabilityResolutionReason =
-  | 'user_blocked'
-  | 'control_plane'
-  | 'run_aborted'
-  | 'runtime'
-  | 'user_cancelled';
+export type AgentCapabilityResolutionReason = 'user_blocked';
 
 export type AgentToolCapabilityEventSource =
   | 'default'
-  | 'folder_capability'
-  | 'user_blocklist'
-  | 'control_plane'
-  | 'user'
-  | 'runtime';
+  | 'user_blocklist';
 
 export type AgentToolCapabilityResolvedBy =
   | 'default'
-  | 'folder_capability'
-  | 'folder_grant'
-  | 'user_cancelled'
-  | 'user_blocklist'
-  | 'control_plane'
-  | 'runtime'
-  | 'system_abort';
+  | 'user_blocklist';
 
 export type AgentActor =
   | { type: 'user'; userId: string }
@@ -454,9 +439,8 @@ export type AgentRunLogEvent =
       toolName: string;
       primaryActionKind?: string;
       actionKinds: string[];
-      outcome: 'allow' | 'capability_required' | 'unavailable';
+      outcome: 'allow' | 'unavailable';
       source: AgentToolCapabilityEventSource;
-      requiredFolders?: string[];
       descriptorRef?: AgentPayloadRef;
     })
   | (AgentRunEventBase & {
@@ -464,9 +448,8 @@ export type AgentRunLogEvent =
       requestId: string;
       toolCallId: string;
       toolName: string;
-      status: 'available' | 'unavailable' | 'cancelled';
+      status: 'available' | 'unavailable';
       resolvedBy: AgentToolCapabilityResolvedBy;
-      updatedFolders?: string[];
       reason?: AgentCapabilityResolutionReason;
     })
   | (AgentRunEventBase & {
@@ -816,9 +799,8 @@ export interface ToolCapabilityCheckedEvent extends AgentEventBase {
   toolName: string;
   primaryActionKind?: string;
   actionKinds: string[];
-  outcome: 'allow' | 'capability_required' | 'unavailable';
+  outcome: 'allow' | 'unavailable';
   source: AgentToolCapabilityEventSource;
-  requiredFolders?: string[];
   descriptorRef?: AgentPayloadRef;
 }
 
@@ -827,9 +809,8 @@ export interface ToolCapabilityResolvedEvent extends AgentEventBase {
   requestId: string;
   toolCallId: string;
   toolName: string;
-  status: 'available' | 'unavailable' | 'cancelled';
+  status: 'available' | 'unavailable';
   resolvedBy: AgentToolCapabilityResolvedBy;
-  updatedFolders?: string[];
   reason?: AgentCapabilityResolutionReason;
 }
 
@@ -912,18 +893,6 @@ export interface NotificationCreatedEvent extends AgentEventBase {
   body?: string;
   /** The background Run or Issue transition that produced this notification. */
   source?: AgentNotificationSource;
-  folderCapability?: AgentFolderCapabilityRequest;
-}
-
-export interface AgentFolderCapabilityRequest {
-  requestId: string;
-  runId: string;
-  agentSessionId: string;
-  issueId: string;
-  toolCallId: string;
-  toolName: string;
-  folders: string[];
-  requestedByAgentId?: string;
 }
 
 /**
@@ -1193,12 +1162,6 @@ export interface DelegationDetail {
   blockedReason?: string;
   latestVerifierGap?: string;
   parentToolCallId?: string;
-  /**
-   * Run with no interactive folder-capability channel. A missing capability stops
-   * as durable needs-input instead of waiting for a human. Scheduled command runs
-   * derive this from their Run trigger/profile.
-   */
-  unattended?: boolean;
 }
 
 export type DelegationRunRecord = DelegationDetail;
@@ -1259,17 +1222,9 @@ export interface AgentNotificationRecord {
   title: string;
   body?: string;
   source?: AgentNotificationSource;
-  folderCapability?: AgentFolderCapabilityRequest;
   seq: number;
   createdAt: number;
   read: boolean;
-}
-
-export interface AgentFolderCapabilityRequestRecord extends AgentFolderCapabilityRequest {
-  conversationId: string;
-  status: 'pending' | 'granted' | 'cancelled';
-  createdAt: number;
-  updatedAt: number;
 }
 
 export interface AgentConversationAttention {
@@ -1294,7 +1249,6 @@ export interface AgentEventReplayState {
   contextClearsByMessageId: Record<string, AgentContextClearRecord>;
   dreamsByMessageId: Record<string, AgentDreamRecord>;
   userQuestions: Record<string, AgentUserQuestionRecord>;
-  folderCapabilityRequests: Record<string, AgentFolderCapabilityRequestRecord>;
   notifications: Record<string, AgentNotificationRecord>;
   attentionByConversationId: Record<string, AgentConversationAttention>;
 }
@@ -1332,7 +1286,6 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     contextClearsByMessageId: {},
     dreamsByMessageId: {},
     userQuestions: {},
-    folderCapabilityRequests: {},
     notifications: {},
     attentionByConversationId: {},
   };
@@ -1753,6 +1706,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'thinking.delta':
     case 'tool_call.delta':
     case 'tool.capability.checked':
+    case 'tool.capability.resolved':
     case 'widget_state.updated':
     case 'follow_up.queued':
     case 'follow_up.applied':
@@ -1765,13 +1719,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'skill.curation.updated':
     case 'checkpoint.created':
       return;
-    case 'tool.capability.resolved': {
-      const request = state.folderCapabilityRequests[event.requestId];
-      if (!request) return;
-      request.status = event.status === 'available' ? 'granted' : 'cancelled';
-      request.updatedAt = event.createdAt;
-      return;
-    }
     case 'user_question.requested':
       state.userQuestions[event.requestId] = {
         requestId: event.requestId,
@@ -1810,23 +1757,10 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         title: event.title,
         body: event.body,
         source: event.source,
-        folderCapability: event.folderCapability
-          ? { ...event.folderCapability, folders: event.folderCapability.folders.slice() }
-          : undefined,
         seq: event.seq,
         createdAt: event.createdAt,
         read,
       };
-      if (event.folderCapability && !state.folderCapabilityRequests[event.folderCapability.requestId]) {
-        state.folderCapabilityRequests[event.folderCapability.requestId] = {
-          ...event.folderCapability,
-          folders: event.folderCapability.folders.slice(),
-          conversationId: event.conversationId,
-          status: 'pending',
-          createdAt: event.createdAt,
-          updatedAt: event.createdAt,
-        };
-      }
       if (!read) attention.unreadCount += 1;
       return;
     }

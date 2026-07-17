@@ -166,7 +166,7 @@ caches the last valid schema under private `userData`. A catalog outage may make
 recommendations unavailable, but it never changes installed content, enabled
 state, or offline invocation. Linlab entries are labelled **Recommended**;
 arbitrary public GitHub entries are labelled **Unverified**. Neither label adds
-tools, folders, permissions, or control-plane access.
+tools, changes host authority or blocks, or bypasses native authorization.
 Each catalog recommendation is bound to its exact repository subdirectory and
 declared skill name; nested candidates never inherit the Recommended label.
 
@@ -277,7 +277,9 @@ name as its canonical fallback, then stores the version under that identity.
 `execution` is the skill-level execution mode. `inline` means the rendered body
 is injected into the parent model turn; `isolated` means the rendered body is
 sent to a sidechain sub-run and only the final result returns to the parent.
-The actual isolation remains the same-agent delegation runtime implementation.
+Isolation covers model context, returned results, and the tool catalog only. The
+same-agent delegation runtime shares the host filesystem, processes, ports,
+credentials, and services with the parent and concurrent Runs.
 Legacy `context: fork` frontmatter is still accepted as an alias for
 `execution: isolated`, but Skillify and built-ins no longer author it.
 
@@ -307,8 +309,8 @@ User/project and built-in skill bodies may include embedded shell commands using
 fenced blocks that start with ```` ```! ```` or inline `!` command spans.
 Commands are expanded only when the skill is invoked, after argument and
 environment placeholder substitution. They execute through the same local bash
-runner and selected Full Access/Restricted filesystem mode used by normal agent
-tool calls. `allowed-tools` does not act as a command-pattern policy. Managed
+runner and host-account Full Access used by normal agent tool calls.
+`allowed-tools` does not act as a command-pattern policy. Managed
 skills reject both embedded-shell forms during import, so network-distributed
 instructions can only invoke scripts later through ordinary model tool calls.
 
@@ -328,8 +330,8 @@ and then install or enable it directly through the ordinary task environment.
 The model must not silently replace the
 dependency-backed route with a hand-written approximation, a different output
 format, or an unrelated tool merely because the dependency is missing. If the
-dependency path is unavailable because of the selected filesystem mode, native OS
-authorization, provider login, payment flow, network path, or project
+dependency path is unavailable because of native OS authorization, provider
+login, payment flow, network path, or project
 constraint, Neva explains the concrete blocker. It asks only when a real
 fallback choice cannot be inferred. Any unavoidable fallback states what behavior, fidelity,
 compatibility, or verification it gives up.
@@ -550,14 +552,14 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Automatic listing | Supported. New model-invocable skills are listed once per conversation and persisted across compact restore. Mutable skills are default-ratified; path-conditional skills still wait for a matching touched file. |
 | Skill invocation | Supported through the `skill` tool and slash composer adapter. Both paths share rendering, capability handling, model, and effort behavior. |
 | Embedded shell | Supported for built-in/user/project skills with `bash` only, at invocation time, after argument and placeholder substitution. Managed import rejects fenced and inline embedded-shell forms. |
-| Reference files and scripts | Supported through `${AGENT_SKILL_DIR}` / `{baseDir}` plus normal `file_read` or `bash` calls. They are not bulk-loaded. For invoked inline skills with resource directories, the runtime exposes that exact skill directory as a read-only file-tool root so references can be read in both dev source-tree runs and packaged app-resource runs. |
+| Reference files and scripts | Supported through `${AGENT_SKILL_DIR}` / `{baseDir}` plus normal `file_read` or `bash` calls. They are not bulk-loaded. Invocation supplies the exact resource directory path; file tools use normal host-account access in both dev source-tree runs and packaged app-resource runs. |
 | Skill dependencies | Binding guidance. When a loaded skill names a required library, command, runtime, or script, the global system prompt tells Neva to verify and install/enable that dependency directly instead of silently changing route. Owner-specific failures require a concrete explanation before a lower-fidelity fallback. |
 | `allowed-tools` | Supported as the complete whole-tool catalog for isolated Runs. Omission creates a tool-free isolated Run; inline skills do not alter the parent catalog. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery for mutable skills. Built-ins load immediately even when they declare `paths`. |
 | `execution: isolated` | Supported through the runtime-owned delegation executor. Isolated skill bodies run in a sidechain worker of the current agent and return only the final result to the parent; they do not require exposing direct delegated-run tools. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
-| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use the selected filesystem mode (Full Access directly; Restricted through ordinary folder capabilities), then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Shell/external-editor writes are validated on discovery and invalid definitions remain unloaded. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
+| Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use host-account access, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Shell/external-editor writes are validated on discovery and invalid definitions remain unloaded. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
 | Agent-managed agent-definition writes | Not supported. The one-Neva invariant removed agent authoring as a self-definition surface (no `/create-agent` workflow, and the self-definition write gate governs skills only). The single agent, Neva, is configured through the agent-config window (`agentUpdateAgentDefinition`), not by authoring `AGENT.md` files. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | Public GitHub skills | Supported through bounded GitHub discovery, strict subtree validation, immutable commit/hash pinning, explicit install/enable/update/rollback/uninstall, and offline local execution. Private repositories, credentials, GitLab, and other providers are not supported. |
@@ -644,7 +646,7 @@ due time; if prior scheduled attempts were missed, the next successful scheduled
 run catches up through that last complete day. The runtime derives the Dream
 cursor from clean completed `dream.finished.window` markers in the protected
 Dream channel, not from mutable scheduler state. A manual Dream uses the same
-restricted Dream-channel path and date-window machinery; its end date is clamped
+Dream-channel-only path and date-window machinery; its end date is clamped
 to today, its default start falls back to today when the derived cursor has
 already reached today, and when it completes a day, that completed window
 suppresses the scheduled Dream for that already-covered day. Before a manual run,
@@ -751,8 +753,8 @@ Intentional omissions:
 
 The delegated-operator capability model is defined in
 `agent-tool-permissions.md`. Skills cannot expose a tool that the runtime did not
-register, bypass a user block, grant a folder, or access private Tenon control
-state.
+register, bypass a user block, change host authority, or bypass native
+authorization.
 
 - Inline skills inherit the parent Run catalog unchanged.
 - Isolated skills receive exactly the whole tools named by `allowed-tools`.

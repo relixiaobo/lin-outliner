@@ -26,9 +26,9 @@ export async function materializePathBackedAttachment<T extends PathBackedAttach
   };
 }
 
-// Containment is checked against the workdir (`localRoot`): a source already readable by the
-// agent is returned as-is. Everything copied in lands in the scratch root (`scratchRoot`),
-// which sits outside the workdir so materialized bytes never show up in the agent's file area.
+// Sources already in the workdir or scratch are returned as-is. Other attachments are copied
+// into app-owned scratch so the Run receives a stable local snapshot instead of depending on
+// the lifetime of the original selection path.
 export async function materializeAgentLocalPath(
   localRoot: string,
   scratchRoot: string,
@@ -39,16 +39,15 @@ export async function materializeAgentLocalPath(
   const rootRealPath = await realpath(root);
   const sourcePath = path.resolve(path.isAbsolute(inputPath) ? inputPath : path.join(root, inputPath));
   const sourceRealPath = await realpath(sourcePath);
-  // A source the agent can already read in place — the workdir or the app-owned scratch root
-  // (e.g. a user-staged attachment already written into scratch) — is returned as-is rather
-  // than copied again.
+  // A source already in the workdir or app-owned scratch (for example, a staged attachment)
+  // is returned as-is rather than copied again.
   const scratchRealPath = await safeRealPath(scratchRoot);
   if (isPathInside(rootRealPath, sourceRealPath)) return sourceRealPath;
   if (scratchRealPath && isPathInside(scratchRealPath, sourceRealPath)) return sourceRealPath;
 
   const sourceStat = await stat(sourceRealPath);
   if (sourceStat.isDirectory()) {
-    throw new Error('Directory attachments outside the allowed file area cannot be materialized safely.');
+    throw new Error('Directory attachments outside the Run workdir cannot be materialized as stable snapshots.');
   }
   if (!sourceStat.isFile()) {
     throw new Error('Only regular file attachments can be materialized for agent access.');

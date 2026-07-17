@@ -1,194 +1,103 @@
-# Agent Access Modes And System Boundary
+# Agent Full Access And System Boundary
 
 Tenon treats the agent as a delegated local operator. A user request authorizes
-the requested work; destructiveness, reversibility, command complexity,
-installs, network effects, publishes, messages, payments, and unfamiliar shell
-syntax do not create Tenon confirmation prompts.
+the requested work; destructiveness, command complexity, installs, network
+effects, publishes, messages, payments, and unfamiliar shell syntax do not add
+Tenon confirmation prompts.
 
-Filesystem authority is selected in Settings -> Security:
+Agent file tools and local processes always use the filesystem authority of the
+current OS account. Tenon has no agent filesystem mode, folder capability,
+private `userData` boundary, or process sandbox. Native TCC, administrator
+authorization, Keychain controls, CLI login, and service authentication remain
+owned by macOS or the relevant provider.
 
-- **Full Access** is the default. File tools and local processes have the same
-  filesystem authority as Tenon under the current OS account. Tenon does not
-  apply folder capabilities, a process sandbox, or a private `userData`
-  boundary.
-- **Restricted** is opt-in. File tools and processes are limited to the workdir,
-  app-owned scratch, exact active skill resources, and remembered folder
-  capabilities. Tenon `userData` control state remains private.
-
-Native TCC, administrator authorization, Keychain controls, CLI login, and
-service credentials remain owned by macOS or the relevant provider in both
-modes. `ask_user_question` is for missing product input, not authorization.
+`ask_user_question` gathers missing product input. It is not an authorization
+prompt.
 
 ## Decision Pipeline
 
-A tool call follows one short pipeline:
+Every tool call follows one short pipeline:
 
 ```text
 tool exists in this Run
+  -> derive audit descriptors
   -> explicit user block
-  -> filesystem mode
-  -> Restricted ownership/folder resolution, when selected
-  -> execution
-  -> audit and recovery
+  -> execute
+  -> durable capability audit
 ```
 
-The runtime derives `AgentToolActionKind` descriptors for activity labels,
-debugging, read-only catalog construction, and exact user-block matching. Those
-descriptors are not risk scores and never change authority by themselves.
-Unknown shell syntax is an audit label and executes normally.
+The Run's tool catalog is the first boundary: a tool outside the catalog cannot
+be called. For a present tool, Tenon derives `AgentToolActionKind` descriptors
+for activity labels, debugging, read-only catalog construction, and exact block
+matching. Descriptors are not risk scores and do not change authority by
+themselves. Unknown shell syntax receives an audit label and executes normally.
 
-An absent tool is unavailable because the Run's catalog does not contain it.
-An explicit user block is `unavailable / user_blocked`. In Restricted mode,
-private control-state access is `unavailable / control_plane` and an uncovered
-filesystem root is `capability_required / folder_access_required`.
-
-The observable authorization outcomes remain:
+The authorization outcomes are:
 
 ```text
-allow                execute immediately
-capability_required  Restricted mode needs a remembered folder root
-unavailable          the operation cannot be provided in this context
+allow        execute immediately
+unavailable  an explicit user block prevents dispatch
 ```
 
-## Full Access
+There is no access-acquisition outcome or pause-and-resume authorization flow.
 
-Full Access uses the current OS account as the filesystem boundary:
+## Filesystem Access
+
+Typed file tools and local processes have the same host filesystem authority:
 
 | Resource | Read | Write |
 | --- | ---: | ---: |
-| Current workdir and scratch | yes | yes |
-| Any user-readable/writable host path | yes | yes |
+| Run workdir and scratch | yes | yes |
+| Any host path allowed to the OS account | yes | yes |
 | Tenon documents and event stores | yes | yes |
-| Tenon capability and provider settings | yes | yes |
-| `agent-secrets.json` and OAuth tokens | yes | yes |
+| Tenon settings and provider credentials | yes | yes |
 | Import API descriptor and bearer token | yes | yes |
 
-Typed file tools and bash intentionally have the same path authority. Relative
-paths still resolve against the workdir, but any absolute path available to the
-OS account is valid. File tools canonicalize symlinks and retain their normal
-operation contracts, such as read-before-edit, trash-backed deletion, and skill
-definition validation; those are tool semantics, not containment.
+Relative paths resolve against the Run workdir. Absolute paths address the host
+filesystem directly. Symlinks can resolve outside the workdir because the
+workdir is a path base, not a containment root.
 
-Full Access combines host reads/writes with the existing process network
-authority. A mistaken or prompt-injected agent can read and exfiltrate provider
-keys, OAuth tokens, shell credentials, and other host files; directly modify
-Tenon stores outside the command layer; alter explicit blocks or startup files;
-or exercise the same authority from an unattended Agent Session whose catalog
-contains file/process tools. These are accepted mode semantics, not failures of
-the Full Access implementation.
+Typed tools retain correctness contracts that are independent of authority:
 
-Explicit `Action(...)` and `Command(...)` blocks are still checked before tool
-dispatch. They are not a tamper-resistant security boundary in Full Access,
-because an already-running process can modify their on-disk store.
+- `file_edit` and overwriting `file_write` require a fresh complete read;
+- `file_delete` moves content to the agent trash and refuses the workdir root
+  and the trash root itself;
+- Skill definition writes are validated, recorded, and hot-reloaded;
+- parsers, output limits, and format validation continue to apply.
 
-## Restricted
-
-Restricted mode enforces one private control container and scoped data roots:
-
-| Resource | Read | Write | Owner |
-| --- | ---: | ---: | --- |
-| Current workdir | yes | yes | Run context |
-| Attachment scratch | yes | no | Tenon ingestion |
-| Cleanup, tool-output, generated-image scratch | yes | yes | Agent output |
-| Exact active/invoked skill resources | yes | no | Skill invocation |
-| Persistent user folder | yes | yes | User capability |
-| Tenon `userData` control state | no | no | Product commands/services |
-
-The workdir and scratch roots can live inside `userData`; they are explicit
-exceptions to the private control container. Managed payloads also live there,
-but only the exact enabled version being invoked is a temporary read exception.
-The managed index, catalog cache, staging, disabled versions, retained versions,
-and every managed write remain private.
-
-Typed file tools canonicalize the target at their own operation boundary, then
-check protected control state and read/write roots. Symlinks are resolved before
-both checks.
-
-### Folder capabilities
-
-`FolderCapabilityService` is the authority for Restricted persistent roots. It:
-
-- accepts existing directories, including `/`;
-- canonicalizes with `realpath`;
-- compacts duplicate and nested grants;
-- persists private JSON atomically;
-- serializes mode, folder, and block updates;
-- preserves roots and blocks when the mode changes;
-- applies Settings removals as deltas so concurrent grants are preserved;
-- publishes grant, revocation, and mode-change events after persistence.
-
-Relative paths always resolve against the workdir. A capability is used through
-an explicit absolute path and does not change that base.
-
-Revocation increments an in-memory snapshot generation and terminates active
-Restricted processes using that root. Folder requests are never emitted while
-Full Access is active; remembered roots stay stored for a later switch back to
-Restricted.
+These contracts prevent malformed tool operations; they are not a filesystem
+sandbox. Direct shell commands can bypass typed-tool semantics.
 
 ## Process Execution
 
-All agent-launched processes use `AgentProcessExecutor`: foreground/background
-`bash`, embedded skill shell, ripgrep, converters, and helper commands. The
-executor owns spawn, environment construction, process-tree termination, output
-capture, timeout, and an immutable snapshot containing filesystem mode, roots,
-and revocation generation.
+All agent-launched processes use `AgentProcessExecutor`, including foreground
+and background bash, embedded Skill shell commands, ripgrep, document/PDF
+converters, and helper programs. The executor:
 
-In Full Access, the executor spawns the requested command directly. It does not
-probe or invoke `/usr/bin/sandbox-exec`, overlay `userData` protections, or
-translate folder roots into a Seatbelt profile.
+- spawns commands directly with the requested workdir;
+- constructs the child environment and removes only keys explicitly marked
+  Tenon-private by the caller;
+- captures bounded output and owns timeouts;
+- terminates the process group when stopping a Run or background task.
 
-In Restricted mode on macOS, the probed Seatbelt adapter:
+It has no filesystem snapshot, root list, sandbox adapter, mode transition, or
+Seatbelt health probe. It does not invoke `sandbox-exec`.
 
-1. allows ordinary process, network, IPC, and OS behavior;
-2. recursively denies user-data containers (`/Users` and `/Volumes`) and then
-   re-allows only snapshot read roots;
-3. permits writes only to snapshot write roots;
-4. denies the protected `userData` container;
-5. re-allows only the declared workdir, scratch, and exact invoked
-   managed-skill exceptions.
+Child processes inherit user-owned environment variables such as shell, GitHub,
+and cloud credentials. Provider credentials are not copied into child variables,
+but they are stored as private-mode files under `userData`, so any Full Access
+process can read or modify them through the filesystem.
 
-The application-bound managed-content protection is a read-only upper bound.
-`AgentProcessExecutor` intersects that bound with the invocation snapshot, so
-Restricted mode can admit one exact active hash without exposing the managed
-store.
+Native OS failures and provider/service failures are returned as their real
+errors. Tenon does not infer missing filesystem authorization from stderr and
+does not add an internal recovery card.
 
-If Seatbelt is unavailable, Restricted process execution is unavailable because
-Tenon cannot enforce its selected boundary. Full Access does not depend on
-Seatbelt availability.
+## Direct Host And Network Effects
 
-`bash.required_folders` is meaningful only in Restricted mode. Missing declared
-roots follow the folder capability flow. Undeclared access receives the real
-sandbox failure, and the model must issue a fresh call with the required folder.
-Generic OS/TCC/process errors remain command failures; Tenon does not infer a
-missing folder from stderr text.
-
-Changing either direction between Full Access and Restricted increments the
-snapshot generation and terminates all active agent-launched processes. Process
-start checks generation before and after Restricted sandbox preparation, so a
-snapshot captured under the previous mode cannot start after the change.
-
-The process boundary is mode enforcement, not general hostile-code containment.
-Docker, Apple Events, OS services, network services, and deliberately malicious
-executables remain governed by their own boundaries.
-
-## Credentials
-
-Child processes inherit the user's ambient environment. Variables such as
-`GITHUB_TOKEN`, cloud credentials, and custom tokens are user-owned host
-capabilities and are not removed by name. Callers may explicitly mark injected
-environment keys as Tenon-private; only those marked keys are removed.
-
-Provider credentials are not copied into child environment variables. They are
-stored as plaintext JSON under `userData` with POSIX mode `0600`, however, so
-Full Access processes can read or change them through ordinary filesystem APIs.
-Restricted processes cannot reach that store.
-
-## Direct Host And Network Execution
-
-Tenon has no action-level hard block for recursive root/home deletion, disk
-tools, raw devices, shutdown/reboot, root ownership changes, package installs,
-deployments, Git publishes, messages, payments, or unknown shell commands. The
-user's OS account and native authorization own those effects.
+Tenon has no action-level hard block for recursive deletion, disk tools, raw
+devices, shutdown/reboot, ownership changes, package installs, deployments, Git
+publishes, messages, payments, or unknown shell commands. The OS account and
+native authorization own those effects.
 
 The unprivileged `web_fetch` client accepts credential-free HTTP(S), including
 loopback, private, link-local, and metadata addresses. Direct requests use a
@@ -196,131 +105,100 @@ dedicated non-persistent Electron session with `credentials: "omit"`. Browser
 fallback uses a separate non-persistent session and clears storage,
 authentication state, and cache before and after each use.
 
-## Scoped Runs And Skills
+A mistaken or prompt-injected file/process-capable agent can read and exfiltrate
+provider keys, OAuth tokens, shell credentials, and other host files; directly
+modify Tenon stores outside the command layer; change block rules or startup
+files; or affect external systems through inherited credentials and network
+access. This is the explicit Full Access product boundary.
 
-Verifier, Research, Dream, isolated-skill, and explicitly scoped Runs receive a
-narrowed tool catalog before the model starts. A tool outside that catalog
-cannot be called. Filesystem mode applies uniformly to every file/process tool
-that remains in the catalog; an unattended or delegated Run does not receive an
-implicit safer mode.
+## Scoped Runs, Sub-agents, And Skills
+
+Verifier, Research, Dream, delegated sub-agent, isolated-Skill, and explicitly
+scoped Runs receive a narrowed tool catalog before the model starts. A file or
+process tool that remains in that catalog has the same host-account authority as
+the main agent. A narrower catalog controls callable operations; it does not
+create filesystem or process isolation.
+
+Main and sub-agent processes share the host filesystem, Git worktrees, process
+namespace, ports, databases, Tenon state, credentials, and external service
+accounts. Concurrent agents can interfere with each other when they mutate the
+same resource. Workflows that need isolation must allocate separate worktrees,
+`userData` directories, ports, accounts, containers, or VMs. Tenon does not
+provide that isolation automatically.
 
 For `execution: isolated`, `allowed-tools` selects whole tool names. Omitted
-`allowed-tools` creates a tool-free isolated Run. Inline skills keep the parent
+`allowed-tools` creates a tool-free isolated Run. Inline Skills keep the parent
 Run's catalog unchanged. Command-pattern entries do not authorize shell forms.
 
-Shell writes under `.agents/skills` are ordinary user-data writes. Typed
-`file_write` / `file_edit` retain the validated authoring gateway, provenance,
-undo metadata, and hot reload. Shell or external-editor writes are validated on
-discovery/load; invalid skills remain unloaded with diagnostics.
+Typed `file_write` / `file_edit` calls under recognized Skill roots retain the
+validated authoring gateway, provenance, undo metadata, and hot reload. Shell
+or external-editor writes are validated on discovery; invalid Skills stay
+unloaded with diagnostics.
 
-Installing or enabling a managed skill is a product lifecycle action, not a
-tool grant. Recommended and Unverified labels do not change the selected
-filesystem mode, tool catalog, user blocks, native authorization, or service
-credentials.
+Installing or enabling a managed Skill is a product lifecycle action, not a
+tool grant. Recommended and Unverified labels do not change host authority,
+tool catalogs, user blocks, native authorization, or service credentials.
 
-## Interaction Flows
+## Explicit Blocks
 
-### Full Access execution
-
-1. The runtime derives audit descriptors and checks explicit user blocks.
-2. File tools widen their effective path root to the filesystem root.
-3. Processes spawn directly with the Full Access snapshot.
-4. Native OS/provider failures are returned as their real errors.
-
-There is no folder request, continue-anyway action, or control-plane exception.
-
-### Restricted foreground folder acquisition
-
-1. A typed file tool targets a path, or `bash` declares `required_folders`.
-2. The ownership boundary rejects private control state without UI.
-3. The folder service computes uncovered canonical roots.
-4. A runtime-wide acquisition registry emits one `folder` request per canonical
-   folder set while retaining per-call audit.
-5. **Grant and remember** persists the roots, re-evaluates, and executes once.
-   **Cancel** aborts the call.
-6. Later Restricted Runs, conversations, and launches reuse the capability.
-
-### Restricted unattended acquisition
-
-An unattended Agent Session records one durable `needs_input` folder request and
-stops before process execution. Granting the folder starts a new continuation
-Session after the original is terminal. Switching to Full Access also resolves
-covered pending requests and starts fresh continuation tool calls; it never
-replays a partially started process.
-
-Conversation restore projects unresolved requests back into the composer. A
-Settings grant or mode change triggers recovery even when the original card is
-not mounted.
-
-### OS and provider acquisition
-
-OAuth, Keychain, TCC, administrator authorization, CLI login, and service
-payment flows use their owning system. Tenon may surface concrete remediation
-but does not add a second confirmation. The owner remembers successful access.
-
-## Persistent Settings
-
-`agent-capabilities.json` under `userData` contains:
+`agent-capabilities.json` under `userData` contains only:
 
 ```ts
 interface AgentCapabilitySettings {
-  filesystemMode: 'full-access' | 'restricted';
-  folders: string[];
   blocks: string[];
 }
 ```
 
-Missing or invalid `filesystemMode` resolves to `full-access`. The default block
-list and folder list are empty. Existing folder grants remain stored while Full
-Access is selected.
-
-Supported user-block syntax is `Action(action.kind)` or
+The default list is empty. Supported syntax is `Action(action.kind)` or
 `Command(exact command form)`. Command matching normalizes whitespace outside
-quotes. Broad, empty, or unknown entries are inert and produce diagnostics. The
-debug panel can add a block from a concrete tool exchange; Settings can remove
-it.
+quotes. Broad, empty, malformed, and unknown entries are inert and produce
+diagnostics. Local-file actions use `file.*.local_path` and
+`file.*.sensitive_local_path`; there is no inside/outside Tenon area split.
+
+Blocks are checked before dispatch for every Run. The debug panel can append a
+block from a concrete tool exchange; Settings can remove blocks. They are local
+dispatch policy, not tamper-resistant containment: a process with host
+filesystem access can change their store, invoke alternate host mechanisms, or
+continue work it already started.
 
 Settings -> Security contains:
 
-- **Agent Access**: Full Access / Restricted segmented control;
-- **Folder Access**: add, list, and revoke persistent roots, visible only while
-  Restricted is selected;
-- **Your Blocks**: list and remove explicit user blocks in both modes;
-- **System Boundary**: mode-specific, truthful host/control-state copy.
+- **Agent Access**: fixed **Full Access** status and host-authority description;
+- **Your Blocks**: list and remove explicit user blocks;
+- **System Boundary**: OS-account scope plus native authorization caveats.
 
-Folder picking performs one atomic grant. The Settings draft records a mode
-replacement plus explicit folder/block removals. Save applies that patch to the
-current persistent state, preserving concurrent grants and blocks.
+There is no mode switch, folder list, folder picker, or authorization card.
 
 ## Events And Runtime Transport
 
 The durable audit pair remains:
 
-- `tool.capability.checked`, outcome
-  `allow | capability_required | unavailable`;
+- `tool.capability.checked`, outcome `allow | unavailable`;
 - `tool.capability.resolved`, status
-  `available | unavailable | cancelled`.
+  `available | unavailable`.
 
-`requestId` joins the pair. Sources and resolution reasons distinguish default
-access, remembered folders, folder grants, user blocks, Restricted control
-state, user cancel, runtime failure, and Run abort. Full Access allows use the
-existing `default` source; descriptors carry the concrete action/path metadata.
+`requestId` joins the pair. Sources distinguish default access from user blocks.
+The runtime emits the pair together before dispatch; there is no in-flight
+capability request to cancel. Action/path descriptors remain payload-backed
+audit data.
 
-Restricted folder cards use transient `capability_request` /
-`capability_resolved` events and the `agent_resolve_capability` command. There
-is no approval-named transport or persisted approval event track.
+There are no folder request/resolution renderer events, commands, notification
+payloads, replay records, or composer cards.
 
 ## Separate Product Invariants
 
-Some failures are not capability decisions:
+These boundaries remain independent of agent Full Access:
 
-- Electron keeps `contextIsolation`, renderer sandboxing, navigation guards,
-  and its small renderer permission allow-list;
+- Electron keeps `contextIsolation: true`, renderer `sandbox: true`,
+  `nodeIntegration: false`, CSP, navigation guards, and its small permission
+  allow-list;
 - Issue execution validates lifecycle, scope, dependencies, and output
   contracts;
+- stored local-file references retain their renderer-facing trusted-root and
+  safe-open validation;
 - `human-review` completion remains an explicit product workflow;
-- typed authoring gateways reject malformed skill definitions;
+- typed authoring gateways reject malformed Skill definitions;
 - providers and the OS may report unavailable credentials or authorization.
 
-These operations return their own direct errors or owner-specific interaction.
-They must not be converted into generic risk confirmation prompts.
+They return their own errors or owner-specific interaction and must not be
+converted into generic risk confirmation prompts.

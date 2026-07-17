@@ -1,18 +1,10 @@
 import path from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import {
   agentToolActionKindProfile,
   isReadOnlyActionKind,
 } from '../core/agentActionCatalog';
-import {
-  capabilityFolderForTarget,
-  canonicalPathPreservingSuffix,
-  createFolderCapabilitySnapshot,
-  isPathInside,
-  missingFolderCapabilities,
-  normalizeRequiredFolders,
-  protectedRootForPath,
-} from './agentFolderCapabilities';
 import {
   matchingBlockForDescriptor,
   parseAgentCapabilitySettings,
@@ -30,68 +22,37 @@ export type {
 } from './agentCapabilityRules';
 
 export type AgentCapabilityAccess = 'read' | 'write' | 'execute' | 'control' | 'unknown';
-export type AgentCapabilityBehavior = 'allow' | 'capability_required' | 'unavailable';
-export type AgentCapabilitySource = 'default' | 'folder_capability' | 'user_blocklist' | 'control_plane';
-
-export interface AgentCapabilityDetail {
-  label: string;
-  value: string;
-}
-
-export interface AgentFolderCapabilityRequest {
-  kind: 'folder';
-  title: string;
-  target: string;
-  details: AgentCapabilityDetail[];
-  folders: string[];
-}
 
 export interface AgentCapabilityPolicy {
   workspaceRoot: string;
-  scratchRoot?: string;
-  protectedStoreRoot?: string;
-  trustedReadRoots: readonly string[];
   capabilityConfig: AgentCapabilityConfig;
 }
 
 export interface AgentCapabilityPolicyInput {
   workspaceRoot?: string;
-  scratchRoot?: string;
-  protectedStoreRoot?: string;
-  trustedReadRoots?: readonly string[];
   capabilityConfig?: unknown;
 }
 
 interface AgentCapabilityDecisionBase {
-  behavior: AgentCapabilityBehavior;
   access: AgentCapabilityAccess;
-  reason?: string;
-  code?: string;
-  source: AgentCapabilitySource;
   descriptor?: ToolActionDescriptor;
   descriptors: readonly ToolActionDescriptor[];
 }
 
 export interface AgentCapabilityAllowDecision extends AgentCapabilityDecisionBase {
   behavior: 'allow';
-}
-
-export interface AgentCapabilityRequiredDecision extends AgentCapabilityDecisionBase {
-  behavior: 'capability_required';
-  code: 'folder_access_required';
-  reason: string;
-  request: AgentFolderCapabilityRequest;
+  source: 'default';
 }
 
 export interface AgentCapabilityUnavailableDecision extends AgentCapabilityDecisionBase {
   behavior: 'unavailable';
-  code: string;
+  code: 'user_blocked';
   reason: string;
+  source: 'user_blocklist';
 }
 
 export type AgentCapabilityDecision =
   | AgentCapabilityAllowDecision
-  | AgentCapabilityRequiredDecision
   | AgentCapabilityUnavailableDecision;
 
 export interface AgentCapabilityEvaluationInput {
@@ -119,13 +80,6 @@ export function createAgentCapabilityPolicy(input: AgentCapabilityPolicyInput = 
   const workspaceRoot = canonicalPathPreservingSuffix(input.workspaceRoot ?? process.cwd());
   return {
     workspaceRoot,
-    scratchRoot: input.scratchRoot?.trim()
-      ? canonicalPathPreservingSuffix(input.scratchRoot)
-      : undefined,
-    protectedStoreRoot: input.protectedStoreRoot?.trim()
-      ? canonicalPathPreservingSuffix(input.protectedStoreRoot)
-      : undefined,
-    trustedReadRoots: normalizeRoots(input.trustedReadRoots),
     capabilityConfig: parseAgentCapabilitySettings(input.capabilityConfig),
   };
 }
@@ -141,90 +95,17 @@ export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInpu
     .find((entry) => entry.rule);
   if (userBlock?.rule) {
     return unavailable(
-      'user_blocked',
       `Blocked by user rule ${userBlock.rule.ruleValue}.`,
       access,
       descriptors,
       userBlock.descriptor,
-      'user_blocklist',
     );
   }
 
-  if (policy.capabilityConfig.filesystemMode === 'full-access') {
-    return {
-      behavior: 'allow',
-      access,
-      source: 'default',
-      descriptor: descriptors[0],
-      descriptors,
-    };
-  }
-
-  const unavailableDescriptor = descriptors.find((descriptor) => descriptor.code === 'control_plane_unavailable');
-  if (unavailableDescriptor) {
-    return unavailable(
-      'control_plane_unavailable',
-      unavailableDescriptor.consequence,
-      access,
-      descriptors,
-      unavailableDescriptor,
-      'control_plane',
-    );
-  }
-
-  const snapshot = createFolderCapabilitySnapshot({
-    filesystemMode: policy.capabilityConfig.filesystemMode,
-    workspaceRoot: policy.workspaceRoot,
-    scratchRoot: policy.scratchRoot,
-    activeSkillReadRoots: policy.trustedReadRoots,
-    protectedRoots: policy.protectedStoreRoot ? [policy.protectedStoreRoot] : [],
-  }, policy.capabilityConfig.folders);
-  const requiredFolders = requiredFoldersForTool(toolName, input.args, policy.workspaceRoot, snapshot, access);
-  const requiredFolderAccess = access === 'read' ? 'read' : 'write';
-  const protectedRequiredRoot = requiredFolders
-    .map((folder) => protectedRootForPath(snapshot, folder, requiredFolderAccess))
-    .find((root): root is string => Boolean(root));
-  if (protectedRequiredRoot) {
-    return unavailable(
-      'control_plane_unavailable',
-      `Agent processes cannot access Tenon control state under ${protectedRequiredRoot}.`,
-      access,
-      descriptors,
-      descriptors[0],
-      'control_plane',
-    );
-  }
-  const missingFolders = missingFolderCapabilities(requiredFolders, { readRoots: snapshot.writeRoots });
-  if (missingFolders.length > 0) {
-    const target = missingFolders.join(', ');
-    return {
-      behavior: 'capability_required',
-      access,
-      code: 'folder_access_required',
-      source: 'default',
-      reason: `Folder access is required before ${input.toolName} can run: ${target}`,
-      request: {
-        kind: 'folder',
-        title: missingFolders.length === 1 ? 'Folder access required' : 'Folder access required',
-        target,
-        folders: missingFolders,
-        details: missingFolders.map((folder) => ({ label: 'Folder', value: folder })),
-      },
-      descriptor: descriptors[0],
-      descriptors,
-    };
-  }
-
-  const usesRememberedFolder = descriptors.some((descriptorValue) => (
-    descriptorValue.targetPath
-    && policy.capabilityConfig.folders.some((folder) => isPathInside(folder, descriptorValue.targetPath!))
-  )) || requiredFolders.some((required) => (
-    policy.capabilityConfig.folders.some((folder) => isPathInside(folder, required))
-  ));
   return {
     behavior: 'allow',
     access,
-    source: usesRememberedFolder ? 'folder_capability' : 'default',
+    source: 'default',
     descriptor: descriptors[0],
     descriptors,
   };
@@ -257,12 +138,12 @@ function descriptorForKnownTool(toolName: string, args: unknown): ToolActionDesc
   if (toolName === 'generate_image') return simpleDescriptor(toolName, args, 'agent.image.generate', 'image generation', 'Generate an image with an enabled provider.', 'external_system');
   if (toolName === 'past_chats') return simpleDescriptor(toolName, args, 'agent.memory.recall', 'past chat recall', 'Read local conversation history.');
   if (toolName === 'ask_user_question') return simpleDescriptor(toolName, args, 'agent.user_question.ask', 'user question', 'Ask the user for required product input.');
-  if (toolName === 'node_read' || toolName === 'node_search') return simpleDescriptor(toolName, args, 'outline.read', 'outline read', 'Read local outline content.', 'allowed_file_area');
-  if (toolName === 'node_create' || toolName === 'node_edit' || toolName === 'data_import') return simpleDescriptor(toolName, args, 'outline.edit', 'outline edit', 'Change local outline content.', 'allowed_file_area');
-  if (toolName === 'node_delete') return simpleDescriptor(toolName, args, 'outline.delete', 'outline delete', 'Delete local outline content.', 'allowed_file_area');
+  if (toolName === 'node_read' || toolName === 'node_search') return simpleDescriptor(toolName, args, 'outline.read', 'outline read', 'Read local outline content.', 'local_system');
+  if (toolName === 'node_create' || toolName === 'node_edit' || toolName === 'data_import') return simpleDescriptor(toolName, args, 'outline.edit', 'outline edit', 'Change local outline content.', 'local_system');
+  if (toolName === 'node_delete') return simpleDescriptor(toolName, args, 'outline.delete', 'outline delete', 'Delete local outline content.', 'local_system');
   if (toolName === 'outline_undo_stack') {
     const actionKind = firstActionKindForTool(toolName, args, 'outline.read') ?? 'outline.read';
-    return simpleDescriptor(toolName, args, actionKind, 'outline history', 'Inspect or apply local outline history.', 'allowed_file_area');
+    return simpleDescriptor(toolName, args, actionKind, 'outline history', 'Inspect or apply local outline history.', 'local_system');
   }
   if (toolName === 'bash_stop') return simpleDescriptor(toolName, args, 'shell.stop', 'process stop', 'Stop an agent-launched background process.');
   if (toolName === 'skill') return simpleDescriptor(toolName, args, 'agent.skill.invoke', 'skill invocation', 'Invoke installed skill instructions.');
@@ -296,10 +177,10 @@ function derivePathToolActionDescriptor(
 ): ToolActionDescriptor {
   const rawPath = getStringArg(args, pathArgName);
   const write = access === 'write';
-  const fallback = fileActionKind(toolName, write, 'allowed_file_area');
+  const fallback = fileActionKind(toolName, write, 'local_path');
   if (!rawPath) {
     return descriptor(toolName, fallback, {
-      accessScope: 'allowed_file_area',
+      accessScope: 'local_system',
       title: write ? 'file write' : 'file read',
       summary: write ? 'Write a local file.' : 'Read a local file.',
       consequence: 'No path was provided.',
@@ -307,39 +188,14 @@ function derivePathToolActionDescriptor(
   }
 
   const targetPath = canonicalPathPreservingSuffix(resolveCapabilityPath(policy.workspaceRoot, rawPath));
-  const snapshot = createFolderCapabilitySnapshot({
-    filesystemMode: policy.capabilityConfig.filesystemMode,
-    workspaceRoot: policy.workspaceRoot,
-    scratchRoot: policy.scratchRoot,
-    activeSkillReadRoots: policy.trustedReadRoots,
-    protectedRoots: policy.protectedStoreRoot ? [policy.protectedStoreRoot] : [],
-  }, policy.capabilityConfig.folders);
-  const protectedRoot = protectedRootForPath(snapshot, targetPath, write ? 'write' : 'read');
-  if (protectedRoot) {
-    return descriptor(toolName, fileActionKind(toolName, write, 'sensitive_local_path'), {
-      accessScope: 'outside_allowed_file_area',
-      title: 'Tenon control plane access',
-      summary: `${write ? 'Write' : 'Read'} private Tenon state at ${targetPath}.`,
-      consequence: `Agent file tools cannot access Tenon control state under ${protectedRoot}.`,
-      targetPath,
-      code: 'control_plane_unavailable',
-    });
-  }
-  const roots = write ? snapshot.writeRoots : snapshot.readRoots;
-  const inside = policy.capabilityConfig.filesystemMode === 'full-access'
-    || roots.some((root) => isPathInside(root, targetPath));
   const sensitive = isSensitivePath(targetPath);
-  const scope: ToolAccessScope = inside ? 'allowed_file_area' : 'outside_allowed_file_area';
-  const actionKind = fileActionKind(toolName, write, sensitive ? 'sensitive_local_path' : scope);
+  const scope: ToolAccessScope = 'local_system';
+  const actionKind = fileActionKind(toolName, write, sensitive ? 'sensitive_local_path' : 'local_path');
   return descriptor(toolName, actionKind, {
     accessScope: scope,
     title: write ? 'file write' : 'file read',
     summary: `${write ? 'Write' : 'Read'} ${targetPath}.`,
-    consequence: policy.capabilityConfig.filesystemMode === 'full-access'
-      ? 'This path is available through Full Access.'
-      : inside
-        ? 'This path is covered by an existing folder capability.'
-        : 'This path needs a folder capability.',
+    consequence: 'This path is available through Full Access.',
     targetPath,
   });
 }
@@ -352,7 +208,7 @@ function deriveBashActionDescriptors(
   const descriptors = splitShellSegments(command).map((segment) => classifyShellSegment(segment, command));
   if (getBooleanArg(args, 'run_in_background')) {
     descriptors.push(descriptor('bash', 'shell.background_process', {
-      accessScope: 'allowed_file_area',
+      accessScope: 'local_system',
       title: 'background process',
       summary: command,
       consequence: 'Run a process in the background.',
@@ -368,7 +224,7 @@ function classifyShellSegment(segmentInput: string, fullCommand: string): ToolAc
   const values = (actionKind: AgentToolActionKind, title: string, summary: string): ToolActionDescriptor => descriptor('bash', actionKind, {
     accessScope: actionKind === 'shell.network_write' || actionKind === 'git.publish_remote' || actionKind === 'deploy.publish_remote'
       ? 'external_system'
-      : 'allowed_file_area',
+      : 'local_system',
     title,
     summary,
     consequence: summary,
@@ -400,31 +256,12 @@ function classifyShellSegment(segmentInput: string, fullCommand: string): ToolAc
     return values('shell.local_code_execution', 'local code execution', segment);
   }
   if (containsShellWriteOperator(segment) || /\b(?:sed|perl|ruby)\s+-[^\s]*i\b/i.test(segment)) {
-    return values('file.edit.allowed_file_area', 'shell file edit', segment);
+    return values('file.edit.local_path', 'shell file edit', segment);
   }
   if (/\b(?:ls|find|fd|rg|grep|cat|head|tail|sed|awk|wc|stat|git\s+(?:status|diff|log|show|branch))\b/i.test(segment)) {
     return values('shell.read_search', 'local inspection', segment);
   }
   return unknownShellDescriptor(fullCommand, 'Unclassified shell syntax.');
-}
-
-function requiredFoldersForTool(
-  toolName: string,
-  args: unknown,
-  workspaceRoot: string,
-  snapshot: ReturnType<typeof createFolderCapabilitySnapshot>,
-  access: AgentCapabilityAccess,
-): string[] {
-  if (toolName === 'bash') return normalizeRequiredFolders(getUnknownArg(args, 'required_folders'), workspaceRoot);
-  const pathArg = toolPathArgumentName(toolName);
-  if (!pathArg) return [];
-  const rawPath = getStringArg(args, pathArg);
-  if (!rawPath) return [];
-  const target = canonicalPathPreservingSuffix(resolveCapabilityPath(workspaceRoot, rawPath));
-  const allowedRoots = access === 'write' ? snapshot.writeRoots : snapshot.readRoots;
-  if (allowedRoots.some((root) => isPathInside(root, target))) return [];
-  const folder = capabilityFolderForTarget(target, workspaceRoot);
-  return folder ? [folder] : [];
 }
 
 export function toolPathArgumentName(toolNameInput: string): string | null {
@@ -445,13 +282,13 @@ function firstActionKindForTool(
 function fileActionKind(
   toolName: string,
   write: boolean,
-  scope: 'allowed_file_area' | 'outside_allowed_file_area' | 'sensitive_local_path',
+  scope: 'local_path' | 'sensitive_local_path',
 ): AgentToolActionKind {
   if (!write) return `file.read.${scope}`;
-  if (scope !== 'allowed_file_area') return `file.write.${scope}`;
-  if (toolName === 'file_delete') return 'file.delete.allowed_file_area';
-  if (toolName === 'file_edit') return 'file.edit.allowed_file_area';
-  return 'file.write.allowed_file_area';
+  if (scope !== 'local_path') return `file.write.${scope}`;
+  if (toolName === 'file_delete') return 'file.delete.local_path';
+  if (toolName === 'file_edit') return 'file.edit.local_path';
+  return 'file.write.local_path';
 }
 
 function descriptor(
@@ -464,7 +301,7 @@ function descriptor(
 
 function unknownShellDescriptor(command: string, reason: string): ToolActionDescriptor {
   return descriptor('bash', 'shell.unknown', {
-    accessScope: 'allowed_file_area',
+    accessScope: 'local_system',
     title: 'unclassified shell command',
     summary: command || reason,
     consequence: reason,
@@ -473,19 +310,17 @@ function unknownShellDescriptor(command: string, reason: string): ToolActionDesc
 }
 
 function unavailable(
-  code: string,
   reason: string,
   access: AgentCapabilityAccess,
   descriptors: readonly ToolActionDescriptor[],
   descriptorValue?: ToolActionDescriptor,
-  source: AgentCapabilitySource = 'default',
 ): AgentCapabilityUnavailableDecision {
   return {
     behavior: 'unavailable',
-    code,
+    code: 'user_blocked',
     reason,
     access,
-    source,
+    source: 'user_blocklist',
     descriptor: descriptorValue ?? descriptors[0],
     descriptors,
   };
@@ -545,16 +380,6 @@ function isSensitivePath(filePath: string): boolean {
   return /(?:^|\/)(?:\.ssh|\.gnupg|\.aws|\.azure|Library\/Keychains)(?:\/|$)|(?:^|\/)\.env(?:$|[./-])|\.(?:pem|key|p12|pfx)$/i.test(filePath);
 }
 
-function normalizeRoots(roots: readonly string[] | undefined): string[] {
-  const normalized: string[] = [];
-  for (const root of roots ?? []) {
-    if (!root.trim()) continue;
-    const canonical = canonicalPathPreservingSuffix(root);
-    if (!normalized.some((existing) => isPathInside(existing, canonical))) normalized.push(canonical);
-  }
-  return normalized;
-}
-
 function normalizeToolName(value: string): string {
   const normalized = value.trim().replace(/^\//, '').replace(/-/g, '_').toLowerCase();
   return TOOL_ALIASES.get(normalized) ?? normalized;
@@ -585,6 +410,23 @@ function expandHome(inputPath: string): string {
   if (inputPath.startsWith('$HOME/')) return path.join(homedir(), inputPath.slice(6));
   if (inputPath.startsWith('${HOME}/')) return path.join(homedir(), inputPath.slice(8));
   return inputPath;
+}
+
+function canonicalPathPreservingSuffix(inputPath: string): string {
+  const requested = path.resolve(expandHome(inputPath));
+  let existing = requested;
+  while (!existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  try {
+    const canonicalExisting = realpathSync.native(existing);
+    const suffix = path.relative(existing, requested);
+    return suffix ? path.resolve(canonicalExisting, suffix) : canonicalExisting;
+  } catch {
+    return requested;
+  }
 }
 
 function parseShellWords(command: string): string[] {

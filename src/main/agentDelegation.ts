@@ -134,12 +134,6 @@ export interface AgentChildAgentCreateInput {
   systemPrompt: string;
   executingAgentId: string;
   parentAgentId: string;
-  /**
-   * The consultee to attribute this run's folder-capability requests to (its own
-   * id for a fresh consult, the inherited consultee for a fork, undefined for the
-   * user's own agent). Resolved to a mention token by the request card.
-   */
-  requestedByAgentId?: string;
   memoryOwnerAgentId: string;
   memoryOriginWorkspace?: string;
   model?: string;
@@ -153,14 +147,6 @@ export interface AgentChildAgentCreateInput {
   disallowedTools?: string[];
   scopePreauthorized?: boolean;
   l0CacheBreakpointEnabled?: boolean;
-  /**
-   * Run with no interactive folder-capability channel. A missing capability is
-   * surfaced as durable needs-input instead of waiting for a human; calls within
-   * the current capability set still run. Set only by runtime-owned unattended
-   * execution paths.
-   */
-  unattended?: boolean;
-  blockForInput?: (reason: string) => void;
   afterToolResult?: (
     toolCallId: string,
     toolName: string,
@@ -238,26 +224,18 @@ export interface AgentDelegationRuntimeOptions {
   memoryOwnerAgentId?: string;
   localRoot?: string;
   scratchRoot?: string;
-  protectedStoreRoot?: string;
   depth?: number;
   ancestry?: string[];
   maxDepth?: number;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
-  /**
-   * The consultee this runtime executes as, for folder-request attribution. Set
-   * when this runtime is a consulted agent (a fresh child) or a fork descending
-   * from one; undefined for the user's own top agent. A run's forks inherit it.
-   */
-  requestedByAgentId?: string;
   host: AgentDelegationRuntimeHost;
 }
 
-// The live runtime record: the canonical {@link DelegationDetail} (id, status,
-// the descriptive fields, the persisted `unattended` flag) plus the in-memory
-// execution state that never persists (the live agent, the message buffer, the
-// completion promise). The descriptive half is the SAME shape the durable record
-// and IPC snapshot derive from — the convergence's single source.
+// The live runtime record: the canonical {@link DelegationDetail} plus the
+// in-memory execution state that never persists (the live agent, message buffer,
+// and completion promise). The descriptive half is the same shape the durable
+// record and IPC snapshot derive from.
 interface DelegationRunState extends DelegationDetail {
   definition: AgentDefinition | null;
   depth: number;
@@ -358,13 +336,6 @@ interface AgentToolParams {
   inheritedVerificationAttempts?: number;
   inheritedVerifierGapSignatures?: string[];
   inheritedVerifierRunIds?: string[];
-  /**
-   * Run with no interactive folder-capability channel. A missing capability is
-   * surfaced as durable needs-input instead of waiting for a human, while calls
-   * within the current capability set still run. Internal-only; not part of the
-   * agent-facing Agent tool schema.
-   */
-  unattended?: boolean;
 }
 
 export interface AgentRunSkillInput {
@@ -382,13 +353,11 @@ export class AgentDelegationRuntime {
   private readonly conversationId: string;
   private readonly localRoot: string;
   private readonly scratchRoot: string;
-  private readonly protectedStoreRoot?: string;
   private readonly depth: number;
   private readonly maxDepth: number;
   private readonly ancestry: string[];
   private readonly executingAgentId: string;
   private readonly memoryOwnerAgentId: string;
-  private readonly requestedByAgentId?: string;
   private readonly inheritedScope?: AgentRunScope;
   private readonly inheritedBudget?: AgentRunBudget;
   private readonly host: AgentDelegationRuntimeHost;
@@ -402,13 +371,11 @@ export class AgentDelegationRuntime {
     this.conversationId = options.conversationId;
     this.localRoot = path.resolve(options.localRoot ?? process.cwd());
     this.scratchRoot = scratchRootForWorkdir(this.localRoot, options.scratchRoot);
-    this.protectedStoreRoot = options.protectedStoreRoot;
     this.depth = options.depth ?? 0;
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH;
     this.ancestry = options.ancestry ?? [];
     this.executingAgentId = options.executingAgentId;
     this.memoryOwnerAgentId = options.memoryOwnerAgentId ?? options.executingAgentId;
-    this.requestedByAgentId = options.requestedByAgentId;
     this.inheritedScope = options.scope;
     this.inheritedBudget = options.budget;
     this.host = options.host;
@@ -430,18 +397,6 @@ export class AgentDelegationRuntime {
     run.agent?.abort();
     this.runs.delete(runId);
     if (run.name && this.names.get(run.name) === runId) this.names.delete(run.name);
-  }
-
-  private blockRunForInput(runId: string, reason: string): void {
-    const run = this.runs.get(runId);
-    if (!run || run.status !== 'running') return;
-    run.status = 'failed';
-    run.objectiveStatus = 'blocked';
-    run.error = reason;
-    run.blockedReason = reason;
-    run.completedAt = Math.max(Date.now(), run.updatedAt + 1);
-    run.updatedAt = run.completedAt;
-    run.agent?.abort();
   }
 
   async listAllAgentDefinitions(): Promise<AgentDefinition[]> {
@@ -1019,7 +974,6 @@ export class AgentDelegationRuntime {
         memoryOriginWorkspace,
         model: params.model,
         effort: params.effort,
-        unattended: params.unattended,
         // The child consumes its prompt via `run.messages` + `runChildAgent`, not
         // through the agent's seed messages.
         initialMessages: [],
@@ -1093,7 +1047,6 @@ export class AgentDelegationRuntime {
       parentBudgetRef: parentBudget,
       budgetSettled: false,
       parentToolCallId,
-      unattended: params.unattended,
       toolResultBudgetState: createToolResultBudgetState(),
       nodeChanges: {},
       fileChanges: {},
@@ -1171,7 +1124,6 @@ export class AgentDelegationRuntime {
     memoryOriginWorkspace?: string;
     model?: string;
     effort?: string;
-    unattended?: boolean;
     initialMessages: AgentMessage[];
     afterToolResult: AgentChildAgentCreateInput['afterToolResult'];
   }): Promise<{
@@ -1213,19 +1165,13 @@ export class AgentDelegationRuntime {
       this.localRoot,
       this.scratchRoot,
       skillRuntime,
-      this.protectedStoreRoot,
     );
-    // A sub-run runs as its spawner, so it inherits folder-request attribution.
-    // The nested runtime carries it so deeper sub-runs inherit it.
-    const requestedByAgentId = this.requestedByAgentId;
     subRunRuntime = new AgentDelegationRuntime({
       conversationId: childConversationId,
       executingAgentId: input.executingAgentId,
       memoryOwnerAgentId: input.memoryOwnerAgentId,
-      requestedByAgentId,
       localRoot: this.localRoot,
       scratchRoot: this.scratchRoot,
-      protectedStoreRoot: this.protectedStoreRoot,
       depth: this.depth + 1,
       maxDepth: this.maxDepth,
       ancestry: [...this.ancestry, input.definition.name],
@@ -1243,7 +1189,6 @@ export class AgentDelegationRuntime {
       systemPrompt,
       executingAgentId: input.executingAgentId,
       parentAgentId: input.parentAgentId,
-      requestedByAgentId,
       memoryOwnerAgentId: input.memoryOwnerAgentId,
       memoryOriginWorkspace: input.memoryOriginWorkspace,
       model: input.model ?? input.definition.model,
@@ -1256,8 +1201,6 @@ export class AgentDelegationRuntime {
       allowedTools: input.definition.tools,
       disallowedTools: input.definition.disallowedTools,
       l0CacheBreakpointEnabled: false,
-      unattended: input.unattended,
-      blockForInput: (reason) => this.blockRunForInput(input.runId, reason),
       afterToolResult: input.afterToolResult,
     });
     return { skillRuntime, localWorkspace, childAgent, subRunRuntime };
@@ -1642,7 +1585,6 @@ export class AgentDelegationRuntime {
           allowedTools: verifierAllowedToolNames(run.scope, run.definition?.tools),
           parentRunId: run.id,
           parentBudget: run.budget,
-          unattended: true,
         }, releaseStartupSlot, verificationSignal);
       } catch (error) {
         releaseStartupSlot?.();
@@ -1794,7 +1736,6 @@ export class AgentDelegationRuntime {
         inheritedVerificationAttempts: run.verificationAttempts,
         inheritedVerifierGapSignatures: run.verifierGapSignatures,
         inheritedVerifierRunIds: run.verifierRunIds,
-        unattended: run.unattended,
       }, releaseStartupSlot, signal, run.parentToolCallId);
       if (signal?.aborted || runWasStopped(run)) {
         const replacementRun = this.runs.get(replacement.runId);
@@ -2029,7 +1970,6 @@ export class AgentDelegationRuntime {
       parentAgentId: run.parentAgentId,
       memoryOwnerAgentId: run.memoryOwnerAgentId,
       memoryOriginWorkspace: run.memoryOriginWorkspace,
-      unattended: run.unattended,
       // Resume continues from the run's restored transcript (the model + effort
       // come from the run's resolved definition, not a fresh override).
       initialMessages: run.messages.map(cloneAgentMessage),
@@ -2102,8 +2042,8 @@ export class AgentDelegationRuntime {
 
   private async resolveDefinitionForRun(run: DelegationRunState): Promise<AgentDefinition> {
     if (run.definition) return run.definition;
-    // Every sub-run is Neva continuing in isolation (the one-Neva invariant); there is no
-    // by-name agent to resolve.
+    // Every sub-run is Neva continuing in a separate model context (the one-Neva
+    // invariant); there is no by-name agent to resolve.
     return createForkAgentDefinition();
   }
 
@@ -2532,7 +2472,6 @@ function snapshotRun(run: DelegationRunState): AgentRunSnapshot {
     blockedReason: run.blockedReason,
     latestVerifierGap: run.latestVerifierGap,
     parentToolCallId: run.parentToolCallId,
-    unattended: run.unattended,
   };
 }
 
@@ -2625,7 +2564,6 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
     model: coerceString(raw.model),
     name: coerceString(raw.name),
     allowedTools,
-    unattended: raw.unattended === true,
   };
 }
 

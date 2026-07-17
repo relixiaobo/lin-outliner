@@ -23,6 +23,10 @@ Session tools.
 - There is still exactly one built-in assistant, **Neva**.
 - Delegation creates same-agent execution workers, not independent personas,
   team members, or user-visible assignees.
+- A worker's separate ledger, model context, and tool catalog do not create a
+  process or filesystem sandbox. Parent and concurrent workers share host files,
+  processes, ports, credentials, application state, and services, so workflows
+  must avoid conflicting mutations or allocate external isolation explicitly.
 - Direct delegated-Run tools are not in the agent tool catalog.
 - The action catalog does not expose delegated-run action kinds.
 - Tool-call UI does not special-case delegated-run tool names.

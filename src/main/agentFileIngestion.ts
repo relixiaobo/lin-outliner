@@ -3,7 +3,6 @@ import path from 'node:path';
 import { agentDerivedFileCache, derivedFileCacheKey } from './agentFileIngestionCache';
 import type { ToolStatus } from './agentToolEnvelope';
 import { runAgentToolProcess } from './agentToolProcess';
-import type { FolderCapabilitySnapshot } from './agentFolderCapabilities';
 
 export type FileIngestionContentPart =
   | { type: 'text'; text: string }
@@ -70,9 +69,8 @@ export class AgentFileIngestionFailure extends Error {
 export async function ingestRichDocumentAsMarkdown(
   filePath: string,
   sourceHash: string | undefined,
-  capabilities: FolderCapabilitySnapshot,
 ): Promise<MarkdownIngestionResult> {
-  const command = await resolveMarkitdownCommand(path.dirname(filePath), capabilities);
+  const command = await resolveMarkitdownCommand(path.dirname(filePath));
   const cacheKey = sourceHash
     ? derivedFileCacheKey(MARKITDOWN_CACHE_EXTRACTOR, sourceHash, {
         ext: path.extname(filePath).toLowerCase(),
@@ -90,7 +88,6 @@ export async function ingestRichDocumentAsMarkdown(
     path.dirname(filePath),
     MARKITDOWN_TIMEOUT_MS,
     {
-      capabilities,
       maxStdoutChars: MARKITDOWN_STDOUT_CAPTURE_CHARS,
       maxStderrChars: MARKITDOWN_STDERR_CAPTURE_CHARS,
     },
@@ -119,15 +116,12 @@ export async function ingestRichDocumentAsMarkdown(
   return converted;
 }
 
-async function resolveMarkitdownCommand(
-  cwd: string,
-  capabilities: FolderCapabilitySnapshot,
-): Promise<MarkitdownCommand> {
+async function resolveMarkitdownCommand(cwd: string): Promise<MarkitdownCommand> {
   const cacheKey = markitdownCommandCacheKey(cwd);
   const cached = markitdownCommandCache.get(cacheKey);
   if (cached) return cached;
 
-  const resolution = resolveMarkitdownCommandUncached(cwd, capabilities);
+  const resolution = resolveMarkitdownCommandUncached(cwd);
   markitdownCommandCache.set(cacheKey, resolution);
   try {
     return await resolution;
@@ -137,14 +131,11 @@ async function resolveMarkitdownCommand(
   }
 }
 
-async function resolveMarkitdownCommandUncached(
-  cwd: string,
-  capabilities: FolderCapabilitySnapshot,
-): Promise<MarkitdownCommand> {
+async function resolveMarkitdownCommandUncached(cwd: string): Promise<MarkitdownCommand> {
   const explicit = normalizedEnvCommand(process.env[MARKITDOWN_COMMAND_ENV]);
   if (explicit) {
     const candidate = commandFromEnv(explicit);
-    if (await canRunMarkitdown(candidate, cwd, capabilities)) return candidate;
+    if (await canRunMarkitdown(candidate, cwd)) return candidate;
     throw new AgentFileIngestionFailure('markitdown_unavailable', `${MARKITDOWN_COMMAND_ENV} does not point to a runnable MarkItDown executable.`, MARKITDOWN_RECOVERY_INSTRUCTIONS);
   }
 
@@ -153,7 +144,7 @@ async function resolveMarkitdownCommandUncached(
     { command: 'python3', argsPrefix: ['-m', 'markitdown'], label: 'python3 -m markitdown' },
   ];
   for (const candidate of candidates) {
-    if (await canRunMarkitdown(candidate, cwd, capabilities)) return candidate;
+    if (await canRunMarkitdown(candidate, cwd)) return candidate;
   }
   throw new AgentFileIngestionFailure('markitdown_unavailable', 'MarkItDown is not available on PATH.', MARKITDOWN_RECOVERY_INSTRUCTIONS);
 }
@@ -161,7 +152,6 @@ async function resolveMarkitdownCommandUncached(
 async function canRunMarkitdown(
   candidate: MarkitdownCommand,
   cwd: string,
-  capabilities: FolderCapabilitySnapshot,
 ): Promise<boolean> {
   const result = await runAgentToolProcess(
     candidate.command,
@@ -169,7 +159,6 @@ async function canRunMarkitdown(
     cwd,
     MARKITDOWN_PROBE_TIMEOUT_MS,
     {
-      capabilities,
       maxStdoutChars: 4_096,
       maxStderrChars: 4_096,
     },

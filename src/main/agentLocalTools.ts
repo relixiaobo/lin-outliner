@@ -1,6 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createReadStream, createWriteStream, existsSync, realpathSync, statSync } from 'node:fs';
 import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -35,13 +35,7 @@ import {
 } from './agentToolParams';
 import { buildAgentLocalToolProcessEnv, runAgentToolProcess } from './agentToolProcess';
 import { resolveRipgrepCommand, type ResolvedRipgrepCommand } from './agentRipgrep';
-import {
-  createFolderCapabilitySnapshot,
-  protectedRootForPath,
-  type FolderCapabilitySnapshot,
-} from './agentFolderCapabilities';
 import { getAgentProcessExecutor } from './agentProcessExecutor';
-import type { AgentFilesystemMode } from '../core/agentFilesystemMode';
 
 export { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 
@@ -53,31 +47,14 @@ interface LocalToolOptions {
 }
 
 export interface AgentLocalWorkspaceContext {
-  // The agent's file area (cwd + file_* root + relative-path base). Its own outputs land here.
+  // The Run workdir: cwd, default file-tool search root, and relative-path base.
   root: string;
-  // App-owned ephemeral area for materialized attachments / web-fetch / tool-outputs / PDF
-  // pages. A sibling of `root`, so it never appears in the file area's default listings, yet
-  // it is a co-trusted read root (see `resolveWorkspacePath`) so the agent can read what the
-  // app places there. Defaults to `<root>/tmp` when no explicit scratch root is supplied.
+  // App-owned ephemeral area for materialized attachments, web fetches, tool output, and PDF
+  // pages. A sibling of `root`, so it does not appear in default workdir listings. Defaults to
+  // `<root>/tmp` when no explicit scratch root is supplied.
   scratchRoot: string;
-  // User-handed folders and active read-only skill resources.
-  // These widen file-tool containment without changing the relative-path base.
-  capabilityRoots: ResolvedAgentLocalCapabilityRoot[];
-  filesystemMode: AgentFilesystemMode;
-  processCapabilities: FolderCapabilitySnapshot;
-  protectedStoreRoot?: string;
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
-}
-
-export interface AgentLocalCapabilityRoot {
-  access: 'read' | 'write';
-  root: string;
-}
-
-interface ResolvedAgentLocalCapabilityRoot extends AgentLocalCapabilityRoot {
-  realRoot: string;
-  isDirectory: boolean;
 }
 
 type WorkspaceContext = AgentLocalWorkspaceContext;
@@ -263,7 +240,6 @@ interface BashParams {
   description?: string;
   timeout?: number;
   run_in_background?: boolean;
-  required_folders?: string[];
 }
 
 export interface BashData {
@@ -419,7 +395,6 @@ interface ProcessResult {
 interface ProcessOptions {
   maxStdoutChars?: number;
   maxStderrChars?: number;
-  capabilities: FolderCapabilitySnapshot;
 }
 
 interface ProcessItemsResult {
@@ -515,7 +490,7 @@ const FILE_READ_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'The absolute path to the file to read.' },
+    file_path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative path to the file to read.' },
     offset: { type: 'integer', minimum: 0, description: 'The line number to start reading from. Only provide if the file is too large to read at once.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_FILE_READ_LIMIT, description: 'The number of lines to read. Only provide if the file is too large to read at once.' },
     pages: { type: 'string', description: `Page range for PDF files, for example "1-5", "3", or "10-20". Only applicable to PDF files. Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.` },
@@ -528,7 +503,7 @@ const FILE_GLOB_PARAMETERS = {
   required: ['pattern'],
   properties: {
     pattern: { type: 'string', minLength: 1, description: 'The glob pattern to match files against.' },
-    path: { type: 'string', minLength: 1, description: 'The directory to search in. If not specified, the default file area will be used. Omit this field for the default behavior.' },
+    path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative directory to search. Omit it to search the Run workdir.' },
   },
 };
 
@@ -538,7 +513,7 @@ const FILE_GREP_PARAMETERS = {
   required: ['pattern'],
   properties: {
     pattern: { type: 'string', minLength: 1, description: 'The regular expression pattern to search for in file contents.' },
-    path: { type: 'string', minLength: 1, description: 'File or directory to search in. Defaults to the default file area.' },
+    path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative file or directory to search. Defaults to the Run workdir.' },
     glob: { type: 'string', minLength: 1, description: 'Glob pattern to filter files, for example "*.js" or "*.{ts,tsx}".' },
     output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'], description: 'Output mode: "content" shows matching lines, "files_with_matches" shows file paths, "count" shows match counts. Defaults to "files_with_matches".' },
     '-B': { type: 'integer', minimum: 0, description: 'Number of lines to show before each match. Requires output_mode: "content", ignored otherwise.' },
@@ -559,7 +534,7 @@ const FILE_EDIT_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path', 'old_string', 'new_string'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'The absolute path to the file to modify.' },
+    file_path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative path to the file to modify.' },
     old_string: { type: 'string', description: 'The exact text to replace.' },
     new_string: { type: 'string', description: 'The text to replace it with. Must be different from old_string.' },
     replace_all: { type: 'boolean', description: 'Replace all occurrences of old_string. Defaults to false.' },
@@ -571,7 +546,7 @@ const FILE_WRITE_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path', 'content'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'The absolute path to the file to write.' },
+    file_path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative path to the file to write.' },
     content: { type: 'string', description: 'The content to write to the file.' },
   },
 };
@@ -581,7 +556,7 @@ const FILE_DELETE_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'The absolute path to the file or directory to move to agent trash.' },
+    file_path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative path to move to agent trash.' },
   },
 };
 
@@ -602,11 +577,6 @@ const BASH_PARAMETERS = {
     },
     timeout: { type: 'integer', minimum: 1, maximum: BASH_MAX_TIMEOUT_MS, description: `Optional timeout in milliseconds. Maximum ${BASH_MAX_TIMEOUT_MS}.` },
     run_in_background: { type: 'boolean', description: 'Set to true to run this command in the background. You do not need to append "&"; use file_read on the returned output path later if needed.' },
-    required_folders: {
-      type: 'array',
-      items: { type: 'string', minLength: 1 },
-      description: 'Folders outside the default file area that this command needs to read or write. Omit folders already inside the default file area.',
-    },
   },
 };
 
@@ -640,12 +610,9 @@ export async function runLocalBashCommand(
     command: string;
     timeout?: number;
     signal?: AbortSignal;
-    capabilities: FolderCapabilitySnapshot;
   },
 ): Promise<LocalBashRunResult> {
   const workspace = createWorkspaceContext(options.localRoot, options.scratchRoot);
-  workspace.filesystemMode = options.capabilities.filesystemMode;
-  workspace.processCapabilities = options.capabilities;
   const params = normalizeBashParams({
     command: options.command,
     timeout: options.timeout,
@@ -668,9 +635,8 @@ export async function runLocalBashCommand(
 
 // Resolve the agent scratch root for a workdir. Production passes the explicit app-owned
 // `<userData>/agent-scratch`; when none is supplied (internal callers, tests) the fallback is
-// `<workdir>/tmp`, which keeps the legacy in-workdir layout and is always a sibling-or-child of
-// the workdir, so containment stays well-defined. Single source of this default so the four
-// callers that need scratch before a WorkspaceContext exists cannot drift.
+// `<workdir>/tmp`, which keeps the legacy in-workdir layout predictable. Single source of this
+// default so the callers that need scratch before a WorkspaceContext exists cannot drift.
 export function scratchRootForWorkdir(workdir: string | undefined, scratchRoot: string | undefined): string {
   const root = path.resolve(nonBlank(workdir) ?? process.cwd());
   const explicit = nonBlank(scratchRoot);
@@ -689,23 +655,12 @@ function createWorkspaceContext(
   localRoot?: string,
   scratchRoot?: string,
   skillRuntime?: AgentSkillRuntime,
-  protectedStoreRoot?: string,
 ): WorkspaceContext {
   const root = path.resolve(localRoot ?? process.cwd());
   const resolvedScratchRoot = scratchRootForWorkdir(localRoot, scratchRoot);
   return {
     root,
     scratchRoot: resolvedScratchRoot,
-    capabilityRoots: [],
-    filesystemMode: 'restricted',
-    protectedStoreRoot,
-    processCapabilities: createFolderCapabilitySnapshot({
-      filesystemMode: 'restricted',
-      workspaceRoot: root,
-      scratchRoot: resolvedScratchRoot,
-      includeSystemRoots: true,
-      protectedRoots: protectedStoreRoot ? [protectedStoreRoot] : [],
-    }, []),
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
   };
@@ -715,42 +670,8 @@ export function createAgentLocalWorkspaceContext(
   localRoot?: string,
   scratchRoot?: string,
   skillRuntime?: AgentSkillRuntime,
-  protectedStoreRoot?: string,
 ): AgentLocalWorkspaceContext {
-  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime, protectedStoreRoot);
-}
-
-export function setAgentLocalCapabilityRoots(
-  workspace: AgentLocalWorkspaceContext,
-  roots: readonly AgentLocalCapabilityRoot[],
-  revocationGeneration = 0,
-  filesystemMode: AgentFilesystemMode = 'restricted',
-): void {
-  const effectiveRoots: readonly AgentLocalCapabilityRoot[] = filesystemMode === 'full-access'
-    ? [{ access: 'write', root: path.parse(workspace.root).root }]
-    : roots;
-  workspace.filesystemMode = filesystemMode;
-  workspace.capabilityRoots = effectiveRoots
-    .flatMap((entry): ResolvedAgentLocalCapabilityRoot[] => {
-      const root = path.resolve(entry.root);
-      const resolved = resolveCanonicalPath(root);
-      if (!resolved) return [];
-      return [{
-        access: entry.access,
-        root,
-        realRoot: resolved.realPath,
-        isDirectory: isDirectoryPath(resolved.realPath),
-      }];
-    });
-  workspace.processCapabilities = createFolderCapabilitySnapshot({
-    filesystemMode,
-    workspaceRoot: workspace.root,
-    scratchRoot: workspace.scratchRoot,
-    activeSkillReadRoots: workspace.capabilityRoots.filter((entry) => entry.access === 'read').map((entry) => entry.realRoot),
-    includeSystemRoots: true,
-    protectedRoots: workspace.protectedStoreRoot ? [workspace.protectedStoreRoot] : [],
-    revocationGeneration,
-  }, workspace.capabilityRoots.filter((entry) => entry.access === 'write').map((entry) => entry.realRoot));
+  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime);
 }
 
 export async function restorePostCompactReadFiles(
@@ -804,7 +725,7 @@ export async function restorePostCompactReadFiles(
 }
 
 async function notifySuccessfulFileTouch(workspace: WorkspaceContext, filePath: string): Promise<void> {
-  await workspace.skillRuntime?.notifyFileTouched([filePath], workspace.processCapabilities);
+  await workspace.skillRuntime?.notifyFileTouched([filePath]);
 }
 
 async function notifySuccessfulSkillContentWrite(
@@ -920,7 +841,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
       const started = Date.now();
       try {
         const params = normalizeFileReadParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path, 'read');
+        const filePath = resolveWorkspacePath(workspace, params.file_path);
         const fileStat = await stat(filePath);
         if (fileStat.isDirectory()) {
           throw new LocalToolFailure('is_directory', `Path is a directory: ${filePath}`, 'Use file_glob to discover files under a directory.');
@@ -1098,9 +1019,9 @@ function createFileGlobTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
       const started = Date.now();
       try {
         const params = normalizeFileGlobParams(rawParams);
-        const searchRoot = params.path ? resolveWorkspacePath(workspace, params.path, 'read') : workspace.root;
+        const searchRoot = params.path ? resolveWorkspacePath(workspace, params.path) : workspace.root;
         const matcher = createGlobMatcher(params.pattern, searchRoot);
-        const candidates = await collectFileGlobCandidates(searchRoot, params.pattern, workspace.processCapabilities);
+        const candidates = await collectFileGlobCandidates(searchRoot, params.pattern);
         const matched = candidates.files.filter((file) => matcher(file));
         const withStats = (await Promise.all(matched.map(statFileForGlob))).filter((item): item is { filePath: string; mtimeMs: number } => item !== null);
         withStats.sort((left, right) => right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath));
@@ -1168,7 +1089,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
       const started = Date.now();
       try {
         const params = normalizeFileEditParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
+        const filePath = resolveWorkspacePath(workspace, params.file_path);
         if (path.extname(filePath).toLowerCase() === '.ipynb') {
           throw new LocalToolFailure(
             'notebook_edit_required',
@@ -1268,7 +1189,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
       const started = Date.now();
       try {
         const params = normalizeFileWriteParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
+        const filePath = resolveWorkspacePath(workspace, params.file_path);
         let original: TextFileRead | null = null;
         try {
           original = await readWorkspaceText(filePath);
@@ -1333,7 +1254,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
     label: 'File Delete',
     description: [
       'Moves a local file or directory to agent trash instead of permanently deleting it.',
-      'Use this for reversible cleanup inside the allowed file area. It cannot delete the file area root.',
+      'Use this for reversible cleanup. It cannot delete the Run workdir root.',
       'The result includes the trash path so the item can be recovered if needed.',
     ].join('\n'),
     parameters: FILE_DELETE_PARAMETERS,
@@ -1342,7 +1263,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
       const started = Date.now();
       try {
         const params = normalizeFileDeleteParams(rawParams);
-        const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
+        const filePath = resolveWorkspacePath(workspace, params.file_path);
         if (isSelfDefinitionWritePath(workspace, filePath)) {
           throw new LocalToolFailure(
             'self_definition_delete_not_supported',
@@ -1350,8 +1271,8 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
             'Edit or create self-definition files through file_write/file_edit. Delete agents in Settings.',
           );
         }
-        if (isFileAreaRoot(workspace, filePath)) {
-          throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the allowed file area root.', 'Delete a specific file or subdirectory instead.');
+        if (isWorkdirRoot(workspace, filePath)) {
+          throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the Run workdir root.', 'Delete a specific file or subdirectory instead.');
         }
         const trashRoot = agentTrashRoot(workspace);
         if (isResolvedPathInside(trashRoot, path.resolve(filePath))) {
@@ -1386,7 +1307,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
     name: 'bash',
     label: 'Bash',
     description: [
-      'Executes a shell command in the default file area.',
+      'Executes a shell command in the Run workdir with the current OS account authority.',
       'Use file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.',
       'For document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).',
       'Use run_in_background for long-running commands. You do not need to append "&"; use bash_stop if the task needs to be stopped.',
@@ -1417,7 +1338,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
           })
           : errorEnvelope<BashData>('bash', result.interrupted ? 'command_interrupted' : 'command_failed', result.returnCodeInterpretation ?? interpretation.message ?? 'Command was interrupted.', {
             data: result,
-            instructions: 'Inspect stdout and stderr. If the OS denied a known external folder, declare it in required_folders before retrying; otherwise fix the command or inputs.',
+            instructions: 'Inspect stdout and stderr, then fix the command, inputs, native OS authorization, or service login before retrying.',
             metrics: metrics(started, result),
           });
         return agentToolResult(envelope, visibleBash(result));
@@ -1549,9 +1470,6 @@ function normalizeBashParams(rawParams: unknown): BashParams {
     description: optionalNormalizedString(input.description),
     timeout: clampInteger(input.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS),
     run_in_background: input.run_in_background === true,
-    required_folders: Array.isArray(input.required_folders)
-      ? input.required_folders.filter((value): value is string => typeof value === 'string' && Boolean(value.trim())).map((value) => value.trim())
-      : undefined,
   };
 }
 
@@ -1561,7 +1479,7 @@ function normalizeBashStopParams(rawParams: unknown): BashStopParams {
 }
 
 async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Promise<FileGrepData> {
-  const target = params.path ? resolveWorkspacePath(workspace, params.path, 'read') : workspace.root;
+  const target = params.path ? resolveWorkspacePath(workspace, params.path) : workspace.root;
   const targetStat = await stat(target).catch((error: unknown) => {
     throw localFsError(error, target);
   });
@@ -1572,8 +1490,8 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   const mode = params.output_mode ?? 'files_with_matches';
   const args = buildRipgrepArgs(workspace, target, params);
   const page = grepPageParams(params.head_limit, params.offset);
-  const ripgrep = await resolveRipgrepForTool(workspace.root, workspace.processCapabilities);
-  const result = await runProcessLinesPage(ripgrep.command, [...ripgrep.argsPrefix, ...args], workspace.root, page.offset, page.limit, 60_000, workspace.processCapabilities);
+  const ripgrep = await resolveRipgrepForTool(workspace.root);
+  const result = await runProcessLinesPage(ripgrep.command, [...ripgrep.argsPrefix, ...args], workspace.root, page.offset, page.limit, 60_000);
   if (result.error) {
     const detail = `${ripgrep.mode} provider at ${ripgrep.source} failed to start: ${result.error.message}`;
     throw new LocalToolFailure('ripgrep_unavailable', detail, ripgrepRecoveryInstructions(detail));
@@ -1727,12 +1645,9 @@ function clearReadStateForDeletedPath(workspace: WorkspaceContext, filePath: str
   }
 }
 
-async function resolveRipgrepForTool(
-  cwd: string,
-  capabilities: FolderCapabilitySnapshot,
-): Promise<ResolvedRipgrepCommand> {
+async function resolveRipgrepForTool(cwd: string): Promise<ResolvedRipgrepCommand> {
   try {
-    return await resolveRipgrepCommand(cwd, capabilities);
+    return await resolveRipgrepCommand(cwd);
   } catch (error) {
     const detail = errorMessage(error);
     throw new LocalToolFailure('ripgrep_unavailable', detail, ripgrepRecoveryInstructions(detail));
@@ -1754,10 +1669,8 @@ async function runProcessItems(
   separator: string,
   maxItems: number,
   timeoutMs: number,
-  capabilities: FolderCapabilitySnapshot,
 ): Promise<ProcessItemsResult> {
   const result = await runAgentToolProcess(command, args, cwd, timeoutMs, {
-    capabilities,
     maxStderrChars: GREP_STDERR_CAPTURE_CHARS,
     stdoutItemPage: {
       separator,
@@ -1784,10 +1697,8 @@ async function runProcessLinesPage(
   offset: number,
   limit: number,
   timeoutMs: number,
-  capabilities: FolderCapabilitySnapshot,
 ): Promise<ProcessLinesPageResult> {
   const result = await runAgentToolProcess(command, args, cwd, timeoutMs, {
-    capabilities,
     maxStderrChars: GREP_STDERR_CAPTURE_CHARS,
     stdoutItemPage: {
       separator: '\n',
@@ -1862,7 +1773,6 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
-      capabilities: workspace.processCapabilities,
     });
     processHandle = { child };
     attachSplitOutputCapture(child, capture);
@@ -1991,7 +1901,6 @@ async function registerBackgroundTask(
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
         windowsHide: true,
-        capabilities: workspace.processCapabilities,
       });
       processHandle = { child };
       attachSplitOutputCapture(child, capture);
@@ -2047,14 +1956,14 @@ interface FileGlobCandidates {
   truncated: boolean;
 }
 
-async function collectFileGlobCandidates(searchRoot: string, pattern: string, capabilities: FolderCapabilitySnapshot): Promise<FileGlobCandidates> {
-  const ripgrep = await collectFilesWithRipgrep(searchRoot, pattern, capabilities);
+async function collectFileGlobCandidates(searchRoot: string, pattern: string): Promise<FileGlobCandidates> {
+  const ripgrep = await collectFilesWithRipgrep(searchRoot, pattern);
   if (ripgrep) return ripgrep;
   return collectFilesFallback(searchRoot, FILE_GLOB_CANDIDATE_LIMIT);
 }
 
-async function collectFilesWithRipgrep(searchRoot: string, pattern: string, capabilities: FolderCapabilitySnapshot): Promise<FileGlobCandidates | null> {
-  const ripgrep = await resolveRipgrepCommand(searchRoot, capabilities).catch(() => null);
+async function collectFilesWithRipgrep(searchRoot: string, pattern: string): Promise<FileGlobCandidates | null> {
+  const ripgrep = await resolveRipgrepCommand(searchRoot).catch(() => null);
   if (!ripgrep) return null;
   const args = ['--files', '--hidden', '--null'];
   const positiveGlob = ripgrepGlobForFileGlob(pattern, searchRoot);
@@ -2063,7 +1972,7 @@ async function collectFilesWithRipgrep(searchRoot: string, pattern: string, capa
     args.push('--glob', `!**/${dir}/**`);
   }
 
-  const result = await runProcessItems(ripgrep.command, [...ripgrep.argsPrefix, ...args], searchRoot, '\0', FILE_GLOB_CANDIDATE_LIMIT, 30_000, capabilities);
+  const result = await runProcessItems(ripgrep.command, [...ripgrep.argsPrefix, ...args], searchRoot, '\0', FILE_GLOB_CANDIDATE_LIMIT, 30_000);
   if (result.error || result.timedOut) return null;
   if (result.exitCode !== 0 && result.exitCode !== 1 && !result.truncated) return null;
   return {
@@ -2261,7 +2170,6 @@ function readUInt24LE(buffer: Buffer, offset: number): number {
 async function getPdfPageCount(
   filePath: string,
   sourceHash: string | undefined,
-  capabilities: FolderCapabilitySnapshot,
 ): Promise<number> {
   const cacheKey = sourceHash
     ? derivedFileCacheKey(PDF_INFO_CACHE_EXTRACTOR, sourceHash, pdfToolCacheOptions({}))
@@ -2269,7 +2177,7 @@ async function getPdfPageCount(
   const cached = cacheKey ? agentDerivedFileCache.get<number>(cacheKey) : undefined;
   if (cached !== undefined) return cached;
 
-  const result = await runProcess('pdfinfo', [filePath], path.dirname(filePath), 30_000, { capabilities });
+  const result = await runProcess('pdfinfo', [filePath], path.dirname(filePath), 30_000, {});
   if (result.error) {
     throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_RECOVERY_INSTRUCTIONS);
   }
@@ -2303,14 +2211,13 @@ async function ingestPdfFile(
   }
 
   const sourceHash = sha256Buffer(buffer);
-  const totalPages = await getPdfPageCount(filePath, sourceHash, workspace.processCapabilities);
+  const totalPages = await getPdfPageCount(filePath, sourceHash);
   const range = selectPdfPageRange(totalPages, requestedPages);
   const requestedPageImages = requestedPages !== undefined;
   const requestedRendered = requestedPageImages ? await renderPdfPages(workspace, filePath, range) : null;
   const extractedText = await extractPdfText(filePath, range, {
     ignoreUnavailableReader: requestedPageImages,
     sourceHash,
-    capabilities: workspace.processCapabilities,
   });
   const shouldRenderInlineFallback = !requestedRendered && !extractedText && totalPages <= PDF_INLINE_PAGE_THRESHOLD;
   const rendered = requestedRendered ?? (shouldRenderInlineFallback ? await renderPdfPages(workspace, filePath, range) : null);
@@ -2385,7 +2292,7 @@ async function ingestRichDocumentFile(
   originalSize: number,
   sourceHash: string,
 ): Promise<FileIngestionOutput<FileReadMarkdownData>> {
-  const markdown = await ingestRichDocumentAsMarkdown(filePath, sourceHash, workspace.processCapabilities);
+  const markdown = await ingestRichDocumentAsMarkdown(filePath, sourceHash);
   const textContent = {
     type: 'text' as const,
     text: `Converted Markdown from ${filePath}${markdown.truncated ? ' (truncated)' : ''}:\n\n${markdown.content}`,
@@ -2417,7 +2324,7 @@ async function renderPdfPages(workspace: WorkspaceContext, filePath: string, ran
   await mkdir(outputDir, { recursive: true });
   const prefix = path.join(outputDir, 'page');
   const args = ['-jpeg', '-r', '100', '-f', String(range.firstPage), '-l', String(range.lastPage), filePath, prefix];
-  const result = await runProcess('pdftoppm', args, path.dirname(filePath), 120_000, { capabilities: workspace.processCapabilities });
+  const result = await runProcess('pdftoppm', args, path.dirname(filePath), 120_000, {});
   if (result.error) {
     throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_RECOVERY_INSTRUCTIONS);
   }
@@ -2447,7 +2354,7 @@ function isPdfBuffer(buffer: Buffer): boolean {
 async function extractPdfText(
   filePath: string,
   range: PdfPageRange,
-  options: { ignoreUnavailableReader?: boolean; sourceHash?: string; capabilities: FolderCapabilitySnapshot },
+  options: { ignoreUnavailableReader?: boolean; sourceHash?: string },
 ): Promise<{ text: string; chars: number; truncated: boolean } | null> {
   const cacheKey = options.sourceHash
     ? derivedFileCacheKey(PDF_TEXT_CACHE_EXTRACTOR, options.sourceHash, pdfToolCacheOptions({
@@ -2468,7 +2375,6 @@ async function extractPdfText(
     filePath,
     '-',
   ], path.dirname(filePath), 60_000, {
-    capabilities: options.capabilities,
     maxStdoutChars: PDF_TEXT_CAPTURE_CHARS,
   });
   if (result.error || result.exitCode === 127) {
@@ -2946,35 +2852,7 @@ function clearBashKillEscalation(processHandle: BashProcessHandle) {
 
 function killBashProcessTree(processHandle: BashProcessHandle, signal: NodeJS.Signals) {
   clearBashKillEscalation(processHandle);
-  const pid = processHandle.child.pid;
-  if (!pid) {
-    safeKillChildProcess(processHandle.child, signal);
-    return;
-  }
-  if (process.platform === 'win32') {
-    const args = ['/pid', String(pid), '/t'];
-    if (signal === 'SIGKILL') args.push('/f');
-    try {
-      const killer = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
-      killer.unref();
-    } catch {
-      safeKillChildProcess(processHandle.child, signal);
-    }
-    return;
-  }
-  try {
-    process.kill(-pid, signal);
-  } catch {
-    safeKillChildProcess(processHandle.child, signal);
-  }
-}
-
-function safeKillChildProcess(child: ChildProcess, signal: NodeJS.Signals) {
-  try {
-    child.kill(signal);
-  } catch {
-    // The child may already have exited between the watchdog/timeout and kill.
-  }
+  getAgentProcessExecutor().terminate(processHandle.child, signal);
 }
 
 function bashMaxOutputBytes(): number {
@@ -3211,62 +3089,15 @@ function countOccurrences(content: string, needle: string): number {
   }
 }
 
-// The allowed file area is asymmetric: the agent may WRITE under the workdir and handed
-// write-scope roots, but may READ the workdir, handed read/write roots, and the app-owned
-// scratch root (materialized attachments, fetched binaries, overflow logs the app places
-// there). `access` selects which rule applies, so both this layer and the capability evaluator
-// (`agentCapabilities.ts`) enforce the same boundary.
-type FileAccess = 'read' | 'write';
-
-function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, access: FileAccess): string {
-  // Relative paths always resolve against the workdir (`root`); the agent only ever targets
-  // scratch with the absolute paths the app hands it, so scratch is an additional *read* root,
-  // never the base for relative resolution.
+function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string): string {
+  // Relative paths use the Run workdir. Absolute paths address the host filesystem directly.
   const root = path.resolve(workspace.root);
-  const rootRealPath = realpathSync.native(root);
-  const allowedRoots = allowedRealRoots(workspace, rootRealPath, access);
   const expanded = expandHome(inputPath);
-  const requestedPath = path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
-  const resolved = resolveCanonicalPath(requestedPath);
-  const protectedRoot = resolved
-    ? protectedRootForPath(workspace.processCapabilities, resolved.realPath, access)
-    : null;
-  if (protectedRoot) {
-    throw new LocalToolFailure(
-      'control_plane_unavailable',
-      `Agent file tools cannot access Tenon control state under ${protectedRoot}.`,
-      'Use Tenon product commands and settings for control-state changes.',
-    );
-  }
-  if (!resolved || !isInsideAnyRoot(allowedRoots, resolved.realPath)) {
-    throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
-  }
-  return requestedPath;
+  return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
 }
 
 export function resolveAgentLocalReadPath(workspace: AgentLocalWorkspaceContext, inputPath: string): string {
-  return resolveWorkspacePath(workspace, inputPath, 'read');
-}
-
-// The real paths a file tool may touch for the given access: the workdir always, handed
-// capability roots whose access covers the requested operation, plus — for reads — the
-// scratch root when it resolves to a distinct, existing location (scratch is `<root>/tmp`
-// by default, already covered by the workdir).
-function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, access: FileAccess): string[] {
-  const roots = [rootRealPath];
-  for (const entry of workspace.capabilityRoots) {
-    if (access === 'write' && entry.access !== 'write') continue;
-    if (!roots.some((root) => isResolvedPathInside(root, entry.realRoot))) {
-      roots.push(entry.realRoot);
-    }
-  }
-  if (access === 'read') {
-    const scratchReal = safeRealPath(workspace.scratchRoot);
-    if (scratchReal && !isResolvedPathInside(rootRealPath, scratchReal)) {
-      roots.push(scratchReal);
-    }
-  }
-  return roots;
+  return resolveWorkspacePath(workspace, inputPath);
 }
 
 function isSelfDefinitionWritePath(workspace: WorkspaceContext, filePath: string): boolean {
@@ -3292,19 +3123,10 @@ function isSelfDefinitionContentPath(root: string, candidate: string): boolean {
   return isDirectoryPath(candidate);
 }
 
-function isInsideAnyRoot(roots: readonly string[], candidate: string): boolean {
-  return roots.some((root) => isResolvedPathInside(root, candidate));
-}
-
-function isFileAreaRoot(workspace: WorkspaceContext, filePath: string): boolean {
+function isWorkdirRoot(workspace: WorkspaceContext, filePath: string): boolean {
   const rootRealPath = safeRealPath(workspace.root);
   const candidate = resolveCanonicalPath(filePath);
-  if (!rootRealPath || !candidate) return false;
-  if (rootRealPath === candidate.realPath) return true;
-  return workspace.capabilityRoots.some((entry) => {
-    if (entry.access !== 'write') return false;
-    return entry.realRoot === candidate.realPath && (entry.isDirectory || isDirectoryPath(entry.realRoot));
-  });
+  return Boolean(rootRealPath && candidate && rootRealPath === candidate.realPath);
 }
 
 function safeRealPath(target: string): string | null {

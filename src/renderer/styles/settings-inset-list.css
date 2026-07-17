@@ -205,14 +205,3 @@
   flex: 0 1 auto;
   padding: var(--space-2) var(--space-4) var(--space-4) var(--space-5);
 }
-
-.settings-agent-access-control {
-  width: 16rem;
-  max-width: 100%;
-}
-
-.settings-agent-access-control .segmented-control-option {
-  flex: 1 1 0;
-  padding-right: var(--space-4);
-  padding-left: var(--space-4);
-}

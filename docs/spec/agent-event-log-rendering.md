@@ -320,9 +320,9 @@ Clean-cut startup policy (pre-release, no migration) — the storage-generation
 sentinel:
 
 - ONE event-store root file `layout.json` `{"v": <generation>}` is written once
-  per on-disk format generation (`STORAGE_LAYOUT_VERSION`, currently `7` =
-  conversation logs no longer store child-run lifecycle markers; Run index + Run
-  ledgers are the execution record). First store access reads this single line;
+  per on-disk format generation (`STORAGE_LAYOUT_VERSION`, currently `8` =
+  obsolete authorization request/replay state is removed; Run index + Run ledgers
+  remain the execution record). First store access reads this single line;
   a matching `v` proceeds with no per-conversation probing.
 - A stale `v` or a MISSING sentinel is positive proof of another generation:
   event-log owned paths are hard-deleted (logged with the old generation) —
@@ -1803,11 +1803,8 @@ timestamp. It contains:
 
 Portable event reads omit `debug.run_snapshot.created`,
 `tool.capability.checked`, `tool.capability.resolved`, and
-`checkpoint.created`. A `notification.created` carrying `folderCapability` is
-also omitted as one unit because both its structured grant request and its
-free-form body may disclose device paths. Payload events and nested payload
-references are retained only for the `source`, `preview`, `text_extract`, and
-`tool_output` roles.
+`checkpoint.created`. Payload events and nested payload references are retained
+only for the `source`, `preview`, `text_extract`, and `tool_output` roles.
 `thumbnail`, `debug`, and unclassified payloads are local/derived and excluded.
 Portable payload refs also drop their free-form local summary field.
 The catalog never contains absolute storage paths, payload summaries, indexes,
@@ -1868,7 +1865,7 @@ user sends prompt
   -> append run.started
   -> stream pi-mono
   -> append assistant/tool events
-  -> append capability audit events around tool preflight and folder acquisition
+  -> append capability audit events around tool preflight and resolution
   -> on failure, append assistant_message.failed for the terminal assistant turn
   -> append run.completed or run.failed
   -> write checkpoint

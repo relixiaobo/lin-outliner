@@ -7,7 +7,7 @@ import { Core } from '../../src/core/core';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
 import type { ImportPack } from '../../src/main/agentDataImportPack';
 import { AgentImportApiServer, type ImportApiDescriptor, type ImportApiResponse } from '../../src/main/agentImportApi';
-import { AgentImportService } from '../../src/main/agentImportService';
+import { AgentImportService, resolvePackFilePath } from '../../src/main/agentImportService';
 import { createAgentLocalWorkspaceContext } from '../../src/main/agentLocalTools';
 import {
   checkedState,
@@ -166,6 +166,21 @@ function samplePack(): ImportPack {
 }
 
 describe('Tenon import service', () => {
+  test('resolves absolute pack files outside the Run workdir under Full Access', async () => {
+    const workdir = await mkdtemp(path.join(tmpdir(), 'tenon-data-import-workdir-'));
+    const sourceDir = await mkdtemp(path.join(tmpdir(), 'tenon-data-import-source-'));
+    try {
+      const sourcePath = path.join(sourceDir, 'pack.json');
+      await writeFile(sourcePath, '{}', 'utf8');
+      expect(resolvePackFilePath(sourcePath, { localFileRoot: workdir })).toBe(sourcePath);
+    } finally {
+      await Promise.all([
+        rm(workdir, { recursive: true, force: true }),
+        rm(sourceDir, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   test('requires a matching dry-run preview and stages a validated Import Pack', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'tenon-data-import-'));
     try {

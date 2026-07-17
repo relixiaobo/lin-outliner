@@ -112,10 +112,13 @@ const CONVERSATION_INDEX_VERSION = 1;
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
+// v8 = agent-full-access-only: obsolete authorization request/replay projection
+// state was removed. The clean cut affects only agent event-store paths;
+// outline and imported Tana nodes live outside this root.
 // v7 = agent-run-graph-cleanup: conversation logs no longer store
 // child_run.started/updated lifecycle markers. The Run index and each run's
 // ledger are the durable execution record; conversation logs keep only chat,
-// permissions, notifications, and other conversation-local events.
+// capability audit, notifications, and other conversation-local events.
 // v6 = agent-run-graph-cleanup: run meta v2 stores nested execution/objective
 // state plus parentToolCallId, runProfile, and context. Old flat run metas are
 // pre-release data and are wiped by the sentinel.
@@ -130,10 +133,10 @@ export const LAYOUT_SENTINEL_FILE = 'layout.json';
 // v2 = run unification: a delegated run is its own ledger (`runs/<runId>/
 // events.jsonl`, own seq space) excluded from conversation replay. The
 // pre-unification entity-grade events and transcript-snapshot payloads are gone.
-export const STORAGE_LAYOUT_VERSION = 7;
+export const STORAGE_LAYOUT_VERSION = 8;
 // Checkpoints are disposable replay caches. Bump this whenever a required
 // AgentEventReplayState field changes so older shapes fall back to full replay.
-const CHECKPOINT_VERSION = 6;
+const CHECKPOINT_VERSION = 7;
 const SEARCH_INDEX_VERSION = 3;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
 const MAX_CHECKPOINTS_PER_CONVERSATION = 3;
@@ -3197,7 +3200,6 @@ function normalizeCheckpoint(value: unknown, conversationId: string): AgentEvent
   if (!isRecord(state.compactionsByMessageId)) return null;
   if (!isRecord(state.contextClearsByMessageId)) return null;
   if (!isRecord(state.dreamsByMessageId) || !isRecord(state.userQuestions)) return null;
-  if (!isRecord(state.folderCapabilityRequests)) return null;
   if (!isRecord(state.notifications) || !isRecord(state.attentionByConversationId)) return null;
   if (state.selectedLeafMessageId !== null && typeof state.selectedLeafMessageId !== 'string') return null;
   if (state.latestMessageId !== null && typeof state.latestMessageId !== 'string') return null;

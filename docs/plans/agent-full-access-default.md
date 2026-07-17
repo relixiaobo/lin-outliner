@@ -1,273 +1,154 @@
-# Agent Full Access Default
+# Agent Full Access Only
 
 ## Goal
 
-Make Tenon agents operate like a trusted local coding agent by default. A Run
-must be able to read and write every path available to the current OS account,
-launch local runtimes and package managers without a Seatbelt wrapper, and use
-Tenon's local CLI bridges without acquiring folder capabilities first.
+Make every Tenon agent file tool and local process run with the filesystem
+authority of the current OS account. Remove the agent process sandbox, folder
+capabilities, access-mode switching, and their recovery UI so imports and local
+tooling do not stop at a Tenon-specific filesystem boundary.
 
-Keep the current folder-capability sandbox as an explicit **Restricted** mode
-for users who choose it. The default and missing persisted value is **Full
-Access** for both existing and new development profiles.
-
-This is shape **(a)**: one complete feature in one PR. The persisted mode,
-runtime policy, process execution, Settings surface, documentation, tests, and
-real Tana import verification ship together.
+This is shape **(a)**: one complete feature in one PR. Runtime policy, process
+execution, persisted settings, renderer transport, Settings, event replay,
+documentation, tests, and a real Tana import are changed and verified together.
 
 ## Non-goals
 
-- Do not weaken Electron renderer isolation, CSP, navigation guards,
-  single-instance behavior, or per-clone `userData` isolation.
-- Do not bypass native macOS TCC, administrator authorization, Keychain access
-  controls, or service login requirements.
-- Do not migrate provider credentials back to Keychain or change their current
-  plaintext `0600` storage. Full Access intentionally accepts that an agent
-  process can read and modify those credentials.
-- Do not remove Restricted mode, its remembered folder roots, or its capability
-  request/recovery flow.
-- Do not add per-command approval prompts or consequence scoring.
-- Do not make user block rules tamper-resistant in Full Access. They remain a
-  dispatch policy, not a containment boundary, because a full-access process can
-  modify the local policy store.
-- Do not change the document command protocol or expose Node APIs to the
-  renderer.
+- Do not weaken Electron renderer isolation, CSP, navigation guards, the
+  permission-handler allow-list, single-instance behavior, or per-clone
+  `userData` isolation.
+- Do not bypass macOS TCC, administrator authorization, Keychain controls, CLI
+  login, or service credentials.
+- Do not remove explicit `Action(...)` and `Command(...)` blocks, capability
+  audit events, scoped tool catalogs, or run profiles.
+- Do not remove read-before-edit, trash-backed deletion, skill-definition
+  validation, or other typed-tool correctness contracts.
+- Do not add per-command confirmations or consequence scoring.
+- Do not add worktree, container, VM, port, process, or service isolation
+  between concurrent agents.
+- Do not change the outline command model or expose Node APIs to the renderer.
 
 ## Design
 
-### Product Decisions
+### One Access Model
 
-- **DEC-1:** Tenon exposes two filesystem execution modes:
-  `full-access` and `restricted`.
-- **DEC-2:** A missing, malformed, or pre-feature mode value resolves to
-  `full-access`. No compatibility migration rewrites the file merely to record
-  the default.
-- **DEC-3:** The selected mode applies to foreground, background, delegated,
-  and scheduled Runs. A restricted tool catalog such as Dream remains
-  restricted by tool availability, but any file/process tool it does receive
-  follows the global mode.
-- **DEC-4:** Explicit `Action(...)` and `Command(...)` blocks are evaluated in
-  both modes before execution. Full Access does not claim that the on-disk block
-  store is protected from an already-running process.
-- **DEC-5:** Full Access uses the current macOS account as the filesystem
-  boundary. Tenon's `userData`, including document state, event logs,
-  capability settings, provider credentials, and Import API descriptors, is
-  directly accessible.
-- **DEC-6:** Restricted preserves the current ownership model: folder
-  capability roots are agent-visible while Tenon control state stays private.
+A Run first receives its tool catalog. For a tool that exists in that catalog,
+the runtime derives action descriptors for audit and explicit block matching.
+An exact user block returns `unavailable`; every other call executes. There is
+no filesystem mode, folder-root coverage check, control-plane exception, or
+capability acquisition step.
 
-### Persisted Mode
+Local-file audit and Block action kinds use `file.*.local_path` or
+`file.*.sensitive_local_path`. The old `allowed_file_area` /
+`outside_allowed_file_area` distinction is removed with the boundary it
+described.
 
-Extend `agent-capabilities.json` with one optional field:
+`agent-capabilities.json` persists only:
 
 ```json
 {
-  "filesystemMode": "restricted",
-  "folders": ["/absolute/path"],
   "blocks": ["Action(git.publish_remote)"]
 }
 ```
 
-`AgentCapabilityConfig` always carries the normalized mode. Serialization
-preserves folder grants and blocks when the mode changes. Existing folder roots
-remain stored while Full Access is selected so switching back to Restricted
-restores the user's prior scopes.
+The parser ignores unrelated JSON fields as ordinary unknown input but does
+not implement a legacy mode or folder reader. Settings patches remove blocks
+only. The Security pane shows a fixed **Full Access** status, explicit blocks,
+and a truthful host-account boundary description.
 
-The existing Settings save command accepts a mode replacement alongside folder
-and block removals. Folder selection remains an immediate grant; the mode
-change remains a draft until Save, consistent with the rest of the Security
-pane.
+### Files And Processes
 
-### Tool Capability Evaluation
+Relative file paths continue to resolve against the Run workdir. Absolute paths
+address the host filesystem directly, including paths outside the workdir and
+Tenon `userData`, subject only to the current OS account and native system
+authorization. File tools keep their operation-specific correctness rules.
 
-The decision pipeline remains:
+`AgentProcessExecutor` directly spawns foreground and background shell work,
+embedded Skill shell commands, ripgrep, document converters, and helper
+processes. It owns environment construction, explicitly private environment-key
+removal, timeout/output handling, and process-tree termination. It carries no
+filesystem snapshot or sandbox adapter and never invokes `sandbox-exec`.
 
-```text
-tool exists in this Run
-  -> explicit user block
-  -> filesystem mode
-  -> execution
-  -> audit and recovery
-```
+### Runs, Sub-agents, And Skills
 
-In Full Access, capability evaluation still derives action descriptors for
-audit and exact user-block matching, then allows the call. It does not apply
-folder-root coverage, emit `folder_access_required`, or reject Tenon control
-state. Typed file tools therefore have the same filesystem authority as bash.
+The same host-account access applies to the main agent, delegated sub-agents,
+scheduled/Dream Runs, and isolated Skills whenever their catalog contains a
+file or process tool. Tool catalogs and run profiles still restrict which tools
+the model can call; they do not isolate filesystem, processes, ports, Git state,
+databases, credentials, or services.
 
-In Restricted, the existing control-plane and folder-capability checks remain
-unchanged. Folder request cards, durable unattended recovery, remembered roots,
-and revocation behavior are reachable only from this mode.
+Concurrent agents can therefore interfere when they touch the same worktree,
+file, process, port, application state, or remote service. Avoiding that requires
+separate worktrees, `userData` directories, ports, accounts, containers, or VMs
+chosen by the workflow. This change does not claim concurrency isolation.
 
-### Process Execution
+Typed Skill writes remain validated and hot-reloaded. Shell and external-editor
+writes are validated when discovered; invalid definitions remain unloaded.
 
-Every process snapshot carries the normalized filesystem mode and revocation
-generation. `AgentProcessExecutor` chooses one of two paths:
+### Runtime And Storage Cut
 
-- **Full Access:** spawn the requested executable directly after environment
-  sanitization. Do not probe or invoke `/usr/bin/sandbox-exec`, overlay control
-  plane protections, or translate folder roots into a Seatbelt profile.
-- **Restricted:** retain the current `MacOSFileSandboxAdapter`, protected
-  `userData` overlay, immutable root snapshot, and Seatbelt health probe.
+Delete folder request/resolution commands, transient renderer events, durable
+notification payloads, replay projection state, acquisition registries, and
+composer cards. Capability audit contracts narrow to `allow | unavailable`.
 
-All process call sites continue to supply a snapshot; there is no separate
-per-caller bypass. This keeps foreground/background bash, skill shell, ripgrep,
-converters, and helper commands on one authoritative mode.
+Because replay state loses a persisted field, bump the agent event-store layout
+and checkpoint versions. Startup wipes only agent event-store-owned paths for a
+stale generation; outline documents, imported Tana nodes, assets, and unrelated
+application data remain untouched. Pre-release policy requires this clean cut
+instead of a compatibility reader.
 
-### Mode Transition And Revocation
+The system prompt always states host-account Full Access and directs the model
+to report native OS or provider denials directly. It does not describe folder
+acquisition or an access-mode switch.
 
-Changing the persisted mode increments the same serialized snapshot generation
-used by folder revocation. The service publishes a mode-change event only after
-the new document is durable.
+### Security Boundary
 
-The process executor terminates every active agent process on a mode change.
-Snapshot generation is checked before and after restricted sandbox preparation,
-so a process prepared under the old mode cannot start after the change. New
-calls read the new mode and construct a fresh snapshot.
+Full Access intentionally lets a file/process-capable Run read or change any
+host path available to Tenon, including Tenon stores and plaintext provider
+credentials, and combine that access with network-capable tools or processes.
+Explicit blocks are dispatch policy, not tamper-resistant containment, because
+a running process can modify their on-disk store.
 
-Pending folder capability requests are not replayed while Full Access is
-active. Runtime recovery treats them as covered and resolves/continues them
-under the newly selected mode; switching to Restricted resumes normal folder
-coverage semantics.
+Electron's renderer sandbox remains a separate product boundary. Native TCC,
+administrator prompts, Keychain policy, and service authentication remain
+owned by macOS or the provider.
 
-### Settings
+### Verification
 
-Settings -> Security begins with an **Agent Access** segmented mode control:
+- Typecheck and run core, renderer, documentation, and focused E2E suites.
+- Verify direct file and process access outside the workdir, blocks, audit
+  events, Skill shell behavior, and absence of folder recovery transport.
+- Inspect Security Settings in light and dark themes for truthful copy and
+  stable layout.
+- Import `/Users/lixiaobo/Downloads/b8AyeCJNsefK@2026-07-03.json` through the
+  supported Tana inspect/transform/validate/preview/commit path in the isolated
+  `dev:codex-2` profile and confirm zero unaccounted coverage.
 
-- **Full Access**: default; local processes and file tools can read and modify
-  everything available to the macOS account, including Tenon data and stored
-  provider credentials.
-- **Restricted**: processes use the macOS sandbox; file access is limited to the
-  workdir and remembered folders; Tenon control state remains private.
+### Files And Collision
 
-The Folder Access group is shown only for Restricted mode. Existing grants are
-not deleted when hidden. Your Blocks remains visible in both modes. The System
-Boundary copy reflects the selected mode and never claims that Tenon control
-state is private in Full Access.
+The implementation removes the filesystem-mode and folder-capability modules
+and updates capability policy/store/events, local tools, process execution,
+runtime, prompt, renderer API/state/UI, event replay, tests, and the directly
+affected agent specs. It changes the shared command/type protocol as one
+coordinated deletion.
 
-Changing modes and saving shows no second confirmation: selecting Full Access
-is the user's explicit authorization gesture. The control has stable dimensions,
-keyboard focus, and light/dark coverage.
+The Draft PR is the file-scope claim. PR #408 overlapped `main.ts`, Settings,
+and i18n; this branch is rebased after it and preserves
+`PreviewTranslationCacheStore` wiring. No dependency or build file changes.
 
-### Prompt And Documentation
+### Risks
 
-The system prompt describes the selected mode rather than always instructing
-the model to use folder capability recovery. Full Access tells the agent to
-operate under the host account and report native OS/provider denials directly.
-Restricted retains the current folder capability guidance.
-
-`docs/spec/agent-tool-permissions.md` becomes authoritative for both modes and
-states the accepted plaintext-secret and control-state consequences. Related
-permission wording in the agent tool design is updated only where it would
-otherwise contradict the new default.
-
-### Security Consequences
-
-Full Access deliberately combines filesystem read/write access with the
-existing process network authority. A prompt-injected or mistaken agent can:
-
-- read and exfiltrate `agent-secrets.json`, OAuth tokens, shell credentials, and
-  other files readable by the user;
-- modify Tenon document/event stores outside the command layer and corrupt
-  state;
-- alter capability settings, explicit blocks, startup files, repositories, or
-  other host data;
-- exercise the same authority from an unattended Agent Session if its tool
-  catalog includes file or process tools.
-
-These are accepted Full Access semantics, not residual implementation bugs.
-Restricted remains the containment option.
-
-## Requirements And Acceptance
-
-- **FR-1:** Missing persisted mode resolves to Full Access.
-- **FR-2:** Full Access file tools and processes use the current OS account's
-  filesystem authority without folder acquisition or Seatbelt.
-- **FR-3:** Restricted preserves current folder and control-plane enforcement.
-- **FR-4:** Mode changes are durable, invalidate stale snapshots, and terminate
-  active agent processes.
-- **FR-5:** Settings accurately presents and persists both modes without
-  deleting remembered folders or blocks.
-- **FR-6:** Tana import can complete through the supported `tenon-import`
-  inspect, transform, validate, preview, and commit path in the clone-isolated
-  `dev:codex-2` environment.
-
-- **AC-1:** With no `filesystemMode` field, a file tool can read and write an
-  absolute path outside the workdir without a capability request.
-- **AC-2:** In Full Access, a real child process can read a file under another
-  user-visible directory and read the Tenon Import API descriptor without
-  `/usr/bin/sandbox-exec` in its launch command.
-- **AC-3:** In Restricted, existing process tests still deny an ungranted path
-  and Tenon control state while allowing granted roots.
-- **AC-4:** An explicit block prevents its matching dispatch in either mode.
-- **AC-5:** Saving Restricted during an active Full Access process terminates
-  that process and rejects a stale spawn snapshot.
-- **AC-6:** Switching Full Access -> Restricted -> Full Access preserves the
-  prior folder and block lists.
-- **AC-7:** Security Settings render the selected mode and truthful boundary
-  copy in English and Simplified Chinese, light and dark modes.
-- **AC-8:** The approved Tana export produces valid inspection, pack, coverage,
-  validation, preview, and committed import results in isolated `dev:codex-2`
-  data.
-
-## Files And Collision
-
-Expected areas:
-
-- `src/main/agentCapabilityRules.ts`, `agentFolderCapabilities.ts`,
-  `agentCapabilityStore.ts`, and `agentCapabilities.ts` for mode persistence and
-  tool policy;
-- `src/main/agentProcessExecutor.ts`, `agentSkillShell.ts`, `agentRuntime.ts`,
-  and `agentSystemPrompt.ts` for process snapshots, transitions, recovery, and
-  prompt truthfulness;
-- `src/main/main.ts` for process-policy and post-persistence mode-change wiring;
-- `src/renderer/ui/agent/AgentSettingsView.tsx`, renderer capability settings
-  helpers, and `src/core/i18n/messages/*` for the Settings surface;
-- focused core, renderer, and E2E permission tests;
-- `docs/spec/agent-tool-permissions.md`, its `docs/spec/README.md` index entry,
-  and any directly contradictory agent tool wording.
-
-Collision check at approval time:
-
-- PR #407 (Issue persistence): no overlapping implementation files;
-- PR #409 (Table view): plan-file-only claim, no overlap;
-- PR #408 (preview translation cache): overlaps `main.ts`,
-  `AgentSettingsView.tsx`, and both i18n message files. This feature is ordered
-  after #408 and must rebase it before final verification. It does not modify
-  preview translation behavior.
-
-The coordinated infrastructure scope is limited to `docs/spec/README.md` and
-the mode-change wiring in `main.ts`. No dependency/build file or core
-command/type protocol change is required.
-
-## Risks
-
-- A mode default implemented in only the process layer would leave typed tools
-  blocked and recreate the current inconsistent behavior.
-- A mode default implemented only in capability evaluation would let bash start
-  with an unexpectedly restricted snapshot.
-- A Full -> Restricted transition that does not terminate old processes leaves
-  an unsandboxed escape after the UI claims restriction.
-- Hiding Folder Access must not erase existing grants.
-- Full Access makes plaintext provider secrets and the Import API bearer token
-  agent-readable; Settings and specs must say so explicitly.
-- PR #408 can create textual conflicts in Settings/i18n even though the product
-  behavior is independent.
+- Leaving one process helper on the old adapter would create inconsistent
+  access between bash, Skills, converters, and imports.
+- Leaving replay or IPC shapes behind would preserve unreachable recovery
+  behavior and complicate the runtime.
+- Broad host access exposes credentials and makes prompt injection or mistaken
+  commands more consequential; the Settings copy and spec must state this.
+- Shared host resources mean concurrent agents can race or overwrite each
+  other; Full Access must not be described as isolated execution.
+- The event-store generation bump must remain scoped to agent ledgers so Tana
+  and outline data are not erased.
 
 ## Open Questions
 
-None. The PM approved Full Access as the default, optional Restricted mode, and
-the resulting access to plaintext Tenon credentials and all `userData`.
-
-## Implementation Checklist
-
-- [ ] 1. Persist and normalize the mode, covering FR-1 and FR-5.
-- [ ] 2. Make tool evaluation mode-aware, covering FR-2, FR-3, and FR-4.
-- [ ] 3. Make process snapshots and transitions mode-aware, covering FR-2,
-      FR-3, and FR-4.
-- [ ] 4. Update runtime recovery and prompt behavior, covering FR-1 through
-      FR-4.
-- [ ] 5. Build the Settings surface and copy, covering FR-5.
-- [ ] 6. Update current specs, covering all approved security consequences.
-- [ ] 7. Run automated and real Tana import verification, covering AC-1 through
-      AC-8.
+None. The PM approved Full Access-only execution and removal of the agent
+filesystem/process containment mode.

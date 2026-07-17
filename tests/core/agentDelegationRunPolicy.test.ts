@@ -145,7 +145,7 @@ describe('agent delegation run policy', () => {
 
   test('normalizes and narrows run scope without widening parent constraints', () => {
     const parent: AgentRunScope = {
-      capabilities: ['file.read.allowed_file_area', 'outline.read'],
+      capabilities: ['file.read.local_path', 'outline.read'],
       resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a', 'node:b'] },
     };
 
@@ -154,8 +154,7 @@ describe('agent delegation run policy', () => {
       resources: { docs: [' spec '], paths: [' src '], nodes: [' node:a '] },
     })).toEqual({
       capabilities: [
-        'file.read.allowed_file_area',
-        'file.read.outside_allowed_file_area',
+        'file.read.local_path',
         'file.read.sensitive_local_path',
         'outline.read',
       ],
@@ -230,13 +229,13 @@ describe('agent delegation run policy', () => {
 
   test('derives allowed tools and verifier-only read scope from capabilities', () => {
     expect(scopedAllowedToolNames(['file_read', 'file_edit', 'node_read'], {
-      capabilities: ['file.read.allowed_file_area', 'outline.read'],
+      capabilities: ['file.read.local_path', 'outline.read'],
     })).toEqual(['file_read', 'node_read']);
 
     expect(scopedAllowedToolNames(['file_read', 'file_edit'], undefined)).toEqual(['file_read', 'file_edit']);
 
     expect(verifierRunScope({
-      capabilities: ['file.read.allowed_file_area', 'outline.edit', 'web.search'],
+      capabilities: ['file.read.local_path', 'outline.edit', 'web.search'],
       resources: {
         docs: ['spec'],
         paths: ['src'],
@@ -245,7 +244,7 @@ describe('agent delegation run policy', () => {
         creatableNodeParents: ['node:a'],
       },
     })).toEqual({
-      capabilities: ['file.read.allowed_file_area', 'web.search'],
+      capabilities: ['file.read.local_path', 'web.search'],
       resources: { docs: ['spec'], paths: ['src'], nodes: ['node:a'] },
     });
     expect(verifierRunScope({ resources: { writableNodes: ['node:writable'] } })).toMatchObject({

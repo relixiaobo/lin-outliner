@@ -1,7 +1,6 @@
 import { getBundledRipgrepBinDirForPath } from './agentRipgrep';
 import { buildAgentToolPathValue } from './agentToolPath';
 import { getAgentProcessExecutor } from './agentProcessExecutor';
-import type { FolderCapabilitySnapshot } from './agentFolderCapabilities';
 
 export interface AgentToolProcessResult {
   stdout: string;
@@ -27,7 +26,6 @@ export interface AgentToolProcessStdoutItemPage {
 export interface AgentToolProcessOptions {
   maxStdoutChars?: number;
   maxStderrChars?: number;
-  capabilities: FolderCapabilitySnapshot;
   env?: NodeJS.ProcessEnv;
   privateEnvKeys?: readonly string[];
   stdoutItemPage?: AgentToolProcessStdoutItemPage;
@@ -52,7 +50,7 @@ export async function runAgentToolProcess(
   args: string[],
   cwd: string,
   timeoutMs = 60_000,
-  options: AgentToolProcessOptions,
+  options: AgentToolProcessOptions = {},
 ): Promise<AgentToolProcessResult> {
   const itemPage = options.stdoutItemPage;
   if (itemPage && (!itemPage.separator || itemPage.offset < 0 || itemPage.limit < 1)) {
@@ -96,7 +94,6 @@ export async function runAgentToolProcess(
       cwd,
       env: { ...buildAgentLocalToolProcessEnv(), ...options.env },
       privateEnvKeys: options.privateEnvKeys,
-      capabilities: options.capabilities,
       detached: process.platform !== 'win32',
     }).then((child) => {
       const timer = setTimeout(() => {

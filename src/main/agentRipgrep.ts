@@ -1,7 +1,6 @@
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { FolderCapabilitySnapshot } from './agentFolderCapabilities';
 import { buildAgentToolPathValue, pathSegments } from './agentToolPath';
 import { getAgentProcessExecutor } from './agentProcessExecutor';
 
@@ -22,13 +21,10 @@ const RIPGREP_PROBE_TIMEOUT_MS = 5_000;
 
 let cachedResolution: { signature: string; promise: Promise<ResolvedRipgrepCommand> } | undefined;
 
-export async function resolveRipgrepCommand(
-  cwd: string,
-  capabilities: FolderCapabilitySnapshot,
-): Promise<ResolvedRipgrepCommand> {
+export async function resolveRipgrepCommand(cwd: string): Promise<ResolvedRipgrepCommand> {
   const signature = ripgrepResolutionSignature();
   if (cachedResolution?.signature === signature) return cachedResolution.promise;
-  const promise = resolveRipgrepCommandUncached(cwd, capabilities);
+  const promise = resolveRipgrepCommandUncached(cwd);
   cachedResolution = { signature, promise };
   try {
     return await promise;
@@ -55,10 +51,7 @@ export function clearRipgrepCommandCacheForTests(): void {
   cachedResolution = undefined;
 }
 
-async function resolveRipgrepCommandUncached(
-  cwd: string,
-  capabilities: FolderCapabilitySnapshot,
-): Promise<ResolvedRipgrepCommand> {
+async function resolveRipgrepCommandUncached(cwd: string): Promise<ResolvedRipgrepCommand> {
   const attempts: string[] = [];
   const envCommand = process.env[RIPGREP_COMMAND_ENV]?.trim();
   if (envCommand) {
@@ -71,7 +64,7 @@ async function resolveRipgrepCommandUncached(
         mode: 'env',
         binDir: path.isAbsolute(command) ? path.dirname(command) : undefined,
         source: RIPGREP_COMMAND_ENV,
-      }, cwd, capabilities);
+      }, cwd);
     } catch (error) {
       attempts.push(`env: ${errorMessage(error)}`);
     }
@@ -86,7 +79,7 @@ async function resolveRipgrepCommandUncached(
         mode: 'bundled',
         binDir: path.dirname(bundledExecutable),
         source: bundledExecutable,
-      }, cwd, capabilities);
+      }, cwd);
     } catch (error) {
       attempts.push(`bundled: ${errorMessage(error)}`);
     }
@@ -103,7 +96,7 @@ async function resolveRipgrepCommandUncached(
         mode: 'system',
         binDir: path.dirname(systemRipgrep),
         source: systemRipgrep,
-      }, cwd, capabilities);
+      }, cwd);
     } catch (error) {
       attempts.push(`system: ${errorMessage(error)}`);
     }
@@ -117,13 +110,11 @@ async function resolveRipgrepCommandUncached(
 async function probeRipgrepCommand(
   input: Omit<ResolvedRipgrepCommand, 'version'>,
   cwd: string,
-  capabilities: FolderCapabilitySnapshot,
 ): Promise<ResolvedRipgrepCommand> {
   const result = await spawnProbe(
     input.command,
     [...input.argsPrefix, '--version'],
     cwd,
-    capabilities,
   );
   if (result.error) {
     throw new Error(`${input.mode} provider at ${input.source} failed to start: ${result.error.message}`);
@@ -143,7 +134,6 @@ function spawnProbe(
   command: string,
   args: string[],
   cwd: string,
-  capabilities: FolderCapabilitySnapshot,
 ): Promise<{
   stdout: string;
   stderr: string;
@@ -157,7 +147,6 @@ function spawnProbe(
       command,
       args,
       cwd,
-      capabilities,
       env: { ...process.env, PATH: buildAgentToolPathValue() },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',

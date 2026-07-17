@@ -16,16 +16,7 @@ import {
   type AgentSkillProvenanceRecord,
   type AgentSkillProvenanceStore,
 } from '../../src/main/agentSkills';
-import { createFolderCapabilitySnapshot } from '../../src/main/agentFolderCapabilities';
-
 const execFile = promisify(execFileCallback);
-
-function processCapabilities(root: string) {
-  return createFolderCapabilitySnapshot({
-    workspaceRoot: root,
-    includeSystemRoots: true,
-  }, []);
-}
 
 describe('resolveSkillContentTarget (single skill-path source of truth)', () => {
   const root = path.join(path.sep, 'work', 'project');
@@ -432,7 +423,7 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
     await acceptSkillForTest(runtime, 'demo');
 
-    await runtime.notifyFileTouched([path.join(root, 'src', 'file.ts')], processCapabilities(root));
+    await runtime.notifyFileTouched([path.join(root, 'src', 'file.ts')]);
     const skill = await runtime.getSkill('demo');
     const listing = runtime.drainSteeringMessages()
       .map((message) => message.content[0]?.type === 'text' ? message.content[0].text : '')
@@ -1388,7 +1379,7 @@ describe('agent skills', () => {
 
     // Drain the initial listing (built-in skillify) so only activation remains.
     expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('typescript-review');
-    await runtime.notifyFileTouched([path.join(root, 'src', 'main.ts')], processCapabilities(root));
+    await runtime.notifyFileTouched([path.join(root, 'src', 'main.ts')]);
     const [message] = runtime.drainSteeringMessages();
     const text = message?.content[0]?.type === 'text' ? message.content[0].text : '';
 
@@ -1421,14 +1412,14 @@ describe('agent skills', () => {
 
     // Drain the initial listing (built-in skillify) so only activation remains.
     expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('src-directory');
-    await runtime.notifyFileTouched([path.join(root, 'src')], processCapabilities(root));
+    await runtime.notifyFileTouched([path.join(root, 'src')]);
     const [directoryMessage] = runtime.drainSteeringMessages();
     const directoryText = directoryMessage?.content[0]?.type === 'text' ? directoryMessage.content[0].text : '';
 
     expect(directoryText).toContain('src-directory');
     expect(directoryText).toContain('src-globstar');
 
-    await runtime.notifyFileTouched([path.join(root, 'src', 'app', 'main.ts')], processCapabilities(root));
+    await runtime.notifyFileTouched([path.join(root, 'src', 'app', 'main.ts')]);
     expect(runtime.drainSteeringMessages()).toEqual([]);
   });
 
@@ -1443,7 +1434,7 @@ describe('agent skills', () => {
 
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
 
-    await runtime.notifyFileTouched([path.join(root, 'ignored', 'pkg', 'file.ts')], processCapabilities(root));
+    await runtime.notifyFileTouched([path.join(root, 'ignored', 'pkg', 'file.ts')]);
 
     expect(runtime.drainSteeringMessages()).toEqual([]);
   });
@@ -1454,7 +1445,7 @@ describe('agent skills', () => {
     const touchedFile = path.join(root, 'packages', 'app', 'src', 'main.ts');
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
 
-    await runtime.notifyFileTouched([touchedFile], processCapabilities(root));
+    await runtime.notifyFileTouched([touchedFile]);
     expect(runtime.drainSteeringMessages()).toEqual([]);
     expect(await runtime.buildSkillListingReminderText(200_000)).not.toContain('late-dynamic');
 
@@ -1462,7 +1453,7 @@ describe('agent skills', () => {
       frontmatter: ['description: Late dynamic skill'],
       body: 'Use late dynamic instructions.',
     }, nestedSkillsDir);
-    await runtime.notifyFileTouched([touchedFile], processCapabilities(root));
+    await runtime.notifyFileTouched([touchedFile]);
     const [message] = runtime.drainSteeringMessages();
     const text = message?.content[0]?.type === 'text' ? message.content[0].text : '';
 

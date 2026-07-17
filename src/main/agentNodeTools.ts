@@ -4073,8 +4073,8 @@ function validateLocalFileReferenceMarkers(
   if (!outside) return null;
   return {
     code: 'invalid_file_reference',
-    error: `Local file reference is outside the allowed file area: ${outside}`,
-    instructions: 'Attach external files through the composer, or reference a file path under the allowed file area.',
+    error: `Local file reference is outside the workspace-local reference root: ${outside}`,
+    instructions: 'Attach external files through the composer, or store a reference under the Run workdir.',
   };
 }
 

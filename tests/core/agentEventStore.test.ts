@@ -318,38 +318,6 @@ describe('agent event store', () => {
     });
   });
 
-  test('falls back to full log replay for a v5 checkpoint without folder capability state', async () => {
-    await withStore(async (store) => {
-      const conversationId = 'conversation-1';
-      await store.appendEvents(conversationId, [
-        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
-        {
-          ...base(conversationId, 2, 'user_message.created', userActor),
-          messageId: 'message-1',
-          parentMessageId: null,
-          content: [{ type: 'text', text: 'Hello from the log' }],
-        },
-      ]);
-      const checkpoint = await store.writeCheckpoint(conversationId, await store.replay(conversationId));
-      expect(checkpoint?.seq).toBe(2);
-
-      const checkpointPath = store.checkpointPath(conversationId, 2);
-      const raw = JSON.parse(await readFile(checkpointPath, 'utf8')) as {
-        v: number;
-        state: Record<string, unknown>;
-      };
-      raw.v = 5;
-      delete raw.state.folderCapabilityRequests;
-      await writeFile(checkpointPath, `${JSON.stringify(raw)}\n`, 'utf8');
-
-      const replayed = await store.replay(conversationId);
-
-      expect(replayed.latestSeq).toBe(2);
-      expect(replayed.messages['message-1']?.content).toEqual([{ type: 'text', text: 'Hello from the log' }]);
-      expect(replayed.folderCapabilityRequests).toEqual({});
-    });
-  });
-
   test('falls back to log replay when a checkpoint predates context clear replay state', async () => {
     await withStore(async (store) => {
       const conversationId = 'conversation-1';

@@ -239,16 +239,14 @@ Finish runtime polish on top of the event log and delegation foundation.
 - [ ] Add richer non-text media payload lazy loading UI in debug/render details.
 - [ ] Add performance instrumentation around replay, projection, IPC payload size,
   and long transcript rendering.
-- [x] Access-mode capability model wired end to end: Full Access direct execution
-  under the host account by default; optional Restricted persistent folder
-  acquisition for uncovered roots including `/`, with typed-file and process
-  isolation for private Tenon control state; ambient
-  user credentials preserved while explicitly private injected values are
-  removed; no action-level host/payment/network hard blocks; scoped Runs built
-  from narrowed tool catalogs; durable unattended `needs_input` recovery;
-  revocation-driven process termination; and joinable
-  `tool.capability.checked` / `tool.capability.resolved` events with no
-  approval-named transport.
+- [x] Full Access-only capability model wired end to end: typed file tools,
+  foreground/background processes, Skill shell, converters, and delegated Runs
+  execute under the host account; ambient user credentials are preserved while
+  explicitly private injected values are removed; explicit command/action
+  blocks and scoped Run tool catalogs remain; joinable
+  `tool.capability.checked` / `tool.capability.resolved` events use
+  `allow | unavailable`; and there is no agent process sandbox, folder
+  acquisition/recovery transport, or concurrency isolation between Runs.
 - [ ] Emit and render the remaining schema-reserved runtime events that are not
   active yet: persisted follow-ups, metrics, and explicit cancellation details.
 - [ ] Refine checkpoint retention settings if real user conversations show unusual

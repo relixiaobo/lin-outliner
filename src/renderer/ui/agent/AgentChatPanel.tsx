@@ -501,10 +501,8 @@ export function AgentChatPanel({
     regenerateMessage,
     reloadConversation,
     revision,
-    pendingCapability,
     pendingUserQuestion,
     retryMessage,
-    resolveCapability,
     resolveUserQuestion,
     selectConversation,
     newConversation,
@@ -1380,13 +1378,6 @@ export function AgentChatPanel({
     return () => document.removeEventListener('pointerdown', handlePointerDown, true);
   }, [historyOpen]);
 
-  const handleResolveCapability = useCallback(async (
-    requestId: string,
-    resolution: 'granted' | 'cancelled',
-  ) => {
-    return await resolveCapability(requestId, resolution);
-  }, [resolveCapability]);
-
   async function refreshAfterSettingsChange() {
     const refreshes: Array<Promise<unknown>> = [
       loadProviderSettings(),
@@ -2042,9 +2033,7 @@ export function AgentChatPanel({
                 onSend={sendMessage}
                 onStop={stop}
                 onSteer={handleSteerMessage}
-                onResolveCapability={handleResolveCapability}
                 onResolveUserQuestion={resolveUserQuestion}
-                pendingCapability={pendingCapability}
                 pendingUserQuestion={pendingUserQuestion}
                 settings={providerSettings}
                 agentModel={typeof builtInDefinition?.model === 'string' ? builtInDefinition.model : ''}

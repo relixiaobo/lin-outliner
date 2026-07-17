@@ -11,7 +11,6 @@ import {
   RIPGREP_RECOVERY_INSTRUCTIONS,
   restorePostCompactReadFiles,
   scratchRootForWorkdir,
-  setAgentLocalCapabilityRoots,
   visibleBash,
   visibleFileGlob,
   visibleFileGrep,
@@ -298,7 +297,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_read rejects symlinks that resolve outside the local root', async () => {
+  test('file_read follows symlinks outside the workdir under Full Access', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-outside-'));
       try {
@@ -309,107 +308,37 @@ describe('agent local tools', () => {
 
         const read = await executeTool(workspaceRoot, 'file_read', { file_path: linkPath });
 
-        expect(read.ok).toBe(false);
-        expect(read.error?.code).toBe('path_outside_local_root');
+        expect(read.ok).toBe(true);
+        expect((read.data as { file: { content: string } }).file.content).toBe('secret');
       } finally {
         await rm(outsideRoot, { recursive: true, force: true });
       }
     });
   });
 
-  test('scratch root is readable but not writable when it sits outside the workdir', async () => {
+  test('absolute paths use Full Access while relative paths keep the workdir base', async () => {
     await withWorkspace(async (workspaceRoot) => {
-      const scratchRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-scratch-'));
+      const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-outside-'));
       try {
-        // A materialized attachment / fetched binary lands in scratch (a sibling of the workdir).
-        const scratchFile = path.join(scratchRoot, 'agent-attachments', 'doc.txt');
-        await mkdir(path.dirname(scratchFile), { recursive: true });
-        await writeFile(scratchFile, 'attachment body', 'utf8');
-
-        const tools = createLocalTools({ localRoot: workspaceRoot, scratchRoot });
-        const fileRead = tools.find((tool) => tool.name === 'file_read')!;
-        const read = (await (fileRead.execute as any)('call', { file_path: scratchFile })).details as ToolEnvelope<{
-          type: 'text';
-          file: { content: string };
-        }>;
-
-        expect(read.ok).toBe(true);
-        expect(read.data!.file.content).toBe('attachment body');
-
-        // Scratch is read-only for the agent: a write to a scratch path is rejected even though
-        // reading it is allowed — the agent writes its own outputs to the workdir.
-        const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
-        const blockedWrite = (await (fileWrite.execute as any)('call', {
-          file_path: path.join(scratchRoot, 'agent-attachments', 'sneaky.txt'),
-          content: 'no',
-        })).details as ToolEnvelope<unknown>;
-        expect(blockedWrite.ok).toBe(false);
-        expect(blockedWrite.error?.code).toBe('path_outside_local_root');
-
-        // The same read path is rejected when scratch is not declared, proving the allowance is
-        // the scratch root and not a loosened boundary.
-        const sealed = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_read')!;
-        const denied = (await (sealed.execute as any)('call', { file_path: scratchFile })).details as ToolEnvelope<unknown>;
-        expect(denied.ok).toBe(false);
-        expect(denied.error?.code).toBe('path_outside_local_root');
-      } finally {
-        await rm(scratchRoot, { recursive: true, force: true });
-      }
-    });
-  });
-
-  test('remembered folder capabilities widen file-tool containment without changing the relative base', async () => {
-    await withWorkspace(async (workspaceRoot) => {
-      const handedRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-handed-'));
-      try {
-        const handedFile = path.join(handedRoot, 'notes.txt');
-        await writeFile(handedFile, 'handed notes', 'utf8');
-        const workspace = createAgentLocalWorkspaceContext(workspaceRoot);
-        setAgentLocalCapabilityRoots(workspace, [{ access: 'read', root: handedRoot }]);
-        const tools = createLocalTools({ workspace });
+        const outsideFile = path.join(outsideRoot, 'notes.txt');
+        await writeFile(outsideFile, 'outside notes', 'utf8');
+        const tools = createLocalTools({ localRoot: workspaceRoot });
         const fileRead = tools.find((tool) => tool.name === 'file_read')!;
         const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
-        const read = (await (fileRead.execute as any)('call', { file_path: handedFile })).details as ToolEnvelope<{
+        const read = (await (fileRead.execute as any)('call', { file_path: outsideFile })).details as ToolEnvelope<{
           type: 'text';
           file: { content: string };
         }>;
         expect(read.ok).toBe(true);
-        expect(read.data!.file.content).toBe('handed notes');
+        expect(read.data!.file.content).toBe('outside notes');
 
-        const readOnlyWrite = (await (fileWrite.execute as any)('call', {
-          file_path: path.join(handedRoot, 'created.txt'),
-          content: 'no',
+        const outsideCreated = path.join(outsideRoot, 'created.txt');
+        const absoluteWrite = (await (fileWrite.execute as any)('call', {
+          file_path: outsideCreated,
+          content: 'absolute',
         })).details as ToolEnvelope<unknown>;
-        expect(readOnlyWrite.ok).toBe(false);
-        expect(readOnlyWrite.error?.code).toBe('path_outside_local_root');
-
-        const exactNewFile = path.join(handedRoot, 'exact-new.txt');
-        setAgentLocalCapabilityRoots(workspace, [{ access: 'write', root: exactNewFile }]);
-        const exactWrite = (await (fileWrite.execute as any)('call', {
-          file_path: exactNewFile,
-          content: 'exact',
-        })).details as ToolEnvelope<{ type: 'create'; filePath: string }>;
-        expect(exactWrite.ok).toBe(true);
-        const siblingWrite = (await (fileWrite.execute as any)('call', {
-          file_path: path.join(handedRoot, 'sibling.txt'),
-          content: 'no',
-        })).details as ToolEnvelope<unknown>;
-        expect(siblingWrite.ok).toBe(false);
-        expect(siblingWrite.error?.code).toBe('path_outside_local_root');
-
-        setAgentLocalCapabilityRoots(workspace, [{ access: 'write', root: handedRoot }]);
-        const write = (await (fileWrite.execute as any)('call', {
-          file_path: path.join(handedRoot, 'created.txt'),
-          content: 'yes',
-        })).details as ToolEnvelope<{ type: 'create'; filePath: string }>;
-        expect(write.ok).toBe(true);
-        expect(await readFile(path.join(handedRoot, 'created.txt'), 'utf8')).toBe('yes');
-
-        const rootDelete = (await (tools.find((tool) => tool.name === 'file_delete')!.execute as any)('call', {
-          file_path: handedRoot,
-        })).details as ToolEnvelope<unknown>;
-        expect(rootDelete.ok).toBe(false);
-        expect(rootDelete.error?.code).toBe('root_delete_forbidden');
+        expect(absoluteWrite.ok).toBe(true);
+        expect(await readFile(outsideCreated, 'utf8')).toBe('absolute');
 
         const relativeWrite = (await (fileWrite.execute as any)('call', {
           file_path: 'relative.txt',
@@ -417,114 +346,6 @@ describe('agent local tools', () => {
         })).details as ToolEnvelope<{ type: 'create'; filePath: string }>;
         expect(relativeWrite.ok).toBe(true);
         expect(relativeWrite.data!.filePath).toBe(path.join(workspaceRoot, 'relative.txt'));
-      } finally {
-        await rm(handedRoot, { recursive: true, force: true });
-      }
-    });
-  });
-
-  test('a filesystem-root capability reaches user files while the Tenon control plane stays private', async () => {
-    await withWorkspace(async (controlRoot) => {
-      const workspaceRoot = path.join(controlRoot, 'agent-workdir');
-      const scratchRoot = path.join(controlRoot, 'agent-scratch');
-      const outputRoot = path.join(scratchRoot, 'data-cleanup');
-      const outsideRoot = await mkdtemp(path.join(tmpdir(), 'tenon-root-capability-'));
-      try {
-        await mkdir(workspaceRoot, { recursive: true });
-        await mkdir(outputRoot, { recursive: true });
-        await writeFile(path.join(controlRoot, 'agent-secrets.json'), 'private', 'utf8');
-        await writeFile(path.join(workspaceRoot, 'inside.txt'), 'inside', 'utf8');
-        await writeFile(path.join(scratchRoot, 'attachment.txt'), 'attachment', 'utf8');
-        await writeFile(path.join(outsideRoot, 'user.txt'), 'user', 'utf8');
-
-        const workspace = createAgentLocalWorkspaceContext(
-          workspaceRoot,
-          scratchRoot,
-          undefined,
-          controlRoot,
-        );
-        setAgentLocalCapabilityRoots(workspace, [{ access: 'write', root: path.parse(controlRoot).root }]);
-        const tools = createLocalTools({ workspace });
-        const fileRead = tools.find((tool) => tool.name === 'file_read')!;
-        const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
-
-        const outsideRead = (await (fileRead.execute as any)('read-outside', {
-          file_path: path.join(outsideRoot, 'user.txt'),
-        })).details as ToolEnvelope<{ file: { content: string } }>;
-        expect(outsideRead.ok).toBe(true);
-        expect(outsideRead.data!.file.content).toBe('user');
-
-        const outsideWrite = (await (fileWrite.execute as any)('write-outside', {
-          file_path: path.join(outsideRoot, 'created.txt'),
-          content: 'created',
-        })).details as ToolEnvelope<unknown>;
-        expect(outsideWrite.ok).toBe(true);
-        expect(await readFile(path.join(outsideRoot, 'created.txt'), 'utf8')).toBe('created');
-
-        const attachmentRead = (await (fileRead.execute as any)('read-attachment', {
-          file_path: path.join(scratchRoot, 'attachment.txt'),
-        })).details as ToolEnvelope<{ file: { content: string } }>;
-        expect(attachmentRead.ok).toBe(true);
-        expect(attachmentRead.data!.file.content).toBe('attachment');
-
-        const outputWrite = (await (fileWrite.execute as any)('write-output', {
-          file_path: path.join(outputRoot, 'pack.json'),
-          content: '{}',
-        })).details as ToolEnvelope<unknown>;
-        expect(outputWrite.ok).toBe(true);
-
-        const secretRead = (await (fileRead.execute as any)('read-control', {
-          file_path: path.join(controlRoot, 'agent-secrets.json'),
-        })).details as ToolEnvelope<unknown>;
-        const controlWrite = (await (fileWrite.execute as any)('write-control', {
-          file_path: path.join(controlRoot, 'workspace.json'),
-          content: '{}',
-        })).details as ToolEnvelope<unknown>;
-        const attachmentWrite = (await (fileWrite.execute as any)('write-attachment', {
-          file_path: path.join(scratchRoot, 'mutated.txt'),
-          content: 'blocked',
-        })).details as ToolEnvelope<unknown>;
-        expect(secretRead.error?.code).toBe('control_plane_unavailable');
-        expect(controlWrite.error?.code).toBe('control_plane_unavailable');
-        expect(attachmentWrite.error?.code).toBe('control_plane_unavailable');
-      } finally {
-        await rm(outsideRoot, { recursive: true, force: true });
-      }
-    });
-  });
-
-  test('Full Access file tools reach outside paths and Tenon control state', async () => {
-    await withWorkspace(async (controlRoot) => {
-      const workspaceRoot = path.join(controlRoot, 'agent-workdir');
-      const outsideRoot = await mkdtemp(path.join(tmpdir(), 'tenon-full-access-tools-'));
-      try {
-        await mkdir(workspaceRoot, { recursive: true });
-        const secretPath = path.join(controlRoot, 'agent-secrets.json');
-        await writeFile(secretPath, 'full-access-secret', 'utf8');
-        const workspace = createAgentLocalWorkspaceContext(
-          workspaceRoot,
-          undefined,
-          undefined,
-          controlRoot,
-        );
-        setAgentLocalCapabilityRoots(workspace, [], 0, 'full-access');
-        const tools = createLocalTools({ workspace });
-        const fileRead = tools.find((tool) => tool.name === 'file_read')!;
-        const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
-
-        const secretRead = (await (fileRead.execute as any)('read-control', {
-          file_path: secretPath,
-        })).details as ToolEnvelope<{ file: { content: string } }>;
-        expect(secretRead.ok).toBe(true);
-        expect(secretRead.data!.file.content).toBe('full-access-secret');
-
-        const outsidePath = path.join(outsideRoot, 'created.txt');
-        const outsideWrite = (await (fileWrite.execute as any)('write-outside', {
-          file_path: outsidePath,
-          content: 'created',
-        })).details as ToolEnvelope<unknown>;
-        expect(outsideWrite.ok).toBe(true);
-        expect(await readFile(outsidePath, 'utf8')).toBe('created');
       } finally {
         await rm(outsideRoot, { recursive: true, force: true });
       }
@@ -534,8 +355,7 @@ describe('agent local tools', () => {
   test('a materialized attachment in a separate scratch root is readable by file_read (production layout)', async () => {
     // Production wires workdir and scratch as independent siblings (`<userData>/agent-workdir`
     // and `<userData>/agent-scratch`), unlike the `<workdir>/tmp` default the other tests inherit.
-    // This proves the materializer's target dir and the file tool's trusted-roots set agree when
-    // scratch genuinely sits OUTSIDE the workdir — the round-trip the two-root model relies on.
+    // This proves the materializer and file tool agree when scratch sits outside the workdir.
     await withWorkspace(async (workspaceRoot) => {
       const scratchRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-scratch-'));
       const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-source-'));
@@ -543,7 +363,7 @@ describe('agent local tools', () => {
         const sourcePath = path.join(sourceRoot, 'report.txt');
         await writeFile(sourcePath, 'materialized body', 'utf8');
 
-        // The app materializes an out-of-area attachment exactly as production does.
+        // The app materializes an attachment exactly as production does.
         const attachment = await materializePathBackedAttachment(workspaceRoot, scratchRoot, {
           name: 'report.txt',
           path: sourcePath,
@@ -567,7 +387,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_glob rejects symlinked directories that resolve outside the local root', async () => {
+  test('file_glob follows a symlinked directory outside the workdir', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-outside-'));
       try {
@@ -577,8 +397,8 @@ describe('agent local tools', () => {
 
         const glob = await executeTool(workspaceRoot, 'file_glob', { path: linkPath, pattern: '**/*' });
 
-        expect(glob.ok).toBe(false);
-        expect(glob.error?.code).toBe('path_outside_local_root');
+        expect(glob.ok).toBe(true);
+        expect((glob.data as FileGlobData).filenames).toContain('outside-dir/secret.txt');
       } finally {
         await rm(outsideRoot, { recursive: true, force: true });
       }
@@ -850,8 +670,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('MarkItDown probes use the file tool capability snapshot', async () => {
-    if (process.platform !== 'darwin') return;
+  test('MarkItDown probes run with Full Access', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const controlRoot = path.join(workspaceRoot, 'control');
       await mkdir(controlRoot);
@@ -876,7 +695,6 @@ describe('agent local tools', () => {
         workspaceRoot,
         undefined,
         undefined,
-        controlRoot,
       );
       const tool = createLocalTools({ workspace }).find((candidate) => candidate.name === 'file_read')!;
 
@@ -889,7 +707,7 @@ describe('agent local tools', () => {
         const read = result.details as ToolEnvelope<{ type: 'markdown' }>;
 
         expect(read.ok).toBe(true);
-        expect(await readFile(probeLeakPath, 'utf8').catch(() => '')).not.toContain('private-control-state');
+        expect(await readFile(probeLeakPath, 'utf8')).toContain('private-control-state');
       });
     });
   });
@@ -1503,7 +1321,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_delete refuses the file area root and the agent trash itself', async () => {
+  test('file_delete refuses the Run workdir root and the agent trash itself', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const rootDelete = await executeTool(workspaceRoot, 'file_delete', {
         file_path: workspaceRoot,
@@ -1815,19 +1633,19 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_write rejects agent definition symlink escapes before validation', async () => {
+  test('file_write keeps self-definition governance across symlinks', async () => {
     await withWorkspace(async (workspaceRoot) => {
-      const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-definition-escape-'));
+      const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-skill-definition-escape-'));
       try {
         await mkdir(path.join(workspaceRoot, '.agents'), { recursive: true });
-        await symlink(outsideRoot, path.join(workspaceRoot, '.agents', 'agents'), 'dir');
+        await symlink(outsideRoot, path.join(workspaceRoot, '.agents', 'skills'), 'dir');
 
         const result = await executeTool(workspaceRoot, 'file_write', {
-          file_path: path.join(workspaceRoot, '.agents', 'agents', 'escape-agent', 'AGENT.md'),
+          file_path: path.join(workspaceRoot, '.agents', 'skills', 'escape-skill', 'SKILL.md'),
           content: [
             '---',
-            'name: Escape Agent',
-            'description: Attempts to escape through symlink.',
+            'name: escape-skill',
+            'description: Attempts to escape through a symlink.',
             '---',
             'Do not write outside the workspace.',
             '',
@@ -1835,7 +1653,7 @@ describe('agent local tools', () => {
         });
 
         expect(result.ok).toBe(false);
-        expect(result.error?.code).toBe('path_outside_local_root');
+        expect(result.error?.code).toBe('ungoverned_self_definition_write');
       } finally {
         await rm(outsideRoot, { recursive: true, force: true });
       }

@@ -2,7 +2,6 @@ import { expect, type Page } from '@playwright/test';
 import { DEFAULT_DREAM_CHANNEL_ID, DEFAULT_GENERAL_CHANNEL_ID, usesChannelActivitySurface } from '../../src/core/agentChannel';
 import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
-import type { AgentFilesystemMode } from '../../src/core/agentFilesystemMode';
 
 export const ids = {
   workspace: 'workspace',
@@ -43,10 +42,6 @@ interface MockFixtureOptions {
   oauthProvider?: boolean;
   /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
   noProvider?: boolean;
-  /** Preloads remembered folder capabilities for settings/security specs. */
-  capabilityFolders?: string[];
-  /** Selects the persisted agent filesystem mode. */
-  capabilityFilesystemMode?: AgentFilesystemMode;
   /** Preloads user blocklist rules for settings/security specs. */
   capabilityBlocks?: string[];
   /** Delays initial workspace restoration so startup chrome can be asserted before data arrives. */
@@ -520,8 +515,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       });
     }
     const agentCapabilities = {
-      filesystemMode: options.capabilityFilesystemMode ?? 'full-access' as AgentFilesystemMode,
-      folders: [...(options.capabilityFolders ?? [])] as string[],
       blocks: [...(options.capabilityBlocks ?? [])] as string[],
       diagnostics: [] as Array<{ ruleValue: string; code: string; message: string }>,
     };
@@ -687,7 +680,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const longToolCallId = 'call_hY7YSWjtewOewQfepRMCajzMlfc_00128e64f08e3fd6016a3a61cb0a9c8197a9c011';
     const deniedToolCallId = 'call_unavailable_tool_00128e64f08e3fd6016a3a61cb0a9c8197a9c012';
-    const deniedToolResult = '{"ok":false,"tool":"file_read","status":"unavailable","error":{"code":"operation_unavailable","message":"Tenon control state is unavailable to agent file tools."}}';
+    const deniedToolResult = '{"ok":false,"tool":"bash","status":"unavailable","error":{"code":"operation_unavailable","message":"Blocked by user rule Command(git push --force origin main)."}}';
     const debugRun = {
       ...debugRunSummary,
       systemPrompt: 'You are Lin agent.\nLong unbroken diagnostic prompt segment: abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789.',
@@ -2180,18 +2173,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_get_capability_settings') {
           return clone(agentCapabilities) as T;
         }
-        if (cmd === 'agent_pick_capability_folder') {
-          const path = '/mock/handoff-folder';
-          if (!agentCapabilities.folders.includes(path)) {
-            agentCapabilities.folders.push(path);
-          }
-          return clone({
-            canceled: false,
-            path,
-            folder: path,
-            settings: agentCapabilities,
-          }) as T;
-        }
         if (cmd === 'agent_list_all_skills') {
           if (options.agentSkillsDelayMs) await delay(options.agentSkillsDelayMs);
           return clone(agentSkills) as T;
@@ -2221,14 +2202,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_apply_capability_settings_patch') {
           const patch = args.patch as {
-            filesystemMode?: AgentFilesystemMode;
-            revokeFolders?: string[];
             removeBlocks?: string[];
           };
-          const revoked = Array.isArray(patch.revokeFolders) ? patch.revokeFolders.map(String) : [];
           const removed = Array.isArray(patch.removeBlocks) ? patch.removeBlocks.map(String) : [];
-          if (patch.filesystemMode) agentCapabilities.filesystemMode = patch.filesystemMode;
-          agentCapabilities.folders = agentCapabilities.folders.filter((folder) => !revoked.includes(folder));
           agentCapabilities.blocks = agentCapabilities.blocks.filter((block) => !removed.includes(block));
           return clone(agentCapabilities) as T;
         }

@@ -24,7 +24,6 @@ import {
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
-import type { FolderCapabilitySnapshot } from './agentFolderCapabilities';
 import { runAgentToolProcess } from './agentToolProcess';
 
 export const SKILL_TOOL_NAME = 'skill';
@@ -574,11 +573,8 @@ export class AgentSkillRuntime {
     return effect;
   }
 
-  async notifyFileTouched(
-    filePaths: string[],
-    capabilities: FolderCapabilitySnapshot,
-  ): Promise<void> {
-    const changed = await this.registry.activateForFilePaths(filePaths, capabilities);
+  async notifyFileTouched(filePaths: string[]): Promise<void> {
+    const changed = await this.registry.activateForFilePaths(filePaths);
     if (!changed) return;
     const listing = await this.buildSkillListingMessage();
     if (listing) this.enqueueSteeringMessage(listing);
@@ -1284,13 +1280,10 @@ class SkillRegistry {
       ?? null;
   }
 
-  async activateForFilePaths(
-    filePaths: string[],
-    capabilities: FolderCapabilitySnapshot,
-  ): Promise<boolean> {
+  async activateForFilePaths(filePaths: string[]): Promise<boolean> {
     await this.ensureLoaded();
     let changed = false;
-    const nestedDirs = await this.discoverSkillDirsForPaths(filePaths, capabilities);
+    const nestedDirs = await this.discoverSkillDirsForPaths(filePaths);
     for (const dir of nestedDirs) {
       // Nested .agents/skills dirs are always under the work root → project source.
       const loaded = await loadSkillsFromDir(dir, 'project');
@@ -1408,10 +1401,7 @@ class SkillRegistry {
     return true;
   }
 
-  private async discoverSkillDirsForPaths(
-    filePaths: string[],
-    capabilities: FolderCapabilitySnapshot,
-  ): Promise<string[]> {
+  private async discoverSkillDirsForPaths(filePaths: string[]): Promise<string[]> {
     const discovered: string[] = [];
     for (const filePath of filePaths) {
       const absolute = path.resolve(filePath);
@@ -1421,7 +1411,7 @@ class SkillRegistry {
         if (!this.checkedDynamicSkillDirs.has(skillDir)) {
           if (await directoryExists(skillDir)) {
             this.checkedDynamicSkillDirs.add(skillDir);
-            if (!(await isGitIgnored(this.root, skillDir, capabilities))) {
+            if (!(await isGitIgnored(this.root, skillDir))) {
               discovered.push(skillDir);
             }
           }
@@ -2385,7 +2375,6 @@ async function directoryExists(dir: string): Promise<boolean> {
 async function isGitIgnored(
   root: string,
   candidate: string,
-  capabilities: FolderCapabilitySnapshot,
 ): Promise<boolean> {
   const relative = path.relative(root, candidate);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return false;
@@ -2395,7 +2384,6 @@ async function isGitIgnored(
     root,
     5_000,
     {
-      capabilities,
       maxStdoutChars: 1_024,
       maxStderrChars: 1_024,
       env: {

@@ -90,14 +90,14 @@ describe('agent system prompt composer', () => {
     expect(prompt.indexOf('# System context')).toBeLessThan(prompt.indexOf('You are "Reviewer"'));
   });
 
-  test('describes Restricted folder acquisition only when that mode is selected', () => {
-    const prompt = composeAgentPrompt(def(), {
-      mode: 'member',
-      filesystemMode: 'restricted',
-    });
-    expect(prompt).toContain('This Run is Restricted');
-    expect(prompt).toContain("folder capability flow");
-    expect(prompt).not.toContain('This Run has Full Access');
+  test('describes Full Access and native boundaries for every Run', () => {
+    const prompt = composeAgentPrompt(def(), { mode: 'member' });
+    expect(prompt).toContain('This Run has Full Access');
+    expect(prompt).toContain('Native OS authorization and provider or service login still apply');
+    expect(prompt).toContain('place it under the Run workdir');
+    expect(prompt).toContain('without limiting other Full Access operations');
+    expect(prompt).not.toContain('Restricted');
+    expect(prompt).not.toContain('folder capability');
   });
 
   test('memory module follows effective tool capability', () => {

@@ -193,20 +193,14 @@ describe('agent runtime Issue tools', () => {
   const roots: string[] = [];
 
   beforeEach(async () => {
-    const { resetFolderCapabilityServiceForTests } = await import('../../src/main/agentCapabilityStore');
-    resetFolderCapabilityServiceForTests();
     await rm(electronUserDataRoot, { recursive: true, force: true });
     await mkdir(electronUserDataRoot, { recursive: true });
     await writeFile(path.join(electronUserDataRoot, 'agent-capabilities.json'), JSON.stringify({
-      filesystemMode: 'restricted',
-      folders: [],
       blocks: [],
     }));
   });
 
   afterEach(async () => {
-    const { resetFolderCapabilityServiceForTests } = await import('../../src/main/agentCapabilityStore');
-    resetFolderCapabilityServiceForTests();
     await Promise.allSettled(drainableRuntimes.splice(0).map((runtime) => runtime.drainPendingWrites()));
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
     await rm(electronUserDataRoot, { recursive: true, force: true });
@@ -279,7 +273,7 @@ describe('agent runtime Issue tools', () => {
     eventStore.readRunMetaProjection = originalReadRunMetaProjection;
   });
 
-  test('applies Issue tool calls without a capability interruption', async () => {
+  test('applies Issue tool calls directly', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-tools-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-issue-tools-data-'));
     roots.push(localRoot, dataRoot);
@@ -339,7 +333,6 @@ describe('agent runtime Issue tools', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(calls[0]?.tools).toContain('issue_update');
-    expect(sink.events.some((event) => event.type === 'capability_request')).toBe(false);
     const read = await store.read({ target: issue.target, include: ['activity'] });
     expect(read.issue?.confirmation.confirmedBy).toEqual(actor);
     expect(read.issue?.status).toMatchObject({ name: 'Started', category: 'started' });
@@ -464,7 +457,6 @@ describe('agent runtime Issue tools', () => {
     expect(rootDeliveryContexts).toHaveLength(1);
     expect(rootDeliveryContexts[0]).toContain('Weather issue execution result.');
     expect((await runtime.listConversations()).map((entry) => entry.title)).not.toContain('Query Beijing district weather');
-    expect(sink.events.some((event) => event.type === 'capability_request')).toBe(false);
     const state = await store.state();
     expect(Object.values(state.sessions)).toHaveLength(1);
     const session = Object.values(state.sessions)[0];
@@ -524,122 +516,6 @@ describe('agent runtime Issue tools', () => {
     expect(sessionReadContexts.some((text) => text.includes('Unknown run'))).toBe(false);
   });
 
-  test('retries an unattended Agent Session after a durable folder capability grant', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-retry-root-'));
-    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-retry-outside-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-folder-retry-data-'));
-    roots.push(localRoot, outsideRoot, dataRoot);
-    const outsideFile = path.join(outsideRoot, 'source.txt');
-    await writeFile(outsideFile, 'persistent-folder-content');
-    const canonicalOutsideRoot = await realpath(outsideRoot);
-
-    let issueCreated = false;
-    let sessionToolCalls = 0;
-    const streamFn = dynamicStream((context) => {
-      const serialized = JSON.stringify(context.messages);
-      if (latestContextMessage(context).includes('<root-issue-delivery')) {
-        return fauxAssistantMessage(fauxText('Folder retry result delivered.'));
-      }
-      if (serialized.includes('You are executing one Agent Session for a Tenon Issue.')) {
-        if (serialized.includes('persistent-folder-content')) {
-          return fauxAssistantMessage(fauxText('Folder retry completed from the granted source.'));
-        }
-        sessionToolCalls += 1;
-        return fauxAssistantMessage([
-          fauxToolCall('file_read', {
-            file_path: outsideFile,
-          }, { id: `tool-unattended-folder-${sessionToolCalls}` }),
-        ], { stopReason: 'toolUse' });
-      }
-      if (!issueCreated) {
-        issueCreated = true;
-        return fauxAssistantMessage([
-          fauxToolCall('issue_create', {
-            issueType: 'issue',
-            fields: {
-              title: 'Read an external durable source',
-              description: 'Read the external source and report its content.',
-              trigger: { type: 'when-ready' },
-              permissionMode: 'unattended',
-            },
-            request: { mode: 'request' },
-            reason: 'Create durable work that requires a folder capability.',
-          }, { id: 'tool-create-folder-retry-issue' }),
-        ], { stopReason: 'toolUse' });
-      }
-      return fauxAssistantMessage(fauxText('Folder work handed off.'));
-    }, () => undefined);
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
-        streamFn,
-      },
-    );
-    drainableRuntimes.push(runtime);
-
-    const conversation = await runtime.restoreLatestConversation();
-    await runtime.sendMessage(conversation.conversationId, 'Create background work for the external source.');
-    await waitFor(() => sink.events.some((event) => (
-      event.type === 'capability_request'
-      && event.conversationId === conversation.conversationId
-    )), 3_000);
-    const capability = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'capability_request' }> => (
-      event.type === 'capability_request'
-      && event.conversationId === conversation.conversationId
-    ));
-    if (!capability) throw new Error('Expected durable folder capability request.');
-    expect(capability.request.folders).toEqual([canonicalOutsideRoot]);
-
-    const store = AgentIssueStore.forAgentDataRoot(dataRoot);
-    await waitFor(async () => Object.values((await store.state()).sessions).some((session) => session.state === 'error'), 3_000);
-    const beforeGrant = await store.state();
-    const failedSession = Object.values(beforeGrant.sessions)[0]!;
-    expect(failedSession.errorMessage).toContain('required folder capability is missing');
-    const restoredPending = await runtime.restoreConversation(conversation.conversationId);
-    expect(restoredPending.pendingCapabilities?.map((request) => request.requestId)).toContain(capability.requestId);
-
-    await runtime.resolveCapability(conversation.conversationId, capability.requestId, 'granted');
-    await waitFor(async () => {
-      const state = await store.state();
-      return Object.values(state.sessions).length === 2
-        && Object.values(state.sessions).some((session) => session.state === 'complete')
-        && Object.values(state.issues).some((issue) => issue.status.category === 'completed');
-    }, 5_000);
-    await waitFor(async () => {
-      const deliveries = Object.values((await store.state()).terminalDeliveries);
-      return deliveries.length === 1 && deliveries[0]?.status === 'delivered';
-    }, 5_000);
-
-    const afterGrant = await store.state();
-    const sessions = Object.values(afterGrant.sessions).sort((left, right) => left.createdAt - right.createdAt);
-    expect(sessions[0]?.state).toBe('error');
-    expect(sessions[1]).toMatchObject({
-      state: 'complete',
-      continuationOfAgentSessionId: sessions[0]?.id,
-    });
-    expect(sessions[1]?.latestOutput).toContain('Folder retry completed from the granted source.');
-    expect(sessionToolCalls).toBe(2);
-
-    const restoredResolved = await runtime.restoreConversation(conversation.conversationId);
-    expect(restoredResolved.pendingCapabilities ?? []).toHaveLength(0);
-    const originEvents = await new AgentEventStore(dataRoot)
-      .readConversationStreamEvents(conversation.conversationId);
-    expect(originEvents.find((event) => (
-      event.type === 'notification.created'
-      && event.folderCapability?.requestId === capability.requestId
-    ))).toMatchObject({ kind: 'needs_input' });
-    expect(originEvents.find((event) => (
-      event.type === 'tool.capability.resolved'
-      && event.requestId === capability.requestId
-    ))).toMatchObject({ status: 'available', resolvedBy: 'folder_grant' });
-  });
 
   test('keeps an active conversation turn alive across same-process restore', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-active-restore-root-'));

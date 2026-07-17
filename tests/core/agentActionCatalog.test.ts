@@ -13,10 +13,10 @@ describe('agent action catalog', () => {
       expect(typeof isReadOnlyActionKind(actionKind)).toBe('boolean');
     }
 
-    expect(isReadOnlyActionKind('file.read.allowed_file_area')).toBe(true);
+    expect(isReadOnlyActionKind('file.read.local_path')).toBe(true);
     expect(isReadOnlyActionKind('web.search')).toBe(true);
     expect(isReadOnlyActionKind('agent.session.read')).toBe(true);
-    expect(isReadOnlyActionKind('file.edit.allowed_file_area')).toBe(false);
+    expect(isReadOnlyActionKind('file.edit.local_path')).toBe(false);
     expect(isReadOnlyActionKind('agent.skill.invoke')).toBe(false);
     expect(isReadOnlyActionKind('agent.image.generate')).toBe(false);
     expect(isReadOnlyActionKind('agent.session.start')).toBe(false);
@@ -64,6 +64,6 @@ describe('agent action catalog', () => {
     ]));
     expect(agentToolNamesForActionKindScope(['agent.session.read'], ['*'])).not.toContain('spawn_run');
     expect(agentToolNamesForActionKindScope(['agent.session.read'], ['*'])).not.toContain('run_amend');
-    expect(agentToolNamesForActionKindScope(['file.read.allowed_file_area'], ['file_read', 'file_write'])).toEqual(['file_read']);
+    expect(agentToolNamesForActionKindScope(['file.read.local_path'], ['file_read', 'file_write'])).toEqual(['file_read']);
   });
 });

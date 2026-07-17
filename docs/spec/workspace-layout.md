@@ -935,7 +935,7 @@ The agent can request:
 - Open a node in the active pane.
 - Open a node in a new pane.
 - Apply a document edit through commands.
-- Show a diff preview or an in-composer capability request.
+- Show a diff preview or an in-composer product-input question.
 
 The agent should not:
 
@@ -946,8 +946,8 @@ The agent's view context is pane-centric (`activePanelId`, `focusedPanelId`,
 `nodePanels`); it carries no tab concept.
 
 When the agent dock is reopened from its collapsed rail state, focus moves to the
-agent composer editor when the normal composer is visible. If a capability or
-user-question card is occupying the composer surface, the reopen token is
+agent composer editor when the normal composer is visible. If a user-question
+card is occupying the composer surface, the reopen token is
 consumed without focus, and resolving that card must not reuse the old token to
 steal focus. The dock stays mounted while collapsed, so this is a one-shot open
 transition, not a remount side effect or a generic render-time focus steal.

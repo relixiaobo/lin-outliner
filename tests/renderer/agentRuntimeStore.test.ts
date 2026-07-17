@@ -5,7 +5,6 @@ import {
   type AgentRuntimeClient,
 } from '../../src/renderer/agent/runtime';
 import type {
-  AgentCapabilityRequestView,
   AgentRuntimeEvent,
   AgentUserViewContext,
   AskUserQuestionResult,
@@ -175,25 +174,6 @@ function conversation(conversationId: string, renderProjection: AgentRenderProje
   };
 }
 
-function folderCapability(
-  requestId = 'capability-1',
-  conversationId = 'saved',
-  folder = '/tmp/project',
-): AgentCapabilityRequestView {
-  return {
-    requestId,
-    conversationId,
-    kind: 'folder',
-    toolCallId: `tool-${requestId}`,
-    toolName: 'file_read',
-    title: 'Folder access required',
-    target: folder,
-    reason: `Folder access is required before file_read can run: ${folder}`,
-    details: [{ label: 'Folder', value: folder }],
-    folders: [folder],
-  };
-}
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -222,11 +202,6 @@ function createFakeClient(options: {
     restoreConversation: [] as string[],
     markConversationRead: [] as string[],
     queueFollowUp: [] as Array<{ conversationId: string; message: string; userViewContext?: AgentUserViewContext | null }>,
-    resolveCapability: [] as Array<{
-      conversationId: string;
-      requestId: string;
-      resolution: 'granted' | 'cancelled';
-    }>,
     resolveUserQuestion: [] as Array<{ conversationId: string; requestId: string; result: AskUserQuestionResult }>,
     steerConversation: [] as Array<{ conversationId: string; message: string }>,
     sendMessage: [] as Array<{
@@ -277,10 +252,6 @@ function createFakeClient(options: {
       return { queued: true };
     },
     clearSteer: async () => {},
-    resolveCapability: async (conversationId, requestId, resolution) => {
-      calls.resolveCapability.push({ conversationId, requestId, resolution });
-      return { resolved: true };
-    },
     resolveUserQuestion: async (conversationId, requestId, result) => {
       calls.resolveUserQuestion.push({ conversationId, requestId, result });
       return { resolved: true };
@@ -557,52 +528,6 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('tracks pending capability requests and clears them after resolution', async () => {
-    const fake = createFakeClient({ latestConversation: conversation('saved', projection([], { isStreaming: true })) });
-    const store = createAgentRuntimeStore(fake.client);
-    const unsubscribe = store.subscribe(() => {});
-
-    await flushMicrotasks();
-
-    fake.emit({
-      type: 'capability_request',
-      conversationId: 'saved',
-      requestId: 'capability-1',
-      request: folderCapability(),
-      timestamp: 10,
-    });
-
-    expect(store.getSnapshot().pendingCapability?.requestId).toBe('capability-1');
-
-    await store.getSnapshot().resolveCapability('capability-1', 'granted');
-
-    expect(fake.calls.resolveCapability).toEqual([{
-      conversationId: 'saved',
-      requestId: 'capability-1',
-      resolution: 'granted',
-    }]);
-    expect(store.getSnapshot().pendingCapability).toBeNull();
-    unsubscribe();
-  });
-
-  test('hydrates durable folder capability requests when a conversation is restored', async () => {
-    const restored = {
-      ...conversation('saved', projection([])),
-      pendingCapabilities: [folderCapability('durable-folder-request', 'saved', '/tmp/archive')],
-    };
-    const fake = createFakeClient({ latestConversation: restored });
-    const store = createAgentRuntimeStore(fake.client);
-    const unsubscribe = store.subscribe(() => {});
-
-    await flushMicrotasks();
-
-    expect(store.getSnapshot().pendingCapability).toEqual(folderCapability(
-      'durable-folder-request',
-      'saved',
-      '/tmp/archive',
-    ));
-    unsubscribe();
-  });
 
   test('threads cross-conversation unread attention and clears it on zero', async () => {
     const fake = createFakeClient({ latestConversation: conversation('saved', projection([])) });
@@ -665,41 +590,6 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('queues multiple pending capability requests and shows the next after resolution', async () => {
-    const fake = createFakeClient({ latestConversation: conversation('saved', projection([], { isStreaming: true })) });
-    const store = createAgentRuntimeStore(fake.client);
-    const unsubscribe = store.subscribe(() => {});
-
-    await flushMicrotasks();
-
-    const request = (requestId: string, target: string): AgentRuntimeEvent => ({
-      type: 'capability_request',
-      conversationId: 'saved',
-      requestId,
-      request: folderCapability(requestId, 'saved', target),
-      timestamp: 10,
-    });
-
-    fake.emit(request('capability-1', '/tmp/project-a'));
-    fake.emit(request('capability-2', '/tmp/project-b'));
-
-    expect(store.getSnapshot().pendingCapability?.requestId).toBe('capability-1');
-
-    await store.getSnapshot().resolveCapability('capability-1', 'granted');
-
-    expect(store.getSnapshot().pendingCapability?.requestId).toBe('capability-2');
-
-    fake.emit({
-      type: 'capability_resolved',
-      conversationId: 'saved',
-      requestId: 'capability-2',
-      resolution: 'cancelled',
-      timestamp: 20,
-    });
-
-    expect(store.getSnapshot().pendingCapability).toBeNull();
-    unsubscribe();
-  });
 
   test('tracks pending user questions and resolves structured answers', async () => {
     const fake = createFakeClient({ latestConversation: conversation('saved', projection([], { isStreaming: true })) });

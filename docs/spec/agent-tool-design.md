@@ -42,13 +42,13 @@ These tools are required for the first useful local agent.
 | `node_edit` | outliner | Yes | Direct | Edit one known node's own content, fields, field values, or saved-search config using exact string replacement, or perform explicit by-id operations such as move and merge. |
 | `node_delete` | outliner | Yes | Direct | Trash or restore one or more nodes. |
 | `outline_undo_stack` | outliner | Yes for undo/redo | Direct | Inspect, undo, or redo user and agent outline operations. |
-| `file_read` | local | No | Folder if uncovered | Read local files with bounded output. |
-| `file_glob` | local | No | Folder if uncovered | Find files by glob or path pattern. |
-| `file_grep` | local | No | Folder if uncovered | Search file contents under allowed roots. |
-| `file_edit` | local | Yes | Folder if uncovered | Apply exact string replacements to files. |
-| `file_write` | local | Yes | Folder if uncovered | Create files or rewrite whole files. |
-| `file_delete` | local | Yes | Folder if uncovered | Move local files or directories to agent trash. |
-| `bash` | local | Depends | Declared folder if uncovered | Run local commands with timeout and output limits. |
+| `file_read` | local | No | Full Access | Read local files with bounded output. |
+| `file_glob` | local | No | Full Access | Find files by glob or path pattern. |
+| `file_grep` | local | No | Full Access | Search file contents from the Run workdir or an explicit host path. |
+| `file_edit` | local | Yes | Full Access | Apply exact string replacements to files. |
+| `file_write` | local | Yes | Full Access | Create files or rewrite whole files. |
+| `file_delete` | local | Yes | Full Access | Move local files or directories to agent trash. |
+| `bash` | local | Depends | Full Access | Run local commands with timeout and output limits. |
 | `bash_stop` | local | Yes | Direct | Stop background commands created by `bash`. |
 | `web_search` | web | No | Direct | Search the web for current external information, or for images with `kind: "image"`. |
 | `web_fetch` | web | No | Direct | Fetch and read a specific HTTP(S) URL with pagination or snippet search. |
@@ -115,8 +115,8 @@ The checkpoint defines the concepts, schemas, and Issue-first Work surface:
   `previousAgentSessionId` and `intent`; the Store repeats that validation at its
   trust boundary before building a Session objective;
 - Local Issue lifecycle and Agent Session control tools do not have a separate
-  Issue-specific authorization classifier in V1; downstream tools use the
-  ordinary capability and control-plane boundary. The
+  Issue-specific authorization classifier in V1; downstream tools use their
+  ordinary scoped catalog, explicit blocks, and host authority. The
   model-facing schema carries no authorization token, capability id, or
   `userActionId`;
 - `src/main/agentIssueInputResolver.ts` resolves an Issue's input
@@ -657,9 +657,9 @@ tool-catalog scope harder to reason about.
   Search/recent results are navigation; the model must read by `message_id` or
   `source` before relying on details.
 - Use `ask_user_question` only for decisions or missing context that cannot be
-  inferred, never for authorization. Folder capability requests answer "which local
-  folder may the agent access"; this tool answers "what information or direction
-  should the agent use next".
+  inferred, never for authorization. Tenon does not ask the user to authorize a
+  local folder; this tool answers only "what information or direction should the
+  agent use next".
 - Use `generate_image` for raster image generation/editing only; normal
   multimodal chat and `file_read` remain the way to inspect existing images.
 - Local file tools should mirror proven read, edit, write, glob, and grep roles,
@@ -675,7 +675,7 @@ tool-catalog scope harder to reason about.
 ## `ask_user_question`
 
 `ask_user_question` is a run-scoped, blocking user-interaction tool. It is not a
-capability request and does not reuse folder capability cards or events.
+capability request and does not reuse capability audit events.
 
 Input:
 
@@ -2646,19 +2646,19 @@ interface ValidationReport {
 
 ## Local File Tools
 
-File tools are for local files under the configured capability roots. The
+File tools use the current OS account's host filesystem authority. The
 **workdir** is the agent's cwd, the default `file_glob`/`file_grep` root, and
-where relative `file_write` output lands. Persistent user-granted folders are
-additional absolute read/write roots. The app-owned **scratch** sibling holds
-materialized attachments, web-fetch binaries, bash overflow logs, PDF pages,
-cleanup files, and generated images. Attachments are read-only; app-owned output
-subdirectories are writable and scratch is never the default listing root.
+where relative `file_write` output lands. It is a relative-path base, not a
+containment root; absolute paths and symlinks can reach any host path available
+to the account. The app-owned **scratch** sibling holds materialized attachments,
+web-fetch binaries, bash overflow logs, PDF pages, cleanup files, and generated
+images. Scratch is not the default listing root.
 Generated images' narrow path shorthand resolves under scratch: their
 tool-returned `generated-images/...` paths resolve under scratch for preview and
-follow-up `generate_image.image_paths` use — see
-[`agent-tool-permissions.md` -> Folder Capabilities](./agent-tool-permissions.md#folder-capabilities)
-for the two-root model. They must not mutate the outliner
-document. The design keeps dedicated tools for each local file role:
+follow-up `generate_image.image_paths` use. They must not mutate the outliner
+document. See [`agent-tool-permissions.md`](./agent-tool-permissions.md) for the
+host-access and typed-tool correctness boundary. The design keeps dedicated
+tools for each local file role:
 
 - `file_read` inspects file content.
 - `file_edit` applies exact replacements.
@@ -3177,7 +3177,7 @@ Result behavior:
 - Creating a new file does not require a prior `file_read`.
 - Updating an existing file requires a prior `file_read` freshness record.
 - Overwriting a file is a high-signal mutation in logs and executes directly
-  when the selected filesystem mode allows the path.
+  with the current OS account's host authority.
 - Do not use `file_write` to append small changes; use `file_edit`.
 - Writes under self-definition directories are validated by the file-tool gateway
   after ordinary capability preflight. Skill writes validate `SKILL.md` /
@@ -3202,7 +3202,6 @@ interface BashParams {
   description?: string;
   timeout?: number; // milliseconds
   run_in_background?: boolean;
-  required_folders?: string[]; // absolute folders outside the implicit roots
 }
 ```
 
@@ -3236,15 +3235,11 @@ Result behavior:
 - Commands run in the local file root by default. Lin should not expose a
   model-facing `cwd` parameter initially; the agent can use shell syntax when a
   command truly needs another directory.
-- In Restricted mode, commands that need local folders outside the implicit
-  roots declare them in `required_folders`. Missing folders are requested and
-  persisted before process start. Undeclared access is denied by Seatbelt and
-  remains a `command_failed` result with the native error; the agent must declare
-  the folder in a fresh call. Full Access ignores `required_folders` and spawns
-  directly under the host account.
-- Every agent-driven process uses the shared process executor. On macOS it
-  selects direct spawn for Full Access or the capability-derived Seatbelt profile
-  for Restricted.
+- Commands spawn directly under the host account. Relative paths start from the
+  Run workdir; shell syntax can select another directory when needed.
+- Every agent-driven process uses the shared process executor for direct spawn,
+  environment construction, process-tree termination, and output handling. It
+  does not apply a process sandbox.
 - Long-running commands should use `run_in_background: true` and return
   `backgroundTaskId`. The agent should not append `&`.
 - Foreground commands that outlive Lin's blocking budget may be auto-backgrounded
@@ -3270,8 +3265,8 @@ Result behavior:
 - Completion of a background command should be surfaced through the agent
   runtime event stream with the same output path. Do not add a polling-first
   `TaskOutput` equivalent unless real usage proves `file_read` is insufficient.
-- Commands run by default unless they match an explicit user block. Restricted
-  filesystem rules can separately deny a path or process operation.
+- Commands run by default unless they match an explicit user block. Native OS,
+  credential, or service failures remain direct command failures.
 - Non-zero command exit is represented through `stdout`, `stderr`, `exitCode`,
   and optional `returnCodeInterpretation`.
 - Do not use `bash` to read, edit, write, glob, or grep files when the dedicated
@@ -3672,7 +3667,7 @@ outline; fabricated or stale coordinates fail loudly.
 Runtime Dream is a private built-in skill, `memory-dream`. It is runtime-only:
 not model-invocable, and not exposed as `/dream` or a foreground `dream` tool.
 The scheduled-routines path is at-most-once per daily due occurrence; Settings
-also exposes a manual run button that uses the same restricted Dream-channel path
+also exposes a manual run button that uses the same Dream-channel-only path
 and is not blocked by the scheduled due gate. The manual button first calls a read-only
 `agent_dream_readiness` pre-check (new evidence since the watermark vs. the
 scheduled volume bar); below the bar it advises that there is little new chat
@@ -3816,8 +3811,8 @@ coverage maps as follows:
 | `node_delete` | `trash_node`, `batch_trash_nodes`, `restore_node`; permanent delete is not exposed to agent v1. |
 | `outline_undo_stack` | Loro UndoManager-backed `undo`/`redo` plus operation journal listing with origin metadata. |
 | `file_read` | Implemented TypeScript file read command with path normalization, text pagination, image content/dimensions, PDF page rendering, notebook parsing, and freshness tracking. |
-| `file_glob` | Implemented TypeScript glob command under allowed roots with local-root-relative output paths. |
-| `file_grep` | Implemented ripgrep-backed search command under allowed roots through Tenon's ripgrep provider, with relative paths, output modes, and streamed pagination. |
+| `file_glob` | Implemented TypeScript glob command from the Run workdir or an explicit host path, with workdir-relative output paths where applicable. |
+| `file_grep` | Implemented ripgrep-backed search from the Run workdir or an explicit host path through Tenon's ripgrep provider, with relative paths, output modes, and streamed pagination. |
 | `file_edit` | Implemented TypeScript exact-replacement command with read-before-edit freshness checks. |
 | `file_write` | Implemented TypeScript create/rewrite command with read-before-write freshness checks for existing files. |
 | `bash` | Implemented TypeScript command runner with timeout, output caps, background task support, and output persistence. |
@@ -3832,11 +3827,10 @@ agents than only `merge_node_into_previous`.
 
 ## Capability Boundary
 
-The capability model — `allow | capability_required | unavailable`, persistent
-folder roots, control-plane isolation, user blocks, process containment, scoped
-tool catalogs, and events — is specified in `agent-tool-permissions.md`. This
-section classifies tools as read-only or mutating for catalog construction and
-audit only.
+The capability model - `allow | unavailable`, explicit user blocks,
+host-account execution, scoped tool catalogs, and audit events - is specified
+in `agent-tool-permissions.md`. This section classifies tools as read-only or
+mutating for catalog construction and audit only.
 
 Read-only tools run immediately when their required resources are available:
 
@@ -3866,10 +3860,9 @@ Mutating tools use the same capability boundary:
 - `bash_stop`
 - `generate_image`
 
-Ordinary reads and mutations run immediately when their resources are present.
-Missing folders request one persistent capability. Explicit user blocks and
-private Tenon control-state access return unavailable; scoped Runs exclude tools
-from the catalog before model execution. The exact rules are owned by
+Ordinary reads and mutations run immediately under the host account. Explicit
+user blocks return unavailable; scoped Runs exclude tools from the catalog
+before model execution. The exact rules are owned by
 `agent-tool-permissions.md`.
 
 ## Implementation Notes
