@@ -351,11 +351,14 @@ system field has no definition node, so its kind icon remains non-interactive an
 does not expose that hover state. Column labels and menus keep their existing
 view-local behavior.
 
-**Add column** lists active reusable definitions not already displayed and the
-supported system fields. Selecting one creates only a display-field node. The
-new-field path accepts a localized field type and atomically creates the field
-definition plus its display-field node. Neither path bulk-creates empty values
-on records.
+**Add column** lists active reusable definitions not currently visible and the
+supported system fields. A hidden display field therefore remains available;
+selecting it restores that same column with its width, order, view-local label,
+and row values intact. The Display popover provides the equivalent checkbox
+toggle. Selecting a definition with no display field creates only a display-field
+node. The new-field path accepts a localized field type and atomically creates
+the field definition plus its display-field node. None of these paths bulk-create
+empty values on records.
 
 An existing authored value renders through the ordinary node surface, including
 the standard bullet, single-click editing, disclosure, children, context menu,

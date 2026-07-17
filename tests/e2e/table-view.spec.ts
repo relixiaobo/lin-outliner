@@ -465,6 +465,12 @@ test.describe('table view', () => {
     await page.getByRole('menuitem', { name: 'Hide column' }).click();
     await expect(grid.getByRole('columnheader').filter({ hasText: 'Budget' })).toHaveCount(0);
 
+    await grid.getByRole('button', { name: 'Add column' }).click();
+    await page.getByRole('dialog', { name: 'Add column' }).getByRole('button', { name: 'Budget', exact: true }).click();
+    await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Deadline', 'Status', 'Done', 'Budget']);
+    await grid.getByRole('button', { name: 'Budget column menu' }).click();
+    await page.getByRole('menuitem', { name: 'Hide column' }).click();
+
     await grid.getByRole('button', { name: 'Status column menu' }).click();
     await page.getByRole('menuitem', { name: 'Hide column' }).click();
     await grid.getByRole('button', { name: 'Done column menu' }).click();

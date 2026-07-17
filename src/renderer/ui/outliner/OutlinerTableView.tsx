@@ -953,9 +953,9 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
           })}
           <TableAddColumn
             choices={fieldChoices}
+            displayFields={view.displayFields}
             nodeId={props.parentId}
             run={props.run}
-            visibleFields={view.displayFields}
           />
         </div>
         <div
@@ -1301,14 +1301,14 @@ function TableColumnHeader({
 
 function TableAddColumn({
   choices,
+  displayFields,
   nodeId,
   run,
-  visibleFields,
 }: {
   choices: Array<{ id: string; label: string }>;
+  displayFields: readonly ViewDisplayField[];
   nodeId: NodeId;
   run: CommandRunner;
-  visibleFields: readonly ViewDisplayField[];
 }) {
   const tt = useT().outliner.table;
   const buttonRef = useRef<HTMLButtonElement | null>(null);
@@ -1326,10 +1326,12 @@ function TableAddColumn({
     maxHeight: 420,
   });
   useDismissibleOverlay(menuRef, () => setOpen(false), { disabled: !open });
-  const displayed = useMemo(() => new Set(visibleFields.map((field) => field.field)), [visibleFields]);
+  const visibleFieldIds = useMemo(() => new Set(
+    displayFields.filter((field) => field.visible).map((field) => field.field),
+  ), [displayFields]);
   const normalized = query.trim().toLocaleLowerCase();
   const available = choices.filter((choice) => (
-    !displayed.has(choice.id)
+    !visibleFieldIds.has(choice.id)
     && (!normalized || choice.label.toLocaleLowerCase().includes(normalized))
   ));
 

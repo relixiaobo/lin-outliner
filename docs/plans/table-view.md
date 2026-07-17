@@ -136,9 +136,10 @@ no independently shipped scaffold.
 - The header menu exposes Rename for this view, Hide, Move left, Move right, and
   Remove from view. Renaming changes `displayLabel`, never the field definition.
 - **Add column** opens an anchored searchable menu of active field definitions,
-  excluding fields already displayed. Its create path asks for a name and an
-  existing field type, atomically creates the definition and display-field node,
-  and focuses the new header.
+  excluding fields already visible. A hidden display field remains in this menu;
+  selecting it restores the existing column and its view-local settings. The
+  create path asks for a name and an existing field type, atomically creates the
+  definition and display-field node, and focuses the new header.
 
 ### Cells
 
@@ -173,8 +174,9 @@ no independently shipped scaffold.
 ### FLOW-2: Configure Columns
 
 1. Reveal the view toolbar and open Display, or use **Add column** in the header.
-2. Toggle an existing display field, add an active field definition, or create a
-   new field definition and column.
+2. Toggle an existing display field, restore a hidden one through Display or Add
+   column, add an active field definition, or create a new field definition and
+   column.
 3. Reorder through the header menu, resize from the divider, rename for this
    view, or remove the column.
 4. The table updates without mutating any row that lacks that field.
@@ -228,8 +230,9 @@ width. The panel's vertical scroller remains authoritative.
   are hidden or absent.
 - **FR-4:** Table shall honor `displayOrder`, `displayWidth`, `displayLabel`, and
   `displayVisible`, with deterministic fallback ordering for old configurations.
-- **FR-5:** A user shall add an existing active field definition as a column or
-  create a new typed definition and column without creating entries on rows.
+- **FR-5:** A user shall add an existing active field definition, restore a hidden
+  display field as the same configured column, or create a new typed definition
+  and column without creating entries on rows.
 - **FR-6:** A user shall resize, restore automatic width, relabel, hide, remove,
   and explicitly move an optional column left or right.
 - **FR-7:** Existing typed field values shall remain editable through their
@@ -336,7 +339,9 @@ width. The panel's vertical scroller remains authoritative.
   double-clicks, or types a printable key, then exactly one field entry attaches
   to the selected definition and the correct typed editor receives focus.
 - **AC-6:** Given an existing active field, when it is added as a column, then no
-  child row is mutated and the column is available after restart.
+  child row is mutated and the column is available after restart. If its existing
+  display field was hidden, Add column restores that same display field without
+  duplicating it or losing its view-local configuration.
 - **AC-7:** Given a newly named typed field in Add column, when creation commits,
   then one field definition and one display-field node are created atomically;
   no row entries are created.
