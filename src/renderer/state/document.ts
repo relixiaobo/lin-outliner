@@ -21,7 +21,12 @@ import {
   resolveSelectableReferenceTargetId,
   selectableChildParentId,
 } from './selectableRows';
-import { buildOutlinerRows, type OutlinerRowItem } from './outlinerRows';
+import {
+  buildOutlinerRows,
+  readViewConfig,
+  visibleAuthoredTableFieldIds,
+  type OutlinerRowItem,
+} from './outlinerRows';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
@@ -284,10 +289,21 @@ export function flattenVisibleRows(
   expandedHiddenFields: Set<string> = new Set(),
 ): NodeId[] {
   const result: NodeId[] = [];
-  const visit = (parentId: NodeId, referencePath: NodeId[]) => {
+  const visit = (
+    parentId: NodeId,
+    referencePath: NodeId[],
+    suppressedFieldDefIds?: ReadonlySet<string>,
+  ) => {
     const parent = byId.get(parentId);
     if (!parent) return;
-    const rows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
+    const view = readViewConfig(parent, byId);
+    const tableFieldDefIds = view.viewMode === 'table'
+      ? visibleAuthoredTableFieldIds(view)
+      : undefined;
+    const rows = buildOutlinerRows(parent, byId, {
+      expandedHiddenFields,
+      suppressedFieldDefIds,
+    });
     const visitRows = (currentRows: OutlinerRowItem[]) => {
       for (const row of currentRows) {
         if (row.type === 'filteredOut') {
@@ -299,7 +315,11 @@ export function flattenVisibleRows(
         if (!isRowExpanded(row.id, byId, expanded)) continue;
         const childParentId = outlinerChildParentId(row.id, byId);
         if (!childParentId || referencePath.includes(childParentId)) continue;
-        visit(childParentId, [...referencePath, childParentId]);
+        visit(
+          childParentId,
+          [...referencePath, childParentId],
+          row.type === 'content' ? tableFieldDefIds : undefined,
+        );
       }
     }
     visitRows(rows);

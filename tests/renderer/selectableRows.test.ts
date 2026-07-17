@@ -34,6 +34,66 @@ function rowIds(rows: ReturnType<typeof buildSelectableRows>): NodeId[] {
 }
 
 describe('buildSelectableRows', () => {
+  test('omits visible table-column fields from expanded record children', () => {
+    const byId = byIdOf([
+      node('root', { children: ['view', 'record'] }),
+      node('view', {
+        parentId: 'root',
+        type: 'viewDef',
+        viewMode: 'table',
+        children: ['shown-column', 'hidden-column'],
+      }),
+      node('shown-column', {
+        parentId: 'view',
+        type: 'displayField',
+        displayField: 'shown-field',
+      }),
+      node('hidden-column', {
+        parentId: 'view',
+        type: 'displayField',
+        displayField: 'hidden-field',
+        displayVisible: false,
+      }),
+      node('record', {
+        parentId: 'root',
+        children: ['shown-entry', 'hidden-entry', 'child'],
+      }),
+      node('shown-entry', {
+        parentId: 'record',
+        type: 'fieldEntry',
+        fieldDefId: 'shown-field',
+        children: ['shown-value'],
+      }),
+      node('shown-value', { parentId: 'shown-entry' }),
+      node('hidden-entry', {
+        parentId: 'record',
+        type: 'fieldEntry',
+        fieldDefId: 'hidden-field',
+        children: ['hidden-value'],
+      }),
+      node('hidden-value', { parentId: 'hidden-entry' }),
+      node('child', { parentId: 'record' }),
+    ]);
+    const expanded = new Set<NodeId>(['record']);
+
+    expect(rowIds(buildSelectableRows('root', byId, { expanded: new Set() }))).toEqual([
+      'record',
+      'shown-value',
+    ]);
+    expect(rowIds(buildSelectableRows('root', byId, { expanded }))).toEqual([
+      'record',
+      'shown-value',
+      'hidden-entry',
+      'hidden-value',
+      'child',
+    ]);
+    expect(flattenVisibleRows('root', byId, expanded)).toEqual([
+      'record',
+      'hidden-entry',
+      'child',
+    ]);
+  });
+
   test('adds field values to panel selection order without changing visible flattening', () => {
     const byId = byIdOf([
       node('root', { children: ['before', 'entry', 'after'] }),

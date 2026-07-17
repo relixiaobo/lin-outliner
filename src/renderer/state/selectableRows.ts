@@ -1,5 +1,11 @@
 import type { NodeId, NodeProjection } from '../api/types';
-import { buildOutlinerRows, type OutlinerRowItem } from './outlinerRows';
+import {
+  buildOutlinerRows,
+  fieldEntryForViewCell,
+  readViewConfig,
+  visibleAuthoredTableFieldIds,
+  type OutlinerRowItem,
+} from './outlinerRows';
 import {
   isSyntheticSystemReferenceId,
   systemReferenceValueIds,
@@ -131,10 +137,21 @@ function visitSelectableRows(
 ): void {
   const expandedHiddenFields = options.expandedHiddenFields ?? new Set<string>();
 
-  const visit = (parentId: NodeId, referencePath: NodeId[]) => {
+  const visit = (
+    parentId: NodeId,
+    referencePath: NodeId[],
+    suppressedFieldDefIds?: ReadonlySet<string>,
+  ) => {
     const parent = byId.get(parentId);
     if (!parent) return;
-    const rows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
+    const view = readViewConfig(parent, byId);
+    const tableFieldDefIds = view.viewMode === 'table'
+      ? visibleAuthoredTableFieldIds(view)
+      : undefined;
+    const rows = buildOutlinerRows(parent, byId, {
+      expandedHiddenFields,
+      suppressedFieldDefIds,
+    });
     const visitRows = (currentRows: OutlinerRowItem[]) => {
       for (const row of currentRows) {
         if (row.type === 'filteredOut') {
@@ -161,11 +178,23 @@ function visitSelectableRows(
             }));
           }
         }
+        if (row.type === 'content' && tableFieldDefIds) {
+          const rowNode = byId.get(row.id);
+          for (const fieldDefId of tableFieldDefIds) {
+            const entry = rowNode ? fieldEntryForViewCell(rowNode, fieldDefId, byId) : undefined;
+            if (!entry || referencePath.includes(entry.id)) continue;
+            visit(entry.id, [...referencePath, entry.id]);
+          }
+        }
         const shouldDescend = row.type === 'field' || options.expanded.has(row.id);
         if (shouldDescend) {
           const childParentId = selectableChildParentId(row.id, byId);
           if (childParentId && !referencePath.includes(childParentId)) {
-            visit(childParentId, [...referencePath, childParentId]);
+            visit(
+              childParentId,
+              [...referencePath, childParentId],
+              row.type === 'content' ? tableFieldDefIds : undefined,
+            );
           }
         }
         visitor.afterRow?.(parentId, row.id);

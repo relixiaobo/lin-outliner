@@ -13,6 +13,7 @@ import { ViewToolbar } from './ViewToolbar';
 import { FilteredOutHeading, HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
+import { OutlinerTableView } from './OutlinerTableView';
 
 interface OutlinerViewProps {
   panelId: string;
@@ -33,6 +34,7 @@ interface OutlinerViewProps {
   setDragId: (nodeId: NodeId | null) => void;
   onTogglePin: (nodeId: NodeId) => void;
   rows?: OutlinerRowItem[];
+  suppressedFieldDefIds?: ReadonlySet<string>;
   referencePath?: readonly NodeId[];
   showViewToolbar?: boolean;
   // When this view renders a field's values (not body content), the field-value
@@ -47,6 +49,7 @@ interface OutlinerViewProps {
   // Empty-state placeholder for the trailing draft row (definition template /
   // options blocks). Only the draft row receives it.
   draftPlaceholder?: string;
+  rowSemanticRole?: 'treeitem' | 'presentation';
 }
 
 function countRenderableChildRows(rows: readonly OutlinerRowItem[]): number {
@@ -62,8 +65,10 @@ export function OutlinerView(props: OutlinerViewProps) {
   const [searchRefreshing, setSearchRefreshing] = useState(false);
   const selectionRootId = props.selectionRootId ?? props.rootId;
   const view = readViewConfig(parent, props.index.byId);
+  const tableMode = view.viewMode === 'table' && !props.fieldValue;
   const builtRows = props.rows ?? buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
+    suppressedFieldDefIds: props.suppressedFieldDefIds,
   });
 
   // The draft id is minted here (renderer-only) so it survives until the row
@@ -98,7 +103,7 @@ export function OutlinerView(props: OutlinerViewProps) {
     : builtRows;
 
   useEffect(() => {
-    if (parent?.type !== 'search') {
+    if (parent?.type !== 'search' || tableMode) {
       setSearchRefreshing(false);
       return undefined;
     }
@@ -114,7 +119,36 @@ export function OutlinerView(props: OutlinerViewProps) {
     return () => {
       active = false;
     };
-  }, [parent?.type, props.parentId, props.index.projection]);
+  }, [parent?.type, props.index.projection, props.parentId, tableMode]);
+
+  if (tableMode) {
+    return (
+      <OutlinerTableView
+        panelId={props.panelId}
+        parentId={props.parentId}
+        rootId={props.rootId}
+        selectionRootId={selectionRootId}
+        onRoot={props.onRoot}
+        depth={props.depth}
+        index={props.index}
+        isNodePinned={props.isNodePinned}
+        ui={props.ui}
+        uiRef={props.uiRef}
+        setUi={props.setUi}
+        run={props.run}
+        onTogglePin={props.onTogglePin}
+        trigger={props.trigger}
+        setTrigger={props.setTrigger}
+        dragId={props.dragId}
+        setDragId={props.setDragId}
+        referencePath={props.referencePath}
+        suppressedOwnerFieldDefIds={props.suppressedFieldDefIds}
+        showViewToolbar={props.showViewToolbar}
+        trailingDraft={props.trailingDraft}
+        draftPlaceholder={props.draftPlaceholder}
+      />
+    );
+  }
 
   return (
     <>
@@ -228,6 +262,7 @@ export function OutlinerView(props: OutlinerViewProps) {
             // onSelectOption derived from the field-value context.
             optionField={props.fieldValue?.optionField}
             onSelectOption={props.fieldValue?.onSelectOption}
+            semanticRole={props.rowSemanticRole}
           />
         )}
       />

@@ -166,6 +166,10 @@ interface OutlinerItemProps {
   // by the flat producer, so this row must not render its own nested OutlinerView.
   // Indentation comes from `depth` (cumulative) instead of nested `.children`.
   flat?: boolean;
+  semanticRole?: 'treeitem' | 'presentation';
+  hideDisplayFields?: boolean;
+  suppressedChildFieldDefIds?: ReadonlySet<string>;
+  tableNextRowId?: NodeId | null;
   onDisclosureToggleAnchor?: (anchorElement: HTMLElement | null) => void;
 }
 
@@ -212,7 +216,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const referenceCycle = node?.type === 'reference'
     && Boolean(referenceTargetId)
     && props.referencePath.includes(childParentId);
-  const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId);
+  const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId).filter((childId) => {
+    const child = props.index.byId.get(childId);
+    return child?.type !== 'fieldEntry'
+      || !child.fieldDefId
+      || !props.suppressedChildFieldDefIds?.has(child.fieldDefId);
+  });
   const parentView = readViewConfig(parentNode, props.index.byId);
   const referenceSummary = referenceSummaryForIndex(props.index);
   const displayValues = realNode && displayed && !props.draft && !props.fieldValue
@@ -1424,6 +1433,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       focusTrailingDraft();
       return;
     }
+    if (props.tableNextRowId) {
+      await commitDraft(draftContentRef.current);
+      requestRowFocus(props.tableNextRowId, cursorStart(), props.parentId);
+      return;
+    }
     const siblings = props.index.byId.get(props.parentId)?.children ?? [];
     const rowIndex = siblings.indexOf(props.nodeId);
     if (payload.atStart && !payload.atEnd) {
@@ -2156,6 +2170,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       expanded={row.expanded}
       level={props.depth + 1}
       selected={row.rowSelected}
+      semanticRole={props.semanticRole}
       wrapProps={outlinerWrapProps}
       rowClassName={row.rowClassName([
         referenceLikeRow ? 'reference-row' : '',
@@ -2337,7 +2352,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               )}
             </span>
           )}
-          <ViewDisplayFields ariaLabel={t.outliner.viewToolbar.displayedFieldsAriaLabel} values={displayValues} />
+          {!props.hideDisplayFields ? (
+            <ViewDisplayFields ariaLabel={t.outliner.viewToolbar.displayedFieldsAriaLabel} values={displayValues} />
+          ) : null}
           {dateFieldValue && props.fieldValue && (
             <DateValuePicker
               anchorRef={optionAnchorRef}
@@ -2756,6 +2773,10 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   if (prev.parentId !== next.parentId) return false;
   if (prev.rootId !== next.rootId) return false;
   if (prev.depth !== next.depth) return false;
+  if (prev.semanticRole !== next.semanticRole) return false;
+  if (prev.hideDisplayFields !== next.hideDisplayFields) return false;
+  if (prev.suppressedChildFieldDefIds !== next.suppressedChildFieldDefIds) return false;
+  if (prev.tableNextRowId !== next.tableNextRowId) return false;
   // Drag start/end is infrequent; re-render every row so drag handlers close over
   // the current dragId and the dragged row picks up its 'dragging' class.
   if (prev.dragId !== next.dragId) return false;

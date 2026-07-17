@@ -297,6 +297,461 @@
   flex-wrap: wrap;
 }
 
+.view-toolbar-mode {
+  display: inline-flex;
+  min-height: var(--control-size-xl);
+  align-items: center;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--segmented-track-shadow);
+  padding: var(--space-hairline);
+}
+
+.view-toolbar-mode-button {
+  display: inline-flex;
+  min-height: calc(var(--control-size-xl) - 2 * var(--space-hairline));
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  padding: 0 var(--space-3);
+}
+
+.view-toolbar-mode-button:hover {
+  color: var(--text-primary);
+}
+
+.view-toolbar-mode-button.is-active {
+  background: var(--control-active);
+  color: var(--text-primary);
+}
+
+/* Table is a dense presentation of the same child nodes, not a framed card.
+   The owner supplies one column template to every header/body row so virtualized
+   rows cannot drift out of alignment. */
+.outline-panel-surface .panel-inner:has(> .outliner-table-host) {
+  width: 100%;
+}
+
+.outliner-table-host {
+  min-width: 0;
+}
+
+.outliner-table-scope {
+  width: 100%;
+  min-width: 0;
+  margin: var(--space-2) 0 var(--space-6);
+}
+
+.outliner-table-scope > .view-toolbar {
+  width: auto;
+  margin-right: var(--row-selection-start);
+}
+
+.outliner-table-owner-fields {
+  margin-bottom: var(--space-4);
+}
+
+.outliner-table-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: clip;
+  overscroll-behavior-x: contain;
+  scrollbar-gutter: stable;
+}
+
+.outliner-table-header,
+.outliner-table-row {
+  display: grid;
+  width: var(--table-min-width);
+  min-width: var(--table-min-width);
+  grid-template-columns: var(--table-columns);
+}
+
+.outliner-table-header {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-raised);
+  min-height: var(--field-row-min-height);
+  align-items: stretch;
+  background: var(--bg-content);
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  font-weight: 500;
+  user-select: none;
+}
+
+.outliner-table-title-header,
+.outliner-table-column-header,
+.outliner-table-add-column {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: var(--field-row-min-height);
+  align-items: center;
+}
+
+.outliner-table-title-header,
+.outliner-table-column-header {
+  border-bottom: 1px solid var(--separator);
+  padding: 0 var(--space-3);
+}
+
+.outliner-table-column-header {
+  gap: var(--space-2);
+}
+
+.outliner-table-column-kind {
+  display: inline-flex;
+  width: var(--row-bullet-width);
+  height: var(--row-bullet-width);
+  flex: 0 0 var(--row-bullet-width);
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.outliner-table-column-kind > svg {
+  width: var(--row-bullet-width);
+  height: var(--row-bullet-width);
+}
+
+.outliner-table-column-kind > .view-toolbar-field-kind {
+  color: inherit;
+}
+
+button.outliner-table-column-kind {
+  appearance: none;
+  border-radius: var(--radius-pill);
+  padding: 0;
+}
+
+button.outliner-table-column-kind:hover,
+button.outliner-table-column-kind:active,
+button.outliner-table-column-kind:focus-visible {
+  color: var(--text-primary);
+}
+
+.outliner-table-column-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outliner-table-column-menu-button,
+.outliner-table-add-column-button {
+  display: inline-flex;
+  height: var(--control-size-xl);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  color: var(--text-tertiary);
+}
+
+.outliner-table-column-menu-button {
+  position: absolute;
+  right: var(--space-1);
+  width: var(--control-size-xl);
+  background: var(--bg-content);
+  opacity: 0;
+}
+
+.outliner-table-column-header:hover .outliner-table-column-menu-button,
+.outliner-table-column-header:focus-within .outliner-table-column-menu-button {
+  opacity: 1;
+}
+
+.outliner-table-column-menu-button:hover,
+.outliner-table-column-menu-button:active,
+.outliner-table-add-column-button:hover,
+.outliner-table-add-column-button:active {
+  color: var(--text-primary);
+}
+
+.outliner-table-add-column {
+  justify-content: flex-start;
+}
+
+.outliner-table-add-column-button {
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  padding: 0 var(--space-6);
+  font-size: var(--font-ui-sm);
+}
+
+.outliner-table-column-resize {
+  position: absolute;
+  top: 0;
+  right: calc(-1 * var(--resize-hit-width) / 2);
+  bottom: 0;
+  z-index: var(--z-resize);
+  width: var(--resize-hit-width);
+  background: transparent;
+  cursor: var(--resize-cursor);
+}
+
+.outliner-table-column-resize::after {
+  position: absolute;
+  top: 0;
+  right: calc(var(--resize-hit-width) / 2);
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+  content: "";
+}
+
+.outliner-table-column-resize:hover::after,
+.outliner-table-column-resize:focus-visible::after {
+  background: var(--border-emphasis);
+}
+
+.outliner-table-column-resize:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--space-hairline));
+}
+
+.outliner-table-body {
+  position: relative;
+  width: var(--table-min-width);
+  min-width: var(--table-min-width);
+}
+
+.outliner-table-window-row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  min-width: 0;
+  will-change: transform;
+}
+
+.outliner-table-record,
+.outliner-table-flow-row,
+.outliner-table-window-row {
+  min-width: 0;
+}
+
+.outliner-table-row {
+  min-height: var(--field-row-min-height);
+  align-items: stretch;
+  background: var(--bg-content);
+}
+
+.outliner-table-row.is-selected {
+  border-radius: var(--radius-row);
+  background: var(--row-selected);
+  box-shadow: var(--outline-faint);
+}
+
+.outliner-table-row.is-selected > .outliner-table-title-cell .row.selected::before {
+  display: none;
+}
+
+.outliner-table-record.is-filtered .outliner-table-row {
+  color: var(--text-tertiary);
+}
+
+.outliner-table-title-cell,
+.outliner-table-cell {
+  min-width: 0;
+  min-height: var(--field-row-min-height);
+  border-bottom: 1px solid var(--separator);
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.outliner-table-title-cell {
+  position: relative;
+}
+
+.outliner-table-title-cell > .row-wrap {
+  width: 100%;
+  height: 100%;
+  transform: none;
+}
+
+.outliner-table-title-cell .row {
+  min-height: var(--field-row-min-height);
+  grid-template-columns: var(--row-leading-width) minmax(0, 1fr) auto;
+  border-radius: var(--radius-none);
+  padding-left: var(--row-edge);
+  padding-right: var(--space-3);
+}
+
+.outliner-table-cell {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 var(--space-4) 0 var(--row-edge);
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outliner-table-cell.has-node-value {
+  align-items: stretch;
+  overflow: visible;
+  padding: 0;
+  white-space: normal;
+}
+
+.outliner-table-row:not(.is-selected) > .outliner-table-title-cell.is-active:focus,
+.outliner-table-row:not(.is-selected) > .outliner-table-cell.is-active:focus {
+  background: var(--fill-1);
+}
+
+.outliner-table-title-cell:focus-visible,
+.outliner-table-cell:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.outliner-table-cell .field-value-cell,
+.outliner-table-cell .field-value-outliner {
+  width: 100%;
+  min-width: 0;
+}
+
+.outliner-table-cell .field-value-outliner > .row-wrap > .row {
+  min-height: calc(var(--field-row-min-height) - 2 * var(--space-hairline));
+  grid-template-columns: var(--row-leading-width) minmax(0, 1fr) auto;
+  border-radius: var(--radius-none);
+  padding: var(--space-hairline) 0 var(--space-hairline) var(--row-edge);
+}
+
+.outliner-table-cell .field-value-system,
+.outliner-table-cell .typed-field-checkbox {
+  min-height: var(--field-row-min-height);
+}
+
+.outliner-table-empty-cell {
+  display: flex;
+  width: 100%;
+  min-height: var(--field-row-min-height);
+  align-items: center;
+  color: var(--text-quaternary);
+}
+
+.outliner-table-empty-leading {
+  flex: 0 0 var(--row-leading-width);
+}
+
+.outliner-table-row-actions {
+  min-height: var(--field-row-min-height);
+}
+
+.outliner-table-filtered-row {
+  display: grid;
+  width: var(--table-min-width);
+  min-width: var(--table-min-width);
+  grid-template-columns: var(--table-columns);
+}
+
+.outliner-table-filtered-cell {
+  min-width: 0;
+  grid-column: 1 / -2;
+  border-bottom: 1px solid var(--separator);
+}
+
+.outliner-table-filtered-cell .filtered-out-heading {
+  margin-left: var(--space-4);
+}
+
+.outliner-table-nested {
+  min-width: 0;
+  border-bottom: 1px solid var(--separator);
+  padding: var(--space-2) 0 var(--space-3) var(--row-selection-start);
+}
+
+.outliner-table-flat-scope {
+  position: relative;
+  min-width: 0;
+  padding: var(--space-2) 0;
+}
+
+.outliner-table-flat-scope::before {
+  position: absolute;
+  top: var(--space-2);
+  bottom: var(--space-2);
+  left: calc(-1 * var(--row-selection-start));
+  width: 1px;
+  background: var(--separator);
+  content: "";
+  pointer-events: none;
+}
+
+.outliner-table-column-menu,
+.outliner-table-add-column-menu {
+  position: fixed;
+  z-index: var(--z-popover);
+  overflow-y: auto;
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+  padding: var(--space-2);
+}
+
+.outliner-table-column-rename,
+.outliner-table-field-search {
+  width: 100%;
+}
+
+.outliner-table-field-options {
+  max-height: 260px;
+  overflow-y: auto;
+  margin: var(--space-2) 0;
+}
+
+.outliner-table-no-fields {
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-sm);
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.outliner-table-new-field {
+  border-top: 1px solid var(--separator);
+  margin-top: var(--space-2);
+}
+
+.outliner-table-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2);
+}
+
+.outliner-table-create-field-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.outliner-table-create-cancel,
+.outliner-table-create-confirm {
+  min-height: var(--control-size-xl);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  padding: 0 var(--space-4);
+}
+
+.outliner-table-create-cancel:hover,
+.outliner-table-create-confirm:hover {
+  background: var(--control-hover);
+  color: var(--text-primary);
+}
+
+.outliner-table-create-confirm:disabled {
+  color: var(--text-quaternary);
+}
+
 .view-toolbar-name-filter {
   display: inline-flex;
   height: var(--control-size-xl);

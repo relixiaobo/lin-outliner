@@ -105,6 +105,7 @@ const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/outliner.css|.batch-tag-selector', 'Batch tag selector popover.'],
   ['src/renderer/styles/outliner.css|.node-context-menu', 'Node context menu.'],
   ['src/renderer/styles/outliner.css|.node-picker-popover', 'Node picker popover.'],
+  ['src/renderer/styles/outliner.css|.outliner-table-column-menu, .outliner-table-add-column-menu', 'Table column configuration menus.'],
   ['src/renderer/styles/outliner.css|.tag-context-menu', 'Tag context menu.'],
   ['src/renderer/styles/outliner.css|.typed-field-date-popover', 'Field date picker popover.'],
   ['src/renderer/styles/outliner.css|.view-toolbar-popover', 'View toolbar popover.'],
@@ -132,6 +133,7 @@ const borderlessOverlaySurfaceSelectors = new Map([
   ['src/renderer/styles/outliner.css|.batch-tag-selector', 'Batch tag selector popover.'],
   ['src/renderer/styles/outliner.css|.node-context-menu', 'Node context menu.'],
   ['src/renderer/styles/outliner.css|.node-picker-popover', 'Node picker popover.'],
+  ['src/renderer/styles/outliner.css|.outliner-table-column-menu, .outliner-table-add-column-menu', 'Table column configuration menus.'],
   ['src/renderer/styles/outliner.css|.tag-context-menu', 'Tag context menu.'],
   ['src/renderer/styles/outliner.css|.typed-field-date-popover', 'Field date picker popover.'],
   ['src/renderer/styles/outliner.css|.view-toolbar-popover', 'View toolbar popover.'],
@@ -154,6 +156,8 @@ const runtimeTokenInputs = new Map([
   ['src/renderer/styles/outliner.css|--flat-indent-guide-top', 'Flat indent guides receive measured geometry from the outliner runtime.'],
   ['src/renderer/styles/outliner.css|--flat-indent-guide-left', 'Flat indent guides receive measured geometry from the outliner runtime.'],
   ['src/renderer/styles/outliner.css|--flat-indent-guide-height', 'Flat indent guides receive measured geometry from the outliner runtime.'],
+  ['src/renderer/styles/outliner.css|--table-columns', 'Table owners provide one live column template to aligned header and body rows.'],
+  ['src/renderer/styles/outliner.css|--table-min-width', 'Table owners provide the live horizontal extent derived from configured column widths.'],
 ]);
 const layoutTransitionProperties = new Set([
   'all',

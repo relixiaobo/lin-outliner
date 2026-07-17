@@ -241,9 +241,19 @@ export const api = {
     command<CommandResult>('set_group_field', { nodeId, field }),
   addDisplayField: (nodeId: string, field: string) =>
     command<CommandResult>('add_display_field', { nodeId, field }),
+  createDisplayField: (nodeId: string, name: string, fieldType: FieldType) =>
+    command<CommandResult>('add_display_field', { nodeId, createFieldName: name, createFieldType: fieldType }),
   updateDisplayField: (
     displayFieldId: string,
-    patch: { field?: string | null; visible?: boolean | null; width?: number | null; order?: number | null; label?: string | null; placement?: string | null },
+    patch: {
+      field?: string | null;
+      visible?: boolean | null;
+      width?: number | null;
+      order?: number | null;
+      label?: string | null;
+      placement?: string | null;
+      move?: 'left' | 'right';
+    },
   ) => command<CommandResult>('update_display_field', { displayFieldId, ...patch }),
   removeDisplayField: (displayFieldId: string) =>
     command<CommandResult>('remove_display_field', { displayFieldId }),
@@ -287,8 +297,13 @@ export const api = {
     command<CommandResult>('create_field_def', { tagId, name, fieldType }),
   createInlineFieldAfterNode: (afterNodeId: string, name: string, fieldType: FieldType) =>
     command<CommandResult>('create_inline_field_after_node', { afterNodeId, name, fieldType }),
-  createInlineField: (parentId: string, index: number | null, name: string, fieldType: FieldType) =>
-    command<CommandResult>('create_inline_field', { parentId, index, name, fieldType }),
+  createInlineField: (
+    parentId: string,
+    index: number | null,
+    name: string,
+    fieldType: FieldType,
+    targetDefId?: string,
+  ) => command<CommandResult>('create_inline_field', { parentId, index, name, fieldType, targetDefId }),
   reuseFieldDefinition: (entryId: string, targetDefId: string) =>
     command<CommandResult>('reuse_field_definition', { entryId, targetDefId }),
   registerCollectedOption: (fieldDefId: string, name: string) =>

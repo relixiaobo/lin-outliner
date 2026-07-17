@@ -23,7 +23,9 @@ import {
 } from '../interactions/selectionBatchActions';
 import {
   AgentIcon,
+  CheckIcon,
   CheckboxIcon,
+  ChevronRightIcon,
   CopyIcon,
   DescriptionIcon,
   DuplicateIcon,
@@ -35,12 +37,14 @@ import {
   MoveDownIcon,
   MoveToIcon,
   MoveUpIcon,
+  NodeReadToolIcon,
   OpenIcon,
   PinIcon,
   RestoreIcon,
   ShowToolbarIcon,
   SortAscIcon,
   SupertagIcon,
+  TableIcon,
   TrashIcon,
 } from '../icons';
 import { Button } from '../primitives/Button';
@@ -105,7 +109,7 @@ async function writeClipboardText(text: string): Promise<void> {
 export function NodeContextMenu(props: NodeContextMenuProps) {
   const t = useT();
   const tc = t.outliner.contextMenu;
-  const [mode, setMode] = useState<'main' | 'tag' | 'move'>('main');
+  const [mode, setMode] = useState<'main' | 'tag' | 'move' | 'view'>('main');
   const [query, setQuery] = useState('');
   const [pendingDelete, setPendingDelete] = useState<PendingDeleteConfirmation | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -391,6 +395,16 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         role="menuitem"
       />
       <div className="node-context-separator" role="separator" />
+      <MenuItem
+        className="node-context-item"
+        icon={view.viewMode === 'table'
+          ? <TableIcon size={ICON_SIZE.menu} />
+          : <NodeReadToolIcon size={ICON_SIZE.menu} />}
+        label={tc.viewAs}
+        meta={<ChevronRightIcon size={ICON_SIZE.menu} />}
+        onClick={() => setMode('view')}
+        role="menuitem"
+      />
       {item(
         viewToolbarVisibleInRow ? tc.hideViewToolbar : tc.showViewToolbar,
         viewToolbarVisibleInRow ? <HideToolbarIcon size={ICON_SIZE.menu} /> : <ShowToolbarIcon size={ICON_SIZE.menu} />,
@@ -401,7 +415,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       )}
       {item(tc.filterBy, <FilterIcon size={ICON_SIZE.menu} />, () => openViewSection('filter'))}
       {item(tc.sortBy, <SortAscIcon size={ICON_SIZE.menu} />, () => openViewSection('sort'))}
-      {item(tc.groupBy, <GroupIcon size={ICON_SIZE.menu} />, () => openViewSection('group'))}
+      {view.viewMode !== 'table'
+        ? item(tc.groupBy, <GroupIcon size={ICON_SIZE.menu} />, () => openViewSection('group'))
+        : null}
       {item(tc.display, <FieldIcon size={ICON_SIZE.menu} />, () => openViewSection('display'))}
       <div className="node-context-separator" role="separator" />
       {item(target.description ? tc.editDescription : tc.addDescription, <DescriptionIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
@@ -515,9 +531,41 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     </>
   );
 
+  const renderViewMode = () => (
+    <>
+      <div className="node-context-subhead">
+        <Button onClick={() => setMode('main')} size="sm" variant="ghost">{tc.back}</Button>
+        <span>{tc.viewAs}</span>
+      </div>
+      <MenuItem
+        active={view.viewMode !== 'table'}
+        className="node-context-item"
+        icon={<NodeReadToolIcon size={ICON_SIZE.menu} />}
+        label={tc.viewOutline}
+        meta={view.viewMode !== 'table' ? <CheckIcon size={ICON_SIZE.menu} /> : null}
+        onClick={() => {
+          void props.run(() => api.setViewMode(props.targetId, 'list'));
+          props.onClose();
+        }}
+      />
+      <MenuItem
+        active={view.viewMode === 'table'}
+        className="node-context-item"
+        icon={<TableIcon size={ICON_SIZE.menu} />}
+        label={tc.viewTable}
+        meta={view.viewMode === 'table' ? <CheckIcon size={ICON_SIZE.menu} /> : null}
+        onClick={() => {
+          void props.run(() => api.setViewMode(props.targetId, 'table'));
+          props.onClose();
+        }}
+      />
+    </>
+  );
+
   const modeLabel = mode === 'main' ? tc.nodeActions
     : mode === 'tag' ? tc.addTagTitle
-      : tc.moveNode;
+      : mode === 'move' ? tc.moveNode
+        : tc.viewAs;
 
   return createPortal(
     <>
@@ -535,7 +583,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
           ? renderMain()
           : mode === 'tag'
             ? renderTagMode()
-            : renderMoveMode()}
+            : mode === 'move'
+              ? renderMoveMode()
+              : renderViewMode()}
       </MenuSurface>
       {pendingDelete ? (
         <ConfirmDialog

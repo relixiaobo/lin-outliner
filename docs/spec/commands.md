@@ -80,12 +80,24 @@ here because they use the image-node commands.
 `remove_filter_rule`, `clear_filter_rules`, `set_group_field`,
 `add_display_field`, `update_display_field`, `remove_display_field`.
 
+`add_display_field` accepts either an existing field id or a new field name/type.
+The latter creates the field definition and display-field node in one mutation.
+Adding an already configured field reveals its existing display node rather than
+creating a duplicate. New display fields receive the next finite display order.
+`update_display_field` may move a column left or right; the move and sibling-order
+normalization are one mutation.
+
 ### Document — knowledge model (tags and fields)
 `create_tag`, `apply_tag`, `remove_tag`, `set_tag_config`, `set_field_config`,
 `create_field_def`, `create_inline_field`, `create_inline_field_after_node`,
 `reuse_field_definition`, `register_collected_option`,
 `create_collected_field_option`, `select_field_option`,
 `set_field_free_text_value`, `clear_field_value`, `remove_field_value`.
+
+`create_inline_field` may receive an existing `targetDefId`. That form validates
+the definition, rejects a duplicate field on the owner, and creates only the
+field entry in one mutation. Table uses it to materialize an absent field cell
+without minting a throwaway definition or issuing a second relink command.
 
 User tag and field definitions are reusable only while they are active: the
 definition node must exist, have the expected `tagDef` / `fieldDef` type, and not

@@ -1172,14 +1172,52 @@ export class Core {
     });
   }
 
-  addDisplayField(nodeId: string, field: ViewFieldRef): CommandOutcome {
+  addDisplayField(
+    nodeId: string,
+    field: ViewFieldRef | null | undefined,
+    createField?: { name: string; fieldType: FieldType },
+  ): CommandOutcome {
     return this.mutate(() => {
+      let fieldId = normalizeOptionalText(field);
+      if (createField) {
+        const name = normalizeRequiredText(createField.name, 'field name');
+        const state = this.snapshot();
+        fieldId = findFieldDefByName(state, name)
+          ?? this.insertFieldDefNodeDirect(SCHEMA_ID, name, createField.fieldType);
+      }
+      if (!fieldId) throw CoreError.invalidOperation('display field is required');
+
       const viewDefId = this.ensureViewDefDirect(nodeId);
-      this.loro.createNodeWithId<DisplayFieldNode>(freshId('display'), viewDefId, undefined, 'displayField', (node) => {
-        node.displayField = normalizeRequiredText(field, 'display field');
+      const state = this.snapshot();
+      const viewDef = requiredNode(state, viewDefId);
+      const existing = viewDef.children
+        .map((childId) => state.nodes[childId])
+        .find((child): child is DisplayFieldNode => (
+          child?.type === 'displayField' && child.displayField === fieldId
+        ));
+      if (existing) {
+        if (existing.displayVisible === false) {
+          const next = clone(existing);
+          next.displayVisible = true;
+          next.updatedAt = nowMs();
+          this.loro.writeNode(next);
+        }
+        return focus(existing.id);
+      }
+
+      const displayFields = viewDef.children
+        .map((childId) => state.nodes[childId])
+        .filter((child): child is DisplayFieldNode => child?.type === 'displayField');
+      const nextOrder = displayFields.reduce((max, display) => (
+        Number.isFinite(display.displayOrder) ? Math.max(max, display.displayOrder!) : max
+      ), -1) + 1;
+      const displayFieldId = freshId('display');
+      this.loro.createNodeWithId<DisplayFieldNode>(displayFieldId, viewDefId, undefined, 'displayField', (node) => {
+        node.displayField = fieldId;
         node.displayVisible = true;
+        node.displayOrder = nextOrder;
       });
-      return focus(nodeId);
+      return focus(displayFieldId);
     });
   }
 
@@ -1192,6 +1230,7 @@ export class Core {
       order?: number | null;
       label?: string | null;
       placement?: DisplayPlacement | null;
+      move?: 'left' | 'right' | null;
     },
   ): CommandOutcome {
     return this.mutate(() => {
@@ -1205,7 +1244,41 @@ export class Core {
       if (patch.label !== undefined) setOptional(node, 'displayLabel', normalizeOptionalText(patch.label));
       if (patch.placement !== undefined) setOptional(node, 'displayPlacement', normalizeOptionalText(patch.placement) as DisplayPlacement | undefined);
       node.updatedAt = nowMs();
-      this.loro.writeNode(node);
+      let moved = false;
+      if (patch.move && node.parentId) {
+        const parent = requiredNode(state, node.parentId);
+        const siblings = parent.children
+          .map((childId, sourceIndex) => ({ child: state.nodes[childId], sourceIndex }))
+          .filter((entry): entry is { child: DisplayFieldNode; sourceIndex: number } => entry.child?.type === 'displayField')
+          .sort((left, right) => {
+            const leftOrder = Number.isFinite(left.child.displayOrder) ? left.child.displayOrder! : Number.POSITIVE_INFINITY;
+            const rightOrder = Number.isFinite(right.child.displayOrder) ? right.child.displayOrder! : Number.POSITIVE_INFINITY;
+            if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+            return left.sourceIndex - right.sourceIndex;
+          })
+          .map((entry) => entry.child);
+        const currentIndex = siblings.findIndex((sibling) => sibling.id === node.id);
+        const direction = patch.move === 'left' ? -1 : 1;
+        let targetIndex = currentIndex + direction;
+        while (
+          targetIndex >= 0
+          && targetIndex < siblings.length
+          && siblings[targetIndex]?.displayVisible === false
+        ) {
+          targetIndex += direction;
+        }
+        if (currentIndex >= 0 && targetIndex >= 0 && targetIndex < siblings.length) {
+          [siblings[currentIndex], siblings[targetIndex]] = [siblings[targetIndex]!, siblings[currentIndex]!];
+          siblings.forEach((sibling, index) => {
+            const next = sibling.id === node.id ? node : clone(sibling);
+            next.displayOrder = index;
+            next.updatedAt = nowMs();
+            this.loro.writeNode(next);
+          });
+          moved = true;
+        }
+      }
+      if (!moved) this.loro.writeNode(node);
       return focus(displayFieldId);
     });
   }
@@ -1802,11 +1875,23 @@ export class Core {
     });
   }
 
-  createInlineField(parentId: string, index: number | null | undefined, name: string, fieldType: FieldType): CommandOutcome {
+  createInlineField(
+    parentId: string,
+    index: number | null | undefined,
+    name: string,
+    fieldType: FieldType,
+    targetDefId?: string | null,
+  ): CommandOutcome {
     const normalized = name.trim();
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
+      if (targetDefId) {
+        ensureFieldDefinition(state, targetDefId);
+        assertOwnerDoesNotHaveFieldName(state, parentId, fieldNameForDefId(state, targetDefId));
+        const fieldEntryId = this.insertFieldEntryNodeDirect(parentId, index, targetDefId);
+        return focus(fieldEntryId, { parentId: fieldEntryId, surface: 'trailing' });
+      }
       assertOwnerDoesNotHaveFieldName(state, parentId, normalized);
       const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType);
       const fieldEntryId = this.insertFieldEntryNodeDirect(parentId, index, fieldDefId);

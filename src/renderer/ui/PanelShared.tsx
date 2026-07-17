@@ -14,6 +14,8 @@ import type { DocumentIndex, UiState } from '../state/document';
 import { ChevronLeftIcon, CloseIcon } from './icons';
 import { RECURSIVE_OUTLINER_FALLBACK_ENABLED, OutlinerFlatView } from './outliner/OutlinerFlatView';
 import { OutlinerView } from './outliner/OutlinerView';
+import { OutlinerTableView } from './outliner/OutlinerTableView';
+import { readViewConfig } from './outliner/row-model';
 import { IconButton } from './primitives/IconButton';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared';
 
@@ -158,7 +160,8 @@ interface PanelChildrenOutlineProps {
 
 export function PanelChildrenOutline(props: PanelChildrenOutlineProps) {
   const t = useT();
-  const className = ['outliner', props.className].filter(Boolean).join(' ');
+  const tableMode = readViewConfig(props.index.byId.get(props.parentId), props.index.byId).viewMode === 'table';
+  const className = ['outliner', tableMode ? 'outliner-table-host' : '', props.className].filter(Boolean).join(' ');
 
   // The node outline is an ARIA tree: `treeitem` rows carry level / expanded /
   // selected state (see OutlinerRowShell). Multi-select is supported, so the tree
@@ -167,14 +170,37 @@ export function PanelChildrenOutline(props: PanelChildrenOutlineProps) {
   return (
     <div
       className={className}
-      role="tree"
-      aria-label={t.outliner.treeAriaLabel}
-      aria-multiselectable="true"
+      role={tableMode ? 'presentation' : 'tree'}
+      aria-label={tableMode ? undefined : t.outliner.treeAriaLabel}
+      aria-multiselectable={tableMode ? undefined : 'true'}
       onDragOver={props.onDragOver}
       onDrop={props.onDrop}
     >
       {props.label}
-      {RECURSIVE_OUTLINER_FALLBACK_ENABLED ? (
+      {tableMode ? (
+        <OutlinerTableView
+          panelId={props.panelId}
+          parentId={props.parentId}
+          rootId={props.rootId}
+          onRoot={props.onRoot}
+          depth={0}
+          index={props.index}
+          isNodePinned={props.isNodePinned}
+          ui={props.ui}
+          uiRef={props.uiRef}
+          setUi={props.setUi}
+          run={props.run}
+          onTogglePin={props.onTogglePin}
+          trigger={props.trigger}
+          setTrigger={props.setTrigger}
+          dragId={props.dragId}
+          setDragId={props.setDragId}
+          referencePath={[props.parentId]}
+          trailingDraft={props.trailingDraft}
+          draftPlaceholder={props.draftPlaceholder}
+          scrollParentRef={props.scrollParentRef}
+        />
+      ) : RECURSIVE_OUTLINER_FALLBACK_ENABLED ? (
         <OutlinerView
           panelId={props.panelId}
           parentId={props.parentId}

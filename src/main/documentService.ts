@@ -544,7 +544,16 @@ export class DocumentService {
       case 'set_group_field':
         return this.core.setGroupField(String(args.nodeId), nullableString(args.field));
       case 'add_display_field':
-        return this.core.addDisplayField(String(args.nodeId), String(args.field));
+        return this.core.addDisplayField(
+          String(args.nodeId),
+          nullableString(args.field),
+          args.createFieldName === undefined
+            ? undefined
+            : {
+                name: String(args.createFieldName),
+                fieldType: fieldType(args.createFieldType),
+              },
+        );
       case 'update_display_field':
         return this.core.updateDisplayField(String(args.displayFieldId), {
           field: nullableString(args.field),
@@ -553,6 +562,7 @@ export class DocumentService {
           order: nullableNumber(args.order),
           label: nullableString(args.label),
           placement: displayPlacement(args.placement),
+          move: args.move === 'left' || args.move === 'right' ? args.move : undefined,
         });
       case 'remove_display_field':
         return this.core.removeDisplayField(String(args.displayFieldId));
@@ -620,7 +630,13 @@ export class DocumentService {
       case 'create_inline_field_after_node':
         return this.core.createInlineFieldAfterNode(String(args.afterNodeId), String(args.name), fieldType(args.fieldType));
       case 'create_inline_field':
-        return this.core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), fieldType(args.fieldType));
+        return this.core.createInlineField(
+          String(args.parentId),
+          nullableNumber(args.index),
+          String(args.name),
+          fieldType(args.fieldType),
+          nullableString(args.targetDefId),
+        );
       case 'reuse_field_definition':
         return this.core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
       case 'merge_definitions':

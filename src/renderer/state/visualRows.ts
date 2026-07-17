@@ -13,6 +13,7 @@ import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
 // kind plus per-level toolbars and trailing drafts, and carries cumulative depth.
 export type VisualRow =
   | { kind: 'toolbar'; key: string; nodeId: NodeId; depth: number; indentDepth: number; parentId: NodeId }
+  | { kind: 'table'; key: string; nodeId: NodeId; depth: number; parentId: NodeId; referencePath: NodeId[] }
   | { kind: 'group'; key: string; label: string; depth: number; parentId: NodeId }
   | { kind: 'filteredOut'; key: string; id: string; count: number; depth: number; parentId: NodeId; expanded: boolean }
   | { kind: 'hiddenField'; key: string; fieldId: NodeId; label: string; depth: number; parentId: NodeId }
@@ -212,7 +213,20 @@ export function buildVisualRows(
   const descend = (rowId: NodeId, depth: number, referencePath: NodeId[], keyPath: NodeId[]) => {
     const childParentId = outlinerChildParentId(rowId, byId);
     if (!childParentId || referencePath.includes(childParentId)) return;
-    visit(childParentId, depth + 1, [...referencePath, childParentId], [...keyPath, rowId], 'auto');
+    const nextReferencePath = [...referencePath, childParentId];
+    const nextKeyPath = [...keyPath, rowId];
+    if (readViewConfig(byId.get(childParentId), byId).viewMode === 'table') {
+      out.push({
+        kind: 'table',
+        key: `table>${nextKeyPath.join('>')}`,
+        nodeId: childParentId,
+        depth: depth + 1,
+        parentId: childParentId,
+        referencePath: nextReferencePath,
+      });
+      return;
+    }
+    visit(childParentId, depth + 1, nextReferencePath, nextKeyPath, 'auto');
   };
 
   visit(rootId, options.rootDepth ?? 0, [rootId], [rootId], options.rootTrailingDraft ?? 'none');
