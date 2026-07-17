@@ -524,6 +524,16 @@
   background: var(--bg-content);
 }
 
+.outliner-table-row.is-selected {
+  border-radius: var(--radius-row);
+  background: var(--row-selected);
+  box-shadow: var(--outline-faint);
+}
+
+.outliner-table-row.is-selected > .outliner-table-title-cell .row.selected::before {
+  display: none;
+}
+
 .outliner-table-record.is-filtered .outliner-table-row {
   color: var(--text-tertiary);
 }
@@ -573,8 +583,8 @@
   white-space: normal;
 }
 
-.outliner-table-scroll:focus-within .outliner-table-title-cell.is-active,
-.outliner-table-scroll:focus-within .outliner-table-cell.is-active {
+.outliner-table-row:not(.is-selected) > .outliner-table-title-cell.is-active:focus,
+.outliner-table-row:not(.is-selected) > .outliner-table-cell.is-active:focus {
   background: var(--fill-1);
 }
 

@@ -80,6 +80,7 @@ import {
   hiddenFieldKey,
   readViewConfig,
   viewFieldValuesFor,
+  visibleAuthoredTableFieldIds,
   visibleDisplayFields,
   type OutlinerRowItem,
   type ViewDisplayField,
@@ -157,6 +158,7 @@ export interface OutlinerTableViewProps {
   trailingDraft?: 'always' | 'auto' | 'none';
   draftPlaceholder?: string;
   scrollParentRef?: RefObject<HTMLElement | null>;
+  suppressedOwnerFieldDefIds?: ReadonlySet<string>;
 }
 
 function clampColumnWidth(width: number | undefined): number {
@@ -220,6 +222,13 @@ function visibleTableRange(layout: TableLayout, scrollTop: number, viewportHeigh
 
 function cellKey(cell: TableCellAddress): string {
   return `${cell.rowId}\u001f${cell.columnId}`;
+}
+
+function isTableRecordSelected(rowId: NodeId, ui: UiState): boolean {
+  if (ui.focusedId) return false;
+  const selected = ui.selectedIds.has(rowId) || ui.selectedId === rowId;
+  if (!selected) return false;
+  return ui.selectionSource !== 'ref-click' || ui.selectedIds.size > 1;
 }
 
 function tableFieldLabel(fieldId: string, index: DocumentIndex, tt: TableMessages): string {
@@ -337,9 +346,11 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     [parent, props.index.byId],
   );
   const columns = useMemo(() => visibleDisplayFields(view), [view]);
+  const displayedFieldDefIds = useMemo(() => visibleAuthoredTableFieldIds(view), [view]);
   const builtRows = useMemo(() => buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
-  }), [parent, props.index.byId, props.ui.expandedHiddenFields]);
+    suppressedFieldDefIds: props.suppressedOwnerFieldDefIds,
+  }), [parent, props.index.byId, props.suppressedOwnerFieldDefIds, props.ui.expandedHiddenFields]);
   const ownerRows = useMemo(
     () => builtRows.filter((row) => row.type === 'field' || row.type === 'hiddenField'),
     [builtRows],
@@ -673,6 +684,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   const renderDataRow = (row: Extract<TableRenderRow, { kind: 'data' }>, rowIndex: number) => {
     const rowNode = props.index.byId.get(row.id);
     const nextStoredRow = renderRows.slice(rowIndex + 1).find((candidate) => candidate.kind === 'data' && !candidate.draft);
+    const selected = !row.draft && isTableRecordSelected(row.id, props.ui);
     const titleAddress = { rowId: row.id, columnId: TABLE_TITLE_COLUMN_ID };
     const activeTitle = effectiveActiveCell?.rowId === row.id
       && effectiveActiveCell.columnId === TABLE_TITLE_COLUMN_ID;
@@ -681,10 +693,33 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     const childReferencePath = [...referencePath, ownerId];
     const referenceCycle = referencePath.includes(ownerId) && ownerId !== row.id;
     const expanded = !row.draft && props.ui.expanded.has(row.id) && !referenceCycle;
+    const nestedRows = expanded && childParent
+      ? buildOutlinerRows(childParent, props.index.byId, {
+        expandedHiddenFields: props.ui.expandedHiddenFields,
+        suppressedFieldDefIds: displayedFieldDefIds,
+      })
+      : [];
+    const nestedView = childParent ? readViewConfig(childParent, props.index.byId) : null;
+    const focusedId = props.ui.focusedId;
+    const nestedDraftFocused = Boolean(childParent) && props.ui.focusedPanelId === props.panelId && (
+      (focusedId === ownerId && props.ui.focusSurface === 'trailing')
+      || (
+        props.ui.focusedParentId === ownerId
+        && focusedId !== null
+        && !props.index.byId.has(focusedId)
+      )
+    );
+    const showNested = expanded && Boolean(childParent) && (
+      nestedRows.length > 0
+      || nestedView?.viewMode === 'table'
+      || nestedView?.toolbarVisible
+      || nestedDraftFocused
+    );
     return (
       <div className={`outliner-table-record ${row.filtered ? 'is-filtered' : ''}`} role="presentation">
         <div
-          className="outliner-table-row"
+          aria-selected={selected}
+          className={`outliner-table-row${selected ? ' is-selected' : ''}`}
           role="row"
           aria-rowindex={rowIndex + 2}
         >
@@ -725,6 +760,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
               flat
               semanticRole="presentation"
               hideDisplayFields
+              suppressedChildFieldDefIds={displayedFieldDefIds}
               tableNextRowId={nextStoredRow?.kind === 'data' ? nextStoredRow.id : null}
             />
           </div>
@@ -763,7 +799,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
           })}
           <div className="outliner-table-row-actions" role="presentation" />
         </div>
-        {expanded && childParent ? (
+        {showNested && childParent ? (
           <div className="outliner-table-nested" role="presentation">
             <OutlinerView
               panelId={props.panelId}
@@ -784,6 +820,8 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
               dragId={props.dragId}
               setDragId={props.setDragId}
               referencePath={childReferencePath}
+              rows={nestedRows}
+              suppressedFieldDefIds={displayedFieldDefIds}
               trailingDraft="auto"
             />
           </div>
@@ -887,6 +925,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
       <div
         aria-colcount={columnIds.length}
         aria-label={tt.ariaLabel({ title: parent.content.text || t.common.untitled })}
+        aria-multiselectable="true"
         aria-rowcount={renderRows.length + 1}
         className="outliner-table-scroll"
         onKeyDown={onGridKeyDown}

@@ -44,6 +44,7 @@ export type OutlinerRowItem =
 
 export interface RowBuildOptions {
   expandedHiddenFields?: Set<string>;
+  suppressedFieldDefIds?: ReadonlySet<string>;
   systemFieldContext?: SystemFieldContext;
 }
 
@@ -556,6 +557,13 @@ function buildChildRows(
     if (child.type && INTERNAL_NODE_TYPES.has(child.type)) continue;
     if (
       child.type === 'fieldEntry'
+      && child.fieldDefId
+      && options.suppressedFieldDefIds?.has(child.fieldDefId)
+    ) {
+      continue;
+    }
+    if (
+      child.type === 'fieldEntry'
       && isHiddenFieldEntry(child, byId)
       && !options.expandedHiddenFields?.has(hiddenFieldKey(parent.id, child.id))
     ) {
@@ -661,6 +669,12 @@ export function fieldChoiceLabel(fieldId: string, byId: Map<NodeId, NodeProjecti
 
 export function visibleDisplayFields(view: ViewConfig): ViewDisplayField[] {
   return view.displayFields.filter((field) => field.visible && field.field !== NAME_FIELD);
+}
+
+export function visibleAuthoredTableFieldIds(view: ViewConfig): Set<string> {
+  return new Set(visibleDisplayFields(view).flatMap((field) => (
+    isSystemFieldId(field.field) ? [] : [field.field]
+  )));
 }
 
 export function fieldEntryForViewCell(

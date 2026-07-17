@@ -34,6 +34,7 @@ interface OutlinerViewProps {
   setDragId: (nodeId: NodeId | null) => void;
   onTogglePin: (nodeId: NodeId) => void;
   rows?: OutlinerRowItem[];
+  suppressedFieldDefIds?: ReadonlySet<string>;
   referencePath?: readonly NodeId[];
   showViewToolbar?: boolean;
   // When this view renders a field's values (not body content), the field-value
@@ -67,6 +68,7 @@ export function OutlinerView(props: OutlinerViewProps) {
   const tableMode = view.viewMode === 'table' && !props.fieldValue;
   const builtRows = props.rows ?? buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
+    suppressedFieldDefIds: props.suppressedFieldDefIds,
   });
 
   // The draft id is minted here (renderer-only) so it survives until the row
@@ -140,6 +142,7 @@ export function OutlinerView(props: OutlinerViewProps) {
         dragId={props.dragId}
         setDragId={props.setDragId}
         referencePath={props.referencePath}
+        suppressedOwnerFieldDefIds={props.suppressedFieldDefIds}
         showViewToolbar={props.showViewToolbar}
         trailingDraft={props.trailingDraft}
         draftPlaceholder={props.draftPlaceholder}

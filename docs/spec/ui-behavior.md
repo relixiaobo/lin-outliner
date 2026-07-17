@@ -363,6 +363,14 @@ direct toggle behavior. The trailing Title draft creates an ordinary direct
 child, and Enter at the end of the final stored Title creates and focuses the
 next record.
 
+Expanding a table record shows its ordinary child outline without duplicating
+authored field entries already represented by visible columns. Those entries and
+their values remain editable through their cells, but are omitted from the
+expanded render and child count. The entry wrapper is absent from row navigation;
+its visible value nodes remain ordinary selectable nodes in cell order. Field
+entries for hidden or undisplayed columns remain ordinary expanded child rows so
+hiding a column never makes its data unreachable.
+
 Each table is an independently named ARIA `grid` with `row`, `columnheader`, and
 `gridcell` descendants and one roving tab stop. Arrow keys move one cell, Home
 and End move to row edges, and Cmd/Ctrl+Home or Cmd/Ctrl+End move to grid edges.
@@ -370,9 +378,18 @@ Those navigation keys operate only while the cell wrapper owns focus. Tab and
 Shift+Tab traverse wrappers, and native Tab leaves at the outer boundary. Once
 an authored node editor owns focus, Enter, Tab, Shift+Tab, drag, and other node
 commands retain ordinary outliner semantics rather than being captured by the
-grid. Escape closes editor-local state and, after the editor releases focus,
+grid. The neutral cell fill likewise belongs only to wrapper focus; descendant
+editor focus leaves the wrapper transparent, including while its node subtree is
+expanded. Escape closes editor-local state and, after the editor releases focus,
 returns focus to the same logical cell. IME composition, modifier shortcuts,
 and dead keys are not consumed as printable table input.
+
+Selecting a record's Title node keeps the ordinary node selection identity and
+commands, but Table projects its visual selection and `aria-selected` state onto
+the complete multi-select grid row. Title does not retain a second node-local fill
+inside that surface. An authored value node is still an ordinary nested node:
+selecting it remains local to that value and does not select the containing record
+row.
 
 The grid uses the panel as its vertical scroll owner and a local native
 horizontal scroll area for overflowing columns. Header and mounted rows share

@@ -253,6 +253,12 @@ width. The panel's vertical scroller remains authoritative.
 - **FR-16:** Switching to Table shall widen the root content surface to the
   panel's usable width; overflowing columns shall use a local native horizontal
   scrollbar without widening sibling panels.
+- **FR-17:** Selecting a record's Title node shall project the ordinary node
+  selection across that complete table row without changing the selected node
+  identity. Selecting an authored value node shall remain local to that node.
+- **FR-18:** Expanding a table record shall omit field entries already projected
+  by visible columns while retaining ordinary child nodes and field entries for
+  hidden or undisplayed columns.
 
 ## Keyboard And Accessibility
 
@@ -261,7 +267,9 @@ width. The panel's vertical scroller remains authoritative.
   grids rather than one invalid nested row set.
 - **BR-2:** Exactly one cell participates in the tab order. Arrow keys move the
   active cell without entering edit mode. Home/End move to first/last cell in a
-  row; Cmd/Ctrl+Home and Cmd/Ctrl+End move to the first/last available cell.
+  row; Cmd/Ctrl+Home and Cmd/Ctrl+End move to the first/last available cell. The
+  neutral cell fill appears only while that wrapper owns focus; descendant node
+  focus never paints the full height of an expanded cell.
 - **BR-3:** Tab and Shift+Tab move forward/backward through cells only while the
   roving cell wrapper owns focus. Inside an authored node editor they retain the
   ordinary node indent/outdent behavior. At the final wrapper cell, Tab reaches
@@ -276,6 +284,10 @@ width. The panel's vertical scroller remains authoritative.
 - **BR-6:** Column resize handles are keyboard operable in fixed increments and
   expose current width; header menus provide every resize/reorder action that is
   otherwise pointer accessible.
+- **BR-7:** The grid exposes multi-selection semantics and every data row exposes
+  its boolean `aria-selected` state. A selected record paints one continuous
+  neutral selection surface across Title, field, and action columns; the nested
+  Title node does not paint a second selection surface.
 - **NFR-1:** Rows use a stable minimum height near Tana's dense 32px rhythm while
   allowing wrapped titles and field values to grow without overlap.
 - **NFR-2:** All fills, separators, text, focus, shadows, and materials use design
@@ -345,6 +357,15 @@ width. The panel's vertical scroller remains authoritative.
 - **AC-14:** Given light/dark and accessibility preference variants at desktop
   and narrow split-panel widths, when visually inspected, then the table is
   unframed, dense, token-correct, aligned, non-overlapping, and locally scrollable.
+- **AC-15:** Given one or more selected table records, when selection mode is
+  active, then each selected record paints one continuous row-wide neutral
+  surface and exposes `aria-selected`, while unselected rows and independently
+  selected authored value nodes do not gain that record surface.
+- **AC-16:** Given an expanded record with authored fields and ordinary children,
+  when one authored field is a visible column, then that field appears only in
+  its cell, its entry wrapper is absent from expanded child rows and selectable
+  order, its cell value nodes remain selectable, and undisplayed fields plus
+  ordinary children remain available below the record.
 
 ## Suggested Implementation Boundaries
 

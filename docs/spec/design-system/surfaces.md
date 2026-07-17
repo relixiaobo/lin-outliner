@@ -141,15 +141,24 @@ keep the surface scannable in light and dark mode. Vertical cell borders and a
 top frame are absent at rest. The header may stick inside the panel but does not
 become translucent chrome.
 
-An active cell uses the neutral fill ladder plus the shared focus outline only
-while focus is actually within its grid; an idle table never paints a synthetic
-first-cell selection. Authored field values always use the ordinary node
-renderer, including its standard bullet, single-click editor, disclosure,
-children, and context menu. Table never substitutes bare cell copy or a bespoke
-bullet for those nodes. A missing value may show the same standard marker in a
-quiet inert state without materializing data. The disclosure chevron and bullet
-always occupy their separate standard leading slots; hover never swaps one for
-the other.
+An active cell wrapper uses the neutral fill ladder plus the shared focus outline
+only while the wrapper itself owns focus; an idle table never paints a synthetic
+first-cell selection. Once focus enters an authored node editor, the wrapper
+returns to transparent so an expanded subtree is never flooded with a cell-wide
+fill. Authored field values always use the ordinary node renderer, including its
+standard bullet, single-click editor, disclosure, children, and context menu.
+Table never substitutes bare cell copy or a bespoke bullet for those nodes. A
+missing value may show the same standard marker in a quiet inert state without
+materializing data. The disclosure chevron and bullet always occupy their
+separate standard leading slots; hover never swaps one for the other.
+Selecting a record through its Title node paints one continuous neutral surface
+across the complete table row; the nested Title row suppresses its local
+selection fill so the result never becomes a stack of cell-sized pills. Selection
+of an authored value node remains node-local and does not select its record.
+When a record expands, authored fields already represented by visible columns do
+not repeat as field rows beneath it. Ordinary children and fields not represented
+by visible columns keep their normal outline presentation; the Title node's
+child/disclosure state follows that same visible child set.
 Column menu and add-column icon controls deepen colour without a rounded-square
 hover box. The resize separator expands its invisible hit target without changing
 column geometry and exposes a visible neutral line/focus ring only on interaction.

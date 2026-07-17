@@ -163,6 +163,90 @@ test.describe('table view', () => {
     expect((await commandCalls(page)).some((call) => call.cmd === 'indent_node')).toBe(false);
   });
 
+  test('projects title-node selection across the complete table record', async ({ page }) => {
+    await configureRootTable(page);
+    await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
+
+    const grid = rootGrid(page);
+    const tableRow = (rowId: string) => grid
+      .locator(`.outliner-table-title-cell[data-table-row-id="${rowId}"]`)
+      .locator('..');
+    const titleNode = (rowId: string) => grid
+      .locator(`.outliner-table-title-cell[data-table-row-id="${rowId}"] [data-node-id="${rowId}"]`);
+
+    await titleNode(ids.alpha).click({ modifiers: ['Meta'] });
+    await titleNode(ids.beta).click({ modifiers: ['Meta'] });
+
+    await expect(tableRow(ids.alpha)).toHaveClass(/is-selected/);
+    await expect(tableRow(ids.alpha)).toHaveAttribute('aria-selected', 'true');
+    await expect(tableRow(ids.beta)).toHaveClass(/is-selected/);
+    await expect(tableRow(ids.gamma)).not.toHaveClass(/is-selected/);
+    await expect(tableRow(ids.gamma)).toHaveAttribute('aria-selected', 'false');
+    await expect(grid).toHaveAttribute('aria-multiselectable', 'true');
+
+    const selectionVisual = await tableRow(ids.alpha).evaluate((element) => {
+      const titleSelection = element.querySelector<HTMLElement>('.outliner-table-title-cell .row.selected')!;
+      const cells = [...element.children].filter((child): child is HTMLElement => child instanceof HTMLElement);
+      return {
+        rowBackground: getComputedStyle(element).backgroundColor,
+        titleSelectionOverlay: getComputedStyle(titleSelection, '::before').display,
+        cellBackgrounds: cells.map((cell) => getComputedStyle(cell).backgroundColor),
+      };
+    });
+    expect(selectionVisual.rowBackground).not.toBe('rgba(0, 0, 0, 0)');
+    expect(selectionVisual.titleSelectionOverlay).toBe('none');
+    expect(selectionVisual.cellBackgrounds.every((background) => background === 'rgba(0, 0, 0, 0)')).toBe(true);
+  });
+
+  test('does not repeat visible column fields under an expanded record', async ({ page }) => {
+    await configureRootTable(page);
+    await invokeCommands(page, [{
+      cmd: 'create_inline_field',
+      args: {
+        parentId: ids.alpha,
+        index: null,
+        name: '',
+        fieldType: 'plain',
+        targetDefId: ids.statusField,
+      },
+    }]);
+    const projection = await e2eProjection(page);
+    const alpha = projection.nodes.find((node) => node.id === ids.alpha)!;
+    const entry = projection.nodes.find((node) => (
+      alpha.children.includes(node.id)
+      && node.type === 'fieldEntry'
+      && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.statusField
+    ));
+    expect(entry).toBeTruthy();
+    await invokeCommands(page, [
+      {
+        cmd: 'set_field_free_text_value',
+        args: { fieldEntryId: entry!.id, text: 'Column value', id: 'table-column-value' },
+      },
+      {
+        cmd: 'create_node',
+        args: { parentId: ids.alpha, index: null, text: 'Nested child', id: 'table-record-child' },
+      },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+    ]);
+
+    const grid = rootGrid(page);
+    const titleCell = grid.locator(
+      `[data-table-row-id="${ids.alpha}"][data-table-column-id="__title__"]`,
+    );
+    const statusCell = grid.locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`).first();
+    await expect(statusCell).toContainText('Column value');
+
+    const titleNode = titleCell.locator(`[data-node-id="${ids.alpha}"]`);
+    await titleNode.locator(':scope > .row').hover();
+    await titleNode.locator(':scope > .row > .row-leading > .row-chevron-button').click();
+
+    const nested = titleCell.locator('..').locator('..').locator(':scope > .outliner-table-nested');
+    await expect(nested.locator('[data-node-id="table-record-child"]')).toContainText('Nested child');
+    await expect(nested.locator(`[data-node-id="${entry!.id}"]`)).toHaveCount(0);
+    await expect(statusCell).toContainText('Column value');
+  });
+
   test('renders an existing authored value as an ordinary interactive node', async ({ page }) => {
     await configureRootTable(page);
     await invokeCommands(page, [{
@@ -194,7 +278,12 @@ test.describe('table view', () => {
       },
       {
         cmd: 'create_node',
-        args: { parentId: 'table-interactive-value', index: null, text: 'Nested value' },
+        args: {
+          parentId: 'table-interactive-value',
+          index: null,
+          text: 'Nested value',
+          id: 'table-interactive-child',
+        },
       },
       { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
     ]);
@@ -259,6 +348,19 @@ test.describe('table view', () => {
     expect(leadingGeometry.bulletLeft).toBeGreaterThanOrEqual(leadingGeometry.chevronRight);
     await disclosure.click();
     await expect(valueCell.getByText('Nested value', { exact: true })).toBeVisible();
+
+    await valueCell.focus();
+    const wrapperFocusBackground = await valueCell.evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(wrapperFocusBackground).not.toBe('rgba(0, 0, 0, 0)');
+    const nestedEditor = valueCell.locator('[data-node-id="table-interactive-child"] .ProseMirror').first();
+    await nestedEditor.click();
+    await expect(nestedEditor).toBeFocused();
+    const descendantFocusBackgrounds = await Promise.all([
+      valueCell.evaluate((element) => getComputedStyle(element).backgroundColor),
+      titleCell.evaluate((element) => getComputedStyle(element).backgroundColor),
+    ]);
+    expect(descendantFocusBackgrounds[0]).toBe('rgba(0, 0, 0, 0)');
+    expect(descendantFocusBackgrounds[0]).toBe(descendantFocusBackgrounds[1]);
 
     const secondEditor = valueCell.locator('[data-node-id="table-interactive-value-2"] .ProseMirror').first();
     await secondEditor.click();
