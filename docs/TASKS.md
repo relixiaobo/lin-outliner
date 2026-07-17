@@ -23,18 +23,18 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407) |
 | Codex 2 | `lin-outliner-codex-2/` | `codex-2/agent-full-access-default` | Draft PR #410 (Default agent Full Access) |
-| Codex 3 | `lin-outliner-codex-3/` | `codex-3/table-view` | Draft PR #409 (Table view) |
-| Codex 4 | `lin-outliner-codex-4/` | `codex-4/preview-translation-persistent-cache` | PR #408 ready for main review |
+| Codex 3 | `lin-outliner-codex-3/` | `codex-3/table-view` | PR #409 ready for main review (Table view) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-17).** Open PR queue: #408
-(`codex-4/preview-translation-persistent-cache`), ready for main review; Draft
-#409 (`codex-3/table-view`) and #410
-(`codex-2/agent-full-access-default`). Recently merged: #407
+**In flight (2026-07-17).** Open PR queue: #409 (`codex-3/table-view`), ready
+for main review; Draft #410 (`codex-2/agent-full-access-default`). Recently
+merged: #408 (`codex-4/preview-translation-persistent-cache`) merged 2026-07-17
+after two main review passes; see *Recently completed*. #407
 (`codex/issue-event-persistence`) merged 2026-07-17 after three main review
 passes; see *Recently completed*. #406
 (`codex-2/github-managed-skills`) merged 2026-07-17 after four main review
@@ -513,6 +513,26 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **preview-translation-persistent-cache**
+  (`codex-4/preview-translation-persistent-cache`, PR #408, codex-4, merged
+  2026-07-17, plan-track) — webpage blocks, finite prerecorded captions, and
+  reflowable EPUB passages now restore previously translated content from a
+  private main-owned cache without repeating provider work. Cache identity binds
+  source and stable track/book identity, target language, prompt revision, and
+  the resolved provider/model; partial hits settle before misses, same-language
+  no-ops persist as a source-free sentinel, and unreliable caption identities
+  remain translatable without persistence. The cache is bounded to 64 MiB and
+  50,000 entries, degrades to misses on storage failure, and can be cleared from
+  General Settings without changing visible translations. **Gate (main):** two
+  review passes closed plaintext persistence of same-language no-ops and
+  cross-track caption cache aliasing when no stable track identity is available;
+  the final pass found no reportable issues. Verified on final head `48a3546f`
+  and the latest-`main` merge result with typecheck, 44 focused Core tests, 911
+  renderer tests, the 50,000-entry capacity probe, a restart no-op persistence
+  reproduction, the real-Electron URL/EPUB restart-and-clear smoke, light/dark
+  Settings visual QA, `docs:check`, and diff check. Plan archived `done`:
+  `docs/plans/archive/preview-translation-persistent-cache.md`.
 
 - **sync-readiness-foundation Unit 4** (`codex/issue-event-persistence`, PR
   #407, codex, merged 2026-07-17, plan-track) — Issue, Recurring Issue, Agent

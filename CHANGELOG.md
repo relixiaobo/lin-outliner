@@ -67,6 +67,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Persistent preview translation cache (PR #408, codex-4)** — webpage blocks,
+  finite prerecorded captions, and reflowable EPUB passages now restore saved
+  translations from a private, bounded main-owned cache keyed by source,
+  translation configuration, and resolved model. Partial hits settle before
+  provider misses, same-language no-ops use a source-free durable sentinel,
+  unreliable caption identities remain uncached, and General Settings can clear
+  saved translations without changing currently visible content. **Gate
+  (main):** two review passes closed plaintext no-op persistence and unstable
+  caption-track identity findings; the final pass found no reportable issues.
+  Verified with typecheck, 44 focused Core tests, 911 renderer tests, the
+  50,000-entry capacity probe, a restart no-op persistence reproduction, the
+  real-Electron URL/EPUB restart-and-clear smoke, light/dark Settings visual QA,
+  docs check, and diff check.
 - **Event-sourced Issue persistence (PR #407, codex)** — Issues, Recurring
   Issues, Agent Sessions, Activity, execution bindings, stop intents, terminal
   deliveries, and schedule state now persist as versioned atomic JSONL operation
