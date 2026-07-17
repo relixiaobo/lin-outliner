@@ -394,6 +394,20 @@ describe('agent local tools', () => {
     });
   });
 
+  ripgrepTest('file_grep does not infer permissions from invalid regex text', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      await writeFile(path.join(workspaceRoot, 'readable.txt'), 'readable', 'utf8');
+
+      for (const pattern of ['(', 'EPERM(', 'EACCES(', 'permission denied[', 'operation not permitted[']) {
+        const result = await executeTool(workspaceRoot, 'file_grep', { path: workspaceRoot, pattern });
+
+        expect(result.error?.code).toBe('ripgrep_failed');
+        expect(result.error?.message).toContain('regex parse error');
+        expect(result.instructions).toContain('Fix the regular expression');
+      }
+    });
+  });
+
   test('a materialized attachment in a separate scratch root is readable by file_read (production layout)', async () => {
     // Production wires workdir and scratch as independent siblings (`<userData>/agent-workdir`
     // and `<userData>/agent-scratch`), unlike the `<workdir>/tmp` default the other tests inherit.

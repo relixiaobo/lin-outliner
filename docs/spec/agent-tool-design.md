@@ -2697,6 +2697,10 @@ Path rules:
 - Native `EACCES` / `EPERM` failures return `permission_denied` with the same OS
   authorization recovery instructions across concrete and search tools. Search
   never converts a permission failure into an empty match set or input error.
+  Ripgrep stderr counts only when a complete diagnostic line matches
+  `rg: <path>: Permission denied (os error 13)` or the corresponding
+  `Operation not permitted (os error 1)` form; regex parser text remains
+  `ripgrep_failed` even when the invalid pattern contains permission words.
 
 Document and image conversion is not a dedicated tool. It runs through `bash`
 invoking the installed converter binaries directly — LibreOffice-compatible

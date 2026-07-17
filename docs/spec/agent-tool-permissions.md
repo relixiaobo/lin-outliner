@@ -88,9 +88,11 @@ and cloud credentials. Provider credentials are not copied into child variables,
 but they are stored as private-mode files under `userData`, so any Full Access
 process can read or modify them through the filesystem.
 
-Native OS failures and provider/service failures are returned as their real
-errors. Tenon does not infer missing filesystem authorization from stderr and
-does not add an internal recovery card.
+Native OS failures and provider/service failures remain owned by their source.
+Typed file tools map Node `EACCES` / `EPERM` errors and complete provider-owned
+ripgrep permission diagnostic lines to structured `permission_denied` recovery.
+Tenon does not infer missing filesystem authorization from arbitrary process
+stderr and does not add an internal recovery card.
 
 ## Direct Host And Network Effects
 

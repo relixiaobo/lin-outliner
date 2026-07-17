@@ -1498,7 +1498,7 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
     const detail = `${ripgrep.mode} provider at ${ripgrep.source} failed to start: ${result.error.message}`;
     throw new LocalToolFailure('ripgrep_unavailable', detail, ripgrepRecoveryInstructions(detail));
   }
-  if (isNativeFilePermissionMessage(result.stderr)) throw localPermissionError(target);
+  if (hasRipgrepNativePermissionDiagnostic(result.stderr)) throw localPermissionError(target);
   if (result.exitCode !== 0 && result.exitCode !== 1 && !result.truncated) {
     const message = result.stderr.trim() || `rg exited with code ${result.exitCode}.`;
     throw new LocalToolFailure('ripgrep_failed', message, 'Fix the regular expression, path, glob, or type filter and retry.');
@@ -1977,7 +1977,7 @@ async function collectFilesWithRipgrep(searchRoot: string, pattern: string): Pro
 
   const result = await runProcessItems(ripgrep.command, [...ripgrep.argsPrefix, ...args], searchRoot, '\0', FILE_GLOB_CANDIDATE_LIMIT, 30_000);
   if (result.error || result.timedOut) return null;
-  if (isNativeFilePermissionMessage(result.stderr)) throw localPermissionError(searchRoot);
+  if (hasRipgrepNativePermissionDiagnostic(result.stderr)) throw localPermissionError(searchRoot);
   if (result.exitCode !== 0 && result.exitCode !== 1 && !result.truncated) return null;
   return {
     files: result.items.map((item) => path.resolve(searchRoot, item)),
@@ -3200,8 +3200,9 @@ function isNativeFilePermissionError(error: unknown): error is NodeJS.ErrnoExcep
   return isNodeError(error) && (error.code === 'EACCES' || error.code === 'EPERM');
 }
 
-function isNativeFilePermissionMessage(message: string): boolean {
-  return /\b(?:permission denied|operation not permitted|EACCES|EPERM|os error (?:1|13))\b/i.test(message);
+function hasRipgrepNativePermissionDiagnostic(stderr: string): boolean {
+  const permissionLine = /^rg: .+: (?:Permission denied \(os error 13\)|Operation not permitted \(os error 1\))$/;
+  return stderr.split(/\r?\n/).some((line) => permissionLine.test(line));
 }
 
 function localErrorResult<TData>(tool: string, error: unknown, started: number, filePath?: string) {
