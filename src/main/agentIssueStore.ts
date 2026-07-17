@@ -58,6 +58,10 @@ import {
 } from './agentIssueSessionScope';
 import { withFileWriteLock } from './jsonFileStore';
 import {
+  isValidIssueCompletionCriterion,
+  isValidIssueEvidenceRef,
+} from './agentIssueOperationCodec';
+import {
   applyAgentIssueOperationBatch,
   buildAgentIssueOperationBatch,
   parseAgentIssueOperationBatchesJsonl,
@@ -3600,6 +3604,20 @@ function validateIssueCreateInput(value: unknown): ValidationMessage[] {
     }
     validation.push(...validateIssueRelationsInput(fields.relations, 'fields.relations'));
     validation.push(...validateIssueTriggerInput(fields.trigger, 'fields.trigger'));
+    validation.push(...validatePersistedArrayInput(
+      fields.completionCriteria,
+      'fields.completionCriteria',
+      'invalid_completion_criteria',
+      'Issue completion criteria',
+      isValidIssueCompletionCriterion,
+    ));
+    validation.push(...validatePersistedArrayInput(
+      fields.evidence,
+      'fields.evidence',
+      'invalid_evidence',
+      'Issue evidence',
+      isValidIssueEvidenceRef,
+    ));
     validation.push(...validateIssueInputScope(fields.input, 'fields.input'));
     validation.push(...validateIssueOutputPolicy(fields.output, 'fields.output'));
     validation.push(...validateIssueExecutionPolicy(fields.executionPolicy, 'fields.executionPolicy'));
@@ -3628,6 +3646,13 @@ function validateIssueCreateInput(value: unknown): ValidationMessage[] {
         'fields.issueTemplate',
       ));
       validation.push(...validateIssueTriggerInput(fields.issueTemplate.trigger, 'fields.issueTemplate.trigger'));
+      validation.push(...validatePersistedArrayInput(
+        fields.issueTemplate.completionCriteria,
+        'fields.issueTemplate.completionCriteria',
+        'invalid_completion_criteria',
+        'Recurring Issue completion criteria',
+        isValidIssueCompletionCriterion,
+      ));
       validation.push(...validateIssueInputScope(fields.issueTemplate.input, 'fields.issueTemplate.input'));
       validation.push(...validateIssueOutputPolicy(fields.issueTemplate.output, 'fields.issueTemplate.output'));
     }
@@ -3704,6 +3729,20 @@ function validateIssueUpdateInput(value: unknown): ValidationMessage[] {
     if (target.type === 'issue') {
       validation.push(...validateIssueRelationsInput(patch.relations, 'change.patch.relations'));
       validation.push(...validateIssueTriggerInput(patch.trigger, 'change.patch.trigger'));
+      validation.push(...validatePersistedArrayInput(
+        patch.completionCriteria,
+        'change.patch.completionCriteria',
+        'invalid_completion_criteria',
+        'Issue completion criteria',
+        isValidIssueCompletionCriterion,
+      ));
+      validation.push(...validatePersistedArrayInput(
+        patch.evidence,
+        'change.patch.evidence',
+        'invalid_evidence',
+        'Issue evidence',
+        isValidIssueEvidenceRef,
+      ));
       validation.push(...validateIssueInputScope(patch.input, 'change.patch.input'));
       validation.push(...validateIssueOutputPolicy(patch.output, 'change.patch.output'));
       validation.push(...validateIssueExecutionPolicy(patch.executionPolicy, 'change.patch.executionPolicy'));
@@ -3736,6 +3775,13 @@ function validateIssueUpdateInput(value: unknown): ValidationMessage[] {
           patch.issueTemplate.trigger,
           'change.patch.issueTemplate.trigger',
         ));
+        validation.push(...validatePersistedArrayInput(
+          patch.issueTemplate.completionCriteria,
+          'change.patch.issueTemplate.completionCriteria',
+          'invalid_completion_criteria',
+          'Recurring Issue completion criteria',
+          isValidIssueCompletionCriterion,
+        ));
         validation.push(...validateIssueInputScope(
           patch.issueTemplate.input,
           'change.patch.issueTemplate.input',
@@ -3761,6 +3807,24 @@ function validateIssueUpdateInput(value: unknown): ValidationMessage[] {
     }
   }
   return validation;
+}
+
+function validatePersistedArrayInput(
+  value: unknown,
+  path: string,
+  code: string,
+  label: string,
+  isValidItem: (item: unknown) => boolean,
+): ValidationMessage[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    return [{ path, code, message: `${label} must be an array.` }];
+  }
+  return value.flatMap((item, index) => (
+    isValidItem(item)
+      ? []
+      : [{ path: `${path}.${index}`, code, message: `${label} contains an invalid item.` }]
+  ));
 }
 
 function validateIssueTriggerInput(value: unknown, path: string): ValidationMessage[] {

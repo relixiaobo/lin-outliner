@@ -34,6 +34,7 @@ export interface AgentIssueOperationProjection {
   state: AgentIssueStoreState;
   issueTombstones: Record<string, AgentIssueDeletionTombstone>;
   recurringIssueTombstones: Record<string, AgentIssueDeletionTombstone>;
+  suppressedIssueIds: Set<string>;
   lastSeq: number;
   operationSignatures: Map<string, string>;
 }
@@ -62,6 +63,7 @@ function emptyAgentIssueOperationProjection(): AgentIssueOperationProjection {
     state: emptyAgentIssueStoreState(),
     issueTombstones: {},
     recurringIssueTombstones: {},
+    suppressedIssueIds: new Set(),
     lastSeq: 0,
     operationSignatures: new Map(),
   };
@@ -103,7 +105,7 @@ export function buildAgentIssueOperationBatch(
   appendActivityOperations(operations, previous, next);
 
   if (operations.length === 0) return null;
-  return canonicalJsonValue({
+  const batch = canonicalJsonValue({
     v: AGENT_ISSUE_OPERATION_VERSION,
     seq,
     operationId: randomUUID(),
@@ -111,6 +113,11 @@ export function buildAgentIssueOperationBatch(
     committedAt: context.committedAt,
     operations,
   });
+  const normalized = normalizeAgentIssueOperationBatch(batch);
+  if (!normalized) {
+    throw new Error('Generated Agent Issue operation batch failed persistence validation.');
+  }
+  return normalized;
 }
 
 export function replayAgentIssueOperationBatches(
@@ -151,13 +158,6 @@ export function parseAgentIssueOperationBatchesJsonl(
   const signatures = new Map<string, string>();
   const lines = raw.split(/\r?\n/);
   const hasTornTrailingLine = raw.length > 0 && !raw.endsWith('\n');
-  let lastContentIndex = -1;
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (lines[index]!.trim()) {
-      lastContentIndex = index;
-      break;
-    }
-  }
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!.trim();
@@ -166,7 +166,7 @@ export function parseAgentIssueOperationBatchesJsonl(
     try {
       parsed = JSON.parse(line) as unknown;
     } catch (error) {
-      if (index === lastContentIndex && hasTornTrailingLine) {
+      if (index === lines.length - 1 && hasTornTrailingLine) {
         console.warn(`Dropping torn trailing Agent Issue operation at ${source}:${index + 1}`);
         break;
       }
@@ -322,17 +322,19 @@ function applyAgentIssueOperation(
 ): void {
   const state = projection.state;
   switch (operation.type) {
-    case 'issue.upserted':
-      if (
-        !projection.issueTombstones[operation.issue.id]
-        && !issueDependsOnTombstonedEntity(projection, operation.issue)
-      ) {
+    case 'issue.upserted': {
+      if (issueUpsertIsSuppressed(projection, operation.issue)) {
+        projection.suppressedIssueIds.add(operation.issue.id);
+        delete state.issues[operation.issue.id];
+      } else {
         state.issues[operation.issue.id] = structuredClone(operation.issue);
       }
       return;
+    }
     case 'issue.deleted': {
       const issueId = operation.tombstone.entity.issueId;
       projection.issueTombstones[issueId] ??= structuredClone(operation.tombstone);
+      projection.suppressedIssueIds.add(issueId);
       delete state.issues[issueId];
       return;
     }
@@ -377,12 +379,16 @@ function applyAgentIssueOperation(
   }
 }
 
-function issueDependsOnTombstonedEntity(
+function issueUpsertIsSuppressed(
   projection: AgentIssueOperationProjection,
   issue: AgentIssue,
 ): boolean {
   return Boolean(
-    (issue.parentIssueId && projection.issueTombstones[issue.parentIssueId])
+    projection.suppressedIssueIds.has(issue.id)
+    || (
+      issue.parentIssueId
+      && projection.suppressedIssueIds.has(issue.parentIssueId)
+    )
     || (
       issue.recurrence
       && projection.recurringIssueTombstones[issue.recurrence.recurringIssueId]

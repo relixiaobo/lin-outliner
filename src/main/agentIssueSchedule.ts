@@ -73,8 +73,9 @@ export function validateRecurringIssueSchedule(
     case 'weekly':
       if (!Array.isArray(cadence.weekdays)
         || cadence.weekdays.length === 0
-        || cadence.weekdays.some((weekday) => !Number.isInteger(weekday) || weekday < 0 || weekday > 6)) {
-        validation.push({ path: 'cadence.weekdays', code: 'invalid_weekdays', message: 'Weekly cadence requires at least one weekday from 0 through 6.' });
+        || cadence.weekdays.some((weekday) => !Number.isInteger(weekday) || weekday < 0 || weekday > 6)
+        || new Set(cadence.weekdays).size !== cadence.weekdays.length) {
+        validation.push({ path: 'cadence.weekdays', code: 'invalid_weekdays', message: 'Weekly cadence requires unique weekdays from 0 through 6.' });
       }
       break;
     case 'monthly':

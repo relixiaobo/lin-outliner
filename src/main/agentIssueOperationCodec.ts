@@ -429,6 +429,14 @@ export function normalizeAgentIssueOperationBatch(value: unknown): AgentIssueOpe
   return agentIssueOperationBatch(value) ? value as AgentIssueOperationBatch : null;
 }
 
+export function isValidIssueEvidenceRef(value: unknown): boolean {
+  return evidenceRef(value);
+}
+
+export function isValidIssueCompletionCriterion(value: unknown): boolean {
+  return completionCriterion(value);
+}
+
 function object(fields: Readonly<Record<string, Field>>): Check {
   const entries = Object.entries(fields);
   const allowedKeys = new Set(Object.keys(fields));

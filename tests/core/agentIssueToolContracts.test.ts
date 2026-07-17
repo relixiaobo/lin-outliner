@@ -84,10 +84,11 @@ describe('agent issue manager tool contracts', () => {
       .toEqual(['previousAgentSessionId', 'intent']);
   });
 
-  test('uses discriminated input and output policy schemas with required variant fields', () => {
+  test('uses discriminated input, output, and evidence schemas with required variant fields', () => {
     const fields = AGENT_ISSUE_TOOL_PARAMETER_SCHEMAS.issue_create.properties.fields.properties;
     const inputVariants = fields.input.oneOf;
     const outputVariants = fields.output.oneOf;
+    const evidenceVariants = fields.evidence.items.oneOf;
 
     expect(inputVariants.map((variant) => variant.properties.type.enum[0])).toEqual([
       'none',
@@ -121,6 +122,24 @@ describe('agent issue manager tool contracts', () => {
       .toEqual(['type', 'parentNodeId']);
     expect(outputVariants.find((variant) => variant.properties.type.enum[0] === 'replace-input')?.properties.requiresConfirmation.enum)
       .toEqual([true]);
+
+    expect(evidenceVariants.map((variant) => variant.properties.type.enum[0])).toEqual([
+      'issue',
+      'agent-session',
+      'activity',
+      'node',
+      'file',
+      'url',
+    ]);
+    expect(evidenceVariants.find((variant) => variant.properties.type.enum[0] === 'file')?.required)
+      .toEqual(['type', 'path']);
+    expect(evidenceVariants.find((variant) => variant.properties.type.enum[0] === 'url')?.required)
+      .toEqual(['type', 'url']);
+    expect(evidenceVariants.every((variant) => variant.additionalProperties === false)).toBe(true);
+    expect(fields.cadence.properties.weekdays).toMatchObject({
+      minItems: 1,
+      uniqueItems: true,
+    });
   });
 
   test('classifies read, mutation, runtime-control, and destructive behavior', () => {

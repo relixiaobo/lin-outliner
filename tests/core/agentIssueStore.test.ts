@@ -545,6 +545,7 @@ describe('agent issue store', () => {
     ['time', { type: 'daily', time: '9:00' }, 'UTC', 'invalid_cadence_time'],
     ['time zone', { type: 'daily', time: '09:00' }, 'Not/A_Time_Zone', 'invalid_time_zone'],
     ['weekdays', { type: 'weekly', weekdays: [], time: '09:00' }, 'UTC', 'invalid_weekdays'],
+    ['duplicate weekdays', { type: 'weekly', weekdays: [1, 1], time: '09:00' }, 'UTC', 'invalid_weekdays'],
     ['day of month', { type: 'monthly', dayOfMonth: 0, time: '09:00' }, 'UTC', 'invalid_day_of_month'],
   ] as const) {
     test(`rejects an invalid Recurring Issue ${label}`, async () => {
@@ -3006,7 +3007,7 @@ describe('agent issue store', () => {
         request: { mode: 'request' },
         reason: 'Start scoped parent work.',
       }, { type: 'runtime-action', actor }, actor, 20, {
-        resolveInput: async (input, _issue, now) => ({ scope: input, resolvedAt: now, nodeIds: ['node:read-only-input'] }),
+        resolveInput: (input, _issue, now) => ({ scope: input, resolvedAt: now, nodeIds: ['node:read-only-input'] }),
       });
       const parentSessionId = parentStarted.targets.find((target) => target.type === 'agent-session')!.id;
       await store.bindSessionExecution(parentSessionId, {
