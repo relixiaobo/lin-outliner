@@ -3,6 +3,7 @@ import { parseProviderQualifiedModel } from './agentModelId';
 
 export const URL_PAGE_TRANSLATE_COMMAND = 'url_page_translate_blocks';
 export const URL_PAGE_TRANSLATION_CANCEL_COMMAND = 'url_page_translation_cancel';
+export const LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL = 'lin:clear-preview-translation-cache';
 export const LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL = 'lin:url-page-translation-shortcut';
 export const LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL = 'lin:url-page-translation-preferences-changed';
 
@@ -16,6 +17,9 @@ export const URL_CAPTION_TRANSLATION_MAX_BLOCKS = 16;
 export const URL_CAPTION_TRANSLATION_MAX_BATCH_CHARS = 4_000;
 export const URL_PAGE_TRANSLATION_MAX_OUTPUT_CHARS = 64_000;
 export const URL_PAGE_TRANSLATION_MAX_TRANSLATION_CHARS = 12_000;
+export const PREVIEW_TRANSLATION_CACHE_MAX_SOURCE_ID_CHARS = 2_048;
+export const PREVIEW_TRANSLATION_CACHE_MAX_BLOCK_KEY_CHARS = 512;
+export const PREVIEW_TRANSLATION_PROMPT_REVISION = 1;
 
 export type UrlPageTranslationCommand =
   | typeof URL_PAGE_TRANSLATE_COMMAND
@@ -24,6 +28,8 @@ export type UrlPageTranslationCommand =
 export interface UrlPageTranslationBlock {
   id: string;
   text: string;
+  /** Stable only within cacheSourceId; omitted by callers that do not persist. */
+  cacheKey?: string;
 }
 
 export type UrlPageTranslationContentKind = 'caption' | 'document' | 'page';
@@ -36,6 +42,8 @@ export interface UrlPageTranslationRequest {
   contentKind?: UrlPageTranslationContentKind;
   /** Provider-qualified model id. Omitted means resolve the current Agent model. */
   model?: string;
+  /** Trusted host identity; main hashes it before persistence and never uses it as a path. */
+  cacheSourceId?: string;
   blocks: UrlPageTranslationBlock[];
 }
 
@@ -67,6 +75,10 @@ export type UrlPageTranslationResponse =
       ok: true;
       requestId: string;
       translations: UrlPageTranslationItem[];
+      /** True when this immediate response contains local persistent-cache hits. */
+      cacheHit?: true;
+      /** Present only for an immediate partial cache hit; these blocks still need provider work. */
+      remainingBlockIds?: string[];
     }
   | {
       ok: false;
@@ -77,6 +89,11 @@ export type UrlPageTranslationResponse =
 export interface UrlPageTranslationCancelResponse {
   cancelled: boolean;
 }
+
+export type ClearPreviewTranslationCacheResult =
+  | { status: 'cleared' }
+  | { status: 'canceled' }
+  | { status: 'failed'; error: 'unavailable' | 'clear-failed' };
 
 export function isUrlPageTranslationCommand(command: string): command is UrlPageTranslationCommand {
   return command === URL_PAGE_TRANSLATE_COMMAND || command === URL_PAGE_TRANSLATION_CANCEL_COMMAND;

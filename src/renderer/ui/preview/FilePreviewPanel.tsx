@@ -69,6 +69,7 @@ import {
   type UrlPreviewPageMetadata,
 } from './previewRenderers';
 import { useEpubTranslation } from './useEpubTranslation';
+import { epubPreviewTranslationCacheSourceId } from './previewTranslationCache';
 import { useUrlPageTranslation } from './useUrlPageTranslation';
 import { useTranslationLanguagePreference } from './translationLanguagePreference';
 import { useUrlPageTranslationPreferences } from './urlPageTranslationPreferences';
@@ -125,9 +126,15 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const fileRoot = readerMode ? null : boundFileNode;
   const nodeTarget = boundFileNode ? fileNodeTarget(boundFileNode) : null;
   const looseUrlPreview = !readerMode && !boundFileNode && props.target.kind === 'url';
-  const epubPreviewSource = state.status === 'ready'
+  const epubTranslationSource = state.status === 'ready'
     && state.source.kind === 'file'
-    && isEpubSource(state.source);
+    && isEpubSource(state.source)
+    ? state.source
+    : null;
+  const epubPreviewSource = epubTranslationSource !== null;
+  const epubCacheSourceId = epubTranslationSource
+    ? epubPreviewTranslationCacheSourceId(epubTranslationSource)
+    : undefined;
   const [epubTranslationAvailable, setEpubTranslationAvailable] = useState(false);
   const translationLanguage = useTranslationLanguagePreference();
   const translationPreferences = useUrlPageTranslationPreferences();
@@ -155,6 +162,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const epubTranslation = useEpubTranslation({
     active: epubPreviewSource,
     autoTranslate: translationPreferences.autoTranslateEpubs,
+    ...(epubCacheSourceId ? { cacheSourceId: epubCacheSourceId } : {}),
     shortcutActive: props.activePanel,
     model: translationPreferences.translationModel,
     targetLanguage: translationLanguage.language,

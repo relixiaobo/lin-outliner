@@ -51,9 +51,11 @@ import {
   type ErrorReport,
 } from '../core/errorObservability';
 import {
+  LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL,
   isUrlPageTranslationPreferences,
   LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL,
   LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
+  type ClearPreviewTranslationCacheResult,
   type UrlPageTranslationPreferences,
 } from '../core/urlPageTranslation';
 import {
@@ -293,6 +295,8 @@ const api = {
     ipcRenderer.invoke('lin:set-notification-prefs', prefs) as Promise<{ osNotificationsEnabled: boolean }>,
   clearUrlPreviewData: () =>
     ipcRenderer.invoke(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL) as Promise<ClearUrlPreviewDataResult>,
+  clearPreviewTranslationCache: () =>
+    ipcRenderer.invoke(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL) as Promise<ClearPreviewTranslationCacheResult>,
   // Durably mark a conversation read (the user opened/viewed it). Separate from
   // restoreConversation so a config reload never clears unread.
   agentMarkConversationRead: (conversationId: string) =>

@@ -9,6 +9,7 @@ import type { UrlPageTranslationStatus } from './urlPageTranslationController';
 interface UseEpubTranslationOptions {
   active: boolean;
   autoTranslate: boolean;
+  cacheSourceId?: string;
   model: string | null;
   onError: (error: Exclude<UrlPageTranslationFailureCode, 'cancelled'>) => void;
   shortcutActive: boolean;
@@ -18,6 +19,7 @@ interface UseEpubTranslationOptions {
 export function useEpubTranslation({
   active,
   autoTranslate,
+  cacheSourceId,
   model,
   onError,
   shortcutActive,
@@ -32,6 +34,7 @@ export function useEpubTranslation({
   const [status, setStatus] = useState<UrlPageTranslationStatus>('off');
   const activeRef = useRef(active);
   const autoTranslateRef = useRef(autoTranslate);
+  const cacheSourceIdRef = useRef(cacheSourceId);
   const controllerRef = useRef<EpubTranslationController | null>(null);
   const modelRef = useRef(model);
   const onErrorRef = useRef(onError);
@@ -41,6 +44,7 @@ export function useEpubTranslation({
   const targetLanguageRef = useRef(targetLanguage);
   activeRef.current = active;
   autoTranslateRef.current = autoTranslate;
+  cacheSourceIdRef.current = cacheSourceId;
   modelRef.current = model;
   onErrorRef.current = onError;
   shortcutActiveRef.current = shortcutActive;
@@ -49,6 +53,7 @@ export function useEpubTranslation({
   const installController = useCallback((surface: EpubTranslationDomAdapter) => {
     const controller = new EpubTranslationController(surface, {
       autoTranslate: autoTranslateRef.current,
+      ...(cacheSourceIdRef.current ? { cacheSourceId: cacheSourceIdRef.current } : {}),
       model: modelRef.current,
       targetLanguage: targetLanguageRef.current,
       onCompletionChange: setCompleted,
@@ -101,6 +106,10 @@ export function useEpubTranslation({
   useEffect(() => {
     controllerRef.current?.setTranslationModel(model);
   }, [model]);
+
+  useEffect(() => {
+    controllerRef.current?.setCacheSourceId(cacheSourceId);
+  }, [cacheSourceId]);
 
   useEffect(() => {
     controllerRef.current?.setAutoTranslate(autoTranslate);

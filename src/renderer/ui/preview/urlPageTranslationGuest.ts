@@ -2,6 +2,7 @@ import type { TranslationLanguage } from '../../../core/translationLanguage';
 import {
   URL_CAPTION_TRANSLATION_MAX_BATCH_CHARS,
   URL_CAPTION_TRANSLATION_MAX_BLOCKS,
+  PREVIEW_TRANSLATION_CACHE_MAX_BLOCK_KEY_CHARS,
   URL_PAGE_TRANSLATION_MAX_BATCH_CHARS,
   URL_PAGE_TRANSLATION_MAX_BLOCK_CHARS,
   URL_PAGE_TRANSLATION_MAX_BLOCKS,
@@ -516,6 +517,14 @@ export function installUrlPageTranslationRuntime(
   host.addEventListener('scroll', handleViewportScroll, { capture: true, passive: true });
 
   const normalizeText = (value: string) => value.replace(/\s+/g, ' ').trim();
+  const cacheHash = (value: string): string => {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(36);
+  };
   const nativeCueText = (value: string) => value
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;');
@@ -1127,6 +1136,36 @@ export function installUrlPageTranslationRuntime(
     return candidates.length === 1 ? candidates[0] ?? null : null;
   };
 
+  const stableMediaResource = (value: string | null | undefined): string => {
+    if (!value || value.length > 8_192) return '';
+    try {
+      const url = new URL(value, host.location?.href);
+      return url.protocol === 'http:' || url.protocol === 'https:'
+        ? `${url.origin}${url.pathname}`.slice(0, 4_096)
+        : '';
+    } catch {
+      return '';
+    }
+  };
+
+  const standardCaptionKey = (media: HTMLMediaElement, sourceTrack: TextTrack): string => {
+    const sourceElement = Array.from(media.querySelectorAll('source'))
+      .find((element) => Boolean(element.src || element.getAttribute('src')));
+    const trackElement = Array.from(media.querySelectorAll('track'))
+      .find((element) => element.track === sourceTrack);
+    const mediaIndex = Array.from(doc.querySelectorAll('video, audio')).indexOf(media);
+    return `standard:${cacheHash(JSON.stringify([
+      mediaIndex,
+      stableMediaResource(
+        media.getAttribute('src') || media.currentSrc || sourceElement?.src || sourceElement?.getAttribute('src'),
+      ),
+      stableMediaResource(trackElement?.src || trackElement?.getAttribute('src')),
+      sourceTrack.id.slice(0, 512),
+      sourceTrack.label.slice(0, 512),
+      sourceTrack.language.slice(0, 64),
+    ]))}`;
+  };
+
   const createBilingualTrack = (
     media: HTMLMediaElement,
   ): { element: HTMLTrackElement | null; track: TextTrack } | null => {
@@ -1174,7 +1213,7 @@ export function installUrlPageTranslationRuntime(
       if (captionState?.adapter === 'standard') setCaptionPresentationEnabled(captionState, false);
       return true;
     }
-    const key = `standard:${sourceTrack.id || sourceTrack.label}:${sourceTrack.language}`;
+    const key = standardCaptionKey(media, sourceTrack);
     if (
       captionState?.adapter !== 'standard'
       || captionState.media !== media
@@ -2094,7 +2133,15 @@ export function installUrlPageTranslationRuntime(
         entry.record.pending = true;
         if (contentKind === 'page') (entry.record as RecordEntry).queued = false;
         entry.record.retryRequested = false;
-        blocks.push({ id: entry.record.id, text: entry.record.text });
+        const cacheKey = contentKind === 'caption' && activeCaptionState
+          ? [
+              'caption',
+              cacheHash(`${activeCaptionState.key}:${activeCaptionState.language ?? ''}`),
+              Math.round((entry.record as CaptionRecord).startTime * 1_000),
+              Math.round((entry.record as CaptionRecord).endTime * 1_000),
+            ].join(':')
+          : `page:${cacheHash(entry.record.text)}`;
+        blocks.push({ id: entry.record.id, text: entry.record.text, cacheKey });
         if (contentKind === 'caption') selectedCaptions.push(entry.record as CaptionRecord);
         else selectedPage.push(entry.record as RecordEntry);
         chars += entry.record.text.length;
@@ -2255,11 +2302,13 @@ export function installUrlPageTranslationRuntime(
 }
 
 /**
- * Preserve readable runtime source while removing formatting-only indentation from
+ * Preserve readable runtime source while removing formatting-only whitespace from
  * the isolated-world payload. Serialized execution tests cover the exact result.
  */
 export function urlPageTranslationRuntimeSource(): string {
-  return installUrlPageTranslationRuntime.toString().replace(/^[ \t]+/gmu, '');
+  return installUrlPageTranslationRuntime.toString()
+    .replace(/^[ \t]+/gmu, '')
+    .replace(/;\n/gu, ';');
 }
 
 function validatedGuestBatch(
@@ -2301,7 +2350,12 @@ function validatedGuestBatch(
     if (chars + text.length > maxChars && !allowSingleLongCaption) break;
     ids.add(id);
     chars += text.length;
-    blocks.push({ id, text });
+    const cacheKey = typeof item.cacheKey === 'string' ? item.cacheKey.trim() : '';
+    blocks.push({
+      id,
+      text,
+      ...(cacheKey && cacheKey.length <= PREVIEW_TRANSLATION_CACHE_MAX_BLOCK_KEY_CHARS ? { cacheKey } : {}),
+    });
     if (chars > maxChars) break;
     if (blocks.length >= maxBlocks) break;
   }

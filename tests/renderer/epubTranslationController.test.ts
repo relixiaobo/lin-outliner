@@ -158,6 +158,101 @@ describe('EpubTranslationController', () => {
     controller.destroy();
   });
 
+  test('applies partial persistent-cache hits before continuing only the EPUB misses', async () => {
+    const sourceBatch = batch(['Cached passage', 'Missing passage'], 0);
+    const surface = new FakeSurface([sourceBatch]);
+    const requests: UrlPageTranslationRequest[] = [];
+    let resolveProvider: ((response: UrlPageTranslationResponse) => void) | null = null;
+    const controller = new EpubTranslationController(surface, {
+      cacheSourceId: '["epub","asset:book",1024,1000]',
+      targetLanguage: 'zh-Hans',
+      pollIntervalMs: 5,
+      cancel: async () => undefined,
+      translate: async (request) => {
+        requests.push(request);
+        if (requests.length === 1) {
+          return {
+            ok: true,
+            requestId: request.requestId,
+            cacheHit: true,
+            translations: [{ id: request.blocks[0]!.id, translation: '缓存段落' }],
+            remainingBlockIds: [request.blocks[1]!.id],
+          };
+        }
+        return await new Promise((resolve) => {
+          resolveProvider = resolve;
+        });
+      },
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+    });
+
+    controller.enable();
+    await waitFor(() => requests.length === 2);
+    expect(surface.applied).toEqual([[
+      { id: sourceBatch.blocks[0]!.id, translation: '缓存段落' },
+    ]]);
+    expect(controller.currentStatus).toBe('starting');
+    expect(requests[0]?.blocks).toEqual(sourceBatch.blocks);
+    expect(requests[1]?.blocks).toEqual([sourceBatch.blocks[1]]);
+    expect(requests[1]?.sessionId).toBe(requests[0]?.sessionId);
+    expect(requests[1]?.requestId).toBe(requests[0]?.requestId);
+    expect(requests.every((request) => request.cacheSourceId === '["epub","asset:book",1024,1000]'))
+      .toBe(true);
+
+    resolveProvider?.({
+      ok: true,
+      requestId: requests[1]!.requestId,
+      translations: [{ id: sourceBatch.blocks[1]!.id, translation: '模型段落' }],
+    });
+    await waitFor(() => surface.applied.length === 2);
+    expect(surface.applied[1]).toEqual([
+      { id: sourceBatch.blocks[1]!.id, translation: '模型段落' },
+    ]);
+    expect(controller.currentStatus).toBe('on');
+    controller.destroy();
+  });
+
+  test('restarts an enabled session when the persistent-cache source changes', async () => {
+    const initialBatch = batch(['Old edition'], 0);
+    const replacementBatch = batch(['New edition'], 0);
+    const surface = new FakeSurface([initialBatch]);
+    const pending: Array<{
+      request: UrlPageTranslationRequest;
+      resolve: (response: UrlPageTranslationResponse) => void;
+    }> = [];
+    const cancelled: string[] = [];
+    const controller = new EpubTranslationController(surface, {
+      cacheSourceId: '["epub","asset:book",1024,1000]',
+      targetLanguage: 'zh-Hans',
+      pollIntervalMs: 5,
+      cancel: async (sessionId) => { cancelled.push(sessionId); },
+      translate: async (request) => await new Promise((resolve) => pending.push({ request, resolve })),
+      onError: () => undefined,
+      onStatusChange: () => undefined,
+    });
+
+    controller.enable();
+    await waitFor(() => pending.length === 1);
+    surface.enqueue(replacementBatch);
+    controller.setCacheSourceId('["epub","asset:book",2048,2000]');
+    await waitFor(() => pending.length === 2);
+
+    expect(cancelled).toEqual([pending[0]!.request.sessionId]);
+    expect(surface.released).toContainEqual(initialBatch.blocks.map(({ id }) => id));
+    expect(surface.resetTargets).toEqual(['zh-Hans', 'zh-Hans']);
+    expect(pending[1]!.request.cacheSourceId).toBe('["epub","asset:book",2048,2000]');
+
+    pending[0]!.resolve(success(pending[0]!.request));
+    await delay(10);
+    expect(surface.applied).toEqual([]);
+
+    pending[1]!.resolve(success(pending[1]!.request));
+    await waitFor(() => surface.applied.length === 1);
+    expect(surface.applied[0]?.[0]?.translation).toBe('Translated New edition');
+    controller.destroy();
+  });
+
   test('waits for an obsolete prefetch cancellation before starting replacement work', async () => {
     const surface = new FakeSurface([
       batch(['One', 'Two'], 0),
@@ -559,7 +654,10 @@ class FakeSurface implements EpubTranslationSurface {
 
 function batch(texts: string[], priority: number): EpubTranslationBatch {
   return {
-    blocks: texts.map((text, index) => ({ id: `e:${text}:${index}`, text })),
+    blocks: texts.map((text, index) => {
+      const id = `e:${text}:${index}`;
+      return { id, text, cacheKey: id };
+    }),
     priority,
   };
 }

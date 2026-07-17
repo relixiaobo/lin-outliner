@@ -439,9 +439,11 @@ inert plain-text translation after each eligible source block; disabling it hide
 translations without discarding the current page's in-memory cache. `Option+A`
 on macOS and `Alt+A` elsewhere toggles translation only for the active URL
 preview, including while its webview has focus, and never changes the automatic
-preference. Navigation and reload cancel pending work, clear page-local cache,
+preference. Navigation and reload cancel pending work, clear mounted page state,
 and re-evaluate automatic translation; target/model change, pane close, or
-webview replacement also cancels pending work and clears page-local cache.
+webview replacement also cancels pending work and clears mounted results. These
+lifecycle resets do not delete matching translations from the local persistent
+preview cache described below.
 
 The common target-language catalog is independent of Tenon's display locales
 and uses language autonyms. Until the user chooses a target it follows Tenon's
@@ -457,7 +459,8 @@ provider-qualified explicit choice globally. Returning to `Follow Agent` clears
 that override. If an explicit model becomes unavailable, it remains identified
 as unavailable and requests fail with a recoverable configuration error instead
 of silently falling back. Changing model while translation is on cancels the
-active request, clears page-local results, and retranslates the current viewport.
+active request, clears mounted results, and restores or retranslates the current
+viewport under the newly resolved cache namespace.
 
 Automatic translation is a globally remembered opt-in switch. Turning it on
 immediately checks the current document and detected media captions. Translation
@@ -496,9 +499,10 @@ wait wakes the host immediately; its one-second timeout is only a recovery probe
 The remote page cannot choose blocks or provider inputs through that signal.
 Cancellation is not surfaced as an error. Dynamic content joins only after it
 enters the same bounded window, and successful blocks remain cached in memory so
-back-scrolling does not call the provider again. When a source element's
-normalized text changes, it receives a fresh block id; responses, failures, and
-releases from the previous text snapshot can no longer affect it.
+back-scrolling does not call the provider again during the mounted session. When
+a source element's normalized text changes, it receives a fresh block id;
+responses, failures, and releases from the previous text snapshot can no longer
+affect it.
 DOM insertion, hide, and restore capture the
 first visible source block and compensate its post-write offset immediately and
 across two bounded animation frames. Wheel, touch, keyboard input, or any viewport
@@ -553,6 +557,55 @@ The guest still has no preload, Node integration, child-window capability, or
 non-HTTP navigation; only fullscreen and sanitized clipboard writes are
 permitted. Translation does not weaken the URL-preview security posture or add
 a guest-to-main IPC channel.
+
+Validated successful translations for URL page blocks, finite prerecorded
+captions, and reflowable EPUB passages also enter one main-owned persistent
+preview cache. Persistence is automatic and does not activate translation by
+itself: manual and automatic consent, viewport scheduling, concurrency, and
+prefetch bounds remain unchanged. Reopening an unchanged source first shows the
+ordinary local loaders, then settles cache hits without invoking the provider.
+For a mixed batch, main returns the validated hits immediately; the controller
+applies them, leaves only misses loading, and continues those misses through the
+same request session. A valid result equal to its source is cached as a completed
+no-op so undeclared same-language content does not repeatedly call the model,
+while still producing neither a bilingual node nor a false completed header.
+
+Cache identity combines the target language, content kind, translation-prompt
+revision, actual resolved provider/model, bounded source scope, stable block key,
+and normalized source text. `Follow Agent` therefore follows Neva's currently
+resolved model rather than sharing one generic namespace. URL scope is the
+normalized top-level URL including its query and excluding its fragment; page
+keys derive from normalized block text. Caption keys additionally bind the
+adapter/video/track identity, language, and cue timing. EPUB scope binds the
+resolved source id, byte size, and modified time; its block key binds the section
+index, semantic ordinal, and source-text fingerprint. Source, target, model,
+track, prompt, or text changes miss safely, while returning to a prior matching
+configuration can reuse its earlier translation.
+
+The cache lives under Electron's isolated `userData` directory and is disposable
+local derived data, outside the workspace document, replication, portable assets,
+exports, and diagnostics. Main hashes each complete scope and block identity with
+SHA-256 before persistence. Disk shards contain only opaque digests, validated
+translated text, and access times; they contain no source text, URL, local path,
+or readable model configuration. Private directory/file modes and atomic JSON
+writes match the other local stores. Corrupt, missing, unreadable, or unwritable
+cache state degrades to an ordinary miss and only emits fixed, content-free
+diagnostics. Writes are debounced off the visible apply path and join the bounded
+before-quit flush.
+
+Retention has no fixed expiry. Least-recently-used entries are bounded globally
+to 64 MiB of logical data and 50,000 entries, with small per-scope shards loaded
+on demand; one scope is additionally capped at 4 MiB and 4,000 entries so an
+exceptionally large book or page cannot turn each recency update into a large
+main-thread rewrite. Settings > General > Translation Data exposes one secondary
+**Clear** action. Its native, cancel-safe confirmation explains that pages,
+captions, and books will need translation again while current visible translations
+and source documents remain untouched. Only the live Settings window may invoke
+the clear.
+A successful clear removes both memory and disk state and increments a cache
+epoch, so provider work started before the clear cannot repopulate it; work
+started afterward may cache normally. A failed clear reports a localized,
+recoverable settings error and does not expose storage details.
 
 Prerecorded video captions participate in that same URL-translation session.
 The target language, `Follow Agent` or explicit model, automatic-translation
@@ -667,12 +720,16 @@ EPUB loading, retry, insertion, hide/show, and stale-record cleanup use the same
 bounded scroll-anchor correction as webpage translation. Immediate and delayed
 correction yields to wheel, touch, keyboard, pointer, native-scrollbar, or other
 external scroll input. Target/model changes cancel stale generations, clear the
-old configuration cache, and restart an enabled session; an auto-activated book
-retains that provenance across a model restart so a later matching target can
-turn it off correctly. UI-language label changes update live status nodes without
+mounted configuration results, select the matching persistent namespace, and
+restart an enabled session; an auto-activated book retains that provenance across
+a model restart so a later matching target can turn it off correctly. UI-language
+label changes update live status nodes without
 rebuilding the adapter or losing session state. Main receives EPUB batches as
 `document` content under the existing validated translation command and uses
 neighboring reflowable passages only as untrusted translation context.
+Matching passages can additionally restore from the shared persistent preview
+cache across reader teardown and app restart; this does not widen the lazy section
+mount window or trigger whole-book translation.
 
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the

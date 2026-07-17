@@ -59,8 +59,10 @@ import { normalizePreviewHttpUrl } from '../core/preview';
 import {
   isUrlPageTranslationCommand,
   isUrlPageTranslationPreferences,
+  LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL,
   LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL,
   LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
+  type ClearPreviewTranslationCacheResult,
   type UrlPageTranslationPreferences,
 } from '../core/urlPageTranslation';
 import { LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL } from '../core/urlPageTranslationGuest';
@@ -71,6 +73,8 @@ import {
 } from '../core/urlPreviewSession';
 import { handlePreviewCommand } from './previewSource';
 import { PageTranslationService, pageTranslationErrorReport } from './pageTranslation';
+import { PreviewTranslationCacheStore } from './previewTranslationCacheStore';
+import { clearPreviewTranslationCacheFromSettings } from './previewTranslationCacheClear';
 import { executeUrlPageTranslationGuestCommand } from './urlPageTranslationGuest';
 import { setBoundedMapEntry } from './boundedMap';
 import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
@@ -406,7 +410,20 @@ const agentRuntime: AgentRuntime = new AgentRuntime(() => mainWindow, documentSe
 });
 folderCapabilityService.onGranted(() => agentRuntime.folderCapabilitiesChanged());
 agentRuntime.folderCapabilitiesChanged();
+const previewTranslationCache = new PreviewTranslationCacheStore(
+  join(app.getPath('userData'), 'preview-translation-cache'),
+  {
+    onError: (operation) => reportError({
+      domain: 'page-translation',
+      severity: 'warn',
+      code: `preview-translation-cache-${operation}-failed`,
+      message: 'Preview translation cache operation failed.',
+      context: { operation: `translation-cache-${operation}` },
+    }),
+  },
+);
 const pageTranslationService = new PageTranslationService({
+  cache: previewTranslationCache,
   onError: () => reportError(pageTranslationErrorReport()),
 });
 const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
@@ -1339,6 +1356,17 @@ async function clearUrlPreviewWebsiteData(
   }
 }
 
+function clearPreviewTranslationCache(
+  event: IpcMainInvokeEvent,
+): Promise<ClearPreviewTranslationCacheResult> {
+  return clearPreviewTranslationCacheFromSettings(event, {
+    cache: previewTranslationCache,
+    getSettingsWindow: () => liveWindow(settingsWindow) ?? null,
+    labels: () => getMessages(effectiveLocale()).settings.general,
+    showMessageBox: (window, options) => dialog.showMessageBox(window, options),
+  });
+}
+
 // The per-provider API-key form opens as its OWN native window — a modal child of
 // the settings window (the macOS System Settings idiom: a list row pushes its
 // detail into a real attached dialog, not an in-renderer overlay). It reuses the
@@ -1610,6 +1638,7 @@ function registerIpc() {
   ipcMain.handle('lin:open-settings', (_event, target?: unknown) => openSettingsWindow(sanitizeSettingsOpenTarget(target)));
   ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
   ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, clearUrlPreviewWebsiteData);
+  ipcMain.handle(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL, clearPreviewTranslationCache);
   ipcMain.handle(LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL, async (
     event,
     request?: Partial<AgentMessageContextMenuRequest>,
@@ -3202,6 +3231,7 @@ if (!app.requestSingleInstanceLock()) {
       Promise.allSettled([
         documentService.flushPendingChanges(),
         nodeAccessStore.flushNow(),
+        previewTranslationCache.flushNow(),
         importApiServer.stop(),
         agentRuntime.drainPendingWrites(),
         flushUrlPreviewSession(urlPreviewSession),

@@ -190,7 +190,15 @@ export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, sourc
       cancelled = true;
       abortController.abort();
     };
-  }, [source.mimeType, source.name, source.sizeBytes, source.streamUrl, source.target]);
+  }, [
+    source.id,
+    source.lastModified,
+    source.mimeType,
+    source.name,
+    source.sizeBytes,
+    source.streamUrl,
+    source.target,
+  ]);
 
   if (state.status === 'loading') return <PreviewMessage>{labels.loading}</PreviewMessage>;
   if (state.status === 'error') {

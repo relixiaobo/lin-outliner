@@ -58,6 +58,7 @@ import {
 } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import { WebsiteDataSettingsGroup } from './WebsiteDataSettingsGroup';
+import { TranslationDataSettingsGroup } from './TranslationDataSettingsGroup';
 import { ManagedSkillsSettings } from './ManagedSkillsSettings';
 import {
   capabilitySettingsRemovalPatch,
@@ -1007,6 +1008,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   />
                 </InsetGroup>
                 <WebsiteDataSettingsGroup onError={setError} onNotice={setNotice} />
+                <TranslationDataSettingsGroup onError={setError} onNotice={setNotice} />
                 <InsetGroup
                   ariaLabel={t.settings.general.diagnosticsGroup}
                   label={t.settings.general.diagnosticsGroup}

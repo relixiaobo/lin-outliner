@@ -118,6 +118,7 @@ describe('URL page translation guest runtime', () => {
     const visibleTexts = visibleBatch.blocks.map((block) => block.text);
 
     expect(visibleBatch.priority).toBe(0);
+    expect(visibleBatch.blocks.every((block) => block.cacheKey?.startsWith('page:'))).toBe(true);
     expect(visibleTexts).toContain('Above the viewport');
     expect(visibleTexts).toContain('Current paragraph');
     expect(visibleTexts).not.toContain('Prefetched paragraph');
@@ -252,6 +253,7 @@ describe('URL page translation guest runtime', () => {
     fixture.runtime.setEnabled(true, 'zh-Hans');
     const pending = nextBatch(fixture.runtime);
     expect(pending.blocks.map((block) => block.text)).toEqual(['Resume this caption']);
+    expect(pending.blocks[0]?.cacheKey).toMatch(/^caption:[a-z0-9]+:0:8000$/u);
 
     fixture.runtime.setEnabled(false, 'zh-Hans');
     fixture.runtime.setEnabled(true, 'zh-Hans');
@@ -259,6 +261,25 @@ describe('URL page translation guest runtime', () => {
 
     expect(resumed.contentKind).toBe('caption');
     expect(resumed.blocks).toEqual(pending.blocks);
+  });
+
+  test('binds standard caption cache keys to the stable media source', () => {
+    const cacheKeyFor = (src: string): string | undefined => {
+      const fixture = createFixture();
+      const caption = addCaptionVideo(fixture.document, fixture.window, {
+        language: 'en',
+        cues: [{ startTime: 0, endTime: 8, text: 'Shared cue text' }],
+      });
+      caption.media.setAttribute('src', src);
+      fixture.runtime.setEnabled(true, 'zh-Hans');
+      return nextBatch(fixture.runtime).blocks[0]?.cacheKey;
+    };
+
+    const first = cacheKeyFor('https://media.example.test/lesson-1.mp4');
+    expect(first).toMatch(/^caption:[a-z0-9]+:0:8000$/u);
+    expect(cacheKeyFor('https://media.example.test/lesson-1.mp4')).toBe(first);
+    expect(cacheKeyFor('https://media.example.test/lesson-1.mp4?signature=renewed')).toBe(first);
+    expect(cacheKeyFor('https://media.example.test/lesson-2.mp4')).not.toBe(first);
   });
 
   test('detects a standard caption language without adding a synthetic track', async () => {
@@ -639,6 +660,7 @@ describe('URL page translation guest runtime', () => {
     const batch = await waitForCaptionBatch(fixture.runtime);
     expect(batch.contentKind).toBe('caption');
     expect(batch.blocks).toHaveLength(1);
+    expect(batch.blocks[0]?.cacheKey).toMatch(/^caption:[a-z0-9]+:0:10000$/u);
     expect(fetched).toHaveLength(1);
     expect(new URL(fetched[0]!.url).pathname).toBe('/api/timedtext');
     expect(fetched[0]!.redirect).toBe('error');
