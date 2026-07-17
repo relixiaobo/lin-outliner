@@ -1,4 +1,3 @@
-import path from 'node:path';
 import {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
   actionKindFromRuleValue,
@@ -9,8 +8,7 @@ export {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
   type AgentToolActionKind,
 } from '../core/agentActionCatalog';
-
-export type ToolAccessScope = 'allowed_file_area' | 'outside_allowed_file_area' | 'external_system' | 'none';
+export type ToolAccessScope = 'local_system' | 'external_system' | 'none';
 
 export interface ToolActionDescriptor {
   toolName: string;
@@ -40,15 +38,16 @@ export interface AgentCapabilityRuleDiagnostic {
 }
 
 export interface AgentCapabilityConfig {
-  folders: string[];
   blocks: AgentCapabilityBlockRule[];
   diagnostics: AgentCapabilityRuleDiagnostic[];
-  revocationGeneration?: number;
 }
 
 export interface AgentCapabilitySettings {
-  folders?: unknown;
   blocks?: unknown;
+}
+
+export interface NormalizedAgentCapabilitySettings {
+  blocks: string[];
 }
 
 const SUPPORTED_ACTION_KIND_SET = new Set<string>(SUPPORTED_AGENT_TOOL_ACTION_KINDS);
@@ -56,7 +55,6 @@ const SUPPORTED_ACTION_KIND_SET = new Set<string>(SUPPORTED_AGENT_TOOL_ACTION_KI
 export function parseAgentCapabilitySettings(input: unknown): AgentCapabilityConfig {
   if (looksParsedAgentCapabilityConfig(input)) return input;
   const settings = isRecord(input) ? input as AgentCapabilitySettings : {};
-  const folders = normalizedStrings(settings.folders).map((folder) => path.resolve(folder));
   const blocks: AgentCapabilityBlockRule[] = [];
   const diagnostics: AgentCapabilityRuleDiagnostic[] = [];
   const blockEntries = Array.isArray(settings.blocks) ? settings.blocks : [];
@@ -75,14 +73,13 @@ export function parseAgentCapabilitySettings(input: unknown): AgentCapabilityCon
     else blocks.push(parsed.rule);
   }
 
-  return { folders: compactPaths(folders), blocks, diagnostics };
+  return { blocks, diagnostics };
 }
 
 export function agentCapabilityConfigToSettings(
   config: AgentCapabilityConfig,
-): Required<AgentCapabilitySettings> {
+): NormalizedAgentCapabilitySettings {
   return {
-    folders: [...config.folders],
     blocks: config.blocks.map((block) => block.ruleValue),
   };
 }
@@ -180,29 +177,6 @@ function normalizeCommandForBlockMatch(command: string): string {
   return normalized;
 }
 
-function compactPaths(paths: readonly string[]): string[] {
-  const result: string[] = [];
-  for (const candidate of [...new Set(paths)].sort((left, right) => left.length - right.length)) {
-    if (result.some((root) => isPathInside(root, candidate))) continue;
-    result.push(candidate);
-  }
-  return result;
-}
-
-function isPathInside(rootInput: string, candidateInput: string): boolean {
-  const root = path.resolve(rootInput);
-  const candidate = path.resolve(candidateInput);
-  const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-function normalizedStrings(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.flatMap((candidate) => (
-    typeof candidate === 'string' && candidate.trim() ? [candidate.trim()] : []
-  )))];
-}
-
 function diagnostic(
   ruleValue: string,
   code: AgentCapabilityRuleDiagnostic['code'],
@@ -219,7 +193,6 @@ function normalizeCapabilityConfig(input?: unknown): AgentCapabilityConfig {
 
 function looksParsedAgentCapabilityConfig(value: unknown): value is AgentCapabilityConfig {
   return isRecord(value)
-    && Array.isArray(value.folders)
     && Array.isArray(value.blocks)
     && Array.isArray(value.diagnostics)
     && (value.blocks.length === 0 || isParsedBlockRule(value.blocks[0]));

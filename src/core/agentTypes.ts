@@ -538,44 +538,6 @@ export interface AgentToolResultEvent {
   timestamp: number;
 }
 
-export type AgentCapabilityRequestKind = 'folder';
-
-export interface AgentCapabilityRequestDetail {
-  label: string;
-  value: string;
-}
-
-export interface AgentCapabilityRequestView {
-  requestId: string;
-  conversationId: string;
-  kind: AgentCapabilityRequestKind;
-  toolCallId: string;
-  toolName: string;
-  title: string;
-  target: string;
-  reason: string;
-  details: AgentCapabilityRequestDetail[];
-  folders: string[];
-  /** Agent id when a separate consulted agent requested the folder. */
-  requestedByAgentId?: string;
-}
-
-export interface AgentCapabilityResolvedEvent {
-  type: 'capability_resolved';
-  conversationId: string;
-  requestId: string;
-  resolution: 'granted' | 'cancelled';
-  timestamp: number;
-}
-
-export interface AgentCapabilityRequestEvent {
-  type: 'capability_request';
-  conversationId: string;
-  requestId: string;
-  request: AgentCapabilityRequestView;
-  timestamp: number;
-}
-
 export interface AgentUserQuestionPendingView {
   requestId: string;
   conversationId: string;
@@ -624,8 +586,6 @@ export type AgentRuntimeEvent =
   | AgentProviderRetryEvent
   | AgentToolCallEvent
   | AgentToolResultEvent
-  | AgentCapabilityRequestEvent
-  | AgentCapabilityResolvedEvent
   | AgentUserQuestionRequestEvent
   | AgentUserQuestionResolvedEvent
   | AgentConversationAttentionEvent;

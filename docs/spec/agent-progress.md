@@ -70,7 +70,7 @@ truth.
     missing Poppler or MarkItDown errors tell the agent to use `bash`
     to detect available local tooling, install the dependency without assuming
     Homebrew, then retry the same file tool call
-  - `file_glob` and `file_grep` return local-root-relative paths
+  - `file_glob` and `file_grep` return Run-workdir-relative paths
   - `file_grep` backed by Tenon's ripgrep provider with streamed paginated
     output modes
   - `file_edit` narrowed to exact non-empty replacements after a full read
@@ -88,8 +88,8 @@ truth.
     monochrome icon + text) — the same rendering as the outliner; see
     [`design-system/surfaces.md`](./design-system/surfaces.md#references)
   - model-facing text preserves files/folders/images with
-    `[[file:<label>^<path>]]`; pathless attachments are staged under the agent
-    local file root first
+    `[[file:<label>^<path>]]`; pathless attachments are staged under the
+    app-owned scratch root first
   - image bytes remain available as inline image content blocks while the file
     marker gives tools a readable path
 - [x] Lin-specific stable system prompt module for agent identity, tool
@@ -239,15 +239,14 @@ Finish runtime polish on top of the event log and delegation foundation.
 - [ ] Add richer non-text media payload lazy loading UI in debug/render details.
 - [ ] Add performance instrumentation around replay, projection, IPC payload size,
   and long transcript rendering.
-- [x] Ownership-based capability model wired end to end: direct execution when
-  resources exist; persistent folder acquisition for uncovered roots including
-  `/`; typed-file and process isolation for private Tenon control state; ambient
-  user credentials preserved while explicitly private injected values are
-  removed; no action-level host/payment/network hard blocks; scoped Runs built
-  from narrowed tool catalogs; durable unattended `needs_input` recovery;
-  revocation-driven process termination; and joinable
-  `tool.capability.checked` / `tool.capability.resolved` events with no
-  approval-named transport.
+- [x] Full Access-only capability model wired end to end: typed file tools,
+  foreground/background processes, Skill shell, converters, and delegated Runs
+  execute under the host account; ambient user credentials are preserved while
+  explicitly private injected values are removed; explicit command/action
+  blocks and scoped Run tool catalogs remain; joinable
+  `tool.capability.checked` / `tool.capability.resolved` events use
+  `allow | unavailable`; and there is no agent process sandbox, folder
+  acquisition/recovery transport, or concurrency isolation between Runs.
 - [ ] Emit and render the remaining schema-reserved runtime events that are not
   active yet: persisted follow-ups, metrics, and explicit cancellation details.
 - [ ] Refine checkpoint retention settings if real user conversations show unusual

@@ -28,6 +28,8 @@ describe('composeAgentPrompt sub-run mode', () => {
     expect(prompt).not.toContain('Use dream');
     expect(prompt).toContain('You are a Tenon same-agent sub-run');
     expect(prompt).toContain('# Sub-run rules');
+    expect(prompt).toContain('They do not isolate host resources');
+    expect(prompt).toContain('share files, processes, ports, credentials, application state, and services');
     expect(prompt).toContain('never ask the user questions');
     expect(prompt).toContain('Agent type: researcher');
     expect(prompt).not.toContain('You are Neva');

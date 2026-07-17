@@ -265,12 +265,7 @@ export function resolvePackFilePath(packFileInput: string, options: Pick<ImportS
     ? path.join(process.env.HOME ?? '', packFileInput.slice(2))
     : packFileInput;
   const root = path.resolve(options.localFileRoot ?? process.cwd());
-  const resolved = path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
-  const relative = path.relative(root, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${resolved}`);
-  }
-  return resolved;
+  return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
 }
 
 export function visibleImportServiceResult(data: ImportServiceResult): unknown {

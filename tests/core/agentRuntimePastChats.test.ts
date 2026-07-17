@@ -382,7 +382,7 @@ describe('agent runtime past chats integration', () => {
     expect(outputs[1]).toContain('Cobalt blue is the recorded focus-ring choice.');
   });
 
-  test('scheduled Dream invokes the private memory-dream skill through a restricted Dream channel run', async () => {
+  test('scheduled Dream invokes the private memory-dream skill through a tool-scoped Dream channel run', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-data-'));
     roots.push(localRoot, dataRoot);

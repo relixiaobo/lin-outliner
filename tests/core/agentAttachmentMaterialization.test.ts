@@ -33,7 +33,7 @@ describe('agent attachment materialization', () => {
       path: sourcePath,
     });
 
-    // Lands in scratch (a sibling of the workdir), never inside the agent's file area.
+    // Lands in scratch (a sibling of the workdir), never inside the workdir itself.
     expect(attachment.path).toStartWith(agentAttachmentDir(scratchRoot));
     expect(attachment.path).not.toStartWith(path.resolve(localRoot));
     expect(attachment.path).not.toBe(sourcePath);
@@ -93,7 +93,7 @@ describe('agent attachment materialization', () => {
     await expect(readdir(agentAttachmentDir(scratchRoot))).rejects.toThrow();
   });
 
-  test('rejects out-of-root directory attachments instead of symlinking them', async () => {
+  test('rejects out-of-workdir directory snapshots instead of symlinking them', async () => {
     const localRoot = await mkdtempRoot('lin-agent-attachment-root-');
     const scratchRoot = await mkdtempRoot('lin-agent-attachment-scratch-');
     const sourceRoot = await mkdtempRoot('lin-agent-attachment-source-');
@@ -101,7 +101,7 @@ describe('agent attachment materialization', () => {
     await expect(materializePathBackedAttachment(localRoot, scratchRoot, {
       name: 'outside-dir',
       path: sourceRoot,
-    })).rejects.toThrow('Directory attachments outside the allowed file area');
+    })).rejects.toThrow('Directory attachments outside the Run workdir');
   });
 
   test('prunes expired staged attachments', async () => {

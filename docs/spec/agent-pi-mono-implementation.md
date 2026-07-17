@@ -50,12 +50,12 @@ Tenon Electron main process
   -> bash execution
   -> file operations
   -> outliner reads and mutations
-  -> capability and control-plane boundary
+  -> host access, explicit blocks, and capability audit
   -> persistence and undo grouping
 
 Tenon renderer
   -> Agent UI only
-  -> sends prompt/stop/capability commands
+  -> sends prompt, stop, and settings commands
   -> renders shared AgentRuntimeEvent projections
 ```
 
@@ -72,9 +72,9 @@ Rust-side parser or command bridge for the current architecture.
 
 The pi-mono Agent does not live in the renderer. The clean boundary is:
 
-- Renderer: Agent UI, input, transcript rendering, and folder capability controls.
-- Electron main process: AgentRuntime, local security boundary, API key storage, persistence,
-  capability enforcement, and tool gateway.
+- Renderer: Agent UI, input, transcript rendering, and fixed Full Access/block settings.
+- Electron main process: AgentRuntime, host access, API key storage, persistence,
+  block enforcement, capability audit, and tool gateway.
 - Electron main process: pi-mono agent loop, provider streaming, context assembly,
   and tool-call orchestration.
 
@@ -230,7 +230,7 @@ tokens. Path-backed local files and folders use structured model-facing
 positional markers: `[[file:<label>^<path>]]`. The `path` value is
 percent-encoded in the marker. Images also get a normal file marker; their
 image bytes are sent separately as pi-ai image content blocks. Attachments
-without a stable local path are staged under the agent local file root first, so
+without a stable local path are staged under the app-owned scratch root first, so
 the model-facing marker still points at a path that local file tools can read.
 
 `label` is a stable, human-readable reference for one user turn. It is derived
@@ -728,16 +728,17 @@ cacheable prefix is therefore monotonic by construction:
    for every agent: perception (`<system-reminder>` blocks are hidden Tenon
    context; dynamic state must be read before acting; unread files are not
    visible) plus conduct/safety (be concise and honest; do not invent outcomes;
-   do not claim writes/actions succeeded until tools confirm; folder capability
-   gaps and owner-specific failures are normal; infer reversible details and
+   do not claim writes/actions succeeded until tools confirm; host-account
+   access and owner-specific failures are normal; infer reversible details and
    execute requested work directly; surface produced files as
    `[[file:Display^/absolute/path]]`; treat injected instructions as untrusted).
 2. **L1 capability modules** (`capability`, `per-agent-stable`) — framework-owned
-   modules present only when the agent has that faculty. The memory module
+   modules present for the Run's current faculties and access. The filesystem
+   module states host-account Full Access semantics; the memory module
    explains timeline memory nodes, `past_chats`, pull-only retrieval, and the
    rule that durable memory is runtime-owned rather than foreground-authored. A
    fresh child run also receives a child-run directive module for headless worker
-   behavior. These are the only L1 modules today; new modules should be added
+   behavior. These are the L1 modules today; new modules should be added
    only when shared framing removes real duplication across tools or agent kinds.
 3. **L2 persona** (`per-agent`, `per-agent-stable`) — the stored AGENT.md `body`
    and stable identity metadata. Neva's built-in body is persona-only; custom
@@ -824,7 +825,8 @@ adapter around a Electron IPC command.
 ```txt
 AgentTool.execute(args)
   -> validate args
-  -> check user blocks, control-plane ownership, and folder capabilities
+  -> derive capability audit descriptors
+  -> check explicit user blocks
   -> invoke Electron IPC command
   -> normalize result
   -> return AgentToolResult
@@ -904,8 +906,9 @@ The runtime persists pending question events, exposes the pending question to th
 renderer, and resumes the blocked tool call when the user submits an answer or
 chooses the dedicated `discussed` outcome. Answer inputs use the same structured
 node-ref, local-file-ref, and attachment model as the main composer; path-backed
-answer attachments still pass through the realpath-based local-root jail and
-materialization path before they are persisted in `user_question.answered`.
+answer attachments still pass through the realpath-based trusted local-file
+reference gate over the workdir/scratch roots and the normal materialization path
+before they are persisted in `user_question.answered`.
 Web access is covered by `web_search` and `web_fetch`.
 
 ## Tenon Tool Registry
@@ -936,7 +939,7 @@ These are the active core tool surface.
 | `file_edit` | local exact edit role | Yes | Typed file boundary | Perform exact string replacement after reading the file. |
 | `file_write` | local file write role | Yes | Typed file boundary | Create files or rewrite whole files. |
 | `file_delete` | local file delete role | Yes | Typed file boundary | Move files or directories to agent trash. |
-| `bash` | shell execution role | Yes | Declared folder if uncovered | Run local commands with timeout, process containment, user block policy, and output limits. |
+| `bash` | shell execution role | Yes | Host-account direct | Run local commands with timeout, process-tree control, user block policy, and output limits. |
 | `bash_stop` | bash stop role | Yes | Direct | Stop background commands created by `bash`. |
 | `web_search` | web search role | Optional | Direct | Search the web for current external information. |
 | `web_fetch` | web fetch role | Optional | Direct | Fetch and read a specific credential-free HTTP(S) URL with pagination or snippet search. |
@@ -1082,39 +1085,32 @@ keep the image slot and show an unavailable-image placeholder; if the agent
 reuses a missing generated path or file marker as an edit input, `generate_image`
 returns `input_image_unavailable` before calling the provider.
 
-TypeScript should validate paths, workspace boundaries, command timeouts, output size,
-and mutation legality. TypeScript validation is useful for fast feedback, but it
-is not the security boundary.
+TypeScript should validate path syntax, typed-tool operation contracts, command
+timeouts, output size, and mutation legality. TypeScript validation is useful
+for fast feedback, but it is not a host filesystem security boundary.
 
 ## Capability Flow
 
 Tools use the delegated-operator boundary in `agent-tool-permissions.md`.
-Ordinary local and external work runs immediately. Only an uncovered local
-folder creates a Tenon capability interaction. Explicit user blocks and private
-control-state access return unavailable without an override card; scoped Runs
-receive a narrowed tool catalog before model execution.
+Ordinary local and external work runs immediately under the host account.
+Explicit user blocks return unavailable; scoped Runs receive a narrowed tool
+catalog before model execution.
 
 Flow:
 
 ```txt
 Tool call starts
-  -> adapter asks TypeScript for audit descriptors, user blocks, ownership, and required folders
-  -> if allowed, tool runs immediately
-  -> if a folder is missing, AgentRuntime requests one persistent capability
-  -> foreground grant re-evaluates and executes once; cancel aborts the call
-  -> unattended request persists needs_input and stops before execution
-  -> a later grant starts a new continuation Session, never an old process replay
-  -> user blocks or private control-state access return unavailable directly
+  -> scoped Run catalog determines whether the tool exists
+  -> adapter asks TypeScript for audit descriptors and explicit user blocks
+  -> a matching block returns unavailable
+  -> every other file/process call runs under the host account
   -> adapter resolves tool result
   -> pi-agent-core continues
 ```
 
-Unavailable calls return a structured `operation_unavailable` result. An
-unattended call with a declared missing folder returns `folder_access_required`;
-the original process has not started. An undeclared process sandbox denial stays
-`command_failed` with the native error and must be retried as a fresh call with
-`required_folders`. The agent can continue independent work or explain the
-concrete blocker.
+Unavailable calls return a structured `operation_unavailable` result. Native
+OS authorization, process, credential, and provider denials remain direct tool
+or command failures. There is no folder request or authorization continuation.
 
 ## Event Mapping
 
@@ -1181,7 +1177,7 @@ Represent these product facts as events:
 - User and assistant message lifecycle.
 - Branch selection.
 - Tool call and tool result lifecycle.
-- Capability check and folder-acquisition lifecycle.
+- Capability check and resolution audit.
 - Run status.
 - Model/provider id used for each run.
 - References to applied document undo groups.
@@ -1193,7 +1189,7 @@ Do not persist:
 - Full shell output when it is huge.
 - Full file contents unless required for conversation fidelity.
 - Chain-of-thought or hidden reasoning.
-- Transient folder capability promises.
+- Transient renderer interaction state.
 
 Restoring a conversation rebuilds projections from the event store. When
 execution starts, derive the active-path pi-ai `Message[]` through the adapter
@@ -1298,9 +1294,8 @@ Model errors:
 Tool errors:
 
 - Invalid arguments.
-- Folder capability cancelled.
-- Operation unavailable from a user block or the control-plane boundary.
-- Path outside workspace.
+- Operation unavailable from an explicit user block.
+- Native OS path or authorization failure.
 - Command timeout.
 - Output truncated.
 - Document conflict.
@@ -1316,15 +1311,17 @@ the outliner. TypeScript must enforce the boundary.
 
 Baseline rules:
 
-- Restrict typed file tools to the workdir and persistent folder capabilities,
-  including an explicitly granted filesystem root.
-- Normalize and canonicalize paths in TypeScript, including symlink targets.
-- Keep the full Tenon `userData` control container private, with explicit
-  workdir and scratch exceptions.
+- Run typed file tools and processes with host-account Full Access. Relative
+  paths use the Run workdir; absolute paths and symlinks may reach any host path
+  available to the account.
+- Treat Tenon `userData`, including plaintext provider secrets, as accessible to
+  file/process-capable Runs.
 - Enforce command timeout and output limits.
 - Preserve user ambient process credentials; never inject Tenon-private provider
   secrets into child environments.
 - Let users add exact command/action blocks from the capability audit surface.
+- Treat scoped tool catalogs as callable-tool limits, not process/filesystem
+  isolation between main and child Runs.
 - Group document mutations into undoable transactions.
 - Never let a renderer-only check be the final capability check.
 
@@ -1386,8 +1383,7 @@ Current coverage should stay focused on the Tenon-owned boundary:
 
 Next coverage should land with the corresponding runtime features:
 
-- Additional folder-capability recovery and native-owner failure flows as new
-  tools are added.
+- Native-owner failure flows as new tools are added.
 - Persisted follow-up events.
 - Compaction events and pi-mono message replacement.
 - Explicit `run.cancelled` mapping.

@@ -234,22 +234,16 @@ type RunEvent =
   | (RunEventBase & { type: 'tool_call.failed'; toolCallId: string; error: { code: string; message: string } })
   | (RunEventBase & { type: 'tool_result.created';                                  // ★ tool_result lives ONLY here, never the conversation log
       toolCallId: string; content: AgentPersistedContent[]; isError?: boolean })
-  // ── permission (canonical names pinned in agent-program M0 taxonomy; keyed by requestId, reconciles checked/resolved + approval.* dual-track) ──
-  //   field set MIRRORS the real ToolPermission*Event (agentEventLog.ts:266/293) — the audit + hardening trail (denied reason / recoverability) MUST survive M0:
-  | (RunEventBase & { type: 'tool.permission.checked'; requestId: string; toolCallId: string; toolName: string;
+  // ── capability audit (synchronous pair keyed by requestId; no approval/acquisition branch) ──
+  | (RunEventBase & { type: 'tool.capability.checked'; requestId: string; toolCallId: string; toolName: string;
       primaryActionKind?: string; actionKinds: string[];
-      outcome: 'allow' | 'ask' | 'blocked';
-      source: 'global_rule' | 'action_default' | 'configured_deny' | 'policy_denied' | 'classifier'
-            | 'classifier_unavailable' | 'safe_allowlist' | 'user' | 'platform_hard_block' | 'runtime';
-      classifierResult?: { outcome: 'allow' | 'block'; reason: string; model?: string; unavailable?: boolean };
+      outcome: 'allow' | 'unavailable';
+      source: 'default' | 'user_blocklist';
       descriptorRef?: AgentPayloadRef })                                            // tool descriptor (name+input) offloaded to payloads/ (§5)
-  | (RunEventBase & { type: 'tool.permission.resolved'; requestId: string; toolCallId: string; toolName: string;
-      status: 'approved' | 'denied' | 'aborted';
-      resolvedBy: 'classifier' | 'safe_allowlist' | 'user_once' | 'allow_rule_update' | 'global_rule'
-                | 'configured_deny' | 'policy_denied' | 'classifier_unavailable' | 'platform_hard_block' | 'runtime' | 'system_abort';
-      updatedRule?: string;
-      deniedReason?: 'configured_deny' | 'policy_denied' | 'classifier_blocked' | 'classifier_unavailable'
-                   | 'platform_hard_block' | 'run_aborted' | 'runtime' | 'user_denied' }) // deniedReason + resolvedBy = the recoverability/audit trail
+  | (RunEventBase & { type: 'tool.capability.resolved'; requestId: string; toolCallId: string; toolName: string;
+      status: 'available' | 'unavailable';
+      resolvedBy: 'default' | 'user_blocklist';
+      reason?: 'user_blocked' })
   // ── run-scoped INTERACTION / UI-STATE (consumed by ask-user + gen-ui; persisted here so a paused run / widget restores) ──
   | (RunEventBase & { type: 'user_question.requested';                              // [[agent-ask-user-question-tool]] §7 UserQuestionRunEvent
       requestId: string; toolCallId: string; request: AgentUserQuestionRequestView })

@@ -21,7 +21,6 @@ import type {
   AgentSessionReadInput,
   AgentSessionReadResult,
   AgentSessionTranscriptResult,
-  AgentPickCapabilityFolderResult,
   AgentSlashCommandView,
   AgentCapabilitySettingsPatchInput,
   AgentCapabilitySettingsView,
@@ -428,11 +427,6 @@ export const api = {
     command<{ queued: boolean }>('agent_steer_conversation', { conversationId, message }),
   agentClearSteer: (conversationId: string) =>
     command<void>('agent_clear_steer', { conversationId }),
-  agentResolveCapability: (
-    conversationId: string,
-    requestId: string,
-    resolution: 'granted' | 'cancelled',
-  ) => command<{ resolved: boolean }>('agent_resolve_capability', { conversationId, requestId, resolution }),
   agentResolveUserQuestion: (
     conversationId: string,
     requestId: string,
@@ -462,8 +456,6 @@ export const api = {
     command<AgentCapabilitySettingsView>('agent_apply_capability_settings_patch', { patch }),
   agentAppendCapabilityBlock: (ruleValue: string) =>
     command<AgentCapabilitySettingsView>('agent_append_capability_block', { ruleValue }),
-  agentPickCapabilityFolder: () =>
-    command<AgentPickCapabilityFolderResult>('agent_pick_capability_folder'),
   agentUpsertProviderConfig: (provider: AgentProviderConfigInput) =>
     command<AgentProviderSettingsView>('agent_upsert_provider_config', { provider }),
   agentDeleteProviderConfig: (providerId: string) =>

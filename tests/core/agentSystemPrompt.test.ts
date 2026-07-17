@@ -30,6 +30,7 @@ describe('agent system prompt composer', () => {
       'system-context',
       'communication-and-safety',
       'skill-dependencies',
+      'filesystem-access',
       'memory',
       'persona',
       'profile-skills',
@@ -40,6 +41,8 @@ describe('agent system prompt composer', () => {
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# System context');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Communication and safety');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Skill dependencies');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Filesystem access');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('This Run has Full Access');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Memory');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('Use node_search over the d- tag family');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('Use past_chats to read raw prior chat spans');
@@ -78,13 +81,23 @@ describe('agent system prompt composer', () => {
     });
     expect(prompt).toContain('# System context');
     expect(prompt).toContain('# Communication and safety');
-    expect(prompt).toContain("folder capability flow");
+    expect(prompt).toContain('This Run has Full Access');
     expect(prompt).toContain('# Skill dependencies');
     expect(prompt).toContain('verify whether the dependency is already available');
     expect(prompt).toContain('You are "Reviewer" (@reviewer).');
     expect(prompt).toContain('# Agent instructions');
     expect(prompt).toContain('REVIEWER_AGENT_BODY');
     expect(prompt.indexOf('# System context')).toBeLessThan(prompt.indexOf('You are "Reviewer"'));
+  });
+
+  test('describes Full Access and native boundaries for every Run', () => {
+    const prompt = composeAgentPrompt(def(), { mode: 'member' });
+    expect(prompt).toContain('This Run has Full Access');
+    expect(prompt).toContain('Native OS authorization and provider or service login still apply');
+    expect(prompt).toContain('place it under the Run workdir');
+    expect(prompt).toContain('without limiting other Full Access operations');
+    expect(prompt).not.toContain('Restricted');
+    expect(prompt).not.toContain('folder capability');
   });
 
   test('memory module follows effective tool capability', () => {

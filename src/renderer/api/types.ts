@@ -73,7 +73,6 @@ export type {
 } from '../../core/types';
 
 export type {
-  AgentCapabilityRequestView,
   AgentAuthoringInput,
   AgentDefinitionView,
   AgentRunDetailPayload,
@@ -105,7 +104,6 @@ export type {
 } from '../../core/agentRenderProjection';
 
 export interface AgentCapabilitySettingsView {
-  folders: string[];
   blocks: string[];
   diagnostics: Array<{
     ruleValue: string;
@@ -115,15 +113,7 @@ export interface AgentCapabilitySettingsView {
 }
 
 export interface AgentCapabilitySettingsPatchInput {
-  revokeFolders: string[];
   removeBlocks: string[];
-}
-
-export interface AgentPickCapabilityFolderResult {
-  canceled: boolean;
-  path?: string;
-  folder?: string;
-  settings: AgentCapabilitySettingsView;
 }
 
 export { EMPTY_RICH_TEXT, plainText, replaceAllRichTextPatch } from '../../core/types';

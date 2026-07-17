@@ -3,7 +3,7 @@ import type { IpcMainInvokeEvent } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
@@ -116,13 +116,8 @@ import {
 import {
   applyAgentCapabilitySettingsPatchView,
   appendAgentCapabilityBlockView,
-  getFolderCapabilityService,
-  grantAgentFolderCapability,
-  grantAgentFolderCapabilityView,
   readAgentCapabilitySettingsView,
 } from './agentCapabilityStore';
-import { bindAgentProcessCapabilities } from './agentProcessExecutor';
-import { createFolderCapabilitySnapshot } from './agentFolderCapabilities';
 import {
   isAgentCommand,
   isAssetCommand,
@@ -361,7 +356,7 @@ const agentScratchRoot = resolveAgentScratchRoot({ userDataPath: app.getPath('us
 // The default workdir is app-owned (`<userData>/agent-workdir`), so create it; an explicit
 // `LIN_AGENT_LOCAL_ROOT` is the user's own directory and must already exist. Scratch is always
 // app-owned, so always create it. Both are best-effort: the agent tools mkdir lazily before each
-// write, so a startup failure (e.g. an unwritable userData) degrades the agent file area rather
+// write, so a startup failure (e.g. an unwritable userData) degrades the agent workdir rather
 // than aborting the whole app at module load.
 function ensureAgentDir(dir: string): void {
   try {
@@ -374,7 +369,6 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
   ensureAgentDir(agentLocalFileRoot);
 }
 ensureAgentDir(agentScratchRoot);
-const folderCapabilityService = getFolderCapabilityService();
 const managedSkillStore = new ManagedSkillStore(resolvedUserDataDir);
 const managedSkillService: ManagedSkillService = new ManagedSkillService({
   appVersion: app.getVersion(),
@@ -384,15 +378,6 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
     agentRuntime.findSkillNameConflict(name, excludingManagedSkillId)
   ),
 });
-const agentProcessControlPlaneProtections = createFolderCapabilitySnapshot({
-  workspaceRoot: agentLocalFileRoot,
-  scratchRoot: agentScratchRoot,
-  // This is only the process-policy upper bound. Each invocation snapshot must
-  // still name one exact active hash root before the intersection allows reads.
-  activeSkillReadRoots: [managedSkillStore.contentRoot],
-  protectedRoots: [resolvedUserDataDir],
-}, []).protectedRoots;
-bindAgentProcessCapabilities(folderCapabilityService, agentProcessControlPlaneProtections);
 // Scratch holds only ephemeral, app-owned data (materialized attachments, web-fetch binaries,
 // bash overflow logs, PDF page images). Reclaim anything past the TTL once per launch; failures
 // are swallowed so cleanup never blocks startup.
@@ -402,14 +387,11 @@ void pruneAgentScratch(agentScratchRoot).catch((error) => {
 const agentRuntime: AgentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   localFileRoot: agentLocalFileRoot,
   scratchRoot: agentScratchRoot,
-  protectedStoreRoot: resolvedUserDataDir,
   managedSkillService,
   assetResolver: assetService,
   dreamMemoryExtractionEnabled: true,
   errorReporter: reportError,
 });
-folderCapabilityService.onGranted(() => agentRuntime.folderCapabilitiesChanged());
-agentRuntime.folderCapabilitiesChanged();
 const previewTranslationCache = new PreviewTranslationCacheStore(
   join(app.getPath('userData'), 'preview-translation-cache'),
   {
@@ -1954,10 +1936,6 @@ function registerIpc() {
     }
     lastAttachmentPickerDirectory = dirname(result.filePaths[0]!);
     const selectedPaths = result.filePaths.slice(0, maxFiles);
-    for (const selectedPath of selectedPaths) {
-      const selectedStat = await stat(selectedPath).catch(() => null);
-      if (selectedStat?.isDirectory()) await grantAgentFolderCapability(selectedPath);
-    }
     const skippedCount = Math.max(0, result.filePaths.length - selectedPaths.length);
     const files = (await Promise.all(selectedPaths.map(localPickedFile))).filter(
       (file): file is NonNullable<Awaited<ReturnType<typeof localPickedFile>>> => Boolean(file),
@@ -1994,9 +1972,7 @@ function registerIpc() {
     const id = typeof rawOptions?.id === 'string' ? rawOptions.id : '';
     const filePath = localFileSearchCache.get(id);
     if (!filePath) return { file: null };
-    const file = await localPickedFile(filePath);
-    if (file?.entryKind === 'directory') await grantAgentFolderCapability(file.path);
-    return { file };
+    return { file: await localPickedFile(filePath) };
   });
 
   ipcMain.handle('lin:preview-local-file', async (_event, rawOptions?: { id?: unknown }) => {
@@ -2309,42 +2285,6 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
   };
 }
 
-async function pickAgentCapabilityFolder(event: IpcMainInvokeEvent) {
-  const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? settingsWindow ?? mainWindow;
-  const defaultPath = safeAppPath('documents') ?? safeAppPath('home') ?? undefined;
-  const dialogStrings = getMessages(effectiveLocale()).window;
-  const options: Electron.OpenDialogOptions = {
-    ...(defaultPath ? { defaultPath } : {}),
-    title: dialogStrings.handCapabilityFolderTitle,
-    properties: ['openDirectory', 'createDirectory'],
-  };
-  const result = window
-    ? await dialog.showOpenDialog(window, options)
-    : await dialog.showOpenDialog(options);
-  if (result.canceled || !result.filePaths[0]) {
-    return {
-      canceled: true,
-      settings: await readAgentCapabilitySettingsView(),
-    };
-  }
-
-  const root = await canonicalDirectoryPath(result.filePaths[0]);
-  const settings = await grantAgentFolderCapabilityView(root);
-  return {
-    canceled: false,
-    path: root,
-    folder: root,
-    settings,
-  };
-}
-
-async function canonicalDirectoryPath(inputPath: string): Promise<string> {
-  const resolved = await realpath(inputPath);
-  const info = await stat(resolved);
-  if (!info.isDirectory()) throw new Error('Selected path is not a folder.');
-  return resolved;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -2414,7 +2354,7 @@ async function commonDirectoryRecentFilePaths(limit: number): Promise<string[]> 
         if (paths.length >= limit) return paths;
       }
     } catch {
-      // Ignore folders the user has not granted or that do not exist.
+      // Ignore folders that are unavailable to the current OS account or do not exist.
     }
   }
   return paths;
@@ -2423,13 +2363,7 @@ async function commonDirectoryRecentFilePaths(limit: number): Promise<string[]> 
 async function rgFileNameMatches(query: string, limit: number): Promise<string[]> {
   const home = safeAppPath('home');
   if (!home) return [];
-  const capabilities = createFolderCapabilitySnapshot({
-    workspaceRoot: home,
-    includeSystemRoots: true,
-    protectedRoots: [resolvedUserDataDir],
-    revocationGeneration: folderCapabilityService.currentRevocationGeneration(),
-  }, []);
-  const ripgrep = await resolveRipgrepCommand(home, capabilities).catch(() => null);
+  const ripgrep = await resolveRipgrepCommand(home).catch(() => null);
   if (!ripgrep) return [];
   return new Promise((resolve) => {
     const results: string[] = [];
@@ -2925,12 +2859,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       );
     case 'agent_clear_steer':
       return agentRuntime.clearSteer(conversationId());
-    case 'agent_resolve_capability':
-      return agentRuntime.resolveCapability(
-        conversationId(),
-        String(args.requestId),
-        args.resolution === 'granted' ? 'granted' : 'cancelled',
-      );
     case 'agent_resolve_user_question':
       return agentRuntime.resolveUserQuestion(
         conversationId(),
@@ -2961,11 +2889,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_get_capability_settings':
       return readAgentCapabilitySettingsView();
     case 'agent_apply_capability_settings_patch':
-      return applyAgentCapabilitySettingsPatchView(args.patch as { revokeFolders?: unknown; removeBlocks?: unknown });
+      return applyAgentCapabilitySettingsPatchView(args.patch as {
+        removeBlocks?: unknown;
+      });
     case 'agent_append_capability_block':
       return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
-    case 'agent_pick_capability_folder':
-      return pickAgentCapabilityFolder(event);
     case 'agent_upsert_provider_config':
       return upsertProviderConfig(args.provider as AgentProviderConfigInput);
     case 'agent_delete_provider_config':

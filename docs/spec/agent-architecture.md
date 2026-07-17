@@ -45,9 +45,9 @@ are **views, rules, or metadata** of these, not separate primitives.
    `built-in:tenon:assistant`, handle/mention `assistant`). A built-in defined in
    code; user edits layer as a stored overlay. Persona + model/effort + skill
    bindings + tool catalog + timeline memory tools. ✅
-7. **Capability boundary** — direct execution over available resources,
-   persistent folder acquisition, private Tenon control state, and
-   owner-specific unavailable results. ✅
+7. **Capability boundary** — host-account Full Access for every available file
+   and process tool, explicit user blocks, scoped Run tool catalogs, durable
+   audit events, and owner-specific native unavailable results. ✅
 
 ### The one agent — Neva
 
@@ -92,13 +92,15 @@ and every conversation's members are `{user, Neva}`.
 
 - **Delegation (a sub-run — NOT a separate kind of agent / NOT a member)** — Neva
   spawns helper runs for a bounded objective. Delegation is **fork-only**: a fork *is* Neva
-  continuing in an isolated sub-run context (it runs AS Neva — same
+  continuing in a separate sub-run context, not a process or filesystem sandbox
+  (it runs AS Neva — same
   `executingAgentId`/`memoryOwnerAgentId`), never a second agent. The cross-agent
   "fresh" path (a sub-agent with its own identity + memory line) is **removed**
   (`single-agent-finish-collapse`): the `Agent` tool carries no `agent_type`, the
   registry loads only Neva, and no file-backed `.agents/agents/*` definition is
-  loaded. `/research` and background self-work are isolated same-agent Runs; runtime Dream
-  is a restricted top-level run in the protected Dream channel. Sub-runs carry
+  loaded. `/research` and background self-work are separate-context same-agent
+  Runs; runtime Dream is a tool-scoped top-level run in the protected Dream
+  channel. Sub-runs carry
   `parentRunId`; they are **not** conversation members and **not** peers. ✅ — and
   the code honors the model (`agent-run-unification`, shipped): a delegated run is
   an ordinary Run with its OWN `runs/<runId>/` ledger (its own seq space, replayed
@@ -369,7 +371,7 @@ leftover; only the single-agent value is ever assigned.)
 | Timeline memory nodes | ✅ built | durable memory lives in per-day generated-headline `#d-memory` plus optional `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
 | One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` Dream-channel runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; the Dream channel retains the newest 512 run transcripts and prunes older run ledgers/anchor markers/search entries; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
 | Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |
-| Capability boundary | ✅ built | direct execution, persistent folders including `/`, private Tenon control state, user blocks, and scoped tool catalogs |
+| Capability boundary | ✅ built | host-account Full Access for main and child Runs; explicit user blocks, scoped tool catalogs, capability audit events, and native OS/provider boundaries; no process/filesystem isolation between concurrent Runs |
 
 ## Known tensions / honest caveats
 

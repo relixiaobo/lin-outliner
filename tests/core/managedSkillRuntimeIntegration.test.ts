@@ -7,10 +7,6 @@ import type { ManagedSkillGitHubClient } from '../../src/main/managedSkillGitHub
 import { ManagedSkillService } from '../../src/main/managedSkillService';
 import { ManagedSkillStore, storedVersionFromValidated } from '../../src/main/managedSkillStore';
 import { validateManagedSkillFiles } from '../../src/main/managedSkillValidation';
-import {
-  createFolderCapabilitySnapshot,
-  protectedRootForPath,
-} from '../../src/main/agentFolderCapabilities';
 
 const roots: string[] = [];
 
@@ -99,22 +95,6 @@ describe('managed skill runtime integration', () => {
     });
 
     expect(await runtime.getSkill('same-name')).toMatchObject({ source: 'project', rootDir: projectRoot });
-  });
-
-  test('opens only an invoked managed hash for reads inside protected userData', async () => {
-    const fixture = await managedFixture('capability-skill');
-    const siblingVersion = path.join(fixture.contentRoot, 'capability-skill', 'e'.repeat(64));
-    await mkdir(siblingVersion, { recursive: true });
-    const snapshot = createFolderCapabilitySnapshot({
-      workspaceRoot: fixture.workspace,
-      activeSkillReadRoots: [fixture.versionRoot],
-      protectedRoots: [fixture.userData],
-    }, [fixture.userData]);
-    const protectedRoot = snapshot.protectedRoots[0]!.root;
-
-    expect(protectedRootForPath(snapshot, fixture.versionRoot, 'read')).toBeNull();
-    expect(protectedRootForPath(snapshot, siblingVersion, 'read')).toBe(protectedRoot);
-    expect(protectedRootForPath(snapshot, fixture.versionRoot, 'write')).toBe(protectedRoot);
   });
 
   test('never resolves managed content through the mutable authoring path', async () => {

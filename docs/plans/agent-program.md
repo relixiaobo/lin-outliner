@@ -57,9 +57,9 @@ Already real; the rebuild sits **on top**, it does not re-implement these:
   run-scoped preapproval; `model`/`effort` override; `context: fork`; slash-only
   built-in `/skillify`; governed file-tool self-authoring with hot-reload and
   `skill.*` audit events (`docs/spec/agent-skills.md`).
-- **Permissions** — `allow | folder_required | blocked` + persistent folder
-  capabilities + one sandboxed process executor + direct hard/user/restricted
-  blocks + durable unattended recovery + permission events
+- **Permissions** — Full Access under the current OS account + explicit user
+  blocks + direct process execution + paired capability audit events; no folder
+  acquisition, agent process sandbox, or unattended permission recovery
   (`docs/spec/agent-tool-permissions.md`).
 - **Subagents** — fresh / fork / background runs + sidechain transcripts + background
   notifications + `Agent` / `AgentStatus` / `AgentSend` / `AgentStop`
@@ -124,7 +124,7 @@ that consume it — proof it belongs here, not inside one feature plan.
 | F3 | **`actor` on message records** | `AgentEventMessageRecord.actor` is required; runtime-authored events use the stable assistant principal instead of a hardcoded `'pi-mono'` author | conversation-model (notifications, multi-agent POV, forwarding), task delivery |
 | F4 | **Internal domain-event bus + taxonomy** | The M0 bus exists with persisted-log, renderer-projection, trusted-observer, and hook-interceptor lanes. Consumer-specific notification/hook policy remains later work. | **notifications** (conv-model, trusted observer) + **hooks** (self-mod, untrusted) + ask-question + gen-ui + scheduled + config + skills |
 | F5 | **`AgentSessionState` split** | Active-run state is structurally separated from the runtime session object and aligns with the F2 run log. Remaining session-shaped runtime fields are internal bridge debt, not a protocol shape for new consumers. | background tasks, scheduled routines, multi-agent channels |
-| F6 | **Protocol-surface type adds (consolidated)** | Consolidated event/type reservations landed for task, notification, config, review-card, skill audit, user-question/widget state, run meta, payload scope, command nodes, and the `AgentSafetyMode` user-facing default policy split from the restricted delegation sandbox | all plans |
+| F6 | **Protocol-surface type adds (consolidated)** | Consolidated event/type reservations landed for task, notification, config, review-card, skill audit, user-question/widget state, run meta, payload scope, and command nodes. The obsolete safety-mode and folder-capability protocol was later removed by the Full Access-only clean cut. | all plans |
 
 ### Cross-plan event taxonomy (design ONCE)
 
@@ -137,7 +137,7 @@ naming; align lifecycle points to it rather than inventing variants.
 |---|---|---|---|
 | **Lifecycle** (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PreCompact`, `PostCompact`, `Stop`) | runtime | hooks (self-mod), notifications | cc-2.1 names; the hook event surface |
 | **Run / execution** (`run.started/completed/failed`, `*_message.delta`, `thinking.delta`, `tool_call.*`, `tool_result.created`) | the run loop | run log, debug panel | live in the **run log** (F2), not the conversation log — keeps `tool_call ↔ tool_result` pairs off the shared channel stream |
-| **Permission** (`tool.permission.checked` → `tool.permission.resolved`, keyed by request id) | permission engine | approval UI, hooks, run log, `needs-input` | **M0 pins ONE canonical vocabulary + the request-id join** — reconciles today's `tool.permission.checked/resolved` + `approval.*` dual-track, which the spec admits can't join (`docs/spec/agent-tool-permissions.md:144,189`) |
+| **Capability audit** (`tool.capability.checked` → `tool.capability.resolved`, keyed by request id) | capability evaluator | run log, debug tooling | Synchronous `allow | unavailable` audit around default Full Access and explicit user blocks. There is no approval UI or `needs-input` branch. |
 | **Distillation** (`compaction.completed`, generalized) | compaction / consolidation | context assembly, navigation, recall, Dream span location | a recorded summary over a **retained** range; carries the addressable `source` down-pointer; Dream uses summaries as locators, then reads raw conversation/run evidence before writing memory ([[agent-data-model]]) |
 | **Task** (`TaskCreated`, `TaskCompleted`, `needs-input`) | task plane (conv-model) | task panel, notifications, hooks | self-mod's `TaskCreated/Completed` hooks **depend on conv-model building this** |
 | **Notification / attention** | task plane, runs | immediate origin target; visible conversations own in-stream + unread/OS projection | Issue children route first to their direct parent Agent Session; trusted internal observer; reuses **F3 `actor`** |

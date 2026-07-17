@@ -2,7 +2,6 @@ import { beforeEach, expect, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createFolderCapabilitySnapshot } from '../../src/main/agentFolderCapabilities';
 import {
   clearRipgrepCommandCacheForTests,
   getBundledRipgrepExecutablePath,
@@ -47,13 +46,6 @@ async function withTempDir<T>(fn: (root: string) => Promise<T>): Promise<T> {
   }
 }
 
-function processCapabilities(root: string) {
-  return createFolderCapabilitySnapshot({
-    workspaceRoot: root,
-    includeSystemRoots: true,
-  }, []);
-}
-
 test('resolves LIN_AGENT_RIPGREP_COMMAND with fixed prefix args', async () => {
   await withTempDir(async (root) => {
     const fakeRg = path.join(root, 'fake-rg');
@@ -75,7 +67,7 @@ test('resolves LIN_AGENT_RIPGREP_COMMAND with fixed prefix args', async () => {
       LIN_AGENT_EXTRA_TOOL_PATH: undefined,
     }, async () => {
       await mkdir(process.env.PATH!, { recursive: true });
-      const resolved = await resolveRipgrepCommand(root, processCapabilities(root));
+      const resolved = await resolveRipgrepCommand(root);
       expect(resolved).toMatchObject({
         command: fakeRg,
         argsPrefix: ['--fixed-prefix'],
@@ -99,7 +91,7 @@ bundledRipgrepTest('resolves bundled ripgrep when PATH has no system rg', async 
       LIN_AGENT_EXTRA_TOOL_PATH: undefined,
       PATH: emptyPath,
     }, async () => {
-      const resolved = await resolveRipgrepCommand(root, processCapabilities(root));
+      const resolved = await resolveRipgrepCommand(root);
       expect(resolved.mode).toBe('bundled');
       expect(resolved.command).toBe(getBundledRipgrepExecutablePath());
       expect(resolved.version).toContain('ripgrep 15.1.0');

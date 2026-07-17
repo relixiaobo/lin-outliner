@@ -19,7 +19,6 @@ export interface RunProfile {
   defaultSkills?: string[];
   modelOverride?: string;
   effortOverride?: string;
-  unattended?: boolean;
   modelSelectable?: boolean;
   internalOnly?: boolean;
   hiddenFromWorkRuns?: boolean;
@@ -49,7 +48,6 @@ export const BUILT_IN_RUN_PROFILES = {
     defaultContext: 'none',
     defaultObjectiveRole: 'verifier',
     defaultDisposition: 'attended',
-    unattended: true,
     internalOnly: true,
     active: true,
   },
@@ -82,7 +80,6 @@ export const BUILT_IN_RUN_PROFILES = {
     label: 'Dream',
     defaultContext: 'none',
     defaultDisposition: 'detached',
-    unattended: true,
     internalOnly: true,
     hiddenFromWorkRuns: true,
     active: true,

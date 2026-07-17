@@ -20,7 +20,6 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   DatabaseIcon,
-  FolderIcon,
   ICON_SIZE,
   LoaderIcon,
   PasswordIcon,
@@ -62,7 +61,6 @@ import { TranslationDataSettingsGroup } from './TranslationDataSettingsGroup';
 import { ManagedSkillsSettings } from './ManagedSkillsSettings';
 import {
   capabilitySettingsRemovalPatch,
-  rebaseCapabilityDraft,
 } from './agentCapabilitySettings';
 
 interface AgentSettingsViewProps {
@@ -322,7 +320,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   // applies immediately, persisted by main, no Save step. Default off.
   const [osNotificationsEnabled, setOsNotificationsEnabled] = useState(false);
   const [diagnosticsBusy, setDiagnosticsBusy] = useState<null | 'reveal' | 'export'>(null);
-  const [capabilityFolderBusy, setCapabilityFolderBusy] = useState(false);
   // Display language: the picker reads/writes the shared i18n context (seeded before
   // first paint, broadcast across windows), so it applies instantly like the theme.
   const { locale, t, setLocale } = useI18n();
@@ -609,7 +606,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     [providerCatalog, settings],
   );
 
-  const capabilityFolders = capabilityDraft?.folders ?? capabilitySettings?.folders ?? [];
   const capabilityBlocks = capabilityDraft?.blocks ?? capabilitySettings?.blocks ?? [];
   const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
   const capabilityPatch = capabilitySettings && capabilityDraft
@@ -617,7 +613,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     : null;
   const capabilityDraftDirty = Boolean(
     capabilityPatch
-    && (capabilityPatch.revokeFolders.length > 0 || capabilityPatch.removeBlocks.length > 0),
+    && capabilityPatch.removeBlocks.length > 0,
   );
   const showFooterActions = category === 'security'
     ? capabilityDraftDirty || runtimeDraftDirty
@@ -635,11 +631,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
       ...base,
       [kind]: base[kind].filter((candidate) => candidate !== rule),
     });
-  }
-
-  function revokeCapabilityFolder(folder: string) {
-    const base = capabilityDraft ?? capabilitySettings ?? emptyCapabilitySettings();
-    setCapabilityDraft({ ...base, folders: base.folders.filter((candidate) => candidate !== folder) });
   }
 
   function renderCapabilityRuleRows(
@@ -666,28 +657,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         wrap
       />
     ));
-  }
-
-  async function chooseCapabilityFolder() {
-    setCapabilityFolderBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await api.agentPickCapabilityFolder();
-      if (!mountedRef.current) return;
-      const nextDraft = capabilitySettings && capabilityDraft
-        ? rebaseCapabilityDraft(capabilitySettings, capabilityDraft, result.settings)
-        : result.settings;
-      setCapabilitySettings(result.settings);
-      setCapabilityDraft(nextDraft);
-      if (result.canceled) return;
-      setNotice(t.settings.security.handedFolderNotice({ path: result.path ?? '' }));
-      await onApplied();
-    } catch (caught) {
-      if (mountedRef.current) setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      if (mountedRef.current) setCapabilityFolderBusy(false);
-    }
   }
 
   // The footer Save persists ONLY what this pane owns — runtime (security /
@@ -1109,39 +1078,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
               </section>
             ) : category === 'security' ? (
               <section className="agent-settings-section settings-security-section" aria-label={t.settings.security.sectionAriaLabel}>
-                <InsetGroup
-                  ariaLabel={t.settings.security.boundariesAriaLabel}
-                  label={t.settings.security.boundariesGroup}
-                >
+                <InsetGroup ariaLabel={t.settings.security.accessAriaLabel} label={t.settings.security.accessGroup}>
                   <InsetRow
-                    label={t.settings.security.handFolderLabel}
-                    leading={<FolderIcon size={ICON_SIZE.menu} aria-hidden />}
-                    sublabel={t.settings.security.handFolderSublabel}
-                    trailing={(
-                      <Button
-                        disabled={saving || capabilityFolderBusy}
-                        onClick={() => void chooseCapabilityFolder()}
-                        size="sm"
-                        variant="secondary"
-                      >
-                        {capabilityFolderBusy ? t.settings.security.handingFolderAction : t.settings.security.handFolderAction}
-                      </Button>
-                    )}
+                    label={t.settings.security.accessModeLabel}
+                    sublabel={t.settings.security.fullAccessSublabel}
+                    trailing={t.settings.security.fullAccessLabel}
                     wrap
                   />
-                  {capabilityFolders.length === 0 ? <InsetRow disabled label={t.settings.security.noBoundaries} /> : capabilityFolders.map((folder) => (
-                    <InsetRow
-                      key={folder}
-                      label={folder}
-                      leading={<FolderIcon size={ICON_SIZE.menu} aria-hidden />}
-                      trailing={(
-                        <Button onClick={() => revokeCapabilityFolder(folder)} size="sm" variant="ghost">
-                          {t.settings.security.revokeGrant}
-                        </Button>
-                      )}
-                      wrap
-                    />
-                  ))}
                 </InsetGroup>
 
                 <InsetGroup ariaLabel={t.settings.security.blocksAriaLabel} label={t.settings.security.blocksGroup}>
@@ -1155,13 +1098,13 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
 
                 <InsetGroup
                   ariaLabel={t.settings.security.systemBoundaryAriaLabel}
-                  footnote={t.settings.security.systemBoundaryNote}
+                  footnote={t.settings.security.fullAccessBoundaryNote}
                   label={t.settings.security.systemBoundaryGroup}
                 >
                   <InsetRow
                     className="settings-system-boundary-row"
-                    label={t.settings.security.systemBoundaryLabel}
-                    sublabel={t.settings.security.systemBoundarySublabel}
+                    label={t.settings.security.fullAccessBoundaryLabel}
+                    sublabel={t.settings.security.fullAccessBoundarySublabel}
                     wrap
                   />
                 </InsetGroup>
@@ -1410,7 +1353,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   <Button onClick={onClose} variant="ghost">
                     {t.settings.footer.cancel}
                   </Button>
-                  <Button disabled={saving || capabilityFolderBusy} onClick={save} variant="primary">
+                  <Button disabled={saving} onClick={save} variant="primary">
                     {saving ? t.settings.footer.saving : t.settings.footer.save}
                   </Button>
                 </div>
@@ -1580,7 +1523,7 @@ function capabilityRuleLabel(rule: string, t: Messages): string {
 }
 
 function emptyCapabilitySettings(): AgentCapabilitySettingsView {
-  return { folders: [], blocks: [], diagnostics: [] };
+  return { blocks: [], diagnostics: [] };
 }
 
 function formatSettingsDate(timestamp: number): string {

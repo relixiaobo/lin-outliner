@@ -151,17 +151,17 @@ test.describe('agent settings window', () => {
     });
   }
 
-  test('shows folder capabilities, user blocks, and the system boundary', async ({ page }) => {
+  test('defaults to Full Access with truthful host and credential scope', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Security/ }).click();
-    await expect(settings.getByRole('list', { name: 'System boundary' })).toContainText('Tenon control state');
-    await expect(settings.getByText('Private to Tenon; agent file tools and processes cannot read or change it.')).toBeVisible();
-    await expect(settings.getByText('Other host operations run under your macOS account and use native authorization or service sign-in when required.')).toBeVisible();
-    await expect(settings.getByRole('radio', { name: 'Full Access' })).toHaveCount(0);
-    await expect(settings.getByText('Add an exception')).toHaveCount(0);
-    await expect(settings.locator('.settings-security-section .select-popup-input')).toHaveCount(0);
+    const filesystemRow = settings.locator('.inset-row', { hasText: 'Filesystem' }).first();
+    await expect(filesystemRow.locator('.inset-row-trailing')).toHaveText('Full Access');
+    await expect(settings.getByRole('list', { name: 'System boundary' })).toContainText('macOS account');
+    await expect(settings.getByText(/same filesystem access as Tenon/)).toBeVisible();
+    await expect(settings.getByText(/including Tenon data and stored provider credentials/)).toBeVisible();
     await expect(settings.getByRole('list', { name: 'Your blocks' })).toContainText('No explicit blocks.');
-    await expect(settings.getByRole('list', { name: 'Folder access' })).toContainText('No additional folders.');
+    await expect(settings.getByText('Restricted', { exact: true })).toHaveCount(0);
+    await expect(settings.getByRole('button', { name: /Choose Folder/ })).toHaveCount(0);
 
     const modeRowMetrics = await settings.locator('.settings-system-boundary-row').evaluate((row) => {
       const sublabel = row.querySelector<HTMLElement>('.inset-row-sublabel');
@@ -178,6 +178,35 @@ test.describe('agent settings window', () => {
     expect(modeRowMetrics!.sublabelWidth).toBeGreaterThanOrEqual(300);
     expect(modeRowMetrics!.sublabelHeight).toBeLessThan(48);
   });
+
+  for (const colorScheme of ['light', 'dark'] as const) {
+    test(`keeps the Full Access status contained without overlap in ${colorScheme} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      const settings = await openSettings(page);
+      await settings.getByRole('button', { name: /^Security/ }).click();
+      const row = settings.locator('.inset-row', { hasText: 'Filesystem' }).first();
+      const status = row.locator('.inset-row-trailing');
+      await expect(status).toHaveText('Full Access');
+
+      const metrics = await row.evaluate((element) => {
+        const rowBox = element.getBoundingClientRect();
+        const statusBox = element.querySelector<HTMLElement>('.inset-row-trailing')?.getBoundingClientRect();
+        const sublabelBox = element.querySelector<HTMLElement>('.inset-row-sublabel')?.getBoundingClientRect();
+        if (!statusBox || !sublabelBox) return null;
+        const overlaps = !(
+          sublabelBox.right <= statusBox.left
+          || statusBox.right <= sublabelBox.left
+          || sublabelBox.bottom <= statusBox.top
+          || statusBox.bottom <= sublabelBox.top
+        );
+        return {
+          contained: statusBox.left >= rowBox.left && statusBox.right <= rowBox.right,
+          overlaps,
+        };
+      });
+      expect(metrics).toEqual({ contained: true, overlaps: false });
+    });
+  }
 
   test('removes user block rules through the Security pane', async ({ page }) => {
     const settings = await openSettings(page, '', {
@@ -196,27 +225,8 @@ test.describe('agent settings window', () => {
       const updateCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_apply_capability_settings_patch');
       return updateCall?.args.patch;
     }).toEqual({
-      revokeFolders: [],
       removeBlocks: ['Command(git push origin main)'],
     });
-  });
-
-  test('hands a folder to Tenon as a remembered folder capability', async ({ page }) => {
-    const settings = await openSettings(page, '', {
-      capabilityFolders: ['/tmp/project'],
-    });
-    await settings.getByRole('button', { name: /^Security/ }).click();
-
-    const boundaries = settings.getByRole('list', { name: 'Folder access' });
-    await boundaries.getByRole('button', { name: 'Choose Folder…' }).click();
-
-    await expect(boundaries).toContainText('/tmp/project');
-    await expect(boundaries).toContainText('/mock/handoff-folder');
-    await expect(settings.getByText('Folder handed to Tenon: /mock/handoff-folder')).toBeVisible();
-    await expect.poll(async () => {
-      const pickCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_pick_capability_folder');
-      return pickCall?.args;
-    }).toEqual({});
   });
 
   test('opens agent config from the Agent Profiles list', async ({ page }) => {

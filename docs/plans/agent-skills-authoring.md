@@ -172,7 +172,8 @@ The upgraded workflow should reliably produce:
   invocation gate.
 - No dedicated preview-card protocol in this PR. The complete `SKILL.md` or
   focused diff is shown only when it is needed to resolve a material ambiguity.
-  The ordinary folder-capability policy remains the only file access surface.
+  Skill writes use the ordinary Full Access file-tool path plus the validated
+  authoring gateway; this work adds no access-acquisition protocol.
 - No executable support-file authoring. The existing M1 deny path for executable
   support files stays in force until a separate ratify+sandbox design lands.
 - No background curation or silent skill rewriting.
@@ -403,9 +404,9 @@ loader enumerates (defaults + `additionalSkillDirectories` + on-demand
 `discoverSkillDirsForPaths([filePath])`). The loader uses it to enumerate; the file-tool
 gateway (`agentLocalTools.ts:911,986`) calls it to detect a skill write. The hardcoded
 regex in `detectAgentSkillContentTarget` is deleted. **Recognition ≠ permission:** every
-real skill dir is recognized/governed; whether a given dir is *writable* (the
-additional-dirs question) becomes a separate permission policy (default read-only), denied
-at the permission layer — never by the detector failing to see it.
+real skill dir is recognized/governed. Host writability comes from Full Access,
+the OS account, and explicit user blocks; definition validation is enforced by
+the authoring gateway, never by the detector failing to see the path.
 
 **Seam 3 — write-time governance is heavier than it needs to be.** lin runs frontmatter
 validation, support-file shape checks, a `RISKY_ALLOWED_TOOL_NAMES` no-escalation guard,
@@ -413,9 +414,9 @@ secret scanning, path-traversal/symlink/exec checks, audit, snapshot, and forced
 `disable-model-invocation` all at write time (`agentSkillAuthoring.ts`). Verified against
 the invocation path: catastrophic/platform hard-blocks and global denies are enforced at
 invocation regardless of preapproval (`agentPermissions.ts:271,281,297`), so the guard's
-"can't exceed the floor" portion is **redundant**; but skill `allowed-tools` *do* grant in
-restricted mode (`:311`), so the "don't preapprove risky tools" portion is **not**
-redundant. cc-2.1 handles the latter by human review (skillify confirm) + the floor, not a
+"can't exceed the floor" portion is **redundant**. Skill `allowed-tools` narrows
+the Run catalog and cannot widen the parent's catalog or host authority. cc-2.1
+handles authorship review in the Skillify workflow rather than through a
 write-time string guard.
 
 → **Fix — re-layer along the cc-2.1 split** (corrected in the 2026-06-10 re-review;
@@ -538,11 +539,12 @@ deliberately conservative (self-modification §8):
   (Now an instruction-layer concern — carried in `skillify` like cc-2.1, resolved in the
   creative-UX PR (#230), not the convergence PR.)
 - ~~**Writable additional dirs**~~ — **resolved (convergence):** recognition ≠ permission.
-  All real skill dirs are recognized/governed via the single resolver; writability is a
-  separate permission policy (default read-only), denied at the permission layer.
+  All real skill dirs are recognized/governed via the single resolver; writes use
+  Full Access subject to native OS authorization, explicit blocks, and the Skill
+  authoring gateway.
 - ~~**Per-skill permission suggestions**~~ — **resolved:** no dedicated prompt or
-  UI. `allowed-tools` is restricted-Run preapproval metadata; the global folder
-  capability service and hard floor remain authoritative.
+  UI. `allowed-tools` narrows the Run tool catalog; Full Access, explicit blocks,
+  native authorization, and typed-tool contracts remain authoritative.
 - **Where bundled adapters ship** (from [[agent-import-skill]]): a built-in
   `import/adapters/` skill bundle (versions with the app → `built-in`) vs the user
   `~/.agents/skills` dir. Leaning `built-in` now that the source exists.
