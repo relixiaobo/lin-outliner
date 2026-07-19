@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Single-delivery projection routing (PR #412, codex)** — local renderer
+  document commands now apply their returned projection update once, while the
+  main process suppresses the duplicate `projection_changed` event back to the
+  invoking `webContents`. Main-owned mutations remain broadcastable, and live
+  search refreshes route through the command runner so sender suppression cannot
+  leave search rows stale. **Gate (main):** review found one swallowed
+  live-search refresh path; codex fixed it before merge. Verified with
+  typecheck, focused Core/renderer tests, full renderer tests, docs check, and
+  diff check.
 - **Renderer no-op command outcomes (PR #411, codex)** — blocked, empty, or
   local-UI-only renderer command paths now return a renderer-local no-op instead
   of fetching and reseeding the full projection. The command runner skips

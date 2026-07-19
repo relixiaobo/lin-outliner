@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
@@ -31,10 +31,12 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-19).** Open PR queue: none. Recently merged: #411
-(`codex/renderer-noop-command-outcome`) merged 2026-07-19 after main review;
-see *Recently completed*. #410 (`codex-2/agent-full-access-default`) merged
-2026-07-17 after iterative main review; see *Recently completed*. #409
+**In flight (2026-07-19).** Open PR queue: none. Recently merged: #412
+(`codex/single-delivery-projection-routing`) merged 2026-07-19 after main
+review; see *Recently completed*. #411 (`codex/renderer-noop-command-outcome`)
+merged 2026-07-19 after main review; see *Recently completed*. #410
+(`codex-2/agent-full-access-default`) merged 2026-07-17 after iterative main
+review; see *Recently completed*. #409
 (`codex-3/table-view`) merged 2026-07-17
 after three main review passes; see *Recently completed*. #408
 (`codex-4/preview-translation-persistent-cache`)
@@ -517,6 +519,22 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **single-delivery-projection-routing**
+  (`codex/single-delivery-projection-routing`, PR #412, codex, merged
+  2026-07-19, fast-track) — renderer-originated document mutations now carry
+  the invoking `webContents` id through `DocumentService`, letting the main IPC
+  delivery path suppress only the redundant `projection_changed` event back to
+  the sender while keeping main-owned and non-local mutations broadcastable.
+  `useCommandRunner` no longer needs renderer-local lifecycle suppression, and
+  live search refreshes now route through the command runner so their returned
+  projection updates are applied locally even when the sender event is skipped.
+  **Gate (main):** first review found that direct live-search refresh calls
+  ignored their returned updates after sender suppression; codex fixed all three
+  outliner paths before merge, and the final pass found no reportable issues.
+  Verified on final head `e2390e4b` and the latest-`main` merge result with
+  typecheck, focused Core/renderer tests, full renderer tests, `docs:check`, and
+  diff check.
 
 - **renderer-noop-command-outcome**
   (`codex/renderer-noop-command-outcome`, PR #411, codex, merged 2026-07-19,
