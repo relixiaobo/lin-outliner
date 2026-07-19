@@ -61,14 +61,26 @@ export interface OperationStackState {
   topRedo?: OperationHistoryEntry;
 }
 
-export class OperationJournal {
-  private entries: OperationHistoryEntry[];
+const DEFAULT_MAX_ENTRIES = 500;
 
-  constructor(entries: unknown[] | undefined) {
-    this.entries = Array.isArray(entries) ? entries.filter(isOperationHistoryEntry) : [];
+export class OperationJournal {
+  private entries: OperationHistoryEntry[] = [];
+  private entriesByOrigin: Record<OperationHistoryOrigin, OperationHistoryEntry[]> = {
+    agent: [],
+    user: [],
+    system: [],
+  };
+  private entryByOperationId = new Map<string, OperationHistoryEntry>();
+  private readonly maxEntries: number;
+
+  constructor(entries: unknown[] | undefined, options: { maxEntries?: number } = {}) {
+    this.maxEntries = Math.max(1, options.maxEntries ?? DEFAULT_MAX_ENTRIES);
+    const restored = Array.isArray(entries) ? entries.filter(isOperationHistoryEntry) : [];
+    for (const entry of restored.slice(-this.maxEntries)) this.appendEntry(entry);
   }
 
   entriesForSerialization(limit: number) {
+    if (limit <= 0) return [];
     return this.entries.slice(-limit);
   }
 
@@ -96,7 +108,7 @@ export class OperationJournal {
   }
 
   record(entry: OperationHistoryEntry) {
-    const existing = findLastEntry(this.entries, entry.operationId);
+    const existing = this.entryByOperationId.get(entry.operationId);
     if (existing) {
       existing.affectedNodeIds = [...new Set([...existing.affectedNodeIds, ...entry.affectedNodeIds])].sort();
       existing.command ??= entry.command;
@@ -105,11 +117,12 @@ export class OperationJournal {
       existing.summary = entry.summary;
       return;
     }
-    this.entries.push(entry);
+    this.appendEntry(entry);
+    this.evictOverflow();
   }
 
   findByOperationId(operationId: string): OperationHistoryEntry | undefined {
-    return findLastEntry(this.entries, operationId);
+    return this.entryByOperationId.get(operationId);
   }
 
   list(
@@ -117,13 +130,12 @@ export class OperationJournal {
     stack: OperationStackState,
   ): OperationHistoryResult {
     const { origin, limit, offset } = query;
-    const entries = this.entries
-      .filter((entry) => origin === 'all' || entry.origin === origin)
-      .slice()
-      .reverse();
-    const items = entries
-      .slice(offset, offset + limit)
-      .map((entry) => decorateHistoryItem(entry, stack));
+    const entries = origin === 'all' ? this.entries : this.entriesByOrigin[origin];
+    const items: OperationHistoryItem[] = [];
+    for (let index = entries.length - 1 - offset; index >= 0 && items.length < limit; index -= 1) {
+      const entry = entries[index];
+      if (entry) items.push(decorateHistoryItem(entry, stack));
+    }
     return {
       action: 'list',
       historyMode: 'journal',
@@ -134,13 +146,29 @@ export class OperationJournal {
       ...stackStateResult(stack),
     };
   }
-}
 
-function findLastEntry(entries: OperationHistoryEntry[], operationId: string) {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (entries[index]?.operationId === operationId) return entries[index];
+  private appendEntry(entry: OperationHistoryEntry) {
+    this.entries.push(entry);
+    this.entriesByOrigin[entry.origin].push(entry);
+    this.entryByOperationId.set(entry.operationId, entry);
   }
-  return undefined;
+
+  private evictOverflow() {
+    while (this.entries.length > this.maxEntries) {
+      const evicted = this.entries.shift();
+      if (!evicted) continue;
+      const originEntries = this.entriesByOrigin[evicted.origin];
+      if (originEntries[0] === evicted) {
+        originEntries.shift();
+      } else {
+        const index = originEntries.indexOf(evicted);
+        if (index >= 0) originEntries.splice(index, 1);
+      }
+      if (this.entryByOperationId.get(evicted.operationId) === evicted) {
+        this.entryByOperationId.delete(evicted.operationId);
+      }
+    }
+  }
 }
 
 export function isOperationHistoryEntry(value: unknown): value is OperationHistoryEntry {
