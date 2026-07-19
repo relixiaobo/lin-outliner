@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
@@ -31,9 +31,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-17).** Open PR queue: none. Recently merged: #410
-(`codex-2/agent-full-access-default`) merged 2026-07-17 after iterative main
-review; see *Recently completed*. #409 (`codex-3/table-view`) merged 2026-07-17
+**In flight (2026-07-19).** Open PR queue: none. Recently merged: #411
+(`codex/renderer-noop-command-outcome`) merged 2026-07-19 after main review;
+see *Recently completed*. #410 (`codex-2/agent-full-access-default`) merged
+2026-07-17 after iterative main review; see *Recently completed*. #409
+(`codex-3/table-view`) merged 2026-07-17
 after three main review passes; see *Recently completed*. #408
 (`codex-4/preview-translation-persistent-cache`)
 merged 2026-07-17 after two main review passes; see *Recently completed*. #407
@@ -515,6 +517,22 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **renderer-noop-command-outcome**
+  (`codex/renderer-noop-command-outcome`, PR #411, codex, merged 2026-07-19,
+  fast-track) — blocked, empty, or local-UI-only renderer command paths now
+  return a renderer-local no-op instead of fetching and reseeding the current
+  projection. `useCommandRunner` skips projection application, focus commits,
+  local pre-apply work, and `flushSync` for those no-op outcomes, while real
+  command results still apply their deltas. Slash image/attachment cleanup uses
+  nested runner calls for real mutations and aborts on nested failure so the
+  outer no-op cannot clear the user-visible error or continue into the file
+  picker. **Gate (main):** first review found that nested slash-file cleanup
+  failures were swallowed; codex fixed it with an explicit abort outcome, and
+  the final pass found no reportable issues. Verified on final head `cdfcadd4`
+  and the latest-`main` merge result with typecheck, focused renderer tests,
+  diff check, and a renderer scan proving no `api.getProjection()` sentinels
+  remain.
 
 - **agent-full-access-default** (`codex-2/agent-full-access-default`, PR #410,
   codex-2, merged 2026-07-17, plan-track) — removed Restricted access and left

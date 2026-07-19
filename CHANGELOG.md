@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Renderer no-op command outcomes (PR #411, codex)** — blocked, empty, or
+  local-UI-only renderer command paths now return a renderer-local no-op instead
+  of fetching and reseeding the full projection. The command runner skips
+  projection application, focus commits, and `flushSync` for those no-ops, while
+  nested slash-file cleanup failures abort without clearing the user-visible
+  error. **Gate (main):** review found one nested command failure swallowing
+  issue; codex fixed it before merge. Verified with typecheck, focused renderer
+  tests, diff check, and a renderer scan proving no `api.getProjection()`
+  sentinels remain.
 - **Provider transient request retries (PR #395, codex)** — OpenAI and Azure
   Responses requests now retry pre-stream `5xx` and bounded transport failures
   four times with abortable jittered backoff, while retaining the independent
