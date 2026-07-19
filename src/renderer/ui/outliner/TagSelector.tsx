@@ -1,9 +1,9 @@
 import { api } from '../../api/client';
-import type { CommandResult, NodeId, NodeProjection, ProjectionSnapshot } from '../../api/types';
+import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { AddIcon, ICON_SIZE } from '../icons';
 import { tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
-import type { CommandRunner } from '../shared';
+import { commandRunnerNoop, type CommandRunner, type CommandRunnerOperationResult } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { PopoverListItem } from './PopoverList';
 
@@ -17,8 +17,8 @@ interface TagSelectorProps {
   run: CommandRunner;
   close: () => void;
   clearTriggerText: () => Promise<void>;
-  applyTag?: (tag: NodeProjection) => Promise<CommandResult | ProjectionSnapshot | null | void>;
-  createTagAndApply?: (name: string) => Promise<CommandResult | ProjectionSnapshot | null | void>;
+  applyTag?: (tag: NodeProjection) => Promise<CommandRunnerOperationResult>;
+  createTagAndApply?: (name: string) => Promise<CommandRunnerOperationResult>;
 }
 
 export function TagSelector(props: TagSelectorProps) {
@@ -43,7 +43,7 @@ export function TagSelector(props: TagSelectorProps) {
           if (props.applyTag) {
             void props.run(async () => {
               const result = await props.applyTag?.(tag);
-              return result ?? api.getProjection();
+              return result ?? commandRunnerNoop();
             });
             return;
           }
@@ -64,7 +64,7 @@ export function TagSelector(props: TagSelectorProps) {
         if (props.createTagAndApply) {
           void props.run(async () => {
             const result = await props.createTagAndApply?.(item.name);
-            return result ?? api.getProjection();
+            return result ?? commandRunnerNoop();
           });
           return;
         }

@@ -27,7 +27,7 @@ import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel, definitionOutlinerPlaceholder } from './definition/definitionConfig';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../core/configProjection';
 import type { SlashCommandId } from './interactions/slashCommands';
-import type { CommandRunner, EditorTrigger, NavigateRootOptions, TriggerState } from './shared';
+import { commandRunnerNoop, type CommandRunner, type EditorTrigger, type NavigateRootOptions, type TriggerState } from './shared';
 import {
   clearFocusRequestState,
   clearFocusState,
@@ -570,7 +570,7 @@ export function NodePanel(props: NodePanelProps) {
     if (commandId === 'command_palette') {
       await clearTitleTriggerText();
       props.setUi((prev) => ({ ...prev, commandOpen: true }));
-      return api.getProjection();
+      return commandRunnerNoop();
     }
 
     return null;

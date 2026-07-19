@@ -170,10 +170,10 @@ describe('reduceProjection — delta structural change', () => {
     expect(next.index.byId.get('c')!.parentId).toBe('a2');
   });
 
-  test('a same-revision full reseed is a no-op (sentinel refresh)', () => {
+  test('a same-revision full reseed is a no-op', () => {
     const prev = seed(5);
-    // `api.getProjection()` returns the current snapshot; folding it as a full at
-    // the held revision must not churn renderRev (it would invalidate every memo).
+    // Folding a refresh snapshot at the held revision must not churn renderRev
+    // (it would invalidate every memo).
     const same = reduceProjection(prev, { kind: 'full', revision: 5, projection: prev.index.projection });
     expect(same).toBe(prev);
   });

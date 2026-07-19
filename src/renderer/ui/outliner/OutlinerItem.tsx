@@ -57,7 +57,7 @@ import {
 } from '../interactions/rowInteractions';
 import type { SlashCommandId } from '../interactions/slashCommands';
 import type { CommandRunner, CommandRunnerOptions, NavigateRootOptions, TriggerAnchor, TriggerState } from '../shared';
-import { collapseExpandedParentIds, outlinerChildren, parentIdsEmptiedByOutdent, textOf } from '../shared';
+import { collapseExpandedParentIds, commandRunnerNoop, outlinerChildren, parentIdsEmptiedByOutdent, textOf } from '../shared';
 import {
   clearFocusRequestState,
   clearFocusState,
@@ -1005,7 +1005,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       treeBlockReason,
       sourceIsReference: node.type === 'reference',
     });
-    if (action === 'blocked') return api.getProjection();
+    if (action === 'blocked') return commandRunnerNoop();
     if (action === 'tree_reference') {
       // Whole-text @ref. A draft has no node yet, so it creates a fresh
       // inline-conversion row (add_reference_conversion); a real (empty) row
@@ -1088,7 +1088,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         // setTrigger would arm the popover but leave the caret before the '@', so
         // typing would land in front of it.)
         focusTrailingDraft();
-        return api.getProjection();
+        return commandRunnerNoop();
       }
       const result = await api.replaceNodeText(targetEditId, nextContent);
       window.requestAnimationFrame(() => {
@@ -1156,11 +1156,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         materializeDraft();
         await pendingTextPatchRef.current;
       } else {
-        await api.replaceNodeText(targetEditId, withoutTrigger);
+        await props.run(() => api.replaceNodeText(targetEditId, withoutTrigger));
       }
       const assets = await api.pickImageFiles();
       await landImagesOnCurrentRow(assets);
-      return api.getProjection();
+      return commandRunnerNoop();
     }
 
     if (commandId === 'attachment') {
@@ -1173,13 +1173,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           replaceLocalDraftContent(EMPTY_RICH_TEXT);
           await insertAssetNodesAt(assets, currentDraftCreateIndex());
         }
-        return api.getProjection();
+        return commandRunnerNoop();
       } else {
-        await api.replaceNodeText(targetEditId, withoutTrigger);
+        await props.run(() => api.replaceNodeText(targetEditId, withoutTrigger));
       }
       const assets = await api.pickAttachmentFiles();
       await landAssetsOnCurrentRow(assets);
-      return api.getProjection();
+      return commandRunnerNoop();
     }
 
     if (commandId === 'command_palette') {
@@ -1190,7 +1190,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         await applyTextWithoutTrigger();
       }
       props.setUi((prev) => ({ ...prev, commandOpen: true }));
-      return api.getProjection();
+      return commandRunnerNoop();
     }
 
     return null;
