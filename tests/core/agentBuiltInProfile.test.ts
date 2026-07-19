@@ -10,6 +10,8 @@ import path from 'node:path';
 // that the Settings → Agents Save relies on (the one path with no e2e coverage).
 
 let currentUserData = '';
+const TEST_OAUTH_PROVIDER_IDS = ['anthropic', 'github-copilot', 'openai-codex'] as const;
+const testOAuthProviders = () => TEST_OAUTH_PROVIDER_IDS.map((id) => ({ id, name: id }));
 
 mock.module('electron', () => ({
   app: { getPath: () => currentUserData },
@@ -25,7 +27,8 @@ mock.module('electron', () => ({
 
 mock.module('@earendil-works/pi-ai/oauth', () => ({
   getOAuthProvider: (id: string) =>
-    ['anthropic', 'github-copilot', 'openai-codex'].includes(id) ? { id, name: id } : undefined,
+    testOAuthProviders().find((provider) => provider.id === id),
+  getOAuthProviders: testOAuthProviders,
 }));
 
 const { getBuiltInAgentProfile, setBuiltInAgentProfile } = await import('../../src/main/agentSettings');

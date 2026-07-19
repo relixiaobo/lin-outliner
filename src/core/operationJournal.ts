@@ -75,15 +75,11 @@ export class OperationJournal {
   createEntry(
     commitOrigin: string,
     metadata: OperationHistoryMetadata,
-    before: DocumentState,
-    after: DocumentState,
-    affectedNodeIds?: string[],
+    affectedNodeIds: readonly string[],
   ) {
     const origin = historyOriginFromCommitOrigin(commitOrigin);
     if (origin === 'system') return undefined;
-    const affected = affectedNodeIds && affectedNodeIds.length > 0
-      ? [...new Set(affectedNodeIds)].sort()
-      : changedNodeIdsBetweenStates(before, after);
+    const affected = [...new Set(affectedNodeIds)].sort();
     if (affected.length === 0) return undefined;
 
     const action = metadata.tool ?? metadata.command ?? 'document_operation';

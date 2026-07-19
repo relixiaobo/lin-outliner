@@ -632,11 +632,11 @@ export interface BatchMoveNodeInput {
   index: number | null;
 }
 
-// Core's internal command result: a command assembles the full projection
-// in-process (cheap — cached refs, no clone). The main-process boundary converts
-// this to a `CommandResult` before crossing IPC.
+// Core's internal command result: commands return only local interaction hints.
+// Projection materialization is explicit (`projection()` / `revisionDelta()` +
+// `projectionNodesFor(...)`) so ordinary mutations do not assemble a full document
+// projection before the main-process boundary builds the renderer-facing update.
 export interface CommandOutcome {
-  projection: DocumentProjection;
   focus?: FocusHint;
 }
 

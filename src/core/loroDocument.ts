@@ -496,6 +496,24 @@ export class LoroOutlinerDocument {
     return this.readNodeFromTree(treeNode);
   }
 
+  // Materialize selected nodes without copying the whole `nodes` container.
+  // Normal mutation finalization drains touched ids, reads only those nodes, and
+  // patches Core's committed state/projection caches from this sparse snapshot.
+  materializeNodes(ids: Iterable<string>): Map<string, Node | undefined> {
+    const snapshots = new Map<string, Node | undefined>();
+    for (const id of ids) {
+      const node = this.materializeNode(id);
+      const cachedNode = node && cacheFreezeEnabled() ? deepFreeze(node) : node;
+      snapshots.set(id, cachedNode);
+      if (this.stateCacheNodes !== null && !this.stateDirtyFull) {
+        if (cachedNode) this.stateCacheNodes[id] = cachedNode;
+        else delete this.stateCacheNodes[id];
+        this.statePatch.delete(id);
+      }
+    }
+    return snapshots;
+  }
+
   private readNodeFromTree(treeNode: LoroTreeNode): Node | undefined {
     if (isDeletedTreeNode(treeNode)) return undefined;
     const data = treeNode.data;

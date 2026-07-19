@@ -110,8 +110,8 @@ describe('buildManualNoteInput', () => {
   test('a manual note lands under today as a plain node (no sidecar)', () => {
     const core = Core.new();
     const now = new Date();
-    const ensured = core.ensureDateNode(now.getFullYear(), now.getMonth() + 1, now.getDate());
-    const todayId = ensured.projection.todayId;
+    core.ensureDateNode(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const todayId = core.todayId();
     const input = buildManualNoteInput({
       destinationParentId: todayId,
       title: 'Typed into the launcher',

@@ -170,7 +170,6 @@ interface TreeYieldContext {
 
 interface CoreTransaction {
   origin: string;
-  before: DocumentState;
   metadata: CoreTransactionMetadata;
   chunkedCommits: number;
   chunkUndoValue?: OperationHistoryEntry;
@@ -427,9 +426,14 @@ export class Core {
     // to reflect in-flight mutations. Outside one, serve the incremental cache.
     if (this.activeTransaction) return this.freshProjection();
     this.ensureProjectionCache();
-    const state = this.loro.materializeState();
     const todayId = this.currentTodayNodeId();
-    return assembleProjection(state.workspaceId, state.rootId, todayId, this.projectionOrder, this.projectionNodes);
+    return assembleProjection(
+      this.stateValue.workspaceId,
+      this.stateValue.rootId,
+      todayId,
+      this.projectionOrder,
+      this.projectionNodes,
+    );
   }
 
   /**
@@ -497,11 +501,11 @@ export class Core {
 
   // Fold the touched nodes into the projection cache. Re-sort the id order only
   // when membership changed (create/delete), not on plain content edits.
-  private patchProjectionCache(affectedNodeIds: readonly string[], state: DocumentState) {
-    this.ensureProjectionCache();
+  private patchProjectionCache(affectedNodeIds: readonly string[], afterNodes: ReadonlyMap<string, Node | undefined>) {
+    if (!this.projectionReady) return;
     let membershipChanged = false;
     for (const id of affectedNodeIds) {
-      const node = state.nodes[id];
+      const node = afterNodes.get(id);
       if (node) {
         if (!this.projectionNodes.has(id)) membershipChanged = true;
         this.projectionNodes.set(id, projectNode(node));
@@ -526,7 +530,7 @@ export class Core {
   // hot path, so an O(N) build here is acceptable.
   private freshProjection(): DocumentProjection {
     const state = this.loro.materializeState();
-    return buildDocumentProjection(state, this.currentTodayNodeId());
+    return buildDocumentProjection(state, this.currentTodayNodeIdFromState(state));
   }
 
   // Opt-in invariant check (LIN_VERIFY_CACHE=1): the incrementally-patched
@@ -552,27 +556,18 @@ export class Core {
 
   async transaction<T>(origin: CommitOrigin, fn: () => T | Promise<T>, metadata: CoreTransactionMetadata = {}): Promise<T> {
     if (this.activeTransaction) return fn();
-    const before = this.loro.materializeState();
     const rollbackFrontiers = this.loro.frontiers();
     this.loro.clearTouchedNodeIds();
     this.activeTransaction = {
       origin: commitOriginFor(origin),
-      before,
       metadata,
       chunkedCommits: 0,
     };
     try {
       const result = await fn();
       const transaction = this.activeTransaction;
-      const after = this.loro.materializeState();
-      const affectedNodeIds = this.loro.drainTouchedNodeIds();
-      if (transaction && changedTouchedNodes(affectedNodeIds, transaction.before, after)) {
-        this.commitCurrentTransaction(transaction.origin, transaction.before, after, transaction.metadata, affectedNodeIds);
-        this.patchProjectionCache(affectedNodeIds, after);
-        this.bumpRevision(affectedNodeIds, false);
-      }
+      if (transaction) this.finalizeTouchedMutation(transaction.origin, transaction.metadata);
       this.activeTransaction = undefined;
-      this.refreshStateFromLoro();
       this.verifyCaches();
       return result;
     } catch (error) {
@@ -799,7 +794,7 @@ export class Core {
     options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
   ): Promise<CommandOutcome> {
     const focusHint = await this.createNodesFromTreeYieldingFocus(parentId, nodes, options);
-    return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+    return focusHint ? { focus: focusHint } : {};
   }
 
   async createNodesFromTreeYieldingFocus(
@@ -2582,27 +2577,33 @@ export class Core {
   }
 
   undo(): CommandOutcome {
-    return { projection: this.applyOperationHistory('undo', 'all', 1).projection! };
+    this.applyOperationHistory('undo', 'all', 1);
+    return {};
   }
 
   redo(): CommandOutcome {
-    return { projection: this.applyOperationHistory('redo', 'all', 1).projection! };
+    this.applyOperationHistory('redo', 'all', 1);
+    return {};
   }
 
   undoAgent(): CommandOutcome {
-    return { projection: this.applyOperationHistory('undo', 'agent', 1).projection! };
+    this.applyOperationHistory('undo', 'agent', 1);
+    return {};
   }
 
   redoAgent(): CommandOutcome {
-    return { projection: this.applyOperationHistory('redo', 'agent', 1).projection! };
+    this.applyOperationHistory('redo', 'agent', 1);
+    return {};
   }
 
   undoUser(): CommandOutcome {
-    return { projection: this.applyOperationHistory('undo', 'user', 1).projection! };
+    this.applyOperationHistory('undo', 'user', 1);
+    return {};
   }
 
   redoUser(): CommandOutcome {
-    return { projection: this.applyOperationHistory('redo', 'user', 1).projection! };
+    this.applyOperationHistory('redo', 'user', 1);
+    return {};
   }
 
   operationHistory(query: OperationHistoryQuery = {}): OperationHistoryResult {
@@ -2695,31 +2696,19 @@ export class Core {
   private mutate(mutator: Mutator): CommandOutcome {
     if (this.activeTransaction) {
       const focusHint = mutator();
-      return { projection: this.freshProjection(), ...(focusHint ? { focus: focusHint } : {}) };
+      return focusHint ? { focus: focusHint } : {};
     }
 
-    const before = this.loro.materializeState();
     this.loro.clearTouchedNodeIds();
     const focusHint = mutator();
-    const after = this.loro.materializeState();
-    const affectedNodeIds = this.loro.drainTouchedNodeIds();
-    // Exact change detection at O(touched): a node is changed iff its pre/post
-    // materialization differs. This preserves the prior whole-state `sameJson`
-    // semantics (idempotent writes that touch but don't change are not commits)
-    // without stringifying the entire document.
-    if (changedTouchedNodes(affectedNodeIds, before, after)) {
-      this.commitCurrentTransaction(this.currentCommitOrigin(), before, after, this.currentCommitMetadata(), affectedNodeIds);
-      this.patchProjectionCache(affectedNodeIds, after);
-      this.bumpRevision(affectedNodeIds, false);
-      this.verifyCaches();
-    }
-    this.stateValue = after;
-    return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+    const changed = this.finalizeTouchedMutation(this.currentCommitOrigin(), this.currentCommitMetadata());
+    if (changed) this.verifyCaches();
+    return focusHint ? { focus: focusHint } : {};
   }
 
   private async mutateAsync(mutator: AsyncMutator): Promise<CommandOutcome> {
     const focusHint = await this.mutateAsyncFocus(mutator);
-    return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+    return focusHint ? { focus: focusHint } : {};
   }
 
   private async mutateAsyncFocus(mutator: AsyncMutator): Promise<FocusHint | undefined> {
@@ -2727,21 +2716,13 @@ export class Core {
       return mutator();
     }
 
-    const before = this.loro.materializeState();
     this.loro.clearTouchedNodeIds();
     const rollbackFrontiers = this.loro.frontiers();
     this.activeAsyncMutations += 1;
     try {
       const focusHint = await mutator();
-      const after = this.loro.materializeState();
-      const affectedNodeIds = this.loro.drainTouchedNodeIds();
-      if (changedTouchedNodes(affectedNodeIds, before, after)) {
-        this.commitCurrentTransaction(this.currentCommitOrigin(), before, after, this.currentCommitMetadata(), affectedNodeIds);
-        this.patchProjectionCache(affectedNodeIds, after);
-        this.bumpRevision(affectedNodeIds, false);
-        this.verifyCaches();
-      }
-      this.stateValue = after;
+      const changed = this.finalizeTouchedMutation(this.currentCommitOrigin(), this.currentCommitMetadata());
+      if (changed) this.verifyCaches();
       return focusHint;
     } catch (error) {
       this.loro.revertTo(rollbackFrontiers, SYSTEM_COMMIT_ORIGIN);
@@ -2754,12 +2735,58 @@ export class Core {
     }
   }
 
+  private finalizeTouchedMutation(origin: string, metadata: CoreTransactionMetadata): boolean {
+    const affectedNodeIds = this.loro.drainTouchedNodeIds();
+    const afterNodes = this.loro.materializeNodes(affectedNodeIds);
+    // Exact change detection at O(touched): a node is changed iff its committed
+    // pre-mutation snapshot differs from its post-mutation materialization.
+    // This preserves the prior idempotent-write semantics without copying or
+    // stringifying the entire document on every mutation.
+    const changed = changedTouchedNodes(affectedNodeIds, this.stateValue.nodes, afterNodes);
+    if (changed) this.commitCurrentTransaction(origin, metadata, affectedNodeIds);
+    this.patchStateValue(affectedNodeIds, afterNodes);
+    if (changed) {
+      this.patchProjectionCache(affectedNodeIds, afterNodes);
+      this.bumpRevision(affectedNodeIds, false);
+    }
+    return changed;
+  }
+
+  private patchStateValue(affectedNodeIds: readonly string[], afterNodes: ReadonlyMap<string, Node | undefined>) {
+    for (const id of affectedNodeIds) {
+      const node = afterNodes.get(id);
+      if (node) this.stateValue.nodes[id] = node;
+      else delete this.stateValue.nodes[id];
+    }
+  }
+
   private currentTodayNodeId(): string {
     const today = new Date();
     const year = today.getFullYear();
     const month = today.getMonth() + 1;
     const day = today.getDate();
-    return this.findDateNodeId(year, month, day) ?? DAILY_NOTES_ID;
+    const state = this.activeTransaction || this.activeAsyncMutations > 0
+      ? this.snapshot()
+      : this.stateValue;
+    return this.currentTodayNodeIdFromState(state, year, month, day);
+  }
+
+  private currentTodayNodeIdFromState(
+    state: DocumentState,
+    year?: number,
+    month?: number,
+    day?: number,
+  ): string {
+    if (year === undefined || month === undefined || day === undefined) {
+      const today = new Date();
+      return this.findDateNodeIdInState(
+        state,
+        today.getFullYear(),
+        today.getMonth() + 1,
+        today.getDate(),
+      ) ?? DAILY_NOTES_ID;
+    }
+    return this.findDateNodeIdInState(state, year, month, day) ?? DAILY_NOTES_ID;
   }
 
   private ensureCurrentTodayNodeDirect(): string {
@@ -2785,12 +2812,10 @@ export class Core {
 
   private commitCurrentTransaction(
     origin: string,
-    before: DocumentState,
-    after: DocumentState,
     metadata: CoreTransactionMetadata = {},
-    affectedNodeIds?: string[],
+    affectedNodeIds: readonly string[],
   ) {
-    const entry = this.history.createEntry(origin, metadata, before, after, affectedNodeIds);
+    const entry = this.history.createEntry(origin, metadata, affectedNodeIds);
     this.loro.commit(origin, entry);
     if (entry) {
       this.history.record(entry);
@@ -3914,6 +3939,10 @@ export class Core {
 
   private findDateNodeId(year: number, month: number, day: number) {
     const state = this.snapshot();
+    return this.findDateNodeIdInState(state, year, month, day);
+  }
+
+  private findDateNodeIdInState(state: DocumentState, year: number, month: number, day: number) {
     const date = new Date(year, month - 1, day);
     if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return undefined;
     const yearName = String(year);
@@ -4137,11 +4166,16 @@ function sameJson(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-// True iff any of the touched nodes actually differs between the pre- and
-// post-mutation states (covers creates, deletes, and content edits). Compares
-// only the touched nodes, so change detection is O(touched) rather than O(N).
-function changedTouchedNodes(touched: readonly string[], before: DocumentState, after: DocumentState): boolean {
-  return touched.some((id) => !sameJson(before.nodes[id], after.nodes[id]));
+// True iff any of the touched nodes actually differs between the committed
+// pre-mutation nodes and the sparse post-mutation snapshot (covers creates,
+// deletes, and content edits). Compares only touched nodes, so change detection
+// is O(touched) rather than O(N).
+function changedTouchedNodes(
+  touched: readonly string[],
+  beforeNodes: Readonly<Record<string, Node>>,
+  afterNodes: ReadonlyMap<string, Node | undefined>,
+): boolean {
+  return touched.some((id) => !sameJson(beforeNodes[id], afterNodes.get(id)));
 }
 
 function commitOriginFor(origin: CommitOrigin) {

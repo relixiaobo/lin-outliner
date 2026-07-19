@@ -8,9 +8,11 @@ by the TypeScript core in `src/core` and the main process in `src/main`.
 The authoritative list lives in [`src/core/commands.ts`](../../src/core/commands.ts):
 
 - `DOCUMENT_COMMANDS` — document tree, rich text, fields, tags, references,
-  search nodes, view config, batch ops, undo/redo. Every mutating command
-  persists the workspace snapshot and returns a `CommandOutcome` with the new
-  `DocumentProjection` and optional `FocusHint`.
+  search nodes, view config, batch ops, undo/redo. Core mutation methods return
+  an internal `CommandOutcome` with only local interaction hints such as
+  `FocusHint`; the main-process boundary persists the workspace snapshot and
+  converts the core revision delta into the renderer-facing `CommandResult.update`
+  (`ProjectionUpdate`).
 - `AGENT_COMMANDS` — agent session lifecycle, message send/edit/regenerate,
   follow-ups, steering, provider settings, debug snapshots, child-run control.
 - `ASSET_COMMANDS` — asset ingest, lookup, native pickers, safe system file
@@ -261,8 +263,10 @@ pre-release child-run command aliases are not accepted.
 - A renderer module never mutates document state directly. UI changes that
   affect document content or tree structure must go through a command.
 - Every mutating command persists the workspace snapshot before returning, and
-  produces a `CommandOutcome` carrying the projection plus an optional
-  `FocusHint` so the caller can restore focus deterministically.
+  produces a renderer-facing `CommandResult.update` (`ProjectionUpdate`) plus an
+  optional `FocusHint` so the caller can update local projection state and restore
+  focus deterministically. Core's internal `CommandOutcome` does not carry a full
+  projection.
 - Origins are tagged on the underlying Loro transaction (`user:`, `agent:`,
   `system:`) so the scoped `UndoManager` can separate user undo from agent
   undo. See `src/core/loroDocument.ts`.

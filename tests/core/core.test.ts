@@ -2315,6 +2315,37 @@ describe('Core', () => {
     });
   });
 
+  test('text patch command finalization uses sparse touched-node snapshots', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const nodeId = mustFocus(core.createNode(today, null, 'Draft'));
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      materializeState: () => ReturnType<LoroOutlinerDocument['materializeState']>;
+    };
+    const originalMaterializeState = instrumented.materializeState.bind(loro);
+    let fullStateMaterializations = 0;
+    instrumented.materializeState = () => {
+      fullStateMaterializations += 1;
+      return originalMaterializeState();
+    };
+    const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
+
+    let outcome: ReturnType<Core['applyNodeTextPatch']>;
+    try {
+      delete process.env.LIN_VERIFY_CACHE;
+      outcome = core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch(plainText('Edited')));
+    } finally {
+      instrumented.materializeState = originalMaterializeState;
+      if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
+      else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
+    }
+
+    expect(fullStateMaterializations).toBe(1);
+    expect(outcome!).not.toHaveProperty('projection');
+    expect(core.state().nodes[nodeId]!.content.text).toBe('Edited');
+  });
+
   test('groups continuous text patches into one Loro undo item and one journal entry', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, ''));

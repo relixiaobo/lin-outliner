@@ -33,6 +33,8 @@ type StoredOAuth = { refresh: string; access: string; expires: number };
 let currentUserData = '';
 let oauthRefreshImpl: (credential: OAuthCredential) => Promise<OAuthCredential> = async (credential) => credential;
 let oauthToApiKeyImpl: (credential: OAuthCredential) => Promise<string> = async (credential) => credential.access;
+const TEST_OAUTH_PROVIDER_IDS = ['anthropic', 'github-copilot', 'openai-codex'] as const;
+const testOAuthProviders = () => TEST_OAUTH_PROVIDER_IDS.map((id) => ({ id, name: id }));
 
 mock.module('electron', () => ({
   app: {
@@ -58,7 +60,8 @@ mock.module('electron', () => ({
 
 mock.module('@earendil-works/pi-ai/oauth', () => ({
   getOAuthProvider: (id: string) =>
-    ['anthropic', 'github-copilot', 'openai-codex'].includes(id) ? { id, name: id } : undefined,
+    testOAuthProviders().find((provider) => provider.id === id),
+  getOAuthProviders: testOAuthProviders,
 }));
 
 const {

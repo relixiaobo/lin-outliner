@@ -196,8 +196,9 @@ Per-edit cost scales with what changed, not document size.
   `delta` (changed nodes via `projectionNodesFor`, with absent ids becoming
   `removedIds`) for a clean `+1` revision step; any discontinuity, or core's
   `requiresFullSearchRebuild` (undo/redo/import/load), falls back to `full`. Core
-  is untouched — the delta is assembled at the process boundary from existing core
-  APIs.
+  exposes this explicit projection-read surface; its internal `CommandOutcome`
+  carries only local interaction hints and does not force projection
+  materialization on the mutation path.
 - **Renderer reducer** (`reduceProjection` in `renderer/state/document.ts`): a
   `full` rebuilds the index; a `delta` patches a copy of the previous `byId` —
   `set` each changed node, `delete` **exactly** `removedIds` (no stale-subtree
