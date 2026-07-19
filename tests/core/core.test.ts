@@ -23,6 +23,7 @@ import {
   plainText,
   replaceAllRichTextPatch,
   type CreateNodeTree,
+  type FieldEntryNode,
   type FocusHint,
   type RichText,
 } from '../../src/core/types';
@@ -382,6 +383,40 @@ describe('Core', () => {
     expect(core.state().nodes[rootId].children).toHaveLength(5);
   });
 
+  test('yielding tree append does not materialize the growing parent per sibling', async () => {
+    const core = Core.new();
+    const parentId = mustFocus(core.createNode(core.projection().todayId, null, 'Bulk parent'));
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      materializeNode: (id: string) => ReturnType<LoroOutlinerDocument['materializeNode']>;
+    };
+    const originalMaterializeNode = instrumented.materializeNode.bind(loro);
+    let materializeNodeCalls = 0;
+    instrumented.materializeNode = (id: string) => {
+      materializeNodeCalls += 1;
+      return originalMaterializeNode(id);
+    };
+    const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
+
+    try {
+      delete process.env.LIN_VERIFY_CACHE;
+      await core.createNodesFromTreeYieldingFocus(parentId, Array.from({ length: 100 }, (_value, index) => ({
+        content: plainText(`Child ${index + 1}`),
+        children: [],
+      })), {
+        yieldEveryNodes: 1_000,
+        yield: async () => {},
+      });
+    } finally {
+      instrumented.materializeNode = originalMaterializeNode;
+      if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
+      else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
+    }
+
+    expect(materializeNodeCalls).toBeLessThanOrEqual(2);
+    expect(core.state().nodes[parentId].children).toHaveLength(100);
+  });
+
   test('yielding tree materialization can flush commits while remaining one agent undo', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -421,6 +456,132 @@ describe('Core', () => {
     expect(undo.count).toBe(1);
     expect(undo.undone?.[0]?.affectedNodeIds).toContain(rootId);
     expect(core.state().nodes[rootId]).toBeUndefined();
+  });
+
+  test('direct yielding tree materialization honors commit chunks as one undo', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      commit: (origin: string, undoValue?: unknown) => void;
+    };
+    const originalCommit = instrumented.commit.bind(loro);
+    let commitCalls = 0;
+    instrumented.commit = (origin, undoValue) => {
+      commitCalls += 1;
+      return originalCommit(origin, undoValue);
+    };
+
+    let rootId = '';
+    try {
+      const focus = await core.createNodesFromTreeYieldingFocus(today, [{
+        content: plainText('Direct imported root'),
+        children: Array.from({ length: 5 }, (_value, index) => ({
+          content: plainText(`Direct imported child ${index + 1}`),
+          children: [],
+        })),
+      }], {
+        yieldEveryNodes: 2,
+        commitEveryNodes: 2,
+        yield: async () => {},
+      });
+      rootId = focus!.nodeId;
+    } finally {
+      instrumented.commit = originalCommit;
+    }
+
+    expect(commitCalls).toBeGreaterThan(1);
+    expect(core.state().nodes[rootId].children).toHaveLength(5);
+
+    core.undoUser();
+    expect(core.state().nodes[rootId]).toBeUndefined();
+  });
+
+  test('yielding tree materialization caches inherited child tag config for tagged parents', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      materializeState: () => ReturnType<LoroOutlinerDocument['materializeState']>;
+    };
+    const originalMaterializeState = instrumented.materializeState.bind(loro);
+    let materializeStateCalls = 0;
+    instrumented.materializeState = () => {
+      materializeStateCalls += 1;
+      return originalMaterializeState();
+    };
+    const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
+
+    try {
+      delete process.env.LIN_VERIFY_CACHE;
+      await core.createNodesFromTreeYieldingFocus(today, Array.from({ length: 100 }, (_value, index) => ({
+        content: plainText(`Today import child ${index + 1}`),
+        children: [],
+      })), {
+        yieldEveryNodes: 10,
+        commitEveryNodes: 10,
+        yield: async () => {},
+      });
+    } finally {
+      instrumented.materializeState = originalMaterializeState;
+      if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
+      else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
+    }
+
+    expect(materializeStateCalls).toBeLessThanOrEqual(2);
+  });
+
+  test('yielding tree materialization caches pasted field resolution for config-heavy imports', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      materializeState: () => ReturnType<LoroOutlinerDocument['materializeState']>;
+    };
+    const originalMaterializeState = instrumented.materializeState.bind(loro);
+    let materializeStateCalls = 0;
+    instrumented.materializeState = () => {
+      materializeStateCalls += 1;
+      return originalMaterializeState();
+    };
+    const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
+
+    try {
+      delete process.env.LIN_VERIFY_CACHE;
+      await core.createNodesFromTreeYieldingFocus(today, Array.from({ length: 100 }, (_value, index) => ({
+        content: plainText(`Config import child ${index + 1}`),
+        children: [],
+        fields: [
+          { name: 'Status', value: index % 2 === 0 ? 'Closed' : 'Open' },
+          { name: 'Score', value: String(index) },
+        ],
+      })), {
+        yieldEveryNodes: 10,
+        commitEveryNodes: 10,
+        yield: async () => {},
+      });
+    } finally {
+      instrumented.materializeState = originalMaterializeState;
+      if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
+      else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
+    }
+
+    expect(materializeStateCalls).toBeLessThanOrEqual(8);
+
+    const state = core.state();
+    const child = Object.values(state.nodes).find((node) => node.content.text === 'Config import child 42');
+    expect(child).toBeDefined();
+    const fieldEntries = child!.children
+      .map((childId) => state.nodes[childId])
+      .filter((node): node is FieldEntryNode => node?.type === 'fieldEntry');
+    expect(fieldEntries).toHaveLength(2);
+    const valueTexts = fieldEntries.flatMap((entry) => entry.children.map((childId) => state.nodes[childId]?.content.text));
+    expect(valueTexts).toContain('Open');
+    expect(valueTexts).toContain('41');
+    expect(Object.values(state.nodes).filter((node) =>
+      node.type === 'fieldDef' && node.parentId === SCHEMA_ID && node.content.text === 'Status')).toHaveLength(1);
+    expect(Object.values(state.nodes).filter((node) =>
+      node.type === 'fieldDef' && node.parentId === SCHEMA_ID && node.content.text === 'Score')).toHaveLength(1);
   });
 
   test('preflights yielding tree references before committing any chunk', async () => {
@@ -2171,6 +2332,97 @@ describe('Core', () => {
     expect(core.state().nodes[agentNode]).toBeUndefined();
   });
 
+  test('Loro undo managers retain only the latest 100 steps for all scopes', () => {
+    const scenarios = [
+      {
+        origin: 'all' as const,
+        commitOrigin: 'user:undo-retention',
+      },
+      {
+        origin: 'user' as const,
+        commitOrigin: 'user:undo-retention',
+      },
+      {
+        origin: 'agent' as const,
+        commitOrigin: 'agent:undo-retention',
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const document = new LoroOutlinerDocument();
+      const nodeIds = Array.from({ length: 101 }, (_value, index) => {
+        const nodeId = `${scenario.origin}:undo-retention:${index}`;
+        document.createNodeWithId(nodeId, undefined, null, undefined, (node) => {
+          node.content = plainText(`Undo retention ${index}`);
+        });
+        document.commit(scenario.commitOrigin);
+        return nodeId;
+      });
+
+      let undone = 0;
+      while (document.canUndo(scenario.origin)) {
+        document.undo(scenario.origin);
+        undone += 1;
+      }
+
+      expect(undone).toBe(100);
+      const state = document.materializeState();
+      expect(state.nodes[nodeIds[0]!]).toBeDefined();
+      expect(state.nodes[nodeIds[1]!]).toBeUndefined();
+      expect(document.canUndo(scenario.origin)).toBe(false);
+    }
+  });
+
+  test('materializes and permanently deletes a deep document chain iteratively', () => {
+    const depth = 500;
+    const document = new LoroOutlinerDocument();
+    let parentId: string | undefined;
+    for (let index = 0; index < depth; index += 1) {
+      const nodeId = `deep:${index}`;
+      document.createNodeWithId(nodeId, parentId, undefined, undefined, (node) => {
+        node.content = plainText(`Deep ${index}`);
+      });
+      parentId = nodeId;
+    }
+    document.commit('user:deep-chain');
+
+    const core = coreFromLoroDocument(document);
+    expect(core.state().nodes['deep:499']?.content.text).toBe('Deep 499');
+
+    core.deleteNode('deep:0');
+
+    expect(Object.keys(core.state().nodes).some((nodeId) => nodeId.startsWith('deep:'))).toBe(false);
+  });
+
+  test('exports deep shared state through update mode to avoid snapshot depth failure', () => {
+    const depth = 1_100;
+    const document = new LoroOutlinerDocument();
+    let parentId: string | undefined;
+    for (let index = 0; index < depth; index += 1) {
+      const nodeId = `deep-export:${index}`;
+      document.createNodeWithId(nodeId, parentId, undefined, undefined, (node) => {
+        node.content = plainText(`Deep export ${index}`);
+      });
+      parentId = nodeId;
+    }
+    document.commit('user:deep-export');
+
+    const shared = {
+      workspaceId: crypto.randomUUID(),
+      documentId: crypto.randomUUID(),
+      document: document.exportSharedState('__legacy__'),
+    };
+    expect(shared.document.exportMode).toBe('update');
+
+    const restored = Core.fromSharedState(shared);
+    expect(restored.state().nodes['deep-export:1099']?.content.text).toBe('Deep export 1099');
+
+    const envelope = Core.deserializeState(restored.serializeState());
+    expect(envelope.shared.document.exportMode).toBe('update');
+    const reloaded = Core.fromState(envelope);
+    expect(reloaded.state().nodes['deep-export:1099']?.content.text).toBe('Deep export 1099');
+  });
+
   test('failed transactions roll back uncommitted Loro changes', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -2313,6 +2565,37 @@ describe('Core', () => {
       marks: [],
       inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
+  });
+
+  test('text patch command finalization uses sparse touched-node snapshots', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const nodeId = mustFocus(core.createNode(today, null, 'Draft'));
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      materializeState: () => ReturnType<LoroOutlinerDocument['materializeState']>;
+    };
+    const originalMaterializeState = instrumented.materializeState.bind(loro);
+    let fullStateMaterializations = 0;
+    instrumented.materializeState = () => {
+      fullStateMaterializations += 1;
+      return originalMaterializeState();
+    };
+    const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
+
+    let outcome: ReturnType<Core['applyNodeTextPatch']>;
+    try {
+      delete process.env.LIN_VERIFY_CACHE;
+      outcome = core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch(plainText('Edited')));
+    } finally {
+      instrumented.materializeState = originalMaterializeState;
+      if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
+      else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
+    }
+
+    expect(fullStateMaterializations).toBe(1);
+    expect(outcome!).not.toHaveProperty('projection');
+    expect(core.state().nodes[nodeId]!.content.text).toBe('Edited');
   });
 
   test('groups continuous text patches into one Loro undo item and one journal entry', () => {

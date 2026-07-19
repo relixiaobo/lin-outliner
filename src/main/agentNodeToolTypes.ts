@@ -401,6 +401,9 @@ export interface OperationHistoryItem {
   action: string;
   summary: string;
   affectedNodeIds: string[];
+  affectedNodeCount: number;
+  affectedNodeIdsTruncated?: boolean;
+  affectedNodeIdsHash?: string;
   createdAt: string;
   canUndo: boolean;
   canRedo: boolean;

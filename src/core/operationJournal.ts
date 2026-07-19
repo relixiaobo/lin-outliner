@@ -12,6 +12,9 @@ export interface OperationHistoryEntry {
   action: string;
   summary: string;
   affectedNodeIds: string[];
+  affectedNodeCount: number;
+  affectedNodeIdsTruncated?: boolean;
+  affectedNodeIdsHash?: string;
   createdAt: string;
 }
 
@@ -61,30 +64,39 @@ export interface OperationStackState {
   topRedo?: OperationHistoryEntry;
 }
 
-export class OperationJournal {
-  private entries: OperationHistoryEntry[];
+const DEFAULT_MAX_ENTRIES = 500;
+const MAX_AFFECTED_NODE_ID_SAMPLE = 100;
 
-  constructor(entries: unknown[] | undefined) {
-    this.entries = Array.isArray(entries) ? entries.filter(isOperationHistoryEntry) : [];
+export class OperationJournal {
+  private entries: OperationHistoryEntry[] = [];
+  private entriesByOrigin: Record<OperationHistoryOrigin, OperationHistoryEntry[]> = {
+    agent: [],
+    user: [],
+    system: [],
+  };
+  private entryByOperationId = new Map<string, OperationHistoryEntry>();
+  private readonly maxEntries: number;
+
+  constructor(entries: unknown[] | undefined, options: { maxEntries?: number } = {}) {
+    this.maxEntries = Math.max(1, options.maxEntries ?? DEFAULT_MAX_ENTRIES);
+    const restored = Array.isArray(entries) ? entries.filter(isOperationHistoryEntry) : [];
+    for (const entry of restored.slice(-this.maxEntries)) this.appendEntry(normalizeOperationHistoryEntry(entry));
   }
 
   entriesForSerialization(limit: number) {
+    if (limit <= 0) return [];
     return this.entries.slice(-limit);
   }
 
   createEntry(
     commitOrigin: string,
     metadata: OperationHistoryMetadata,
-    before: DocumentState,
-    after: DocumentState,
-    affectedNodeIds?: string[],
+    affectedNodeIds: readonly string[],
   ) {
     const origin = historyOriginFromCommitOrigin(commitOrigin);
     if (origin === 'system') return undefined;
-    const affected = affectedNodeIds && affectedNodeIds.length > 0
-      ? [...new Set(affectedNodeIds)].sort()
-      : changedNodeIdsBetweenStates(before, after);
-    if (affected.length === 0) return undefined;
+    const affected = summarizeAffectedNodeIds(affectedNodeIds);
+    if (affected.affectedNodeCount === 0) return undefined;
 
     const action = metadata.tool ?? metadata.command ?? 'document_operation';
     return {
@@ -94,26 +106,27 @@ export class OperationJournal {
       tool: metadata.tool,
       action,
       summary: metadata.summary ?? summarizeOperation(origin, action),
-      affectedNodeIds: affected,
+      ...affected,
       createdAt: new Date().toISOString(),
     };
   }
 
   record(entry: OperationHistoryEntry) {
-    const existing = findLastEntry(this.entries, entry.operationId);
+    const existing = this.entryByOperationId.get(entry.operationId);
     if (existing) {
-      existing.affectedNodeIds = [...new Set([...existing.affectedNodeIds, ...entry.affectedNodeIds])].sort();
+      applyMergedAffectedNodeSummary(existing, entry);
       existing.command ??= entry.command;
       existing.tool ??= entry.tool;
       existing.action = entry.action;
       existing.summary = entry.summary;
       return;
     }
-    this.entries.push(entry);
+    this.appendEntry(entry);
+    this.evictOverflow();
   }
 
   findByOperationId(operationId: string): OperationHistoryEntry | undefined {
-    return findLastEntry(this.entries, operationId);
+    return this.entryByOperationId.get(operationId);
   }
 
   list(
@@ -121,13 +134,12 @@ export class OperationJournal {
     stack: OperationStackState,
   ): OperationHistoryResult {
     const { origin, limit, offset } = query;
-    const entries = this.entries
-      .filter((entry) => origin === 'all' || entry.origin === origin)
-      .slice()
-      .reverse();
-    const items = entries
-      .slice(offset, offset + limit)
-      .map((entry) => decorateHistoryItem(entry, stack));
+    const entries = origin === 'all' ? this.entries : this.entriesByOrigin[origin];
+    const items: OperationHistoryItem[] = [];
+    for (let index = entries.length - 1 - offset; index >= 0 && items.length < limit; index -= 1) {
+      const entry = entries[index];
+      if (entry) items.push(decorateHistoryItem(entry, stack));
+    }
     return {
       action: 'list',
       historyMode: 'journal',
@@ -138,13 +150,29 @@ export class OperationJournal {
       ...stackStateResult(stack),
     };
   }
-}
 
-function findLastEntry(entries: OperationHistoryEntry[], operationId: string) {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (entries[index]?.operationId === operationId) return entries[index];
+  private appendEntry(entry: OperationHistoryEntry) {
+    this.entries.push(entry);
+    this.entriesByOrigin[entry.origin].push(entry);
+    this.entryByOperationId.set(entry.operationId, entry);
   }
-  return undefined;
+
+  private evictOverflow() {
+    while (this.entries.length > this.maxEntries) {
+      const evicted = this.entries.shift();
+      if (!evicted) continue;
+      const originEntries = this.entriesByOrigin[evicted.origin];
+      if (originEntries[0] === evicted) {
+        originEntries.shift();
+      } else {
+        const index = originEntries.indexOf(evicted);
+        if (index >= 0) originEntries.splice(index, 1);
+      }
+      if (this.entryByOperationId.get(evicted.operationId) === evicted) {
+        this.entryByOperationId.delete(evicted.operationId);
+      }
+    }
+  }
 }
 
 export function isOperationHistoryEntry(value: unknown): value is OperationHistoryEntry {
@@ -158,6 +186,9 @@ export function isOperationHistoryEntry(value: unknown): value is OperationHisto
     && typeof entry.summary === 'string'
     && Array.isArray(entry.affectedNodeIds)
     && entry.affectedNodeIds.every((nodeId) => typeof nodeId === 'string')
+    && (entry.affectedNodeCount == null || isNonNegativeInteger(entry.affectedNodeCount))
+    && (entry.affectedNodeIdsTruncated == null || typeof entry.affectedNodeIdsTruncated === 'boolean')
+    && (entry.affectedNodeIdsHash == null || typeof entry.affectedNodeIdsHash === 'string')
     && typeof entry.createdAt === 'string';
 }
 
@@ -187,18 +218,20 @@ export function synthesizeHistoryEntry(
   after: DocumentState,
 ): OperationHistoryEntry {
   const itemOrigin: OperationHistoryOrigin = origin === 'all' ? 'system' : origin;
+  const affected = summarizeAffectedNodeIds(changedNodeIdsBetweenStates(before, after));
   return {
     operationId: `synthetic:${crypto.randomUUID()}`,
     origin: itemOrigin,
     action,
     summary: `${action === 'undo' ? 'Undo' : 'Redo'} operation.`,
-    affectedNodeIds: changedNodeIdsBetweenStates(before, after),
+    ...affected,
     createdAt: new Date().toISOString(),
   };
 }
 
 export function operationHistoryEntryFromValue(value: unknown): OperationHistoryEntry | undefined {
-  return isOperationHistoryEntry(value) ? value : undefined;
+  if (!isOperationHistoryEntry(value)) return undefined;
+  return normalizeOperationHistoryEntry(value);
 }
 
 export function decorateHistoryItem(entry: OperationHistoryEntry, stack: OperationStackState): OperationHistoryItem {
@@ -222,4 +255,84 @@ export function stackStateResult(stack: OperationStackState) {
 
 function sameJson(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function normalizeOperationHistoryEntry(entry: OperationHistoryEntry): OperationHistoryEntry {
+  if (entry.affectedNodeCount != null) {
+    const uniqueIds = [...new Set(entry.affectedNodeIds)].sort();
+    const affectedNodeIds = uniqueIds.slice(0, MAX_AFFECTED_NODE_ID_SAMPLE);
+    if (
+      affectedNodeIds.length === entry.affectedNodeIds.length
+      && affectedNodeIds.every((nodeId, index) => nodeId === entry.affectedNodeIds[index])
+      && entry.affectedNodeCount >= affectedNodeIds.length
+    ) {
+      return entry;
+    }
+    return {
+      ...entry,
+      affectedNodeIds,
+      affectedNodeCount: Math.max(entry.affectedNodeCount, affectedNodeIds.length),
+      affectedNodeIdsTruncated:
+        entry.affectedNodeCount > affectedNodeIds.length || uniqueIds.length > affectedNodeIds.length
+          ? true
+          : undefined,
+      affectedNodeIdsHash: entry.affectedNodeIdsHash ?? hashStrings(uniqueIds),
+    };
+  }
+  return {
+    ...entry,
+    ...summarizeAffectedNodeIds(entry.affectedNodeIds),
+  };
+}
+
+function summarizeAffectedNodeIds(nodeIds: readonly string[]) {
+  const all = [...new Set(nodeIds)].sort();
+  const affectedNodeCount = all.length;
+  const affectedNodeIds = all.slice(0, MAX_AFFECTED_NODE_ID_SAMPLE);
+  return {
+    affectedNodeIds,
+    affectedNodeCount,
+    ...(affectedNodeCount > affectedNodeIds.length ? { affectedNodeIdsTruncated: true } : {}),
+    affectedNodeIdsHash: hashStrings(all),
+  };
+}
+
+function applyMergedAffectedNodeSummary(target: OperationHistoryEntry, entry: OperationHistoryEntry) {
+  const left = normalizeOperationHistoryEntry(target);
+  const right = normalizeOperationHistoryEntry(entry);
+  const sample = [...new Set([...left.affectedNodeIds, ...right.affectedNodeIds])].sort();
+  const exact = !left.affectedNodeIdsTruncated && !right.affectedNodeIdsTruncated;
+  const summary = exact
+    ? summarizeAffectedNodeIds(sample)
+    : {
+        affectedNodeIds: sample.slice(0, MAX_AFFECTED_NODE_ID_SAMPLE),
+        affectedNodeCount: Math.max(left.affectedNodeCount, right.affectedNodeCount, sample.length),
+        affectedNodeIdsTruncated: true,
+        affectedNodeIdsHash: hashStrings([
+          left.affectedNodeIdsHash ?? hashStrings(left.affectedNodeIds),
+          right.affectedNodeIdsHash ?? hashStrings(right.affectedNodeIds),
+          ...sample,
+        ]),
+      };
+  target.affectedNodeIds = summary.affectedNodeIds;
+  target.affectedNodeCount = summary.affectedNodeCount;
+  target.affectedNodeIdsTruncated = summary.affectedNodeIdsTruncated;
+  target.affectedNodeIdsHash = summary.affectedNodeIdsHash;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function hashStrings(values: readonly string[]) {
+  let hash = 0x811c9dc5;
+  for (const value of values) {
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    hash ^= 0;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
 }

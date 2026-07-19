@@ -21,9 +21,10 @@ import {
 import { createPersistenceId, isPersistenceId } from './persistenceIdentity';
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
-import { DONE_FIELD, systemFieldLabel } from './systemFields';
+import { DONE_FIELD, SYSTEM_FIELD_CHOICES, systemFieldLabel } from './systemFields';
 import {
   fieldEntryDisplayName,
+  inferFieldTypeFromValues,
   normalizeFieldNameKey,
   resolveFieldWriteTarget,
   validateFieldValuesForType,
@@ -156,7 +157,11 @@ interface TemplateFieldRef {
 interface TreeMaterializeContext {
   tagDefByName: Map<string, NodeId>;
   fieldDefByName: Map<string, NodeId>;
+  duplicateFieldDefNameKeys: Set<string>;
+  fieldNameById: Map<NodeId, string>;
   fieldTypeById: Map<NodeId, FieldType>;
+  activeTagIds: Set<NodeId>;
+  childSupertagByTagId: Map<NodeId, NodeId | null>;
 }
 
 interface TreeYieldContext {
@@ -170,10 +175,16 @@ interface TreeYieldContext {
 
 interface CoreTransaction {
   origin: string;
-  before: DocumentState;
   metadata: CoreTransactionMetadata;
   chunkedCommits: number;
+  affectedNodeIds: Set<NodeId>;
+  changed: boolean;
   chunkUndoValue?: OperationHistoryEntry;
+}
+
+interface TouchedMutationPatch {
+  affectedNodeIds: string[];
+  changed: boolean;
 }
 
 export interface WorkspaceSharedState {
@@ -392,20 +403,43 @@ export class Core {
 
   applyReplicationUpdates(updates: readonly Uint8Array[]): CoreReplicationImportResult {
     this.assertReplicationIdle();
-    const before = this.loro.materializeState();
     const importResult = this.loro.importUpdates(updates);
-    const after = this.loro.materializeState();
-    const changedNodeIds = changedNodeIdsBetweenStates(before, after);
+    if (importResult.requiresFullStateDiff) {
+      const after = this.loro.materializeState();
+      const changedNodeIds = changedNodeIdsBetweenStates(this.stateValue, after);
+      this.loro.clearTouchedNodeIds();
+      let revisionDelta = this.unchangedRevisionDelta();
+      if (changedNodeIds.length > 0) {
+        this.invalidateProjectionCache();
+        this.stateValue = after;
+        this.bumpRevision(changedNodeIds, true);
+        this.verifyCaches();
+        revisionDelta = this.revisionDelta();
+      }
+      const {
+        affectedNodeIds: _affectedNodeIds,
+        requiresFullStateDiff: _requiresFullStateDiff,
+        ...publicImportResult
+      } = importResult;
+      return { ...revisionDelta, ...publicImportResult };
+    }
+    const afterNodes = this.loro.materializeNodes(importResult.affectedNodeIds);
+    const changedNodeIds = changedTouchedNodeIds(importResult.affectedNodeIds, this.stateValue.nodes, afterNodes);
     this.loro.clearTouchedNodeIds();
     let revisionDelta = this.unchangedRevisionDelta();
     if (changedNodeIds.length > 0) {
-      this.invalidateProjectionCache();
-      this.stateValue = after;
+      this.patchStateValue(importResult.affectedNodeIds, afterNodes);
+      this.patchProjectionCache(importResult.affectedNodeIds, afterNodes);
       this.bumpRevision(changedNodeIds, true);
       this.verifyCaches();
       revisionDelta = this.revisionDelta();
     }
-    return { ...revisionDelta, ...importResult };
+    const {
+      affectedNodeIds: _affectedNodeIds,
+      requiresFullStateDiff: _requiresFullStateDiff,
+      ...publicImportResult
+    } = importResult;
+    return { ...revisionDelta, ...publicImportResult };
   }
 
   private unchangedRevisionDelta(): CoreRevisionDelta {
@@ -427,9 +461,14 @@ export class Core {
     // to reflect in-flight mutations. Outside one, serve the incremental cache.
     if (this.activeTransaction) return this.freshProjection();
     this.ensureProjectionCache();
-    const state = this.loro.materializeState();
     const todayId = this.currentTodayNodeId();
-    return assembleProjection(state.workspaceId, state.rootId, todayId, this.projectionOrder, this.projectionNodes);
+    return assembleProjection(
+      this.stateValue.workspaceId,
+      this.stateValue.rootId,
+      todayId,
+      this.projectionOrder,
+      this.projectionNodes,
+    );
   }
 
   /**
@@ -497,11 +536,11 @@ export class Core {
 
   // Fold the touched nodes into the projection cache. Re-sort the id order only
   // when membership changed (create/delete), not on plain content edits.
-  private patchProjectionCache(affectedNodeIds: readonly string[], state: DocumentState) {
-    this.ensureProjectionCache();
+  private patchProjectionCache(affectedNodeIds: readonly string[], afterNodes: ReadonlyMap<string, Node | undefined>) {
+    if (!this.projectionReady) return;
     let membershipChanged = false;
     for (const id of affectedNodeIds) {
-      const node = state.nodes[id];
+      const node = afterNodes.get(id);
       if (node) {
         if (!this.projectionNodes.has(id)) membershipChanged = true;
         this.projectionNodes.set(id, projectNode(node));
@@ -526,7 +565,7 @@ export class Core {
   // hot path, so an O(N) build here is acceptable.
   private freshProjection(): DocumentProjection {
     const state = this.loro.materializeState();
-    return buildDocumentProjection(state, this.currentTodayNodeId());
+    return buildDocumentProjection(state, this.currentTodayNodeIdFromState(state));
   }
 
   // Opt-in invariant check (LIN_VERIFY_CACHE=1): the incrementally-patched
@@ -551,28 +590,29 @@ export class Core {
   }
 
   async transaction<T>(origin: CommitOrigin, fn: () => T | Promise<T>, metadata: CoreTransactionMetadata = {}): Promise<T> {
+    return this.transactionWithResolvedOrigin(commitOriginFor(origin), fn, metadata);
+  }
+
+  private async transactionWithResolvedOrigin<T>(
+    origin: string,
+    fn: () => T | Promise<T>,
+    metadata: CoreTransactionMetadata = {},
+  ): Promise<T> {
     if (this.activeTransaction) return fn();
-    const before = this.loro.materializeState();
     const rollbackFrontiers = this.loro.frontiers();
     this.loro.clearTouchedNodeIds();
     this.activeTransaction = {
-      origin: commitOriginFor(origin),
-      before,
+      origin,
       metadata,
       chunkedCommits: 0,
+      affectedNodeIds: new Set(),
+      changed: false,
     };
     try {
       const result = await fn();
       const transaction = this.activeTransaction;
-      const after = this.loro.materializeState();
-      const affectedNodeIds = this.loro.drainTouchedNodeIds();
-      if (transaction && changedTouchedNodes(affectedNodeIds, transaction.before, after)) {
-        this.commitCurrentTransaction(transaction.origin, transaction.before, after, transaction.metadata, affectedNodeIds);
-        this.patchProjectionCache(affectedNodeIds, after);
-        this.bumpRevision(affectedNodeIds, false);
-      }
+      if (transaction) this.finalizeActiveTransaction(transaction);
       this.activeTransaction = undefined;
-      this.refreshStateFromLoro();
       this.verifyCaches();
       return result;
     } catch (error) {
@@ -590,6 +630,7 @@ export class Core {
   private commitActiveTransactionChunk(): void {
     const transaction = this.activeTransaction;
     if (!transaction) return;
+    this.patchActiveTransactionTouchedNodes(transaction);
     this.loro.commit(transaction.origin, this.chunkUndoValueForTransaction(transaction));
     transaction.chunkedCommits += 1;
   }
@@ -608,6 +649,7 @@ export class Core {
       action,
       summary: transaction.metadata.summary ?? summarizeOperationHistoryAction(origin, action),
       affectedNodeIds: [],
+      affectedNodeCount: 0,
       createdAt: new Date().toISOString(),
     };
     return transaction.chunkUndoValue;
@@ -799,7 +841,7 @@ export class Core {
     options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
   ): Promise<CommandOutcome> {
     const focusHint = await this.createNodesFromTreeYieldingFocus(parentId, nodes, options);
-    return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+    return focusHint ? { focus: focusHint } : {};
   }
 
   async createNodesFromTreeYieldingFocus(
@@ -807,6 +849,19 @@ export class Core {
     nodes: CreateNodeTree[],
     options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
   ): Promise<FocusHint | undefined> {
+    if (!this.activeTransaction && options.commitEveryNodes) {
+      const undoGroupStarted = this.beginUndoGroup();
+      try {
+        return await this.transactionWithResolvedOrigin(
+          this.currentCommitOrigin(),
+          () => this.createNodesFromTreeYieldingFocus(parentId, nodes, options),
+          this.currentCommitMetadata(),
+        );
+      } finally {
+        if (undoGroupStarted) this.endUndoGroup();
+      }
+    }
+
     return this.mutateAsyncFocus(async () => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
@@ -2582,27 +2637,33 @@ export class Core {
   }
 
   undo(): CommandOutcome {
-    return { projection: this.applyOperationHistory('undo', 'all', 1).projection! };
+    this.applyOperationHistory('undo', 'all', 1);
+    return {};
   }
 
   redo(): CommandOutcome {
-    return { projection: this.applyOperationHistory('redo', 'all', 1).projection! };
+    this.applyOperationHistory('redo', 'all', 1);
+    return {};
   }
 
   undoAgent(): CommandOutcome {
-    return { projection: this.applyOperationHistory('undo', 'agent', 1).projection! };
+    this.applyOperationHistory('undo', 'agent', 1);
+    return {};
   }
 
   redoAgent(): CommandOutcome {
-    return { projection: this.applyOperationHistory('redo', 'agent', 1).projection! };
+    this.applyOperationHistory('redo', 'agent', 1);
+    return {};
   }
 
   undoUser(): CommandOutcome {
-    return { projection: this.applyOperationHistory('undo', 'user', 1).projection! };
+    this.applyOperationHistory('undo', 'user', 1);
+    return {};
   }
 
   redoUser(): CommandOutcome {
-    return { projection: this.applyOperationHistory('redo', 'user', 1).projection! };
+    this.applyOperationHistory('redo', 'user', 1);
+    return {};
   }
 
   operationHistory(query: OperationHistoryQuery = {}): OperationHistoryResult {
@@ -2695,31 +2756,19 @@ export class Core {
   private mutate(mutator: Mutator): CommandOutcome {
     if (this.activeTransaction) {
       const focusHint = mutator();
-      return { projection: this.freshProjection(), ...(focusHint ? { focus: focusHint } : {}) };
+      return focusHint ? { focus: focusHint } : {};
     }
 
-    const before = this.loro.materializeState();
     this.loro.clearTouchedNodeIds();
     const focusHint = mutator();
-    const after = this.loro.materializeState();
-    const affectedNodeIds = this.loro.drainTouchedNodeIds();
-    // Exact change detection at O(touched): a node is changed iff its pre/post
-    // materialization differs. This preserves the prior whole-state `sameJson`
-    // semantics (idempotent writes that touch but don't change are not commits)
-    // without stringifying the entire document.
-    if (changedTouchedNodes(affectedNodeIds, before, after)) {
-      this.commitCurrentTransaction(this.currentCommitOrigin(), before, after, this.currentCommitMetadata(), affectedNodeIds);
-      this.patchProjectionCache(affectedNodeIds, after);
-      this.bumpRevision(affectedNodeIds, false);
-      this.verifyCaches();
-    }
-    this.stateValue = after;
-    return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+    const changed = this.finalizeTouchedMutation(this.currentCommitOrigin(), this.currentCommitMetadata());
+    if (changed) this.verifyCaches();
+    return focusHint ? { focus: focusHint } : {};
   }
 
   private async mutateAsync(mutator: AsyncMutator): Promise<CommandOutcome> {
     const focusHint = await this.mutateAsyncFocus(mutator);
-    return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+    return focusHint ? { focus: focusHint } : {};
   }
 
   private async mutateAsyncFocus(mutator: AsyncMutator): Promise<FocusHint | undefined> {
@@ -2727,21 +2776,13 @@ export class Core {
       return mutator();
     }
 
-    const before = this.loro.materializeState();
     this.loro.clearTouchedNodeIds();
     const rollbackFrontiers = this.loro.frontiers();
     this.activeAsyncMutations += 1;
     try {
       const focusHint = await mutator();
-      const after = this.loro.materializeState();
-      const affectedNodeIds = this.loro.drainTouchedNodeIds();
-      if (changedTouchedNodes(affectedNodeIds, before, after)) {
-        this.commitCurrentTransaction(this.currentCommitOrigin(), before, after, this.currentCommitMetadata(), affectedNodeIds);
-        this.patchProjectionCache(affectedNodeIds, after);
-        this.bumpRevision(affectedNodeIds, false);
-        this.verifyCaches();
-      }
-      this.stateValue = after;
+      const changed = this.finalizeTouchedMutation(this.currentCommitOrigin(), this.currentCommitMetadata());
+      if (changed) this.verifyCaches();
       return focusHint;
     } catch (error) {
       this.loro.revertTo(rollbackFrontiers, SYSTEM_COMMIT_ORIGIN);
@@ -2754,12 +2795,84 @@ export class Core {
     }
   }
 
+  private finalizeTouchedMutation(origin: string, metadata: CoreTransactionMetadata): boolean {
+    const patch = this.drainTouchedMutationPatch();
+    if (patch.changed) {
+      this.commitCurrentTransaction(origin, metadata, patch.affectedNodeIds);
+      this.bumpRevision(patch.affectedNodeIds, false);
+    }
+    return patch.changed;
+  }
+
+  private finalizeActiveTransaction(transaction: CoreTransaction): boolean {
+    this.patchActiveTransactionTouchedNodes(transaction);
+    if (!transaction.changed) return false;
+    const affectedNodeIds = [...transaction.affectedNodeIds].sort();
+    this.commitCurrentTransaction(transaction.origin, transaction.metadata, affectedNodeIds);
+    this.bumpRevision(affectedNodeIds, false);
+    return true;
+  }
+
+  private patchActiveTransactionTouchedNodes(transaction: CoreTransaction): TouchedMutationPatch {
+    const patch = this.drainTouchedMutationPatch();
+    if (patch.changed) {
+      transaction.changed = true;
+      for (const id of patch.affectedNodeIds) transaction.affectedNodeIds.add(id);
+    }
+    return patch;
+  }
+
+  private drainTouchedMutationPatch(): TouchedMutationPatch {
+    const affectedNodeIds = this.loro.drainTouchedNodeIds();
+    if (affectedNodeIds.length === 0) return { affectedNodeIds, changed: false };
+    const afterNodes = this.loro.materializeNodes(affectedNodeIds);
+    // Exact change detection at O(touched): a node is changed iff its committed
+    // pre-mutation snapshot differs from its post-mutation materialization.
+    // This preserves the prior idempotent-write semantics without copying or
+    // stringifying the entire document on every mutation.
+    const changed = changedTouchedNodes(affectedNodeIds, this.stateValue.nodes, afterNodes);
+    this.patchStateValue(affectedNodeIds, afterNodes);
+    if (changed) {
+      this.patchProjectionCache(affectedNodeIds, afterNodes);
+    }
+    return { affectedNodeIds, changed };
+  }
+
+  private patchStateValue(affectedNodeIds: readonly string[], afterNodes: ReadonlyMap<string, Node | undefined>) {
+    for (const id of affectedNodeIds) {
+      const node = afterNodes.get(id);
+      if (node) this.stateValue.nodes[id] = node;
+      else delete this.stateValue.nodes[id];
+    }
+  }
+
   private currentTodayNodeId(): string {
     const today = new Date();
     const year = today.getFullYear();
     const month = today.getMonth() + 1;
     const day = today.getDate();
-    return this.findDateNodeId(year, month, day) ?? DAILY_NOTES_ID;
+    const state = this.activeTransaction || this.activeAsyncMutations > 0
+      ? this.snapshot()
+      : this.stateValue;
+    return this.currentTodayNodeIdFromState(state, year, month, day);
+  }
+
+  private currentTodayNodeIdFromState(
+    state: DocumentState,
+    year?: number,
+    month?: number,
+    day?: number,
+  ): string {
+    if (year === undefined || month === undefined || day === undefined) {
+      const today = new Date();
+      return this.findDateNodeIdInState(
+        state,
+        today.getFullYear(),
+        today.getMonth() + 1,
+        today.getDate(),
+      ) ?? DAILY_NOTES_ID;
+    }
+    return this.findDateNodeIdInState(state, year, month, day) ?? DAILY_NOTES_ID;
   }
 
   private ensureCurrentTodayNodeDirect(): string {
@@ -2785,12 +2898,10 @@ export class Core {
 
   private commitCurrentTransaction(
     origin: string,
-    before: DocumentState,
-    after: DocumentState,
     metadata: CoreTransactionMetadata = {},
-    affectedNodeIds?: string[],
+    affectedNodeIds: readonly string[],
   ) {
-    const entry = this.history.createEntry(origin, metadata, before, after, affectedNodeIds);
+    const entry = this.history.createEntry(origin, metadata, affectedNodeIds);
     this.loro.commit(origin, entry);
     if (entry) {
       this.history.record(entry);
@@ -3438,7 +3549,7 @@ export class Core {
       }
       if (completedAt !== undefined) node.completedAt = completedAt;
     });
-    this.applyChildTagsDirect(parentId, id);
+    this.applyChildTagsDirect(parentId, id, context);
     this.applyPasteMetadataDirect(id, tree.tags, tree.fields, context);
     return id;
   }
@@ -3446,17 +3557,39 @@ export class Core {
   private createTreeMaterializeContext(state: DocumentState): TreeMaterializeContext {
     const tagDefByName = new Map<string, NodeId>();
     const fieldDefByName = new Map<string, NodeId>();
+    const duplicateFieldDefNameKeys = new Set<string>();
+    const fieldNameById = new Map<NodeId, string>();
     const fieldTypeById = new Map<NodeId, FieldType>();
+    const activeTagIds = new Set<NodeId>();
+    const childSupertagByTagId = new Map<NodeId, NodeId | null>();
     for (const node of Object.values(state.nodes)) {
       const key = definitionNameKey(node.content.text);
       if (!key) continue;
-      if (isActiveTagDefinition(state, node.id)) tagDefByName.set(key, node.id);
+      if (isActiveTagDefinition(state, node.id)) {
+        tagDefByName.set(key, node.id);
+        activeTagIds.add(node.id);
+      }
       if (node.parentId === SCHEMA_ID && isActiveFieldDefinition(state, node.id)) {
-        fieldDefByName.set(key, node.id);
+        const fieldKey = normalizeFieldNameKey(node.content.text);
+        if (fieldDefByName.has(fieldKey)) duplicateFieldDefNameKeys.add(fieldKey);
+        else fieldDefByName.set(fieldKey, node.id);
+        fieldNameById.set(node.id, node.content.text);
         fieldTypeById.set(node.id, fieldTypeOf(state, node.id));
       }
     }
-    return { tagDefByName, fieldDefByName, fieldTypeById };
+    for (const tagId of activeTagIds) {
+      const childSupertag = configRefTarget(state, tagId, 'childSupertag');
+      childSupertagByTagId.set(tagId, childSupertag && activeTagIds.has(childSupertag) ? childSupertag : null);
+    }
+    return {
+      tagDefByName,
+      fieldDefByName,
+      duplicateFieldDefNameKeys,
+      fieldNameById,
+      fieldTypeById,
+      activeTagIds,
+      childSupertagByTagId,
+    };
   }
 
   private insertFieldDefNodeDirect(parentId: string, name: string, fieldType: FieldType) {
@@ -3497,6 +3630,8 @@ export class Core {
       if (!tagId) {
         tagId = findTagByName(this.snapshot(), name) ?? this.createTagDefDirect(name);
         context?.tagDefByName.set(key, tagId);
+        context?.activeTagIds.add(tagId);
+        context?.childSupertagByTagId.set(tagId, null);
       }
       this.applyTagNoHistoryDirect(nodeId, tagId);
     }
@@ -3514,6 +3649,8 @@ export class Core {
     value: string,
     context?: TreeMaterializeContext,
   ): void {
+    if (context && this.applyResolvedFieldTextValueWithContextDirect(nodeId, name, value, context)) return;
+
     const resolution = resolveFieldWriteTarget(fieldResolutionMap(this.snapshot()), nodeId, name, [{ text: value }]);
     if (!resolution.ok) throw CoreError.invalidOperation(resolution.error);
 
@@ -3538,16 +3675,110 @@ export class Core {
       fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, name, fieldType);
     }
 
-    context?.fieldDefByName.set(definitionNameKey(name), fieldDefId);
+    const fieldName = resolution.target.kind === 'existingEntry'
+      ? (context?.fieldNameById.get(fieldDefId) ?? fieldNameForDefId(this.snapshot(), fieldDefId))
+      : name;
+    context?.fieldDefByName.set(normalizeFieldNameKey(fieldName), fieldDefId);
+    context?.fieldNameById.set(fieldDefId, fieldName);
     context?.fieldTypeById.set(fieldDefId, fieldType);
     const entryId = resolution.target.kind === 'existingEntry'
       ? resolution.target.fieldEntryId
       : this.reuseOrCreateFieldEntryDirect(nodeId, fieldDefId);
-    this.writeFieldTextValueDirect(entryId, fieldDefId, fieldType, value);
+    this.writeFieldTextValueDirect(entryId, fieldDefId, fieldType, value, fieldName);
   }
 
-  private writeFieldTextValueDirect(entryId: string, fieldDefId: string, fieldType: FieldType, value: string) {
-    const validation = validateFieldValuesForType(fieldNameForDefId(this.snapshot(), fieldDefId), fieldType, [{ text: value }]);
+  private applyResolvedFieldTextValueWithContextDirect(
+    nodeId: string,
+    name: string,
+    value: string,
+    context: TreeMaterializeContext,
+  ): boolean {
+    const key = normalizeFieldNameKey(name);
+    if (!key || context.duplicateFieldDefNameKeys.has(key)) return false;
+
+    const owner = this.loro.materializeNode(nodeId);
+    if (!owner) throw CoreError.nodeNotFound(nodeId);
+    const ownerMatches: FieldEntryNode[] = [];
+    for (const childId of owner.children) {
+      const child = this.loro.materializeNode(childId);
+      if (child?.type !== 'fieldEntry') continue;
+      const label = this.fieldEntryDisplayNameFromContext(child, context);
+      if (normalizeFieldNameKey(label) === key) ownerMatches.push(child);
+    }
+    if (ownerMatches.length > 1) {
+      throw CoreError.invalidOperation(`Multiple field entries match "${name}": ${ownerMatches.map((entry) => entry.id).join(', ')}`);
+    }
+    if (ownerMatches.length === 1) {
+      const entry = ownerMatches[0]!;
+      const fieldDefId = entry.fieldDefId;
+      if (!fieldDefId) {
+        this.writeFieldTextValueDirect(entry.id, '', 'plain', value, name);
+        return true;
+      }
+      if (fieldDefId === DONE_FIELD) {
+        const validation = validateFieldValuesForType(name, 'checkbox', [{ text: value }]);
+        if (!validation.ok) throw CoreError.invalidOperation(validation.error);
+        this.reuseOrCreateFieldEntryDirect(nodeId, DONE_FIELD, name, context);
+        this.writeDoneStateDirect(this.snapshot(), nodeId, (node, tagDriven) => applyNodeDoneState(node, booleanFieldValue(value), tagDriven));
+        return true;
+      }
+      if (systemFieldLabel(fieldDefId)) return false;
+      const fieldType = context.fieldTypeById.get(fieldDefId) ?? 'plain';
+      const fieldName = context.fieldNameById.get(fieldDefId) ?? name;
+      this.writeFieldTextValueDirect(entry.id, fieldDefId, fieldType, value, fieldName);
+      return true;
+    }
+
+    const systemFieldId = systemFieldIdForName(name);
+    if (systemFieldId) return false;
+
+    let fieldDefId = context.fieldDefByName.get(key);
+    let fieldType: FieldType;
+    let fieldName = name;
+    if (fieldDefId) {
+      fieldType = context.fieldTypeById.get(fieldDefId) ?? 'plain';
+      fieldName = context.fieldNameById.get(fieldDefId) ?? name;
+      const validation = validateFieldValuesForType(fieldName, fieldType, [{ text: value }]);
+      if (!validation.ok) throw CoreError.invalidOperation(validation.error);
+    } else {
+      fieldType = inferFieldTypeFromValues([{ text: value }]);
+      const validation = validateFieldValuesForType(name, fieldType, [{ text: value }]);
+      if (!validation.ok) throw CoreError.invalidOperation(validation.error);
+      fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, name, fieldType);
+      context.fieldDefByName.set(key, fieldDefId);
+      context.fieldNameById.set(fieldDefId, name);
+      context.fieldTypeById.set(fieldDefId, fieldType);
+    }
+
+    const entryId = this.reuseOrCreateFieldEntryDirect(nodeId, fieldDefId, fieldName, context);
+    this.writeFieldTextValueDirect(entryId, fieldDefId, fieldType, value, fieldName);
+    return true;
+  }
+
+  private fieldEntryDisplayNameFromContext(entry: FieldEntryNode, context: TreeMaterializeContext): string {
+    const fieldDefId = entry.fieldDefId;
+    if (fieldDefId) {
+      const systemLabel = systemFieldLabel(fieldDefId);
+      if (systemLabel) return systemLabel;
+      const cached = context.fieldNameById.get(fieldDefId);
+      if (cached) return cached;
+      const fieldDef = this.loro.materializeNode(fieldDefId);
+      if (fieldDef?.content.text.trim()) {
+        context.fieldNameById.set(fieldDefId, fieldDef.content.text);
+        return fieldDef.content.text;
+      }
+    }
+    return entry.content.text.trim();
+  }
+
+  private writeFieldTextValueDirect(
+    entryId: string,
+    fieldDefId: string,
+    fieldType: FieldType,
+    value: string,
+    fieldName = fieldNameForDefId(this.snapshot(), fieldDefId),
+  ) {
+    const validation = validateFieldValuesForType(fieldName, fieldType, [{ text: value }]);
     if (!validation.ok) throw CoreError.invalidOperation(validation.error);
     if (fieldType === 'options') {
       const optionId = this.ensureOptionNodeDirect(fieldDefId, value);
@@ -3580,7 +3811,12 @@ export class Core {
   // Reuse a field entry the node already owns for this def (e.g. one a tag
   // template just instantiated) so a pasted `field::` fills it instead of
   // stacking a second empty entry; otherwise create one.
-  private reuseOrCreateFieldEntryDirect(nodeId: string, fieldDefId: string): string {
+  private reuseOrCreateFieldEntryDirect(
+    nodeId: string,
+    fieldDefId: string,
+    fieldName?: string,
+    context?: TreeMaterializeContext,
+  ): string {
     const node = this.loro.materializeNode(nodeId);
     if (!node) throw CoreError.nodeNotFound(nodeId);
     const existing = node.children.find((childId) => {
@@ -3588,8 +3824,26 @@ export class Core {
       return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
     });
     if (existing) return existing;
-    assertOwnerDoesNotHaveFieldName(this.snapshot(), nodeId, fieldNameForDefId(this.snapshot(), fieldDefId));
+    if (fieldName && context) this.assertOwnerDoesNotHaveFieldNameFromContext(node, fieldName, context);
+    else assertOwnerDoesNotHaveFieldName(this.snapshot(), nodeId, fieldNameForDefId(this.snapshot(), fieldDefId));
     return this.insertFieldEntryNodeDirect(nodeId, undefined, fieldDefId);
+  }
+
+  private assertOwnerDoesNotHaveFieldNameFromContext(
+    owner: Node,
+    fieldName: string,
+    context: TreeMaterializeContext,
+  ) {
+    const key = normalizeFieldNameKey(fieldName);
+    if (!key) return;
+    const matches = owner.children.filter((childId) => {
+      const child = this.loro.materializeNode(childId);
+      return child?.type === 'fieldEntry'
+        && normalizeFieldNameKey(this.fieldEntryDisplayNameFromContext(child, context)) === key;
+    });
+    if (matches.length > 0) {
+      throw CoreError.invalidOperation(`duplicate field "${fieldName}" on owner ${owner.id}: ${matches.join(', ')}`);
+    }
   }
 
   private touchNodeDirect(nodeId: string) {
@@ -3662,10 +3916,17 @@ export class Core {
     return clonedId;
   }
 
-  private applyChildTagsDirect(parentId: string, childId: string) {
-    const parent = this.loro.materializeNode(parentId);
-    const tagIds = parent?.tags ?? [];
+  private applyChildTagsDirect(parentId: string, childId: string, context?: TreeMaterializeContext) {
+    const tagIds = this.loro.nodeTags(parentId);
     if (tagIds.length === 0) return;
+    if (context) {
+      for (const tagId of tagIds) {
+        if (!context.activeTagIds.has(tagId)) continue;
+        const childSupertag = context.childSupertagByTagId.get(tagId);
+        if (childSupertag) this.applyTagDirect(childId, childSupertag);
+      }
+      return;
+    }
     const state = this.snapshot();
     for (const tagId of tagIds) {
       if (!isActiveTagDefinition(state, tagId)) continue;
@@ -3914,6 +4175,10 @@ export class Core {
 
   private findDateNodeId(year: number, month: number, day: number) {
     const state = this.snapshot();
+    return this.findDateNodeIdInState(state, year, month, day);
+  }
+
+  private findDateNodeIdInState(state: DocumentState, year: number, month: number, day: number) {
     const date = new Date(year, month - 1, day);
     if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return undefined;
     const yearName = String(year);
@@ -4017,6 +4282,7 @@ function assertWorkspaceSharedState(value: unknown): asserts value is WorkspaceS
     || document.schemaVersion !== 3
     || typeof document.snapshot !== 'string'
     || document.snapshot.length === 0
+    || (document.exportMode != null && document.exportMode !== 'snapshot' && document.exportMode !== 'update')
   ) {
     throw CoreError.invalidOperation('invalid shared Loro document state');
   }
@@ -4073,18 +4339,39 @@ function plannedInsertIndex(index: number | null | undefined, length: number): n
 
 function collectDescendantsFromState(state: DocumentState, nodeId: string): string[] {
   const result: string[] = [];
-  for (const childId of state.nodes[nodeId]?.children ?? []) {
-    result.push(childId, ...collectDescendantsFromState(state, childId));
+  const stack = [...(state.nodes[nodeId]?.children ?? [])].reverse();
+  const visited = new Set<string>();
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (visited.has(id)) continue;
+    const node = state.nodes[id];
+    if (!node) continue;
+    visited.add(id);
+    result.push(id);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push(node.children[index]!);
+    }
   }
   return result;
 }
 
 function collectSubtreeAndDependentReferences(state: DocumentState, nodeId: string): Set<string> {
   const removedIds = new Set<string>();
-  const addSubtree = (id: string) => {
-    if (removedIds.has(id) || !state.nodes[id]) return;
-    removedIds.add(id);
-    for (const childId of state.nodes[id].children) addSubtree(childId);
+  const addSubtree = (rootId: string) => {
+    const stack = [rootId];
+    let added = false;
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (removedIds.has(id)) continue;
+      const node = state.nodes[id];
+      if (!node) continue;
+      removedIds.add(id);
+      added = true;
+      for (let index = node.children.length - 1; index >= 0; index -= 1) {
+        stack.push(node.children[index]!);
+      }
+    }
+    return added;
   };
 
   addSubtree(nodeId);
@@ -4095,8 +4382,7 @@ function collectSubtreeAndDependentReferences(state: DocumentState, nodeId: stri
     for (const node of Object.values(state.nodes)) {
       if (removedIds.has(node.id)) continue;
       if (node.type === 'reference' && node.targetId && removedIds.has(node.targetId)) {
-        addSubtree(node.id);
-        changed = true;
+        if (addSubtree(node.id)) changed = true;
       }
     }
   }
@@ -4137,11 +4423,29 @@ function sameJson(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-// True iff any of the touched nodes actually differs between the pre- and
-// post-mutation states (covers creates, deletes, and content edits). Compares
-// only the touched nodes, so change detection is O(touched) rather than O(N).
-function changedTouchedNodes(touched: readonly string[], before: DocumentState, after: DocumentState): boolean {
-  return touched.some((id) => !sameJson(before.nodes[id], after.nodes[id]));
+// True iff any of the touched nodes actually differs between the committed
+// pre-mutation nodes and the sparse post-mutation snapshot (covers creates,
+// deletes, and content edits). Compares only touched nodes, so change detection
+// is O(touched) rather than O(N).
+function changedTouchedNodes(
+  touched: readonly string[],
+  beforeNodes: Readonly<Record<string, Node>>,
+  afterNodes: ReadonlyMap<string, Node | undefined>,
+): boolean {
+  return changedTouchedNodeIds(touched, beforeNodes, afterNodes).length > 0;
+}
+
+function changedTouchedNodeIds(
+  touched: readonly string[],
+  beforeNodes: Readonly<Record<string, Node>>,
+  afterNodes: ReadonlyMap<string, Node | undefined>,
+): string[] {
+  return touched.filter((id) => {
+    const before = beforeNodes[id];
+    const after = afterNodes.get(id);
+    if (before === undefined || after === undefined) return before !== after;
+    return !sameJson(before, after);
+  });
 }
 
 function commitOriginFor(origin: CommitOrigin) {
@@ -5011,6 +5315,15 @@ function assertFieldDefRenameDoesNotDuplicateOwner(state: DocumentState, fieldDe
 
 function fieldNameForDefId(state: DocumentState, fieldDefId: NodeId): string {
   return systemFieldLabel(fieldDefId) ?? state.nodes[fieldDefId]?.content.text ?? fieldDefId;
+}
+
+function systemFieldIdForName(fieldName: string): NodeId | null {
+  const key = normalizeFieldNameKey(fieldName);
+  if (!key) return null;
+  for (const choice of SYSTEM_FIELD_CHOICES) {
+    if (normalizeFieldNameKey(choice.id) === key || normalizeFieldNameKey(choice.label) === key) return choice.id;
+  }
+  return null;
 }
 
 function booleanFieldValue(value: string): boolean {

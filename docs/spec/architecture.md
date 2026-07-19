@@ -135,6 +135,14 @@ always follows the same fresh-replica rule. The retired top-level Loro v2 format
 has no compatibility reader; pre-release development data must be reset after
 this format change.
 
+Local undo/redo and local operation-history metadata are intentionally bounded.
+The Loro `UndoManager` instances for all, agent, and user scopes each retain the
+latest 100 steps. The JavaScript operation journal is metadata for listing and
+stack guards, not an unbounded audit log; Core restores, serves, and persists only
+the latest 500 entries for the owning installation. Each entry stores at most a
+bounded deterministic sample of affected node ids plus the total count and a
+diagnostic hash, so bulk operations do not pin every touched id in local history.
+
 Every Core construction uses a fresh random Loro peer id for new operations;
 the active peer is never persisted. This remains safe when a complete
 `userData` directory is cloned or an older workspace snapshot is restored:
@@ -142,10 +150,16 @@ neither process can reuse an already-synchronized `{peer, counter}` range.
 Historical peer ids remain intrinsic to operation ids in the snapshot. The
 trade-off is one version-vector peer per editing session.
 
-The shared Loro record contains a snapshot but no field designating the active
-local peer. Two converged replicas can therefore emit different snapshot bytes;
-convergence is the same materialized state and semantic version vector, not
-byte-identical snapshot encoding.
+The shared Loro record contains portable Loro bytes but no field designating the
+active local peer. Core exports a compact Loro snapshot by default. If the
+materialized outline is deeper than 1,024 rows, Core writes a full Loro update
+instead (`exportMode: "update"`), because Loro's snapshot/shallow-snapshot export
+path fails in wasm on very deep tree nesting while update export remains
+iterative enough for the same structure. Loro import accepts both encodings, so
+reload and replication bootstrap use the same shared-state path. Two converged
+replicas can therefore emit different byte encodings; convergence is the same
+materialized state and semantic version vector, not byte-identical snapshot
+encoding.
 
 Core exposes provider-neutral replication primitives for a full shared
 snapshot, encoded version vectors, updates since a version vector, committed
@@ -155,10 +169,35 @@ leave replica identity and the local operation journal untouched, and report
 accepted operations, unresolved dependencies, and persistence changes
 separately from materialized node changes. Newly accepted operations are
 durable even when conflict resolution leaves the visible state unchanged.
-Duplicate or still-pending imports do not invalidate materialized caches or
-clear redo.
+For the common single-update path, Core derives candidate node ids from Loro's
+import event tree/map/text/list paths, materializes only those candidates, and
+compares them against the committed state before reporting `changedNodeIds`.
+Multi-update batches, dependency-pending updates that become applicable later,
+and accepted imports with no usable event candidates fall back to a full-state
+diff. Duplicate or still-pending imports do not invalidate materialized caches
+or clear redo.
 
-Shared snapshot export, version-vector reads, incremental export, and remote
+The Loro document wrapper materializes and deletes document trees with explicit
+work stacks rather than recursive JS traversal. Core's permanent-delete
+dependency collection uses the same iterative discipline, so valid deep outline
+chains do not fail from JavaScript call-stack depth in these paths.
+Yielding tree materialization honors `commitEveryNodes` even when called directly
+without an outer service transaction: Core opens an internal transaction and undo
+group so chunk commits are real Loro commits while undo still removes the import
+as one operation. Each chunk drains, materializes, and patches its touched nodes
+before committing, then Core records one revision and operation-history entry at
+the final transaction boundary. That keeps the public mutation atomic while
+avoiding one large end-of-import materialization stall. The tree-materialization
+context also caches active tag definitions, `childSupertag` config for inherited
+child tags, and field definition name/type resolution for pasted `field:: value`
+metadata, so importing many children under a tagged parent such as Today or a
+field-heavy import does not re-materialize the whole document for every inserted
+row or field. The agent import service chooses its `yieldEveryNodes` /
+`commitEveryNodes` chunk size from Import Pack stats: plain large outlines keep
+larger chunks, while field-heavy packs yield more often because each field
+materializes an entry plus a value/reference child.
+
+Shared-state export, version-vector reads, incremental export, and remote
 import are available only at a committed Core boundary. They reject both an
 active explicit transaction and a standalone async mutation while it has
 yielded. Loro export can otherwise auto-commit pending operations, so this guard
@@ -196,8 +235,9 @@ Per-edit cost scales with what changed, not document size.
   `delta` (changed nodes via `projectionNodesFor`, with absent ids becoming
   `removedIds`) for a clean `+1` revision step; any discontinuity, or core's
   `requiresFullSearchRebuild` (undo/redo/import/load), falls back to `full`. Core
-  is untouched — the delta is assembled at the process boundary from existing core
-  APIs.
+  exposes this explicit projection-read surface; its internal `CommandOutcome`
+  carries only local interaction hints and does not force projection
+  materialization on the mutation path.
 - **Renderer reducer** (`reduceProjection` in `renderer/state/document.ts`): a
   `full` rebuilds the index; a `delta` patches a copy of the previous `byId` —
   `set` each changed node, `delete` **exactly** `removedIds` (no stale-subtree

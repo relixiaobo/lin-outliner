@@ -56,7 +56,8 @@ describe('workspace replication persistence', () => {
     });
     expect(left.persistenceIdentity().replicaId).not.toBe(right.persistenceIdentity().replicaId);
     expect(left.persistenceIdentity().loroSessionPeerId).not.toBe(right.persistenceIdentity().loroSessionPeerId);
-    expect(Object.keys(shared.document).sort()).toEqual(['kind', 'schemaVersion', 'snapshot']);
+    expect(Object.keys(shared.document).sort()).toEqual(['exportMode', 'kind', 'schemaVersion', 'snapshot']);
+    expect(shared.document.exportMode).toBe('snapshot');
     expect(left.requiresInitialPersist()).toBe(true);
     expect(right.requiresInitialPersist()).toBe(true);
   });
@@ -403,6 +404,35 @@ describe('workspace replication persistence', () => {
     focusedNodeId(target.createNode(target.projection().todayId, null, 'Local row'));
     expect(targetLocalUpdates).toHaveLength(1);
     unsubscribe();
+  });
+
+  test('applies a single remote update without full-state materialization', () => {
+    const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
+    delete process.env.LIN_VERIFY_CACHE;
+    const seed = Core.new({ installationId: newInstallationId() });
+    const shared = seed.exportSharedState();
+    const source = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const target = Core.fromSharedState(shared, { installationId: newInstallationId() });
+    const cursor = source.replicationVersionVector();
+    const remoteNodeId = focusedNodeId(source.createNode(source.projection().todayId, null, 'Sparse remote row'));
+    const loro = (target as unknown as { loro: { materializeState: () => unknown } }).loro;
+    const originalMaterializeState = loro.materializeState.bind(loro);
+    let materializeStateCalls = 0;
+    loro.materializeState = () => {
+      materializeStateCalls += 1;
+      return originalMaterializeState();
+    };
+
+    try {
+      const delta = target.applyReplicationUpdates([source.exportReplicationUpdate(cursor)]);
+
+      expect(delta.changedNodeIds).toContain(remoteNodeId);
+      expect(materializeStateCalls).toBe(0);
+      expect(target.projectionNodesByIds([remoteNodeId])).toHaveLength(1);
+    } finally {
+      if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
+      else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
+    }
   });
 
   test('restarts both replicas with fresh peers and continues converging', () => {

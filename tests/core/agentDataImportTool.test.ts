@@ -7,7 +7,7 @@ import { Core } from '../../src/core/core';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
 import type { ImportPack } from '../../src/main/agentDataImportPack';
 import { AgentImportApiServer, type ImportApiDescriptor, type ImportApiResponse } from '../../src/main/agentImportApi';
-import { AgentImportService, resolvePackFilePath } from '../../src/main/agentImportService';
+import { AgentImportService, importYieldEveryNodesForStats, resolvePackFilePath } from '../../src/main/agentImportService';
 import { createAgentLocalWorkspaceContext } from '../../src/main/agentLocalTools';
 import {
   checkedState,
@@ -166,6 +166,12 @@ function samplePack(): ImportPack {
 }
 
 describe('Tenon import service', () => {
+  test('scales import yield chunks by estimated field materialization cost', () => {
+    expect(importYieldEveryNodesForStats({ nodes: 20_000, fields: 0 })).toBe(50);
+    expect(importYieldEveryNodesForStats({ nodes: 5_000, fields: 5_000 })).toBe(16);
+    expect(importYieldEveryNodesForStats({ nodes: 5_000, fields: 10_000 })).toBe(10);
+  });
+
   test('resolves absolute pack files outside the Run workdir under Full Access', async () => {
     const workdir = await mkdtemp(path.join(tmpdir(), 'tenon-data-import-workdir-'));
     const sourceDir = await mkdtemp(path.join(tmpdir(), 'tenon-data-import-source-'));

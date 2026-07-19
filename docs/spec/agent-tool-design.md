@@ -2411,7 +2411,10 @@ interface OutlineUndoStackItem {
   command?: string;
   action: string;
   summary: string;
-  affectedNodeIds: string[];
+  affectedNodeIds: string[]; // bounded deterministic sample
+  affectedNodeCount: number;
+  affectedNodeIdsTruncated?: boolean;
+  affectedNodeIdsHash?: string;
   createdAt: string;
   canUndo: boolean;
   canRedo: boolean;
@@ -2422,10 +2425,21 @@ Result behavior:
 
 - Omitted `action` means `list`.
 - `list` is read-only, defaults to `origin: "all"`, and executes directly.
+- The returned journal is a bounded local metadata window: Core restores,
+  persists, and lists only the latest 500 operation-history entries for the
+  current installation. Older document operations may still exist in the CRDT
+  snapshot but are not listable metadata.
+- Each history item returns `affectedNodeIds` as a deterministic sample, not an
+  unbounded complete set. `affectedNodeCount` is the total affected-id count before
+  sampling; `affectedNodeIdsTruncated` signals that the sample is incomplete;
+  `affectedNodeIdsHash` is a stable diagnostic fingerprint for comparing sampled
+  affected sets without retaining every id.
 - `undo` and `redo` are stack operations. Agent v1 does not support arbitrary
   history jumping.
 - `steps` defaults to 1 and should stay small. Initial maximum: 10.
 - `undo` and `redo` default to `origin: "agent"` for safety.
+- The underlying all/user/agent Loro undo managers each retain the latest 100
+  steps, after origin exclusions.
 - `origin: "agent"` means undo/redo the nearest stack operation whose origin is
   agent, stopping at unsafe dependencies.
 - `origin: "user"` means undo/redo the nearest user-origin stack operation and

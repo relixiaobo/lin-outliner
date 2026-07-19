@@ -5,6 +5,7 @@ import {
   LoroText,
   UndoManager,
   VersionVector,
+  type LoroEventBatch,
   type LoroMap,
   type LoroTree,
   type LoroTreeNode,
@@ -33,6 +34,7 @@ export interface SharedLoroDocumentState {
   kind: 'loro-document';
   schemaVersion: 3;
   snapshot: string;
+  exportMode?: 'snapshot' | 'update';
 }
 
 export interface LoroDocumentInit {
@@ -43,17 +45,21 @@ export interface LoroDocumentInit {
 
 export interface LoroImportResult {
   acceptedOperations: boolean;
+  affectedNodeIds: string[];
+  requiresFullStateDiff: boolean;
   hasPendingUpdates: boolean;
   persistenceChanged: boolean;
 }
 
 const LORO_TREE_NAME = 'nodes';
+const MAX_SNAPSHOT_EXPORT_DEPTH = 1_024;
 const INLINE_REF_MARK = 'inlineRef';
 const INLINE_REF_PLACEHOLDER = '\uFFFC';
 const TEXT_MARK_KEYS = ['bold', 'italic', 'strike', 'code', 'highlight', 'headingMark', 'link'] as const;
 const UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:'];
 const AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:', 'user:'];
 const USER_UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:', 'agent:'];
+const LORO_UNDO_MAX_STEPS = 100;
 const LORO_DELETED_ROOT_ID = '2147483647@18446744073709551615' as TreeID;
 const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'type',
@@ -182,10 +188,13 @@ export class LoroOutlinerDocument {
 
   exportSharedState(commitOrigin: string): SharedLoroDocumentState {
     this.commit(commitOrigin);
+    const state = this.materializeState();
+    const exportMode = maxTreeDepth(state) > MAX_SNAPSHOT_EXPORT_DEPTH ? 'update' : 'snapshot';
     return {
       kind: 'loro-document',
       schemaVersion: 3,
-      snapshot: encodeBase64(this.doc.export({ mode: 'snapshot' })),
+      exportMode,
+      snapshot: encodeBase64(this.doc.export({ mode: exportMode })),
     };
   }
 
@@ -216,22 +225,39 @@ export class LoroOutlinerDocument {
     if (updates.length === 0) {
       return {
         acceptedOperations: false,
+        affectedNodeIds: [],
+        requiresFullStateDiff: false,
         hasPendingUpdates: this.pendingUpdates.size > 0,
         persistenceChanged: false,
       };
     }
     const candidates = new Map(this.pendingUpdates);
     for (const [encoded, update] of uniqueEncodedUpdates(updates)) candidates.set(encoded, update);
-    const status = this.doc.importBatch(updates.map((update) => update.slice()));
+    const affectedNodeIds = new Set<string>();
+    const unsubscribe = this.doc.subscribe((batch) => this.collectImportedNodeIds(batch, affectedNodeIds));
+    let status: ReturnType<LoroDoc['importBatch']>;
+    try {
+      status = this.doc.importBatch(updates.map((update) => update.slice()));
+    } finally {
+      unsubscribe();
+    }
     const acceptedOperations = status.success.size > 0;
     const previousPendingKeys = new Set(this.pendingUpdates.keys());
     this.pendingUpdates = retainUnappliedUpdates(candidates, this.doc);
+    const requiresFullStateDiff = acceptedOperations && (
+      updates.length > 1
+      || previousPendingKeys.size > 0
+      || affectedNodeIds.size === 0
+    );
     if (acceptedOperations) {
       this.clearRedo();
-      this.invalidateWholeTree();
+      if (requiresFullStateDiff) this.invalidateWholeTree();
+      else for (const id of affectedNodeIds) this.statePatch.add(id);
     }
     return {
       acceptedOperations,
+      affectedNodeIds: [...affectedNodeIds].sort(),
+      requiresFullStateDiff,
       hasPendingUpdates: this.pendingUpdates.size > 0,
       persistenceChanged: acceptedOperations || !sameKeys(previousPendingKeys, this.pendingUpdates),
     };
@@ -346,6 +372,38 @@ export class LoroOutlinerDocument {
     this.stateDirtyFull = true;
   }
 
+  private collectImportedNodeIds(batch: LoroEventBatch, affectedNodeIds: Set<string>) {
+    if (batch.by !== 'import') return;
+    for (const event of batch.events) {
+      const pathTreeId = treeIdFromEventPath(event.path);
+      if (pathTreeId) this.addImportedTreeNodeId(pathTreeId, affectedNodeIds, false);
+      if (event.diff.type !== 'tree') continue;
+      for (const item of event.diff.diff) {
+        if ('parent' in item && item.parent) this.addImportedTreeNodeId(item.parent, affectedNodeIds, false);
+        if ('oldParent' in item && item.oldParent) this.addImportedTreeNodeId(item.oldParent, affectedNodeIds, false);
+        this.addImportedTreeNodeId(item.target, affectedNodeIds, item.action === 'create' || item.action === 'delete');
+      }
+    }
+  }
+
+  private addImportedTreeNodeId(treeId: TreeID, affectedNodeIds: Set<string>, includeDescendants: boolean) {
+    const root = this.tree.getNodeByID(treeId);
+    if (!root) return;
+    const stack = [root];
+    while (stack.length > 0) {
+      const treeNode = stack.pop()!;
+      const id = readString(treeNode.data.get('id'));
+      if (id) {
+        affectedNodeIds.add(id);
+        if (isDeletedTreeNode(treeNode)) this.nodeIdToTreeId.delete(id);
+        else this.nodeIdToTreeId.set(id, treeNode.id);
+      }
+      if (!includeDescendants) continue;
+      const children = treeNode.children() ?? [];
+      for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]!);
+    }
+  }
+
   clearTouchedNodeIds() {
     this.touchedNodeIds.clear();
   }
@@ -362,8 +420,9 @@ export class LoroOutlinerDocument {
 
   writeNode(node: Node) {
     const treeNode = this.requiredTreeNode(node.id);
-    writeNodeData(treeNode.data, normalizeNode(node));
-    this.touchNode(node.id);
+    const normalized = normalizeNode(node);
+    writeNodeData(treeNode.data, normalized);
+    this.touchNodeWithSnapshot(node.id, normalized);
   }
 
   applyNodeTextPatch(nodeId: string, patch: RichTextPatch) {
@@ -391,17 +450,20 @@ export class LoroOutlinerDocument {
     const parentTreeNode = parentId ? this.treeNodeOrUndefined(parentId) : undefined;
     if (parentId && !parentTreeNode) throw CoreError.parentNotFound(parentId);
     const parentTreeId = parentTreeNode?.id;
-    const targetIndex = parentTreeNode
-      ? clampInsertIndex(index, parentTreeNode.children()?.length ?? 0)
-      : clampInsertIndex(index, this.tree.roots().length);
+    const targetIndex = index === null || index === undefined
+      ? undefined
+      : parentTreeNode
+        ? clampInsertIndex(index, parentTreeNode.children()?.length ?? 0)
+        : clampInsertIndex(index, this.tree.roots().length);
     const treeNode = this.tree.createNode(parentTreeId, targetIndex);
     // The caller's `type` argument fixes the variant; `T` lets it set
     // variant-specific fields on the configured node without a local cast.
     const node = createNodeRecord(id, type, parentId, nowMs()) as T;
     configure(node);
-    writeNodeData(treeNode.data, normalizeNode(node));
+    const normalized = normalizeNode(node);
+    writeNodeData(treeNode.data, normalized);
     this.nodeIdToTreeId.set(id, treeNode.id);
-    this.touchNode(id);
+    this.touchNodeWithSnapshot(id, normalized);
     if (parentId) this.touchNode(parentId);
     return id;
   }
@@ -413,7 +475,9 @@ export class LoroOutlinerDocument {
     if (!state.nodes[parentId]) throw CoreError.parentNotFound(parentId);
     const treeNode = this.requiredTreeNode(nodeId);
     const parentTreeNode = this.requiredTreeNode(parentId);
-    const targetIndex = clampInsertIndex(index, parentTreeNode.children()?.length ?? 0);
+    const targetIndex = index === null || index === undefined
+      ? undefined
+      : clampInsertIndex(index, parentTreeNode.children()?.length ?? 0);
     this.tree.move(treeNode.id, parentTreeNode.id, targetIndex);
     this.touchNode(nodeId);
     if (state.nodes[nodeId]?.parentId) this.touchNode(state.nodes[nodeId]!.parentId!);
@@ -423,7 +487,7 @@ export class LoroOutlinerDocument {
   deleteNode(nodeId: string) {
     const state = this.materializeState();
     const removed = subtreeIds(state, nodeId);
-    for (const id of removed) this.touchNode(id);
+    for (const id of removed) this.touchNodeWithSnapshot(id, undefined);
     const parentId = state.nodes[nodeId]?.parentId;
     if (parentId) this.touchNode(parentId);
     this.tree.delete(this.requiredTreeNode(nodeId).id);
@@ -471,13 +535,17 @@ export class LoroOutlinerDocument {
   // consistent with the full build.
   private buildAllNodes(): Record<string, Node> {
     const nodes: Record<string, Node> = {};
-    const visit = (treeNode: LoroTreeNode) => {
+    const stack = [...this.tree.roots()].reverse();
+    while (stack.length > 0) {
+      const treeNode = stack.pop()!;
       const node = this.readNodeFromTree(treeNode);
       if (node) nodes[node.id] = node;
-      for (const child of treeNode.children() ?? []) visit(child);
-    };
+      const children = treeNode.children() ?? [];
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        stack.push(children[index]!);
+      }
+    }
 
-    for (const root of this.tree.roots()) visit(root);
     return normalizeState({
       schemaVersion: 1,
       workspaceId: WORKSPACE_ID,
@@ -494,6 +562,34 @@ export class LoroOutlinerDocument {
     const treeNode = this.treeNodeOrUndefined(id);
     if (!treeNode) return undefined;
     return this.readNodeFromTree(treeNode);
+  }
+
+  nodeTags(id: string): string[] {
+    const treeNode = this.treeNodeOrUndefined(id);
+    if (!treeNode) return [];
+    return readStringList(treeNode.data.get('tags'));
+  }
+
+  // Materialize selected nodes without copying the whole `nodes` container.
+  // Normal mutation finalization drains touched ids, reads only those nodes, and
+  // patches Core's committed state/projection caches from this sparse snapshot.
+  materializeNodes(ids: Iterable<string>): Map<string, Node | undefined> {
+    const snapshots = new Map<string, Node | undefined>();
+    for (const id of ids) {
+      if (this.stateCacheNodes !== null && !this.stateDirtyFull && !this.statePatch.has(id)) {
+        snapshots.set(id, this.stateCacheNodes[id]);
+        continue;
+      }
+      const node = this.materializeNode(id);
+      const cachedNode = node && cacheFreezeEnabled() ? deepFreeze(node) : node;
+      snapshots.set(id, cachedNode);
+      if (this.stateCacheNodes !== null && !this.stateDirtyFull) {
+        if (cachedNode) this.stateCacheNodes[id] = cachedNode;
+        else delete this.stateCacheNodes[id];
+        this.statePatch.delete(id);
+      }
+    }
+    return snapshots;
   }
 
   private readNodeFromTree(treeNode: LoroTreeNode): Node | undefined {
@@ -554,6 +650,7 @@ export class LoroOutlinerDocument {
     let poppedValue: Value | undefined;
     return new UndoManager(this.doc, {
       mergeInterval: 0,
+      maxUndoSteps: LORO_UNDO_MAX_STEPS,
       excludeOriginPrefixes,
       onPush: () => {
         const value = this.pendingUndoValue ?? poppedValue ?? null;
@@ -583,6 +680,17 @@ export class LoroOutlinerDocument {
 
   private touchNode(nodeId: string) {
     this.touchedNodeIds.add(nodeId);
+    this.statePatch.add(nodeId);
+  }
+
+  private touchNodeWithSnapshot(nodeId: string, node: Node | undefined) {
+    this.touchedNodeIds.add(nodeId);
+    if (this.stateCacheNodes !== null && !this.stateDirtyFull) {
+      if (node) this.stateCacheNodes[nodeId] = cacheFreezeEnabled() ? deepFreeze(node) : node;
+      else delete this.stateCacheNodes[nodeId];
+      this.statePatch.delete(nodeId);
+      return;
+    }
     this.statePatch.add(nodeId);
   }
 }
@@ -640,9 +748,47 @@ function isDescendant(state: DocumentState, nodeId: string, ancestorId: string):
 }
 
 function subtreeIds(state: DocumentState, nodeId: string): string[] {
-  const node = state.nodes[nodeId];
-  if (!node) return [];
-  return [nodeId, ...node.children.flatMap((childId) => subtreeIds(state, childId))];
+  if (!state.nodes[nodeId]) return [];
+  const result: string[] = [];
+  const stack = [nodeId];
+  const visited = new Set<string>();
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (visited.has(id)) continue;
+    const node = state.nodes[id];
+    if (!node) continue;
+    visited.add(id);
+    result.push(id);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push(node.children[index]!);
+    }
+  }
+  return result;
+}
+
+function maxTreeDepth(state: DocumentState): number {
+  let maxDepth = 0;
+  const stack = Object.values(state.nodes)
+    .filter((node) => !node.parentId || !state.nodes[node.parentId])
+    .map((node) => ({ nodeId: node.id, depth: 1 }));
+  const visited = new Set<string>();
+  while (stack.length > 0) {
+    const { nodeId, depth } = stack.pop()!;
+    if (visited.has(nodeId)) continue;
+    const node = state.nodes[nodeId];
+    if (!node) continue;
+    visited.add(nodeId);
+    maxDepth = Math.max(maxDepth, depth);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push({ nodeId: node.children[index]!, depth: depth + 1 });
+    }
+  }
+  return maxDepth;
+}
+
+function treeIdFromEventPath(path: readonly unknown[]): TreeID | undefined {
+  if (path[0] !== LORO_TREE_NAME || typeof path[1] !== 'string') return undefined;
+  return path[1] as TreeID;
 }
 
 function clampInsertIndex(index: number | null | undefined, length: number): number | undefined {
