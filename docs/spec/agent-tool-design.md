@@ -2422,10 +2422,16 @@ Result behavior:
 
 - Omitted `action` means `list`.
 - `list` is read-only, defaults to `origin: "all"`, and executes directly.
+- The returned journal is a bounded local metadata window: Core restores,
+  persists, and lists only the latest 500 operation-history entries for the
+  current installation. Older document operations may still exist in the CRDT
+  snapshot but are not listable metadata.
 - `undo` and `redo` are stack operations. Agent v1 does not support arbitrary
   history jumping.
 - `steps` defaults to 1 and should stay small. Initial maximum: 10.
 - `undo` and `redo` default to `origin: "agent"` for safety.
+- The underlying all/user/agent Loro undo managers each retain the latest 100
+  steps, after origin exclusions.
 - `origin: "agent"` means undo/redo the nearest stack operation whose origin is
   agent, stopping at unsafe dependencies.
 - `origin: "user"` means undo/redo the nearest user-origin stack operation and

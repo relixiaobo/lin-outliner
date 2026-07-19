@@ -54,6 +54,7 @@ const TEXT_MARK_KEYS = ['bold', 'italic', 'strike', 'code', 'highlight', 'headin
 const UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:'];
 const AGENT_UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:', 'user:'];
 const USER_UNDO_EXCLUDED_ORIGIN_PREFIXES = ['__seed__', 'system:', 'agent:'];
+const LORO_UNDO_MAX_STEPS = 100;
 const LORO_DELETED_ROOT_ID = '2147483647@18446744073709551615' as TreeID;
 const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'type',
@@ -588,6 +589,7 @@ export class LoroOutlinerDocument {
     let poppedValue: Value | undefined;
     return new UndoManager(this.doc, {
       mergeInterval: 0,
+      maxUndoSteps: LORO_UNDO_MAX_STEPS,
       excludeOriginPrefixes,
       onPush: () => {
         const value = this.pendingUndoValue ?? poppedValue ?? null;

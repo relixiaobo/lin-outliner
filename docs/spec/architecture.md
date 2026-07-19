@@ -135,6 +135,12 @@ always follows the same fresh-replica rule. The retired top-level Loro v2 format
 has no compatibility reader; pre-release development data must be reset after
 this format change.
 
+Local undo/redo and local operation-history metadata are intentionally bounded.
+The Loro `UndoManager` instances for all, agent, and user scopes each retain the
+latest 100 steps. The JavaScript operation journal is metadata for listing and
+stack guards, not an unbounded audit log; Core restores, serves, and persists only
+the latest 500 entries for the owning installation.
+
 Every Core construction uses a fresh random Loro peer id for new operations;
 the active peer is never persisted. This remains safe when a complete
 `userData` directory is cloned or an older workspace snapshot is restored:

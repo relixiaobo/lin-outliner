@@ -2205,6 +2205,47 @@ describe('Core', () => {
     expect(core.state().nodes[agentNode]).toBeUndefined();
   });
 
+  test('Loro undo managers retain only the latest 100 steps for all scopes', () => {
+    const scenarios = [
+      {
+        origin: 'all' as const,
+        commitOrigin: 'user:undo-retention',
+      },
+      {
+        origin: 'user' as const,
+        commitOrigin: 'user:undo-retention',
+      },
+      {
+        origin: 'agent' as const,
+        commitOrigin: 'agent:undo-retention',
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const document = new LoroOutlinerDocument();
+      const nodeIds = Array.from({ length: 101 }, (_value, index) => {
+        const nodeId = `${scenario.origin}:undo-retention:${index}`;
+        document.createNodeWithId(nodeId, undefined, null, undefined, (node) => {
+          node.content = plainText(`Undo retention ${index}`);
+        });
+        document.commit(scenario.commitOrigin);
+        return nodeId;
+      });
+
+      let undone = 0;
+      while (document.canUndo(scenario.origin)) {
+        document.undo(scenario.origin);
+        undone += 1;
+      }
+
+      expect(undone).toBe(100);
+      const state = document.materializeState();
+      expect(state.nodes[nodeIds[0]!]).toBeDefined();
+      expect(state.nodes[nodeIds[1]!]).toBeUndefined();
+      expect(document.canUndo(scenario.origin)).toBe(false);
+    }
+  });
+
   test('failed transactions roll back uncommitted Loro changes', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

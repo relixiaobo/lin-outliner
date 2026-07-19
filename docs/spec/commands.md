@@ -269,7 +269,10 @@ pre-release child-run command aliases are not accepted.
   projection.
 - Origins are tagged on the underlying Loro transaction (`user:`, `agent:`,
   `system:`) so the scoped `UndoManager` can separate user undo from agent
-  undo. See `src/core/loroDocument.ts`.
+  undo. The all/user/agent undo managers each retain the latest 100 steps. The
+  separate operation journal used for history listing and stack guards is bounded
+  to the latest 500 local entries. See `src/core/loroDocument.ts` and
+  `src/core/operationJournal.ts`.
 - `NodeType` is content-oriented. It does not include a work/execution node type;
   scheduling and execution are owned by Issue / Recurring Issue / Agent Session
   runtime state.
