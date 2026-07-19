@@ -414,8 +414,11 @@ const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
   assetRoot(),
 ]);
 
-documentService.onProjectionChanged((event) => {
-  mainWindow?.webContents.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
+documentService.onProjectionChanged(({ event, sourceWebContentsId }) => {
+  const target = liveWindow(mainWindow)?.webContents;
+  if (target && target.id !== sourceWebContentsId) {
+    target.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
+  }
   pruneNodeAccessForProjectionUpdate(event.update);
 });
 
@@ -1584,7 +1587,9 @@ function registerIpc() {
           localFileReferencePreview,
         });
       }
-      if (isDocumentCommand(command)) return documentService.handle(command, args);
+      if (isDocumentCommand(command)) {
+        return documentService.handle(command, args, { sourceWebContentsId: event.sender.id });
+      }
       throw new Error(`Unknown command: ${command}`);
     };
     if (!IPC_TRACE_ENABLED) return dispatch();

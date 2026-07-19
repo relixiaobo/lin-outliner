@@ -53,6 +53,7 @@ const WORKSPACE_FILE = 'workspace.loro.json';
 
 export interface DocumentMutationMeta {
   origin?: 'user' | 'agent' | 'system';
+  sourceWebContentsId?: number;
   operationId?: string;
   command?: string;
   tool?: string;
@@ -66,7 +67,12 @@ interface TextEditGroup {
   timer?: ReturnType<typeof setTimeout>;
 }
 
-type ProjectionChangedListener = (event: DocumentProjectionChangedEvent) => void;
+export interface ProjectionChangedDelivery {
+  event: DocumentProjectionChangedEvent;
+  sourceWebContentsId?: number;
+}
+
+type ProjectionChangedListener = (delivery: ProjectionChangedDelivery) => void;
 
 export class DocumentService {
   private core = Core.new();
@@ -247,7 +253,7 @@ export class DocumentService {
       if (this.core.revision() !== revisionBefore) {
         this.refreshTextSearchIndexFromCoreDelta();
         this.scheduleCoreSave();
-        this.emitProjectionChanged(meta.origin ?? 'user');
+        this.emitProjectionChanged(meta.origin ?? 'user', meta.sourceWebContentsId);
       }
       return result;
     });
@@ -278,7 +284,7 @@ export class DocumentService {
       if (this.core.revision() !== revisionBefore) {
         await this.refreshTextSearchIndexFromCoreDeltaYielding({ yieldEveryNodes: options.yieldEveryNodes });
         this.scheduleCoreSave();
-        this.emitProjectionChanged(meta.origin ?? 'agent');
+        this.emitProjectionChanged(meta.origin ?? 'agent', meta.sourceWebContentsId);
       }
       return focus ? { focus } : {};
     });
@@ -345,7 +351,7 @@ export class DocumentService {
         this.scheduleCoreSave();
       }
       if (changed && (command === 'apply_node_text_patch' || isMaterialize)) this.refreshTextSearchIndexFromCoreDelta();
-      if (changed) this.emitProjectionChanged(effectiveMeta.origin ?? 'user');
+      if (changed) this.emitProjectionChanged(effectiveMeta.origin ?? 'user', effectiveMeta.sourceWebContentsId);
       const focus = 'focus' in outcome ? outcome.focus : undefined;
       const result: CommandResult = { update: this.buildProjectionUpdate(), ...(focus ? { focus } : {}) };
       return result;
@@ -981,7 +987,10 @@ export class DocumentService {
     this.coreSavePending = false;
   }
 
-  private emitProjectionChanged(origin: DocumentProjectionChangedEvent['origin']) {
+  private emitProjectionChanged(
+    origin: DocumentProjectionChangedEvent['origin'],
+    sourceWebContentsId?: number,
+  ) {
     if (this.projectionChangedListeners.size === 0) return;
     const event: DocumentProjectionChangedEvent = {
       type: 'projection_changed',
@@ -989,7 +998,11 @@ export class DocumentService {
       update: this.buildProjectionUpdate(),
       timestamp: Date.now(),
     };
-    for (const listener of this.projectionChangedListeners) listener(event);
+    const delivery: ProjectionChangedDelivery = {
+      event,
+      ...(sourceWebContentsId !== undefined ? { sourceWebContentsId } : {}),
+    };
+    for (const listener of this.projectionChangedListeners) listener(delivery);
   }
 }
 
