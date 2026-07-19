@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Core sparse transactions (PR #413, codex)** — Core mutations now finalize
+  from explicit touched-node ids instead of whole-state materialization on the
+  hot path. Operation history stores bounded affected-id summaries, journal and
+  undo retention are capped, deep shared-state export avoids stack failures,
+  replication import uses sparse event candidates when safe, and field/tag-heavy
+  tree imports cache resolution while committing responsive chunks. **Gate
+  (main):** review found no reportable issues. Verified with typecheck, full
+  Core/renderer tests, focused sparse replication/import/cache coverage, docs
+  check, and diff check.
 - **Single-delivery projection routing (PR #412, codex)** — local renderer
   document commands now apply their returned projection update once, while the
   main process suppresses the duplicate `projection_changed` event back to the

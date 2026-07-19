@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
@@ -31,9 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-19).** Open PR queue: none. Recently merged: #412
-(`codex/single-delivery-projection-routing`) merged 2026-07-19 after main
-review; see *Recently completed*. #411 (`codex/renderer-noop-command-outcome`)
+**In flight (2026-07-19).** Open PR queue: none. Recently merged: #413
+(`codex/core-sparse-transactions`) merged 2026-07-19 after main review; see
+*Recently completed*. #412 (`codex/single-delivery-projection-routing`) merged
+2026-07-19 after main review; see *Recently completed*. #411 (`codex/renderer-noop-command-outcome`)
 merged 2026-07-19 after main review; see *Recently completed*. #410
 (`codex-2/agent-full-access-default`) merged 2026-07-17 after iterative main
 review; see *Recently completed*. #409
@@ -163,9 +164,10 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    model-first model picker (merge Provider + Model Override, provider as secondary label,
    "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
 3. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
-   reference-summary Trash set precomputation and default-panel row-model pruning; residual
-   `new Map(prev.byId)` + `nextRevisions` whole-map rebuild remains, each a small standalone PR;
-   no design gate.
+   reference-summary Trash set precomputation and default-panel row-model pruning; #413 shipped
+   core sparse transaction/write-path hardening, bounded journal/undo metadata, sparse replication
+   import, and yielding import cache/finalization. Remaining localized cleanups are still tracked in
+   `docs/plans/performance-optimization.md`; no design gate.
 4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
 5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
@@ -475,13 +477,14 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
   perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
-  · P2 (#275) · P3 hot-path cleanup #380 all shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
+  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
   index patched per delta, windowed/flat outliner renderer + agent streaming `projection_patch` +
   structural-save coalescing (metrics in Recently completed). #380 precomputes Trash descendant sets
   for renderer/system/search reference-summary scans and stops building recursive panel row models on
-  the default flat outliner path. **Remaining P3:** localized O(N) cleanups — the residual
-  `new Map(prev.byId)` + `nextRevisions` whole-map rebuild; several unlocked by the stable-identity
-  foundation P1 PR-A laid.
+  the default flat outliner path. #413 makes Core mutation finalization, history/journal metadata,
+  replication import, and yielding field/tag-heavy import proportional to touched nodes where sparse
+  evidence is available. **Remaining P3:** localized O(N) cleanups still listed in the plan, including
+  the residual `new Map(prev.byId)` + `nextRevisions` whole-map rebuild.
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
@@ -519,6 +522,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **core-sparse-transactions**
+  (`codex/core-sparse-transactions`, PR #413, codex, merged 2026-07-19,
+  fast-track) — Core mutation finalization now drains explicit touched-node ids,
+  materializes only changed nodes, patches state/projection caches sparsely, and
+  keeps `CommandOutcome` to local interaction hints while callers request
+  projections through explicit snapshot/delta APIs. Operation history now stores
+  bounded affected-id summaries, `OperationJournal` keeps a 500-entry indexed
+  live window, Loro undo managers cap retention explicitly, deep shared-state
+  export switches to update mode, replication import uses sparse event
+  candidates when safe, and yielding tree imports cache inherited tags/field
+  resolution while committing chunks without splitting public history.
+  **Gate (main):** review found no reportable issues on final head `1e3b4b3d`.
+  Verified with typecheck, full Core/renderer suites, focused sparse
+  replication/import/cache coverage, `docs:check`, and diff check.
 
 - **single-delivery-projection-routing**
   (`codex/single-delivery-projection-routing`, PR #412, codex, merged
