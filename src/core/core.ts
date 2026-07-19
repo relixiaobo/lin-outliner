@@ -520,7 +520,7 @@ export class Core {
       else removedIds.push(nodeId);
     }
     return {
-      todayId: this.currentTodayNodeId(),
+      todayId: this.currentTodayNodeIdFromState(this.stateValue),
       changedNodes,
       removedIds,
     };
