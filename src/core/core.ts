@@ -185,6 +185,7 @@ interface CoreTransaction {
 interface TouchedMutationPatch {
   affectedNodeIds: string[];
   changed: boolean;
+  afterNodes: ReadonlyMap<string, Node | undefined>;
 }
 
 export interface WorkspaceSharedState {
@@ -500,6 +501,28 @@ export class Core {
       revision: this.lastRevisionDelta.revision,
       changedNodeIds: [...this.lastRevisionDelta.changedNodeIds],
       requiresFullSearchRebuild: this.lastRevisionDelta.requiresFullSearchRebuild,
+    };
+  }
+
+  drainTransactionProjectionChanges(): {
+    todayId: NodeId;
+    changedNodes: NodeProjection[];
+    removedIds: NodeId[];
+  } | null {
+    const transaction = this.activeTransaction;
+    if (!transaction) return null;
+    const patch = this.patchActiveTransactionTouchedNodes(transaction);
+    const changedNodes: NodeProjection[] = [];
+    const removedIds: NodeId[] = [];
+    for (const nodeId of patch.affectedNodeIds) {
+      const node = patch.afterNodes.get(nodeId);
+      if (node) changedNodes.push(projectNode(node));
+      else removedIds.push(nodeId);
+    }
+    return {
+      todayId: this.currentTodayNodeId(),
+      changedNodes,
+      removedIds,
     };
   }
 
@@ -2824,7 +2847,7 @@ export class Core {
 
   private drainTouchedMutationPatch(): TouchedMutationPatch {
     const affectedNodeIds = this.loro.drainTouchedNodeIds();
-    if (affectedNodeIds.length === 0) return { affectedNodeIds, changed: false };
+    if (affectedNodeIds.length === 0) return { affectedNodeIds, changed: false, afterNodes: new Map() };
     const afterNodes = this.loro.materializeNodes(affectedNodeIds);
     // Exact change detection at O(touched): a node is changed iff its committed
     // pre-mutation snapshot differs from its post-mutation materialization.
@@ -2835,7 +2858,7 @@ export class Core {
     if (changed) {
       this.patchProjectionCache(affectedNodeIds, afterNodes);
     }
-    return { affectedNodeIds, changed };
+    return { affectedNodeIds, changed, afterNodes };
   }
 
   private patchStateValue(affectedNodeIds: readonly string[], afterNodes: ReadonlyMap<string, Node | undefined>) {

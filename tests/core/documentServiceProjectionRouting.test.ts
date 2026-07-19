@@ -135,4 +135,61 @@ describe('DocumentService projection routing metadata', () => {
     expect(toolResult.details.data.items[0].title).toBe('Tool read model routed');
     expect(projectionReads).toBe(0);
   });
+
+  test('serves DocumentService-backed replace_outline edit through command deltas without rebuilding projection indexes', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const createdRoot = await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Editable root',
+    }) as CommandResult;
+    const nodeId = createdRoot.focus!.nodeId;
+    const createdField = await service.handle('create_inline_field', {
+      parentId: nodeId,
+      index: null,
+      name: 'Status',
+      fieldType: 'plain',
+    }) as CommandResult;
+    const fieldId = createdField.focus!.nodeId;
+    const createdValue = await service.handle('create_node', {
+      parentId: fieldId,
+      index: null,
+      text: 'Open',
+    }) as CommandResult;
+    const valueId = createdValue.focus!.nodeId;
+    service.getDocumentReadModel();
+
+    const originalGetProjection = service.getProjection.bind(service);
+    let projectionReads = 0;
+    (service as unknown as { getProjection: typeof service.getProjection }).getProjection = () => {
+      projectionReads += 1;
+      return originalGetProjection();
+    };
+    const tools = createNodeTools(service);
+    const nodeRead = tools.find((tool) => tool.name === 'node_read');
+    const nodeEdit = tools.find((tool) => tool.name === 'node_edit');
+    expect(nodeRead).toBeDefined();
+    expect(nodeEdit).toBeDefined();
+    const readResult = await (nodeRead!.execute as any)('test-read', { node_id: nodeId, depth: 0 });
+    const revision = readResult.details.data.items[0].revision;
+
+    const editResult = await (nodeEdit!.execute as any)('test-edit', {
+      node_id: nodeId,
+      old_string: '*',
+      new_string: [
+        `- %%node:${nodeId}%% [x] Edited root #delta-tag`,
+        `  - %%node:${fieldId}%% Status::`,
+        `    - %%node:${valueId}%% Closed`,
+        '  - Mood:: Focused',
+      ].join('\n'),
+      expected_revision: revision,
+    });
+
+    expect(editResult.details.ok).toBe(true);
+    expect(editResult.details.data.afterOutline).toContain(`- %%node:${nodeId}%% [x] Edited root #delta-tag`);
+    expect(editResult.details.data.afterOutline).toContain(`- %%node:${valueId}%% Closed`);
+    expect(editResult.details.data.createdNodeIds).toHaveLength(1);
+    expect(projectionReads).toBe(0);
+  });
 });

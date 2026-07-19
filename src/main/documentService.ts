@@ -190,6 +190,10 @@ export class DocumentService {
     return this.documentReadModel;
   }
 
+  drainTransactionProjectionChanges() {
+    return this.core.drainTransactionProjectionChanges();
+  }
+
   getTextSearchIndex(): TextSearchIndex {
     this.ensureTextSearchIndex();
     return this.textSearchIndex!;
