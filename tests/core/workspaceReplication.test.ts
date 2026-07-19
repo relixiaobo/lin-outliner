@@ -56,7 +56,8 @@ describe('workspace replication persistence', () => {
     });
     expect(left.persistenceIdentity().replicaId).not.toBe(right.persistenceIdentity().replicaId);
     expect(left.persistenceIdentity().loroSessionPeerId).not.toBe(right.persistenceIdentity().loroSessionPeerId);
-    expect(Object.keys(shared.document).sort()).toEqual(['kind', 'schemaVersion', 'snapshot']);
+    expect(Object.keys(shared.document).sort()).toEqual(['exportMode', 'kind', 'schemaVersion', 'snapshot']);
+    expect(shared.document.exportMode).toBe('snapshot');
     expect(left.requiresInitialPersist()).toBe(true);
     expect(right.requiresInitialPersist()).toBe(true);
   });

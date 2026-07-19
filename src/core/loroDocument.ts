@@ -33,6 +33,7 @@ export interface SharedLoroDocumentState {
   kind: 'loro-document';
   schemaVersion: 3;
   snapshot: string;
+  exportMode?: 'snapshot' | 'update';
 }
 
 export interface LoroDocumentInit {
@@ -48,6 +49,7 @@ export interface LoroImportResult {
 }
 
 const LORO_TREE_NAME = 'nodes';
+const MAX_SNAPSHOT_EXPORT_DEPTH = 1_024;
 const INLINE_REF_MARK = 'inlineRef';
 const INLINE_REF_PLACEHOLDER = '\uFFFC';
 const TEXT_MARK_KEYS = ['bold', 'italic', 'strike', 'code', 'highlight', 'headingMark', 'link'] as const;
@@ -183,10 +185,13 @@ export class LoroOutlinerDocument {
 
   exportSharedState(commitOrigin: string): SharedLoroDocumentState {
     this.commit(commitOrigin);
+    const state = this.materializeState();
+    const exportMode = maxTreeDepth(state) > MAX_SNAPSHOT_EXPORT_DEPTH ? 'update' : 'snapshot';
     return {
       kind: 'loro-document',
       schemaVersion: 3,
-      snapshot: encodeBase64(this.doc.export({ mode: 'snapshot' })),
+      exportMode,
+      snapshot: encodeBase64(this.doc.export({ mode: exportMode })),
     };
   }
 
@@ -707,6 +712,26 @@ function subtreeIds(state: DocumentState, nodeId: string): string[] {
     }
   }
   return result;
+}
+
+function maxTreeDepth(state: DocumentState): number {
+  let maxDepth = 0;
+  const stack = Object.values(state.nodes)
+    .filter((node) => !node.parentId || !state.nodes[node.parentId])
+    .map((node) => ({ nodeId: node.id, depth: 1 }));
+  const visited = new Set<string>();
+  while (stack.length > 0) {
+    const { nodeId, depth } = stack.pop()!;
+    if (visited.has(nodeId)) continue;
+    const node = state.nodes[nodeId];
+    if (!node) continue;
+    visited.add(nodeId);
+    maxDepth = Math.max(maxDepth, depth);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push({ nodeId: node.children[index]!, depth: depth + 1 });
+    }
+  }
+  return maxDepth;
 }
 
 function clampInsertIndex(index: number | null | undefined, length: number): number | undefined {

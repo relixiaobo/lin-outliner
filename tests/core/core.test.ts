@@ -2267,6 +2267,35 @@ describe('Core', () => {
     expect(Object.keys(core.state().nodes).some((nodeId) => nodeId.startsWith('deep:'))).toBe(false);
   });
 
+  test('exports deep shared state through update mode to avoid snapshot depth failure', () => {
+    const depth = 1_100;
+    const document = new LoroOutlinerDocument();
+    let parentId: string | undefined;
+    for (let index = 0; index < depth; index += 1) {
+      const nodeId = `deep-export:${index}`;
+      document.createNodeWithId(nodeId, parentId, undefined, undefined, (node) => {
+        node.content = plainText(`Deep export ${index}`);
+      });
+      parentId = nodeId;
+    }
+    document.commit('user:deep-export');
+
+    const shared = {
+      workspaceId: crypto.randomUUID(),
+      documentId: crypto.randomUUID(),
+      document: document.exportSharedState('__legacy__'),
+    };
+    expect(shared.document.exportMode).toBe('update');
+
+    const restored = Core.fromSharedState(shared);
+    expect(restored.state().nodes['deep-export:1099']?.content.text).toBe('Deep export 1099');
+
+    const envelope = Core.deserializeState(restored.serializeState());
+    expect(envelope.shared.document.exportMode).toBe('update');
+    const reloaded = Core.fromState(envelope);
+    expect(reloaded.state().nodes['deep-export:1099']?.content.text).toBe('Deep export 1099');
+  });
+
   test('failed transactions roll back uncommitted Loro changes', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

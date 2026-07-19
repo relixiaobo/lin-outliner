@@ -150,10 +150,16 @@ neither process can reuse an already-synchronized `{peer, counter}` range.
 Historical peer ids remain intrinsic to operation ids in the snapshot. The
 trade-off is one version-vector peer per editing session.
 
-The shared Loro record contains a snapshot but no field designating the active
-local peer. Two converged replicas can therefore emit different snapshot bytes;
-convergence is the same materialized state and semantic version vector, not
-byte-identical snapshot encoding.
+The shared Loro record contains portable Loro bytes but no field designating the
+active local peer. Core exports a compact Loro snapshot by default. If the
+materialized outline is deeper than 1,024 rows, Core writes a full Loro update
+instead (`exportMode: "update"`), because Loro's snapshot/shallow-snapshot export
+path fails in wasm on very deep tree nesting while update export remains
+iterative enough for the same structure. Loro import accepts both encodings, so
+reload and replication bootstrap use the same shared-state path. Two converged
+replicas can therefore emit different byte encodings; convergence is the same
+materialized state and semantic version vector, not byte-identical snapshot
+encoding.
 
 Core exposes provider-neutral replication primitives for a full shared
 snapshot, encoded version vectors, updates since a version vector, committed
@@ -171,7 +177,7 @@ work stacks rather than recursive JS traversal. Core's permanent-delete
 dependency collection uses the same iterative discipline, so valid deep outline
 chains do not fail from JavaScript call-stack depth in these paths.
 
-Shared snapshot export, version-vector reads, incremental export, and remote
+Shared-state export, version-vector reads, incremental export, and remote
 import are available only at a committed Core boundary. They reject both an
 active explicit transaction and a standalone async mutation while it has
 yielded. Loro export can otherwise auto-commit pending operations, so this guard

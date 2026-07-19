@@ -4046,6 +4046,7 @@ function assertWorkspaceSharedState(value: unknown): asserts value is WorkspaceS
     || document.schemaVersion !== 3
     || typeof document.snapshot !== 'string'
     || document.snapshot.length === 0
+    || (document.exportMode != null && document.exportMode !== 'snapshot' && document.exportMode !== 'update')
   ) {
     throw CoreError.invalidOperation('invalid shared Loro document state');
   }
