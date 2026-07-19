@@ -23,20 +23,33 @@ export interface CommandRunnerNoop {
   kind: 'noop';
 }
 
+export interface CommandRunnerAbort {
+  kind: 'abort';
+}
+
 export type CommandRunnerResult = CommandResult | ProjectionSnapshot | CommandRunnerNoop;
-export type CommandRunnerOperationResult = CommandRunnerResult | null | void;
+export type CommandRunnerOperationResult = CommandRunnerResult | CommandRunnerAbort | null | void;
 
 type CommandRunnerNoopResult = CommandRunnerNoop | null | undefined;
-type ResolvedCommandRunnerOperationResult = CommandRunnerResult | null | undefined;
+type ResolvedCommandRunnerOperationResult = CommandRunnerResult | CommandRunnerAbort | null | undefined;
 
 const COMMAND_RUNNER_NOOP: CommandRunnerNoop = { kind: 'noop' };
+const COMMAND_RUNNER_ABORT: CommandRunnerAbort = { kind: 'abort' };
 
 export function commandRunnerNoop(): CommandRunnerNoop {
   return COMMAND_RUNNER_NOOP;
 }
 
+export function commandRunnerAbort(): CommandRunnerAbort {
+  return COMMAND_RUNNER_ABORT;
+}
+
 function isCommandRunnerNoopResult(result: ResolvedCommandRunnerOperationResult): result is CommandRunnerNoopResult {
   return result == null || ('kind' in result && result.kind === 'noop');
+}
+
+function isCommandRunnerAbortResult(result: ResolvedCommandRunnerOperationResult): result is CommandRunnerAbort {
+  return Boolean(result && 'kind' in result && result.kind === 'abort');
 }
 
 export type CommandRunner = (
@@ -168,6 +181,9 @@ export function useCommandRunner(
     lifecycle.onLocalCommandStart?.();
     try {
       const result = (await operation()) as ResolvedCommandRunnerOperationResult;
+      // Abort means a nested runner already handled a failed command and left the
+      // user-visible error state in place. Do not treat it as a clean no-op.
+      if (isCommandRunnerAbortResult(result)) return null;
       // A no-op is renderer-local: nothing crossed the command boundary, so there
       // is no projection, focus, or local pre-apply work to commit.
       if (isCommandRunnerNoopResult(result)) {

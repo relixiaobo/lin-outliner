@@ -57,7 +57,7 @@ import {
 } from '../interactions/rowInteractions';
 import type { SlashCommandId } from '../interactions/slashCommands';
 import type { CommandRunner, CommandRunnerOptions, NavigateRootOptions, TriggerAnchor, TriggerState } from '../shared';
-import { collapseExpandedParentIds, commandRunnerNoop, outlinerChildren, parentIdsEmptiedByOutdent, textOf } from '../shared';
+import { collapseExpandedParentIds, commandRunnerAbort, commandRunnerNoop, outlinerChildren, parentIdsEmptiedByOutdent, textOf } from '../shared';
 import {
   clearFocusRequestState,
   clearFocusState,
@@ -1156,7 +1156,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         materializeDraft();
         await pendingTextPatchRef.current;
       } else {
-        await props.run(() => api.replaceNodeText(targetEditId, withoutTrigger));
+        const cleared = await props.run(() => api.replaceNodeText(targetEditId, withoutTrigger));
+        if (cleared === null) return commandRunnerAbort();
       }
       const assets = await api.pickImageFiles();
       await landImagesOnCurrentRow(assets);
@@ -1175,7 +1176,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         }
         return commandRunnerNoop();
       } else {
-        await props.run(() => api.replaceNodeText(targetEditId, withoutTrigger));
+        const cleared = await props.run(() => api.replaceNodeText(targetEditId, withoutTrigger));
+        if (cleared === null) return commandRunnerAbort();
       }
       const assets = await api.pickAttachmentFiles();
       await landAssetsOnCurrentRow(assets);
