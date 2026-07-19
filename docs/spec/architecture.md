@@ -139,7 +139,9 @@ Local undo/redo and local operation-history metadata are intentionally bounded.
 The Loro `UndoManager` instances for all, agent, and user scopes each retain the
 latest 100 steps. The JavaScript operation journal is metadata for listing and
 stack guards, not an unbounded audit log; Core restores, serves, and persists only
-the latest 500 entries for the owning installation.
+the latest 500 entries for the owning installation. Each entry stores at most a
+bounded deterministic sample of affected node ids plus the total count and a
+diagnostic hash, so bulk operations do not pin every touched id in local history.
 
 Every Core construction uses a fresh random Loro peer id for new operations;
 the active peer is never persisted. This remains safe when a complete

@@ -603,6 +603,7 @@ export class Core {
       action,
       summary: transaction.metadata.summary ?? summarizeOperationHistoryAction(origin, action),
       affectedNodeIds: [],
+      affectedNodeCount: 0,
       createdAt: new Date().toISOString(),
     };
     return transaction.chunkUndoValue;

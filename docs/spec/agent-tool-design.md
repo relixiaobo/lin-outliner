@@ -2411,7 +2411,10 @@ interface OutlineUndoStackItem {
   command?: string;
   action: string;
   summary: string;
-  affectedNodeIds: string[];
+  affectedNodeIds: string[]; // bounded deterministic sample
+  affectedNodeCount: number;
+  affectedNodeIdsTruncated?: boolean;
+  affectedNodeIdsHash?: string;
   createdAt: string;
   canUndo: boolean;
   canRedo: boolean;
@@ -2426,6 +2429,11 @@ Result behavior:
   persists, and lists only the latest 500 operation-history entries for the
   current installation. Older document operations may still exist in the CRDT
   snapshot but are not listable metadata.
+- Each history item returns `affectedNodeIds` as a deterministic sample, not an
+  unbounded complete set. `affectedNodeCount` is the total affected-id count before
+  sampling; `affectedNodeIdsTruncated` signals that the sample is incomplete;
+  `affectedNodeIdsHash` is a stable diagnostic fingerprint for comparing sampled
+  affected sets without retaining every id.
 - `undo` and `redo` are stack operations. Agent v1 does not support arbitrary
   history jumping.
 - `steps` defaults to 1 and should stay small. Initial maximum: 10.
