@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { CommandResult, DocumentProjectionChangedEvent } from '../../src/core/types';
+import { SCHEMA_ID, type CommandResult, type DocumentProjectionChangedEvent } from '../../src/core/types';
 import type { ProjectionChangedDelivery } from '../../src/main/documentService';
 
 let electronUserDataRoot = '';
@@ -87,5 +87,24 @@ describe('DocumentService projection routing metadata', () => {
     const publicEvent: DocumentProjectionChangedEvent = deliveries[0].event;
     expect(publicEvent.origin).toBe('agent');
     expect(publicEvent.type).toBe('projection_changed');
+  });
+
+  test('keeps the document read model fresh without projection listeners', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const model = service.getDocumentReadModel();
+    const unchangedBefore = model.node(SCHEMA_ID);
+
+    const result = await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Read model routed',
+    }) as CommandResult;
+    const nodeId = result.focus!.nodeId;
+
+    expect(service.getDocumentReadModel()).toBe(model);
+    expect(model.revision).toBe(result.update.revision);
+    expect(model.node(nodeId)?.content.text).toBe('Read model routed');
+    expect(model.node(SCHEMA_ID)).toBe(unchangedBefore);
   });
 });

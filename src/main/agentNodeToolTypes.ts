@@ -14,6 +14,7 @@ import type { TransientSearchOptions } from '../core/searchEngine';
 
 export interface OutlinerToolHost {
   getProjection(): DocumentProjection;
+  getDocumentReadModel?(): { asProjectionIndex(): ProjectionIndex };
   getTextSearchIndex?(): TextSearchIndex;
   getTransientSearchOptions?(): TransientSearchOptions;
   recordNodeAccess?(nodeIds: readonly string[], source: NodeAccessSource): void | Promise<void>;

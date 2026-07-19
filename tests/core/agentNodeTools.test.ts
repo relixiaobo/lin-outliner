@@ -8,6 +8,7 @@ import { LoroOutlinerDocument } from '../../src/core/loroDocument';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
 import { LIBRARY_ID, plainText, replaceAllRichTextPatch, SCHEMA_ID, TRASH_ID, WORKSPACE_ID } from '../../src/core/types';
 import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agentNodeTools';
+import { DocumentReadModel } from '../../src/main/documentReadModel';
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 import { formatChatSourceReferenceMarker, formatFileReferenceMarker, formatNodeReferenceMarker, splitChatSourceReferenceMarkers, splitFileReferenceMarkers } from '../../src/core/referenceMarkup';
@@ -291,6 +292,62 @@ describe('agent node tools', () => {
     expect(catalog).toContain('Successful creation results include fresh %%node:id%% edit handles');
     expect(catalog).toContain('never show %%node:id%% edit handles');
     expect(catalog).toContain('[[node:^exact-id]]');
+  });
+
+  test('node_read uses the document read model without rebuilding a projection index', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const nodeId = mustFocus(core.createNode(today, null, 'Read model row'));
+    const readModel = DocumentReadModel.fromProjection(core.revision(), core.projection());
+    let projectionReads = 0;
+
+    const envelope = await executeTool<{ items: Array<{ nodeId: string; title: string }> }>(core, 'node_read', {
+      node_id: nodeId,
+      depth: 0,
+    }, undefined, {
+      getProjection: () => {
+        projectionReads += 1;
+        return core.projection();
+      },
+      getDocumentReadModel: () => readModel,
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.items).toEqual([
+      expect.objectContaining({ nodeId, title: 'Read model row' }),
+    ]);
+    expect(projectionReads).toBe(0);
+  });
+
+  test('node_search uses the document read model without rebuilding a projection index', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const matching = mustFocus(core.createNode(today, null, 'Read model search needle'));
+    core.createNode(today, null, 'Other row');
+    const readModel = DocumentReadModel.fromProjection(core.revision(), core.projection());
+    let projectionReads = 0;
+
+    const envelope = await executeTool<{
+      total: number;
+      items?: Array<{ nodeId: string; title: string }>;
+    }>(core, 'node_search', {
+      outline: '- %%search%% Read model\n  - STRING_MATCH\n    - value:: needle',
+      limit: 10,
+    }, undefined, {
+      getProjection: () => {
+        projectionReads += 1;
+        return core.projection();
+      },
+      getDocumentReadModel: () => readModel,
+      getTextSearchIndex: undefined,
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.total).toBe(1);
+    expect(envelope.data!.items).toEqual([
+      expect.objectContaining({ nodeId: matching, title: 'Read model search needle' }),
+    ]);
+    expect(projectionReads).toBe(0);
   });
 
   test('node tools enforce run-scoped node resources for Issue Sessions', async () => {
@@ -2155,6 +2212,55 @@ describe('agent node tools', () => {
     expect(core.state().nodes[root]!.content.text).toBe('Renamed');
     expect(core.state().nodes[statusValue]!.content.text).toBe('Closed');
     expect(core.state().nodes[root]!.completedAt).toBeGreaterThan(0);
+  });
+
+  test('node_edit replace_outline uses sparse mutation facts with a read-model host', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+    const statusField = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const statusValue = mustFocus(core.createNode(statusField, null, 'Open'));
+    const read = await executeTool<{ items: Array<{ revision: string }> }>(core, 'node_read', { node_id: root, depth: 0 });
+    const readModel = DocumentReadModel.fromProjection(core.revision(), core.projection());
+    let readModelReads = 0;
+
+    const envelope = await executeTool<{
+      affectedNodeIds: string[];
+      matchedNodeIds?: string[];
+      createdNodeIds?: string[];
+      updatedFields?: string[];
+      updatedTags?: string[];
+    }>(core, 'node_edit', {
+      node_id: root,
+      old_string: '*',
+      new_string: [
+        `- %%node:${root}%% [x] Renamed #fresh-tag`,
+        `  - %%node:${statusField}%% Status::`,
+        `    - %%node:${statusValue}%% Closed`,
+        '  - Mood:: Focused',
+      ].join('\n'),
+      expected_revision: read.data!.items[0]!.revision,
+    }, undefined, {
+      getDocumentReadModel: () => {
+        readModelReads += 1;
+        return readModel;
+      },
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(readModelReads).toBeGreaterThan(0);
+    expect(envelope.data!.matchedNodeIds).toEqual(expect.arrayContaining([root, statusField, statusValue]));
+    expect(envelope.data!.createdNodeIds).toHaveLength(1);
+    expect(envelope.data!.updatedFields).toHaveLength(1);
+    expect(envelope.data!.updatedTags).toHaveLength(1);
+    expect(envelope.data!.affectedNodeIds).toEqual(expect.arrayContaining([
+      root,
+      statusField,
+      statusValue,
+      envelope.data!.createdNodeIds![0]!,
+      envelope.data!.updatedFields![0]!,
+      envelope.data!.updatedTags![0]!,
+    ]));
   });
 
   test('node_edit whole editable outline revision covers field value changes', async () => {
