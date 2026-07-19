@@ -614,13 +614,10 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     }
     let active = true;
     setSearchRefreshing(true);
-    void api.refreshSearchNodeResults(props.parentId)
-      .catch((error) => {
-        console.error('Failed to refresh live search results', error);
-      })
+    void props.run(() => api.refreshSearchNodeResults(props.parentId), { applyFocus: false })
       .finally(() => { if (active) setSearchRefreshing(false); });
     return () => { active = false; };
-  }, [parent?.type, props.index.projection, props.parentId]);
+  }, [parent?.type, props.index.projection, props.parentId, props.run]);
 
   const measuredRef = useRef(new Map<string, number>());
   const [measureVersion, setMeasureVersion] = useState(0);

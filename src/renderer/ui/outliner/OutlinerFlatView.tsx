@@ -623,10 +623,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     let active = true;
     for (const id of ids) {
       if (id === props.parentId) setRootSearchRefreshing(true);
-      void api.refreshSearchNodeResults(id)
-        .catch((error) => {
-          console.error('Failed to refresh live search results', error);
-        })
+      void props.run(() => api.refreshSearchNodeResults(id), { applyFocus: false })
         .finally(() => {
           if (active && id === props.parentId) setRootSearchRefreshing(false);
         });
@@ -634,7 +631,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     return () => {
       active = false;
     };
-  }, [searchKey, index.projection, props.parentId]);
+  }, [searchKey, index.projection, props.parentId, props.run]);
 
   const renderRow = (row: VisualRow, rowIndex: number): ReactNode => {
     switch (row.kind) {
