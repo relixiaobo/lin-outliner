@@ -77,10 +77,10 @@ export function reduceProjection(
 ): ProjectionState | null {
   if (update.kind === 'full') {
     // A reseed at a revision we already hold (or older) is an identical no-op —
-    // the `api.getProjection()` sentinels return the current snapshot without
-    // mutating. Return `prev` so we don't bump every node's renderRev and force a
-    // full-tree memo invalidation for a pure refresh. (Core bumps the revision on
-    // every change, so equal revision ⇒ identical content.)
+    // refresh snapshots can return the current snapshot without mutating. Return
+    // `prev` so we don't bump every node's renderRev and force a full-tree memo
+    // invalidation for a pure refresh. (Core bumps the revision on every change,
+    // so equal revision ⇒ identical content.)
     if (prev && update.revision <= prev.revision) return prev;
     const byId = new Map(update.projection.nodes.map((node) => [node.id, node]));
     const affected = new Set<NodeId>(byId.keys());

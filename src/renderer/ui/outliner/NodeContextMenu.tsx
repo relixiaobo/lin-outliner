@@ -55,8 +55,7 @@ import { MenuSurface } from '../primitives/MenuSurface';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
-import type { CommandRunner, NavigateRootOptions } from '../shared';
-import { textOf } from '../shared';
+import { commandRunnerNoop, textOf, type CommandRunner, type NavigateRootOptions } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
 import { readViewConfig } from './row-model';
 import { useT } from '../../i18n/I18nProvider';
@@ -522,7 +521,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
               for (const nodeId of activeMoveToIds) {
                 lastResult = await api.moveNode(nodeId, targetNode.id, null);
               }
-              return lastResult ?? api.getProjection();
+              return lastResult ?? commandRunnerNoop();
             });
             props.onClose();
           }}

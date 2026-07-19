@@ -1,5 +1,5 @@
 import { projectFieldConfig } from '../../../core/configProjection';
-import type { CommandResult, NodeId, NodeProjection, ProjectionSnapshot } from '../../api/types';
+import type { NodeId, NodeProjection } from '../../api/types';
 import { api } from '../../api/client';
 import {
   selectableRowForId,
@@ -7,8 +7,9 @@ import {
   type SelectableRowActionPolicy,
 } from '../../state/selectableRows';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
+import { commandRunnerNoop, type CommandRunnerResult } from '../shared';
 
-export type SelectionCommandResult = CommandResult | ProjectionSnapshot;
+export type SelectionCommandResult = CommandRunnerResult;
 
 type SelectionActionKey = keyof SelectableRowActionPolicy;
 
@@ -146,7 +147,7 @@ export async function runSelectionDelete(params: {
   for (const id of plan.fieldValueIds) {
     lastResult = await api.removeFieldValue(id);
   }
-  return lastResult ?? api.getProjection();
+  return lastResult ?? commandRunnerNoop();
 }
 
 export function planSelectionDelete(params: {
@@ -191,7 +192,7 @@ export async function runSelectionDuplicate(params: {
   const duplicateIds = idsAllowedForDuplicate(params);
   return duplicateIds.length > 0
     ? api.batchDuplicateNodes(duplicateIds)
-    : api.getProjection();
+    : commandRunnerNoop();
 }
 
 export async function runSelectionMove(params: {
@@ -208,7 +209,7 @@ export async function runSelectionMove(params: {
     byId: params.byId,
     rowMap: params.rowMap,
   });
-  if (moveIds.length === 0) return api.getProjection();
+  if (moveIds.length === 0) return commandRunnerNoop();
   return params.direction === 'up'
     ? api.batchMoveNodesUp(moveIds)
     : api.batchMoveNodesDown(moveIds);

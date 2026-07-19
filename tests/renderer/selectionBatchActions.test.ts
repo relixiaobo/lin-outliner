@@ -12,8 +12,12 @@ import {
   idsAllowedForStructuralOutdentBatch,
   idsEnabledForSelectionAction,
   planSelectionDelete,
+  runSelectionDelete,
+  runSelectionDuplicate,
+  runSelectionMove,
   selectableRowMap,
 } from '../../src/renderer/ui/interactions/selectionBatchActions';
+import { commandRunnerNoop } from '../../src/renderer/ui/shared';
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
   return {
@@ -228,5 +232,33 @@ describe('selection batch action policy', () => {
       trashIds: [],
       fieldValueIds: ['field-ref'],
     });
+  });
+
+  test('returns a renderer no-op for empty or disabled command batches', async () => {
+    const byId = byIdOf([
+      node('root', { children: ['value'] }),
+      node('value', { parentId: 'root', type: 'reference', locked: true }),
+    ]);
+    const rowMap = selectableRowMap(buildSelectableRows('root', byId, { expanded: new Set() }));
+
+    expect(await runSelectionDelete({
+      ids: [],
+      panelRootId: 'root',
+      byId,
+      rowMap,
+    })).toBe(commandRunnerNoop());
+    expect(await runSelectionDuplicate({
+      ids: ['value'],
+      panelRootId: 'root',
+      byId,
+      rowMap,
+    })).toBe(commandRunnerNoop());
+    expect(await runSelectionMove({
+      ids: [],
+      direction: 'up',
+      panelRootId: 'root',
+      byId,
+      rowMap,
+    })).toBe(commandRunnerNoop());
   });
 });

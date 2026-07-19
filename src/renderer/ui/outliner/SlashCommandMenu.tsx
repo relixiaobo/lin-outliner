@@ -1,6 +1,4 @@
 import type { ReactNode } from 'react';
-import type { CommandResult, ProjectionSnapshot } from '../../api/types';
-import { api } from '../../api/client';
 import {
   AddChildIcon,
   CheckboxIcon,
@@ -17,7 +15,7 @@ import {
   type SlashCommandDefinition,
   type SlashCommandId,
 } from '../interactions/slashCommands';
-import type { CommandRunner } from '../shared';
+import { commandRunnerNoop, type CommandRunner, type CommandRunnerOperationResult } from '../shared';
 import { PopoverEmpty, PopoverListItem } from './PopoverList';
 import { useT } from '../../i18n/I18nProvider';
 
@@ -27,7 +25,7 @@ interface SlashCommandMenuProps {
   setSelectedIndex: (index: number | ((current: number) => number)) => void;
   enabledSlashCommandIds?: SlashCommandId[];
   run: CommandRunner;
-  executeSlashCommand: (commandId: SlashCommandId) => Promise<CommandResult | ProjectionSnapshot | null | void>;
+  executeSlashCommand: (commandId: SlashCommandId) => Promise<CommandRunnerOperationResult>;
   close: () => void;
 }
 
@@ -73,7 +71,7 @@ export function SlashCommandMenu(props: SlashCommandMenuProps) {
             props.close();
             void props.run(async () => {
               const result = await props.executeSlashCommand(command.id);
-              return result ?? api.getProjection();
+              return result ?? commandRunnerNoop();
             });
           }}
         />

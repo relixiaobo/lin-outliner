@@ -1,9 +1,9 @@
 import { api } from '../../api/client';
-import type { CommandResult, NodeId, NodeProjection, ProjectionSnapshot } from '../../api/types';
+import type { CommandResult, NodeId, NodeProjection } from '../../api/types';
 import { nodeFromProjectionUpdate, type DocumentIndex } from '../../state/document';
 import { AddIcon, CalendarIcon, ICON_SIZE } from '../icons';
 import { buildReferenceCandidates, referenceCandidateLabels, type ReferenceCandidate, type ReferenceCandidateLabels } from '../interactions/referenceCandidates';
-import type { CommandRunner } from '../shared';
+import { commandRunnerNoop, type CommandRunner, type CommandRunnerOperationResult } from '../shared';
 import { NodeReferenceMenuIcon } from './NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListItem } from './PopoverList';
 import { useT } from '../../i18n/I18nProvider';
@@ -18,7 +18,7 @@ interface ReferenceSelectorProps {
   run: CommandRunner;
   close: () => void;
   clearTriggerText: () => Promise<void>;
-  applyReference?: (target: NodeProjection) => Promise<CommandResult | ProjectionSnapshot | null | void>;
+  applyReference?: (target: NodeProjection) => Promise<CommandRunnerOperationResult>;
 }
 
 export function referenceItems(params: {
@@ -75,7 +75,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
     void props.run(async () => {
       if (props.applyReference) {
         const result = await props.applyReference(target);
-        return result ?? api.getProjection();
+        return result ?? commandRunnerNoop();
       }
       await props.clearTriggerText();
       return api.addReference(props.currentNodeId, target.id);
@@ -91,7 +91,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
       if (!target) return created;
       if (props.applyReference) {
         const result = await props.applyReference(target);
-        return result ?? api.getProjection();
+        return result ?? created;
       }
       await props.clearTriggerText();
       return api.addReference(props.currentNodeId, target.id);
@@ -113,7 +113,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
       if (!target) return outcome;
       if (props.applyReference) {
         const result = await props.applyReference(target);
-        return result ?? api.getProjection();
+        return result ?? outcome;
       }
       await props.clearTriggerText();
       return api.addReference(props.currentNodeId, target.id);
