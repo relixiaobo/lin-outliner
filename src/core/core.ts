@@ -3688,8 +3688,7 @@ export class Core {
   }
 
   private applyChildTagsDirect(parentId: string, childId: string) {
-    const parent = this.loro.materializeNode(parentId);
-    const tagIds = parent?.tags ?? [];
+    const tagIds = this.loro.nodeTags(parentId);
     if (tagIds.length === 0) return;
     const state = this.snapshot();
     for (const tagId of tagIds) {

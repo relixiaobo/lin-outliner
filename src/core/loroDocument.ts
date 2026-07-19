@@ -362,8 +362,9 @@ export class LoroOutlinerDocument {
 
   writeNode(node: Node) {
     const treeNode = this.requiredTreeNode(node.id);
-    writeNodeData(treeNode.data, normalizeNode(node));
-    this.touchNode(node.id);
+    const normalized = normalizeNode(node);
+    writeNodeData(treeNode.data, normalized);
+    this.touchNodeWithSnapshot(node.id, normalized);
   }
 
   applyNodeTextPatch(nodeId: string, patch: RichTextPatch) {
@@ -391,17 +392,20 @@ export class LoroOutlinerDocument {
     const parentTreeNode = parentId ? this.treeNodeOrUndefined(parentId) : undefined;
     if (parentId && !parentTreeNode) throw CoreError.parentNotFound(parentId);
     const parentTreeId = parentTreeNode?.id;
-    const targetIndex = parentTreeNode
-      ? clampInsertIndex(index, parentTreeNode.children()?.length ?? 0)
-      : clampInsertIndex(index, this.tree.roots().length);
+    const targetIndex = index === null || index === undefined
+      ? undefined
+      : parentTreeNode
+        ? clampInsertIndex(index, parentTreeNode.children()?.length ?? 0)
+        : clampInsertIndex(index, this.tree.roots().length);
     const treeNode = this.tree.createNode(parentTreeId, targetIndex);
     // The caller's `type` argument fixes the variant; `T` lets it set
     // variant-specific fields on the configured node without a local cast.
     const node = createNodeRecord(id, type, parentId, nowMs()) as T;
     configure(node);
-    writeNodeData(treeNode.data, normalizeNode(node));
+    const normalized = normalizeNode(node);
+    writeNodeData(treeNode.data, normalized);
     this.nodeIdToTreeId.set(id, treeNode.id);
-    this.touchNode(id);
+    this.touchNodeWithSnapshot(id, normalized);
     if (parentId) this.touchNode(parentId);
     return id;
   }
@@ -413,7 +417,9 @@ export class LoroOutlinerDocument {
     if (!state.nodes[parentId]) throw CoreError.parentNotFound(parentId);
     const treeNode = this.requiredTreeNode(nodeId);
     const parentTreeNode = this.requiredTreeNode(parentId);
-    const targetIndex = clampInsertIndex(index, parentTreeNode.children()?.length ?? 0);
+    const targetIndex = index === null || index === undefined
+      ? undefined
+      : clampInsertIndex(index, parentTreeNode.children()?.length ?? 0);
     this.tree.move(treeNode.id, parentTreeNode.id, targetIndex);
     this.touchNode(nodeId);
     if (state.nodes[nodeId]?.parentId) this.touchNode(state.nodes[nodeId]!.parentId!);
@@ -423,7 +429,7 @@ export class LoroOutlinerDocument {
   deleteNode(nodeId: string) {
     const state = this.materializeState();
     const removed = subtreeIds(state, nodeId);
-    for (const id of removed) this.touchNode(id);
+    for (const id of removed) this.touchNodeWithSnapshot(id, undefined);
     const parentId = state.nodes[nodeId]?.parentId;
     if (parentId) this.touchNode(parentId);
     this.tree.delete(this.requiredTreeNode(nodeId).id);
@@ -496,12 +502,22 @@ export class LoroOutlinerDocument {
     return this.readNodeFromTree(treeNode);
   }
 
+  nodeTags(id: string): string[] {
+    const treeNode = this.treeNodeOrUndefined(id);
+    if (!treeNode) return [];
+    return readStringList(treeNode.data.get('tags'));
+  }
+
   // Materialize selected nodes without copying the whole `nodes` container.
   // Normal mutation finalization drains touched ids, reads only those nodes, and
   // patches Core's committed state/projection caches from this sparse snapshot.
   materializeNodes(ids: Iterable<string>): Map<string, Node | undefined> {
     const snapshots = new Map<string, Node | undefined>();
     for (const id of ids) {
+      if (this.stateCacheNodes !== null && !this.stateDirtyFull && !this.statePatch.has(id)) {
+        snapshots.set(id, this.stateCacheNodes[id]);
+        continue;
+      }
       const node = this.materializeNode(id);
       const cachedNode = node && cacheFreezeEnabled() ? deepFreeze(node) : node;
       snapshots.set(id, cachedNode);
@@ -601,6 +617,17 @@ export class LoroOutlinerDocument {
 
   private touchNode(nodeId: string) {
     this.touchedNodeIds.add(nodeId);
+    this.statePatch.add(nodeId);
+  }
+
+  private touchNodeWithSnapshot(nodeId: string, node: Node | undefined) {
+    this.touchedNodeIds.add(nodeId);
+    if (this.stateCacheNodes !== null && !this.stateDirtyFull) {
+      if (node) this.stateCacheNodes[nodeId] = cacheFreezeEnabled() ? deepFreeze(node) : node;
+      else delete this.stateCacheNodes[nodeId];
+      this.statePatch.delete(nodeId);
+      return;
+    }
     this.statePatch.add(nodeId);
   }
 }

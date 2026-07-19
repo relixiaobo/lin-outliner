@@ -382,6 +382,40 @@ describe('Core', () => {
     expect(core.state().nodes[rootId].children).toHaveLength(5);
   });
 
+  test('yielding tree append does not materialize the growing parent per sibling', async () => {
+    const core = Core.new();
+    const parentId = mustFocus(core.createNode(core.projection().todayId, null, 'Bulk parent'));
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      materializeNode: (id: string) => ReturnType<LoroOutlinerDocument['materializeNode']>;
+    };
+    const originalMaterializeNode = instrumented.materializeNode.bind(loro);
+    let materializeNodeCalls = 0;
+    instrumented.materializeNode = (id: string) => {
+      materializeNodeCalls += 1;
+      return originalMaterializeNode(id);
+    };
+    const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
+
+    try {
+      delete process.env.LIN_VERIFY_CACHE;
+      await core.createNodesFromTreeYieldingFocus(parentId, Array.from({ length: 100 }, (_value, index) => ({
+        content: plainText(`Child ${index + 1}`),
+        children: [],
+      })), {
+        yieldEveryNodes: 1_000,
+        yield: async () => {},
+      });
+    } finally {
+      instrumented.materializeNode = originalMaterializeNode;
+      if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
+      else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
+    }
+
+    expect(materializeNodeCalls).toBeLessThanOrEqual(2);
+    expect(core.state().nodes[parentId].children).toHaveLength(100);
+  });
+
   test('yielding tree materialization can flush commits while remaining one agent undo', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
