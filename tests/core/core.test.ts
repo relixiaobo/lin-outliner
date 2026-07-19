@@ -2246,6 +2246,27 @@ describe('Core', () => {
     }
   });
 
+  test('materializes and permanently deletes a deep document chain iteratively', () => {
+    const depth = 500;
+    const document = new LoroOutlinerDocument();
+    let parentId: string | undefined;
+    for (let index = 0; index < depth; index += 1) {
+      const nodeId = `deep:${index}`;
+      document.createNodeWithId(nodeId, parentId, undefined, undefined, (node) => {
+        node.content = plainText(`Deep ${index}`);
+      });
+      parentId = nodeId;
+    }
+    document.commit('user:deep-chain');
+
+    const core = coreFromLoroDocument(document);
+    expect(core.state().nodes['deep:499']?.content.text).toBe('Deep 499');
+
+    core.deleteNode('deep:0');
+
+    expect(Object.keys(core.state().nodes).some((nodeId) => nodeId.startsWith('deep:'))).toBe(false);
+  });
+
   test('failed transactions roll back uncommitted Loro changes', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

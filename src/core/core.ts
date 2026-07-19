@@ -4102,18 +4102,39 @@ function plannedInsertIndex(index: number | null | undefined, length: number): n
 
 function collectDescendantsFromState(state: DocumentState, nodeId: string): string[] {
   const result: string[] = [];
-  for (const childId of state.nodes[nodeId]?.children ?? []) {
-    result.push(childId, ...collectDescendantsFromState(state, childId));
+  const stack = [...(state.nodes[nodeId]?.children ?? [])].reverse();
+  const visited = new Set<string>();
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (visited.has(id)) continue;
+    const node = state.nodes[id];
+    if (!node) continue;
+    visited.add(id);
+    result.push(id);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push(node.children[index]!);
+    }
   }
   return result;
 }
 
 function collectSubtreeAndDependentReferences(state: DocumentState, nodeId: string): Set<string> {
   const removedIds = new Set<string>();
-  const addSubtree = (id: string) => {
-    if (removedIds.has(id) || !state.nodes[id]) return;
-    removedIds.add(id);
-    for (const childId of state.nodes[id].children) addSubtree(childId);
+  const addSubtree = (rootId: string) => {
+    const stack = [rootId];
+    let added = false;
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (removedIds.has(id)) continue;
+      const node = state.nodes[id];
+      if (!node) continue;
+      removedIds.add(id);
+      added = true;
+      for (let index = node.children.length - 1; index >= 0; index -= 1) {
+        stack.push(node.children[index]!);
+      }
+    }
+    return added;
   };
 
   addSubtree(nodeId);
@@ -4124,8 +4145,7 @@ function collectSubtreeAndDependentReferences(state: DocumentState, nodeId: stri
     for (const node of Object.values(state.nodes)) {
       if (removedIds.has(node.id)) continue;
       if (node.type === 'reference' && node.targetId && removedIds.has(node.targetId)) {
-        addSubtree(node.id);
-        changed = true;
+        if (addSubtree(node.id)) changed = true;
       }
     }
   }

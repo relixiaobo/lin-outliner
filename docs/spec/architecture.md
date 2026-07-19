@@ -166,6 +166,11 @@ durable even when conflict resolution leaves the visible state unchanged.
 Duplicate or still-pending imports do not invalidate materialized caches or
 clear redo.
 
+The Loro document wrapper materializes and deletes document trees with explicit
+work stacks rather than recursive JS traversal. Core's permanent-delete
+dependency collection uses the same iterative discipline, so valid deep outline
+chains do not fail from JavaScript call-stack depth in these paths.
+
 Shared snapshot export, version-vector reads, incremental export, and remote
 import are available only at a committed Core boundary. They reject both an
 active explicit transaction and a standalone async mutation while it has

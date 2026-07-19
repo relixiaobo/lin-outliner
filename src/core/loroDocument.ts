@@ -478,13 +478,17 @@ export class LoroOutlinerDocument {
   // consistent with the full build.
   private buildAllNodes(): Record<string, Node> {
     const nodes: Record<string, Node> = {};
-    const visit = (treeNode: LoroTreeNode) => {
+    const stack = [...this.tree.roots()].reverse();
+    while (stack.length > 0) {
+      const treeNode = stack.pop()!;
       const node = this.readNodeFromTree(treeNode);
       if (node) nodes[node.id] = node;
-      for (const child of treeNode.children() ?? []) visit(child);
-    };
+      const children = treeNode.children() ?? [];
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        stack.push(children[index]!);
+      }
+    }
 
-    for (const root of this.tree.roots()) visit(root);
     return normalizeState({
       schemaVersion: 1,
       workspaceId: WORKSPACE_ID,
@@ -687,9 +691,22 @@ function isDescendant(state: DocumentState, nodeId: string, ancestorId: string):
 }
 
 function subtreeIds(state: DocumentState, nodeId: string): string[] {
-  const node = state.nodes[nodeId];
-  if (!node) return [];
-  return [nodeId, ...node.children.flatMap((childId) => subtreeIds(state, childId))];
+  if (!state.nodes[nodeId]) return [];
+  const result: string[] = [];
+  const stack = [nodeId];
+  const visited = new Set<string>();
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (visited.has(id)) continue;
+    const node = state.nodes[id];
+    if (!node) continue;
+    visited.add(id);
+    result.push(id);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push(node.children[index]!);
+    }
+  }
+  return result;
 }
 
 function clampInsertIndex(index: number | null | undefined, length: number): number | undefined {
