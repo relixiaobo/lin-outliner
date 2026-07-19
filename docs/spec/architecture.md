@@ -169,8 +169,13 @@ leave replica identity and the local operation journal untouched, and report
 accepted operations, unresolved dependencies, and persistence changes
 separately from materialized node changes. Newly accepted operations are
 durable even when conflict resolution leaves the visible state unchanged.
-Duplicate or still-pending imports do not invalidate materialized caches or
-clear redo.
+For the common single-update path, Core derives candidate node ids from Loro's
+import event tree/map/text/list paths, materializes only those candidates, and
+compares them against the committed state before reporting `changedNodeIds`.
+Multi-update batches, dependency-pending updates that become applicable later,
+and accepted imports with no usable event candidates fall back to a full-state
+diff. Duplicate or still-pending imports do not invalidate materialized caches
+or clear redo.
 
 The Loro document wrapper materializes and deletes document trees with explicit
 work stacks rather than recursive JS traversal. Core's permanent-delete

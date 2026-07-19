@@ -391,20 +391,43 @@ export class Core {
 
   applyReplicationUpdates(updates: readonly Uint8Array[]): CoreReplicationImportResult {
     this.assertReplicationIdle();
-    const before = this.loro.materializeState();
     const importResult = this.loro.importUpdates(updates);
-    const after = this.loro.materializeState();
-    const changedNodeIds = changedNodeIdsBetweenStates(before, after);
+    if (importResult.requiresFullStateDiff) {
+      const after = this.loro.materializeState();
+      const changedNodeIds = changedNodeIdsBetweenStates(this.stateValue, after);
+      this.loro.clearTouchedNodeIds();
+      let revisionDelta = this.unchangedRevisionDelta();
+      if (changedNodeIds.length > 0) {
+        this.invalidateProjectionCache();
+        this.stateValue = after;
+        this.bumpRevision(changedNodeIds, true);
+        this.verifyCaches();
+        revisionDelta = this.revisionDelta();
+      }
+      const {
+        affectedNodeIds: _affectedNodeIds,
+        requiresFullStateDiff: _requiresFullStateDiff,
+        ...publicImportResult
+      } = importResult;
+      return { ...revisionDelta, ...publicImportResult };
+    }
+    const afterNodes = this.loro.materializeNodes(importResult.affectedNodeIds);
+    const changedNodeIds = changedTouchedNodeIds(importResult.affectedNodeIds, this.stateValue.nodes, afterNodes);
     this.loro.clearTouchedNodeIds();
     let revisionDelta = this.unchangedRevisionDelta();
     if (changedNodeIds.length > 0) {
-      this.invalidateProjectionCache();
-      this.stateValue = after;
+      this.patchStateValue(importResult.affectedNodeIds, afterNodes);
+      this.patchProjectionCache(importResult.affectedNodeIds, afterNodes);
       this.bumpRevision(changedNodeIds, true);
       this.verifyCaches();
       revisionDelta = this.revisionDelta();
     }
-    return { ...revisionDelta, ...importResult };
+    const {
+      affectedNodeIds: _affectedNodeIds,
+      requiresFullStateDiff: _requiresFullStateDiff,
+      ...publicImportResult
+    } = importResult;
+    return { ...revisionDelta, ...publicImportResult };
   }
 
   private unchangedRevisionDelta(): CoreRevisionDelta {
@@ -4196,7 +4219,15 @@ function changedTouchedNodes(
   beforeNodes: Readonly<Record<string, Node>>,
   afterNodes: ReadonlyMap<string, Node | undefined>,
 ): boolean {
-  return touched.some((id) => !sameJson(beforeNodes[id], afterNodes.get(id)));
+  return changedTouchedNodeIds(touched, beforeNodes, afterNodes).length > 0;
+}
+
+function changedTouchedNodeIds(
+  touched: readonly string[],
+  beforeNodes: Readonly<Record<string, Node>>,
+  afterNodes: ReadonlyMap<string, Node | undefined>,
+): string[] {
+  return touched.filter((id) => !sameJson(beforeNodes[id], afterNodes.get(id)));
 }
 
 function commitOriginFor(origin: CommitOrigin) {

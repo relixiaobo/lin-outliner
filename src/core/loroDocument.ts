@@ -5,6 +5,7 @@ import {
   LoroText,
   UndoManager,
   VersionVector,
+  type LoroEventBatch,
   type LoroMap,
   type LoroTree,
   type LoroTreeNode,
@@ -44,6 +45,8 @@ export interface LoroDocumentInit {
 
 export interface LoroImportResult {
   acceptedOperations: boolean;
+  affectedNodeIds: string[];
+  requiresFullStateDiff: boolean;
   hasPendingUpdates: boolean;
   persistenceChanged: boolean;
 }
@@ -222,22 +225,39 @@ export class LoroOutlinerDocument {
     if (updates.length === 0) {
       return {
         acceptedOperations: false,
+        affectedNodeIds: [],
+        requiresFullStateDiff: false,
         hasPendingUpdates: this.pendingUpdates.size > 0,
         persistenceChanged: false,
       };
     }
     const candidates = new Map(this.pendingUpdates);
     for (const [encoded, update] of uniqueEncodedUpdates(updates)) candidates.set(encoded, update);
-    const status = this.doc.importBatch(updates.map((update) => update.slice()));
+    const affectedNodeIds = new Set<string>();
+    const unsubscribe = this.doc.subscribe((batch) => this.collectImportedNodeIds(batch, affectedNodeIds));
+    let status: ReturnType<LoroDoc['importBatch']>;
+    try {
+      status = this.doc.importBatch(updates.map((update) => update.slice()));
+    } finally {
+      unsubscribe();
+    }
     const acceptedOperations = status.success.size > 0;
     const previousPendingKeys = new Set(this.pendingUpdates.keys());
     this.pendingUpdates = retainUnappliedUpdates(candidates, this.doc);
+    const requiresFullStateDiff = acceptedOperations && (
+      updates.length > 1
+      || previousPendingKeys.size > 0
+      || affectedNodeIds.size === 0
+    );
     if (acceptedOperations) {
       this.clearRedo();
-      this.invalidateWholeTree();
+      if (requiresFullStateDiff) this.invalidateWholeTree();
+      else for (const id of affectedNodeIds) this.statePatch.add(id);
     }
     return {
       acceptedOperations,
+      affectedNodeIds: [...affectedNodeIds].sort(),
+      requiresFullStateDiff,
       hasPendingUpdates: this.pendingUpdates.size > 0,
       persistenceChanged: acceptedOperations || !sameKeys(previousPendingKeys, this.pendingUpdates),
     };
@@ -350,6 +370,38 @@ export class LoroOutlinerDocument {
   private invalidateWholeTree() {
     this.mappingsDirty = true;
     this.stateDirtyFull = true;
+  }
+
+  private collectImportedNodeIds(batch: LoroEventBatch, affectedNodeIds: Set<string>) {
+    if (batch.by !== 'import') return;
+    for (const event of batch.events) {
+      const pathTreeId = treeIdFromEventPath(event.path);
+      if (pathTreeId) this.addImportedTreeNodeId(pathTreeId, affectedNodeIds, false);
+      if (event.diff.type !== 'tree') continue;
+      for (const item of event.diff.diff) {
+        if ('parent' in item && item.parent) this.addImportedTreeNodeId(item.parent, affectedNodeIds, false);
+        if ('oldParent' in item && item.oldParent) this.addImportedTreeNodeId(item.oldParent, affectedNodeIds, false);
+        this.addImportedTreeNodeId(item.target, affectedNodeIds, item.action === 'create' || item.action === 'delete');
+      }
+    }
+  }
+
+  private addImportedTreeNodeId(treeId: TreeID, affectedNodeIds: Set<string>, includeDescendants: boolean) {
+    const root = this.tree.getNodeByID(treeId);
+    if (!root) return;
+    const stack = [root];
+    while (stack.length > 0) {
+      const treeNode = stack.pop()!;
+      const id = readString(treeNode.data.get('id'));
+      if (id) {
+        affectedNodeIds.add(id);
+        if (isDeletedTreeNode(treeNode)) this.nodeIdToTreeId.delete(id);
+        else this.nodeIdToTreeId.set(id, treeNode.id);
+      }
+      if (!includeDescendants) continue;
+      const children = treeNode.children() ?? [];
+      for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]!);
+    }
   }
 
   clearTouchedNodeIds() {
@@ -732,6 +784,11 @@ function maxTreeDepth(state: DocumentState): number {
     }
   }
   return maxDepth;
+}
+
+function treeIdFromEventPath(path: readonly unknown[]): TreeID | undefined {
+  if (path[0] !== LORO_TREE_NAME || typeof path[1] !== 'string') return undefined;
+  return path[1] as TreeID;
 }
 
 function clampInsertIndex(index: number | null | undefined, length: number): number | undefined {
