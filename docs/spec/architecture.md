@@ -184,10 +184,18 @@ chains do not fail from JavaScript call-stack depth in these paths.
 Yielding tree materialization honors `commitEveryNodes` even when called directly
 without an outer service transaction: Core opens an internal transaction and undo
 group so chunk commits are real Loro commits while undo still removes the import
-as one operation. The tree-materialization context also caches active tag
-definitions and `childSupertag` config for inherited child tags, so importing many
-children under a tagged parent such as Today does not re-materialize the whole
-document for every inserted row.
+as one operation. Each chunk drains, materializes, and patches its touched nodes
+before committing, then Core records one revision and operation-history entry at
+the final transaction boundary. That keeps the public mutation atomic while
+avoiding one large end-of-import materialization stall. The tree-materialization
+context also caches active tag definitions, `childSupertag` config for inherited
+child tags, and field definition name/type resolution for pasted `field:: value`
+metadata, so importing many children under a tagged parent such as Today or a
+field-heavy import does not re-materialize the whole document for every inserted
+row or field. The agent import service chooses its `yieldEveryNodes` /
+`commitEveryNodes` chunk size from Import Pack stats: plain large outlines keep
+larger chunks, while field-heavy packs yield more often because each field
+materializes an entry plus a value/reference child.
 
 Shared-state export, version-vector reads, incremental export, and remote
 import are available only at a committed Core boundary. They reject both an

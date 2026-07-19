@@ -98,7 +98,9 @@ interface PreviewRecord {
 
 const MAX_PACK_BYTES = 50 * 1024 * 1024;
 export const IMPORT_PREVIEW_TTL_MS = 30 * 60 * 1000;
-const IMPORT_YIELD_EVERY_NODES = 50;
+const IMPORT_TARGET_TOUCHED_NODES_PER_CHUNK = 50;
+const IMPORT_MIN_YIELD_EVERY_NODES = 10;
+const IMPORT_MAX_YIELD_EVERY_NODES = 50;
 const DEFAULT_IMPORT_TOOL_NAME = 'tenon-import';
 
 export class AgentImportService {
@@ -360,10 +362,11 @@ async function materializeImportPack(
     tool: toolName,
     summary: `Created import staging tree for ${pack.stats.nodes} cleaned nodes.`,
   } as const;
+  const yieldEveryNodes = importYieldEveryNodesForStats(pack.stats);
   const outcome = host.createNodesFromTreeYielding
     ? await host.createNodesFromTreeYielding(parentId, [rootTree], meta, {
-      yieldEveryNodes: IMPORT_YIELD_EVERY_NODES,
-      commitEveryNodes: IMPORT_YIELD_EVERY_NODES,
+      yieldEveryNodes,
+      commitEveryNodes: yieldEveryNodes,
     })
     : host.transaction
       ? await host.transaction(meta, async () => host.handle('create_nodes_from_tree', { parentId, nodes: [rootTree] }, meta))
@@ -371,6 +374,21 @@ async function materializeImportPack(
   const stagingRootId = focusNodeId(outcome);
   if (!stagingRootId) throw new Error('Import did not create a staging root.');
   return { createdRootIds: [stagingRootId] };
+}
+
+export function importYieldEveryNodesForStats(stats: Pick<ImportStats, 'nodes' | 'fields'>): number {
+  const importedNodes = Math.max(1, stats.nodes);
+  const averageFieldsPerNode = Math.max(0, stats.fields) / importedNodes;
+  // Each imported field creates a fieldEntry and a value/reference child in
+  // addition to the visible outline node. Keep the approximate touched-node
+  // count per chunk stable, so field-heavy imports yield more often without
+  // penalizing plain large outlines.
+  const estimatedTouchedNodesPerImportedNode = 1 + (averageFieldsPerNode * 2);
+  const chunk = Math.floor(IMPORT_TARGET_TOUCHED_NODES_PER_CHUNK / estimatedTouchedNodesPerImportedNode);
+  return Math.max(
+    IMPORT_MIN_YIELD_EVERY_NODES,
+    Math.min(IMPORT_MAX_YIELD_EVERY_NODES, chunk),
+  );
 }
 
 function importPackToCreateNodeTree(pack: ImportPack): CreateNodeTree {

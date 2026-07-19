@@ -21,9 +21,10 @@ import {
 import { createPersistenceId, isPersistenceId } from './persistenceIdentity';
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
-import { DONE_FIELD, systemFieldLabel } from './systemFields';
+import { DONE_FIELD, SYSTEM_FIELD_CHOICES, systemFieldLabel } from './systemFields';
 import {
   fieldEntryDisplayName,
+  inferFieldTypeFromValues,
   normalizeFieldNameKey,
   resolveFieldWriteTarget,
   validateFieldValuesForType,
@@ -156,6 +157,8 @@ interface TemplateFieldRef {
 interface TreeMaterializeContext {
   tagDefByName: Map<string, NodeId>;
   fieldDefByName: Map<string, NodeId>;
+  duplicateFieldDefNameKeys: Set<string>;
+  fieldNameById: Map<NodeId, string>;
   fieldTypeById: Map<NodeId, FieldType>;
   activeTagIds: Set<NodeId>;
   childSupertagByTagId: Map<NodeId, NodeId | null>;
@@ -174,7 +177,14 @@ interface CoreTransaction {
   origin: string;
   metadata: CoreTransactionMetadata;
   chunkedCommits: number;
+  affectedNodeIds: Set<NodeId>;
+  changed: boolean;
   chunkUndoValue?: OperationHistoryEntry;
+}
+
+interface TouchedMutationPatch {
+  affectedNodeIds: string[];
+  changed: boolean;
 }
 
 export interface WorkspaceSharedState {
@@ -595,11 +605,13 @@ export class Core {
       origin,
       metadata,
       chunkedCommits: 0,
+      affectedNodeIds: new Set(),
+      changed: false,
     };
     try {
       const result = await fn();
       const transaction = this.activeTransaction;
-      if (transaction) this.finalizeTouchedMutation(transaction.origin, transaction.metadata);
+      if (transaction) this.finalizeActiveTransaction(transaction);
       this.activeTransaction = undefined;
       this.verifyCaches();
       return result;
@@ -618,6 +630,7 @@ export class Core {
   private commitActiveTransactionChunk(): void {
     const transaction = this.activeTransaction;
     if (!transaction) return;
+    this.patchActiveTransactionTouchedNodes(transaction);
     this.loro.commit(transaction.origin, this.chunkUndoValueForTransaction(transaction));
     transaction.chunkedCommits += 1;
   }
@@ -2783,20 +2796,46 @@ export class Core {
   }
 
   private finalizeTouchedMutation(origin: string, metadata: CoreTransactionMetadata): boolean {
+    const patch = this.drainTouchedMutationPatch();
+    if (patch.changed) {
+      this.commitCurrentTransaction(origin, metadata, patch.affectedNodeIds);
+      this.bumpRevision(patch.affectedNodeIds, false);
+    }
+    return patch.changed;
+  }
+
+  private finalizeActiveTransaction(transaction: CoreTransaction): boolean {
+    this.patchActiveTransactionTouchedNodes(transaction);
+    if (!transaction.changed) return false;
+    const affectedNodeIds = [...transaction.affectedNodeIds].sort();
+    this.commitCurrentTransaction(transaction.origin, transaction.metadata, affectedNodeIds);
+    this.bumpRevision(affectedNodeIds, false);
+    return true;
+  }
+
+  private patchActiveTransactionTouchedNodes(transaction: CoreTransaction): TouchedMutationPatch {
+    const patch = this.drainTouchedMutationPatch();
+    if (patch.changed) {
+      transaction.changed = true;
+      for (const id of patch.affectedNodeIds) transaction.affectedNodeIds.add(id);
+    }
+    return patch;
+  }
+
+  private drainTouchedMutationPatch(): TouchedMutationPatch {
     const affectedNodeIds = this.loro.drainTouchedNodeIds();
+    if (affectedNodeIds.length === 0) return { affectedNodeIds, changed: false };
     const afterNodes = this.loro.materializeNodes(affectedNodeIds);
     // Exact change detection at O(touched): a node is changed iff its committed
     // pre-mutation snapshot differs from its post-mutation materialization.
     // This preserves the prior idempotent-write semantics without copying or
     // stringifying the entire document on every mutation.
     const changed = changedTouchedNodes(affectedNodeIds, this.stateValue.nodes, afterNodes);
-    if (changed) this.commitCurrentTransaction(origin, metadata, affectedNodeIds);
     this.patchStateValue(affectedNodeIds, afterNodes);
     if (changed) {
       this.patchProjectionCache(affectedNodeIds, afterNodes);
-      this.bumpRevision(affectedNodeIds, false);
     }
-    return changed;
+    return { affectedNodeIds, changed };
   }
 
   private patchStateValue(affectedNodeIds: readonly string[], afterNodes: ReadonlyMap<string, Node | undefined>) {
@@ -3518,6 +3557,8 @@ export class Core {
   private createTreeMaterializeContext(state: DocumentState): TreeMaterializeContext {
     const tagDefByName = new Map<string, NodeId>();
     const fieldDefByName = new Map<string, NodeId>();
+    const duplicateFieldDefNameKeys = new Set<string>();
+    const fieldNameById = new Map<NodeId, string>();
     const fieldTypeById = new Map<NodeId, FieldType>();
     const activeTagIds = new Set<NodeId>();
     const childSupertagByTagId = new Map<NodeId, NodeId | null>();
@@ -3529,7 +3570,10 @@ export class Core {
         activeTagIds.add(node.id);
       }
       if (node.parentId === SCHEMA_ID && isActiveFieldDefinition(state, node.id)) {
-        fieldDefByName.set(key, node.id);
+        const fieldKey = normalizeFieldNameKey(node.content.text);
+        if (fieldDefByName.has(fieldKey)) duplicateFieldDefNameKeys.add(fieldKey);
+        else fieldDefByName.set(fieldKey, node.id);
+        fieldNameById.set(node.id, node.content.text);
         fieldTypeById.set(node.id, fieldTypeOf(state, node.id));
       }
     }
@@ -3537,7 +3581,15 @@ export class Core {
       const childSupertag = configRefTarget(state, tagId, 'childSupertag');
       childSupertagByTagId.set(tagId, childSupertag && activeTagIds.has(childSupertag) ? childSupertag : null);
     }
-    return { tagDefByName, fieldDefByName, fieldTypeById, activeTagIds, childSupertagByTagId };
+    return {
+      tagDefByName,
+      fieldDefByName,
+      duplicateFieldDefNameKeys,
+      fieldNameById,
+      fieldTypeById,
+      activeTagIds,
+      childSupertagByTagId,
+    };
   }
 
   private insertFieldDefNodeDirect(parentId: string, name: string, fieldType: FieldType) {
@@ -3597,6 +3649,8 @@ export class Core {
     value: string,
     context?: TreeMaterializeContext,
   ): void {
+    if (context && this.applyResolvedFieldTextValueWithContextDirect(nodeId, name, value, context)) return;
+
     const resolution = resolveFieldWriteTarget(fieldResolutionMap(this.snapshot()), nodeId, name, [{ text: value }]);
     if (!resolution.ok) throw CoreError.invalidOperation(resolution.error);
 
@@ -3621,16 +3675,110 @@ export class Core {
       fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, name, fieldType);
     }
 
-    context?.fieldDefByName.set(definitionNameKey(name), fieldDefId);
+    const fieldName = resolution.target.kind === 'existingEntry'
+      ? (context?.fieldNameById.get(fieldDefId) ?? fieldNameForDefId(this.snapshot(), fieldDefId))
+      : name;
+    context?.fieldDefByName.set(normalizeFieldNameKey(fieldName), fieldDefId);
+    context?.fieldNameById.set(fieldDefId, fieldName);
     context?.fieldTypeById.set(fieldDefId, fieldType);
     const entryId = resolution.target.kind === 'existingEntry'
       ? resolution.target.fieldEntryId
       : this.reuseOrCreateFieldEntryDirect(nodeId, fieldDefId);
-    this.writeFieldTextValueDirect(entryId, fieldDefId, fieldType, value);
+    this.writeFieldTextValueDirect(entryId, fieldDefId, fieldType, value, fieldName);
   }
 
-  private writeFieldTextValueDirect(entryId: string, fieldDefId: string, fieldType: FieldType, value: string) {
-    const validation = validateFieldValuesForType(fieldNameForDefId(this.snapshot(), fieldDefId), fieldType, [{ text: value }]);
+  private applyResolvedFieldTextValueWithContextDirect(
+    nodeId: string,
+    name: string,
+    value: string,
+    context: TreeMaterializeContext,
+  ): boolean {
+    const key = normalizeFieldNameKey(name);
+    if (!key || context.duplicateFieldDefNameKeys.has(key)) return false;
+
+    const owner = this.loro.materializeNode(nodeId);
+    if (!owner) throw CoreError.nodeNotFound(nodeId);
+    const ownerMatches: FieldEntryNode[] = [];
+    for (const childId of owner.children) {
+      const child = this.loro.materializeNode(childId);
+      if (child?.type !== 'fieldEntry') continue;
+      const label = this.fieldEntryDisplayNameFromContext(child, context);
+      if (normalizeFieldNameKey(label) === key) ownerMatches.push(child);
+    }
+    if (ownerMatches.length > 1) {
+      throw CoreError.invalidOperation(`Multiple field entries match "${name}": ${ownerMatches.map((entry) => entry.id).join(', ')}`);
+    }
+    if (ownerMatches.length === 1) {
+      const entry = ownerMatches[0]!;
+      const fieldDefId = entry.fieldDefId;
+      if (!fieldDefId) {
+        this.writeFieldTextValueDirect(entry.id, '', 'plain', value, name);
+        return true;
+      }
+      if (fieldDefId === DONE_FIELD) {
+        const validation = validateFieldValuesForType(name, 'checkbox', [{ text: value }]);
+        if (!validation.ok) throw CoreError.invalidOperation(validation.error);
+        this.reuseOrCreateFieldEntryDirect(nodeId, DONE_FIELD, name, context);
+        this.writeDoneStateDirect(this.snapshot(), nodeId, (node, tagDriven) => applyNodeDoneState(node, booleanFieldValue(value), tagDriven));
+        return true;
+      }
+      if (systemFieldLabel(fieldDefId)) return false;
+      const fieldType = context.fieldTypeById.get(fieldDefId) ?? 'plain';
+      const fieldName = context.fieldNameById.get(fieldDefId) ?? name;
+      this.writeFieldTextValueDirect(entry.id, fieldDefId, fieldType, value, fieldName);
+      return true;
+    }
+
+    const systemFieldId = systemFieldIdForName(name);
+    if (systemFieldId) return false;
+
+    let fieldDefId = context.fieldDefByName.get(key);
+    let fieldType: FieldType;
+    let fieldName = name;
+    if (fieldDefId) {
+      fieldType = context.fieldTypeById.get(fieldDefId) ?? 'plain';
+      fieldName = context.fieldNameById.get(fieldDefId) ?? name;
+      const validation = validateFieldValuesForType(fieldName, fieldType, [{ text: value }]);
+      if (!validation.ok) throw CoreError.invalidOperation(validation.error);
+    } else {
+      fieldType = inferFieldTypeFromValues([{ text: value }]);
+      const validation = validateFieldValuesForType(name, fieldType, [{ text: value }]);
+      if (!validation.ok) throw CoreError.invalidOperation(validation.error);
+      fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, name, fieldType);
+      context.fieldDefByName.set(key, fieldDefId);
+      context.fieldNameById.set(fieldDefId, name);
+      context.fieldTypeById.set(fieldDefId, fieldType);
+    }
+
+    const entryId = this.reuseOrCreateFieldEntryDirect(nodeId, fieldDefId, fieldName, context);
+    this.writeFieldTextValueDirect(entryId, fieldDefId, fieldType, value, fieldName);
+    return true;
+  }
+
+  private fieldEntryDisplayNameFromContext(entry: FieldEntryNode, context: TreeMaterializeContext): string {
+    const fieldDefId = entry.fieldDefId;
+    if (fieldDefId) {
+      const systemLabel = systemFieldLabel(fieldDefId);
+      if (systemLabel) return systemLabel;
+      const cached = context.fieldNameById.get(fieldDefId);
+      if (cached) return cached;
+      const fieldDef = this.loro.materializeNode(fieldDefId);
+      if (fieldDef?.content.text.trim()) {
+        context.fieldNameById.set(fieldDefId, fieldDef.content.text);
+        return fieldDef.content.text;
+      }
+    }
+    return entry.content.text.trim();
+  }
+
+  private writeFieldTextValueDirect(
+    entryId: string,
+    fieldDefId: string,
+    fieldType: FieldType,
+    value: string,
+    fieldName = fieldNameForDefId(this.snapshot(), fieldDefId),
+  ) {
+    const validation = validateFieldValuesForType(fieldName, fieldType, [{ text: value }]);
     if (!validation.ok) throw CoreError.invalidOperation(validation.error);
     if (fieldType === 'options') {
       const optionId = this.ensureOptionNodeDirect(fieldDefId, value);
@@ -3663,7 +3811,12 @@ export class Core {
   // Reuse a field entry the node already owns for this def (e.g. one a tag
   // template just instantiated) so a pasted `field::` fills it instead of
   // stacking a second empty entry; otherwise create one.
-  private reuseOrCreateFieldEntryDirect(nodeId: string, fieldDefId: string): string {
+  private reuseOrCreateFieldEntryDirect(
+    nodeId: string,
+    fieldDefId: string,
+    fieldName?: string,
+    context?: TreeMaterializeContext,
+  ): string {
     const node = this.loro.materializeNode(nodeId);
     if (!node) throw CoreError.nodeNotFound(nodeId);
     const existing = node.children.find((childId) => {
@@ -3671,8 +3824,26 @@ export class Core {
       return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
     });
     if (existing) return existing;
-    assertOwnerDoesNotHaveFieldName(this.snapshot(), nodeId, fieldNameForDefId(this.snapshot(), fieldDefId));
+    if (fieldName && context) this.assertOwnerDoesNotHaveFieldNameFromContext(node, fieldName, context);
+    else assertOwnerDoesNotHaveFieldName(this.snapshot(), nodeId, fieldNameForDefId(this.snapshot(), fieldDefId));
     return this.insertFieldEntryNodeDirect(nodeId, undefined, fieldDefId);
+  }
+
+  private assertOwnerDoesNotHaveFieldNameFromContext(
+    owner: Node,
+    fieldName: string,
+    context: TreeMaterializeContext,
+  ) {
+    const key = normalizeFieldNameKey(fieldName);
+    if (!key) return;
+    const matches = owner.children.filter((childId) => {
+      const child = this.loro.materializeNode(childId);
+      return child?.type === 'fieldEntry'
+        && normalizeFieldNameKey(this.fieldEntryDisplayNameFromContext(child, context)) === key;
+    });
+    if (matches.length > 0) {
+      throw CoreError.invalidOperation(`duplicate field "${fieldName}" on owner ${owner.id}: ${matches.join(', ')}`);
+    }
   }
 
   private touchNodeDirect(nodeId: string) {
@@ -5144,6 +5315,15 @@ function assertFieldDefRenameDoesNotDuplicateOwner(state: DocumentState, fieldDe
 
 function fieldNameForDefId(state: DocumentState, fieldDefId: NodeId): string {
   return systemFieldLabel(fieldDefId) ?? state.nodes[fieldDefId]?.content.text ?? fieldDefId;
+}
+
+function systemFieldIdForName(fieldName: string): NodeId | null {
+  const key = normalizeFieldNameKey(fieldName);
+  if (!key) return null;
+  for (const choice of SYSTEM_FIELD_CHOICES) {
+    if (normalizeFieldNameKey(choice.id) === key || normalizeFieldNameKey(choice.label) === key) return choice.id;
+  }
+  return null;
 }
 
 function booleanFieldValue(value: string): boolean {
