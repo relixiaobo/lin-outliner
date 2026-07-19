@@ -66,18 +66,7 @@ export function App() {
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
   const indexRef = useRef(index);
-  const pendingLocalUserCommandsRef = useRef(0);
-  const ignoreLocalUserEventsThroughRef = useRef(0);
-  const commandRunnerLifecycle = useMemo(() => ({
-    onLocalCommandStart: () => {
-      pendingLocalUserCommandsRef.current += 1;
-    },
-    onLocalCommandSettled: () => {
-      pendingLocalUserCommandsRef.current = Math.max(0, pendingLocalUserCommandsRef.current - 1);
-      ignoreLocalUserEventsThroughRef.current = Date.now();
-    },
-  }), []);
-  const run = useCommandRunner(applyProjectionUpdate, setPendingFocus, setError, commandRunnerLifecycle);
+  const run = useCommandRunner(applyProjectionUpdate, setPendingFocus, setError);
   const nodeAccessTimersRef = useRef<Map<NodeId, number>>(new Map());
 
   useEffect(() => () => {
@@ -287,16 +276,6 @@ export function App() {
   useEffect(() => {
     const unlisten = window.lin?.onDocumentEvent((event) => {
       if (event.type !== 'projection_changed') return;
-      // Local commands apply their returned projection through run(); delayed user events can still carry intermediate state.
-      const isLocalUserCommandEvent = event.origin === 'user'
-        && (
-          pendingLocalUserCommandsRef.current > 0
-          || (
-            typeof event.timestamp === 'number'
-            && event.timestamp <= ignoreLocalUserEventsThroughRef.current
-          )
-        );
-      if (isLocalUserCommandEvent) return;
       applyProjectionUpdate(event.update);
     });
     return () => {

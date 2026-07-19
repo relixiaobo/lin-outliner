@@ -57,13 +57,6 @@ export type CommandRunner = (
   options?: CommandRunnerOptions,
 ) => Promise<CommandRunnerResult | null>;
 
-export interface CommandRunnerLifecycle {
-  onLocalCommandStart?: () => void;
-  onLocalCommandSettled?: () => void;
-}
-
-const EMPTY_COMMAND_RUNNER_LIFECYCLE: CommandRunnerLifecycle = {};
-
 export interface NavigateRootOptions {
   focus?: boolean;
   newPane?: boolean;
@@ -175,10 +168,8 @@ export function useCommandRunner(
   applyProjectionUpdate: (update: ProjectionUpdate) => void,
   setFocus: (focus: FocusHint | null) => void,
   setError: (message: string | null) => void,
-  lifecycle: CommandRunnerLifecycle = EMPTY_COMMAND_RUNNER_LIFECYCLE,
 ): CommandRunner {
   return useCallback(async (operation, options) => {
-    lifecycle.onLocalCommandStart?.();
     try {
       const result = (await operation()) as ResolvedCommandRunnerOperationResult;
       // Abort means a nested runner already handled a failed command and left the
@@ -210,8 +201,6 @@ export function useCommandRunner(
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       return null;
-    } finally {
-      lifecycle.onLocalCommandSettled?.();
     }
-  }, [lifecycle, setError, setFocus, applyProjectionUpdate]);
+  }, [setError, setFocus, applyProjectionUpdate]);
 }

@@ -109,17 +109,14 @@ export function OutlinerView(props: OutlinerViewProps) {
     }
     let active = true;
     setSearchRefreshing(true);
-    void api.refreshSearchNodeResults(props.parentId)
-      .catch((error) => {
-        console.error('Failed to refresh live search results', error);
-      })
+    void props.run(() => api.refreshSearchNodeResults(props.parentId), { applyFocus: false })
       .finally(() => {
         if (active) setSearchRefreshing(false);
       });
     return () => {
       active = false;
     };
-  }, [parent?.type, props.index.projection, props.parentId, tableMode]);
+  }, [parent?.type, props.index.projection, props.parentId, props.run, tableMode]);
 
   if (tableMode) {
     return (

@@ -19,8 +19,6 @@ function renderCommandRunner(spies: {
   applyProjectionUpdate: () => void;
   setFocus: () => void;
   setError: (message: string | null) => void;
-  onLocalCommandStart: () => void;
-  onLocalCommandSettled: () => void;
 }): { run: CommandRunner } {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   Object.assign(globalThis, { document, window, HTMLElement: window.HTMLElement, Node: window.Node });
@@ -32,10 +30,6 @@ function renderCommandRunner(spies: {
       spies.applyProjectionUpdate,
       spies.setFocus,
       spies.setError,
-      {
-        onLocalCommandStart: spies.onLocalCommandStart,
-        onLocalCommandSettled: spies.onLocalCommandSettled,
-      },
     );
     return null;
   };
@@ -55,8 +49,6 @@ describe('useCommandRunner no-op outcome', () => {
       applyProjectionUpdate: () => calls.push('applyProjectionUpdate'),
       setFocus: () => calls.push('setFocus'),
       setError: (message) => calls.push(`setError:${message ?? 'null'}`),
-      onLocalCommandStart: () => calls.push('start'),
-      onLocalCommandSettled: () => calls.push('settled'),
     });
 
     let result: Awaited<ReturnType<CommandRunner>> | null = null;
@@ -68,7 +60,7 @@ describe('useCommandRunner no-op outcome', () => {
     });
 
     expect(result).toBe(commandRunnerNoop());
-    expect(calls).toEqual(['start', 'setError:null', 'settled']);
+    expect(calls).toEqual(['setError:null']);
   });
 
   test('aborts without clearing an error set by a nested runner', async () => {
@@ -77,8 +69,6 @@ describe('useCommandRunner no-op outcome', () => {
       applyProjectionUpdate: () => calls.push('applyProjectionUpdate'),
       setFocus: () => calls.push('setFocus'),
       setError: (message) => calls.push(`setError:${message ?? 'null'}`),
-      onLocalCommandStart: () => calls.push('start'),
-      onLocalCommandSettled: () => calls.push('settled'),
     });
 
     let result: Awaited<ReturnType<CommandRunner>> | null = commandRunnerNoop();
@@ -92,12 +82,6 @@ describe('useCommandRunner no-op outcome', () => {
     });
 
     expect(result).toBe(null);
-    expect(calls).toEqual([
-      'start',
-      'start',
-      'setError:stale command',
-      'settled',
-      'settled',
-    ]);
+    expect(calls).toEqual(['setError:stale command']);
   });
 });
