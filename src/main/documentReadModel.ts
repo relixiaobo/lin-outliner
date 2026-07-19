@@ -33,6 +33,17 @@ function indexNodes(nodes: readonly NodeProjection[]): {
   return { nodeIndexById, nodesById };
 }
 
+function sortedNodeInsertionIndex(nodes: readonly NodeProjection[], nodeId: string): number {
+  let low = 0;
+  let high = nodes.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (nodes[mid]!.id < nodeId) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
 export class DocumentReadModel {
   private projectionView: DocumentProjection;
   private nodesById: Map<string, NodeProjection>;
@@ -83,6 +94,7 @@ export class DocumentReadModel {
     if (update.revision === this.currentRevision) return true;
     if (update.revision !== this.currentRevision + 1) return false;
 
+    let membershipChanged = false;
     if (update.removedIds.length > 0) {
       const removedIndexes: number[] = [];
       for (const nodeId of update.removedIds) {
@@ -94,19 +106,25 @@ export class DocumentReadModel {
         removedIndexes.sort((left, right) => right - left);
         for (const index of removedIndexes) this.projectionView.nodes.splice(index, 1);
         this.nodeIndexById = indexNodes(this.projectionView.nodes).nodeIndexById;
+        membershipChanged = true;
       }
     }
 
+    const addedNodes = new Map<string, NodeProjection>();
     for (const node of update.changedNodes) {
       const index = this.nodeIndexById.get(node.id);
       if (index === undefined) {
-        this.nodeIndexById.set(node.id, this.projectionView.nodes.length);
-        this.projectionView.nodes.push(node);
+        addedNodes.set(node.id, node);
       } else {
         this.projectionView.nodes[index] = node;
       }
       this.nodesById.set(node.id, node);
     }
+    for (const node of addedNodes.values()) {
+      this.projectionView.nodes.splice(sortedNodeInsertionIndex(this.projectionView.nodes, node.id), 0, node);
+      membershipChanged = true;
+    }
+    if (membershipChanged) this.nodeIndexById = indexNodes(this.projectionView.nodes).nodeIndexById;
 
     this.projectionView.todayId = update.todayId;
     this.currentRevision = update.revision;

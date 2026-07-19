@@ -3699,6 +3699,7 @@ function createMutationProjectionView(initialIndex: ProjectionIndex): MutationPr
     }),
     applyFull: reseed,
     applyDelta: (delta) => {
+      let membershipChanged = false;
       if (delta.removedIds.length > 0) {
         const removedIndexes: number[] = [];
         for (const nodeId of delta.removedIds) {
@@ -3710,18 +3711,24 @@ function createMutationProjectionView(initialIndex: ProjectionIndex): MutationPr
           removedIndexes.sort((left, right) => right - left);
           for (const index of removedIndexes) projection.nodes.splice(index, 1);
           indexes.nodeIndexById = indexProjectionNodes(projection.nodes).nodeIndexById;
+          membershipChanged = true;
         }
       }
+      const addedNodes = new Map<string, NodeProjection>();
       for (const node of delta.changedNodes) {
         const index = indexes.nodeIndexById.get(node.id);
         if (index === undefined) {
-          indexes.nodeIndexById.set(node.id, projection.nodes.length);
-          projection.nodes.push(node);
+          addedNodes.set(node.id, node);
         } else {
           projection.nodes[index] = node;
         }
         indexes.nodesById.set(node.id, node);
       }
+      for (const node of addedNodes.values()) {
+        projection.nodes.splice(sortedProjectionNodeInsertionIndex(projection.nodes, node.id), 0, node);
+        membershipChanged = true;
+      }
+      if (membershipChanged) indexes.nodeIndexById = indexProjectionNodes(projection.nodes).nodeIndexById;
       projection.todayId = delta.todayId;
     },
   };
@@ -3756,6 +3763,17 @@ function indexProjectionNodes(nodes: readonly NodeProjection[]): {
     nodesById.set(node.id, node);
   }
   return { nodeIndexById, nodesById };
+}
+
+function sortedProjectionNodeInsertionIndex(nodes: readonly NodeProjection[], nodeId: string): number {
+  let low = 0;
+  let high = nodes.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (nodes[mid]!.id < nodeId) low = mid + 1;
+    else high = mid;
+  }
+  return low;
 }
 
 async function handleMutation(

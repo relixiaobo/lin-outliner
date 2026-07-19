@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
-import { LIBRARY_ID, WORKSPACE_ID, plainText, replaceAllRichTextPatch, type ProjectionUpdate } from '../../src/core/types';
+import {
+  LIBRARY_ID,
+  WORKSPACE_ID,
+  plainText,
+  replaceAllRichTextPatch,
+  type DocumentProjection,
+  type NodeProjection,
+  type ProjectionUpdate,
+} from '../../src/core/types';
 import { indexProjection } from '../../src/main/agentNodeToolProjection';
 import { DocumentReadModel } from '../../src/main/documentReadModel';
 
@@ -18,6 +26,32 @@ function deltaFromCore(core: Core): ProjectionUpdate {
     todayId: core.todayId(),
     changedNodes: [...present.values()],
     removedIds: delta.changedNodeIds.filter((nodeId) => !present.has(nodeId)),
+  };
+}
+
+function fakeNode(id: string): NodeProjection {
+  return {
+    id,
+    content: plainText(id),
+    children: [],
+    tags: [],
+    createdAt: 0,
+    updatedAt: 0,
+  };
+}
+
+function fakeProjection(nodes: NodeProjection[]): DocumentProjection {
+  return {
+    workspaceId: 'workspace',
+    rootId: 'b',
+    libraryId: 'library',
+    dailyNotesId: 'daily',
+    schemaId: 'schema',
+    searchesId: 'searches',
+    recentsId: 'recents',
+    trashId: 'trash',
+    todayId: 'b',
+    nodes,
   };
 }
 
@@ -56,6 +90,24 @@ describe('DocumentReadModel', () => {
     expect(model.node(createdId)?.content.text).toBe('Renamed');
     expect(model.node(createdId)).not.toBe(createdBefore);
     expect(model.node(WORKSPACE_ID)).toBe(unchangedBefore);
+  });
+
+  test('keeps delta-added nodes in full-projection id order', () => {
+    const model = DocumentReadModel.fromProjection(0, fakeProjection([
+      fakeNode('b'),
+      fakeNode('d'),
+    ]));
+
+    expect(model.applyUpdate({
+      kind: 'delta',
+      revision: 1,
+      todayId: 'a',
+      changedNodes: [fakeNode('e'), fakeNode('a'), fakeNode('c')],
+      removedIds: [],
+    })).toBe(true);
+
+    expect(model.projection.nodes.map((node) => node.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect([...model.nodes.keys()].sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 
   test('removes deleted nodes from both map and projection array', () => {
