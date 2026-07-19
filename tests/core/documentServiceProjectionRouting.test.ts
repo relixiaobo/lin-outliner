@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { SCHEMA_ID, type CommandResult, type DocumentProjectionChangedEvent } from '../../src/core/types';
+import { createNodeTools } from '../../src/main/agentNodeTools';
 import type { ProjectionChangedDelivery } from '../../src/main/documentService';
 
 let electronUserDataRoot = '';
@@ -106,5 +107,32 @@ describe('DocumentService projection routing metadata', () => {
     expect(model.revision).toBe(result.update.revision);
     expect(model.node(nodeId)?.content.text).toBe('Read model routed');
     expect(model.node(SCHEMA_ID)).toBe(unchangedBefore);
+  });
+
+  test('serves DocumentService-backed node_read through the read model', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const result = await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Tool read model routed',
+    }) as CommandResult;
+    const nodeId = result.focus!.nodeId;
+    service.getDocumentReadModel();
+
+    const originalGetProjection = service.getProjection.bind(service);
+    let projectionReads = 0;
+    (service as unknown as { getProjection: typeof service.getProjection }).getProjection = () => {
+      projectionReads += 1;
+      return originalGetProjection();
+    };
+    const nodeRead = createNodeTools(service).find((tool) => tool.name === 'node_read');
+    expect(nodeRead).toBeDefined();
+
+    const toolResult = await (nodeRead!.execute as any)('test-call', { node_id: nodeId, depth: 0 });
+
+    expect(toolResult.details.ok).toBe(true);
+    expect(toolResult.details.data.items[0].title).toBe('Tool read model routed');
+    expect(projectionReads).toBe(0);
   });
 });
