@@ -457,6 +457,79 @@ describe('Core', () => {
     expect(core.state().nodes[rootId]).toBeUndefined();
   });
 
+  test('direct yielding tree materialization honors commit chunks as one undo', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      commit: (origin: string, undoValue?: unknown) => void;
+    };
+    const originalCommit = instrumented.commit.bind(loro);
+    let commitCalls = 0;
+    instrumented.commit = (origin, undoValue) => {
+      commitCalls += 1;
+      return originalCommit(origin, undoValue);
+    };
+
+    let rootId = '';
+    try {
+      const focus = await core.createNodesFromTreeYieldingFocus(today, [{
+        content: plainText('Direct imported root'),
+        children: Array.from({ length: 5 }, (_value, index) => ({
+          content: plainText(`Direct imported child ${index + 1}`),
+          children: [],
+        })),
+      }], {
+        yieldEveryNodes: 2,
+        commitEveryNodes: 2,
+        yield: async () => {},
+      });
+      rootId = focus!.nodeId;
+    } finally {
+      instrumented.commit = originalCommit;
+    }
+
+    expect(commitCalls).toBeGreaterThan(1);
+    expect(core.state().nodes[rootId].children).toHaveLength(5);
+
+    core.undoUser();
+    expect(core.state().nodes[rootId]).toBeUndefined();
+  });
+
+  test('yielding tree materialization caches inherited child tag config for tagged parents', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      materializeState: () => ReturnType<LoroOutlinerDocument['materializeState']>;
+    };
+    const originalMaterializeState = instrumented.materializeState.bind(loro);
+    let materializeStateCalls = 0;
+    instrumented.materializeState = () => {
+      materializeStateCalls += 1;
+      return originalMaterializeState();
+    };
+    const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
+
+    try {
+      delete process.env.LIN_VERIFY_CACHE;
+      await core.createNodesFromTreeYieldingFocus(today, Array.from({ length: 100 }, (_value, index) => ({
+        content: plainText(`Today import child ${index + 1}`),
+        children: [],
+      })), {
+        yieldEveryNodes: 10,
+        commitEveryNodes: 10,
+        yield: async () => {},
+      });
+    } finally {
+      instrumented.materializeState = originalMaterializeState;
+      if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
+      else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
+    }
+
+    expect(materializeStateCalls).toBeLessThanOrEqual(2);
+  });
+
   test('preflights yielding tree references before committing any chunk', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

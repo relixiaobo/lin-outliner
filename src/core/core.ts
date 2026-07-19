@@ -157,6 +157,8 @@ interface TreeMaterializeContext {
   tagDefByName: Map<string, NodeId>;
   fieldDefByName: Map<string, NodeId>;
   fieldTypeById: Map<NodeId, FieldType>;
+  activeTagIds: Set<NodeId>;
+  childSupertagByTagId: Map<NodeId, NodeId | null>;
 }
 
 interface TreeYieldContext {
@@ -578,11 +580,19 @@ export class Core {
   }
 
   async transaction<T>(origin: CommitOrigin, fn: () => T | Promise<T>, metadata: CoreTransactionMetadata = {}): Promise<T> {
+    return this.transactionWithResolvedOrigin(commitOriginFor(origin), fn, metadata);
+  }
+
+  private async transactionWithResolvedOrigin<T>(
+    origin: string,
+    fn: () => T | Promise<T>,
+    metadata: CoreTransactionMetadata = {},
+  ): Promise<T> {
     if (this.activeTransaction) return fn();
     const rollbackFrontiers = this.loro.frontiers();
     this.loro.clearTouchedNodeIds();
     this.activeTransaction = {
-      origin: commitOriginFor(origin),
+      origin,
       metadata,
       chunkedCommits: 0,
     };
@@ -826,6 +836,19 @@ export class Core {
     nodes: CreateNodeTree[],
     options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
   ): Promise<FocusHint | undefined> {
+    if (!this.activeTransaction && options.commitEveryNodes) {
+      const undoGroupStarted = this.beginUndoGroup();
+      try {
+        return await this.transactionWithResolvedOrigin(
+          this.currentCommitOrigin(),
+          () => this.createNodesFromTreeYieldingFocus(parentId, nodes, options),
+          this.currentCommitMetadata(),
+        );
+      } finally {
+        if (undoGroupStarted) this.endUndoGroup();
+      }
+    }
+
     return this.mutateAsyncFocus(async () => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
@@ -3487,7 +3510,7 @@ export class Core {
       }
       if (completedAt !== undefined) node.completedAt = completedAt;
     });
-    this.applyChildTagsDirect(parentId, id);
+    this.applyChildTagsDirect(parentId, id, context);
     this.applyPasteMetadataDirect(id, tree.tags, tree.fields, context);
     return id;
   }
@@ -3496,16 +3519,25 @@ export class Core {
     const tagDefByName = new Map<string, NodeId>();
     const fieldDefByName = new Map<string, NodeId>();
     const fieldTypeById = new Map<NodeId, FieldType>();
+    const activeTagIds = new Set<NodeId>();
+    const childSupertagByTagId = new Map<NodeId, NodeId | null>();
     for (const node of Object.values(state.nodes)) {
       const key = definitionNameKey(node.content.text);
       if (!key) continue;
-      if (isActiveTagDefinition(state, node.id)) tagDefByName.set(key, node.id);
+      if (isActiveTagDefinition(state, node.id)) {
+        tagDefByName.set(key, node.id);
+        activeTagIds.add(node.id);
+      }
       if (node.parentId === SCHEMA_ID && isActiveFieldDefinition(state, node.id)) {
         fieldDefByName.set(key, node.id);
         fieldTypeById.set(node.id, fieldTypeOf(state, node.id));
       }
     }
-    return { tagDefByName, fieldDefByName, fieldTypeById };
+    for (const tagId of activeTagIds) {
+      const childSupertag = configRefTarget(state, tagId, 'childSupertag');
+      childSupertagByTagId.set(tagId, childSupertag && activeTagIds.has(childSupertag) ? childSupertag : null);
+    }
+    return { tagDefByName, fieldDefByName, fieldTypeById, activeTagIds, childSupertagByTagId };
   }
 
   private insertFieldDefNodeDirect(parentId: string, name: string, fieldType: FieldType) {
@@ -3546,6 +3578,8 @@ export class Core {
       if (!tagId) {
         tagId = findTagByName(this.snapshot(), name) ?? this.createTagDefDirect(name);
         context?.tagDefByName.set(key, tagId);
+        context?.activeTagIds.add(tagId);
+        context?.childSupertagByTagId.set(tagId, null);
       }
       this.applyTagNoHistoryDirect(nodeId, tagId);
     }
@@ -3711,9 +3745,17 @@ export class Core {
     return clonedId;
   }
 
-  private applyChildTagsDirect(parentId: string, childId: string) {
+  private applyChildTagsDirect(parentId: string, childId: string, context?: TreeMaterializeContext) {
     const tagIds = this.loro.nodeTags(parentId);
     if (tagIds.length === 0) return;
+    if (context) {
+      for (const tagId of tagIds) {
+        if (!context.activeTagIds.has(tagId)) continue;
+        const childSupertag = context.childSupertagByTagId.get(tagId);
+        if (childSupertag) this.applyTagDirect(childId, childSupertag);
+      }
+      return;
+    }
     const state = this.snapshot();
     for (const tagId of tagIds) {
       if (!isActiveTagDefinition(state, tagId)) continue;
@@ -4227,7 +4269,12 @@ function changedTouchedNodeIds(
   beforeNodes: Readonly<Record<string, Node>>,
   afterNodes: ReadonlyMap<string, Node | undefined>,
 ): string[] {
-  return touched.filter((id) => !sameJson(beforeNodes[id], afterNodes.get(id)));
+  return touched.filter((id) => {
+    const before = beforeNodes[id];
+    const after = afterNodes.get(id);
+    if (before === undefined || after === undefined) return before !== after;
+    return !sameJson(before, after);
+  });
 }
 
 function commitOriginFor(origin: CommitOrigin) {

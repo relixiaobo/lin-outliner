@@ -181,6 +181,13 @@ The Loro document wrapper materializes and deletes document trees with explicit
 work stacks rather than recursive JS traversal. Core's permanent-delete
 dependency collection uses the same iterative discipline, so valid deep outline
 chains do not fail from JavaScript call-stack depth in these paths.
+Yielding tree materialization honors `commitEveryNodes` even when called directly
+without an outer service transaction: Core opens an internal transaction and undo
+group so chunk commits are real Loro commits while undo still removes the import
+as one operation. The tree-materialization context also caches active tag
+definitions and `childSupertag` config for inherited child tags, so importing many
+children under a tagged parent such as Today does not re-materialize the whole
+document for every inserted row.
 
 Shared-state export, version-vector reads, incremental export, and remote
 import are available only at a committed Core boundary. They reject both an
