@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
@@ -31,9 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-19).** Open PR queue: none. Recently merged: #413
-(`codex/core-sparse-transactions`) merged 2026-07-19 after main review; see
-*Recently completed*. #412 (`codex/single-delivery-projection-routing`) merged
+**In flight (2026-07-20).** Open PR queue: none. Recently merged: #414
+(`codex/main-document-read-model`) merged 2026-07-20 after main review; see
+*Recently completed*. #413 (`codex/core-sparse-transactions`) merged
+2026-07-19 after main review; see *Recently completed*. #412 (`codex/single-delivery-projection-routing`) merged
 2026-07-19 after main review; see *Recently completed*. #411 (`codex/renderer-noop-command-outcome`)
 merged 2026-07-19 after main review; see *Recently completed*. #410
 (`codex-2/agent-full-access-default`) merged 2026-07-17 after iterative main
@@ -166,8 +167,9 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 3. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
    reference-summary Trash set precomputation and default-panel row-model pruning; #413 shipped
    core sparse transaction/write-path hardening, bounded journal/undo metadata, sparse replication
-   import, and yielding import cache/finalization. Remaining localized cleanups are still tracked in
-   `docs/plans/performance-optimization.md`; no design gate.
+   import, and yielding import cache/finalization; #414 shipped the main-side document read model
+   for Agent node tools and sparse `replace_outline` mutation facts. Remaining localized cleanups
+   are still tracked in `docs/plans/performance-optimization.md`; no design gate.
 4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
 5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
@@ -477,14 +479,17 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
   perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
-  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
+  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
   index patched per delta, windowed/flat outliner renderer + agent streaming `projection_patch` +
   structural-save coalescing (metrics in Recently completed). #380 precomputes Trash descendant sets
   for renderer/system/search reference-summary scans and stops building recursive panel row models on
   the default flat outliner path. #413 makes Core mutation finalization, history/journal metadata,
   replication import, and yielding field/tag-heavy import proportional to touched nodes where sparse
-  evidence is available. **Remaining P3:** localized O(N) cleanups still listed in the plan, including
-  the residual `new Map(prev.byId)` + `nextRevisions` whole-map rebuild.
+  evidence is available. #414 keeps a main-side read model fresh from projection deltas so Agent
+  `node_read`/`node_search` reuse a maintained `ProjectionIndex`, and `node_edit replace_outline`
+  uses transaction-local sparse mutation facts on `DocumentService` hosts. **Remaining P3:** localized
+  O(N) cleanups still listed in the plan, including the residual `new Map(prev.byId)` +
+  `nextRevisions` whole-map rebuild.
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
@@ -522,6 +527,20 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **main-document-read-model**
+  (`codex/main-document-read-model`, PR #414, codex, merged 2026-07-20,
+  fast-track) — `DocumentService` now owns a main-side `DocumentReadModel` that
+  seeds from a full projection once, applies `ProjectionUpdate` deltas in place,
+  and stays fresh even when no renderer projection listener is registered. Agent
+  `node_read` and `node_search` prefer that maintained `ProjectionIndex`, while
+  `node_edit replace_outline` consumes transaction-local sparse projection
+  facts from Core/DocumentService so multi-command edits can update their
+  in-flight view without rebuilding full projections between subcommands.
+  **Gate (main):** review found no reportable issues on final head `bfa4e203`.
+  Verified with typecheck, `docs:check`, diff check, focused read-model /
+  DocumentService / Agent node-tool suites, full `test:core` (1676 pass), and
+  `LIN_VERIFY_CACHE=1` focused cache verification.
 
 - **core-sparse-transactions**
   (`codex/core-sparse-transactions`, PR #413, codex, merged 2026-07-19,

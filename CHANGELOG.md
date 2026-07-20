@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Document read model for Agent node tools (PR #414, codex)** — the main
+  process now keeps a `DocumentReadModel` fresh from projection deltas, letting
+  Agent `node_read` and `node_search` reuse a maintained `ProjectionIndex`
+  instead of rebuilding one from a full projection per call. `node_edit
+  replace_outline` also uses transaction-local sparse projection facts on
+  `DocumentService` hosts, avoiding repeated full projection reads while
+  preserving annotated-outline results. **Gate (main):** review found no
+  reportable issues. Verified with typecheck, full Core tests, focused
+  read-model/DocumentService/Agent node-tool coverage, docs check, diff check,
+  and cache-verification tests.
 - **Core sparse transactions (PR #413, codex)** — Core mutations now finalize
   from explicit touched-node ids instead of whole-state materialization on the
   hot path. Operation history stores bounded affected-id summaries, journal and
