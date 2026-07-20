@@ -30,6 +30,7 @@ import {
   TRANSIENT_TEXT_SENTINEL,
 } from './richTextCodec';
 import { richTextPatchFromTransaction } from './editorTextPatch';
+import { applyRichTextPatchToContent } from './richTextPatchApply';
 import { createInlineMarkShortcutTransaction } from './inlineMarkShortcuts';
 import { moveInlineCodeCaretAcrossBoundary, setDomSelectionAtDocSide } from './inlineCodeBoundaryNavigation';
 import { pmSchema } from './pmSchema';
@@ -230,6 +231,31 @@ function isEmptyRichText(content: RichText) {
   return content.text.replaceAll(TRANSIENT_TEXT_SENTINEL, '').trim().length === 0 && content.inlineRefs.length === 0;
 }
 
+function isEmptyAfterPatch(
+  previousContent: RichText,
+  nextContent: RichText,
+  patch: RichTextPatch,
+  wasEmpty: boolean,
+) {
+  if (wasEmpty) return isEmptyRichText(nextContent);
+  for (const op of patch.ops) {
+    if (op.type === 'replace_all') return isEmptyRichText(nextContent);
+    if (
+      op.type === 'replace'
+      && (
+        op.to > op.from
+        || (op.deletedInlineRefs?.length ?? 0) > 0
+        || op.content.text.trim().length === 0
+      )
+    ) {
+      return isEmptyRichText(nextContent);
+    }
+  }
+  return previousContent.text.length > 0 || previousContent.inlineRefs.length > 0
+    ? false
+    : isEmptyRichText(nextContent);
+}
+
 function isModifierOnlyKey(event: KeyboardEvent) {
   return event.key === 'Meta' || event.key === 'Control' || event.key === 'Alt' || event.key === 'Shift';
 }
@@ -277,7 +303,9 @@ export function RichTextEditor(props: RichTextEditorProps) {
   const compositionToken = useMemo(() => Symbol('ime-composition'), []);
   const compositionStartFocusRequestRef = useRef<FocusRequest | null>(null);
   const pendingHandoffRef = useRef(false);
-  const [isEmpty, setIsEmpty] = useState(() => isEmptyRichText(props.content));
+  const initialEmpty = isEmptyRichText(props.content);
+  const [isEmpty, setIsEmptyState] = useState(initialEmpty);
+  const isEmptyRef = useRef(initialEmpty);
   const [structuredPastePending, setStructuredPastePending] = useState(false);
   const [toolbar, setToolbar] = useState({
     visible: false,
@@ -297,6 +325,11 @@ export function RichTextEditor(props: RichTextEditorProps) {
   ].filter(Boolean).join(' ');
 
   propsRef.current = props;
+
+  const setEditorIsEmpty = (value: boolean) => {
+    isEmptyRef.current = value;
+    setIsEmptyState(value);
+  };
 
   const initialState = useMemo(() => {
     const doc = richTextToDoc(props.content, pmSchema, props.resolveInlineReferenceColor);
@@ -325,8 +358,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
     });
   };
 
-  const updateTrigger = (view: EditorView) => {
-    propsRef.current.onTriggerChange(resolveNodeLineTrigger(view));
+  const updateTrigger = (view: EditorView, content = lastExternalContentRef.current) => {
+    propsRef.current.onTriggerChange(resolveNodeLineTrigger(view, content));
   };
 
   const handleContentUpdateAction = (nextContent: RichText) => {
@@ -355,7 +388,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     compositionDocChangedRef.current = false;
 
     const nextContent = docToRichText(view.state.doc);
-    setIsEmpty(isEmptyDoc(view.state.doc));
+    setEditorIsEmpty(isEmptyDoc(view.state.doc));
     if (richTextEquals(nextContent, lastExternalContentRef.current)) return;
 
     lastExternalContentRef.current = nextContent;
@@ -396,7 +429,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     const nextDoc = richTextToDoc(content, pmSchema, propsRef.current.resolveInlineReferenceColor);
     const nextState = EditorState.create({ doc: nextDoc, schema: pmSchema });
     view.updateState(nextState);
-    setIsEmpty(isEmptyDoc(nextState.doc));
+    setEditorIsEmpty(isEmptyRichText(content));
     lastExternalContentRef.current = content;
     fieldTriggerFiredRef.current = false;
     codeFenceFiredRef.current = false;
@@ -475,25 +508,29 @@ export function RichTextEditor(props: RichTextEditorProps) {
         const composing = composingRef.current || view.composing || pendingHandoffRef.current;
         if (transaction.selectionSet || transaction.docChanged) {
           updateToolbar(view);
-          if (!composing) updateTrigger(view);
         }
         if (transaction.docChanged) {
-          const nextContent = docToRichText(nextState.doc);
-          setIsEmpty(isEmptyRichText(nextContent));
           if (composing) {
             compositionDocChangedRef.current = true;
             return;
           }
           const patch = richTextPatchFromTransaction(transaction);
-          if (patch.ops.length === 0 && richTextEquals(nextContent, lastExternalContentRef.current)) {
+          if (patch.ops.length === 0) {
             compositionDocChangedRef.current = false;
+            updateTrigger(view);
             return;
           }
+          const previousContent = lastExternalContentRef.current;
+          const nextContent = applyRichTextPatchToContent(previousContent, patch);
+          setEditorIsEmpty(isEmptyAfterPatch(previousContent, nextContent, patch, isEmptyRef.current));
           compositionDocChangedRef.current = false;
           lastExternalContentRef.current = nextContent;
-          propsRef.current.onChange(nextContent);
+          updateTrigger(view, nextContent);
+          if (patch.ops.some((op) => op.type === 'replace_all')) propsRef.current.onChange(nextContent);
           if (patch.ops.length > 0) propsRef.current.onPatch(patch);
-          if (!composing) handleContentUpdateAction(nextContent);
+          handleContentUpdateAction(nextContent);
+        } else if (transaction.selectionSet && !composing) {
+          updateTrigger(view);
         }
       },
       handleTextInput(viewInstance, from, to, text) {
@@ -784,7 +821,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
                 // normally, then apply the held placement.
                 flushCompositionChanges(viewInstance);
                 updateTrigger(viewInstance);
-                handleContentUpdateAction(docToRichText(viewInstance.state.doc));
+                handleContentUpdateAction(lastExternalContentRef.current);
                 applyFocusRequest(viewInstance, parkedRequest);
                 return;
               }
@@ -793,7 +830,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
             }
             flushCompositionChanges(viewInstance);
             updateTrigger(viewInstance);
-            handleContentUpdateAction(docToRichText(viewInstance.state.doc));
+            handleContentUpdateAction(lastExternalContentRef.current);
           });
           return false;
         },
@@ -949,7 +986,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
         const structural = resolveNodeLineKeyAction(event, {
           from: selection.from,
           to: selection.to,
-          textLength: docToRichText(viewInstance.state.doc).text.length,
+          textLength: lastExternalContentRef.current.text.length,
           hasShiftArrow: Boolean(propsRef.current.onShiftArrow),
         });
         if (!structural) {
@@ -1064,7 +1101,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
       // below force-commits a live IME session.
       imeTrace('external-replace-while-composing-unfocused', propsRef.current.nodeId);
     }
-    const currentContent = docToRichText(view.state.doc);
+    const currentContent = lastExternalContentRef.current;
     if (view.hasFocus() && richTextEquals(props.content, currentContent)) {
       lastExternalContentRef.current = props.content;
       return;
@@ -1074,7 +1111,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     if (nextDoc.eq(view.state.doc)) return;
     const nextState = EditorState.create({ doc: nextDoc, schema: pmSchema });
     view.updateState(nextState);
-    setIsEmpty(isEmptyDoc(nextState.doc));
+    setEditorIsEmpty(isEmptyRichText(props.content));
     lastExternalContentRef.current = props.content;
     // A programmatic content replace (e.g. clearing the trailing draft after an
     // atomic `>`/``` resolution) bypasses handleContentUpdateAction, so it would
@@ -1153,7 +1190,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     view.dispatch(tr);
     updateToolbar(view);
     updateTrigger(view);
-    handleContentUpdateAction(docToRichText(view.state.doc));
+    handleContentUpdateAction(lastExternalContentRef.current);
     propsRef.current.onPendingInputConsumed?.(input);
   }, [props.pendingInput, structuredPastePending]);
 

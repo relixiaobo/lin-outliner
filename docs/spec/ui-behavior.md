@@ -103,6 +103,30 @@ keyboard or pointer change should be checked against this matrix.
 | `Mod+A` | First press uses native text selection inside the focused editor. If the row text is already fully selected, the next press leaves edit mode and selects every visible row in the panel selection scope. |
 | `Mod+Enter` | Cycle checkbox state: no checkbox, undone checkbox, done checkbox. |
 
+## Rich Text Editor Runtime
+
+- Ordinary focused rich-text edits are patch-first. Insert/delete text and
+  add/remove mark transactions emit bounded `RichTextPatch` operations from the
+  ProseMirror transaction steps; they do not serialize the complete editor
+  document or compare complete `RichText` objects on the input frame.
+- Complete `RichText` snapshots remain explicit slow-boundary work: composition
+  flush, structured paste, external replacement, blur/commit, Enter/split,
+  mod-Enter payloads, and transactions that cannot be represented as bounded
+  patch operations.
+- The focused editor owns an in-memory content mirror. During ordinary edits it
+  updates that mirror with the emitted patch, updates primitive UI facts such as
+  emptiness and trigger state from bounded data, then dispatches the patch to the
+  host. The full `onChange(RichText)` snapshot callback is not part of the
+  ordinary keystroke path.
+- Row and panel-title hosts keep their draft/title mirrors in refs and apply the
+  same patch before sending `apply_node_text_patch`. React state is updated for
+  visible primitive/editor-control needs (for example active triggers, option
+  picker query text, or replace-all slow boundaries), not for every ordinary
+  large `RichText` object.
+- Trigger detection in the focused editor uses the current mirror and a bounded
+  caret window for long text. Full-text trigger parsing is retained only for
+  short rows where slash/bare-trigger semantics require exact whole-row context.
+
 ## Trailing Input Matrix
 
 | Interaction | Expected behavior |

@@ -1066,8 +1066,10 @@ export class Core {
       if (current.type === 'fieldDef') {
         assertFieldDefRenameDoesNotDuplicateOwner(state, nodeId, richTextPatchResultText(current.content, patch));
       }
-      this.loro.applyNodeTextPatch(nodeId, patch);
-      this.loro.setNodeUpdatedAt(nodeId, nowMs());
+      this.loro.applyNodeTextPatch(nodeId, patch, {
+        currentNode: current,
+        updatedAt: nowMs(),
+      });
       return focus(nodeId, { placement: { kind: 'preserve' } });
     });
   }

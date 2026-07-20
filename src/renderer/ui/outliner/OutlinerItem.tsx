@@ -36,6 +36,7 @@ import {
   replaceRichTextRangeWithText,
   richTextEquals,
 } from '../editor/richTextCodec';
+import { applyRichTextPatchToContent } from '../editor/richTextPatchApply';
 import { indentTargetParentId, previousVisibleRowId } from '../interactions/outlinerStructure';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
 import { selectVisibleRowsState } from '../interactions/selectionActions';
@@ -618,6 +619,19 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
 
   const applyTextPatch = (patch: RichTextPatch) => {
+    const nextContent = applyRichTextPatchToContent(draftContentRef.current, patch);
+    localDraftSyncRef.current = { nodeId: targetEditId, content: nextContent };
+    draftContentRef.current = nextContent;
+    if (
+      optionPickerDraft
+      || draftTriggerActiveRef.current
+      || props.trigger?.nodeId === props.nodeId
+      || patch.ops.some((op) => op.type === 'replace_all')
+    ) {
+      setDraftContent(nextContent);
+    }
+    if (optionPickerDraft && !optionsOpen) setOptionsOpen(true);
+
     if (props.draft && !realNode) {
       // A body trailing draft eagerly materializes on the first typed character:
       // the draft becomes a real node carrying the text, and a fresh empty trailing
@@ -680,8 +694,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     localDraftSyncRef.current = { nodeId: targetEditId, content };
     draftContentRef.current = content;
     setDraftContent(content);
-    // optionPicker free text drives the picker filter; keep the popover open.
-    if (optionPickerDraft && !optionsOpen) setOptionsOpen(true);
   };
 
   const handlePasteOutliner = (payload: {

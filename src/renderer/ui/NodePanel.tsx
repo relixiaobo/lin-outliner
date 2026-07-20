@@ -23,6 +23,7 @@ import {
   replaceRichTextRangeWithText,
   richTextEquals,
 } from './editor/richTextCodec';
+import { applyRichTextPatchToContent } from './editor/richTextPatchApply';
 import { DefinitionConfigPanel } from './definition/DefinitionConfigPanel';
 import { definitionKind, definitionOutlinerLabel, definitionOutlinerPlaceholder } from './definition/definitionConfig';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../core/configProjection';
@@ -192,7 +193,9 @@ export function NodePanel(props: NodePanelProps) {
   const scrollRestoreFrameRef = useRef<number | null>(null);
   const restoringScrollRef = useRef(false);
   const pendingTitlePatchRef = useRef<Promise<unknown>>(Promise.resolve());
+  const titleContentRef = useRef<RichText>(rootNode?.content ?? EMPTY_RICH_TEXT);
   const localTitleSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
+  const titleTriggerActiveRef = useRef(false);
   const descriptionReturnPlacementRef = useRef(cursorEnd());
   const rootDefinitionKind = definitionKind(rootNode);
   const definitionTemplateLabel = rootNode
@@ -251,6 +254,7 @@ export function NodePanel(props: NodePanelProps) {
       }
     }
     if (titleEditorFocused) return;
+    titleContentRef.current = nextContent;
     setTitleContent(nextContent);
     setTitleTrigger(null);
   }, [rootNode?.id, rootNode?.content, titleEditorFocused]);
@@ -285,6 +289,7 @@ export function NodePanel(props: NodePanelProps) {
 
   const replaceLocalTitleContent = (content: RichText) => {
     localTitleSyncRef.current = { nodeId: resolvedRootId, content };
+    titleContentRef.current = content;
     setTitleContent(content);
     setTitleContentRevision((revision) => revision + 1);
   };
@@ -397,12 +402,18 @@ export function NodePanel(props: NodePanelProps) {
     ));
   };
 
-  const commitTitle = async (_content = titleContent) => {
+  const commitTitle = async (_content = titleContentRef.current) => {
     await pendingTitlePatchRef.current;
     clearHeaderFocus();
   };
 
   const applyTitlePatch = (patch: RichTextPatch) => {
+    const nextContent = applyRichTextPatchToContent(titleContentRef.current, patch);
+    localTitleSyncRef.current = { nodeId: resolvedRootId, content: nextContent };
+    titleContentRef.current = nextContent;
+    if (titleTriggerActiveRef.current || patch.ops.some((op) => op.type === 'replace_all')) {
+      setTitleContent(nextContent);
+    }
     pendingTitlePatchRef.current = pendingTitlePatchRef.current.then(() =>
       props.run(() => api.applyNodeTextPatch(resolvedRootId, patch), {
         applyFocus: false,
@@ -412,6 +423,7 @@ export function NodePanel(props: NodePanelProps) {
 
   const handleTitleChange = (content: RichText) => {
     localTitleSyncRef.current = { nodeId: resolvedRootId, content };
+    titleContentRef.current = content;
     setTitleContent(content);
   };
 
@@ -698,6 +710,7 @@ export function NodePanel(props: NodePanelProps) {
                     clearHeaderFocus();
                   }}
                   onTriggerChange={(nextTrigger) => {
+                    titleTriggerActiveRef.current = Boolean(nextTrigger);
                     setTitleTrigger(nextTrigger);
                   }}
                   focusTarget={titleFocusTarget}
