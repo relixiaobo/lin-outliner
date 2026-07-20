@@ -4,6 +4,7 @@ import type {
   DocumentProjection,
   FieldConfigPatch,
   FocusHint,
+  NodeId,
   NodeProjection,
   SearchQueryExpr,
   TagConfigPatch,
@@ -14,6 +15,8 @@ import type { TransientSearchOptions } from '../core/searchEngine';
 
 export interface OutlinerToolHost {
   getProjection(): DocumentProjection;
+  getDocumentReadModel?(): { asProjectionIndex(): ProjectionIndex };
+  drainTransactionProjectionChanges?(): TransactionProjectionChanges | null;
   getTextSearchIndex?(): TextSearchIndex;
   getTransientSearchOptions?(): TransientSearchOptions;
   recordNodeAccess?(nodeIds: readonly string[], source: NodeAccessSource): void | Promise<void>;
@@ -33,6 +36,12 @@ export interface OutlinerToolHost {
     options?: { yieldEveryNodes?: number; commitEveryNodes?: number },
   ): Promise<{ focus?: FocusHint }>;
   operationHistory?(query: OperationHistoryParams): Promise<OperationHistoryData> | OperationHistoryData;
+}
+
+export interface TransactionProjectionChanges {
+  todayId: NodeId;
+  changedNodes: NodeProjection[];
+  removedIds: NodeId[];
 }
 
 export interface NodeReadParams {

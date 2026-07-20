@@ -1,6 +1,7 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import path from 'node:path';
 import type { AgentRunScope } from '../core/agentEventLog';
+import type { DocumentCommand } from '../core/commands';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
 import { isInternalConfigNode } from '../core/configSchema';
 import { projectFieldConfig, projectTagConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
@@ -10,11 +11,13 @@ import {
   plainText,
   referenceTargetSortKey,
   replaceAllRichTextPatch,
+  type DocumentProjection,
   type FieldConfigPatch,
   type FieldType,
   type HideFieldMode,
   type NodeId,
   type NodeProjection,
+  type ProjectionUpdate,
   type ReferenceTarget,
   type RichText,
   type SearchQueryExpr,
@@ -76,6 +79,7 @@ import {
   nodeTitle,
   normalChildIds,
   parentRef,
+  projectionIndexForHost,
   projectionFingerprint,
   requiredNode,
   revisionOf,
@@ -129,6 +133,7 @@ import type {
   OperationHistoryParams,
   OutlinerToolHost,
   ProjectionIndex,
+  TransactionProjectionChanges,
 } from './agentNodeToolTypes';
 import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
 import { mergeEquivalentTextMarks, textMarkIdentity } from '../core/textMarks';
@@ -176,6 +181,10 @@ export function createNodeTools(host: OutlinerToolHost, options: NodeToolsOption
 function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {
   return {
     getProjection: () => host.getProjection(),
+    getDocumentReadModel: host.getDocumentReadModel ? () => host.getDocumentReadModel!() : undefined,
+    drainTransactionProjectionChanges: host.drainTransactionProjectionChanges
+      ? () => host.drainTransactionProjectionChanges!()
+      : undefined,
     getTextSearchIndex: host.getTextSearchIndex ? () => host.getTextSearchIndex!() : undefined,
     getTransientSearchOptions: host.getTransientSearchOptions ? () => host.getTransientSearchOptions!() : undefined,
     recordNodeAccess: host.recordNodeAccess
@@ -516,7 +525,7 @@ async function executeOutlineEdit(
   started: number,
   options: NodeToolsOptions,
 ) {
-  const index = indexProjection(host.getProjection());
+  const index = projectionIndexForHost(host);
   const validation = validateMutableNodeIds(index, [params.nodeId]);
   if (validation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', validation.code, validation.error, {
@@ -643,8 +652,9 @@ async function executeOutlineEdit(
   }
 
   const tracker = createMutationTracker();
+  const collector = createMutationEffectCollector(index);
   const warnings = [...parsed.warnings];
-  const beforeProjection = index.projection;
+  const beforeProjection = host.getDocumentReadModel ? undefined : index.projection;
   let updatedTags: string[] = [];
   try {
     const valueKindValidation = validateFieldValueKindUpdates(index, params.nodeId, parsed.document.roots[0]!);
@@ -661,7 +671,7 @@ async function executeOutlineEdit(
     }));
   }
   try {
-    const applied = await applySingleNodeEdit(host, params.nodeId, parsed.document.roots[0]!, tracker, warnings);
+    const applied = await applySingleNodeEdit(host, params.nodeId, parsed.document.roots[0]!, tracker, warnings, collector);
     updatedTags = applied.updatedTagIds;
   } catch (error) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
@@ -670,16 +680,18 @@ async function executeOutlineEdit(
     }));
   }
 
-  const updatedIndex = indexProjection(host.getProjection());
+  const updatedIndex = currentMutationIndex(host, collector);
   const updatedNode = updatedIndex.nodes.get(params.nodeId);
-  const changedIds = changedNodeIds(beforeProjection, updatedIndex.projection)
-    .filter((nodeId) => updatedIndex.nodes.has(nodeId));
+  const changedIds = useSparseMutationEffects(host, collector) || !beforeProjection
+    ? sparseMutationAffectedNodeIds(collector, tracker, updatedIndex)
+    : changedNodeIds(beforeProjection, updatedIndex.projection)
+      .filter((nodeId) => updatedIndex.nodes.has(nodeId));
   const afterOutline = updatedNode ? serializeEditableNodeOutline(updatedIndex, params.nodeId) : replacement.afterOutline;
   const data: NodeEditData = {
     ...dataBase,
     afterOutline,
     status: 'updated',
-    affectedNodeIds: unique([params.nodeId, ...changedIds, ...tracker.createdNodeIds]),
+    affectedNodeIds: unique([params.nodeId, ...changedIds]),
     createdNodeIds: tracker.createdNodeIds.length ? tracker.createdNodeIds : undefined,
     matchedNodeIds: tracker.matchedNodeIds.length ? tracker.matchedNodeIds : undefined,
     updatedFields: tracker.createdFieldEntryIds.length ? tracker.createdFieldEntryIds : undefined,
@@ -1926,7 +1938,7 @@ function createNodeReadTool(host: OutlinerToolHost, options: NodeToolsOptions): 
         }));
       }
 
-      const index = indexProjection(host.getProjection());
+      const index = projectionIndexForHost(host);
       const nodeIds = params.nodeIds ?? [params.nodeId ?? index.projection.todayId];
       const missing = nodeIds.find((nodeId) => !index.nodes.has(nodeId));
       if (missing) {
@@ -1987,7 +1999,7 @@ function createNodeSearchTool(host: OutlinerToolHost, options: NodeToolsOptions)
         }));
       }
 
-      const index = indexProjection(host.getProjection());
+      const index = projectionIndexForHost(host);
       if (params.mode === 'batch_count') {
         return executeNodeSearchBatchCount(host, index, params, started, options);
       }
@@ -2912,28 +2924,29 @@ async function applySingleNodeEdit(
   root: OutlineNode,
   tracker: MutationTracker,
   warnings: string[],
+  collector?: MutationEffectCollector,
 ): Promise<{ updatedTagIds: string[] }> {
   if (root.search) {
-    const spec = resolveSearchSpecFromOutlineNode(indexProjection(host.getProjection()), root);
+    const spec = resolveSearchSpecFromOutlineNode(currentMutationIndex(host, collector), root);
     if ('error' in spec) throw new Error(spec.error);
     warnings.push(...spec.warnings);
-    await host.handle('set_search_node', {
+    await handleMutation(host, collector, 'set_search_node', {
       nodeId,
       config: searchNodeConfigFromSpec(spec),
     });
-    await applySearchViewSpec(host, nodeId, spec.view);
-    const current = indexProjection(host.getProjection()).nodes.get(nodeId);
+    await applySearchViewSpec(host, nodeId, spec.view, collector);
+    const current = currentMutationIndex(host, collector).nodes.get(nodeId);
     if ((current?.description ?? null) !== (root.description ?? null)) {
-      await host.handle('update_node_description', { nodeId, description: root.description ?? null });
+      await handleMutation(host, collector, 'update_node_description', { nodeId, description: root.description ?? null });
     }
-    await setCheckboxState(host, nodeId, root.checked);
-    const updatedTagIds = await syncTags(host, nodeId, root.tags, tracker);
+    await setCheckboxState(host, nodeId, root.checked, collector);
+    const updatedTagIds = await syncTags(host, nodeId, root.tags, tracker, collector);
     return { updatedTagIds };
   }
   if (root.view) warnings.push('View directives are only persisted on search nodes today.');
 
-  const updatedTagIds = await syncOutlineNodeInPlace(host, nodeId, root, tracker, warnings);
-  await upsertFields(host, nodeId, root.fields, tracker, warnings);
+  const updatedTagIds = await syncOutlineNodeInPlace(host, nodeId, root, tracker, warnings, collector);
+  await upsertFields(host, nodeId, root.fields, tracker, warnings, collector);
   return { updatedTagIds };
 }
 
@@ -2943,28 +2956,29 @@ async function syncOutlineNodeInPlace(
   node: OutlineNode,
   tracker: MutationTracker,
   warnings: string[],
+  collector?: MutationEffectCollector,
 ): Promise<string[]> {
   if (node.search) {
-    const spec = resolveSearchSpecFromOutlineNode(indexProjection(host.getProjection()), node);
+    const spec = resolveSearchSpecFromOutlineNode(currentMutationIndex(host, collector), node);
     if ('error' in spec) throw new Error(spec.error);
     warnings.push(...spec.warnings);
-    await host.handle('set_search_node', {
+    await handleMutation(host, collector, 'set_search_node', {
       nodeId,
       config: searchNodeConfigFromSpec(spec),
     });
-    await applySearchViewSpec(host, nodeId, spec.view);
-    const latest = indexProjection(host.getProjection());
+    await applySearchViewSpec(host, nodeId, spec.view, collector);
+    const latest = currentMutationIndex(host, collector);
     const current = requiredNode(latest, nodeId);
     trackMatchedNode(tracker, nodeId);
     if ((current.description ?? null) !== (node.description ?? null)) {
-      await host.handle('update_node_description', { nodeId, description: node.description ?? null });
+      await handleMutation(host, collector, 'update_node_description', { nodeId, description: node.description ?? null });
     }
-    await setCheckboxState(host, nodeId, node.checked);
-    return syncTags(host, nodeId, node.tags, tracker);
+    await setCheckboxState(host, nodeId, node.checked, collector);
+    return syncTags(host, nodeId, node.tags, tracker, collector);
   }
   if (node.view) warnings.push('View directives are only persisted on search nodes today.');
 
-  const currentIndex = indexProjection(host.getProjection());
+  const currentIndex = currentMutationIndex(host, collector);
   const current = requiredNode(currentIndex, nodeId);
   if (current.type === 'reference') throw new Error('Outline edit cannot update a reference node root; use replace_with_reference_to.');
   if (current.type === 'codeBlock' || node.codeBlock) {
@@ -2973,23 +2987,23 @@ async function syncOutlineNodeInPlace(
     }
     trackMatchedNode(tracker, nodeId);
     if (current.content.text !== node.title) {
-      await host.handle('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(plainText(node.title)) });
+      await handleMutation(host, collector, 'apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(plainText(node.title)) });
     }
     if ((current.codeLanguage ?? '') !== (node.codeLanguage ?? '')) {
-      await host.handle('set_code_language', { nodeId, codeLanguage: node.codeLanguage ?? '' });
+      await handleMutation(host, collector, 'set_code_language', { nodeId, codeLanguage: node.codeLanguage ?? '' });
     }
     return [];
   }
   trackMatchedNode(tracker, nodeId);
   const titleSuffix = node.description ? ' - ' : node.tags.length > 0 ? ' ' : '';
   if (richTextOutlineText(current.content, { suffix: titleSuffix }) !== node.title) {
-    await host.handle('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(richTextFromOutlineText(node.title)) });
+    await handleMutation(host, collector, 'apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(richTextFromOutlineText(node.title)) });
   }
   if ((current.description ?? null) !== (node.description ?? null)) {
-    await host.handle('update_node_description', { nodeId, description: node.description ?? null });
+    await handleMutation(host, collector, 'update_node_description', { nodeId, description: node.description ?? null });
   }
-  await setCheckboxState(host, nodeId, node.checked);
-  return syncTags(host, nodeId, node.tags, tracker);
+  await setCheckboxState(host, nodeId, node.checked, collector);
+  return syncTags(host, nodeId, node.tags, tracker, collector);
 }
 
 async function upsertFields(
@@ -2998,8 +3012,9 @@ async function upsertFields(
   fields: OutlineField[],
   tracker: MutationTracker,
   warnings: string[],
+  collector?: MutationEffectCollector,
 ): Promise<void> {
-  const index = indexProjection(host.getProjection());
+  const index = currentMutationIndex(host, collector);
   const existingFieldIds = requiredNode(index, parentId).children.filter((childId) => {
     const child = index.nodes.get(childId);
     return child?.type === 'fieldEntry' && !isInTrash(index, childId);
@@ -3013,7 +3028,7 @@ async function upsertFields(
 
   const usedFieldIds = new Set<string>();
   for (const field of fields) {
-    const latest = indexProjection(host.getProjection());
+    const latest = currentMutationIndex(host, collector);
     const latestExistingFieldIds = requiredNode(latest, parentId).children.filter((childId) => {
       const child = latest.nodes.get(childId);
       return child?.type === 'fieldEntry' && !isInTrash(latest, childId);
@@ -3024,13 +3039,13 @@ async function upsertFields(
       trackMatchedNode(tracker, fieldEntryId);
       const existing = latest.nodes.get(fieldEntryId);
       if (existing?.type === 'fieldEntry' && existing.fieldDefId === DONE_FIELD) {
-        await setDoneFieldValue(host, parentId, field, warnings);
+        await setDoneFieldValue(host, parentId, field, warnings, collector);
         continue;
       }
       if (existing?.type === 'fieldEntry' && isSystemFieldId(existing.fieldDefId)) {
         throw new Error(`System field "${field.name}" is read-only. Use normal node syntax for tags, references, and dates; only Done can be written through field syntax.`);
       }
-      await upsertFieldValues(host, fieldEntryId, field, tracker, warnings);
+      await upsertFieldValues(host, fieldEntryId, field, tracker, warnings, collector);
       continue;
     }
     const resolution = resolveFieldWriteTarget(
@@ -3044,7 +3059,7 @@ async function upsertFields(
     const appliedId = await applyResolvedField(host, parentId, field, resolution.target, tracker, warnings, {
       index: fieldSectionInsertIndex(latest, parentId),
       usedFieldIds,
-    });
+    }, collector);
     usedFieldIds.add(appliedId);
   }
 }
@@ -3055,8 +3070,9 @@ async function upsertFieldValues(
   field: OutlineField,
   tracker: MutationTracker,
   warnings: string[],
+  collector?: MutationEffectCollector,
 ) {
-  const index = indexProjection(host.getProjection());
+  const index = currentMutationIndex(host, collector);
   const normalizedField = normalizeFieldValuesForEntry(index, fieldEntryId, field);
   const fieldType = fieldTypeForEntry(index, fieldEntryId);
   const existingValueIds = [...requiredNode(index, fieldEntryId).children].filter((childId) => !isInTrash(index, childId));
@@ -3082,7 +3098,7 @@ async function upsertFieldValues(
     }
     if (targetValueId) {
       usedExisting.add(targetValueId);
-      const latest = indexProjection(host.getProjection());
+      const latest = currentMutationIndex(host, collector);
       const current = requiredNode(latest, targetValueId);
       if (!canUpdateValueInPlace(current, desired)) {
         throw new Error(`Annotated field value id cannot be changed to a different value kind: ${targetValueId}`);
@@ -3090,14 +3106,14 @@ async function upsertFieldValues(
       trackMatchedNode(tracker, targetValueId);
       const desiredSource = outlineValueSource(desired);
       if (!desired.targetId && richTextOutlineText(current.content) !== desiredSource) {
-        await host.handle('apply_node_text_patch', {
+        await handleMutation(host, collector, 'apply_node_text_patch', {
           nodeId: targetValueId,
           patch: replaceAllRichTextPatch(richTextFromOutlineText(desiredSource)),
         });
       }
       continue;
     }
-    tracker.createdNodeIds.push(...await appendFieldValue(host, fieldEntryId, desired, fieldType));
+    tracker.createdNodeIds.push(...await appendFieldValue(host, fieldEntryId, desired, fieldType, collector));
   }
 }
 
@@ -3253,52 +3269,63 @@ function pushDuplicateKeyWarning(label: string, keys: string[], warnings: string
   }
 }
 
-async function setCheckboxState(host: OutlinerToolHost, nodeId: string, checked: boolean | null | undefined) {
-  const index = indexProjection(host.getProjection());
+async function setCheckboxState(
+  host: OutlinerToolHost,
+  nodeId: string,
+  checked: boolean | null | undefined,
+  collector?: MutationEffectCollector,
+) {
+  const index = currentMutationIndex(host, collector);
   const current = index.nodes.get(nodeId);
   if (!current) throw new Error(`Node not found: ${nodeId}`);
   const isCompleted = nodeIsDone(current);
   if (checked === true) {
-    if (!nodeShowsCheckbox(index.nodes, current)) await host.handle('set_node_checkbox_visible', { nodeId, visible: true });
-    if (!isCompleted) await host.handle('toggle_done', { nodeId });
+    if (!nodeShowsCheckbox(index.nodes, current)) await handleMutation(host, collector, 'set_node_checkbox_visible', { nodeId, visible: true });
+    if (!isCompleted) await handleMutation(host, collector, 'toggle_done', { nodeId });
     return;
   }
   if (checked === false) {
-    if (isCompleted) await host.handle('toggle_done', { nodeId });
-    const latestIndex = indexProjection(host.getProjection());
+    if (isCompleted) await handleMutation(host, collector, 'toggle_done', { nodeId });
+    const latestIndex = currentMutationIndex(host, collector);
     const latest = latestIndex.nodes.get(nodeId);
-    if (!latest || !nodeShowsCheckbox(latestIndex.nodes, latest)) await host.handle('set_node_checkbox_visible', { nodeId, visible: true });
+    if (!latest || !nodeShowsCheckbox(latestIndex.nodes, latest)) await handleMutation(host, collector, 'set_node_checkbox_visible', { nodeId, visible: true });
     return;
   }
-  if (isCompleted) await host.handle('toggle_done', { nodeId });
-  const latestIndex = indexProjection(host.getProjection());
+  if (isCompleted) await handleMutation(host, collector, 'toggle_done', { nodeId });
+  const latestIndex = currentMutationIndex(host, collector);
   const latest = latestIndex.nodes.get(nodeId);
-  if (latest && nodeShowsCheckbox(latestIndex.nodes, latest)) await host.handle('set_node_checkbox_visible', { nodeId, visible: false });
+  if (latest && nodeShowsCheckbox(latestIndex.nodes, latest)) await handleMutation(host, collector, 'set_node_checkbox_visible', { nodeId, visible: false });
 }
 
-async function syncTags(host: OutlinerToolHost, nodeId: string, tagNames: string[], tracker: MutationTracker): Promise<string[]> {
+async function syncTags(
+  host: OutlinerToolHost,
+  nodeId: string,
+  tagNames: string[],
+  tracker: MutationTracker,
+  collector?: MutationEffectCollector,
+): Promise<string[]> {
   const desiredTagIds: string[] = [];
   for (const tagName of tagNames) {
-    const before = indexProjection(host.getProjection());
+    const before = currentMutationIndex(host, collector);
     const existing = findTagByName(before, tagName);
-    const tagId = existing?.id ?? focusFromOutcome(await host.handle('create_tag', { name: tagName }));
+    const tagId = existing?.id ?? focusFromOutcome(await handleMutation(host, collector, 'create_tag', { name: tagName }));
     if (!existing) tracker.createdTagIds.push(tagId);
     desiredTagIds.push(tagId);
   }
 
-  const latest = indexProjection(host.getProjection());
+  const latest = currentMutationIndex(host, collector);
   const currentTagIds = latest.nodes.get(nodeId)?.tags ?? [];
   const desired = new Set(desiredTagIds);
   const updated: string[] = [];
   for (const tagId of currentTagIds) {
     if (!desired.has(tagId)) {
-      await host.handle('remove_tag', { nodeId, tagId });
+      await handleMutation(host, collector, 'remove_tag', { nodeId, tagId });
       updated.push(tagId);
     }
   }
   for (const tagId of desiredTagIds) {
     if (!currentTagIds.includes(tagId)) {
-      await host.handle('apply_tag', { nodeId, tagId });
+      await handleMutation(host, collector, 'apply_tag', { nodeId, tagId });
       updated.push(tagId);
     }
   }
@@ -3630,6 +3657,282 @@ function createMutationTracker(): MutationTracker {
   };
 }
 
+interface MutationEffectCollector {
+  changedNodeIds: string[];
+  removedNodeIds: string[];
+  sparseUnavailable: boolean;
+  commandCount: number;
+  deltaUpdateCount: number;
+  projectionView?: MutationProjectionView;
+}
+
+function createMutationEffectCollector(initialIndex?: ProjectionIndex): MutationEffectCollector {
+  return {
+    changedNodeIds: [],
+    removedNodeIds: [],
+    sparseUnavailable: false,
+    commandCount: 0,
+    deltaUpdateCount: 0,
+    projectionView: initialIndex ? createMutationProjectionView(initialIndex) : undefined,
+  };
+}
+
+interface MutationProjectionView {
+  current(): ProjectionIndex;
+  applyFull(projection: DocumentProjection): void;
+  applyDelta(delta: TransactionProjectionChanges): void;
+}
+
+function createMutationProjectionView(initialIndex: ProjectionIndex): MutationProjectionView {
+  let projection = projectionViewFromIndex(initialIndex);
+  let indexes = indexProjectionNodes(projection.nodes);
+
+  const reseed = (nextProjection: DocumentProjection) => {
+    projection = projectionViewFromProjection(nextProjection);
+    indexes = indexProjectionNodes(projection.nodes);
+  };
+
+  return {
+    current: () => ({
+      projection,
+      nodes: indexes.nodesById,
+    }),
+    applyFull: reseed,
+    applyDelta: (delta) => {
+      let membershipChanged = false;
+      if (delta.removedIds.length > 0) {
+        const removedIndexes: number[] = [];
+        for (const nodeId of delta.removedIds) {
+          indexes.nodesById.delete(nodeId);
+          const index = indexes.nodeIndexById.get(nodeId);
+          if (index !== undefined) removedIndexes.push(index);
+        }
+        if (removedIndexes.length > 0) {
+          removedIndexes.sort((left, right) => right - left);
+          for (const index of removedIndexes) projection.nodes.splice(index, 1);
+          indexes.nodeIndexById = indexProjectionNodes(projection.nodes).nodeIndexById;
+          membershipChanged = true;
+        }
+      }
+      const addedNodes = new Map<string, NodeProjection>();
+      for (const node of delta.changedNodes) {
+        const index = indexes.nodeIndexById.get(node.id);
+        if (index === undefined) {
+          addedNodes.set(node.id, node);
+        } else {
+          projection.nodes[index] = node;
+        }
+        indexes.nodesById.set(node.id, node);
+      }
+      for (const node of addedNodes.values()) {
+        projection.nodes.splice(sortedProjectionNodeInsertionIndex(projection.nodes, node.id), 0, node);
+        membershipChanged = true;
+      }
+      if (membershipChanged) indexes.nodeIndexById = indexProjectionNodes(projection.nodes).nodeIndexById;
+      projection.todayId = delta.todayId;
+    },
+  };
+}
+
+function currentMutationIndex(host: OutlinerToolHost, collector?: MutationEffectCollector): ProjectionIndex {
+  return collector?.projectionView?.current() ?? indexProjection(host.getProjection());
+}
+
+function projectionViewFromIndex(index: ProjectionIndex): DocumentProjection {
+  return {
+    ...index.projection,
+    nodes: [...index.projection.nodes],
+  };
+}
+
+function projectionViewFromProjection(projection: DocumentProjection): DocumentProjection {
+  return {
+    ...projection,
+    nodes: [...projection.nodes],
+  };
+}
+
+function indexProjectionNodes(nodes: readonly NodeProjection[]): {
+  nodeIndexById: Map<string, number>;
+  nodesById: Map<string, NodeProjection>;
+} {
+  const nodeIndexById = new Map<string, number>();
+  const nodesById = new Map<string, NodeProjection>();
+  for (const [index, node] of nodes.entries()) {
+    nodeIndexById.set(node.id, index);
+    nodesById.set(node.id, node);
+  }
+  return { nodeIndexById, nodesById };
+}
+
+function sortedProjectionNodeInsertionIndex(nodes: readonly NodeProjection[], nodeId: string): number {
+  let low = 0;
+  let high = nodes.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (nodes[mid]!.id < nodeId) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+async function handleMutation(
+  host: OutlinerToolHost,
+  collector: MutationEffectCollector | undefined,
+  command: DocumentCommand,
+  args: Record<string, unknown> = {},
+  meta?: Parameters<OutlinerToolHost['handle']>[2],
+): Promise<unknown> {
+  const outcome = await host.handle(command, args, meta);
+  if (collector) {
+    recordMutationEffect(
+      collector,
+      command,
+      args,
+      outcome,
+      host.drainTransactionProjectionChanges?.() ?? null,
+    );
+  }
+  return outcome;
+}
+
+function recordMutationEffect(
+  collector: MutationEffectCollector,
+  command: DocumentCommand,
+  args: Record<string, unknown>,
+  outcome: unknown,
+  transactionChanges: TransactionProjectionChanges | null,
+): void {
+  collector.commandCount += 1;
+  const update = projectionUpdateFromOutcome(outcome);
+  if (update?.kind === 'full') {
+    collector.sparseUnavailable = true;
+    collector.projectionView?.applyFull(update.projection);
+  } else if (update?.kind === 'delta') {
+    recordMutationDelta(collector, update);
+  } else if (transactionChanges) {
+    recordMutationDelta(collector, transactionChanges);
+  } else {
+    collector.projectionView = undefined;
+  }
+
+  recordKnownMutationArgs(collector, command, args);
+  const focusNodeId = focusNodeIdFromOutcome(outcome);
+  if (focusNodeId) recordChangedNodeId(collector, focusNodeId);
+}
+
+function recordMutationDelta(collector: MutationEffectCollector, delta: TransactionProjectionChanges): void {
+  collector.deltaUpdateCount += 1;
+  collector.projectionView?.applyDelta(delta);
+  for (const node of delta.changedNodes) recordChangedNodeId(collector, node.id);
+  for (const nodeId of delta.removedIds) recordRemovedNodeId(collector, nodeId);
+}
+
+function projectionUpdateFromOutcome(outcome: unknown): ProjectionUpdate | null {
+  const update = outcome && typeof outcome === 'object'
+    ? (outcome as { update?: unknown }).update
+    : undefined;
+  if (!update || typeof update !== 'object') return null;
+  const kind = (update as { kind?: unknown }).kind;
+  if (kind === 'full' || kind === 'delta') return update as ProjectionUpdate;
+  return null;
+}
+
+function recordKnownMutationArgs(
+  collector: MutationEffectCollector,
+  command: DocumentCommand,
+  args: Record<string, unknown>,
+): void {
+  switch (command) {
+    case 'apply_node_text_patch':
+    case 'update_node_description':
+    case 'set_code_language':
+    case 'set_code_block':
+    case 'set_node_checkbox_visible':
+    case 'toggle_done':
+    case 'set_search_node':
+    case 'set_view_mode':
+    case 'trash_node':
+      recordChangedArg(collector, args, 'nodeId');
+      return;
+    case 'apply_tag':
+    case 'remove_tag':
+      recordChangedArg(collector, args, 'nodeId');
+      recordChangedArg(collector, args, 'tagId');
+      return;
+    case 'reuse_field_definition':
+      recordChangedArg(collector, args, 'entryId');
+      recordChangedArg(collector, args, 'targetDefId');
+      return;
+    case 'set_reference_target':
+      recordChangedArg(collector, args, 'referenceId');
+      recordChangedArg(collector, args, 'targetId');
+      return;
+    case 'select_field_option':
+      recordChangedArg(collector, args, 'fieldEntryId');
+      recordChangedArg(collector, args, 'optionNodeId');
+      return;
+    case 'create_collected_field_option':
+      recordChangedArg(collector, args, 'fieldEntryId');
+      return;
+    case 'create_node':
+    case 'create_rich_text_node':
+    case 'create_search_node':
+    case 'create_inline_field':
+    case 'add_reference':
+      recordChangedArg(collector, args, 'parentId');
+      return;
+    case 'create_tag':
+    case 'create_field_definition':
+      recordChangedNodeId(collector, SCHEMA_ID);
+      return;
+    case 'move_node':
+      recordChangedArg(collector, args, 'nodeId');
+      recordChangedArg(collector, args, 'parentId');
+      return;
+    default:
+      return;
+  }
+}
+
+function recordChangedArg(
+  collector: MutationEffectCollector,
+  args: Record<string, unknown>,
+  key: string,
+): void {
+  const value = args[key];
+  if (typeof value === 'string' && value.length > 0) recordChangedNodeId(collector, value);
+}
+
+function recordChangedNodeId(collector: MutationEffectCollector, nodeId: string): void {
+  collector.changedNodeIds.push(nodeId);
+}
+
+function recordRemovedNodeId(collector: MutationEffectCollector, nodeId: string): void {
+  collector.removedNodeIds.push(nodeId);
+}
+
+function useSparseMutationEffects(host: OutlinerToolHost, collector: MutationEffectCollector): boolean {
+  return !collector.sparseUnavailable && (Boolean(host.getDocumentReadModel) || collector.deltaUpdateCount > 0);
+}
+
+function sparseMutationAffectedNodeIds(
+  collector: MutationEffectCollector,
+  tracker: MutationTracker,
+  updatedIndex: ProjectionIndex,
+): string[] {
+  const ids = unique([
+    ...collector.changedNodeIds,
+    ...collector.removedNodeIds,
+    ...tracker.createdNodeIds,
+    ...tracker.createdFieldEntryIds,
+    ...tracker.createdFieldDefIds,
+    ...tracker.createdTagIds,
+    ...tracker.matchedNodeIds,
+  ]);
+  return ids.filter((nodeId) => updatedIndex.nodes.has(nodeId));
+}
+
 async function createOutlineNode(
   host: OutlinerToolHost,
   node: OutlineNode,
@@ -3690,12 +3993,18 @@ async function createOutlineNode(
   return createdId;
 }
 
-async function createPlainNode(host: OutlinerToolHost, parentId: string, index: number | null, text: string): Promise<string> {
+async function createPlainNode(
+  host: OutlinerToolHost,
+  parentId: string,
+  index: number | null,
+  text: string,
+  collector?: MutationEffectCollector,
+): Promise<string> {
   const content = richTextFromOutlineText(text);
   if (content.inlineRefs.length === 0 && content.marks.length === 0) {
-    return focusFromOutcome(await host.handle('create_node', { parentId, index, text: content.text }));
+    return focusFromOutcome(await handleMutation(host, collector, 'create_node', { parentId, index, text: content.text }));
   }
-  return focusFromOutcome(await host.handle('create_rich_text_node', { parentId, index, content }));
+  return focusFromOutcome(await handleMutation(host, collector, 'create_rich_text_node', { parentId, index, content }));
 }
 
 async function createCodeBlockNode(
@@ -3710,13 +4019,24 @@ async function createCodeBlockNode(
   return createdId;
 }
 
-async function addReference(host: OutlinerToolHost, parentId: string, targetId: string, index: number | null): Promise<string> {
-  return focusFromOutcome(await host.handle('add_reference', { parentId, targetId, index }));
+async function addReference(
+  host: OutlinerToolHost,
+  parentId: string,
+  targetId: string,
+  index: number | null,
+  collector?: MutationEffectCollector,
+): Promise<string> {
+  return focusFromOutcome(await handleMutation(host, collector, 'add_reference', { parentId, targetId, index }));
 }
 
-async function applySearchViewSpec(host: OutlinerToolHost, nodeId: string, view: string | undefined) {
+async function applySearchViewSpec(
+  host: OutlinerToolHost,
+  nodeId: string,
+  view: string | undefined,
+  collector?: MutationEffectCollector,
+) {
   if (!view) return;
-  await host.handle('set_view_mode', { nodeId, mode: view });
+  await handleMutation(host, collector, 'set_view_mode', { nodeId, mode: view });
 }
 
 async function applyTags(host: OutlinerToolHost, nodeId: string, tags: string[], tracker: MutationTracker) {
@@ -3737,26 +4057,27 @@ async function applyResolvedField(
   tracker: MutationTracker,
   warnings: string[],
   options: { index?: number | null; usedFieldIds?: Set<string> } = {},
+  collector?: MutationEffectCollector,
 ): Promise<string> {
   if (target.kind === 'existingEntry') {
     if (options.usedFieldIds?.has(target.fieldEntryId)) {
       throw new Error(`Duplicate desired field "${field.name}" targets the same field entry: ${target.fieldEntryId}`);
     }
     trackMatchedNode(tracker, target.fieldEntryId);
-    await upsertFieldValues(host, target.fieldEntryId, field, tracker, warnings);
+    await upsertFieldValues(host, target.fieldEntryId, field, tracker, warnings, collector);
     return target.fieldEntryId;
   }
   if (target.kind === 'existingFieldDef') {
-    const fieldEntryId = await createFieldEntryForDefinition(host, parentId, target.fieldDefId, tracker, options.index ?? null);
-    await upsertFieldValues(host, fieldEntryId, field, tracker, warnings);
+    const fieldEntryId = await createFieldEntryForDefinition(host, parentId, target.fieldDefId, tracker, options.index ?? null, collector);
+    await upsertFieldValues(host, fieldEntryId, field, tracker, warnings, collector);
     return fieldEntryId;
   }
   if (target.kind === 'systemDone') {
-    const fieldEntryId = await ensureSystemFieldEntry(host, parentId, target.fieldDefId, tracker, options.index ?? null);
-    await setDoneFieldValue(host, parentId, field, warnings);
+    const fieldEntryId = await ensureSystemFieldEntry(host, parentId, target.fieldDefId, tracker, options.index ?? null, collector);
+    await setDoneFieldValue(host, parentId, field, warnings, collector);
     return fieldEntryId;
   }
-  return createField(host, parentId, field, tracker, options.index ?? null, target.fieldType);
+  return createField(host, parentId, field, tracker, options.index ?? null, target.fieldType, collector);
 }
 
 async function createFieldEntryForDefinition(
@@ -3765,15 +4086,16 @@ async function createFieldEntryForDefinition(
   targetDefId: string,
   tracker: MutationTracker,
   index: number | null,
+  collector?: MutationEffectCollector,
 ): Promise<string> {
-  const fieldEntryId = focusFromOutcome(await host.handle('create_inline_field', {
+  const fieldEntryId = focusFromOutcome(await handleMutation(host, collector, 'create_inline_field', {
     parentId,
     index,
     name: '',
     fieldType: 'plain',
   }));
   tracker.createdFieldEntryIds.push(fieldEntryId);
-  await host.handle('reuse_field_definition', { entryId: fieldEntryId, targetDefId });
+  await handleMutation(host, collector, 'reuse_field_definition', { entryId: fieldEntryId, targetDefId });
   trackMatchedNode(tracker, targetDefId);
   return fieldEntryId;
 }
@@ -3784,8 +4106,9 @@ async function ensureSystemFieldEntry(
   targetDefId: string,
   tracker: MutationTracker,
   index: number | null,
+  collector?: MutationEffectCollector,
 ): Promise<string> {
-  const latest = indexProjection(host.getProjection());
+  const latest = currentMutationIndex(host, collector);
   const existing = requiredNode(latest, parentId).children.find((childId) => {
     const child = latest.nodes.get(childId);
     return child?.type === 'fieldEntry' && child.fieldDefId === targetDefId && !isInTrash(latest, childId);
@@ -3794,7 +4117,7 @@ async function ensureSystemFieldEntry(
     trackMatchedNode(tracker, existing);
     return existing;
   }
-  return createFieldEntryForDefinition(host, parentId, targetDefId, tracker, index);
+  return createFieldEntryForDefinition(host, parentId, targetDefId, tracker, index, collector);
 }
 
 async function setDoneFieldValue(
@@ -3802,6 +4125,7 @@ async function setDoneFieldValue(
   parentId: string,
   field: OutlineField,
   warnings: string[],
+  collector?: MutationEffectCollector,
 ): Promise<void> {
   const validation = validateFieldValuesForType(field.name, 'checkbox', fieldResolutionValues(field));
   if (!validation.ok) throw new Error(validation.error);
@@ -3810,7 +4134,7 @@ async function setDoneFieldValue(
     warnings.push(`Field "${field.name}" was left unchanged because Done requires true or false.`);
     return;
   }
-  await setCheckboxState(host, parentId, desired === 'true');
+  await setCheckboxState(host, parentId, desired === 'true', collector);
 }
 
 function fieldResolutionMap(index: ProjectionIndex): ReadonlyMap<string, FieldResolutionNode> {
@@ -3950,19 +4274,20 @@ async function createField(
   tracker: MutationTracker,
   index: number | null = null,
   fieldType: FieldType = inferFieldTypeFromValues(fieldResolutionValues(field)),
+  collector?: MutationEffectCollector,
 ): Promise<string> {
-  const fieldEntryId = focusFromOutcome(await host.handle('create_inline_field', {
+  const fieldEntryId = focusFromOutcome(await handleMutation(host, collector, 'create_inline_field', {
     parentId,
     index,
     name: field.name,
     fieldType,
   }));
   tracker.createdFieldEntryIds.push(fieldEntryId);
-  const fieldEntry = indexProjection(host.getProjection()).nodes.get(fieldEntryId);
+  const fieldEntry = currentMutationIndex(host, collector).nodes.get(fieldEntryId);
   if (fieldEntry?.type === 'fieldEntry' && fieldEntry.fieldDefId) tracker.createdFieldDefIds.push(fieldEntry.fieldDefId);
   const normalizedField = normalizeFieldValuesForType(field, fieldType);
   for (const value of normalizedField.values) {
-    tracker.createdNodeIds.push(...await appendFieldValue(host, fieldEntryId, value, fieldType));
+    tracker.createdNodeIds.push(...await appendFieldValue(host, fieldEntryId, value, fieldType, collector));
   }
   return fieldEntryId;
 }
@@ -3972,30 +4297,36 @@ async function appendFieldValue(
   fieldEntryId: string,
   value: OutlineValue,
   fieldType: FieldType,
+  collector?: MutationEffectCollector,
 ): Promise<string[]> {
-  const before = new Set(activeChildIds(indexProjection(host.getProjection()), fieldEntryId));
+  const before = new Set(activeChildIds(currentMutationIndex(host, collector), fieldEntryId));
   if (fieldType === 'options') {
     if (value.targetId) {
-      await host.handle('select_field_option', { fieldEntryId, optionNodeId: value.targetId });
+      await handleMutation(host, collector, 'select_field_option', { fieldEntryId, optionNodeId: value.targetId });
     } else {
-      await host.handle('create_collected_field_option', { fieldEntryId, name: value.text });
+      await handleMutation(host, collector, 'create_collected_field_option', { fieldEntryId, name: value.text });
     }
-    return appendedChildIds(host, fieldEntryId, before);
+    return appendedChildIds(host, collector, fieldEntryId, before);
   }
   if (fieldType === 'options_from_supertag') {
     if (!value.targetId) throw new Error('Options-from-supertag field values must use [[node:Display^id]].');
-    await host.handle('select_field_option', { fieldEntryId, optionNodeId: value.targetId });
-    return appendedChildIds(host, fieldEntryId, before);
+    await handleMutation(host, collector, 'select_field_option', { fieldEntryId, optionNodeId: value.targetId });
+    return appendedChildIds(host, collector, fieldEntryId, before);
   }
   if (value.targetId) {
     if (fieldType !== 'plain') throw new Error(`${fieldType} field values cannot store node references.`);
-    return [await addReference(host, fieldEntryId, value.targetId, null)];
+    return [await addReference(host, fieldEntryId, value.targetId, null, collector)];
   }
-  return [await createPlainNode(host, fieldEntryId, null, outlineValueSource(value))];
+  return [await createPlainNode(host, fieldEntryId, null, outlineValueSource(value), collector)];
 }
 
-function appendedChildIds(host: OutlinerToolHost, fieldEntryId: string, before: ReadonlySet<string>): string[] {
-  const after = activeChildIds(indexProjection(host.getProjection()), fieldEntryId);
+function appendedChildIds(
+  host: OutlinerToolHost,
+  collector: MutationEffectCollector | undefined,
+  fieldEntryId: string,
+  before: ReadonlySet<string>,
+): string[] {
+  const after = activeChildIds(currentMutationIndex(host, collector), fieldEntryId);
   return after.filter((childId) => !before.has(childId));
 }
 
@@ -4219,11 +4550,16 @@ function collectTextReferenceTargets(text: string, targets: ReferenceTarget[]) {
 }
 
 function focusFromOutcome(outcome: unknown): string {
+  const focusNodeId = focusNodeIdFromOutcome(outcome);
+  if (typeof focusNodeId !== 'string' || !focusNodeId) throw new Error('Mutation did not return a focus node id.');
+  return focusNodeId;
+}
+
+function focusNodeIdFromOutcome(outcome: unknown): string | undefined {
   const focusNodeId = outcome && typeof outcome === 'object'
     ? (outcome as { focus?: { nodeId?: unknown } }).focus?.nodeId
     : undefined;
-  if (typeof focusNodeId !== 'string' || !focusNodeId) throw new Error('Mutation did not return a focus node id.');
-  return focusNodeId;
+  return typeof focusNodeId === 'string' && focusNodeId.length > 0 ? focusNodeId : undefined;
 }
 
 function richTextFromOutlineText(text: string): RichText {

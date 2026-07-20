@@ -2598,6 +2598,44 @@ describe('Core', () => {
     expect(core.state().nodes[nodeId]!.content.text).toBe('Edited');
   });
 
+  test('transaction projection drains do not materialize full state', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const nodeId = mustFocus(core.createNode(today, null, 'Draft'));
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      materializeState: () => ReturnType<LoroOutlinerDocument['materializeState']>;
+    };
+    const originalMaterializeState = instrumented.materializeState.bind(loro);
+    let fullStateMaterializations = 0;
+    instrumented.materializeState = () => {
+      fullStateMaterializations += 1;
+      return originalMaterializeState();
+    };
+    const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
+
+    try {
+      delete process.env.LIN_VERIFY_CACHE;
+      await core.transaction('agent', () => {
+        core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch(plainText('Edited in transaction')));
+        fullStateMaterializations = 0;
+
+        const changes = core.drainTransactionProjectionChanges();
+
+        expect(fullStateMaterializations).toBe(0);
+        expect(changes?.removedIds).toEqual([]);
+        expect(changes?.changedNodes.find((node) => node.id === nodeId)?.content.text)
+          .toBe('Edited in transaction');
+      }, { tool: 'node_edit', operationId: 'op:transaction-projection-drain' });
+    } finally {
+      instrumented.materializeState = originalMaterializeState;
+      if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
+      else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
+    }
+
+    expect(core.state().nodes[nodeId]!.content.text).toBe('Edited in transaction');
+  });
+
   test('groups continuous text patches into one Loro undo item and one journal entry', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, ''));

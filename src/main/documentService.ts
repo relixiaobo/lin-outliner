@@ -45,6 +45,7 @@ import type { CreateCaptureInput } from '../core/launcher/sources';
 import { parseLinOutline } from './agentOutlineParser';
 import { indexProjection } from './agentNodeToolProjection';
 import { resolveSearchSpecFromOutlineNode } from './agentNodeToolSearch';
+import { DocumentReadModel } from './documentReadModel';
 import { atomicWriteFile } from './jsonFileStore';
 import { loadOrCreateInstallationId } from './installationIdentity';
 import { NodeRetrievalService } from './nodeRetrievalService';
@@ -108,9 +109,11 @@ export class DocumentService {
     getProjection: () => this.core.projection(),
     getTextSearchIndex: () => this.getTextSearchIndex(),
   });
+  private documentReadModel?: DocumentReadModel;
 
   async initWorkspace(): Promise<ProjectionSnapshot> {
     this.core = await this.loadCore();
+    this.documentReadModel = undefined;
     // The constructor lazily mints today's date node (and seeds system nodes) in
     // memory; persist immediately so its id is durable across launches. Without
     // this, a re-init mints a fresh today id while the renderer still holds the
@@ -126,9 +129,11 @@ export class DocumentService {
   // mutation's delta applies cleanly.
   projectionSnapshot(): ProjectionSnapshot {
     const revision = this.core.revision();
+    const projection = this.core.projection();
     this.lastEmittedProjectionRevision = revision;
     this.builtProjectionUpdate = null;
-    return { revision, projection: this.core.projection() };
+    if (this.documentReadModel) this.documentReadModel.reseed(revision, projection);
+    return { revision, projection };
   }
 
   // Build the projection update for the just-committed mutation: a `delta`
@@ -167,6 +172,7 @@ export class DocumentService {
     }
     this.lastEmittedProjectionRevision = revision;
     this.builtProjectionUpdate = { revision, update };
+    this.applyProjectionUpdateToReadModel(update);
     return update;
   }
 
@@ -174,6 +180,18 @@ export class DocumentService {
   // resync path uses the `get_projection` command, which returns a ProjectionSnapshot.
   getProjection() {
     return this.core.projection();
+  }
+
+  getDocumentReadModel(): DocumentReadModel {
+    const revision = this.core.revision();
+    if (!this.documentReadModel || this.documentReadModel.revision !== revision) {
+      this.documentReadModel = DocumentReadModel.fromProjection(revision, this.core.projection());
+    }
+    return this.documentReadModel;
+  }
+
+  drainTransactionProjectionChanges() {
+    return this.core.drainTransactionProjectionChanges();
   }
 
   getTextSearchIndex(): TextSearchIndex {
@@ -991,11 +1009,12 @@ export class DocumentService {
     origin: DocumentProjectionChangedEvent['origin'],
     sourceWebContentsId?: number,
   ) {
+    const update = this.buildProjectionUpdate();
     if (this.projectionChangedListeners.size === 0) return;
     const event: DocumentProjectionChangedEvent = {
       type: 'projection_changed',
       origin,
-      update: this.buildProjectionUpdate(),
+      update,
       timestamp: Date.now(),
     };
     const delivery: ProjectionChangedDelivery = {
@@ -1003,6 +1022,13 @@ export class DocumentService {
       ...(sourceWebContentsId !== undefined ? { sourceWebContentsId } : {}),
     };
     for (const listener of this.projectionChangedListeners) listener(delivery);
+  }
+
+  private applyProjectionUpdateToReadModel(update: ProjectionUpdate): void {
+    if (!this.documentReadModel) return;
+    if (!this.documentReadModel.applyUpdate(update)) {
+      this.documentReadModel.reseed(this.core.revision(), this.core.projection());
+    }
   }
 }
 

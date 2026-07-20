@@ -21,6 +21,7 @@ import type {
   NodeBacklink,
   NodeFieldRead,
   NodeRef,
+  OutlinerToolHost,
   ProjectionIndex,
 } from './agentNodeToolTypes';
 import { unique } from './agentNodeToolUtils';
@@ -217,6 +218,10 @@ export function indexProjection(projection: DocumentProjection): ProjectionIndex
     projection,
     nodes: new Map(projection.nodes.map((node) => [node.id, node])),
   };
+}
+
+export function projectionIndexForHost(host: OutlinerToolHost): ProjectionIndex {
+  return host.getDocumentReadModel?.().asProjectionIndex() ?? indexProjection(host.getProjection());
 }
 
 export function projectionFingerprint(projection: DocumentProjection): string {
