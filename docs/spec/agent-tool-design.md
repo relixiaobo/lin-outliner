@@ -3854,8 +3854,9 @@ outline tools seed validation from the same model and keep a mutation-local
 projection view fresh with command `ProjectionUpdate` deltas; if a host lacks
 the read model or sparse mutation facts, the tools fall back to the public full
 projection for correctness. The normal DocumentService-backed `node_create`
-path must not rebuild the full projection after every created field, tag,
-search node, or visible result assembly step.
+path, including definition creation under Schema, must not rebuild the full
+projection after every created field, tag, search node, definition config write,
+or visible result assembly step.
 
 ## Capability Boundary
 

@@ -1274,7 +1274,7 @@ async function executeDefinitionCreate(
   started: number,
   options: NodeToolsOptions,
 ): Promise<AgentToolResult<ToolEnvelope<NodeCreateData>>> {
-  const initialIndex = indexProjection(host.getProjection());
+  const initialIndex = projectionIndexForHost(host);
   const schemaScopeIssue = validateNodeResourceScope(options, initialIndex, [SCHEMA_ID], 'write');
   if (schemaScopeIssue) return nodeScopeError<NodeCreateData>('node_create', schemaScopeIssue, started);
   const referenceScopeIssue = validateNodeResourceScope(options, initialIndex, definitionPatchNodeIds(definition.config ?? {}));
@@ -1328,20 +1328,21 @@ async function executeDefinitionCreate(
   }
 
   try {
+    const collector = createMutationEffectCollector(initialIndex);
     const createdId = definition.kind === 'field'
-      ? focusFromOutcome(await host.handle('create_field_definition', {
+      ? focusFromOutcome(await handleMutation(host, collector, 'create_field_definition', {
         name: definition.name,
         fieldType: (definition.config as FieldConfigPatch | undefined)?.fieldType ?? 'plain',
       }))
-      : focusFromOutcome(await host.handle('create_tag', { name: definition.name }));
+      : focusFromOutcome(await handleMutation(host, collector, 'create_tag', { name: definition.name }));
     if (definition.config && Object.keys(definition.config).length > 0) {
       if (definition.kind === 'field') {
-        await host.handle('set_field_config', { fieldId: createdId, patch: definition.config });
+        await handleMutation(host, collector, 'set_field_config', { fieldId: createdId, patch: definition.config });
       } else {
-        await host.handle('set_tag_config', { tagId: createdId, patch: definition.config });
+        await handleMutation(host, collector, 'set_tag_config', { tagId: createdId, patch: definition.config });
       }
     }
-    const updatedIndex = indexProjection(host.getProjection());
+    const updatedIndex = currentMutationIndex(host, collector);
     const created = requiredNode(updatedIndex, createdId);
     const afterConfig = projectDefinitionConfig(updatedIndex, created);
     const data: NodeCreateData = {
