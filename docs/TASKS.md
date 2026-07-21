@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
@@ -31,9 +31,9 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-21).** Open PR queue: #419
-(`codex/diagnostic-log-coalescing`) is being revised after main review. Recently
-merged: #418 (`codex/renderer-formatting-cache`) and #417
+**In flight (2026-07-21).** Open PR queue: none. Recently
+merged: #419 (`codex/diagnostic-log-coalescing`) merged 2026-07-21 after
+iterative main review; see *Recently completed*. #418 (`codex/renderer-formatting-cache`) and #417
 (`codex/definition-create-read-model`) merged 2026-07-21 after main review; see
 *Recently completed*. #416 (`codex/agent-node-create-read-model`) merged
 2026-07-21 after main review; see *Recently completed*. #415 (`codex/rich-text-editor-patch-runtime`) merged
@@ -176,7 +176,8 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    for Agent node tools and sparse `replace_outline` mutation facts; #415 shipped patch-first
    focused rich-text editor input and Core/Loro ordinary patch application; #416 routed ordinary
    Agent `node_create` through the maintained read model and transaction-local command deltas;
-   #417 extended that route to definition creation; #418 cached renderer `Intl` formatters.
+   #417 extended that route to definition creation; #418 cached renderer `Intl` formatters;
+   #419 coalesced diagnostic log writes.
    Remaining localized
    cleanups are still tracked in `docs/plans/performance-optimization.md`; no design gate.
 4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
@@ -488,7 +489,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
   perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
-  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 + rich-text patch runtime #415 + Agent node_create read-model routing #416 + definition create routing #417 + renderer formatting cache #418 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
+  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 + rich-text patch runtime #415 + Agent node_create read-model routing #416 + definition create routing #417 + renderer formatting cache #418 + diagnostic log coalescing #419 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
   index patched per delta, windowed/flat outliner renderer + agent streaming `projection_patch` +
   structural-save coalescing (metrics in Recently completed). #380 precomputes Trash descendant sets
   for renderer/system/search reference-summary scans and stops building recursive panel row models on
@@ -502,8 +503,10 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   from caller metadata without full rich-text decode. #416 extends the read-model route to ordinary
   Agent `node_create`, keeping target-reference and outline create subcommands on a mutation-local
   projection view fed by command deltas instead of repeated full projection reads. #417 applies the
-  same read-model and mutation-delta path to Schema definition creation, and #418 centralizes
-  renderer date/time and number formatting behind bounded `Intl` formatter caches. **Remaining P3:** localized O(N) cleanups
+  same read-model and mutation-delta path to Schema definition creation, #418 centralizes
+  renderer date/time and number formatting behind bounded `Intl` formatter caches, and #419
+  coalesces repeated diagnostic reports into dirty in-memory aggregates before compact log flushes.
+  **Remaining P3:** localized O(N) cleanups
   still listed in the plan, including the residual `new Map(prev.byId)` + `nextRevisions` whole-map
   rebuild.
 
@@ -543,6 +546,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **diagnostic-log-coalescing**
+  (`codex/diagnostic-log-coalescing`, PR #419, codex, merged 2026-07-21,
+  fast-track) — diagnostic errors now aggregate in memory by fingerprint and
+  flush through a bounded compact JSONL writer. Repeated renderer/runtime error
+  storms update one dirty aggregate instead of appending and compacting on every
+  report, while reveal/export/fatal/before-quit paths explicitly flush pending
+  records. Renderer startup now relies on the preload diagnostics listeners
+  only, avoiding duplicate global error capture.
+  **Gate (main):** first review found that explicit reveal flush failures were
+  swallowed, causing the diagnostics action to return success for an unwritten
+  log; codex fixed it before merge. Final review found no reportable issues on
+  head `12af5d6`. Verified with typecheck, `docs:check`, diff check, focused
+  diagnostic log / JSON file-store / renderer diagnostics capture tests, and an
+  `ENOTDIR` repro for reveal-flush failure propagation.
 
 - **renderer-formatting-cache**
   (`codex/renderer-formatting-cache`, PR #418, codex, merged 2026-07-21,
