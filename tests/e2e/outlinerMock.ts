@@ -905,7 +905,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 .filter((ref) => !removesRef(ref))
                 .flatMap((ref) => {
                   if (ref.offset <= from) return [ref];
-                  if (ref.offset > to) return [{ ...ref, offset: ref.offset + delta }];
+                  if (ref.offset >= to) return [{ ...ref, offset: ref.offset + delta }];
                   return [];
                 }),
               ...op.content.inlineRefs.map((ref) => ({ ...ref, offset: from + ref.offset })),

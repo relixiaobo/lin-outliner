@@ -64,7 +64,7 @@ function replaceRichTextContentRange(content: RichText, op: Extract<RichTextPatc
   const afterRefs: RichText['inlineRefs'] = [];
   for (const ref of content.inlineRefs) {
     if (ref.offset <= from) beforeRefs.push(ref);
-    else if (ref.offset > to) afterRefs.push({ ...ref, offset: ref.offset + delta });
+    else if (ref.offset >= to) afterRefs.push({ ...ref, offset: ref.offset + delta });
   }
 
   return {

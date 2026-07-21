@@ -20,6 +20,7 @@ import {
   TRASH_ID,
   WORKSPACE_ID,
   defConfigNodeId,
+  nodeReferenceTarget,
   plainText,
   replaceAllRichTextPatch,
   type CreateNodeTree,
@@ -2564,6 +2565,40 @@ describe('Core', () => {
       text: '',
       marks: [],
       inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
+    });
+  });
+
+  test('keeps inline refs at the text patch replacement end boundary', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const nodeId = mustFocus(core.createRichTextContentNode(today, null, {
+      text: 'abc',
+      marks: [],
+      inlineRefs: [{ offset: 2, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    }));
+
+    core.applyNodeTextPatch(nodeId, {
+      ops: [{ type: 'replace', from: 0, to: 2, content: plainText('') }],
+    });
+    expect(core.state().nodes[nodeId]!.content).toEqual({
+      text: 'c',
+      marks: [],
+      inlineRefs: [{ offset: 0, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    });
+
+    core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch({
+      text: 'abc',
+      marks: [],
+      inlineRefs: [{ offset: 2, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    }));
+    core.applyNodeTextPatch(nodeId, {
+      ops: [{ type: 'replace', from: 0, to: 2, content: plainText('x') }],
+    });
+    expect(core.state().nodes[nodeId]!.content).toEqual({
+      text: 'xc',
+      marks: [],
+      inlineRefs: [{ offset: 1, target: nodeReferenceTarget(target), displayName: 'Target' }],
     });
   });
 
