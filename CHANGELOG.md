@@ -22,6 +22,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Tag selector active-tag index (PR #427, codex)** — active tag
+  definitions, normalized labels, hexadecimal-color penalties, exact-label
+  lookup, and empty-query ordering are now cached once per renderer projection
+  snapshot. Repeated selector opens and query changes reuse that snapshot, while
+  empty-query menus skip already-applied tags and stop at the visible limit
+  without rescanning or reranking the full tag set. **Gate (main):** review found
+  no reportable issues. Verified with typecheck, 74 focused renderer tests, the
+  full renderer suite (962 pass), docs check, diff check, and a 60,000-call
+  randomized old-versus-new differential check.
 - **Field-name reuse candidate index (PR #426, codex)** — active field
   definitions and Trash ancestry are now indexed once per renderer projection
   snapshot, so focused field-name queries avoid rescanning the complete document
