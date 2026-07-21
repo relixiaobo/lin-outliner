@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Rich-text editor patch runtime (PR #415, codex)** — ordinary focused
+  rich-text edits now emit bounded patches from ProseMirror transactions, update
+  renderer row/title mirrors through refs instead of whole-snapshot React state,
+  and reserve full snapshots for explicit slow boundaries. Core/Loro patch
+  application reuses caller rich-text metadata for ordinary replace/mark
+  patches, keeping sparse state-cache snapshots while avoiding full rich-text
+  decode on the hot path. **Gate (main):** first review found an inline-reference
+  boundary deletion regression; codex fixed it before merge. Verified with
+  typecheck, Core tests, focused renderer rich-text/trigger/paste/shortcut
+  suites, docs check, diff check, manual inline-reference boundary repros, and
+  cache-verification tests.
 - **Document read model for Agent node tools (PR #414, codex)** — the main
   process now keeps a `DocumentReadModel` fresh from projection deltas, letting
   Agent `node_read` and `node_search` reuse a maintained `ProjectionIndex`
