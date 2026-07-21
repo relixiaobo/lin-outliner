@@ -571,16 +571,21 @@ A typed `ExtensionRegistry` provides only real lifecycle seams:
 - tool contribution and tool lifecycle
 - ordered Turn-item contribution
 
-Turn admission is a synchronous host-only seam under ThreadService's per-Thread
-admission barrier. After ThreadService allocates the Turn identity but before it
-persists the first Item, returns acceptance, or starts any side effect, each
-registered admission contributor may durably snapshot private extension state
-keyed by that `turnId`. A failed contribution rejects the Turn before it exists;
-startup reconciliation removes orphan snapshots whose Turns never became
-durable. Thread configuration changes that affect admission use the same barrier,
-so an extension can bind a Turn to the exact configuration state at acceptance
-without adding an extension-specific field to `Turn`, `TurnProvenance`, or
-`ThreadItem`.
+Turn admission is a synchronous host-only seam under ThreadService's admission
+coordinator. Its per-Thread barrier serializes one Thread's configuration and
+Turn acceptance; its host-wide root-Turn barrier blocks every new root Thread
+and Turn acceptance while a global extension setting or Reset linearizes. The
+host-wide barrier does not interrupt already active Turns, so its consumer must
+persist any feature-specific active-Turn exclusions it needs.
+
+After ThreadService allocates the Turn identity but before it persists the first
+Item, returns acceptance, or starts any side effect, each registered admission
+contributor may durably snapshot private extension state keyed by that `turnId`.
+A failed contribution rejects the Turn before it exists; startup reconciliation
+removes orphan snapshots whose Turns never became durable. Thread or global
+configuration changes that affect admission use the matching barrier, so an
+extension can bind a Turn to the exact configuration state at acceptance without
+adding an extension-specific field to `Turn`, `TurnProvenance`, or `ThreadItem`.
 
 Host-session-, Thread-, and Turn-scoped typed stores hold ephemeral extension
 state. "Host session" here means the lifetime of the in-memory extension host,
@@ -741,7 +746,8 @@ core/history/Goal stores, rollout-as-history-source, the fixed
 the exhaustive tool migration, immutable Turn/Item provenance, the retained Full
 Access boundary, the projection-neutral document system-receipt primitive, the
 protected system-tag-definition primitive, the synchronous extension admission
-barrier, and the interface-first two-PR delivery order.
+barriers at per-Thread and host-wide scope, and the interface-first two-PR
+delivery order.
 
 ## Implementation checklist
 
@@ -751,9 +757,9 @@ barrier, and the interface-first two-PR delivery order.
   protocol and extension interfaces, including ThreadSource strings, immutable
   Turn/Item provenance, paginated-only history, immutable completed Items, client
   input idempotency, Node-backed MemoryCitation, configuration profiles, agent
-  roles, admission-barrier snapshots, additional-context trust, Full Access
-  exclusions, and the generic projection-neutral `DocumentSystemReceipt` plus
-  host-only atomic mutation.
+  roles, per-Thread and host-wide admission-barrier snapshots,
+  additional-context trust, Full Access exclusions, and the generic
+  projection-neutral `DocumentSystemReceipt` plus host-only atomic mutation.
 - [ ] In that interface PR, define and contract-test
   `DocumentSystemTagDefinition` and host-only
   `ensure_document_system_tag_definition`, including fixed caller identity,
