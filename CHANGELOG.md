@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent node_create read-model routing (PR #416, codex)** — ordinary Agent
+  `node_create` now uses the maintained document read model for initial
+  validation and a mutation-local projection view updated from command deltas
+  for target-reference and outline create paths. The collector is threaded
+  through fields, recursive nodes, search nodes, code blocks, tags, checkboxes,
+  nested fields, and visible result assembly so `DocumentService`-backed creates
+  avoid repeated public full-projection reads while fallback hosts keep
+  correctness. **Gate (main):** review found no reportable issues. Verified with
+  typecheck, full Core tests, focused DocumentService / DocumentReadModel /
+  Agent node-tool coverage, docs check, and diff check.
 - **Rich-text editor patch runtime (PR #415, codex)** — ordinary focused
   rich-text edits now emit bounded patches from ProseMirror transactions, update
   renderer row/title mirrors through refs instead of whole-snapshot React state,

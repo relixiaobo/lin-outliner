@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
@@ -31,9 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-21).** Open PR queue: none. Recently merged: #415
-(`codex/rich-text-editor-patch-runtime`) merged 2026-07-21 after iterative main
-review; see *Recently completed*. #414 (`codex/main-document-read-model`)
+**In flight (2026-07-21).** Open PR queue: none. Recently merged: #416
+(`codex/agent-node-create-read-model`) merged 2026-07-21 after main review; see
+*Recently completed*. #415 (`codex/rich-text-editor-patch-runtime`) merged
+2026-07-21 after iterative main review; see *Recently completed*. #414 (`codex/main-document-read-model`)
 merged 2026-07-20 after main review; see *Recently completed*. #413 (`codex/core-sparse-transactions`) merged
 2026-07-19 after main review; see *Recently completed*. #412 (`codex/single-delivery-projection-routing`) merged
 2026-07-19 after main review; see *Recently completed*. #411 (`codex/renderer-noop-command-outcome`)
@@ -170,7 +171,9 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    core sparse transaction/write-path hardening, bounded journal/undo metadata, sparse replication
    import, and yielding import cache/finalization; #414 shipped the main-side document read model
    for Agent node tools and sparse `replace_outline` mutation facts; #415 shipped patch-first
-   focused rich-text editor input and Core/Loro ordinary patch application. Remaining localized
+   focused rich-text editor input and Core/Loro ordinary patch application; #416 routed ordinary
+   Agent `node_create` through the maintained read model and transaction-local command deltas.
+   Remaining localized
    cleanups are still tracked in `docs/plans/performance-optimization.md`; no design gate.
 4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
@@ -481,7 +484,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
   perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
-  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 + rich-text patch runtime #415 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
+  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 + rich-text patch runtime #415 + Agent node_create read-model routing #416 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
   index patched per delta, windowed/flat outliner renderer + agent streaming `projection_patch` +
   structural-save coalescing (metrics in Recently completed). #380 precomputes Trash descendant sets
   for renderer/system/search reference-summary scans and stops building recursive panel row models on
@@ -492,7 +495,9 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   uses transaction-local sparse mutation facts on `DocumentService` hosts. #415 makes ordinary
   focused rich-text edits patch-first in the renderer, keeps row/title mirrors in refs for ordinary
   patches, bounds long-row trigger detection, and lets Core/Loro apply ordinary rich-text patches
-  from caller metadata without full rich-text decode. **Remaining P3:** localized O(N) cleanups
+  from caller metadata without full rich-text decode. #416 extends the read-model route to ordinary
+  Agent `node_create`, keeping target-reference and outline create subcommands on a mutation-local
+  projection view fed by command deltas instead of repeated full projection reads. **Remaining P3:** localized O(N) cleanups
   still listed in the plan, including the residual `new Map(prev.byId)` + `nextRevisions` whole-map
   rebuild.
 
@@ -532,6 +537,19 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-node-create-read-model**
+  (`codex/agent-node-create-read-model`, PR #416, codex, merged 2026-07-21,
+  fast-track) — ordinary Agent `node_create` now seeds validation from the
+  maintained document read model and keeps target-reference and outline create
+  operations on a mutation-local projection view updated from command deltas.
+  Top-level fields, recursive outline creation, search nodes, code blocks, tags,
+  checkboxes, nested fields, and final visible result assembly avoid repeated
+  public `getProjection()` reads on `DocumentService` hosts, while fallback hosts
+  still use full projections when sparse facts are unavailable.
+  **Gate (main):** review found no reportable issues on final head `46da4cb4`.
+  Verified with typecheck, `docs:check`, diff check, focused DocumentService /
+  DocumentReadModel / Agent node-tool suites, and full `test:core` (1680 pass).
 
 - **rich-text-editor-patch-runtime**
   (`codex/rich-text-editor-patch-runtime`, PR #415, codex, merged 2026-07-21,
