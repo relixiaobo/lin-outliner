@@ -437,7 +437,7 @@ describe('Core', () => {
           yieldEveryNodes: 2,
           commitEveryNodes: 2,
           yield: async () => { yields += 1; },
-        }), { tool: 'data_import', operationId: 'op:import-test', summary: 'Imported test nodes.' });
+        }), { tool: 'tenon-import', operationId: 'op:import-test', summary: 'Imported test nodes.' });
     } finally {
       if (undoGroupStarted) core.endUndoGroup();
     }

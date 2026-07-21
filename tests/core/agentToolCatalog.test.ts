@@ -75,18 +75,6 @@ describe('agent tool catalog', () => {
     expect(names).not.toContain('run_stop');
   });
 
-  test('default outliner-backed tools do not expose the internal data import adapter', async () => {
-    const { createAgentTools } = await import('../../src/main/agentTools');
-    const host: OutlinerToolHost = {
-      getProjection: () => ({ nodes: [], rootId: 'root', todayId: 'today', trashId: 'trash' } as any),
-      handle: async () => ({}),
-    };
-    const names = createAgentTools(host, { localFileRoot: '/tmp' }).map((tool) => tool.name);
-
-    expect(names).not.toContain('data_import');
-    expect(names).toContain('node_create');
-  });
-
   test('web_fetch uses a credential-free session instead of Electron defaultSession', async () => {
     sessionPartitions.length = 0;
     sessionFetches.length = 0;

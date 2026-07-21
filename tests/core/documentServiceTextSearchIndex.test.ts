@@ -195,7 +195,7 @@ describe('DocumentService text search index', () => {
         { content: plainText('Imported beta child'), children: [] },
         { content: plainText('Imported gamma child'), children: [] },
       ],
-    }], { origin: 'agent', tool: 'data_import', summary: 'Imported test nodes.' }, {
+    }], { origin: 'agent', tool: 'tenon-import', summary: 'Imported test nodes.' }, {
       yieldEveryNodes: 2,
       commitEveryNodes: 2,
     });
