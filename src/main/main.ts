@@ -252,7 +252,9 @@ function installMainErrorHandlers(): void {
           context: { operation: 'uncaughtException' },
           error,
         })
-        .then(() => diagnosticLog.flushNow({ reason: 'fatal', timeoutMs: 750 })),
+        .then(() =>
+          diagnosticLog.flushNow({ reason: 'fatal', timeoutMs: 750 }).catch(() => undefined),
+        ),
       new Promise((resolve) => setTimeout(resolve, 750)),
     ]).finally(() => app.exit(1));
   });

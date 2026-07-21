@@ -114,9 +114,7 @@ export class DiagnosticLogStore {
   }
 
   async writeExport(filePath: string, environment: DiagnosticEnvironment): Promise<string> {
-    await this.flushNow({ reason: 'export' }).catch((error) => {
-      this.recordFlushFailure(error);
-    });
+    await this.flushNow({ reason: 'export' }).catch(() => undefined);
     const artifact: DiagnosticExportArtifact = {
       v: 1,
       exportedAt: Date.now(),
@@ -229,13 +227,13 @@ export class DiagnosticLogStore {
 
   private scheduleFlush(): void {
     if (this.dirtySeqByFingerprint.size >= DIAGNOSTIC_DIRTY_FLUSH_THRESHOLD) {
-      void this.flushNow({ reason: 'threshold' }).catch((error) => this.recordFlushFailure(error));
+      void this.flushNow({ reason: 'threshold' }).catch(() => undefined);
       return;
     }
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null;
-      void this.flushNow({ reason: 'debounce' }).catch((error) => this.recordFlushFailure(error));
+      void this.flushNow({ reason: 'debounce' }).catch(() => undefined);
     }, DIAGNOSTIC_FLUSH_DEBOUNCE_MS);
     this.flushTimer.unref?.();
   }
@@ -257,6 +255,7 @@ export class DiagnosticLogStore {
       })
       .catch((error) => {
         this.recordFlushFailure(error, startedAt);
+        throw error;
       })
       .finally(() => {
         if (this.flushInFlight === flush) this.flushInFlight = null;

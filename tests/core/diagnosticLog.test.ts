@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { diagnosticSourceLabel, type DiagnosticExportArtifact } from '../../src/core/errorObservability';
@@ -142,6 +142,36 @@ describe('DiagnosticLogStore', () => {
     await expect(store.ensureLogFile()).resolves.toBe(store.logPath);
     const rawLines = (await readFile(store.logPath, 'utf8')).trim().split('\n');
     expect(rawLines).toHaveLength(1);
+  });
+
+  test('ensureLogFile rejects when the explicit reveal flush cannot write pending diagnostics', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-diagnostics-blocked-'));
+    roots.push(root);
+    const blockedUserData = path.join(root, 'userData-file');
+    await writeFile(blockedUserData, 'not a directory');
+    const store = new DiagnosticLogStore(blockedUserData);
+    const originalConsoleError = console.error;
+
+    try {
+      console.error = () => undefined;
+      await store.reportError({
+        domain: 'render',
+        severity: 'fatal',
+        code: 'window-error',
+        message: 'Renderer crashed before reveal',
+      });
+
+      await expect(store.ensureLogFile()).rejects.toThrow(/ENOTDIR|not a directory/i);
+      expect(store.getCountersForTests().dirtyFingerprints).toBe(1);
+      expect(store.getCountersForTests().lastFlushError).toMatch(/ENOTDIR|not a directory/i);
+    } finally {
+      console.error = originalConsoleError;
+      const internals = store as unknown as { flushTimer: ReturnType<typeof setTimeout> | null };
+      if (internals.flushTimer) {
+        clearTimeout(internals.flushTimer);
+        internals.flushTimer = null;
+      }
+    }
   });
 
   test('coalesces same-fingerprint storms into one dirty aggregate before flushing', async () => {
