@@ -1,5 +1,6 @@
 import { inlineRefNodeId, type NodeId, type NodeProjection } from '../api/types';
 import { addToSetMap } from '../../core/setUtils';
+import { SparseProjectionMap } from './sparseProjectionMap';
 
 // Per-node "data revision" support for memoizing the outliner.
 //
@@ -198,10 +199,25 @@ export function nextRevisions(
   affected: ReadonlySet<NodeId>,
   ids: Iterable<NodeId>,
 ): Map<NodeId, number> {
-  const revisions = new Map<NodeId, number>();
-  for (const id of ids) {
-    const base = previous?.get(id) ?? 0;
-    revisions.set(id, affected.has(id) ? base + 1 : base);
+  return SparseProjectionMap.fromEntries((function* revisions() {
+    for (const id of ids) {
+      const base = previous?.get(id) ?? 0;
+      yield [id, affected.has(id) ? base + 1 : base] as const;
+    }
+  }()));
+}
+
+export function patchRevisions(
+  previous: ReadonlyMap<NodeId, number>,
+  affected: ReadonlySet<NodeId>,
+  byId: ReadonlyMap<NodeId, NodeProjection>,
+  removedIds: readonly NodeId[],
+): Map<NodeId, number> {
+  if (affected.size === 0 && removedIds.length === 0 && previous instanceof Map) return previous;
+  const upserts: Array<readonly [NodeId, number]> = [];
+  for (const id of affected) {
+    if (!byId.has(id)) continue;
+    upserts.push([id, (previous.get(id) ?? 0) + 1]);
   }
-  return revisions;
+  return SparseProjectionMap.fromReadonlyMap(previous).patch(upserts, removedIds);
 }

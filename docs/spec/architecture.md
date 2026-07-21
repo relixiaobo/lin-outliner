@@ -239,22 +239,26 @@ Per-edit cost scales with what changed, not document size.
   carries only local interaction hints and does not force projection
   materialization on the mutation path.
 - **Renderer reducer** (`reduceProjection` in `renderer/state/document.ts`): a
-  `full` rebuilds the index; a `delta` patches a copy of the previous `byId` —
-  `set` each changed node, `delete` **exactly** `removedIds` (no stale-subtree
-  walk: core enumerates every genuinely-removed node, and a merge survivor whose
-  grandchildren re-parented out arrives in `changedNodes`). Every unchanged node
-  keeps its object reference, the stable identity the outliner's `React.memo`
-  relies on. A revision gap or a delta with no base returns `null`, triggering the
-  `get_projection` → `ProjectionSnapshot` resync valve (belt-and-suspenders; in
-  steady state the single ordered channel never needs it).
+  `full` rebuilds the index; a `delta` creates a new immutable snapshot backed by
+  a bucketed copy-on-write `byId` map and a lazy `projection.nodes` array view.
+  It writes only the delta keys: upsert each changed node, remove **exactly**
+  `removedIds` (no stale-subtree walk: core enumerates every genuinely-removed
+  node, and a merge survivor whose grandchildren re-parented out arrives in
+  `changedNodes`). Every unchanged node keeps its object reference, and the
+  snapshot objects still get fresh identities so existing React dependency keys
+  update without requiring a component-level rewrite. A revision gap or a delta
+  with no base returns `null`, triggering the `get_projection` →
+  `ProjectionSnapshot` resync valve (belt-and-suspenders; in steady state the
+  single ordered channel never needs it).
 - **Re-render closure** (`renderer/state/renderRev.ts`): a per-node revision
   counter drives the memo. From the change set, `propagateDirty` walks a held
   reverse-edge index (`ReverseEdges`: target → referrers, for reference targets /
   tag definitions / inline-ref targets) plus structural ancestors to mark exactly
-  the nodes that must re-render. The index is carried across edits and patched per
-  delta (`patchReverseEdges`, copy-on-write with a same-keys skip so a plain text
-  edit allocates nothing), never rebuilt by scanning the document. Consistency
-  against a full rebuild is asserted after every command in
+  the nodes that must re-render. Both the reverse-edge index and the per-node
+  revision map are carried across edits and patched per delta (`patchReverseEdges`
+  and `patchRevisions`), never rebuilt by scanning the document. A same-edge plain
+  text edit reuses the reverse-edge object while only the affected revision buckets
+  are copied. Consistency against a full rebuild is asserted after every command in
   `tests/renderer/projectionDeltaIntegration.test.ts`.
 
 ## Agent Runtime Projection Updates

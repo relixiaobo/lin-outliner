@@ -75,6 +75,7 @@ describe('reduceProjection — full update', () => {
 describe('reduceProjection — delta content edit', () => {
   test('replaces only the changed node object and keeps others by reference', () => {
     const prev = seed(1);
+    const previousC = prev.index.byId.get('c');
     const editedC = node('c', { parentId: 'b', content: { text: 'edited', marks: [], inlineRefs: [] } });
     const next = reduceProjection(prev, {
       kind: 'delta',
@@ -85,10 +86,40 @@ describe('reduceProjection — delta content edit', () => {
     })!;
 
     expect(next.revision).toBe(2);
+    expect(next.index.byId).not.toBe(prev.index.byId);
+    expect(next.index.projection.nodes).not.toBe(prev.index.projection.nodes);
     expect(next.index.byId.get('c')!.content.text).toBe('edited');
+    expect(prev.index.byId.get('c')).toBe(previousC);
+    expect(prev.index.projection.nodes.find((candidate) => candidate.id === 'c')).toBe(previousC);
+    expect(next.index.projection.nodes.find((candidate) => candidate.id === 'c')).toBe(editedC);
     // Unchanged nodes keep object identity — the stable-reference foundation memo relies on.
     expect(next.index.byId.get('a2')).toBe(prev.index.byId.get('a2'));
     expect(next.index.byId.get('root')).toBe(prev.index.byId.get('root'));
+  });
+
+  test('does not iterate the previous byId snapshot while folding a content delta', () => {
+    const prev = seed(1);
+    const fail = () => {
+      throw new Error('previous byId must not be fully iterated');
+    };
+    Object.defineProperties(prev.index.byId, {
+      [Symbol.iterator]: { value: fail },
+      entries: { value: fail },
+      keys: { value: fail },
+      values: { value: fail },
+      forEach: { value: fail },
+    });
+
+    const next = reduceProjection(prev, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [node('c', { parentId: 'b', content: { text: 'edited', marks: [], inlineRefs: [] } })],
+      removedIds: [],
+    })!;
+
+    expect(next.index.byId.get('c')!.content.text).toBe('edited');
+    expect(next.index.renderRev.get('root')).toBe(2);
   });
 
   test('bumps the changed node and its structural ancestors only', () => {
@@ -126,6 +157,25 @@ describe('reduceProjection — delta structural change', () => {
     expect(next.index.byId.get('d')).toBeDefined();
     expect(next.index.byId.get('b')!.children).toEqual(['c', 'd']);
     expect(next.index.projection.nodes.some((n) => n.id === 'd')).toBe(true);
+  });
+
+  test('exposes delta projection nodes through normal array reads without materializing the store', () => {
+    const prev = seed(1);
+    const editedC = node('c', { parentId: 'b', content: { text: 'edited', marks: [], inlineRefs: [] } });
+    const next = reduceProjection(prev, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [editedC],
+      removedIds: [],
+    })!;
+
+    expect(Array.isArray(next.index.projection.nodes)).toBe(true);
+    expect(next.index.projection.nodes.length).toBe(prev.index.projection.nodes.length);
+    expect(next.index.projection.nodes[4]).toBe(editedC);
+    expect([...next.index.projection.nodes].map((candidate) => candidate.id)).toEqual(['root', 'a', 'a2', 'b', 'c']);
+    expect(next.index.projection.nodes.filter((candidate) => candidate.id.startsWith('a')).map((candidate) => candidate.id)).toEqual(['a', 'a2']);
+    expect(next.index.projection.nodes.find((candidate) => candidate.id === 'c')).toBe(editedC);
   });
 
   test('deletes exactly the removed ids and carries todayId', () => {

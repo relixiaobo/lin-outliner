@@ -12,10 +12,12 @@ import type {
 import {
   buildReverseEdges,
   nextRevisions,
+  patchRevisions,
   patchReverseEdges,
   propagateDirty,
   type ReverseEdges,
 } from './renderRev';
+import { projectionNodesView, SparseProjectionMap } from './sparseProjectionMap';
 import { measureRenderIndex } from '../ui/outliner/renderProbe';
 import {
   resolveSelectableReferenceTargetId,
@@ -82,7 +84,7 @@ export function reduceProjection(
     // invalidation for a pure refresh. (Core bumps the revision on every change,
     // so equal revision ⇒ identical content.)
     if (prev && update.revision <= prev.revision) return prev;
-    const byId = new Map(update.projection.nodes.map((node) => [node.id, node]));
+    const byId = SparseProjectionMap.fromEntries(update.projection.nodes.map((node) => [node.id, node] as const));
     const affected = new Set<NodeId>(byId.keys());
     const renderRev = nextRevisions(prev?.index.renderRev ?? null, affected, byId.keys());
     return {
@@ -95,7 +97,7 @@ export function reduceProjection(
   if (update.revision <= prev.revision) return prev; // dual-channel duplicate — already applied
   if (update.revision !== prev.revision + 1) return null; // gap — resync
 
-  const byId = new Map(prev.index.byId);
+  const previousById = SparseProjectionMap.fromReadonlyMap(prev.index.byId);
   const changed = new Set<NodeId>();
   // Delete EXACTLY the removed ids — no stale-subtree walk. Core enumerates every
   // genuinely-removed node in the change set (`loro.deleteNode` touches the whole
@@ -105,21 +107,30 @@ export function reduceProjection(
   // `merge_node_into` re-parents grandchildren, then removes the emptied node):
   // those survivors arrive in `changedNodes`, not `removedIds`.
   for (const id of update.removedIds) {
-    byId.delete(id);
     changed.add(id);
   }
   for (const node of update.changedNodes) {
-    byId.set(node.id, node);
     changed.add(node.id);
   }
-  // `nodes` follows Map insertion order (newly-created nodes append at the end),
-  // whereas a full projection from core is id-sorted. `projection.nodes` order is
-  // NOT a stable contract — the tree is defined by each node's `children`, and
-  // display lists that iterate it sort/filter for themselves.
-  const projection: DocumentProjection = { ...prev.index.projection, todayId: update.todayId, nodes: [...byId.values()] };
+  const byId = previousById.patch(
+    update.changedNodes.map((node) => [node.id, node] as const),
+    update.removedIds,
+  );
+  // `nodes` follows the same compatibility order as the held map (newly-created
+  // nodes append at the end), whereas a full projection from core is id-sorted.
+  // The delta path exposes a lazy immutable array snapshot so reducers do not
+  // materialize every node just to preserve the legacy `projection.nodes` surface.
+  // Display lists are still defined by each node's `children`, not by this order.
+  const projection: DocumentProjection = {
+    ...prev.index.projection,
+    todayId: update.todayId,
+    nodes: byId === prev.index.byId
+      ? prev.index.projection.nodes
+      : projectionNodesView(byId, byId.orderedIds),
+  };
   const reverseEdges = patchReverseEdges(prev.reverseEdges, prev.index.byId, update.changedNodes, update.removedIds);
   const affected = propagateDirty(changed, byId, reverseEdges);
-  const renderRev = nextRevisions(prev.index.renderRev, affected, byId.keys());
+  const renderRev = patchRevisions(prev.index.renderRev, affected, byId, update.removedIds);
   return { index: { projection, byId, renderRev }, revision: update.revision, reverseEdges };
 }
 
