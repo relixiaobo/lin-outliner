@@ -24,7 +24,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
@@ -32,7 +32,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-21).** Open PR queue: none. Recently
-merged: #424 (`codex/system-reference-values-overlay`) merged 2026-07-21 after
+merged: #425 (`codex-4/remove-data-import-adapter`) merged 2026-07-21 after
+main review; see *Recently completed*. #424 (`codex/system-reference-values-overlay`) merged 2026-07-21 after
 main review; see *Recently completed*. #422 (`codex/panel-date-navigation-index`) merged 2026-07-21 after two
 main review rounds; see *Recently completed*. #421 (`codex/search-query-complexity-budget`) merged 2026-07-21 after
 iterative main review; see *Recently completed*. #420 (`codex/renderer-delta-reducer-surface`) merged 2026-07-21 after
@@ -560,6 +561,17 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **remove-data-import-adapter**
+  (`codex-4/remove-data-import-adapter`, PR #425, codex-4, merged 2026-07-21,
+  fast-track) — removed the unregistered `data_import` AgentTool compatibility
+  adapter, its dead capability descriptor and write-access classification, and
+  adapter-only negative assertions. The supported `/data-cleanup` workflow
+  remains `tenon-import` CLI -> local Import API -> `AgentImportService`, while
+  import-service coverage now uses the current filename and audit identity.
+  **Gate (main):** review found no reportable issues on final head `001238dc`.
+  Verified with typecheck, `docs:check`, diff check, current-`main` merge-tree,
+  and full `test:core` (1689 pass).
 
 - **system-reference-values-overlay**
   (`codex/system-reference-values-overlay`, PR #424, codex, merged 2026-07-21,

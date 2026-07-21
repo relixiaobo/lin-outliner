@@ -10,6 +10,16 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Internal
+
+- **Legacy data import adapter removal (PR #425, codex-4)** — removed the
+  unregistered `data_import` AgentTool compatibility adapter, its dead
+  capability classification, and adapter-only negative assertions. Import
+  remains exclusively on the `tenon-import` CLI/API path, with import-service
+  coverage retained under its current name and audit identity. **Gate (main):**
+  review found no reportable issues. Verified with typecheck, the full Core
+  suite (1689 pass), docs check, current-`main` merge-tree, and diff check.
+
 ### Fixed
 
 - **System reference values overlay (PR #424, codex)** — read-only References,
