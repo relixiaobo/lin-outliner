@@ -10,15 +10,27 @@ This is a clean replacement against empty agent data: old storage is deleted
 outside the product, and the new runtime never detects, imports, migrates, or
 adapts any former format.
 
-This is one complete feature delivered in one PR. Its internal build order is
-protocol first, then persistence, runtime, transport, renderer, and deletion, but
-none of those stages may merge independently. The PR is complete only when the
-old Conversation / Channel / Run / Issue / AgentSession / Activity / Dream model
-has no runtime, storage, IPC, test, spec, or UI presence.
+This plan is a set of two ordered delivery units required by the repository's
+shared-interface-first rule:
+
+1. A human-led interface-only PR lands `src/core/agent/`, the coordinated shared
+   exports, codecs, tool contracts, provenance contracts, and protocol tests. It
+   does not add a second runtime, adapter, data reader, or migration path. The old
+   runtime remains the only executable consumer during this short interface
+   window.
+2. One complete replacement PR consumes that interface across persistence,
+   runtime, transport, renderer, and deletion. It is complete only when the old
+   Conversation / Channel / Run / Issue / AgentSession / Activity / Dream model
+   has no runtime, storage, IPC, test, spec, or UI presence.
+
+The interface PR is the repository-mandated infrastructure claim, not a partial
+product rollout. The replacement PR follows immediately after it; temporary
+source-level coexistence is never exposed as runtime compatibility, dual writes,
+or old-data support.
 
 This plan is the foundation for `agent-codex-memory` and
-`agent-codex-automations`. Those plans may begin only after this one lands; after
-that they are independent of each other.
+`agent-codex-automations`. Those plans may begin only after the replacement PR
+lands; after that they are independent consumers of Core provenance.
 
 The reference baseline is OpenAI Codex commit
 `841e47b8fb113a201b68e0f1f5790ba22836a241`, especially:
@@ -57,9 +69,10 @@ model. This plan deliberately follows Codex instead of importing those concepts.
 - Copy Codex's Rust implementation or app-server wire format byte for byte.
   Tenon remains TypeScript/Electron and adopts the concepts and behavioral
   contracts that fit its host boundary.
-- Rebuild provider adapters, node tools, skills, permissions, attachments, or
-  model selection when they can be retained as capabilities behind the new Turn
-  runtime. They must stop exposing old execution entities.
+- Rebuild provider adapters, node tools, skills, attachments, model selection, or
+  the ratified Full Access audit/explicit-block boundary when they can be retained
+  as capabilities behind the new Turn runtime. They must stop exposing old
+  execution entities.
 - Introduce a durable Agent membership/execution identity, Task, Session,
   Process, or Activity entity. A child Thread may carry Codex-style
   `agentRole`/`agentNickname`; role definitions and model/tool/skill choices are
@@ -101,7 +114,7 @@ Replace the flat, cross-coupled `agent*.ts` layout with explicit ownership:
 src/core/agent/
   protocol.ts          Thread, Turn, ThreadItem, request/response, notifications
   codec.ts             runtime validation and serialization for that protocol
-  tools.ts             canonical tool identities, schemas, and permission metadata
+  tools.ts             canonical tool identities, schemas, audit/block metadata
   goal.ts              ThreadGoal and its tool contracts
   extensions.ts        typed lifecycle and contribution interfaces
   configuration.ts     thread/turn execution configuration
@@ -157,10 +170,10 @@ Protocol round-trip and exhaustive-variant tests fail on an unhandled item type.
 `parentThreadId` and `forkedFromId`, optional `agentNickname` and `agentRole`,
 `name`, `preview`, `ephemeral`, `source`, `threadSource`, `modelProvider`, `cwd`,
 timestamps, status, and optionally loaded Turns. Thread status is `notLoaded`,
-`idle`, `active`, or `systemError`; active flags express `waitingOnApproval` and
-`waitingOnUserInput` rather than inventing parallel statuses. `source` records
-the host/session origin while `threadSource` classifies the workload; neither is
-a UI-only tag.
+`idle`, `active`, or `systemError`; the active flag `waitingOnUserInput` expresses
+the only Tenon-owned waiting interaction rather than inventing a parallel status.
+`source` records the host/session origin while `threadSource` classifies the
+workload; neither is a UI-only tag.
 
 `ThreadSource` has Codex's exact string representation: the reserved values are
 `user`, `subagent`, and `memory_consolidation`; every other non-empty string is
@@ -175,8 +188,9 @@ with opaque cursors are the only history read contract. There is no `legacy`
 mode, eager full-history fallback, old-history negotiation, or compatibility
 reader in protocol, persistence, or renderer code.
 
-`Turn` has a stable UUIDv7 `id`, ordered items, `itemsView`, status
-`inProgress | completed | interrupted | failed`, optional error, and timing.
+`Turn` has a stable UUIDv7 `id`, ordered items, `itemsView`, immutable
+`provenance`, status `inProgress | completed | interrupted | failed`, optional
+error, and timing.
 Only one Turn may be active in a Thread. Starting, steering, interrupting, and
 resuming all require both the Thread identity and the relevant Turn precondition
 where applicable. Steering can append input only to the active Turn. Completed
@@ -192,6 +206,28 @@ the fork while leaving the current world unchanged. Any future revert operation
 is a separate explicit command with its own preview, conflict detection, and
 audit record; it is not a Thread operation and cannot promise to reverse unknown
 or external effects.
+
+`TurnProvenance` is written by `ThreadService` before the Turn starts and is
+persisted in the rollout and history projection:
+
+```ts
+type TurnProvenance = {
+  originThreadId: string;
+  originTurnId: string;
+  trigger:
+    | { kind: 'user' }
+    | { kind: 'subagent'; parentThreadId: string; parentItemId: string }
+    | { kind: 'feature'; feature: string; ref?: string };
+};
+```
+
+For a newly started Turn, the origin IDs equal its own IDs. The public renderer
+entry may create only `trigger.kind=user`; child execution and installed host
+features use privileged `ThreadService` entries. Automation uses
+`{ kind: feature, feature: "automation", ref: AutomationRun.id }`. Goal
+continuations and Memory consolidation use their own feature labels. Prompt
+content, untrusted `additionalContext`, plugins, and model output cannot author or
+rewrite this provenance.
 
 Turn start and steer accept Codex's optional `clientUserMessageId`. Within a
 Thread, repeating the same client ID returns the existing accepted Item/Turn
@@ -212,6 +248,15 @@ Tenon node tools use `dynamicToolCall`; they do not get a second event taxonomy.
 Attachments are content inside `userMessage`. Provider streaming fragments are
 transport deltas, not additional persisted entity types.
 
+Every completed ThreadItem also has immutable `ItemProvenance` containing
+`originThreadId`, `originTurnId`, and `originItemId`. A newly recorded Item points
+to itself. When a fork materializes inherited history, it assigns local IDs for
+the copied records but preserves their ultimate origin IDs and the original
+Turn trigger; a fork of a fork does not create another origin. The first edited,
+retried, regenerated, or newly submitted Item after the fork boundary is locally
+originated. This gives Memory and audit consumers one stable evidence identity
+without making fork history mutable or coupling it to world-state rollback.
+
 The core protocol defines Codex's optional `MemoryCitation` on `agentMessage`
 even before the Memory extension is installed. Tenon's Node-backed citation
 entry contains `nodeId` and `note`, plus the supporting `threadIds`; artifact
@@ -226,10 +271,10 @@ create `application` entries. The entries contribute model context through the
 Turn runtime but do not become a renderer-defined message or a new history
 entity.
 
-Approval callbacks and `request_user_input` are control-plane request/response
-messages associated with the relevant command or dynamic-tool item. They are not
-new persisted ThreadItem variants. Their waiting state is reflected by Thread
-active flags, and the completed item remains the transcript fact.
+`request_user_input` uses control-plane request/response messages associated with
+the relevant dynamic-tool item. They are not new persisted ThreadItem variants.
+Its waiting state is reflected by `waitingOnUserInput`, and the completed item
+remains the transcript fact.
 
 Every lifecycle notification carries `threadId`, `turnId`, and, for item events,
 `itemId`. The renderer receives `thread/started`, `thread/status/changed`,
@@ -245,12 +290,37 @@ for effects that cannot be reversed. This provenance supports inspection and a
 future explicit undo surface without coupling world-state rollback to history
 forking.
 
+#### Full Access host boundary
+
+Tenon adopts Codex's Thread/Turn/Item concepts but deliberately does not adopt
+its approval policy, sandbox policy, permission profile, or access-acquisition
+protocol. The ratified Full Access boundary remains authoritative: a user request
+or saved Automation definition authorizes the requested work under the current OS
+account, and Tenon adds no risk confirmation or pause/resume authorization flow.
+
+Every model-tool call follows one pipeline: the effective tool catalog determines
+whether the tool exists, action descriptors are derived for audit and exact block
+matching, current explicit user blocks may make it unavailable, the tool
+executes, and the result plus capability audit is recorded. A retained file or
+process tool has host-account filesystem/process authority. Native TCC,
+administrator prompts, Keychain, CLI login, provider authentication, and service
+errors remain owned by their source and are returned normally.
+
+There is no `waitingOnApproval`, approval callback, sandbox mode, filesystem root
+grant, permission selector, permission profile, managed approval fallback, or
+renderer authorization card in protocol, storage, runtime, settings, Automation,
+or UI. `request_user_input` gathers missing product input only and can never be
+used as authorization. Agent Roles and isolated skills may narrow whole tool
+names before a Turn starts; a tool that remains has the same Full Access
+authority. The current `agent-tool-permissions.md` behavior is carried forward
+and rewritten only for Thread/Turn terminology.
+
 #### Configuration profiles and agent roles
 
 Codex configuration profiles and agent roles are separate configuration layers,
 not persisted Agent identities. A named `ConfigurationProfile` supplies defaults
 for a root Thread: instructions, model, reasoning effort, tools, skills, plugins,
-MCP servers, and permission selection. Selecting a profile resolves an effective
+and MCP servers. Selecting a profile resolves an effective
 Thread configuration snapshot; changing the template later does not rewrite
 completed Turns or create a different conversational participant.
 
@@ -260,8 +330,9 @@ through the same configuration machinery. A role has a stable name,
 description, developer instructions, optional nickname candidates, and optional
 execution overrides. Child configuration is resolved from the parent's current
 effective configuration, explicit spawn-time model/effort choices, the selected
-role layer, and the parent's live permission boundary; a role may narrow but
-never silently broaden that boundary.
+role layer, and the parent's effective tool catalog; a role may narrow but never
+silently broaden that catalog. Current explicit user blocks are evaluated again
+at every child-tool dispatch rather than copied into role configuration.
 
 The former editable built-in Agent profile and `AgentRunProfileId` family are
 deleted. Research and verification behavior become Agent Roles; browser, coding,
@@ -275,7 +346,7 @@ and `Subagent` means the child Thread itself.
 Model-callable tools and host IPC methods are different protocol surfaces. A
 canonical model-tool identity is an optional namespace plus a function name;
 provider adapters may encode that identity for transports that require flat
-function names, but source modules, permission rules, ThreadItems, debug views,
+function names, but source modules, audit/block rules, ThreadItems, debug views,
 and tests use the canonical identity. Preload methods such as `threadStart` and
 `turnInterrupt` are never registered as model tools.
 
@@ -296,7 +367,7 @@ the returned and targeted durable object is still a child Thread. Task paths are
 addressing keys inside one root Thread tree, not persisted Task entities.
 `send_input`, `resume_agent`, `close_agent`, `assign_task`, and any unnamespaced
 aliases are not implemented. The namespace is fixed rather than exposed as a
-profile or provider preference, so permission rules and recorded
+profile or provider preference, so audit/block rules and recorded
 `collabAgentToolCall` items cannot drift by configuration.
 
 Core also provides two plain control tools:
@@ -353,9 +424,10 @@ The destructive tool migration is exhaustive:
 | `ask_user_question` | `request_user_input`; all old questionnaire DTOs, events, projections, renderer adapters, and aliases are deleted. |
 | `internal_delegation` and the fork pseudo-agent | The `collaboration` suite over child Threads. |
 
-Permission action kinds and profile allow/deny lists are rebuilt against this
-catalog. No old tool name is accepted as an alias, persisted as current audit
-data, or shown in current UI/specs after the replacement.
+Action-kind audit descriptors, explicit block matching, and profile allow/deny
+lists are rebuilt against this catalog. They control availability and audit, not
+filesystem/process authority. No old tool name is accepted as an alias, persisted
+as current audit data, or shown in current UI/specs after the replacement.
 
 ### 4. Rollout source of truth and rebuildable projections
 
@@ -405,7 +477,7 @@ deleted outside the runtime before launch.
 
 `ThreadService` is the host facade over Thread runtimes. A Thread runtime owns its
 sticky configuration and at most one active Turn; a Turn runtime owns model
-streaming, tool execution, approval/input waits, cancellation, and ordered item
+streaming, tool execution, user-input waits, cancellation, and ordered item
 recording. `tryStartTurnIfIdle` is the only internal entry that lets extensions
 continue work without racing user input.
 
@@ -449,8 +521,8 @@ coordination is represented through
 `collabAgentToolCall` and `subAgentActivity` items. Forking instead copies the
 selected history boundary into a new Thread and records `forkedFromId`.
 Resuming a child resolves its stored role through the same role loader and
-reapplies the current parent permission boundary; it does not revive an
-AgentSession or look up a durable Agent object.
+reapplies the current parent tool-catalog ceiling plus current explicit blocks;
+it does not revive an AgentSession or look up a durable Agent object.
 
 ### 6. IPC and renderer
 
@@ -513,7 +585,7 @@ Replace the current agent spec map with present-tense Codex authority:
 | `agent-subagent-threads.md` | child Thread lineage, roles, coordination, fork distinction |
 | `agent-model-runtime.md` | provider/model stream normalization into Turns and Items |
 | `agent-tool-design.md` | current tool contracts only |
-| `agent-tool-permissions.md` | current permission/approval contracts only |
+| `agent-tool-permissions.md` | Full Access, tool-catalog, explicit-block, native-failure, and capability-audit contracts |
 | `agent-skills.md` | current skill configuration/invocation only |
 | `agent-integration.md` | remaining integration checklist, no project status |
 
@@ -541,14 +613,14 @@ both a zero-result active-repository scan and a zero-result fresh-storage scan;
 
 ### 8. Risks and mitigations
 
-- **Large vertical replacement:** freeze the claimed agent/shared files, build in
-  dependency order inside one branch, and merge only the complete vertical cut.
-  This plan explicitly chooses the single-owner ordered path instead of an
-  interface-only precursor PR, because an unconsumed second protocol would be an
-  incomplete feature and a temporary dual model.
+- **Interface/runtime drift:** the human-led interface PR lands first with codecs,
+  provenance invariants, and contract tests; the replacement branch rebases on
+  that exact commit and may not redeclare or locally widen the shared contract.
+  The interface window contains no adapter, dual write, or second executable
+  runtime and is closed by the immediately following replacement PR.
 - **Capability loss hidden by old adapters:** inventory every provider/tool,
-  permission, attachment, compaction, retry, and notification path and prove each
-  through the canonical protocol before deleting its old consumer.
+  Full Access audit/block, attachment, compaction, retry, and notification path
+  and prove each through the canonical protocol before deleting its old consumer.
 - **Projection drift:** compare incremental pages against a clean rollout replay,
   including interrupted Turns and partially streamed Items.
 - **Terminology residue:** run an allowlist-based repository guard over current
@@ -556,11 +628,13 @@ both a zero-result active-repository scan and a zero-result fresh-storage scan;
 
 ### 9. Collision result
 
-At drafting time, open PR #422 claims renderer date-count indexing files
-only. It has no direct overlap with this plan. This plan does claim the shared
-protocol files `src/core/types.ts` and `src/core/commands.ts`, plus the full agent
-runtime and UI area; no other agent work may modify those areas until this PR
-lands or is abandoned.
+At drafting time, open PR #422 claims renderer date-count indexing files only. It
+has no direct overlap with this plan. The first delivery unit claims
+`src/core/types.ts`, `src/core/commands.ts`, and `src/core/agent/` through its
+human-led interface-only PR. After that merges, the replacement PR rebases and
+claims the full agent runtime and UI area without reopening the shared contract.
+No sibling plan may modify the currently claimed unit until its PR lands or is
+abandoned.
 
 ## Open questions
 
@@ -569,20 +643,25 @@ ThreadGoal per Thread, no durable Agent membership/execution entity, the
 Profile/Role/child-Thread split, history-only fork semantics, separate
 core/history/Goal stores, rollout-as-history-source, the fixed
 `collaboration.*` v2 tool namespace, the exact `request_user_input` replacement,
-the exhaustive tool migration, and one vertical replacement PR.
+the exhaustive tool migration, immutable Turn/Item provenance, the retained Full
+Access boundary, and the interface-first two-PR delivery order.
 
 ## Implementation checklist
 
 - [ ] Have the main agent add the three-plan dependency and this active plan
   to `docs/TASKS.md`; open the Draft PR claim before implementation.
-- [ ] Define and contract-test the canonical protocol and extension interfaces,
-  including ThreadSource strings, paginated-only history, immutable completed
-  Items, client input idempotency, Node-backed MemoryCitation, configuration
-  profiles, agent roles, and additional-context trust.
-- [ ] Implement and contract-test the canonical model-tool registry, fixed
-  `collaboration` namespace, v2 Subagent suite, root-only `request_user_input`,
-  `update_plan`, Goal tools, retained capability tools, permission mappings, and
-  provider transport encodings with no legacy aliases.
+- [ ] In the human-led interface-only PR, define and contract-test the canonical
+  protocol and extension interfaces, including ThreadSource strings, immutable
+  Turn/Item provenance, paginated-only history, immutable completed Items, client
+  input idempotency, Node-backed MemoryCitation, configuration profiles, agent
+  roles, additional-context trust, and Full Access exclusions.
+- [ ] In that interface PR, define and contract-test the canonical model-tool
+  registry, fixed `collaboration` namespace, v2 Subagent suite, root-only
+  `request_user_input`, `update_plan`, Goal tools, retained capability tools,
+  action-kind audit/block mappings, and provider transport encodings with no
+  legacy aliases.
+- [ ] After the interface PR merges, rebase and open the complete replacement PR;
+  do not redeclare, adapt, or widen the shared protocol locally.
 - [ ] Implement rollout recording, Thread metadata/spawn edges, the separate
   history projection, pagination, and replay equivalence.
 - [ ] Implement Thread/Turn runtimes and make GoalExtension exercise the real

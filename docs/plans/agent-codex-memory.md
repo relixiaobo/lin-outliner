@@ -103,14 +103,17 @@ Memory uses five public concepts only:
 - `MemoryCitation` attached to an `agentMessage` ThreadItem
 - `Memory Reset` as a confirmed user command
 
-Jobs, leases, fingerprints, usage counters, and publication generations are
-private pipeline control state. They are not Memory objects and are never
-rendered as Nodes or ThreadItems.
+Jobs, leases, fingerprints, usage counters, publication generations, reset
+epochs, evidence cutoffs, and publication journals are private pipeline control
+state. They are not Memory objects and are never rendered as Nodes or
+ThreadItems.
 
 `memories.sqlite` contains only that control state: source Thread versions,
 job ownership and retry data, source Node IDs and hashes, selected versions,
-usage counters, publication generation, and subtree fingerprints. Model-readable
-Memory content is never canonical in SQLite; it is canonical only in Nodes.
+usage counters, publication generation, subtree fingerprints, the current reset
+epoch, per-Thread reset cutoffs, and prepared/finalized operation rows.
+Model-readable Memory content is never canonical in SQLite; it is canonical only
+in Nodes.
 
 ### 2. Canonical Memory subtree
 
@@ -133,9 +136,17 @@ extracted evidence and exact source provenance.
 
 Each selected source Thread has one deterministic Source Node. Its own content
 is the compact rollout summary; normalized raw Memory is represented by bounded
-descendant Nodes. The control row binds that subtree to `threadId`, source
-`updatedAt`, output hash, and usage data. Source nodes are inspectable and
-navigable but cannot become a second transcript or an execution entity.
+descendant Nodes. The control row binds that subtree to `threadId`, the ordered
+eligible-origin evidence version, output hash, and usage data. Source Nodes are
+inspectable and navigable but cannot become a second transcript or an execution
+entity.
+
+The locked Memory root also carries one private, non-model-readable operation
+receipt in document metadata. A receipt contains only operation identity,
+generation, and hashes needed to reconcile a committed Loro transaction with
+the SQLite control journal after a crash. It is pipeline metadata, never a
+second copy of Summary, Knowledge, Sources, Inbox, or model output, and is not
+returned by Node tools or search.
 
 No tag or Node type identifies Memory. Containment under the reserved root is
 the complete membership rule. Standard Node IDs, RichText, references, search,
@@ -152,13 +163,15 @@ The pipeline wakes after the document, stores, and ThreadService start and when
 an eligible root Thread becomes idle. Each wake performs one bounded scan rather
 than creating a timer per Thread. Phase 1 may claim only a persistent,
 non-ephemeral interactive root Thread with no active Turn whose rollout passed
-the idle grace period, remains inside the configured age window, and changed
-since its last successful extraction.
+the idle grace period, remains inside the configured age window, and whose
+eligible-origin evidence version changed since its last successful extraction.
 
-Subagent Threads, Automation Threads, `memory_consolidation` Threads, Threads
-without memory-relevant user-authored work, and disabled Threads are ineligible.
-A valid extraction that finds no durable signal completes as
-`succeededNoOutput` and publishes no Source Node.
+Subagent Threads, standalone Automation Threads, `memory_consolidation` Threads,
+Threads without memory-relevant user-authored work, and disabled Threads are
+ineligible. A normal user Thread remains eligible when an Automation targets it,
+but every automation-origin Turn is excluded from its evidence. A valid
+extraction that finds no durable signal completes as `succeededNoOutput` and
+publishes no Source Node.
 
 Completing a web search or another result explicitly marked as external context
 sets a private `polluted` extraction flag for that Thread. A polluted Thread is
@@ -173,7 +186,17 @@ subtree.
 
 ### 4. Phase 1: Thread rollout to Source Nodes
 
-Phase 1 reads the canonical rollout and retains only Memory-relevant evidence:
+Phase 1 reads the canonical rollout and first applies immutable Core provenance.
+It rejects every Turn whose `TurnProvenance.trigger` is
+`{ kind: "feature", feature: "automation", ... }`, including such Turns inside
+an otherwise ordinary user Thread. It then rejects every inherited fork Item:
+only Items whose ultimate `ItemProvenance.originThreadId` is the current Thread
+are local evidence. A defensive global uniqueness check ensures that one
+`originItemId` can contribute to at most one extraction even if the same history
+is materialized in multiple Threads.
+
+From that provenance-filtered rollout, Phase 1 retains only Memory-relevant
+evidence:
 
 - user messages and completed final agent messages
 - completed command, file-change, MCP, dynamic-tool, and Node-tool calls and
@@ -188,6 +211,12 @@ runtime metadata. Node content enters Memory only through the bounded tool
 arguments/results or explicit user references recorded in that Thread; the
 pipeline never performs an unbounded document scan.
 
+The source version is a deterministic fingerprint of the ordered eligible
+`originItemId` plus each Item's canonical content hash. It is not the Thread's
+`updatedAt`: excluded Automation Turns, copied fork prefixes, display-only edits,
+and other irrelevant Thread changes cannot make old evidence new. Reset cutoffs
+further remove all local Item positions at or before the recorded barrier.
+
 One bounded internal extraction Turn produces `rawMemory`, `rolloutSummary`, and
 an optional stable `rolloutSlug`. Secrets are redacted before publication. A
 successful output is normalized into the deterministic Source subtree and
@@ -198,7 +227,9 @@ successful and record its Node IDs and output hash.
 Claims use compare-and-set ownership tokens, lease expiry, bounded retry, and
 source-version idempotence. A crash before the document transaction leaves no
 published output; a crash after it is reconciled through the deterministic IDs
-and hash, so retry cannot create duplicate Source Nodes.
+and hash, so retry cannot create duplicate Source Nodes. Every claim carries the
+current reset epoch and rechecks it plus the Thread cutoff immediately before
+publication; stale extraction work cannot cross a Reset.
 
 ### 5. Phase 2: global Node consolidation
 
@@ -231,10 +262,31 @@ Nodes disappeared; it cannot mutate Sources or any Node outside the Memory root.
 After the Turn succeeds, the host validates the resulting outline, computes its
 canonical Node command set, and checks that every live Memory Node fingerprint
 still matches the snapshot. A conflicting user edit aborts publication and
-enqueues a fresh bounded attempt; it is never overwritten. A conflict-free
-result applies atomically through one DocumentService transaction. Only after
-that commit does the control store advance selected versions, consumed Inbox
-inputs, fingerprints, and the publication generation.
+enqueues a fresh bounded attempt; it is never overwritten.
+
+A conflict-free result crosses the Loro/SQLite boundary through a durable
+publication journal:
+
+1. SQLite first commits a `prepared` publication containing a unique
+   `publicationId`, reset epoch, input fingerprints, selected source versions,
+   consumed Inbox IDs, expected output hash, and canonical Node-command hash.
+2. One DocumentService transaction applies the validated Node commands and
+   writes the matching publication receipt into the locked Memory-root metadata.
+3. SQLite then marks that prepared publication `finalized` and advances selected
+   versions, consumed Inbox inputs, fingerprints, and publication generation
+   from the prepared row. It never reconstructs those values from mutable live
+   Nodes.
+
+Startup reconciles this journal before any pipeline worker starts. A matching
+root receipt proves the document transaction committed, so recovery only
+finalizes SQLite and never reruns the model or treats that publication as a user
+conflict. A user edit made after the receipt does not invalidate it: recovery
+finalizes the publication first, then the changed live fingerprint or input
+revision becomes input to the next consolidation. A prepared row without a
+matching receipt did not publish; it is discarded and retried from a fresh
+snapshot, with its model result reusable only when the reset epoch and every
+input fingerprint still match. Any prepared row from an older reset epoch is
+discarded without publication.
 
 Failure leaves the live Outliner unchanged and releases or expires the lease for
 bounded retry. There is no filesystem staging tree, Git baseline, partial Node
@@ -258,8 +310,9 @@ commands are authoritative and trigger the same reconciliation wakeup.
 `agentMessage.memoryCitation` entries contain `nodeId` and `note`, plus the
 supporting `threadIds`. Clicking a citation opens the Memory Node and can navigate
 to the source Threads. A completed cited agent message updates the referenced
-source rows' `usageCount` and `lastUsage`; list/read/search operations alone do
-not count as use.
+source evidence's `usageCount` and `lastUsage`; accounting is keyed by distinct
+`originItemId`, so citations through an inherited fork cannot increase ranking a
+second time. List/read/search operations alone do not count as use.
 
 Deleting a Memory Node makes an old citation explicitly unavailable. Reusing an
 ID for unrelated content is forbidden. Supporting Thread IDs remain the durable
@@ -273,12 +326,34 @@ and search open ordinary Memory Nodes; Settings exposes the global feature
 control, active Thread mode, pipeline freshness/error state, an Open Memory
 command, and a confirmed Reset command.
 
-Memory Reset acquires the document/pipeline write gate, advances a reset
-generation, clears every non-structural descendant under Summary, Knowledge,
-Sources, and Inbox through one document transaction, and clears all Memory
-control rows. It preserves the reserved root/containers and per-Thread
-`ThreadMemoryMode` choices. Workers holding an older generation or lease cannot
-publish after reset.
+Memory Reset means "forget current Memory and learn only from future evidence."
+It never makes pre-reset history eligible again. Under the document/pipeline
+write gate, the host records a monotonic `resetEpoch` and, for every existing
+Thread, the stable terminal local-Item position that forms its evidence cutoff.
+A Thread created after Reset starts beyond no cutoff and can contribute from its
+first eligible local Item; an existing Thread can contribute only local Items
+created after its recorded cutoff.
+
+Reset itself uses a durable cross-store journal:
+
+1. SQLite commits a `reset_prepared` row with `resetId`, next epoch, every
+   per-Thread evidence cutoff, and the expected document-command hash. Preparing
+   the row blocks new pipeline claims.
+2. One DocumentService transaction clears every non-structural descendant under
+   Summary, Knowledge, Sources, and Inbox and writes the matching reset receipt
+   into locked Memory-root metadata.
+3. SQLite finalizes the epoch and cutoffs, clears derived source jobs, leases,
+   selections, Inbox consumption, usage, fingerprints, and publication rows,
+   then unblocks claims. It preserves the reset epoch/cutoff rows and per-Thread
+   `ThreadMemoryMode` choices.
+
+Startup reconciles Reset before publication reconciliation or worker startup. A
+matching root receipt completes SQLite finalization; a prepared Reset without a
+receipt reapplies its idempotent document transaction and then finalizes. Work
+from an older epoch cannot publish. Clearing jobs is therefore not equivalent to
+clearing the historical barrier, and old rollouts inside the age window cannot
+repopulate Memory. A future user-requested re-extraction of old history would be
+a separately designed `Memory Rebuild`, not Reset behavior.
 
 Renderer state contains only ordinary Outliner selection/expansion plus settings
 status. Paths, line numbers, artifact trees, Dream history, memory cards, and a
@@ -310,11 +385,21 @@ superseded plans and updates `docs/TASKS.md` and `CHANGELOG.md` after shipping.
   complete system; runtime-owned Sources stay grouped and collapsed instead of
   appearing on daily timelines.
 - **Recursive or low-signal Memory:** source eligibility excludes child,
-  Automation, and consolidation Threads; Phase 1 applies a strict no-output gate.
+  standalone Automation and consolidation Threads; immutable Turn provenance
+  excludes Automation Turns inside user Threads, and Phase 1 applies a strict
+  no-output gate.
+- **Fork-amplified evidence:** inherited Items preserve ultimate origin IDs;
+  Phase 1 uses only locally originated Items and usage ranking counts each
+  `originItemId` once.
 - **Stale Node facts:** ordinary Nodes enter Memory only through Thread evidence,
   while current document questions continue to use live `node_read` results.
 - **User edits overwritten by consolidation:** subtree fingerprints and an
   optimistic publication check abort on any conflicting edit.
+- **Cross-store crash ambiguity:** prepared SQLite journals and locked-root
+  receipts make publication and Reset idempotently reconcilable before workers
+  start.
+- **Reset resurrects forgotten history:** the retained reset epoch and per-Thread
+  evidence cutoffs permanently exclude pre-reset rollout positions.
 - **Partial document changes:** consolidation runs against an isolated copy and
   publishes one validated document transaction.
 - **External context becomes personal Memory:** pollution removes the Thread from
@@ -342,27 +427,31 @@ and complete removal of Dream and all old Memory data.
 - [ ] Confirm `agent-codex-core` is merged and have the main agent add this plan
   to `docs/TASKS.md`; open the Draft PR claim.
 - [ ] Define reserved Memory Node IDs, Node-backed `MemoryCitation`,
-  `ThreadMemoryMode`, and the control-only `memories.sqlite` schema.
+  `ThreadMemoryMode`, and the control-only `memories.sqlite` schema, including
+  operation journals, reset epochs, and per-Thread evidence cutoffs.
 - [ ] Implement root/container invariants, Memory-root Node visibility, settings
   navigation, and empty-userData creation.
 - [ ] Implement bounded eligibility, leased Phase 1 extraction, deterministic
-  Source Node publication, redaction, no-output, and source-version idempotence.
+  Source Node publication, provenance filtering, origin evidence deduplication,
+  redaction, no-output, and source-version idempotence.
 - [ ] Implement bounded Phase 2 selection, Node change sets, isolated
   consolidation, fingerprint conflict detection, atomic document publication,
-  and forgetting.
+  receipt-based crash reconciliation, and forgetting.
 - [ ] Integrate Summary context and Memory-root `node_search`/`node_read` scope
   for enabled Threads; prove disabled Threads receive neither implicitly.
 - [ ] Implement Inbox intent creation and immediate coalesced consolidation
   wakeup; prove user edits win publication races.
 - [ ] Implement Node citation navigation and citation-driven source usage
   accounting.
-- [ ] Implement generation-safe Memory Reset while preserving structural Nodes
-  and per-Thread modes.
+- [ ] Implement journaled Memory Reset with permanent history cutoffs while
+  preserving structural Nodes and per-Thread modes; prove restart cannot
+  repopulate Memory from pre-reset evidence.
 - [ ] Delete Dream, `#d-*`, chat-source Memory, old profiles/actions/settings,
   old data readers, and all compatibility logic; add source/storage terminology
   guards.
 - [ ] Rewrite active Memory, Node-tool, settings, and architecture specs around
   the canonical subtree.
 - [ ] Validate from empty userData with `bun run typecheck`,
-  `bun run test:core`, `bun run test:renderer`, focused E2E coverage,
+  `bun run test:core`, `bun run test:renderer`, focused provenance, fork, Reset,
+  publication-crash, and E2E coverage,
   `bun run docs:check`, and `git diff --check`.

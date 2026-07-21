@@ -37,8 +37,9 @@ consumer of due work rather than the owner of time.
 The Codex-backed product contract is: standalone schedules create a new Thread
 per occurrence, existing-Thread schedules preserve context, RRULE is the advanced
 schedule format, local/project worktree execution is supported, skills/plugins
-may be selected, and execution is unattended under the effective sandbox and
-approval policy. Codex source does not expose its full scheduler implementation.
+may be selected, and execution is unattended. Tenon retains its separately
+ratified Full Access host boundary instead of adopting Codex sandbox or approval
+policy concepts. Codex source does not expose its full scheduler implementation.
 Durable claims, latest-only catch-up, overlap coalescing, and cleanup below are
 explicit Tenon reliability choices, not claims about undocumented Codex internals.
 
@@ -91,8 +92,7 @@ src/renderer/agent/automations/
 - optional destination `threadId` for existing-Thread delivery
 - zero or more local project bindings, each with `cwd` and
   `executionMode: local | worktree`
-- optional model, reasoning effort, skill, and plugin selections
-- permissions profile and effective sandbox requirements
+- optional model, reasoning effort, tool, skill, and plugin selections
 - status `active | paused | completed`
 - created/updated timestamps and derived next occurrence
 
@@ -107,7 +107,8 @@ are not another persisted task type.
 `threadId`, optional `turnId`, worktree metadata, `readAt`, timestamps, and a
 pre-Thread dispatch error if one occurred. Once a Turn starts, its status, items,
 result, and error remain authoritative; Automation UI joins through `threadId`
-and `turnId` instead of copying execution state.
+and `turnId` instead of copying execution state. A dispatched binding is valid
+only when that Turn's immutable provenance names the same AutomationRun ID.
 
 The persisted dispatch states are `pending`, `dispatched`, `failed`, and
 `omitted`. `pending` owns the durable claim; `dispatched` must reference a Thread
@@ -175,12 +176,31 @@ The target must be persistent and user-addressable. If it already has an active
 Turn, dispatch remains claimed and waits for Thread idle; repeated due
 occurrences coalesce according to the scheduler rule above.
 
+Both dispatch paths use ThreadService's privileged feature entry and persist
+this immutable provenance before model execution:
+
+```ts
+turn.provenance.trigger = {
+  kind: "feature",
+  feature: "automation",
+  ref: automationRun.id,
+};
+```
+
+For standalone and existing-Thread delivery alike, `AutomationRun.turnId` and
+the Turn's provenance `ref` must point to each other. Startup reconciliation
+accepts a dispatch as complete only when this pair matches. Renderer IPC, prompt
+text, model output, tools, and plugins cannot invoke the privileged entry or
+author, copy, or rewrite this provenance.
+
 Both modes attach trusted application context under
 `additionalContext.automation_info` as `{ kind: application, value }`, containing
 Automation identity, scheduled time, destination, project/worktree facts, and
 the durable prompt revision. Main creates this entry; renderer or prompt input
 cannot claim application trust. This is context for the Turn, not a ThreadItem
-or a second system message stored by the renderer.
+or a second system message stored by the renderer. It helps the model understand
+the schedule but is never used to establish Automation provenance or Memory
+eligibility.
 
 Automations do not create `ThreadGoal`s. A user may deliberately target a Thread
 that already has a Goal, in which case the Goal extension observes the resulting
@@ -206,22 +226,23 @@ binding because one Thread has one sticky working context. Creation/update
 rejects a binding whose workspace does not match the destination Thread's
 effective environment; dispatch never silently retargets an existing Thread.
 
-### 5. Permissions and unattended execution
+### 5. Standing authorization and unattended execution
 
-Automation Turns start unattended and use `approvalPolicy=never` when the
-effective organization policy permits it. If managed requirements disallow
-`never`, main applies the selected permission mode's approval behavior, matching
-Codex's documented fallback. An approval or user question then uses the normal
-Thread control plane and `waitingOnApproval` / `waitingOnUserInput` flags; the
-Automations view links to that Thread instead of copying the request or inventing
-an Automation execution status. While the Turn waits, overlap remains blocked
-and later occurrences coalesce under the normal scheduler rule.
+Creating or enabling an Automation is standing authorization for its future
+occurrences to perform the saved work under the current OS account's Full Access.
+Automation does not add a sandbox, permission mode/profile, approval policy,
+managed fallback, risk confirmation, or pause/resume authorization flow. Each
+occurrence resolves its saved configuration revision into an effective tool
+catalog; current explicit user blocks are checked again at every tool dispatch,
+and native OS, authentication, provider, and service failures are returned by
+their owners. A tool that remains available has the same host-account authority
+as it has in an interactive Thread.
 
-The editor defaults to the narrowest useful sandbox. Network, filesystem access
-outside the workspace, app control, and full access require explicit effective
-permission support. The stored Automation contains a permissions profile ID, not
-an arbitrary renderer-authored sandbox object; main resolves and validates the
-effective policy at dispatch time.
+An Automation Turn may call root-only `request_user_input` for missing product
+input. That sets the canonical Thread `waitingOnUserInput` flag and keeps the
+occurrence active while later due work coalesces, but it can never request or
+grant authorization. The Automations view links to the canonical Thread input
+request instead of copying it or inventing an Automation execution status.
 
 Skills and plugins are resolved at each occurrence from the saved selections.
 Missing or disabled dependencies fail visibly before model execution. A skill or
@@ -234,14 +255,17 @@ tables.
 `codex_app.automation_update` supports Codex's create, update, view, and delete
 modes.
 Mutating modes use strict schemas for prompt, destination, RRULE/timezone,
-project bindings, model/effort, skills, plugins, permissions, and status. Main
-performs path, Thread, schedule, dependency, and policy validation and returns
-the canonical Automation DTO or deletion receipt.
+project bindings, model/effort, tools, skills, plugins, and status. Main performs
+path, Thread, schedule, dependency, and tool-catalog validation and returns the
+canonical Automation DTO or deletion receipt. Current explicit blocks remain
+dispatch-time policy and are not copied into the definition. No tool or renderer
+schema accepts a permission profile, sandbox, or approval policy.
 
 Preload exposes canonical list/read/create/update/pause/resume/delete/start-now
 operations plus Automation/AutomationRun change notifications. `start-now`
 creates an immediate uniquely keyed AutomationRun through the same dispatcher;
-it does not bypass permissions, worktree, or destination logic.
+it does not bypass saved configuration, current explicit blocks, worktree, or
+destination logic.
 
 Deleting an Automation stops future claims and omits undispatched pending claims,
 but does not delete dispatched Threads, Turns, or retained AutomationRun history.
@@ -263,8 +287,8 @@ The Automation editor supports:
 - timezone
 - no project, local project, or isolated worktree
 - model and reasoning effort
+- tools
 - skills and plugins
-- permission profile
 - pause/resume, Start now, and delete commands
 - pin/unpin for worktree retention
 
@@ -301,9 +325,14 @@ Issue-trigger schedules, and any second scheduler that starts agent execution.
   before dispatch and serialize one active occurrence per Automation/project.
 - **Busy existing Thread:** retain one pending claim, start only through
   `tryStartTurnIfIdle`, and coalesce later due occurrences to the latest.
-- **Unsafe unattended permissions:** resolve a stored permission profile in main,
-  honor managed fallback, and surface any canonical Thread approval/input wait in
-  the Automations inbox.
+- **Unattended work exceeds its saved scope:** Automation creation is explicit
+  standing authorization; every occurrence resolves the saved tool selections,
+  reevaluates current explicit blocks, records capability audits, and surfaces
+  native failures in its canonical Thread.
+- **Automation content leaks into Memory:** every dispatched Turn has immutable
+  host-authored Automation provenance, including delivery into an existing user
+  Thread; Memory filters that provenance rather than relying on Thread source or
+  model-visible context.
 - **Destructive worktree cleanup:** operate only inside the managed root, verify
   ownership, snapshot before removal, and preserve pinned worktrees.
 - **Execution-model drift:** AutomationRun stores routing only; every transcript,
@@ -320,7 +349,8 @@ preload/navigation integration, and does not modify Memory files.
 
 None. Ratifying this plan ratifies latest-only catch-up, no overlapping
 occurrences per Automation/project binding, standalone versus existing-Thread
-destinations, scoped AutomationRun bindings, and service-layer scheduling.
+destinations, scoped AutomationRun bindings, Full Access standing authorization,
+trusted Turn provenance, and service-layer scheduling.
 
 ## Implementation checklist
 
@@ -333,8 +363,10 @@ destinations, scoped AutomationRun bindings, and service-layer scheduling.
 - [ ] Implement timer/resume wakeup, latest-only catch-up, overlap prevention,
   coalescing, and shutdown behavior.
 - [ ] Implement standalone and existing-Thread dispatch through canonical
-  Thread/Turn APIs and trusted automation context.
-- [ ] Implement project/worktree lifecycle and unattended permission resolution.
+  Thread/Turn APIs with reciprocal AutomationRun provenance and trusted
+  automation context.
+- [ ] Implement project/worktree lifecycle and unattended Full Access execution
+  through saved tool catalogs, current explicit blocks, and native failures.
 - [ ] Implement `codex_app.automation_update`, preload APIs, notifications, Start
   now, and pause/delete/tombstone/retention semantics.
 - [ ] Delete every RecurringIssue, Issue schedule, AgentSession trigger,
@@ -344,7 +376,8 @@ destinations, scoped AutomationRun bindings, and service-layer scheduling.
   joins, and Thread/Turn navigation.
 - [ ] Add DST, crash, duplicate-claim, revision race, busy Thread, catch-up,
   post-Thread/post-Turn crash recovery, bounded omission aggregation, worktree
-  containment/cleanup, missing dependency, and managed-policy fallback tests.
+  containment/cleanup, missing dependency, provenance-integrity, explicit-block,
+  and `request_user_input` wait tests.
 - [ ] Rewrite active scheduling specs and add legacy-scheduler ownership guards.
 - [ ] Validate from empty userData with `bun run typecheck`, `bun run test:core`,
   `bun run test:renderer`, focused E2E coverage, `bun run docs:check`, and
