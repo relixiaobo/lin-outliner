@@ -31,6 +31,134 @@ interface SystemReferenceValuesProps {
   onTogglePin: (nodeId: NodeId) => void;
 }
 
+function mapIterator<T>(iterator: IterableIterator<T>): MapIterator<T> {
+  return Object.assign(iterator, { [Symbol.dispose]: () => undefined }) as MapIterator<T>;
+}
+
+class OverlayMap<K, V> extends Map<K, V> {
+  constructor(
+    private readonly base: ReadonlyMap<K, V>,
+    private readonly overlay: ReadonlyMap<K, V>,
+  ) {
+    super();
+  }
+
+  get size(): number {
+    let size = this.base.size;
+    for (const key of this.overlay.keys()) {
+      if (!this.base.has(key)) size += 1;
+    }
+    return size;
+  }
+
+  clear(): void {
+    throw new TypeError('OverlayMap is read-only');
+  }
+
+  delete(_key: K): boolean {
+    throw new TypeError('OverlayMap is read-only');
+  }
+
+  get(key: K): V | undefined {
+    return this.overlay.has(key) ? this.overlay.get(key) : this.base.get(key);
+  }
+
+  has(key: K): boolean {
+    return this.overlay.has(key) || this.base.has(key);
+  }
+
+  set(_key: K, _value: V): this {
+    throw new TypeError('OverlayMap is read-only');
+  }
+
+  private *entryGenerator(): IterableIterator<[K, V]> {
+    for (const [key, value] of this.base) {
+      yield [key, this.overlay.has(key) ? this.overlay.get(key)! : value];
+    }
+    for (const [key, value] of this.overlay) {
+      if (!this.base.has(key)) yield [key, value];
+    }
+  }
+
+  entries(): MapIterator<[K, V]> {
+    return mapIterator(this.entryGenerator());
+  }
+
+  forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: unknown): void {
+    for (const [key, value] of this.entries()) {
+      callbackfn.call(thisArg, value, key, this);
+    }
+  }
+
+  private *keyGenerator(): IterableIterator<K> {
+    for (const key of this.base.keys()) {
+      yield key;
+    }
+    for (const key of this.overlay.keys()) {
+      if (!this.base.has(key)) yield key;
+    }
+  }
+
+  keys(): MapIterator<K> {
+    return mapIterator(this.keyGenerator());
+  }
+
+  private *valueGenerator(): IterableIterator<V> {
+    for (const [, value] of this.entries()) {
+      yield value;
+    }
+  }
+
+  values(): MapIterator<V> {
+    return mapIterator(this.valueGenerator());
+  }
+
+  [Symbol.iterator](): MapIterator<[K, V]> {
+    return this.entries();
+  }
+}
+
+export function deriveSystemReferenceValueIndex(
+  index: DocumentIndex,
+  ownerId: NodeId,
+  entryId: NodeId,
+  systemFieldId: string,
+): { index: DocumentIndex; isEmpty: boolean } {
+  const owner = index.byId.get(ownerId);
+  if (!owner) return { index, isEmpty: true };
+
+  const targets = systemReferenceTargets(owner, systemFieldId, index.byId);
+  if (targets.length === 0) return { index, isEmpty: true };
+
+  const overlay = new Map<NodeId, NodeProjection>();
+  const refIds: NodeId[] = [];
+  for (const targetId of targets) {
+    const refId = syntheticSystemReferenceId(entryId, targetId);
+    refIds.push(refId);
+    overlay.set(refId, {
+      id: refId,
+      type: 'reference',
+      targetId,
+      parentId: entryId,
+      children: [],
+      content: EMPTY_RICH_TEXT,
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+      locked: true,
+      autoCollected: false,
+    } as NodeProjection);
+  }
+
+  const entry = index.byId.get(entryId);
+  if (entry) overlay.set(entryId, { ...entry, children: refIds });
+
+  return {
+    index: { ...index, byId: new OverlayMap(index.byId, overlay) },
+    isEmpty: false,
+  };
+}
+
 /**
  * Renders a read-only node-reference system field (References / Owner / Day) as
  * real reference rows — the same presentation used everywhere else, so each value
@@ -45,37 +173,14 @@ interface SystemReferenceValuesProps {
  * into an augmented index for this entry's subtree only.
  */
 export function SystemReferenceValues(props: SystemReferenceValuesProps) {
-  const owner = props.index.byId.get(props.ownerId);
-
   const { index, isEmpty } = useMemo(() => {
-    if (!owner) return { index: props.index, isEmpty: true };
-    const targets = systemReferenceTargets(owner, props.systemFieldId, props.index.byId);
-    if (targets.length === 0) return { index: props.index, isEmpty: true };
-
-    const byId = new Map(props.index.byId);
-    const refIds: NodeId[] = [];
-    for (const targetId of targets) {
-      const refId = syntheticSystemReferenceId(props.entryId, targetId);
-      refIds.push(refId);
-      byId.set(refId, {
-        id: refId,
-        type: 'reference',
-        targetId,
-        parentId: props.entryId,
-        children: [],
-        content: EMPTY_RICH_TEXT,
-        tags: [],
-        createdAt: 0,
-        updatedAt: 0,
-        locked: true,
-        autoCollected: false,
-      } as NodeProjection);
-    }
-    const entry = byId.get(props.entryId);
-    if (entry) byId.set(props.entryId, { ...entry, children: refIds });
-
-    return { index: { ...props.index, byId }, isEmpty: false };
-  }, [owner, props.entryId, props.systemFieldId, props.index]);
+    return deriveSystemReferenceValueIndex(
+      props.index,
+      props.ownerId,
+      props.entryId,
+      props.systemFieldId,
+    );
+  }, [props.entryId, props.index, props.ownerId, props.systemFieldId]);
 
   if (isEmpty) {
     return (
