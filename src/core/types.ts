@@ -3,6 +3,34 @@ import type { AgentUserQuestionPendingView } from './agentTypes';
 import type { AgentPrincipal } from './agentEventLog';
 import type { CaptureNodeMetadata } from './launcher/sources';
 
+export type {
+  DocumentSystemReceipt,
+  DocumentSystemHost,
+  DocumentSystemTransaction,
+  DocumentSystemTransactionContext,
+  DocumentSystemTagDefinition,
+  HostDocumentCommandInvocation,
+  HostDocumentCommandArguments,
+} from './documentSystem';
+export type {
+  AdditionalContext,
+  AdditionalContextEntry,
+  AgentCoreNotification,
+  AgentMutationCausation,
+  ItemProvenance,
+  MemoryCitation,
+  MemoryCitationEntry,
+  Thread,
+  ThreadId,
+  ThreadItem,
+  ThreadItemId,
+  ThreadSource,
+  Turn,
+  TurnId,
+  TurnProvenance,
+} from './agent/protocol';
+export type { ThreadGoal, ThreadGoalStatus } from './agent/goal';
+
 export type NodeId = string;
 
 export const WORKSPACE_ID = 'workspace';
