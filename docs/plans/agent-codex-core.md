@@ -14,10 +14,11 @@ This plan is a set of two ordered delivery units required by the repository's
 shared-interface-first rule:
 
 1. A human-led interface-only PR lands `src/core/agent/`, the coordinated shared
-   exports, codecs, tool contracts, provenance contracts, and protocol tests. It
-   does not add a second runtime, adapter, data reader, or migration path. The old
-   runtime remains the only executable consumer during this short interface
-   window.
+   exports, codecs, tool contracts, provenance contracts, the generic
+   projection-neutral document system-receipt contract, and protocol tests. It
+   does not add a second agent runtime, adapter, data reader, or migration path.
+   The old runtime remains the only executable agent consumer during this short
+   interface window.
 2. One complete replacement PR consumes that interface across persistence,
    runtime, transport, renderer, and deletion. It is complete only when the old
    Conversation / Channel / Run / Issue / AgentSession / Activity / Dream model
@@ -163,6 +164,45 @@ files for the duration of the PR.
 preload, renderer, fixtures, and debug views import it; they may define local UI
 state but may not redeclare `Thread`, `Turn`, `ThreadItem`, or `ThreadGoal`.
 Protocol round-trip and exhaustive-variant tests fail on an unhandled item type.
+
+#### Projection-neutral document system receipts
+
+The interface-only PR also defines one generic document primitive needed by
+crash-safe host features such as Memory. `DocumentSystemReceipt` is a small,
+opaque commit marker:
+
+```ts
+type DocumentSystemReceipt = {
+  namespace: string;
+  scopeId: string;
+  operationId: string;
+  generation: number;
+  digest: string; // lowercase SHA-256 of the canonical prepared record
+};
+```
+
+Core persists the latest receipt per `(namespace, scopeId)` in a dedicated Loro
+map outside the Node map. It is deliberately not a `Node` field and is excluded
+from `NodeFieldKey`, `NodeProjection`, `DocumentProjection`, projection deltas,
+renderer IPC, Node tools, search/backlinks, ordinary outline export, and model
+context. Only trusted main-process services can read it.
+
+The shared command contract includes a host-only
+`put_document_system_receipt` mutation. It is not part of the renderer or model
+tool catalogs and cannot be dispatched through public document-command IPC.
+Inside one `DocumentService.transaction`, it commits in the same Loro change as
+the accompanying Node commands; a transaction with Node changes emits only those
+Node projection deltas, while a receipt-only transaction emits no renderer
+projection update. System receipts and their host transactions are excluded from
+user undo/redo. Canonical encoding, last-writer behavior, atomic Node-plus-receipt
+commit, reload, receipt-only projection silence, and public-surface exclusion are
+contract-tested before a consumer may depend on the primitive.
+
+The receipt contains no feature payload. A consumer stores its full prepared
+operation in its own control database and places only a digest over that record
+in the document receipt. The Core replacement implements this already-settled
+contract; Memory later consumes it without modifying `src/core/types.ts` or
+`src/core/commands.ts` again.
 
 ### 3. Protocol model
 
@@ -614,10 +654,11 @@ both a zero-result active-repository scan and a zero-result fresh-storage scan;
 ### 8. Risks and mitigations
 
 - **Interface/runtime drift:** the human-led interface PR lands first with codecs,
-  provenance invariants, and contract tests; the replacement branch rebases on
-  that exact commit and may not redeclare or locally widen the shared contract.
-  The interface window contains no adapter, dual write, or second executable
-  runtime and is closed by the immediately following replacement PR.
+  provenance invariants, the projection-neutral system-receipt contract, and
+  contract tests; the replacement branch rebases on that exact commit and may
+  not redeclare or locally widen the shared contract. The interface window
+  contains no adapter, dual write, or second executable agent runtime and is
+  closed by the immediately following replacement PR.
 - **Capability loss hidden by old adapters:** inventory every provider/tool,
   Full Access audit/block, attachment, compaction, retry, and notification path
   and prove each through the canonical protocol before deleting its old consumer.
@@ -644,7 +685,8 @@ Profile/Role/child-Thread split, history-only fork semantics, separate
 core/history/Goal stores, rollout-as-history-source, the fixed
 `collaboration.*` v2 tool namespace, the exact `request_user_input` replacement,
 the exhaustive tool migration, immutable Turn/Item provenance, the retained Full
-Access boundary, and the interface-first two-PR delivery order.
+Access boundary, the projection-neutral document system-receipt primitive, and
+the interface-first two-PR delivery order.
 
 ## Implementation checklist
 
@@ -654,7 +696,8 @@ Access boundary, and the interface-first two-PR delivery order.
   protocol and extension interfaces, including ThreadSource strings, immutable
   Turn/Item provenance, paginated-only history, immutable completed Items, client
   input idempotency, Node-backed MemoryCitation, configuration profiles, agent
-  roles, additional-context trust, and Full Access exclusions.
+  roles, additional-context trust, Full Access exclusions, and the generic
+  projection-neutral `DocumentSystemReceipt` plus host-only atomic mutation.
 - [ ] In that interface PR, define and contract-test the canonical model-tool
   registry, fixed `collaboration` namespace, v2 Subagent suite, root-only
   `request_user_input`, `update_plan`, Goal tools, retained capability tools,
@@ -662,6 +705,9 @@ Access boundary, and the interface-first two-PR delivery order.
   legacy aliases.
 - [ ] After the interface PR merges, rebase and open the complete replacement PR;
   do not redeclare, adapt, or widen the shared protocol locally.
+- [ ] Implement the settled system-receipt Loro map and host-only
+  `put_document_system_receipt` path, including atomic Node-plus-receipt commits,
+  reload, projection/search/model exclusion, and no user undo entry.
 - [ ] Implement rollout recording, Thread metadata/spawn edges, the separate
   history projection, pagination, and replay equivalence.
 - [ ] Implement Thread/Turn runtimes and make GoalExtension exercise the real
