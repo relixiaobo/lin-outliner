@@ -21,6 +21,10 @@ import {
   type QueryOp,
   type SearchQueryExpr,
 } from '../../src/core/types';
+import {
+  SEARCH_QUERY_COMPLEXITY_LIMITS,
+  compileSearchQueryExpr,
+} from '../../src/core/searchQueryCompiler';
 import { REF_COUNT_FIELD } from '../../src/core/systemFields';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
@@ -138,6 +142,107 @@ describe('core search engine', () => {
 
     expect(run.ok).toBe(false);
     if (!run.ok) expect(run.issue.message).toContain('valid regular expression');
+  });
+
+  test('bounds canonical query expression complexity before evaluation', () => {
+    const core = Core.new();
+    let deepQuery: SearchQueryExpr = { kind: 'rule', op: 'STRING_MATCH', text: 'Alpha' };
+    for (let depth = 0; depth < SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth; depth += 1) {
+      deepQuery = { kind: 'group', logic: 'AND', children: [deepQuery] };
+    }
+    const deepValidation = validateSearchQueries(core.projection(), [deepQuery]);
+    expect(deepValidation.ok).toBe(false);
+    if (!deepValidation.ok) {
+      expect(deepValidation.issue.code).toBe('invalid_search_condition');
+      expect(deepValidation.issue.message).toContain('too deep');
+    }
+
+    const cyclicQuery = { kind: 'group', logic: 'AND', children: [] } as unknown as SearchQueryExpr;
+    (cyclicQuery as Extract<SearchQueryExpr, { kind: 'group' }>).children.push(cyclicQuery);
+    const cyclicValidation = validateSearchQueries(core.projection(), [cyclicQuery]);
+    expect(cyclicValidation.ok).toBe(false);
+    if (!cyclicValidation.ok) expect(cyclicValidation.issue.message).toContain('cycle');
+
+    const operandValidation = validateSearchQueries(core.projection(), [{
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      operands: Array.from({ length: SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule + 1 }, (_, index) => ({
+        text: `term ${index}`,
+      })),
+    }]);
+    expect(operandValidation.ok).toBe(false);
+    if (!operandValidation.ok) expect(operandValidation.issue.message).toContain('too many operands');
+  });
+
+  test('rejects over-budget saved-search configs before mutating nodes', () => {
+    const core = Core.new();
+    const searchesId = core.projection().searchesId;
+    const overDepthQuery = (() => {
+      let query: SearchQueryExpr = { kind: 'rule', op: 'STRING_MATCH', text: 'Alpha' };
+      for (let depth = 0; depth < SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth; depth += 1) {
+        query = { kind: 'group', logic: 'AND', children: [query] };
+      }
+      return query;
+    })();
+
+    const searchRootChildrenBefore = [...core.state().nodes[searchesId]!.children];
+    expect(() => core.createSearchNode(searchesId, null, {
+      title: 'Too deep',
+      query: overDepthQuery,
+    })).toThrow(/too deep/u);
+    expect(core.state().nodes[searchesId]!.children).toEqual(searchRootChildrenBefore);
+
+    expect(() => core.createSearchNode(searchesId, null, {
+      title: 'Unsupported',
+      query: { kind: 'rule', op: 'EDITED_BY' },
+    })).toThrow(/not supported/u);
+    expect(core.state().nodes[searchesId]!.children).toEqual(searchRootChildrenBefore);
+
+    const searchId = mustFocus(core.createSearchNode(searchesId, null, {
+      title: 'Valid',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'Alpha' },
+    }));
+    const savedBefore = core.state().nodes[searchId]!;
+    expect(() => core.setSearchNode(searchId, {
+      title: 'Too deep',
+      query: overDepthQuery,
+    })).toThrow(/too deep/u);
+    const savedAfter = core.state().nodes[searchId]!;
+    expect(savedAfter.content.text).toBe(savedBefore.content.text);
+    expect(savedAfter.children).toEqual(savedBefore.children);
+    expect(runSearchNode(core.state(), searchId).ok).toBe(true);
+
+    expect(() => core.setSearchNode(searchId, {
+      title: 'Unsupported',
+      query: { kind: 'rule', op: 'EDITED_BY' },
+    })).toThrow(/not supported/u);
+    const savedAfterUnsupported = core.state().nodes[searchId]!;
+    expect(savedAfterUnsupported.content.text).toBe(savedBefore.content.text);
+    expect(savedAfterUnsupported.children).toEqual(savedBefore.children);
+    expect(runSearchNode(core.state(), searchId).ok).toBe(true);
+  });
+
+  test('compiles canonical query metadata iteratively', () => {
+    const query: SearchQueryExpr = {
+      kind: 'group',
+      logic: 'AND',
+      children: [
+        { kind: 'rule', op: 'STRING_MATCH', text: 'Launch', operands: [{ text: 'Plan' }] },
+        { kind: 'rule', op: 'HAS_TAG', tagDefId: 'tag-a' },
+        { kind: 'rule', op: 'FIELD_IS', fieldDefId: 'field-a', targetId: 'target-a' },
+      ],
+    };
+
+    const compiled = compileSearchQueryExpr(query);
+    expect(compiled.ok).toBe(true);
+    if (compiled.ok) {
+      expect(compiled.query.hasRules).toBe(true);
+      expect(compiled.query.terms).toEqual(['Launch', 'Plan']);
+      expect(compiled.query.referencedTagIds).toEqual(['tag-a']);
+      expect(compiled.query.referencedFieldIds).toEqual(['field-a']);
+      expect(compiled.query.referencedTargetIds).toEqual(['target-a']);
+      expect(compiled.query.nodeCount).toBe(4);
+    }
   });
 
   test('LINKS_TO uses canonical linked reference sources', () => {
@@ -586,6 +691,16 @@ describe('core search engine', () => {
         children: [{ kind: 'rule', op: 'STRING_MATCH', text: 'Launch' }],
       },
     });
+  });
+
+  test('treats empty saved search condition groups as no query', () => {
+    const core = Core.new();
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Empty search',
+      query: { kind: 'group', logic: 'AND', children: [] },
+    }));
+
+    expect(searchNodeToQueryExpr(core.state(), searchId)).toEqual({ ok: true, query: null });
   });
 
   test('converts full saved search logic without a simple compatibility layer', () => {

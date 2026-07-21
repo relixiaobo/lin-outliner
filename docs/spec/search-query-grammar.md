@@ -48,6 +48,33 @@ Rules:
 - JSON object DSL is allowed as an internal/debug shape only. It is not the
   canonical search outline syntax.
 
+## Complexity Budget
+
+Search query handling is admitted through a shared iterative compiler before
+validation or execution. The compiler is the single budget authority for
+canonical `SearchQueryExpr` input and protects Core, main/agent tools, and
+renderer summaries from stack overflows or frame-length recursive walks.
+
+Current limits:
+
+- maximum query depth: 1,024,
+- maximum query nodes: 10,000,
+- maximum operands per rule: 256,
+- maximum children per group: 1,024.
+
+Over-budget canonical queries fail fast with `invalid_search_condition` (or the
+existing unsupported logic/rule issue where applicable) before candidate
+evaluation starts. Saved-search condition nodes are converted to canonical
+queries with the same budget and cycle checks; an empty saved-search group is
+treated as no executable query so saved-search titles are never interpreted as an
+implicit text condition. Temporary agent search outlines use the same limits
+while parsing, validating, and serializing query trees.
+
+Renderer search query summaries and outline text are also built with bounded
+iterative traversals. If the visible summary must omit over-budget branches, it
+sets truncation metadata and renders a neutral "More rules omitted" chip instead
+of walking the full tree.
+
 ## Execution And Relevance
 
 The query protocol is stable: `SearchQueryExpr`, `QueryOp`, saved-search outline

@@ -1729,6 +1729,7 @@ commandPalette: {
     summary: {
       rulesAriaLabel: 'Search rules',
       noRules: 'No rules',
+      truncated: 'More rules omitted',
       viewTitle: 'Show view toolbar',
       viewLabel: 'Show view toolbar',
       refreshTitle: 'Refresh',

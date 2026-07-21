@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
 import type { Messages } from '../../../core/i18n';
+import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../../core/searchQueryCompiler';
 import { api } from '../../api/client';
 import { inlineRefNodeId, type NodeId, type NodeProjection, type QueryLogic, type QueryOp } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
@@ -31,6 +32,7 @@ export interface SearchQuerySummaryChip {
 export interface SearchQuerySummaryModel {
   chips: SearchQuerySummaryChip[];
   resultCount: number;
+  truncated: boolean;
 }
 
 interface SearchQuerySummaryBarProps {
@@ -66,6 +68,8 @@ const TEXT_OPS = new Set<QueryOp>([
   'EDITED_LAST_DAYS',
   'DONE_LAST_DAYS',
 ]);
+
+const SEARCH_QUERY_SUMMARY_MAX_CHIPS = 64;
 
 export function SearchQueryBuilderPanel({ index, nodeId, run, onClose }: SearchQueryBuilderPanelProps) {
   const t = useT();
@@ -202,16 +206,18 @@ export function searchQuerySummaryModel(index: DocumentIndex, nodeId: NodeId, t:
   if (!searchNode || searchNode.type !== 'search') return null;
 
   const queryRoots = directConditionChildren(index, searchNode);
-  const chips = queryRoots.length > 0
-    ? queryRoots.flatMap((condition) => conditionChips(index, condition, 0, t))
-    : conditionChips(index, searchNode, 0, t);
+  const chipSummary = conditionChips(index, queryRoots.children.length > 0 ? queryRoots.children : [searchNode], t);
+  const truncated = chipSummary.truncated || queryRoots.truncated;
 
   return {
-    chips,
+    chips: truncated
+      ? [...chipSummary.chips, { kind: 'logic', label: t.search.summary.truncated }]
+      : chipSummary.chips,
     resultCount: searchNode.children.filter((childId) => {
       const child = index.byId.get(childId);
       return child?.type === 'reference' && Boolean(child.targetId);
     }).length,
+    truncated,
   };
 }
 
@@ -220,10 +226,10 @@ export function searchQueryOutlineText(index: DocumentIndex, nodeId: NodeId, t: 
   if (!searchNode || searchNode.type !== 'search') return '';
 
   const queryRoots = directConditionChildren(index, searchNode);
-  const roots = queryRoots.length > 0
-    ? queryRoots
+  const roots = queryRoots.children.length > 0
+    ? queryRoots.children
     : searchNode.queryLogic || searchNode.queryOp ? [searchNode] : [];
-  return roots.flatMap((condition) => conditionOutlineLines(index, condition, 0, t)).join('\n');
+  return conditionOutlineLines(index, roots, t).join('\n');
 }
 
 export function SearchQuerySummaryBar({ index, nodeId, run }: SearchQuerySummaryBarProps) {
@@ -295,33 +301,55 @@ function SearchQueryChip({ chip }: { chip: SearchQuerySummaryChip }) {
   );
 }
 
-function conditionOutlineLines(index: DocumentIndex, condition: QueryBearingProjection, level: number, t: Messages): string[] {
-  const indent = '  '.repeat(level);
-  if (condition.queryLogic) {
-    return [
-      `${indent}- ${condition.queryLogic}`,
-      ...directConditionChildren(index, condition).flatMap((child) => conditionOutlineLines(index, child, level + 1, t)),
-    ];
+function conditionOutlineLines(index: DocumentIndex, roots: QueryBearingProjection[], t: Messages): string[] {
+  const lines: string[] = [];
+  const visited = new Set<NodeId>();
+  const stack: Array<{ condition: QueryBearingProjection; level: number }> = [];
+  let nodeCount = 0;
+
+  for (let rootIndex = roots.length - 1; rootIndex >= 0; rootIndex -= 1) {
+    stack.push({ condition: roots[rootIndex]!, level: 0 });
   }
 
-  if (!condition.queryOp) return [];
-  const lines = [`${indent}- ${condition.queryOp}`];
-  if (condition.queryFieldDefId) lines.push(`${indent}  - field:: ${nodeReference(index, condition.queryFieldDefId, t)}`);
-  if (condition.queryTagDefId) lines.push(`${indent}  - tag:: ${nodeReference(index, condition.queryTagDefId, t, tagName(index, condition.queryTagDefId, t))}`);
-  if (condition.queryTargetId) lines.push(`${indent}  - target:: ${nodeReference(index, condition.queryTargetId, t)}`);
-  for (const operand of operandOutlineTexts(index, condition, t)) {
-    lines.push(`${indent}  - value:: ${operand}`);
+  while (stack.length > 0) {
+    const { condition, level } = stack.pop()!;
+    if (visited.has(condition.id)) continue;
+    if (level > SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth) break;
+    if (nodeCount >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes) break;
+    nodeCount += 1;
+    visited.add(condition.id);
+
+    const indent = '  '.repeat(level);
+    if (condition.queryLogic) {
+      lines.push(`${indent}- ${condition.queryLogic}`);
+      const children = directConditionChildren(index, condition).children;
+      for (let childIndex = children.length - 1; childIndex >= 0; childIndex -= 1) {
+        stack.push({ condition: children[childIndex]!, level: level + 1 });
+      }
+      continue;
+    }
+
+    if (!condition.queryOp) continue;
+    lines.push(`${indent}- ${condition.queryOp}`);
+    if (condition.queryFieldDefId) lines.push(`${indent}  - field:: ${nodeReference(index, condition.queryFieldDefId, t)}`);
+    if (condition.queryTagDefId) lines.push(`${indent}  - tag:: ${nodeReference(index, condition.queryTagDefId, t, tagName(index, condition.queryTagDefId, t))}`);
+    if (condition.queryTargetId) lines.push(`${indent}  - target:: ${nodeReference(index, condition.queryTargetId, t)}`);
+    for (const operand of operandOutlineTexts(index, condition, t)) {
+      lines.push(`${indent}  - value:: ${operand}`);
+    }
   }
   return lines;
 }
 
 function operandOutlineTexts(index: DocumentIndex, condition: QueryBearingProjection, t: Messages): string[] {
-  const operands = condition.children.flatMap((childId): string[] => {
+  const operands: string[] = [];
+  for (const childId of condition.children) {
+    if (operands.length >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule) break;
     const child = index.byId.get(childId);
-    if (!child || child.type === 'queryCondition') return [];
+    if (!child || child.type === 'queryCondition') continue;
     const text = operandOutlineText(index, child, t);
-    return text ? [text] : [];
-  });
+    if (text) operands.push(text);
+  }
   if (operands.length > 0) return uniqueLabels(operands);
 
   const text = condition.content.text.trim();
@@ -337,19 +365,81 @@ function operandOutlineText(index: DocumentIndex, node: NodeProjection, t: Messa
   return node.content.text.trim();
 }
 
-function conditionChips(index: DocumentIndex, condition: QueryBearingProjection, depth: number, t: Messages): SearchQuerySummaryChip[] {
-  if (condition.queryLogic) {
-    const childChips = directConditionChildren(index, condition)
-      .flatMap((child) => conditionChips(index, child, depth + 1, t));
-    if (depth === 0 && condition.queryLogic === 'AND') return childChips;
-    return [{
-      kind: 'logic',
-      label: formatLogicGroup(condition.queryLogic, childChips, t),
-    }];
+function conditionChips(index: DocumentIndex, roots: QueryBearingProjection[], t: Messages): {
+  chips: SearchQuerySummaryChip[];
+  truncated: boolean;
+} {
+  type Frame = { condition: QueryBearingProjection; depth: number; exiting: boolean };
+
+  const chipsById = new Map<NodeId, SearchQuerySummaryChip[]>();
+  const childrenById = new Map<NodeId, QueryBearingProjection[]>();
+  const active = new Set<NodeId>();
+  const stack: Frame[] = [];
+  let nodeCount = 0;
+  let truncated = false;
+
+  for (let rootIndex = roots.length - 1; rootIndex >= 0; rootIndex -= 1) {
+    stack.push({ condition: roots[rootIndex]!, depth: 0, exiting: false });
   }
 
-  if (!condition.queryOp) return [];
-  return [ruleChip(index, condition, condition.queryOp, t)];
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    const condition = frame.condition;
+
+    if (frame.exiting) {
+      active.delete(condition.id);
+      if (condition.queryLogic) {
+        const childChips = (childrenById.get(condition.id) ?? [])
+          .flatMap((child) => chipsById.get(child.id) ?? []);
+        if (childChips.length > SEARCH_QUERY_SUMMARY_MAX_CHIPS) truncated = true;
+        const chips = frame.depth === 0 && condition.queryLogic === 'AND'
+          ? childChips
+          : [{ kind: 'logic' as const, label: formatLogicGroup(condition.queryLogic, childChips, t) }];
+        chipsById.set(condition.id, chips.slice(0, SEARCH_QUERY_SUMMARY_MAX_CHIPS));
+      } else if (condition.queryOp) {
+        chipsById.set(condition.id, [ruleChip(index, condition, condition.queryOp, t)]);
+      } else {
+        chipsById.set(condition.id, []);
+      }
+      continue;
+    }
+
+    if (chipsById.has(condition.id)) continue;
+    if (active.has(condition.id)) {
+      truncated = true;
+      chipsById.set(condition.id, []);
+      continue;
+    }
+    if (frame.depth > SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth || nodeCount >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes) {
+      truncated = true;
+      chipsById.set(condition.id, []);
+      continue;
+    }
+    nodeCount += 1;
+    active.add(condition.id);
+    stack.push({ ...frame, exiting: true });
+
+    if (!condition.queryLogic) continue;
+    const childResult = directConditionChildren(index, condition);
+    if (childResult.truncated) truncated = true;
+    childrenById.set(condition.id, childResult.children);
+    for (let childIndex = childResult.children.length - 1; childIndex >= 0; childIndex -= 1) {
+      const child = childResult.children[childIndex]!;
+      if (!chipsById.has(child.id)) stack.push({ condition: child, depth: frame.depth + 1, exiting: false });
+    }
+  }
+
+  const chips: SearchQuerySummaryChip[] = [];
+  for (const root of roots) {
+    for (const chip of chipsById.get(root.id) ?? []) {
+      if (chips.length >= SEARCH_QUERY_SUMMARY_MAX_CHIPS) {
+        truncated = true;
+        break;
+      }
+      chips.push(chip);
+    }
+  }
+  return { chips, truncated };
 }
 
 function ruleChip(index: DocumentIndex, condition: QueryBearingProjection, op: QueryOp, t: Messages): SearchQuerySummaryChip {
@@ -479,12 +569,14 @@ function textRuleLabel(index: DocumentIndex, condition: QueryBearingProjection, 
 }
 
 function valueLabels(index: DocumentIndex, condition: QueryBearingProjection, t: Messages): string[] {
-  const labels = condition.children.flatMap((childId): string[] => {
+  const labels: string[] = [];
+  for (const childId of condition.children) {
+    if (labels.length >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule) break;
     const child = index.byId.get(childId);
-    if (!child || child.type === 'queryCondition') return [];
+    if (!child || child.type === 'queryCondition') continue;
     const label = operandLabel(index, child, t);
-    return label ? [label] : [];
-  });
+    if (label) labels.push(label);
+  }
   if (labels.length > 0) return uniqueLabels(labels);
   const text = condition.content.text.trim();
   return text ? [text] : [];
@@ -498,10 +590,22 @@ function operandLabel(index: DocumentIndex, node: NodeProjection, t: Messages): 
   return node.content.text.trim();
 }
 
-function directConditionChildren(index: DocumentIndex, node: NodeProjection): QueryBearingProjection[] {
-  return node.children
-    .map((childId) => index.byId.get(childId))
-    .filter((child): child is QueryBearingProjection => child?.type === 'queryCondition');
+function directConditionChildren(index: DocumentIndex, node: NodeProjection): {
+  children: QueryBearingProjection[];
+  truncated: boolean;
+} {
+  const children: QueryBearingProjection[] = [];
+  let truncated = false;
+  for (const childId of node.children) {
+    const child = index.byId.get(childId);
+    if (child?.type !== 'queryCondition') continue;
+    if (children.length >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup) {
+      truncated = true;
+      break;
+    }
+    children.push(child);
+  }
+  return { children, truncated };
 }
 
 function formatLogicGroup(logic: QueryLogic, chips: SearchQuerySummaryChip[], t: Messages): string {
