@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Renderer formatting cache (PR #418, codex)** — renderer date/time and
+  number formatting call sites now share bounded `Intl.DateTimeFormat` and
+  `Intl.NumberFormat` caches, preserving the existing visible strings while
+  avoiding repeated formatter construction in Agent panels, file previews, and
+  calendar chrome. **Gate (main):** review found no reportable issues. Verified
+  with typecheck, full renderer tests, focused formatting/cache and migrated
+  call-site tests, docs check, and diff check.
+- **Agent definition-create read-model routing (PR #417, codex)** — definition
+  `node_create` now uses the maintained document read model for initial Schema
+  validation and a mutation-local projection view fed by command deltas for
+  create/config writes, so field/tag definition creation avoids public
+  full-projection fanout on `DocumentService` hosts. **Gate (main):** review
+  found no reportable issues. Verified with typecheck, focused DocumentService /
+  Agent node-tool tests, docs check, and diff check.
 - **Agent node_create read-model routing (PR #416, codex)** — ordinary Agent
   `node_create` now uses the maintained document read model for initial
   validation and a mutation-local projection view updated from command deltas
