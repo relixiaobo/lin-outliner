@@ -192,4 +192,95 @@ describe('DocumentService projection routing metadata', () => {
     expect(editResult.details.data.createdNodeIds).toHaveLength(1);
     expect(projectionReads).toBe(0);
   });
+
+  test('serves DocumentService-backed target-reference node_create through the read model', async () => {
+    const service = await createService();
+    const projection = service.getProjection();
+    const rootId = projection.rootId;
+    const todayId = projection.todayId;
+    const target = await service.handle('create_node', {
+      parentId: todayId,
+      index: null,
+      text: 'Reference target',
+    }) as CommandResult;
+    const targetId = target.focus!.nodeId;
+    service.getDocumentReadModel();
+
+    const originalGetProjection = service.getProjection.bind(service);
+    const originalGetDocumentReadModel = service.getDocumentReadModel.bind(service);
+    let projectionReads = 0;
+    let readModelReads = 0;
+    (service as unknown as { getProjection: typeof service.getProjection }).getProjection = () => {
+      projectionReads += 1;
+      return originalGetProjection();
+    };
+    (service as unknown as { getDocumentReadModel: typeof service.getDocumentReadModel }).getDocumentReadModel = () => {
+      readModelReads += 1;
+      return originalGetDocumentReadModel();
+    };
+    const nodeCreate = createNodeTools(service).find((tool) => tool.name === 'node_create');
+    expect(nodeCreate).toBeDefined();
+
+    const createResult = await (nodeCreate!.execute as any)('test-create-reference', {
+      parent_id: rootId,
+      target_id: targetId,
+    });
+
+    expect(createResult.details.ok).toBe(true);
+    expect(createResult.details.data.targetId).toBe(targetId);
+    expect(createResult.details.data.createdRootIds).toHaveLength(1);
+    expect(projectionReads).toBe(0);
+    expect(readModelReads).toBeGreaterThan(0);
+  });
+
+  test('serves DocumentService-backed outline node_create through command deltas without projection fanout', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Forecast background',
+    });
+    await service.handle('create_tag', { name: 'existing-tag' });
+    service.getDocumentReadModel();
+
+    const originalGetProjection = service.getProjection.bind(service);
+    const originalGetDocumentReadModel = service.getDocumentReadModel.bind(service);
+    let projectionReads = 0;
+    let readModelReads = 0;
+    (service as unknown as { getProjection: typeof service.getProjection }).getProjection = () => {
+      projectionReads += 1;
+      return originalGetProjection();
+    };
+    (service as unknown as { getDocumentReadModel: typeof service.getDocumentReadModel }).getDocumentReadModel = () => {
+      readModelReads += 1;
+      return originalGetDocumentReadModel();
+    };
+    const nodeCreate = createNodeTools(service).find((tool) => tool.name === 'node_create');
+    expect(nodeCreate).toBeDefined();
+
+    const createResult = await (nodeCreate!.execute as any)('test-create-outline', {
+      parent_id: rootId,
+      outline: [
+        '- Source:: RSS',
+        '- Reporter:: Codex',
+        '- Root #existing-tag #created-tag',
+        '  - Status:: Active',
+        '  - ```ts',
+        '  const answer = 42',
+        '  ```',
+        '  - %%search%% Forecast %%view:list%%',
+        '    - STRING_MATCH',
+        '      - value:: forecast',
+      ].join('\n'),
+    });
+
+    expect(createResult.details.ok).toBe(true);
+    expect(createResult.details.data.createdFieldEntryIds.length).toBeGreaterThanOrEqual(3);
+    expect(createResult.details.data.createdTagIds).toHaveLength(1);
+    expect(createResult.details.data.createdRootIds).toHaveLength(1);
+    expect(createResult.details.data.createdNodeIds.length).toBeGreaterThan(2);
+    expect(projectionReads).toBe(0);
+    expect(readModelReads).toBeGreaterThan(0);
+  });
 });
