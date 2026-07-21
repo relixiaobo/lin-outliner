@@ -13,8 +13,8 @@ import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
 import { EMPTY_RICH_TEXT, nodeReferenceTarget, plainText } from '../api/types';
 import { requestRevealChatSource } from '../agent/agentReveal';
-import { TAG_DAY_ID } from '../../core/types';
 import { flattenVisibleRows, resolveReferenceTargetId, type DocumentIndex, type UiState } from '../state/document';
+import { dayNoteIsoDateForNode } from '../state/dayNoteCounts';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
 import {
   deleteRichTextRange,
@@ -97,28 +97,6 @@ interface NodePanelProps {
   setTrigger: (trigger: TriggerState) => void;
   dragId: NodeId | null;
   setDragId: (nodeId: NodeId | null) => void;
-}
-
-function parsePanelDateLabel(label: string) {
-  const trimmed = label.trim();
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(year, month - 1, day);
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return null;
-  }
-  return trimmed;
-}
-
-function isDayTagId(tagId: NodeId, byId: DocumentIndex['byId']) {
-  return tagId === TAG_DAY_ID || byId.get(tagId)?.content.text.toLowerCase() === 'day';
 }
 
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -318,9 +296,7 @@ export function NodePanel(props: NodePanelProps) {
   const showDoneCheckbox = rootNode ? nodeShowsCheckbox(props.index.byId, rootNode) : false;
   const rootTagIds = rootNode?.tags ?? [];
   const hasTitleTags = rootTagIds.length > 0;
-  const panelIsoDate = rootNode && rootTagIds.some((tagId) => isDayTagId(tagId, props.index.byId))
-    ? parsePanelDateLabel(rootNode.content.text)
-    : null;
+  const panelIsoDate = dayNoteIsoDateForNode(rootNode, props.index.dayNoteCounts);
   // A day node's title is a locked, read-only ISO string; show a humanized label
   // ("Today, Wed, May 27" / "Wed, May 27") in its place, in both the title editor
   // and the docked breadcrumb. Re-derived per local day so a session crossing
@@ -337,15 +313,6 @@ export function NodePanel(props: NodePanelProps) {
     [dayTitleLabel],
   );
   const currentPageTitle = fileTitleLabel ?? dayTitleLabel ?? (rootNode?.content.text || t.common.untitled);
-  const dateNoteCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const node of props.index.byId.values()) {
-      if (!node.tags.some((tagId) => isDayTagId(tagId, props.index.byId))) continue;
-      const isoDate = parsePanelDateLabel(node.content.text);
-      if (isoDate) counts[isoDate] = node.children.length;
-    }
-    return counts;
-  }, [props.index.byId]);
 
   const restorePanelScroll = useCallback(() => {
     const panel = mainPanelRef.current;
@@ -813,7 +780,7 @@ export function NodePanel(props: NodePanelProps) {
           )}
           {panelIsoDate && (
             <PanelDateNavigation
-              dateNoteCounts={dateNoteCounts}
+              dayNoteCounts={props.index.dayNoteCounts}
               isoDate={panelIsoDate}
               onRoot={props.onRoot}
               run={props.run}

@@ -137,4 +137,22 @@ describe('reduceProjection over real core deltas', () => {
     expect(byId.get(c)!.parentId).toBe(b);  // C re-parented under B
     expect(materializedById(byId)).toEqual(rebuiltById(core)); // and the whole index matches a rebuild
   });
+
+  test('real date-node child-count deltas update the renderer day-note index', () => {
+    const core = Core.new();
+    const dayId = newId(core.ensureDateNode(2030, 1, 2));
+    let lastEmitted = core.revision();
+    let state = reduceProjection(null, { kind: 'full', revision: lastEmitted, projection: core.projection() });
+    expect(state).not.toBeNull();
+    expect(state!.index.dayNoteCounts.countsByDate.get('2030-01-02')).toBe(0);
+
+    core.createNode(dayId, null, 'Journal entry');
+    const update = buildUpdate(core, lastEmitted);
+    lastEmitted = update.revision;
+    state = reduceProjection(state, update);
+
+    expect(state).not.toBeNull();
+    expect(state!.index.dayNoteCounts.countsByDate.get('2030-01-02')).toBe(1);
+    expect(materializedById(state!.index.byId)).toEqual(rebuiltById(core));
+  });
 });

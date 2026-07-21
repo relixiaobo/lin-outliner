@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { DocumentProjection, NodeId, NodeProjection, ProjectionUpdate } from '../../src/core/types';
+import { TAG_DAY_ID, type DocumentProjection, type NodeId, type NodeProjection, type ProjectionUpdate } from '../../src/core/types';
 import { reduceProjection } from '../../src/renderer/state/document';
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
@@ -62,6 +62,15 @@ describe('reduceProjection — full update', () => {
     expect(state.index.renderRev.get('root')).toBe(1);
   });
 
+  test('seeds the day-note count index from the full projection', () => {
+    const state = reduceProjection(null, full(7, [
+      node('root'),
+      node(TAG_DAY_ID, { type: 'tagDef', content: { text: 'day', marks: [], inlineRefs: [] } }),
+      node('day', { parentId: 'root', tags: [TAG_DAY_ID], content: { text: '2026-05-20', marks: [], inlineRefs: [] }, children: ['a', 'b'] }),
+    ]));
+    expect(state?.index.dayNoteCounts.countsByDate.get('2026-05-20')).toBe(2);
+  });
+
   test('a later full update rebuilds from scratch and bumps every counter', () => {
     const first = seed(1);
     const second = reduceProjection(first, full(2, tree()))!;
@@ -120,6 +129,7 @@ describe('reduceProjection — delta content edit', () => {
 
     expect(next.index.byId.get('c')!.content.text).toBe('edited');
     expect(next.index.renderRev.get('root')).toBe(2);
+    expect(next.index.dayNoteCounts).toBe(prev.index.dayNoteCounts);
   });
 
   test('bumps the changed node and its structural ancestors only', () => {
@@ -198,6 +208,34 @@ describe('reduceProjection — delta structural change', () => {
     expect(next.index.byId.has('a')).toBe(true);
     expect(next.index.projection.todayId).toBe('a2');
     expect(next.index.projection.nodes.some((n) => n.id === 'c')).toBe(false);
+  });
+
+  test('patches day-note counts from projection deltas', () => {
+    const prev = reduceProjection(null, full(1, [
+      node('root', { children: ['day'] }),
+      node(TAG_DAY_ID, { type: 'tagDef', content: { text: 'day', marks: [], inlineRefs: [] } }),
+      node('day', { parentId: 'root', tags: [TAG_DAY_ID], content: { text: '2026-05-20', marks: [], inlineRefs: [] }, children: ['a'] }),
+      node('a', { parentId: 'day' }),
+    ]));
+    expect(prev).not.toBeNull();
+    const editedDay = node('day', {
+      parentId: 'root',
+      tags: [TAG_DAY_ID],
+      content: { text: '2026-05-20', marks: [], inlineRefs: [] },
+      children: ['a', 'b'],
+    });
+    const newChild = node('b', { parentId: 'day' });
+
+    const next = reduceProjection(prev, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [editedDay, newChild],
+      removedIds: [],
+    });
+
+    expect(next?.index.dayNoteCounts).not.toBe(prev!.index.dayNoteCounts);
+    expect(next?.index.dayNoteCounts.countsByDate.get('2026-05-20')).toBe(2);
   });
 
   test('a survivor moved out of a removed node is kept (removedIds-only delete)', () => {

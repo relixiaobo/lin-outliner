@@ -29,6 +29,11 @@ import {
   visibleAuthoredTableFieldIds,
   type OutlinerRowItem,
 } from './outlinerRows';
+import {
+  buildDayNoteCountIndex,
+  patchDayNoteCountIndex,
+  type DayNoteCountIndex,
+} from './dayNoteCounts';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
@@ -39,6 +44,7 @@ export interface DocumentIndex {
   // projection store. UI state (focus/selection/…) is compared per-row in the
   // memo from the `ui` prop, not carried here.
   renderRev?: ReadonlyMap<NodeId, number>;
+  dayNoteCounts: DayNoteCountIndex;
 }
 
 export type FocusSurface = CoreFocusSurface;
@@ -47,9 +53,11 @@ export type InlineRefCursorBias = CoreInlineRefCursorBias;
 export type SelectionSource = 'global' | 'ref-click';
 
 export function buildIndex(projection: DocumentProjection): DocumentIndex {
+  const byId = new Map(projection.nodes.map((node) => [node.id, node]));
   return {
     projection,
-    byId: new Map(projection.nodes.map((node) => [node.id, node])),
+    byId,
+    dayNoteCounts: buildDayNoteCountIndex(byId),
   };
 }
 
@@ -88,7 +96,7 @@ export function reduceProjection(
     const affected = new Set<NodeId>(byId.keys());
     const renderRev = nextRevisions(prev?.index.renderRev ?? null, affected, byId.keys());
     return {
-      index: { projection: update.projection, byId, renderRev },
+      index: { projection: update.projection, byId, renderRev, dayNoteCounts: buildDayNoteCountIndex(byId) },
       revision: update.revision,
       reverseEdges: buildReverseEdges(byId),
     };
@@ -131,7 +139,14 @@ export function reduceProjection(
   const reverseEdges = patchReverseEdges(prev.reverseEdges, prev.index.byId, update.changedNodes, update.removedIds);
   const affected = propagateDirty(changed, byId, reverseEdges);
   const renderRev = patchRevisions(prev.index.renderRev, affected, byId, update.removedIds);
-  return { index: { projection, byId, renderRev }, revision: update.revision, reverseEdges };
+  const dayNoteCounts = patchDayNoteCountIndex({
+    previous: prev.index.dayNoteCounts,
+    previousById: prev.index.byId,
+    nextById: byId,
+    changedNodes: update.changedNodes,
+    removedIds: update.removedIds,
+  });
+  return { index: { projection, byId, renderRev, dayNoteCounts }, revision: update.revision, reverseEdges };
 }
 
 // Find a node by id within a ProjectionUpdate: the changed set for a `delta`, the
