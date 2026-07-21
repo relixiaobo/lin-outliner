@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
@@ -32,7 +32,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-21).** Open PR queue: none. Recently
-merged: #421 (`codex/search-query-complexity-budget`) merged 2026-07-21 after
+merged: #422 (`codex/panel-date-navigation-index`) merged 2026-07-21 after two
+main review rounds; see *Recently completed*. #421 (`codex/search-query-complexity-budget`) merged 2026-07-21 after
 iterative main review; see *Recently completed*. #420 (`codex/renderer-delta-reducer-surface`) merged 2026-07-21 after
 main review; see *Recently completed*. #419 (`codex/diagnostic-log-coalescing`) merged 2026-07-21 after
 iterative main review; see *Recently completed*. #418 (`codex/renderer-formatting-cache`) and #417
@@ -181,7 +182,8 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    #417 extended that route to definition creation; #418 cached renderer `Intl` formatters;
    #419 coalesced diagnostic log writes; #420 made renderer projection delta
    snapshots bucketed copy-on-write with lazy `projection.nodes` views; #421
-   bounded search-query compilation and removed recursive query traversal.
+   bounded search-query compilation and removed recursive query traversal; #422
+   made panel date-navigation counts incremental and windowed.
    Remaining localized
    cleanups are still tracked in `docs/plans/performance-optimization.md`; no design gate.
 4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
@@ -493,7 +495,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
   perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
-  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 + rich-text patch runtime #415 + Agent node_create read-model routing #416 + definition create routing #417 + renderer formatting cache #418 + diagnostic log coalescing #419 + renderer delta reducer surface #420 + search query complexity budget #421 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
+  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 + rich-text patch runtime #415 + Agent node_create read-model routing #416 + definition create routing #417 + renderer formatting cache #418 + diagnostic log coalescing #419 + renderer delta reducer surface #420 + search query complexity budget #421 + panel date navigation index #422 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
   index patched per delta, windowed/flat outliner renderer + agent streaming `projection_patch` +
   structural-save coalescing (metrics in Recently completed). #380 precomputes Trash descendant sets
   for renderer/system/search reference-summary scans and stops building recursive panel row models on
@@ -512,8 +514,10 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   coalesces repeated diagnostic reports into dirty in-memory aggregates before compact log flushes,
   #420 keeps renderer projection `byId` and render-revision snapshots in sparse copy-on-write
   maps while exposing delta `projection.nodes` through a lazy array-shaped compatibility view,
-  and #421 bounds query depth/size before evaluation while making Core, Agent, renderer summary,
-  and reference-cycle query-adjacent traversals iterative.
+  #421 bounds query depth/size before evaluation while making Core, Agent, renderer summary,
+  and reference-cycle query-adjacent traversals iterative, and #422 maintains day-note tag
+  membership and per-date direct-child counts from projection deltas while reading only the visible
+  calendar window.
   **Remaining P3:** additional localized O(N) cleanups still listed in the plan; the ordinary renderer
   projection delta path no longer rebuilds `new Map(prev.byId)` or the whole render-revision map.
 
@@ -553,6 +557,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **panel-date-navigation-index**
+  (`codex/panel-date-navigation-index`, PR #422, codex, merged 2026-07-21,
+  fast-track) — renderer document state now maintains day-note tag membership
+  and per-date direct-child counts from projection deltas. The panel calendar
+  reads only its visible date window instead of rescanning the full document,
+  while fallback Day tags, renames, duplicate dates, and sparse updates preserve
+  existing behavior.
+  **Gate (main):** the first review found that ordinary incremental updates still
+  cloned complete backing maps; the second found that every tag-member set
+  eagerly allocated 1,024 empty buckets. Codex replaced those paths with sparse
+  occupied-bucket maps and native sets below 64 members on final head `05f6baa`.
+  Verified with typecheck, `docs:check`, diff check, full `test:renderer` (953
+  pass), focused light/dark date-navigation E2E (3 pass), and a 5,000-operation
+  incremental-versus-rebuild differential check across the set threshold.
 
 - **search-query-complexity-budget**
   (`codex/search-query-complexity-budget`, PR #421, codex, merged 2026-07-21,

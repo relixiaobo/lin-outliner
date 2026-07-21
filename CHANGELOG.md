@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Panel date navigation index (PR #422, codex)** — renderer document state now
+  maintains day-note tag membership and per-date direct-child counts from
+  projection deltas, and the panel calendar reads only its visible date window
+  instead of rescanning the full document. Fallback Day tags, renames, duplicate
+  dates, and sparse updates preserve existing behavior. **Gate (main):** the
+  first review found that ordinary incremental updates still cloned complete
+  backing maps; the second found that every tag-member set eagerly allocated
+  1,024 empty buckets. Codex replaced those paths with sparse occupied-bucket
+  maps and native sets below 64 members before merge. Verified with typecheck,
+  full renderer tests, focused light/dark date-navigation E2E, docs check, diff
+  check, and a 5,000-operation incremental-versus-rebuild differential check.
 - **Search query complexity budget (PR #421, codex)** — canonical and saved
   search queries now pass through bounded iterative compilation before
   evaluation, with explicit depth, node, operand, and group-child limits.
