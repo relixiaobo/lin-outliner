@@ -4,6 +4,7 @@ import {
   buildSystemFieldReuseCandidates,
   buildUserFieldReuseCandidates,
   filterFieldReuseCandidates,
+  queryUserFieldReuseCandidates,
   sortFieldReuseCandidatesByLabel,
 } from '../../src/renderer/ui/interactions/fieldReuseCandidates';
 
@@ -18,6 +19,15 @@ function node(
 
 function byId(...nodes: NodeProjection[]): Map<NodeId, NodeProjection> {
   return new Map(nodes.map((n) => [n.id, n]));
+}
+
+class CountingMap<K, V> extends Map<K, V> {
+  valuesCalls = 0;
+
+  override values(): MapIterator<V> {
+    this.valuesCalls += 1;
+    return super.values();
+  }
 }
 
 describe('buildUserFieldReuseCandidates', () => {
@@ -42,6 +52,85 @@ describe('buildUserFieldReuseCandidates', () => {
     );
     const result = buildUserFieldReuseCandidates(map, { trashId: 'trash' });
     expect(result.map((c) => c.id)).toEqual(['a']);
+  });
+});
+
+describe('queryUserFieldReuseCandidates', () => {
+  test('reuses the active field index for multiple queries on the same byId snapshot', () => {
+    const map = new CountingMap<NodeId, NodeProjection>([
+      ['trash', node('trash', 'node', 'Trash')],
+      ['a', node('a', 'fieldDef', 'Status')],
+      ['b', node('b', 'fieldDef', 'Start date')],
+      ['c', node('c', 'fieldDef', 'Assignee')],
+    ]);
+
+    expect(queryUserFieldReuseCandidates(map, 'sta', { trashId: 'trash' }).map((c) => c.label)).toEqual([
+      'Start date',
+      'Status',
+    ]);
+    expect(map.valuesCalls).toBe(1);
+
+    expect(queryUserFieldReuseCandidates(map, 'ass', { trashId: 'trash' }).map((c) => c.label)).toEqual([
+      'Assignee',
+    ]);
+    expect(map.valuesCalls).toBe(1);
+  });
+
+  test('serves broad prefix queries from a bounded sorted window', () => {
+    const entries: Array<[NodeId, NodeProjection]> = [['trash', node('trash', 'node', 'Trash')]];
+    for (let index = 0; index < 40; index += 1) {
+      const id = `field-${String(index).padStart(2, '0')}`;
+      entries.push([id, node(id, 'fieldDef', `Field ${String(index).padStart(2, '0')}`)]);
+    }
+    const map = new CountingMap<NodeId, NodeProjection>(entries);
+
+    const result = queryUserFieldReuseCandidates(map, 'field', { trashId: 'trash' });
+
+    expect(result).toHaveLength(24);
+    expect(result[0]?.label).toBe('Field 00');
+    expect(result.at(-1)?.label).toBe('Field 23');
+    expect(map.valuesCalls).toBe(1);
+  });
+
+  test('falls back to substring matches when there are not enough prefix matches', () => {
+    const map = byId(
+      node('a', 'fieldDef', 'Status'),
+      node('b', 'fieldDef', 'Start date'),
+      node('c', 'fieldDef', 'Assignee'),
+    );
+
+    expect(queryUserFieldReuseCandidates(map, 'tus').map((c) => c.label)).toEqual([
+      'Status',
+    ]);
+  });
+
+  test('keeps the empty forced picker complete and alphabetical', () => {
+    const map = byId(
+      node('a', 'fieldDef', 'Owner'),
+      node('b', 'fieldDef', 'Assignee'),
+      node('c', 'fieldDef', 'status'),
+    );
+
+    expect(queryUserFieldReuseCandidates(map, '', { forceOpen: true }).map((c) => c.label)).toEqual([
+      'Assignee',
+      'Owner',
+      'status',
+    ]);
+  });
+
+  test('excludes the draft def and fields already present on the owner', () => {
+    const map = byId(
+      node('a', 'fieldDef', 'Status'),
+      node('b', 'fieldDef', 'Start date'),
+      node('draft', 'fieldDef', 'Draft'),
+    );
+
+    expect(queryUserFieldReuseCandidates(map, 'sta', {
+      excludeDefId: 'draft',
+      excludeDefIds: new Set(['a']),
+    }).map((c) => c.label)).toEqual([
+      'Start date',
+    ]);
   });
 });
 

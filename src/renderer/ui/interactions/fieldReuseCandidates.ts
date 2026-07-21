@@ -16,6 +16,17 @@ export interface FieldReuseCandidate {
   systemKind?: string;
 }
 
+interface IndexedFieldReuseCandidate extends FieldReuseCandidate {
+  lowerLabel: string;
+}
+
+interface ActiveFieldReuseIndex {
+  sortedFields: IndexedFieldReuseCandidate[];
+}
+
+const TYPED_FIELD_REUSE_LIMIT = 24;
+const activeFieldReuseIndexCache = new WeakMap<Map<NodeId, NodeProjection>, Map<string, ActiveFieldReuseIndex>>();
+
 /**
  * Existing user field definitions, offered for reuse while naming a field. Every
  * `fieldDef` node with a name is a reusable definition (mirrors
@@ -34,6 +45,127 @@ export function buildUserFieldReuseCandidates(
     const label = node.content.text.trim();
     if (!label) continue;
     candidates.push({ id: node.id, label, section: 'Fields', kind: 'user' });
+  }
+  return candidates;
+}
+
+function cacheKeyForTrashRoot(trashId: NodeId | undefined): string {
+  return trashId ?? '';
+}
+
+function compareIndexedFieldLabel(left: IndexedFieldReuseCandidate, right: IndexedFieldReuseCandidate): number {
+  const byLower = left.lowerLabel.localeCompare(right.lowerLabel, undefined, { sensitivity: 'base' });
+  if (byLower !== 0) return byLower;
+  return left.id.localeCompare(right.id);
+}
+
+function activeFieldReuseIndex(
+  byId: Map<NodeId, NodeProjection>,
+  trashId: NodeId | undefined,
+): ActiveFieldReuseIndex {
+  const cacheKey = cacheKeyForTrashRoot(trashId);
+  let perTrashRoot = activeFieldReuseIndexCache.get(byId);
+  if (!perTrashRoot) {
+    perTrashRoot = new Map();
+    activeFieldReuseIndexCache.set(byId, perTrashRoot);
+  }
+
+  const cached = perTrashRoot.get(cacheKey);
+  if (cached) return cached;
+
+  const sortedFields: IndexedFieldReuseCandidate[] = [];
+  for (const node of byId.values()) {
+    if (node.type !== 'fieldDef') continue;
+    if (trashId && isNodeInSubtree(byId, node.id, trashId)) continue;
+    const label = node.content.text.trim();
+    if (!label) continue;
+    sortedFields.push({
+      id: node.id,
+      label,
+      lowerLabel: label.toLowerCase(),
+      section: 'Fields',
+      kind: 'user',
+    });
+  }
+  sortedFields.sort(compareIndexedFieldLabel);
+
+  const index = { sortedFields };
+  perTrashRoot.set(cacheKey, index);
+  return index;
+}
+
+function isExcluded(
+  candidate: FieldReuseCandidate,
+  excludeDefId: string | undefined,
+  excludeDefIds: ReadonlySet<string> | undefined,
+): boolean {
+  return candidate.id === excludeDefId || Boolean(excludeDefIds?.has(candidate.id));
+}
+
+function lowerBoundByLabel(
+  fields: readonly IndexedFieldReuseCandidate[],
+  needle: string,
+): number {
+  let low = 0;
+  let high = fields.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (fields[mid].lowerLabel.localeCompare(needle, undefined, { sensitivity: 'base' }) < 0) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+function publicCandidate(candidate: IndexedFieldReuseCandidate): FieldReuseCandidate {
+  return {
+    id: candidate.id,
+    label: candidate.label,
+    section: candidate.section,
+    kind: candidate.kind,
+  };
+}
+
+export function queryUserFieldReuseCandidates(
+  byId: Map<NodeId, NodeProjection>,
+  query: string,
+  options: {
+    excludeDefId?: string;
+    excludeDefIds?: ReadonlySet<string>;
+    trashId?: NodeId;
+    forceOpen?: boolean;
+    limit?: number;
+  } = {},
+): FieldReuseCandidate[] {
+  const fields = activeFieldReuseIndex(byId, options.trashId).sortedFields;
+  const limit = options.limit ?? TYPED_FIELD_REUSE_LIMIT;
+  const needle = query.trim().toLowerCase();
+
+  if (options.forceOpen && !needle) {
+    return fields
+      .filter((candidate) => !isExcluded(candidate, options.excludeDefId, options.excludeDefIds))
+      .map(publicCandidate);
+  }
+
+  if (!needle || limit <= 0) return [];
+
+  const candidates: FieldReuseCandidate[] = [];
+  const prefixStart = lowerBoundByLabel(fields, needle);
+  for (let index = prefixStart; index < fields.length && candidates.length < limit; index += 1) {
+    const candidate = fields[index];
+    if (!candidate.lowerLabel.startsWith(needle)) break;
+    if (!isExcluded(candidate, options.excludeDefId, options.excludeDefIds)) {
+      candidates.push(publicCandidate(candidate));
+    }
+  }
+
+  if (candidates.length >= limit) return candidates;
+
+  for (const candidate of fields) {
+    if (candidates.length >= limit) break;
+    if (candidate.lowerLabel.startsWith(needle)) continue;
+    if (!candidate.lowerLabel.includes(needle)) continue;
+    if (isExcluded(candidate, options.excludeDefId, options.excludeDefIds)) continue;
+    candidates.push(publicCandidate(candidate));
   }
   return candidates;
 }
