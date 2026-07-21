@@ -233,6 +233,44 @@ describe('DocumentService projection routing metadata', () => {
     expect(readModelReads).toBeGreaterThan(0);
   });
 
+  test('serves DocumentService-backed definition node_create through command deltas without projection fanout', async () => {
+    const service = await createService();
+    service.getDocumentReadModel();
+
+    const originalGetProjection = service.getProjection.bind(service);
+    const originalGetDocumentReadModel = service.getDocumentReadModel.bind(service);
+    let projectionReads = 0;
+    let readModelReads = 0;
+    (service as unknown as { getProjection: typeof service.getProjection }).getProjection = () => {
+      projectionReads += 1;
+      return originalGetProjection();
+    };
+    (service as unknown as { getDocumentReadModel: typeof service.getDocumentReadModel }).getDocumentReadModel = () => {
+      readModelReads += 1;
+      return originalGetDocumentReadModel();
+    };
+    const nodeCreate = createNodeTools(service).find((tool) => tool.name === 'node_create');
+    expect(nodeCreate).toBeDefined();
+
+    const createResult = await (nodeCreate!.execute as any)('test-create-definition', {
+      definition: {
+        kind: 'field',
+        name: 'Score',
+        config: { field_type: 'number', min_value: 0, max_value: 10 },
+      },
+    });
+
+    expect(createResult.details.ok).toBe(true);
+    expect(createResult.details.data.createdFieldDefIds).toHaveLength(1);
+    expect(createResult.details.data.definition.afterConfig).toMatchObject({
+      fieldType: 'number',
+      minValue: 0,
+      maxValue: 10,
+    });
+    expect(projectionReads).toBe(0);
+    expect(readModelReads).toBeGreaterThan(0);
+  });
+
   test('serves DocumentService-backed outline node_create through command deltas without projection fanout', async () => {
     const service = await createService();
     const rootId = service.getProjection().rootId;
