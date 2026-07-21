@@ -425,13 +425,30 @@ export class LoroOutlinerDocument {
     this.touchNodeWithSnapshot(node.id, normalized);
   }
 
-  applyNodeTextPatch(nodeId: string, patch: RichTextPatch) {
+  applyNodeTextPatch(
+    nodeId: string,
+    patch: RichTextPatch,
+    options: { currentNode?: Node; updatedAt?: number } = {},
+  ) {
     const treeNode = this.requiredTreeNode(nodeId);
     const text = ensureLoroText(treeNode.data, 'content');
-    for (const op of patch.ops) applyRichTextPatchOp(text, op);
+    let contentMirror = options.currentNode?.content;
+    for (const op of patch.ops) {
+      applyRichTextPatchOp(text, op, contentMirror);
+      if (contentMirror) contentMirror = applyRichTextPatchOpToContent(contentMirror, op);
+    }
     treeNode.data.delete('contentMarks');
     treeNode.data.delete('contentInlineRefs');
-    this.touchNode(nodeId);
+    if (options.updatedAt !== undefined) treeNode.data.set('updatedAt', options.updatedAt);
+    if (options.currentNode && contentMirror) {
+      this.touchNodeWithSnapshot(nodeId, normalizeNode({
+        ...options.currentNode,
+        content: contentMirror,
+        updatedAt: options.updatedAt ?? options.currentNode.updatedAt,
+      }));
+    } else {
+      this.touchNode(nodeId);
+    }
   }
 
   setNodeUpdatedAt(nodeId: string, updatedAt: number) {
@@ -948,19 +965,20 @@ function ensureLoroText(data: LoroMap, key: string) {
   return text as LoroText;
 }
 
-function applyRichTextPatchOp(text: LoroText, op: RichTextPatchOp) {
+function applyRichTextPatchOp(text: LoroText, op: RichTextPatchOp, currentContent?: RichText) {
   if (op.type === 'replace_all') {
     replaceAllRichText(text, op.content);
     return;
   }
   if (op.type === 'replace') {
-    replaceRichTextRange(text, op);
+    const contentAfterDeletedRefs = deleteInlineRefs(text, op.deletedInlineRefs ?? [], currentContent);
+    replaceRichTextRange(text, op, contentAfterDeletedRefs ?? currentContent);
     return;
   }
 
-  const current = richTextFromDelta(text.toDelta());
-  const start = toInternalTextOffset(clampTextOffset(op.from, current.text.length), current.inlineRefs, false);
-  const end = toInternalTextOffset(clampTextOffset(op.to, current.text.length), current.inlineRefs, false);
+  const current = currentContent ?? richTextFromDelta(text.toDelta());
+  const start = toInternalTextOffsetFromContent(clampTextOffset(op.from, current.text.length), current, false);
+  const end = toInternalTextOffsetFromContent(clampTextOffset(op.to, current.text.length), current, false);
   if (end <= start) return;
   if (op.type === 'add_mark') {
     text.mark({ start, end }, op.markType, op.attrs && Object.keys(op.attrs).length > 0 ? clone(op.attrs) : true);
@@ -978,22 +996,28 @@ function replaceAllRichText(text: LoroText, content: RichText) {
   markInsertedRichText(text, 0, content, encoded.inlineRefs);
 }
 
-function replaceRichTextRange(text: LoroText, op: Extract<RichTextPatchOp, { type: 'replace' }>) {
-  deleteInlineRefs(text, op.deletedInlineRefs ?? []);
-
-  const current = richTextFromDelta(text.toDelta());
+function replaceRichTextRange(
+  text: LoroText,
+  op: Extract<RichTextPatchOp, { type: 'replace' }>,
+  currentContent?: RichText,
+) {
+  const current = currentContent ?? richTextFromDelta(text.toDelta());
   const from = clampTextOffset(op.from, current.text.length);
   const to = Math.max(from, clampTextOffset(op.to, current.text.length));
-  const start = toInternalTextOffset(from, current.inlineRefs, true);
-  const end = toInternalTextOffset(to, current.inlineRefs, false);
+  const start = toInternalTextOffsetFromContent(from, current, true);
+  const end = toInternalTextOffsetFromContent(to, current, false);
   const encoded = encodeRichText(op.content);
   text.splice(start, Math.max(0, end - start), encoded.text);
   markInsertedRichText(text, start, op.content, encoded.inlineRefs);
 }
 
-function deleteInlineRefs(text: LoroText, refs: readonly RichText['inlineRefs'][number][]) {
-  if (refs.length === 0) return;
-  const encoded = encodeRichText(richTextFromDelta(text.toDelta()));
+function deleteInlineRefs(
+  text: LoroText,
+  refs: readonly RichText['inlineRefs'][number][],
+  currentContent?: RichText,
+): RichText | undefined {
+  if (refs.length === 0) return currentContent;
+  const encoded = encodeRichText(currentContent ?? richTextFromDelta(text.toDelta()));
   const usedInternalOffsets = new Set<number>();
   const internalOffsets: number[] = [];
   for (const ref of refs) {
@@ -1009,6 +1033,7 @@ function deleteInlineRefs(text: LoroText, refs: readonly RichText['inlineRefs'][
   for (const internalOffset of internalOffsets.sort((left, right) => right - left)) {
     text.splice(internalOffset, INLINE_REF_PLACEHOLDER.length, '');
   }
+  return currentContent ? removeDeletedInlineRefsFromContent(currentContent, refs) : undefined;
 }
 
 function markInsertedRichText(
@@ -1037,6 +1062,149 @@ function markInsertedRichText(
       ...(typeof inlineRef.sizeBytes === 'number' ? { sizeBytes: inlineRef.sizeBytes } : {}),
     });
   }
+}
+
+function applyRichTextPatchOpToContent(content: RichText, op: RichTextPatchOp): RichText {
+  if (op.type === 'replace_all') return cloneRichText(op.content);
+  if (op.type === 'replace') {
+    return replaceRichTextContentRange(
+      removeDeletedInlineRefsFromContent(content, op.deletedInlineRefs ?? []),
+      op,
+    );
+  }
+  if (op.type === 'add_mark') return addTextMarkToContent(content, op);
+  return removeTextMarkFromContent(content, op);
+}
+
+function cloneRichText(content: RichText): RichText {
+  return {
+    text: content.text,
+    marks: content.marks.map((mark) => ({ ...mark, ...(mark.attrs ? { attrs: { ...mark.attrs } } : {}) })),
+    inlineRefs: content.inlineRefs.map((ref) => clone(ref)),
+  };
+}
+
+function replaceRichTextContentRange(content: RichText, op: Extract<RichTextPatchOp, { type: 'replace' }>): RichText {
+  const from = clampTextOffset(op.from, content.text.length);
+  const to = Math.max(from, clampTextOffset(op.to, content.text.length));
+  const insertedLength = op.content.text.length;
+  if (
+    from === to
+    && from === content.text.length
+    && op.content.marks.length === 0
+    && op.content.inlineRefs.length === 0
+  ) {
+    return insertedLength === 0
+      ? content
+      : { text: `${content.text}${op.content.text}`, marks: content.marks, inlineRefs: content.inlineRefs };
+  }
+
+  const delta = insertedLength - (to - from);
+  const mapPosition = (position: number, isStart: boolean) => {
+    if (position < from) return position;
+    if (position > to) return position + delta;
+    return isStart ? from + insertedLength : from;
+  };
+  const remappedMarks = content.marks
+    .map((mark) => ({
+      ...mark,
+      start: mapPosition(mark.start, true),
+      end: mapPosition(mark.end, false),
+    }))
+    .filter((mark) => mark.end > mark.start);
+  const insertedMarks = op.content.marks.map((mark) => ({
+    ...mark,
+    start: from + mark.start,
+    end: from + mark.end,
+  }));
+  const beforeRefs: RichText['inlineRefs'] = [];
+  const afterRefs: RichText['inlineRefs'] = [];
+  for (const ref of content.inlineRefs) {
+    if (ref.offset <= from) {
+      beforeRefs.push(ref);
+    } else if (ref.offset >= to) {
+      afterRefs.push({ ...ref, offset: ref.offset + delta });
+    }
+  }
+
+  return {
+    text: `${content.text.slice(0, from)}${op.content.text}${content.text.slice(to)}`,
+    marks: mergeAdjacentTextMarks([...remappedMarks, ...insertedMarks]),
+    inlineRefs: [
+      ...beforeRefs,
+      ...op.content.inlineRefs.map((ref) => ({ ...ref, offset: from + ref.offset })),
+      ...afterRefs,
+    ],
+  };
+}
+
+function addTextMarkToContent(content: RichText, op: Extract<RichTextPatchOp, { type: 'add_mark' }>): RichText {
+  const start = clampTextOffset(op.from, content.text.length);
+  const end = Math.max(start, clampTextOffset(op.to, content.text.length));
+  if (end <= start) return content;
+  const added: TextMark = {
+    start,
+    end,
+    type: op.markType,
+    ...(op.attrs && Object.keys(op.attrs).length > 0 ? { attrs: { ...op.attrs } } : {}),
+  };
+  if (content.marks.length === 0) {
+    return { ...content, marks: [added] };
+  }
+  const preserved: TextMark[] = [];
+  for (const mark of content.marks) {
+    if (mark.type !== op.markType || mark.end <= start || mark.start >= end) {
+      preserved.push(mark);
+      continue;
+    }
+    if (mark.start < start) preserved.push({ ...mark, end: start });
+    if (mark.end > end) preserved.push({ ...mark, start: end });
+  }
+  return { ...content, marks: mergeAdjacentTextMarks([...preserved, added]) };
+}
+
+function removeTextMarkFromContent(content: RichText, op: Extract<RichTextPatchOp, { type: 'remove_mark' }>): RichText {
+  if (content.marks.length === 0) return content;
+  const start = clampTextOffset(op.from, content.text.length);
+  const end = Math.max(start, clampTextOffset(op.to, content.text.length));
+  if (end <= start) return content;
+  let changed = false;
+  const marks: TextMark[] = [];
+  for (const mark of content.marks) {
+    if (mark.type !== op.markType || mark.end <= start || mark.start >= end) {
+      marks.push(mark);
+      continue;
+    }
+    changed = true;
+    if (mark.start < start) marks.push({ ...mark, end: start });
+    if (mark.end > end) marks.push({ ...mark, start: end });
+  }
+  return changed ? { ...content, marks: mergeAdjacentTextMarks(marks) } : content;
+}
+
+function removeDeletedInlineRefsFromContent(
+  content: RichText,
+  refs: readonly RichText['inlineRefs'][number][],
+): RichText {
+  if (refs.length === 0 || content.inlineRefs.length === 0) return content;
+  const usedDeletedIndexes = new Set<number>();
+  const inlineRefs = content.inlineRefs.filter((ref) => {
+    const deletedIndex = refs.findIndex((candidate, index) =>
+      !usedDeletedIndexes.has(index) && inlineRefMatchesDeletedRef(ref, candidate));
+    if (deletedIndex < 0) return true;
+    usedDeletedIndexes.add(deletedIndex);
+    return false;
+  });
+  return inlineRefs.length === content.inlineRefs.length ? content : { ...content, inlineRefs };
+}
+
+function inlineRefMatchesDeletedRef(
+  ref: RichText['inlineRefs'][number],
+  deletedRef: RichText['inlineRefs'][number],
+) {
+  return deletedRef.offset === ref.offset
+    && referenceTargetsEqual(deletedRef.target, ref.target)
+    && (deletedRef.displayName === undefined || deletedRef.displayName === ref.displayName);
 }
 
 function richTextFromDelta(delta: unknown[]): RichText {
@@ -1106,6 +1274,26 @@ function toInternalTextOffset(offset: number, inlineRefs: RichText['inlineRefs']
   const refCount = inlineRefs.filter((ref) =>
     includeRefsAtOffset ? ref.offset <= offset : ref.offset < offset).length;
   return offset + refCount;
+}
+
+function toInternalTextOffsetFromContent(offset: number, content: RichText, includeRefsAtOffset: boolean) {
+  return offset + countInlineRefsBeforeVisibleOffset(content.inlineRefs, offset, includeRefsAtOffset);
+}
+
+function countInlineRefsBeforeVisibleOffset(
+  inlineRefs: RichText['inlineRefs'],
+  offset: number,
+  includeRefsAtOffset: boolean,
+) {
+  let low = 0;
+  let high = inlineRefs.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    const refOffset = inlineRefs[mid]?.offset ?? 0;
+    if (includeRefsAtOffset ? refOffset <= offset : refOffset < offset) low = mid + 1;
+    else high = mid;
+  }
+  return low;
 }
 
 function clampTextOffset(offset: number, length: number) {

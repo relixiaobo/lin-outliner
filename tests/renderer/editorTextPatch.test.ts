@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { EditorState } from 'prosemirror-state';
 import { richTextPatchFromTransaction } from '../../src/renderer/ui/editor/editorTextPatch';
+import { applyRichTextPatchToContent } from '../../src/renderer/ui/editor/richTextPatchApply';
 import { pmSchema } from '../../src/renderer/ui/editor/pmSchema';
 import {
   docToRichText,
@@ -173,6 +174,44 @@ describe('editor text patch', () => {
           inlineRefs: [{ offset: 4, target: nodeReferenceTarget('target'), displayName: 'Target' }],
         },
       }],
+    });
+  });
+
+  test('keeps inline refs at the replacement end boundary in patch mirrors', () => {
+    const content = {
+      text: 'abc',
+      marks: [],
+      inlineRefs: [{ offset: 2, target: nodeReferenceTarget('target'), displayName: 'Target' }],
+    };
+    const doc = richTextToDoc(content);
+    const state = EditorState.create({ schema: pmSchema, doc });
+    const tr = state.tr.delete(
+      textOffsetToDocPos(doc, 0),
+      textOffsetToDocPos(doc, 2, { inlineRefBias: 'before' }),
+    );
+    const patch = richTextPatchFromTransaction(tr);
+    const afterDelete = {
+      text: 'c',
+      marks: [],
+      inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target'), displayName: 'Target' }],
+    };
+
+    expect(patch).toEqual({
+      ops: [{
+        type: 'replace',
+        from: 0,
+        to: 2,
+        content: { text: '', marks: [], inlineRefs: [] },
+      }],
+    });
+    expect(docToRichText(tr.doc)).toEqual(afterDelete);
+    expect(applyRichTextPatchToContent(content, patch)).toEqual(afterDelete);
+    expect(applyRichTextPatchToContent(content, {
+      ops: [{ type: 'replace', from: 0, to: 2, content: plainText('x') }],
+    })).toEqual({
+      text: 'xc',
+      marks: [],
+      inlineRefs: [{ offset: 1, target: nodeReferenceTarget('target'), displayName: 'Target' }],
     });
   });
 

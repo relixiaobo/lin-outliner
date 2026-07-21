@@ -14,20 +14,10 @@ function isEmptyRichText(content: RichText): boolean {
 }
 
 export function richTextPatchFromTransaction(transaction: Transaction): RichTextPatch {
-  if (richTextEquals(docToRichText(transaction.before), docToRichText(transaction.doc))) {
-    return { ops: [] };
-  }
-
-  if (needsWholeDocumentReplacement(transaction)) {
-    return {
-      ops: [{
-        type: 'replace_all',
-        content: docToRichText(transaction.doc),
-      }],
-    };
-  }
+  if (!transaction.docChanged) return { ops: [] };
 
   const ops: RichTextPatchOp[] = [];
+  let needsWholeReplacement = false;
 
   for (let index = 0; index < transaction.steps.length; index += 1) {
     const step = transaction.steps[index];
@@ -41,6 +31,14 @@ export function richTextPatchFromTransaction(transaction: Transaction): RichText
       const content = richTextFromSlice(step.slice);
       const isNoop = from === to && isEmptyRichText(content) && isEmptyRichText(deleted);
       if (isNoop) continue;
+      if (
+        deleted.inlineRefs.length > 0
+        || content.inlineRefs.length > 0
+        || (from === to && hasInlineReferenceAtDocPosition(doc, step.from))
+      ) {
+        needsWholeReplacement = true;
+        break;
+      }
       ops.push({
         type: 'replace',
         from,
@@ -75,42 +73,41 @@ export function richTextPatchFromTransaction(transaction: Transaction): RichText
   }
 }
 
+  if (needsWholeReplacement) {
+    return {
+      ops: [{
+        type: 'replace_all',
+        content: docToRichText(transaction.doc),
+      }],
+    };
+  }
+
   if (ops.length > 0) return { ops };
-  if (!transaction.docChanged) return { ops: [] };
 
   const before = docToRichText(transaction.before);
+  const after = docToRichText(transaction.doc);
+  if (richTextEquals(before, after)) return { ops: [] };
   return {
     ops: [{
       type: 'replace',
       from: 0,
       to: before.text.length,
-      content: docToRichText(transaction.doc),
+      content: after,
       ...(before.inlineRefs.length > 0 ? { deletedInlineRefs: before.inlineRefs } : {}),
     }],
   };
-}
-
-function needsWholeDocumentReplacement(transaction: Transaction) {
-  for (let index = 0; index < transaction.steps.length; index += 1) {
-    const step = transaction.steps[index];
-    const doc = transaction.docs[index];
-    if (!doc || !(step instanceof ReplaceStep)) continue;
-
-    const from = docPosToTextOffset(doc, step.from);
-    const to = docPosToTextOffset(doc, step.to);
-    const deleted = richTextFromSlice(doc.slice(step.from, step.to));
-    const inserted = richTextFromSlice(step.slice);
-    if (isEmptyRichText(deleted) && isEmptyRichText(inserted)) continue;
-    if (deleted.inlineRefs.length > 0 || inserted.inlineRefs.length > 0) return true;
-    if (from === to && docToRichText(doc).inlineRefs.some((ref) => ref.offset === from)) return true;
-  }
-  return false;
 }
 
 function richTextFromSlice(slice: Slice): RichText {
   const content: RichText = { text: '', marks: [], inlineRefs: [] };
   slice.content.forEach((node) => collectNode(node, content));
   return content;
+}
+
+function hasInlineReferenceAtDocPosition(doc: PMNode, position: number) {
+  const resolved = doc.resolve(Math.max(0, Math.min(position, doc.content.size)));
+  return resolved.nodeBefore?.type.name === 'inlineReference'
+    || resolved.nodeAfter?.type.name === 'inlineReference';
 }
 
 function collectNode(node: PMNode, content: RichText) {

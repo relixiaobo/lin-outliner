@@ -20,6 +20,7 @@ import {
   TRASH_ID,
   WORKSPACE_ID,
   defConfigNodeId,
+  nodeReferenceTarget,
   plainText,
   replaceAllRichTextPatch,
   type CreateNodeTree,
@@ -2565,6 +2566,98 @@ describe('Core', () => {
       marks: [],
       inlineRefs: [{ offset: 0, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
     });
+  });
+
+  test('keeps inline refs at the text patch replacement end boundary', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const nodeId = mustFocus(core.createRichTextContentNode(today, null, {
+      text: 'abc',
+      marks: [],
+      inlineRefs: [{ offset: 2, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    }));
+
+    core.applyNodeTextPatch(nodeId, {
+      ops: [{ type: 'replace', from: 0, to: 2, content: plainText('') }],
+    });
+    expect(core.state().nodes[nodeId]!.content).toEqual({
+      text: 'c',
+      marks: [],
+      inlineRefs: [{ offset: 0, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    });
+
+    core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch({
+      text: 'abc',
+      marks: [],
+      inlineRefs: [{ offset: 2, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    }));
+    core.applyNodeTextPatch(nodeId, {
+      ops: [{ type: 'replace', from: 0, to: 2, content: plainText('x') }],
+    });
+    expect(core.state().nodes[nodeId]!.content).toEqual({
+      text: 'xc',
+      marks: [],
+      inlineRefs: [{ offset: 1, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    });
+  });
+
+  test('ordinary rich text patches reuse caller metadata for sparse snapshots', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const nodeId = mustFocus(core.createNode(today, null, 'abcdef'));
+    core.applyNodeTextPatch(nodeId, replaceAllRichTextPatch({
+      text: 'abcdef',
+      marks: [{ start: 0, end: 4, type: 'bold' }],
+      inlineRefs: [{ offset: 3, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
+    }));
+
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const instrumented = loro as unknown as {
+      materializeNode: (id: string) => ReturnType<LoroOutlinerDocument['materializeNode']>;
+    };
+    const originalMaterializeNode = instrumented.materializeNode.bind(loro);
+    let sparseNodeMaterializations = 0;
+    instrumented.materializeNode = (id: string) => {
+      sparseNodeMaterializations += 1;
+      return originalMaterializeNode(id);
+    };
+
+    try {
+      core.applyNodeTextPatch(nodeId, {
+        ops: [
+          { type: 'replace', from: 6, to: 6, content: plainText('!') },
+          { type: 'add_mark', from: 0, to: 2, markType: 'italic' },
+          { type: 'remove_mark', from: 2, to: 3, markType: 'bold' },
+        ],
+      });
+    } finally {
+      instrumented.materializeNode = originalMaterializeNode;
+    }
+
+    expect(sparseNodeMaterializations).toBe(0);
+    expect(core.state().nodes[nodeId]!.content).toEqual({
+      text: 'abcdef!',
+      marks: [
+        { start: 0, end: 2, type: 'bold' },
+        { start: 0, end: 2, type: 'italic' },
+        { start: 3, end: 4, type: 'bold' },
+      ],
+      inlineRefs: [{ offset: 3, target: { kind: 'node', nodeId: target }, displayName: 'Target' }],
+    });
+
+    const previousVerifyCache = process.env.LIN_VERIFY_CACHE;
+    try {
+      process.env.LIN_VERIFY_CACHE = '1';
+      core.applyNodeTextPatch(nodeId, {
+        ops: [{ type: 'replace', from: 7, to: 7, content: plainText('?') }],
+      });
+    } finally {
+      if (previousVerifyCache === undefined) delete process.env.LIN_VERIFY_CACHE;
+      else process.env.LIN_VERIFY_CACHE = previousVerifyCache;
+    }
+    expect(core.state().nodes[nodeId]!.content.text).toBe('abcdef!?');
   });
 
   test('text patch command finalization uses sparse touched-node snapshots', () => {
