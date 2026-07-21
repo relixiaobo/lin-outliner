@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | `codex/codex-agent-restructure-plans` | drafting Codex agent restructure plans (Draft PR #423); shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427 |
+| Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425) |
@@ -31,9 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-21).** Open PR queue: #423
-(`codex/codex-agent-restructure-plans`, Draft, plan-only). Recently
-merged: #427 (`codex/tag-selector-active-tag-index`) merged 2026-07-21 after
+**In flight (2026-07-21).** Open PR queue: none. Recently
+merged: #423 (`codex/codex-agent-restructure-plans`, plan-only) merged 2026-07-21 after
+iterative main review; its three implementation plans remain `draft` below. #427
+(`codex/tag-selector-active-tag-index`) merged 2026-07-21 after
 main review; see *Recently completed*. #426 (`codex/field-name-reuse-candidate-index`) merged 2026-07-21 after
 two main review rounds; see *Recently completed*. #425 (`codex-4/remove-data-import-adapter`) merged 2026-07-21 after
 main review; see *Recently completed*. #424 (`codex/system-reference-values-overlay`) merged 2026-07-21 after
@@ -267,6 +268,23 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
+- **agent-codex-core** (`draft`, plan merged #423) — replace the current agent
+  architecture with one canonical TypeScript Thread / Turn / ThreadItem model.
+  Delivery follows two ordered units: a human-led interface-only PR for the
+  shared protocol and document contracts, followed immediately by one complete
+  runtime, persistence, transport, renderer, and old-model replacement PR. This
+  foundation must land before either consumer plan starts. See
+  `docs/plans/agent-codex-core.md`.
+- **agent-codex-memory** (`draft`, plan merged #423; depends on the complete
+  `agent-codex-core` replacement) — add Codex-style Memory as one complete
+  extension in one PR, publishing canonical editable `#d-*` Memory Nodes on the
+  daily timeline. It may proceed independently of Automations after Core lands.
+  See `docs/plans/agent-codex-memory.md`.
+- **agent-codex-automations** (`draft`, plan merged #423; depends on the complete
+  `agent-codex-core` replacement) — add one host-owned Codex-style Automation
+  scheduler as a complete feature in one PR, with canonical Threads and Turns as
+  the execution record. It may proceed independently of Memory after Core lands.
+  See `docs/plans/agent-codex-automations.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient

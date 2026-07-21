@@ -12,6 +12,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Codex agent restructure plans (PR #423, codex)** — ratified three plan-only
+  designs for a canonical Thread / Turn / ThreadItem core, Memory published as
+  editable daily-timeline Nodes, and host-owned Automations. Core remains ordered
+  as a human-led interface PR followed by the complete replacement; Memory and
+  Automations remain draft consumers that may proceed independently only after
+  Core lands. **Gate (main):** iterative review resolved all reportable findings,
+  including the global Memory-disable privacy boundary; the final head had no
+  reportable issues. Verified with typecheck, docs check, and diff check.
 - **Legacy data import adapter removal (PR #425, codex-4)** — removed the
   unregistered `data_import` AgentTool compatibility adapter, its dead
   capability classification, and adapter-only negative assertions. Import
