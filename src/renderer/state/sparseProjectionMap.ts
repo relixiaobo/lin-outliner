@@ -86,6 +86,7 @@ export class SparseProjectionMap<TValue> extends Map<NodeId, TValue> {
     let entryCount = this.entryCount;
     let removedExisting: Set<NodeId> | null = null;
     const addedIds: NodeId[] = [];
+    let addedIdSet: Set<NodeId> | null = null;
 
     for (const id of removedIds) {
       const bucket = mutableBucket(id);
@@ -102,7 +103,13 @@ export class SparseProjectionMap<TValue> extends Map<NodeId, TValue> {
       const existsNow = bucket.has(id);
       bucket.set(id, value);
       if (!existsNow) entryCount += 1;
-      if (!existedBefore || wasRemoved) addedIds.push(id);
+      if (!existedBefore || wasRemoved) {
+        addedIdSet ??= new Set(addedIds);
+        if (!addedIdSet.has(id)) {
+          addedIds.push(id);
+          addedIdSet.add(id);
+        }
+      }
     }
 
     if (!buckets) return this;
