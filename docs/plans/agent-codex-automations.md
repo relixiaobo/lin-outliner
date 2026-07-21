@@ -23,7 +23,7 @@ commit `841e47b8fb113a201b68e0f1f5790ba22836a241`, including:
 - the official `Scheduled tasks` / Automations manual
   (`https://learn.chatgpt.com/docs/automations?surface=app`)
 - `ThreadSource::Feature("automation")`
-- host-owned `codex_app` tool `automation_update`
+- host-owned `codex_app.automation_update` tool
 - Turn `additional_context["automation_info"]`
 - `ScheduledTaskSummary` as plugin-provided configuration input
 - `codex-rs/app-server-protocol/src/protocol/v2/plugin.rs`
@@ -226,11 +226,13 @@ effective policy at dispatch time.
 Skills and plugins are resolved at each occurrence from the saved selections.
 Missing or disabled dependencies fail visibly before model execution. A skill or
 foreground Thread can request an Automation create/update only through the
-host-owned `automation_update` tool; model input never writes scheduler tables.
+host-owned `codex_app.automation_update` tool; model input never writes scheduler
+tables.
 
 ### 6. Host tool and transport
 
-`automation_update` supports Codex's create, update, view, and delete modes.
+`codex_app.automation_update` supports Codex's create, update, view, and delete
+modes.
 Mutating modes use strict schemas for prompt, destination, RRULE/timezone,
 project bindings, model/effort, skills, plugins, permissions, and status. Main
 performs path, Thread, schedule, dependency, and policy validation and returns
@@ -333,8 +335,8 @@ destinations, scoped AutomationRun bindings, and service-layer scheduling.
 - [ ] Implement standalone and existing-Thread dispatch through canonical
   Thread/Turn APIs and trusted automation context.
 - [ ] Implement project/worktree lifecycle and unattended permission resolution.
-- [ ] Implement `automation_update`, preload APIs, notifications, Start now, and
-  pause/delete/tombstone/retention semantics.
+- [ ] Implement `codex_app.automation_update`, preload APIs, notifications, Start
+  now, and pause/delete/tombstone/retention semantics.
 - [ ] Delete every RecurringIssue, Issue schedule, AgentSession trigger,
   command-node scheduler, legacy store/reader, IPC command, settings surface,
   test fixture, and compatibility branch before validating fresh userData.

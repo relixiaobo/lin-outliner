@@ -28,6 +28,10 @@ The reference baseline is OpenAI Codex commit
 - `codex-rs/app-server-protocol/src/protocol/v2/item.rs`
 - `codex-rs/ext/extension-api/src/contributors/`
 - `codex-rs/ext/goal/`
+- `codex-rs/core/src/tools/spec_plan.rs`
+- `codex-rs/core/src/tools/handlers/multi_agents_spec.rs`
+- `codex-rs/core/src/tools/handlers/request_user_input_spec.rs`
+- `codex-rs/core/src/tools/handlers/plan_spec.rs`
 - `codex-rs/state/src/runtime.rs`
 - `codex-rs/state/migrations/0001_threads.sql`
 - `codex-rs/state/migrations/0013_threads_agent_nickname.sql`
@@ -97,6 +101,7 @@ Replace the flat, cross-coupled `agent*.ts` layout with explicit ownership:
 src/core/agent/
   protocol.ts          Thread, Turn, ThreadItem, request/response, notifications
   codec.ts             runtime validation and serialization for that protocol
+  tools.ts             canonical tool identities, schemas, and permission metadata
   goal.ts              ThreadGoal and its tool contracts
   extensions.ts        typed lifecycle and contribution interfaces
   configuration.ts     thread/turn execution configuration
@@ -265,6 +270,93 @@ role because Memory replaces it. Internally and in the UI, `Profile` always
 means a root configuration profile, `Role` means child execution configuration,
 and `Subagent` means the child Thread itself.
 
+#### Canonical model-tool surface
+
+Model-callable tools and host IPC methods are different protocol surfaces. A
+canonical model-tool identity is an optional namespace plus a function name;
+provider adapters may encode that identity for transports that require flat
+function names, but source modules, permission rules, ThreadItems, debug views,
+and tests use the canonical identity. Preload methods such as `threadStart` and
+`turnInterrupt` are never registered as model tools.
+
+Core reserves the fixed `collaboration` namespace and implements Codex's v2
+subagent suite exactly:
+
+| Canonical tool | Contract |
+|---|---|
+| `collaboration.spawn_agent` | Create one child Thread, resolve its Agent Role and effective configuration, and start its first Turn. Return the child task path, Thread identity, and nickname when present. |
+| `collaboration.send_message` | Queue a message for an existing child without starting a new Turn. |
+| `collaboration.followup_task` | Start a new Turn when the child is idle; while it is active, deliver the task at a safe message boundary. |
+| `collaboration.wait_agent` | Wait for mailbox activity, child completion notifications, steered root input, or a bounded timeout; it does not return a second transcript copy. |
+| `collaboration.list_agents` | Query the live child-Thread tree and its derived execution statuses, optionally below a task-path prefix. |
+| `collaboration.interrupt_agent` | Interrupt the child's current Turn while retaining the child Thread for later messages or follow-up work. |
+
+The word `agent` in this tool namespace denotes the operational Subagent role;
+the returned and targeted durable object is still a child Thread. Task paths are
+addressing keys inside one root Thread tree, not persisted Task entities.
+`send_input`, `resume_agent`, `close_agent`, `assign_task`, and any unnamespaced
+aliases are not implemented. The namespace is fixed rather than exposed as a
+profile or provider preference, so permission rules and recorded
+`collabAgentToolCall` items cannot drift by configuration.
+
+Core also provides two plain control tools:
+
+- `request_user_input` is root-Thread-only and accepts one to three short
+  questions. Each question has a stable snake-case ID, a short header, one
+  sentence of prompt text, and two or three mutually exclusive options with a
+  label and trade-off description. The host always supplies an `Other` response.
+  Optional `autoResolutionMs` is clamped to 60,000-240,000 ms and is present only
+  when the request is non-blocking and the Turn may continue with host judgment
+  after timeout. Without it, the Turn waits until answer or cancellation.
+- `update_plan` updates a Turn-local checklist and records the resulting `plan`
+  ThreadItem. A plan is execution presentation, not a durable Goal, Task, Issue,
+  or second scheduler.
+
+`request_user_input` has no multi-select questionnaire mode, standalone free-text
+mode, required/optional flags, custom submit label, Node/file references,
+attachments, or `discussed` outcome. A detailed response, attachment, or Outliner
+reference arrives through the normal composer as the next `userMessage`.
+Subagents cannot call this tool; they use `collaboration.send_message` to surface
+a decision to the root. Requests and answers are control-plane messages tied to
+the tool call and Turn, set `waitingOnUserInput`, and do not create a parallel
+`user_question.*` event store or ThreadItem family.
+
+The Goal extension contributes the plain `get_goal`, `create_goal`, and
+`update_goal` tools. The later Automation extension contributes
+`codex_app.automation_update`; the Memory extension contributes no model tools
+and instead scopes the existing Node tools to its canonical Node root.
+
+Provider-neutral capability tools survive with their names and behavior moved
+behind the new Turn runtime:
+
+- Outliner: `node_search`, `node_read`, `node_create`, `node_edit`,
+  `node_delete`, and `outline_undo_stack`
+- workspace: `file_read`, `file_glob`, `file_grep`, `file_edit`, `file_write`,
+  `file_delete`, `bash`, and `bash_stop`
+- retrieval and artifacts: `web_search`, `web_fetch`, `generate_image`, and
+  `data_import`
+- configuration-provided `skill`, MCP, plugin, and dynamic tools
+
+The destructive tool migration is exhaustive:
+
+| Removed tool or internal entry | Canonical disposition |
+|---|---|
+| `issue_search` | No model-tool replacement; cross-Thread Goal lists are host queries and renderer views. |
+| `issue_read` | `get_goal` for the current Thread; Thread history remains paginated host data. |
+| `issue_create` | `create_goal`. |
+| `issue_update` | `update_goal` for Goal state and, after the Automation feature lands, `codex_app.automation_update` for schedules. |
+| `agent_session_start` | `collaboration.spawn_agent` for child work or canonical Thread/Turn host operations for foreground execution. |
+| `agent_session_read` | `collaboration.list_agents` / `collaboration.wait_agent` for live child work and paginated Thread host reads for history. |
+| `agent_session_send_message` | `collaboration.send_message` or `collaboration.followup_task`. |
+| `agent_session_stop` | `collaboration.interrupt_agent`. |
+| `past_chats` | No transcript-search model tool; the Memory extension publishes recall into Nodes, while explicit history inspection is a host/UI operation. |
+| `ask_user_question` | `request_user_input`; all old questionnaire DTOs, events, projections, renderer adapters, and aliases are deleted. |
+| `internal_delegation` and the fork pseudo-agent | The `collaboration` suite over child Threads. |
+
+Permission action kinds and profile allow/deny lists are rebuilt against this
+catalog. No old tool name is accepted as an alias, persisted as current audit
+data, or shown in current UI/specs after the replacement.
+
 ### 4. Rollout source of truth and rebuildable projections
 
 Each persistent Thread owns an append-only rollout JSONL under the new agent data
@@ -339,14 +431,15 @@ statuses are exactly `active`, `paused`, `blocked`, `usageLimited`,
 assignee, due-date, verification, or Activity fields; richer intent belongs in
 the objective and Thread Items.
 
-The extension contributes `get_goal`, `create_goal`, and `update_goal`. Agent
-updates may mark an existing goal only `complete` or `blocked`; pause, resume,
-usage-limit, and budget-limit transitions stay host/user controlled. On Thread
-idle, an active goal may enqueue a continuation through `tryStartTurnIfIdle`.
-Token/time accounting and stop conditions are extension state backed by
-`goals.sqlite`, not Turn subtypes. A private goal generation ID prevents stale
-continuations after replacement, and a private deferral row prevents repeated
-idle callbacks from spinning while continuation is temporarily inadmissible.
+Its `get_goal`, `create_goal`, and `update_goal` tools follow the catalog above.
+Agent updates may mark an existing goal only `complete` or `blocked`; pause,
+resume, usage-limit, and budget-limit transitions stay host/user controlled. On
+Thread idle, an active goal may enqueue a continuation through
+`tryStartTurnIfIdle`. Token/time accounting and stop conditions are extension
+state backed by `goals.sqlite`, not Turn subtypes. A private goal generation ID
+prevents stale continuations after replacement, and a private deferral row
+prevents repeated idle callbacks from spinning while continuation is temporarily
+inadmissible.
 
 Child work always starts a child Thread. It shares the root `sessionId`, stores
 `parentThreadId`, may store `agentRole`/`agentNickname`, receives a deliberately
@@ -474,8 +567,9 @@ lands or is abandoned.
 None. Ratifying this plan ratifies the destructive vocabulary mapping, one
 ThreadGoal per Thread, no durable Agent membership/execution entity, the
 Profile/Role/child-Thread split, history-only fork semantics, separate
-core/history/Goal stores, rollout-as-history-source, and one vertical replacement
-PR.
+core/history/Goal stores, rollout-as-history-source, the fixed
+`collaboration.*` v2 tool namespace, the exact `request_user_input` replacement,
+the exhaustive tool migration, and one vertical replacement PR.
 
 ## Implementation checklist
 
@@ -485,6 +579,10 @@ PR.
   including ThreadSource strings, paginated-only history, immutable completed
   Items, client input idempotency, Node-backed MemoryCitation, configuration
   profiles, agent roles, and additional-context trust.
+- [ ] Implement and contract-test the canonical model-tool registry, fixed
+  `collaboration` namespace, v2 Subagent suite, root-only `request_user_input`,
+  `update_plan`, Goal tools, retained capability tools, permission mappings, and
+  provider transport encodings with no legacy aliases.
 - [ ] Implement rollout recording, Thread metadata/spawn edges, the separate
   history projection, pagination, and replay equivalence.
 - [ ] Implement Thread/Turn runtimes and make GoalExtension exercise the real
@@ -493,7 +591,8 @@ PR.
 - [ ] Replace renderer state and every agent surface with direct protocol
   consumption.
 - [ ] Move retained capabilities behind the new runtime and delete every old
-  model, reader, adapter, test, i18n key, and CSS selector.
+  model, reader, tool/questionnaire DTO, event, adapter, test, i18n key, and CSS
+  selector.
 - [ ] Thread causation metadata through document commands and prove that Edit,
   Retry, Regenerate, and fork omit history without reverting Node, file, shell,
   MCP, process, or external effects.
