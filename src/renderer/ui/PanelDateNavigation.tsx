@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { offsetIsoLocalDate, parseIsoLocalDate, todayIsoLocalDate, type NodeId } from '../api/types';
 import { CalendarIcon, ChevronLeftIcon, ChevronRightIcon } from './icons';
 import { ButtonControl } from './primitives/ButtonControl';
-import { CalendarMonthGrid, shiftedCalendarMonth, type CalendarMonthDay } from './primitives/CalendarMonthGrid';
+import { buildCalendarMonthDays, CalendarMonthGrid, shiftedCalendarMonth, type CalendarMonthDay } from './primitives/CalendarMonthGrid';
 import type { CommandRunner } from './shared';
 import { useT } from '../i18n/I18nProvider';
+import { readDateNoteCountWindow, type DayNoteCountIndex } from '../state/dayNoteCounts';
 
 interface PanelDateNavigationProps {
-  dateNoteCounts?: Readonly<Record<string, number>>;
+  dayNoteCounts: DayNoteCountIndex;
   isoDate: string;
   onRoot: (nodeId: NodeId) => void;
   run: CommandRunner;
@@ -38,7 +39,7 @@ function dateButtonLabel(isoDate: string, count: number, labels: DateButtonLabel
 }
 
 export function PanelDateNavigation({
-  dateNoteCounts = {},
+  dayNoteCounts,
   isoDate,
   onRoot,
   run,
@@ -52,6 +53,12 @@ export function PanelDateNavigation({
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [viewYear, setViewYear] = useState(() => selectedYear ?? new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState(() => selectedMonth ?? new Date().getMonth());
+  const calendarDays = useMemo(() => buildCalendarMonthDays(viewYear, viewMonth), [viewMonth, viewYear]);
+  const visibleIsoDates = useMemo(() => calendarDays.map((day) => day.isoDate), [calendarDays]);
+  const dateCountWindow = useMemo(
+    () => readDateNoteCountWindow(dayNoteCounts, visibleIsoDates),
+    [dayNoteCounts, visibleIsoDates],
+  );
 
   useEffect(() => {
     if (selectedYear === undefined || selectedMonth === undefined) return;
@@ -95,12 +102,12 @@ export function PanelDateNavigation({
   };
 
   const calendarDayClassName = (day: CalendarMonthDay) => {
-    const count = dateNoteCounts[day.isoDate] ?? 0;
+    const count = dateCountWindow.counts.get(day.isoDate) ?? 0;
     return ['panel-date-calendar-day', noteDensityClass(count)].filter(Boolean).join(' ');
   };
 
   const calendarDayLabel = (day: CalendarMonthDay) => {
-    const count = dateNoteCounts[day.isoDate] ?? 0;
+    const count = dateCountWindow.counts.get(day.isoDate) ?? 0;
     return dateButtonLabel(day.isoDate, count, {
       goToDate: t.dateNavigation.goToDate,
       goToDateWithCount: t.dateNavigation.goToDateWithCount,
