@@ -5,6 +5,7 @@ import {
   dayNoteIsoDateForNode,
   patchDayNoteCountIndex,
   readDateNoteCountWindow,
+  type DayNoteCountIndex,
 } from '../../src/renderer/state/dayNoteCounts';
 
 function node(id: NodeId, text: string, patch: Partial<NodeProjection> = {}): NodeProjection {
@@ -255,4 +256,95 @@ describe('day note count index', () => {
     expect(dayNoteIsoDateForNode(day, index)).toBe('2026-08-01');
     expect(dayNoteIsoDateForNode(node('plain', '2026-08-01'), index)).toBeNull();
   });
+
+  test('delta patching does not iterate previous index maps on common write paths', () => {
+    const noiseTag = tag('tag:noise', 'noise');
+    const hotTagMembers = Array.from({ length: 512 }, (_, index) =>
+      node(`tagged:${index}`, `Tagged ${index}`, { tags: ['tag:noise'] }));
+    const day = node('day', '2026-09-01', { tags: [TAG_DAY_ID], children: ['a'] });
+    const ordinary = node('ordinary', 'Ordinary');
+    const previousNodes = [tag(TAG_DAY_ID, 'day'), noiseTag, day, ordinary, ...hotTagMembers];
+    const previousById = byId(previousNodes);
+    const previous = buildDayNoteCountIndex(previousById);
+
+    forbidIndexIteration(previous, ['tag:noise']);
+
+    const added = node('added', 'Added');
+    expect(() => patchDayNoteCountIndex({
+      previous,
+      previousById,
+      nextById: byId([...previousNodes, added]),
+      changedNodes: [added],
+      removedIds: [],
+    })).not.toThrow();
+
+    expect(() => patchDayNoteCountIndex({
+      previous,
+      previousById,
+      nextById: byId(previousNodes.filter((entry) => entry.id !== 'ordinary')),
+      changedNodes: [],
+      removedIds: ['ordinary'],
+    })).not.toThrow();
+
+    const expandedDay = node('day', '2026-09-01', { tags: [TAG_DAY_ID], children: ['a', 'b'] });
+    const datePatch = patchDayNoteCountIndex({
+      previous,
+      previousById,
+      nextById: byId([tag(TAG_DAY_ID, 'day'), noiseTag, expandedDay, ordinary, ...hotTagMembers]),
+      changedNodes: [expandedDay],
+      removedIds: [],
+    });
+    expect(datePatch.countsByDate.get('2026-09-01')).toBe(2);
+
+    const newlyTagged = node('ordinary', 'Ordinary', { tags: ['tag:noise'] });
+    const tagPatch = patchDayNoteCountIndex({
+      previous,
+      previousById,
+      nextById: byId([tag(TAG_DAY_ID, 'day'), noiseTag, day, newlyTagged, ...hotTagMembers]),
+      changedNodes: [newlyTagged],
+      removedIds: [],
+    });
+    expect(tagPatch.tagMembersByTagId.get('tag:noise')?.has('ordinary')).toBe(true);
+  });
 });
+
+function forbidIndexIteration(index: DayNoteCountIndex, tagMemberIds: readonly NodeId[] = []) {
+  forbidMapIteration(index.countsByDate, 'countsByDate');
+  forbidMapIteration(index.dateNodeIdsByDate, 'dateNodeIdsByDate');
+  forbidMapIteration(index.dateRevisionByDate, 'dateRevisionByDate');
+  forbidSetIteration(index.dayTagIds, 'dayTagIds');
+  forbidMapIteration(index.nodeDateById, 'nodeDateById');
+  forbidMapIteration(index.nodeOrderById, 'nodeOrderById');
+  for (const tagId of tagMemberIds) {
+    const members = index.tagMembersByTagId.get(tagId);
+    if (members) forbidSetIteration(members, `tagMembers:${tagId}`);
+  }
+  forbidMapIteration(index.tagMembersByTagId, 'tagMembersByTagId');
+  forbidMapIteration(index.winningNodeIdByDate, 'winningNodeIdByDate');
+}
+
+function forbidMapIteration<TKey, TValue>(map: ReadonlyMap<TKey, TValue>, label: string) {
+  const fail = () => {
+    throw new Error(`${label} must not be iterated during delta patching`);
+  };
+  Object.defineProperties(map, {
+    [Symbol.iterator]: { value: fail },
+    entries: { value: fail },
+    forEach: { value: fail },
+    keys: { value: fail },
+    values: { value: fail },
+  });
+}
+
+function forbidSetIteration<TValue>(set: ReadonlySet<TValue>, label: string) {
+  const fail = () => {
+    throw new Error(`${label} must not be iterated during delta patching`);
+  };
+  Object.defineProperties(set, {
+    [Symbol.iterator]: { value: fail },
+    entries: { value: fail },
+    forEach: { value: fail },
+    keys: { value: fail },
+    values: { value: fail },
+  });
+}

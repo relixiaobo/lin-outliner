@@ -3,6 +3,10 @@ import { TAG_DAY_ID } from '../../core/types';
 import type { NodeId, NodeProjection } from '../api/types';
 
 const DAY_NOTE_COUNT_WINDOW_CACHE_LIMIT = 128;
+const DAY_NOTE_INDEX_BUCKET_COUNT = 1024;
+const DAY_NOTE_INDEX_BUCKET_MASK = DAY_NOTE_INDEX_BUCKET_COUNT - 1;
+
+const EMPTY_NODE_ID_SET = new Set<NodeId>();
 
 export interface DayNoteCountIndex {
   countsByDate: ReadonlyMap<string, number>;
@@ -24,6 +28,195 @@ export interface DateNoteCountWindow {
 }
 
 const dateWindowCache = new Map<string, DateNoteCountWindow>();
+
+class BucketedStringMap<TKey extends string, TValue> implements ReadonlyMap<TKey, TValue> {
+  private constructor(
+    private readonly buckets: readonly ReadonlyMap<TKey, TValue>[],
+    private readonly entryCount: number,
+  ) {}
+
+  static fromEntries<TKey extends string, TValue>(
+    entries: Iterable<readonly [TKey, TValue]>,
+  ): BucketedStringMap<TKey, TValue> {
+    const buckets = emptyBuckets<TKey, TValue>();
+    let entryCount = 0;
+    for (const [key, value] of entries) {
+      const bucket = buckets[bucketIndex(key)]!;
+      if (!bucket.has(key)) entryCount += 1;
+      bucket.set(key, value);
+    }
+    return new BucketedStringMap(buckets, entryCount);
+  }
+
+  static fromReadonlyMap<TKey extends string, TValue>(
+    map: ReadonlyMap<TKey, TValue>,
+  ): BucketedStringMap<TKey, TValue> {
+    return map instanceof BucketedStringMap ? map : BucketedStringMap.fromEntries(map.entries());
+  }
+
+  get [Symbol.toStringTag](): string {
+    return 'Map';
+  }
+
+  get size(): number {
+    return this.entryCount;
+  }
+
+  get(key: TKey): TValue | undefined {
+    return this.buckets[bucketIndex(key)]!.get(key);
+  }
+
+  has(key: TKey): boolean {
+    return this.buckets[bucketIndex(key)]!.has(key);
+  }
+
+  patch(
+    upserts: readonly (readonly [TKey, TValue])[],
+    removedKeys: readonly TKey[],
+  ): BucketedStringMap<TKey, TValue> {
+    if (upserts.length === 0 && removedKeys.length === 0) return this;
+
+    let buckets: Array<ReadonlyMap<TKey, TValue>> | null = null;
+    const copiedBuckets = new Map<number, Map<TKey, TValue>>();
+    const mutableBucket = (key: TKey): Map<TKey, TValue> => {
+      const index = bucketIndex(key);
+      const existing = copiedBuckets.get(index);
+      if (existing) return existing;
+      const copy = new Map(this.buckets[index]);
+      copiedBuckets.set(index, copy);
+      buckets ??= this.buckets.slice();
+      buckets[index] = copy;
+      return copy;
+    };
+
+    let entryCount = this.entryCount;
+    const removedExisting = new Set<TKey>();
+    for (const key of removedKeys) {
+      if (!this.has(key)) continue;
+      const bucket = mutableBucket(key);
+      if (!bucket.delete(key)) continue;
+      entryCount -= 1;
+      removedExisting.add(key);
+    }
+
+    for (const [key, value] of upserts) {
+      if (!removedExisting.has(key) && this.has(key) && Object.is(this.get(key), value)) continue;
+      const bucket = mutableBucket(key);
+      if (!bucket.has(key)) entryCount += 1;
+      bucket.set(key, value);
+    }
+
+    return buckets ? new BucketedStringMap(buckets, entryCount) : this;
+  }
+
+  entries(): MapIterator<[TKey, TValue]> {
+    return mapIterator((function* entries(self: BucketedStringMap<TKey, TValue>) {
+      for (const bucket of self.buckets) {
+        yield* bucket.entries();
+      }
+    }(this)));
+  }
+
+  keys(): MapIterator<TKey> {
+    return mapIterator((function* keys(self: BucketedStringMap<TKey, TValue>) {
+      for (const bucket of self.buckets) {
+        yield* bucket.keys();
+      }
+    }(this)));
+  }
+
+  values(): MapIterator<TValue> {
+    return mapIterator((function* values(self: BucketedStringMap<TKey, TValue>) {
+      for (const bucket of self.buckets) {
+        yield* bucket.values();
+      }
+    }(this)));
+  }
+
+  forEach(
+    callbackfn: (value: TValue, key: TKey, map: ReadonlyMap<TKey, TValue>) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [key, value] of this) callbackfn.call(thisArg, value, key, this);
+  }
+
+  [Symbol.iterator](): MapIterator<[TKey, TValue]> {
+    return this.entries();
+  }
+}
+
+class BucketedStringSet<TKey extends string> implements ReadonlySet<TKey> {
+  private constructor(private readonly members: BucketedStringMap<TKey, true>) {}
+
+  static fromEntries<TKey extends string>(values: Iterable<TKey>): BucketedStringSet<TKey> {
+    return new BucketedStringSet(
+      BucketedStringMap.fromEntries((function* entries() {
+        for (const value of values) yield [value, true] as const;
+      }())),
+    );
+  }
+
+  static fromReadonlySet<TKey extends string>(set: ReadonlySet<TKey>): BucketedStringSet<TKey> {
+    return set instanceof BucketedStringSet ? set : BucketedStringSet.fromEntries(set.values());
+  }
+
+  get [Symbol.toStringTag](): string {
+    return 'Set';
+  }
+
+  get size(): number {
+    return this.members.size;
+  }
+
+  has(value: TKey): boolean {
+    return this.members.has(value);
+  }
+
+  patch(addedValues: readonly TKey[], removedValues: readonly TKey[]): BucketedStringSet<TKey> {
+    const members = this.members.patch(
+      addedValues.map((value) => [value, true] as const),
+      removedValues,
+    );
+    return members === this.members ? this : new BucketedStringSet(members);
+  }
+
+  entries(): SetIterator<[TKey, TKey]> {
+    return setIterator((function* entries(self: BucketedStringSet<TKey>) {
+      for (const value of self.values()) yield [value, value] as [TKey, TKey];
+    }(this)));
+  }
+
+  keys(): SetIterator<TKey> {
+    return this.values();
+  }
+
+  values(): SetIterator<TKey> {
+    return setIterator(this.members.keys());
+  }
+
+  forEach(
+    callbackfn: (value: TKey, value2: TKey, set: ReadonlySet<TKey>) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const value of this) callbackfn.call(thisArg, value, value, this);
+  }
+
+  [Symbol.iterator](): SetIterator<TKey> {
+    return this.values();
+  }
+}
+
+interface MapPatchDraft<TKey extends string, TValue> {
+  base: ReadonlyMap<TKey, TValue>;
+  removals: Set<TKey>;
+  upserts: Map<TKey, TValue>;
+}
+
+interface SetPatchDraft<TKey extends string> {
+  additions: Set<TKey>;
+  base: ReadonlySet<TKey>;
+  removals: Set<TKey>;
+}
 
 export function parseDayNodeIsoDate(label: string): string | null {
   return normalizedIsoLocalDate(label);
@@ -73,16 +266,20 @@ export function buildDayNoteCountIndex(byId: ReadonlyMap<NodeId, NodeProjection>
   }
 
   return {
-    countsByDate,
-    dateNodeIdsByDate,
-    dateRevisionByDate,
-    dayTagIds,
-    nodeDateById,
-    nodeOrderById,
+    countsByDate: BucketedStringMap.fromEntries(countsByDate.entries()),
+    dateNodeIdsByDate: BucketedStringMap.fromEntries(dateNodeIdsByDate.entries()),
+    dateRevisionByDate: BucketedStringMap.fromEntries(dateRevisionByDate.entries()),
+    dayTagIds: BucketedStringSet.fromEntries(dayTagIds),
+    nodeDateById: BucketedStringMap.fromEntries(nodeDateById.entries()),
+    nodeOrderById: BucketedStringMap.fromEntries(nodeOrderById.entries()),
     nextOrder: order,
     revision: 1,
-    tagMembersByTagId,
-    winningNodeIdByDate,
+    tagMembersByTagId: BucketedStringMap.fromEntries((function* tagMembers() {
+      for (const [tagId, members] of tagMembersByTagId) {
+        yield [tagId, BucketedStringSet.fromEntries(members)] as const;
+      }
+    }())),
+    winningNodeIdByDate: BucketedStringMap.fromEntries(winningNodeIdByDate.entries()),
   };
 }
 
@@ -125,9 +322,8 @@ export function patchDayNoteCountIndex({
     const nextIsDayTag = isDayTagIdFromNode(id, nextNode);
 
     if (previousIsDayTag !== nextIsDayTag) {
-      if (nextIsDayTag) ensureDayTagIds(draft).add(id);
-      else ensureDayTagIds(draft).delete(id);
-      draft.changed = true;
+      if (nextIsDayTag) addDayTagId(draft, id);
+      else deleteDayTagId(draft, id);
       visibleChanged = true;
 
       for (const memberId of previous.tagMembersByTagId.get(id) ?? []) affectedNodeIds.add(memberId);
@@ -143,7 +339,7 @@ export function patchDayNoteCountIndex({
   for (const nodeId of affectedNodeIds) {
     const oldDate = getNodeDate(draft, nodeId);
     const nextNode = nextById.get(nodeId);
-    const newDate = nextNode ? dayNoteIsoDateForTags(nextNode, getDayTagIds(draft)) : null;
+    const newDate = nextNode ? dayNoteIsoDateForDraft(nextNode, draft) : null;
     const reinserted = removedNodeIds.has(nodeId) && Boolean(nextNode);
 
     if (oldDate && oldDate === newDate && !reinserted) {
@@ -210,46 +406,46 @@ export function readDateNoteCountWindow(
 
 interface DayNoteCountPatchDraft {
   changed: boolean;
-  countsByDate: Map<string, number> | null;
-  dateNodeIdsByDate: Map<string, readonly NodeId[]> | null;
-  dateRevisionByDate: Map<string, number> | null;
-  dayTagIds: Set<NodeId> | null;
+  countsByDate: MapPatchDraft<string, number>;
+  dateNodeIdsByDate: MapPatchDraft<string, readonly NodeId[]>;
+  dateRevisionByDate: MapPatchDraft<string, number>;
+  dayTagIds: SetPatchDraft<NodeId>;
   nextOrder: number;
-  nodeDateById: Map<NodeId, string> | null;
-  nodeOrderById: Map<NodeId, number> | null;
+  nodeDateById: MapPatchDraft<NodeId, string>;
+  nodeOrderById: MapPatchDraft<NodeId, number>;
   previous: DayNoteCountIndex;
-  tagMembersByTagId: Map<NodeId, ReadonlySet<NodeId>> | null;
-  winningNodeIdByDate: Map<string, NodeId> | null;
+  tagMembersByTagId: MapPatchDraft<NodeId, ReadonlySet<NodeId>>;
+  winningNodeIdByDate: MapPatchDraft<string, NodeId>;
 }
 
 function createPatchDraft(previous: DayNoteCountIndex): DayNoteCountPatchDraft {
   return {
     changed: false,
-    countsByDate: null,
-    dateNodeIdsByDate: null,
-    dateRevisionByDate: null,
-    dayTagIds: null,
+    countsByDate: createMapPatchDraft(previous.countsByDate),
+    dateNodeIdsByDate: createMapPatchDraft(previous.dateNodeIdsByDate),
+    dateRevisionByDate: createMapPatchDraft(previous.dateRevisionByDate),
+    dayTagIds: createSetPatchDraft(previous.dayTagIds),
     nextOrder: previous.nextOrder,
-    nodeDateById: null,
-    nodeOrderById: null,
+    nodeDateById: createMapPatchDraft(previous.nodeDateById),
+    nodeOrderById: createMapPatchDraft(previous.nodeOrderById),
     previous,
-    tagMembersByTagId: null,
-    winningNodeIdByDate: null,
+    tagMembersByTagId: createMapPatchDraft(previous.tagMembersByTagId),
+    winningNodeIdByDate: createMapPatchDraft(previous.winningNodeIdByDate),
   };
 }
 
 function materializePatchDraft(draft: DayNoteCountPatchDraft, visibleChanged: boolean): DayNoteCountIndex {
   return {
-    countsByDate: draft.countsByDate ?? draft.previous.countsByDate,
-    dateNodeIdsByDate: draft.dateNodeIdsByDate ?? draft.previous.dateNodeIdsByDate,
-    dateRevisionByDate: draft.dateRevisionByDate ?? draft.previous.dateRevisionByDate,
-    dayTagIds: draft.dayTagIds ?? draft.previous.dayTagIds,
-    nodeDateById: draft.nodeDateById ?? draft.previous.nodeDateById,
-    nodeOrderById: draft.nodeOrderById ?? draft.previous.nodeOrderById,
+    countsByDate: materializeMapPatchDraft(draft.countsByDate),
+    dateNodeIdsByDate: materializeMapPatchDraft(draft.dateNodeIdsByDate),
+    dateRevisionByDate: materializeMapPatchDraft(draft.dateRevisionByDate),
+    dayTagIds: materializeSetPatchDraft(draft.dayTagIds),
+    nodeDateById: materializeMapPatchDraft(draft.nodeDateById),
+    nodeOrderById: materializeMapPatchDraft(draft.nodeOrderById),
     nextOrder: draft.nextOrder,
     revision: visibleChanged ? draft.previous.revision + 1 : draft.previous.revision,
-    tagMembersByTagId: draft.tagMembersByTagId ?? draft.previous.tagMembersByTagId,
-    winningNodeIdByDate: draft.winningNodeIdByDate ?? draft.previous.winningNodeIdByDate,
+    tagMembersByTagId: materializeMapPatchDraft(draft.tagMembersByTagId),
+    winningNodeIdByDate: materializeMapPatchDraft(draft.winningNodeIdByDate),
   };
 }
 
@@ -266,41 +462,52 @@ function isFallbackDayTagNode(node: NodeProjection | undefined): boolean {
   return node?.type === 'tagDef' && node.content.text.trim().toLowerCase() === 'day';
 }
 
-function getDayTagIds(draft: DayNoteCountPatchDraft): ReadonlySet<NodeId> {
-  return draft.dayTagIds ?? draft.previous.dayTagIds;
+function dayNoteIsoDateForDraft(node: NodeProjection, draft: DayNoteCountPatchDraft): string | null {
+  if (!node.tags.some((tagId) => hasSetPatchValue(draft.dayTagIds, tagId))) return null;
+  return parseDayNodeIsoDate(node.content.text);
 }
 
-function ensureDayTagIds(draft: DayNoteCountPatchDraft): Set<NodeId> {
-  draft.dayTagIds ??= new Set(draft.previous.dayTagIds);
-  return draft.dayTagIds;
+function addDayTagId(draft: DayNoteCountPatchDraft, tagId: NodeId): void {
+  if (!addSetPatchValue(draft.dayTagIds, tagId)) return;
+  draft.changed = true;
+}
+
+function deleteDayTagId(draft: DayNoteCountPatchDraft, tagId: NodeId): void {
+  if (!deleteSetPatchValue(draft.dayTagIds, tagId)) return;
+  draft.changed = true;
 }
 
 function getNodeOrder(draft: DayNoteCountPatchDraft, nodeId: NodeId): number | undefined {
-  return (draft.nodeOrderById ?? draft.previous.nodeOrderById).get(nodeId);
+  return getMapPatchValue(draft.nodeOrderById, nodeId);
 }
 
 function setNodeOrder(draft: DayNoteCountPatchDraft, nodeId: NodeId, order: number): void {
-  draft.nodeOrderById ??= new Map(draft.previous.nodeOrderById);
-  draft.nodeOrderById.set(nodeId, order);
+  if (!setMapPatchValue(draft.nodeOrderById, nodeId, order)) return;
   draft.changed = true;
 }
 
 function deleteNodeOrder(draft: DayNoteCountPatchDraft, nodeId: NodeId): void {
-  if (!draft.previous.nodeOrderById.has(nodeId)) return;
-  draft.nodeOrderById ??= new Map(draft.previous.nodeOrderById);
-  draft.nodeOrderById.delete(nodeId);
+  if (!deleteMapPatchValue(draft.nodeOrderById, nodeId)) return;
   draft.changed = true;
 }
 
 function getTagMembers(draft: DayNoteCountPatchDraft, tagId: NodeId): ReadonlySet<NodeId> {
-  return (draft.tagMembersByTagId ?? draft.previous.tagMembersByTagId).get(tagId) ?? new Set<NodeId>();
+  return getMapPatchValue(draft.tagMembersByTagId, tagId) ?? EMPTY_NODE_ID_SET;
 }
 
 function setTagMembers(draft: DayNoteCountPatchDraft, tagId: NodeId, members: ReadonlySet<NodeId>): void {
-  draft.tagMembersByTagId ??= new Map(draft.previous.tagMembersByTagId);
-  if (members.size === 0) draft.tagMembersByTagId.delete(tagId);
-  else draft.tagMembersByTagId.set(tagId, members);
-  draft.changed = true;
+  const changed = members.size === 0
+    ? deleteMapPatchValue(draft.tagMembersByTagId, tagId)
+    : setMapPatchValue(draft.tagMembersByTagId, tagId, members);
+  if (changed) draft.changed = true;
+}
+
+function patchMemberSet(
+  members: ReadonlySet<NodeId>,
+  additions: readonly NodeId[],
+  removals: readonly NodeId[],
+): ReadonlySet<NodeId> {
+  return BucketedStringSet.fromReadonlySet(members).patch(additions, removals);
 }
 
 function patchTagMembership(
@@ -316,17 +523,13 @@ function patchTagMembership(
     if (nextTagSet.has(tagId)) continue;
     const members = getTagMembers(draft, tagId);
     if (!members.has(nodeId)) continue;
-    const nextMembers = new Set(members);
-    nextMembers.delete(nodeId);
-    setTagMembers(draft, tagId, nextMembers);
+    setTagMembers(draft, tagId, patchMemberSet(members, [], [nodeId]));
   }
   for (const tagId of nextTags) {
     if (previousTagSet.has(tagId)) continue;
     const members = getTagMembers(draft, tagId);
     if (members.has(nodeId)) continue;
-    const nextMembers = new Set(members);
-    nextMembers.add(nodeId);
-    setTagMembers(draft, tagId, nextMembers);
+    setTagMembers(draft, tagId, patchMemberSet(members, [nodeId], []));
   }
 }
 
@@ -337,32 +540,28 @@ function sameStringSet(left: readonly string[], right: readonly string[]): boole
 }
 
 function getNodeDate(draft: DayNoteCountPatchDraft, nodeId: NodeId): string | null {
-  return (draft.nodeDateById ?? draft.previous.nodeDateById).get(nodeId) ?? null;
+  return getMapPatchValue(draft.nodeDateById, nodeId) ?? null;
 }
 
 function setNodeDate(draft: DayNoteCountPatchDraft, nodeId: NodeId, isoDate: string): void {
-  if (getNodeDate(draft, nodeId) === isoDate) return;
-  draft.nodeDateById ??= new Map(draft.previous.nodeDateById);
-  draft.nodeDateById.set(nodeId, isoDate);
+  if (!setMapPatchValue(draft.nodeDateById, nodeId, isoDate)) return;
   draft.changed = true;
 }
 
 function deleteNodeDate(draft: DayNoteCountPatchDraft, nodeId: NodeId): void {
-  if (!getNodeDate(draft, nodeId)) return;
-  draft.nodeDateById ??= new Map(draft.previous.nodeDateById);
-  draft.nodeDateById.delete(nodeId);
+  if (!deleteMapPatchValue(draft.nodeDateById, nodeId)) return;
   draft.changed = true;
 }
 
 function getDateNodeIds(draft: DayNoteCountPatchDraft, isoDate: string): readonly NodeId[] {
-  return (draft.dateNodeIdsByDate ?? draft.previous.dateNodeIdsByDate).get(isoDate) ?? [];
+  return getMapPatchValue(draft.dateNodeIdsByDate, isoDate) ?? [];
 }
 
 function setDateNodeIds(draft: DayNoteCountPatchDraft, isoDate: string, nodeIds: readonly NodeId[]): void {
-  draft.dateNodeIdsByDate ??= new Map(draft.previous.dateNodeIdsByDate);
-  if (nodeIds.length === 0) draft.dateNodeIdsByDate.delete(isoDate);
-  else draft.dateNodeIdsByDate.set(isoDate, [...nodeIds]);
-  draft.changed = true;
+  const changed = nodeIds.length === 0
+    ? deleteMapPatchValue(draft.dateNodeIdsByDate, isoDate)
+    : setMapPatchValue(draft.dateNodeIdsByDate, isoDate, [...nodeIds]);
+  if (changed) draft.changed = true;
 }
 
 function removeDateNode(draft: DayNoteCountPatchDraft, isoDate: string, nodeId: NodeId): void {
@@ -392,42 +591,133 @@ function recomputeDateCount(
     setDateNodeIds(draft, isoDate, liveNodeIds);
   }
 
-  const countsByDate = draft.countsByDate ?? draft.previous.countsByDate;
-  const winningNodeIdByDate = draft.winningNodeIdByDate ?? draft.previous.winningNodeIdByDate;
+  const countsByDate = draft.countsByDate;
+  const winningNodeIdByDate = draft.winningNodeIdByDate;
   const previousCount = draft.previous.countsByDate.get(isoDate);
   const previousWinner = draft.previous.winningNodeIdByDate.get(isoDate);
   const winner = liveNodeIds.at(-1);
   const nextCount = winner ? nextById.get(winner)?.children.length : undefined;
 
   if (!winner || nextCount === undefined) {
-    if (countsByDate.has(isoDate)) {
-      draft.countsByDate ??= new Map(draft.previous.countsByDate);
-      draft.countsByDate.delete(isoDate);
-      draft.changed = true;
-    }
-    if (winningNodeIdByDate.has(isoDate)) {
-      draft.winningNodeIdByDate ??= new Map(draft.previous.winningNodeIdByDate);
-      draft.winningNodeIdByDate.delete(isoDate);
-      draft.changed = true;
-    }
+    if (deleteMapPatchValue(countsByDate, isoDate)) draft.changed = true;
+    if (deleteMapPatchValue(winningNodeIdByDate, isoDate)) draft.changed = true;
   } else {
-    if (countsByDate.get(isoDate) !== nextCount) {
-      draft.countsByDate ??= new Map(draft.previous.countsByDate);
-      draft.countsByDate.set(isoDate, nextCount);
-      draft.changed = true;
-    }
-    if (winningNodeIdByDate.get(isoDate) !== winner) {
-      draft.winningNodeIdByDate ??= new Map(draft.previous.winningNodeIdByDate);
-      draft.winningNodeIdByDate.set(isoDate, winner);
-      draft.changed = true;
-    }
+    if (setMapPatchValue(countsByDate, isoDate, nextCount)) draft.changed = true;
+    if (setMapPatchValue(winningNodeIdByDate, isoDate, winner)) draft.changed = true;
   }
 
   const changed = previousCount !== nextCount || previousWinner !== winner;
   if (changed) {
-    draft.dateRevisionByDate ??= new Map(draft.previous.dateRevisionByDate);
-    draft.dateRevisionByDate.set(isoDate, (draft.previous.dateRevisionByDate.get(isoDate) ?? 0) + 1);
-    draft.changed = true;
+    if (setMapPatchValue(
+      draft.dateRevisionByDate,
+      isoDate,
+      (draft.previous.dateRevisionByDate.get(isoDate) ?? 0) + 1,
+    )) {
+      draft.changed = true;
+    }
   }
   return changed;
+}
+
+function createMapPatchDraft<TKey extends string, TValue>(
+  base: ReadonlyMap<TKey, TValue>,
+): MapPatchDraft<TKey, TValue> {
+  return { base, removals: new Set<TKey>(), upserts: new Map<TKey, TValue>() };
+}
+
+function getMapPatchValue<TKey extends string, TValue>(
+  draft: MapPatchDraft<TKey, TValue>,
+  key: TKey,
+): TValue | undefined {
+  if (draft.upserts.has(key)) return draft.upserts.get(key);
+  if (draft.removals.has(key)) return undefined;
+  return draft.base.get(key);
+}
+
+function hasMapPatchValue<TKey extends string, TValue>(
+  draft: MapPatchDraft<TKey, TValue>,
+  key: TKey,
+): boolean {
+  return draft.upserts.has(key) || (!draft.removals.has(key) && draft.base.has(key));
+}
+
+function setMapPatchValue<TKey extends string, TValue>(
+  draft: MapPatchDraft<TKey, TValue>,
+  key: TKey,
+  value: TValue,
+): boolean {
+  if (hasMapPatchValue(draft, key) && Object.is(getMapPatchValue(draft, key), value)) return false;
+  draft.upserts.set(key, value);
+  draft.removals.delete(key);
+  return true;
+}
+
+function deleteMapPatchValue<TKey extends string, TValue>(
+  draft: MapPatchDraft<TKey, TValue>,
+  key: TKey,
+): boolean {
+  if (!hasMapPatchValue(draft, key)) return false;
+  draft.upserts.delete(key);
+  if (draft.base.has(key)) draft.removals.add(key);
+  else draft.removals.delete(key);
+  return true;
+}
+
+function materializeMapPatchDraft<TKey extends string, TValue>(
+  draft: MapPatchDraft<TKey, TValue>,
+): ReadonlyMap<TKey, TValue> {
+  if (draft.upserts.size === 0 && draft.removals.size === 0) return draft.base;
+  return BucketedStringMap.fromReadonlyMap(draft.base).patch(
+    [...draft.upserts.entries()],
+    [...draft.removals],
+  );
+}
+
+function createSetPatchDraft<TKey extends string>(base: ReadonlySet<TKey>): SetPatchDraft<TKey> {
+  return { additions: new Set<TKey>(), base, removals: new Set<TKey>() };
+}
+
+function hasSetPatchValue<TKey extends string>(draft: SetPatchDraft<TKey>, value: TKey): boolean {
+  return draft.additions.has(value) || (!draft.removals.has(value) && draft.base.has(value));
+}
+
+function addSetPatchValue<TKey extends string>(draft: SetPatchDraft<TKey>, value: TKey): boolean {
+  if (hasSetPatchValue(draft, value)) return false;
+  draft.additions.add(value);
+  draft.removals.delete(value);
+  return true;
+}
+
+function deleteSetPatchValue<TKey extends string>(draft: SetPatchDraft<TKey>, value: TKey): boolean {
+  if (!hasSetPatchValue(draft, value)) return false;
+  draft.additions.delete(value);
+  if (draft.base.has(value)) draft.removals.add(value);
+  else draft.removals.delete(value);
+  return true;
+}
+
+function materializeSetPatchDraft<TKey extends string>(draft: SetPatchDraft<TKey>): ReadonlySet<TKey> {
+  if (draft.additions.size === 0 && draft.removals.size === 0) return draft.base;
+  return BucketedStringSet.fromReadonlySet(draft.base).patch([...draft.additions], [...draft.removals]);
+}
+
+function emptyBuckets<TKey extends string, TValue>(): Map<TKey, TValue>[] {
+  return Array.from({ length: DAY_NOTE_INDEX_BUCKET_COUNT }, () => new Map<TKey, TValue>());
+}
+
+function bucketIndex(key: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash & DAY_NOTE_INDEX_BUCKET_MASK;
+}
+
+function mapIterator<TValue>(iterator: IterableIterator<TValue>): MapIterator<TValue> {
+  return iterator as MapIterator<TValue>;
+}
+
+function setIterator<TValue>(iterator: IterableIterator<TValue>): SetIterator<TValue> {
+  return iterator as SetIterator<TValue>;
 }
