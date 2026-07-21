@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { AssistantMessage } from '../../../core/agentTypes';
 import { useT } from '../../i18n/I18nProvider';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { formatNumber } from '../formatting';
 
 export interface AgentUsageBreakdownValue {
   cacheRead?: number;
@@ -20,7 +21,7 @@ export interface AgentUsageBreakdownValue {
 }
 
 export function formatUsageTokenValue(value: number | undefined): string {
-  return Number.isFinite(value) && value !== undefined ? new Intl.NumberFormat().format(value) : '0';
+  return Number.isFinite(value) && value !== undefined ? formatNumber(value) : '0';
 }
 
 export function formatUsageCostValue(value: number | undefined): string | null {

@@ -23,6 +23,7 @@ import { IconButton } from '../primitives/IconButton';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
+import { formatLocaleDateTime } from '../formatting';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentTranscriptMessageList } from './AgentTranscriptMessageList';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
@@ -693,11 +694,11 @@ export function AgentRunDetailsPanel({
               </div>
               <div>
                 <dt>{t.agent.runDetail.metaStarted}</dt>
-                <dd>{new Date(detail.startedAt).toLocaleString()}</dd>
+                <dd>{formatLocaleDateTime(detail.startedAt)}</dd>
               </div>
               <div>
                 <dt>{t.agent.runDetail.metaUpdated}</dt>
-                <dd>{new Date(detail.updatedAt).toLocaleString()}</dd>
+                <dd>{formatLocaleDateTime(detail.updatedAt)}</dd>
               </div>
             </dl>
           </DisclosureSection>

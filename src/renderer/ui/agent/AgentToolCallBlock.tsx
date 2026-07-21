@@ -28,6 +28,7 @@ import {
 } from './AgentInlineReferenceText';
 import { PlainReadOnlyCodeBlock, ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
 import { AgentToolCallDisclosure } from './AgentToolCallDisclosure';
+import { formatNumber } from '../formatting';
 import { displayRunStatus } from './AgentRunRow';
 import { getToolIcon } from './agentToolPresentation';
 import { usePreviewObjectUrl } from '../preview/usePreviewObjectUrl';
@@ -637,7 +638,7 @@ function outputWindow(
     text: [
       text.slice(0, TOOL_OUTPUT_WINDOW_HEAD_CHARS),
       '',
-      formatOmitted({ count: omitted.toLocaleString() }),
+      formatOmitted({ count: formatNumber(omitted) }),
       '',
       text.slice(-TOOL_OUTPUT_WINDOW_TAIL_CHARS),
     ].join('\n'),

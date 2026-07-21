@@ -12,12 +12,16 @@ import {
   isUserVisibleSessionProcessActivity,
 } from '../../../core/agentIssue';
 import type { Messages } from '../../../core/i18n';
+import { formatDateTime } from '../formatting';
 
 export type IssueWorkPreset = 'inbox' | 'today' | 'upcoming' | 'logbook';
 
 const ISSUE_ROW_INCLUDE: NonNullable<IssueSearchInput['include']> = ['activity-summary', 'session-summary'];
 const TERMINAL_STATUS_CATEGORIES = new Set(['completed', 'canceled']);
 const ISSUE_SEARCH_PAGE_LIMIT = 100;
+const ISSUE_TIME_OPTIONS: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
+const ISSUE_DATE_TIME_OPTIONS: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+const ISSUE_SECTION_DATE_OPTIONS: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', weekday: 'long' };
 
 export const ISSUE_DETAIL_INCLUDE = ['activity', 'sessions', 'child-issues', 'generated-issues'] as const;
 
@@ -113,18 +117,18 @@ function isAfterToday(timestamp: number | undefined, now: number): boolean {
 }
 
 function timeLabel(timestamp: number, locale: string): string {
-  return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
+  return formatDateTime(timestamp, locale, ISSUE_TIME_OPTIONS);
 }
 
 function dateTimeLabel(timestamp: number, locale: string): string {
-  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp));
+  return formatDateTime(timestamp, locale, ISSUE_DATE_TIME_OPTIONS);
 }
 
 export function dateSectionLabel(timestamp: number, now: number, labels: Messages['agent']['issue'], locale: string): string {
   const start = startOfLocalDay(timestamp);
   if (start === startOfLocalDay(now)) return labels.view.today;
   if (start === startOfNextLocalDay(now)) return labels.section.tomorrow;
-  return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', weekday: 'long' }).format(new Date(timestamp));
+  return formatDateTime(timestamp, locale, ISSUE_SECTION_DATE_OPTIONS);
 }
 
 export function dateTimeRelativeLabel(timestamp: number, now: number, labels: Messages['agent']['issue'], locale: string): string {
