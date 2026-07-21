@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import {
   diagnosticSourceLabel,
   serializeUnknownError,
@@ -11,13 +13,16 @@ import {
   type ErrorReportContextValue,
   type ErrorSeverity,
 } from '../core/errorObservability';
-import { AppendOnlySeqLog, serializeJsonl } from './appendOnlySeqLog';
+import { serializeJsonl } from './appendOnlySeqLog';
 import { atomicWriteFile } from './jsonFileStore';
 
 const DIAGNOSTICS_DIR = 'diagnostics';
 const DIAGNOSTIC_LOG_FILE = 'errors.jsonl';
-const DIAGNOSTIC_LOG_KEY = 'diagnostic-errors';
 const DIAGNOSTIC_RECORD_LIMIT = 200;
+const DIAGNOSTIC_FLUSH_DEBOUNCE_MS = 250;
+const DIAGNOSTIC_DIRTY_FLUSH_THRESHOLD = 32;
+const DIAGNOSTIC_LOG_BYTE_LIMIT = 2 * 1024 * 1024;
+const LOGGER_OVERFLOW_FINGERPRINT = 'diagnostic-logger-overflow';
 const MAX_MESSAGE_CHARS = 1_000;
 const MAX_CONTEXT_STRING_CHARS = 240;
 const MAX_CONTEXT_ARRAY_ITEMS = 20;
@@ -55,8 +60,33 @@ const ALLOWED_CONTEXT_KEYS = new Set([
   'statusCode',
 ]);
 
+export interface DiagnosticLogCounters {
+  enqueuedReports: number;
+  flushCount: number;
+  droppedReports: number;
+  droppedFingerprints: number;
+  dirtyFingerprints: number;
+  lastFlushDurationMs: number;
+  lastFlushError?: string;
+  lastLoadError?: string;
+}
+
 export class DiagnosticLogStore {
-  private readonly log = new AppendOnlySeqLog<DiagnosticLogRecord>('diagnostic error', parseDiagnosticRecordsJsonl);
+  private loaded = false;
+  private loading: Promise<void> | null = null;
+  private readonly recordsByFingerprint = new Map<string, DiagnosticLogRecord>();
+  private readonly dirtySeqByFingerprint = new Map<string, number>();
+  private latestSeq = 0;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushInFlight: Promise<void> | null = null;
+  private readonly counters: DiagnosticLogCounters = {
+    enqueuedReports: 0,
+    flushCount: 0,
+    droppedReports: 0,
+    droppedFingerprints: 0,
+    dirtyFingerprints: 0,
+    lastFlushDurationMs: 0,
+  };
 
   constructor(private readonly userDataDir: string) {}
 
@@ -65,47 +95,28 @@ export class DiagnosticLogStore {
   }
 
   async reportError(report: ErrorReport): Promise<DiagnosticLogRecord> {
-    return this.log.enqueue(DIAGNOSTIC_LOG_KEY, async () => {
-      const now = Date.now();
-      const normalized = normalizeReport(report);
-      const fingerprint = fingerprintForReport(normalized);
-      const existingRecords = projectDiagnosticRecords(await this.log.readIfExists(this.logPath));
-      const existing = existingRecords.find((record) => record.fingerprint === fingerprint);
-      const latestSeq = await this.log.latestSeq(DIAGNOSTIC_LOG_KEY, [this.logPath]);
-      const record: DiagnosticLogRecord = {
-        v: 1,
-        seq: latestSeq + 1,
-        eventId: `diag:${randomUUID()}`,
-        ts: now,
-        firstAt: existing?.firstAt ?? now,
-        lastAt: now,
-        count: (existing?.count ?? 0) + 1,
-        domain: normalized.domain,
-        severity: normalized.severity,
-        ...(normalized.code ? { code: normalized.code } : {}),
-        fingerprint,
-        message: normalized.message,
-        ...(normalized.context ? { context: normalized.context } : {}),
-      };
-      await this.log.appendForKey(DIAGNOSTIC_LOG_KEY, this.logPath, [record]);
-      await this.compact();
-      return record;
-    });
+    await this.ensureLoaded();
+    this.counters.enqueuedReports += 1;
+    const record = this.upsertReport(report, Date.now());
+    this.enforceRecordLimit();
+    this.scheduleFlush();
+    return cloneDiagnosticLogRecord(record);
   }
 
   async readRecords(): Promise<DiagnosticLogRecord[]> {
-    return projectDiagnosticRecords(await this.log.readIfExists(this.logPath))
-      .sort((left, right) => right.lastAt - left.lastAt || right.seq - left.seq);
+    await this.ensureLoaded();
+    return this.projectRecordsForRead();
   }
 
   async ensureLogFile(): Promise<string> {
-    return this.log.enqueue(DIAGNOSTIC_LOG_KEY, async () => {
-      await this.compact();
-      return this.logPath;
-    });
+    await this.flushNow({ reason: 'reveal' });
+    return this.logPath;
   }
 
   async writeExport(filePath: string, environment: DiagnosticEnvironment): Promise<string> {
+    await this.flushNow({ reason: 'export' }).catch((error) => {
+      this.recordFlushFailure(error);
+    });
     const artifact: DiagnosticExportArtifact = {
       v: 1,
       exportedAt: Date.now(),
@@ -116,17 +127,249 @@ export class DiagnosticLogStore {
     return filePath;
   }
 
-  private async compact(): Promise<void> {
-    let records = projectDiagnosticRecords(await this.log.readIfExists(this.logPath));
-    if (records.length > DIAGNOSTIC_RECORD_LIMIT) {
-      records = records
-        .sort((left, right) => right.lastAt - left.lastAt || right.seq - left.seq)
-        .slice(0, DIAGNOSTIC_RECORD_LIMIT);
+  async flushNow(options: { timeoutMs?: number; reason?: string } = {}): Promise<void> {
+    await this.ensureLoaded();
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
     }
-    records.sort((left, right) => left.seq - right.seq);
-    await atomicWriteFile(this.logPath, records.length === 0 ? '' : serializeJsonl(records));
-    this.log.setLatestSeq(DIAGNOSTIC_LOG_KEY, records.at(-1)?.seq ?? 0);
+    const flush = this.startFlush(options.reason ?? 'manual');
+    if (!options.timeoutMs || options.timeoutMs <= 0) {
+      await flush;
+      while (this.dirtySeqByFingerprint.size > 0 && !this.counters.lastFlushError) {
+        if (this.flushTimer) {
+          clearTimeout(this.flushTimer);
+          this.flushTimer = null;
+        }
+        await this.startFlush(options.reason ?? 'manual');
+      }
+      return;
+    }
+    await Promise.race([
+      flush,
+      new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, options.timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
   }
+
+  getCountersForTests(): DiagnosticLogCounters {
+    return {
+      ...this.counters,
+      dirtyFingerprints: this.dirtySeqByFingerprint.size,
+    };
+  }
+
+  private async ensureLoaded(): Promise<void> {
+    if (this.loaded) return;
+    if (!this.loading) {
+      this.loading = this.loadExistingRecords().finally(() => {
+        this.loading = null;
+      });
+    }
+    await this.loading;
+  }
+
+  private async loadExistingRecords(): Promise<void> {
+    try {
+      const parsed = parseDiagnosticRecordsJsonl(await readFile(this.logPath, 'utf8'), this.logPath);
+      const projected = projectDiagnosticRecords(parsed);
+      this.recordsByFingerprint.clear();
+      for (const record of projected) {
+        this.recordsByFingerprint.set(record.fingerprint, cloneDiagnosticLogRecord(record));
+        this.latestSeq = Math.max(this.latestSeq, record.seq);
+      }
+      this.enforceRecordLimit({ markOverflow: false });
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        this.counters.lastLoadError = error instanceof Error ? error.message : String(error);
+        console.error('[diagnostics] failed to load diagnostic log', error);
+      }
+      this.recordsByFingerprint.clear();
+      this.latestSeq = 0;
+    } finally {
+      this.loaded = true;
+    }
+  }
+
+  private upsertReport(report: ErrorReport, now: number): DiagnosticLogRecord {
+    const normalized = normalizeReport(report);
+    const fingerprint = fingerprintForReport(normalized);
+    const existing = this.recordsByFingerprint.get(fingerprint);
+    const record: DiagnosticLogRecord = {
+      v: 1,
+      seq: this.nextSeq(),
+      eventId: `diag:${randomUUID()}`,
+      ts: now,
+      firstAt: existing?.firstAt ?? now,
+      lastAt: now,
+      count: (existing?.count ?? 0) + 1,
+      domain: normalized.domain,
+      severity: normalized.severity,
+      ...(normalized.code ? { code: normalized.code } : {}),
+      fingerprint,
+      message: normalized.message,
+      ...(normalized.context ? { context: normalized.context } : {}),
+    };
+    this.recordsByFingerprint.set(fingerprint, record);
+    this.markDirty(record);
+    return record;
+  }
+
+  private nextSeq(): number {
+    this.latestSeq += 1;
+    return this.latestSeq;
+  }
+
+  private markDirty(record: DiagnosticLogRecord): void {
+    this.dirtySeqByFingerprint.set(record.fingerprint, record.seq);
+    this.counters.dirtyFingerprints = this.dirtySeqByFingerprint.size;
+  }
+
+  private scheduleFlush(): void {
+    if (this.dirtySeqByFingerprint.size >= DIAGNOSTIC_DIRTY_FLUSH_THRESHOLD) {
+      void this.flushNow({ reason: 'threshold' }).catch((error) => this.recordFlushFailure(error));
+      return;
+    }
+    if (this.flushTimer) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      void this.flushNow({ reason: 'debounce' }).catch((error) => this.recordFlushFailure(error));
+    }, DIAGNOSTIC_FLUSH_DEBOUNCE_MS);
+    this.flushTimer.unref?.();
+  }
+
+  private startFlush(reason: string): Promise<void> {
+    if (this.flushInFlight) return this.flushInFlight;
+    const dirtyAtStart = new Map(this.dirtySeqByFingerprint);
+    const startedAt = performance.now();
+    const flush = this.writeCompactLog(reason)
+      .then(() => {
+        for (const [fingerprint, seq] of dirtyAtStart) {
+          if (this.dirtySeqByFingerprint.get(fingerprint) === seq) {
+            this.dirtySeqByFingerprint.delete(fingerprint);
+          }
+        }
+        this.counters.flushCount += 1;
+        this.counters.lastFlushDurationMs = performance.now() - startedAt;
+        delete this.counters.lastFlushError;
+      })
+      .catch((error) => {
+        this.recordFlushFailure(error, startedAt);
+      })
+      .finally(() => {
+        if (this.flushInFlight === flush) this.flushInFlight = null;
+        this.counters.dirtyFingerprints = this.dirtySeqByFingerprint.size;
+        if (this.dirtySeqByFingerprint.size > 0 && !this.flushTimer) this.scheduleFlush();
+      });
+    this.flushInFlight = flush;
+    return flush;
+  }
+
+  private async writeCompactLog(_reason: string): Promise<void> {
+    const records = this.recordsForDisk();
+    await atomicWriteFile(this.logPath, records.length === 0 ? '' : serializeJsonl(records));
+  }
+
+  private recordFlushFailure(error: unknown, startedAt = performance.now()): void {
+    this.counters.lastFlushDurationMs = performance.now() - startedAt;
+    this.counters.lastFlushError = error instanceof Error ? error.message : String(error);
+    console.error('[diagnostics] failed to flush diagnostic log', error);
+  }
+
+  private projectRecordsForRead(): DiagnosticLogRecord[] {
+    return [...this.recordsByFingerprint.values()]
+      .map((record) => cloneDiagnosticLogRecord(record))
+      .sort((left, right) => right.lastAt - left.lastAt || right.seq - left.seq);
+  }
+
+  private recordsForDisk(): DiagnosticLogRecord[] {
+    const records = [...this.recordsByFingerprint.values()]
+      .map((record) => cloneDiagnosticLogRecord(record))
+      .sort((left, right) => left.seq - right.seq);
+    while (records.length > 1 && serializedByteLength(records) > DIAGNOSTIC_LOG_BYTE_LIMIT) {
+      const dropIndex = firstDroppableRecordIndex(records);
+      if (dropIndex < 0) break;
+      records.splice(dropIndex, 1);
+    }
+    return records;
+  }
+
+  private enforceRecordLimit(options: { markOverflow?: boolean } = {}): void {
+    const markOverflow = options.markOverflow ?? true;
+    const reserveOverflowSlot = markOverflow && !this.recordsByFingerprint.has(LOGGER_OVERFLOW_FINGERPRINT);
+    const normalRecordLimit = reserveOverflowSlot ? DIAGNOSTIC_RECORD_LIMIT - 1 : DIAGNOSTIC_RECORD_LIMIT;
+    let droppedReports = 0;
+    let droppedFingerprints = 0;
+    while (this.recordsByFingerprint.size > normalRecordLimit) {
+      const oldest = [...this.recordsByFingerprint.values()]
+        .filter((record) => record.fingerprint !== LOGGER_OVERFLOW_FINGERPRINT)
+        .sort((left, right) => left.lastAt - right.lastAt || left.seq - right.seq)[0];
+      if (!oldest) break;
+      this.recordsByFingerprint.delete(oldest.fingerprint);
+      this.dirtySeqByFingerprint.delete(oldest.fingerprint);
+      droppedReports += oldest.count;
+      droppedFingerprints += 1;
+    }
+    if (droppedReports <= 0) return;
+    this.counters.droppedReports += droppedReports;
+    this.counters.droppedFingerprints += droppedFingerprints;
+    if (markOverflow) this.upsertOverflowRecord(droppedReports, droppedFingerprints);
+  }
+
+  private upsertOverflowRecord(droppedReports: number, droppedFingerprints: number): void {
+    const now = Date.now();
+    const existing = this.recordsByFingerprint.get(LOGGER_OVERFLOW_FINGERPRINT);
+    const context = sanitizeContext({
+      count: (typeof existing?.context?.count === 'number' ? existing.context.count : 0) + droppedReports,
+      foundVersion: (typeof existing?.context?.foundVersion === 'number' ? existing.context.foundVersion : 0) + droppedFingerprints,
+      operation: 'diagnostic-log-overflow',
+    });
+    const record: DiagnosticLogRecord = {
+      v: 1,
+      seq: this.nextSeq(),
+      eventId: `diag:${randomUUID()}`,
+      ts: now,
+      firstAt: existing?.firstAt ?? now,
+      lastAt: now,
+      count: (existing?.count ?? 0) + droppedReports,
+      domain: 'runtime',
+      severity: 'warn',
+      code: 'diagnostic-log-overflow',
+      fingerprint: LOGGER_OVERFLOW_FINGERPRINT,
+      message: 'Diagnostic log dropped reports because the retained record limit was exceeded.',
+      ...(context ? { context } : {}),
+    };
+    this.recordsByFingerprint.set(record.fingerprint, record);
+    this.markDirty(record);
+  }
+}
+
+function cloneDiagnosticLogRecord(record: DiagnosticLogRecord): DiagnosticLogRecord {
+  return {
+    ...record,
+    ...(record.context ? { context: { ...record.context } } : {}),
+  };
+}
+
+function serializedByteLength(records: readonly DiagnosticLogRecord[]): number {
+  return Buffer.byteLength(records.length === 0 ? '' : serializeJsonl(records));
+}
+
+function firstDroppableRecordIndex(records: readonly DiagnosticLogRecord[]): number {
+  let index = -1;
+  for (let candidate = 0; candidate < records.length; candidate += 1) {
+    if (records[candidate]?.fingerprint === LOGGER_OVERFLOW_FINGERPRINT) continue;
+    if (
+      index < 0
+      || records[candidate]!.lastAt < records[index]!.lastAt
+      || (records[candidate]!.lastAt === records[index]!.lastAt && records[candidate]!.seq < records[index]!.seq)
+    ) {
+      index = candidate;
+    }
+  }
+  return index;
 }
 
 function normalizeReport(report: ErrorReport): Required<Pick<ErrorReport, 'domain' | 'severity' | 'message'>> & {
@@ -306,4 +549,8 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return isRecord(error) && error.code === 'ENOENT';
 }
