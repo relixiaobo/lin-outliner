@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped table-view #409) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408) |
@@ -32,7 +32,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-21).** Open PR queue: none. Recently
-merged: #420 (`codex/renderer-delta-reducer-surface`) merged 2026-07-21 after
+merged: #421 (`codex/search-query-complexity-budget`) merged 2026-07-21 after
+iterative main review; see *Recently completed*. #420 (`codex/renderer-delta-reducer-surface`) merged 2026-07-21 after
 main review; see *Recently completed*. #419 (`codex/diagnostic-log-coalescing`) merged 2026-07-21 after
 iterative main review; see *Recently completed*. #418 (`codex/renderer-formatting-cache`) and #417
 (`codex/definition-create-read-model`) merged 2026-07-21 after main review; see
@@ -179,7 +180,8 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    Agent `node_create` through the maintained read model and transaction-local command deltas;
    #417 extended that route to definition creation; #418 cached renderer `Intl` formatters;
    #419 coalesced diagnostic log writes; #420 made renderer projection delta
-   snapshots bucketed copy-on-write with lazy `projection.nodes` views.
+   snapshots bucketed copy-on-write with lazy `projection.nodes` views; #421
+   bounded search-query compilation and removed recursive query traversal.
    Remaining localized
    cleanups are still tracked in `docs/plans/performance-optimization.md`; no design gate.
 4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
@@ -491,7 +493,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
   perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
-  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 + rich-text patch runtime #415 + Agent node_create read-model routing #416 + definition create routing #417 + renderer formatting cache #418 + diagnostic log coalescing #419 + renderer delta reducer surface #420 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
+  · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 + rich-text patch runtime #415 + Agent node_create read-model routing #416 + definition create routing #417 + renderer formatting cache #418 + diagnostic log coalescing #419 + renderer delta reducer surface #420 + search query complexity budget #421 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
   index patched per delta, windowed/flat outliner renderer + agent streaming `projection_patch` +
   structural-save coalescing (metrics in Recently completed). #380 precomputes Trash descendant sets
   for renderer/system/search reference-summary scans and stops building recursive panel row models on
@@ -508,8 +510,10 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   same read-model and mutation-delta path to Schema definition creation, #418 centralizes
   renderer date/time and number formatting behind bounded `Intl` formatter caches, #419
   coalesces repeated diagnostic reports into dirty in-memory aggregates before compact log flushes,
-  and #420 keeps renderer projection `byId` and render-revision snapshots in sparse copy-on-write
-  maps while exposing delta `projection.nodes` through a lazy array-shaped compatibility view.
+  #420 keeps renderer projection `byId` and render-revision snapshots in sparse copy-on-write
+  maps while exposing delta `projection.nodes` through a lazy array-shaped compatibility view,
+  and #421 bounds query depth/size before evaluation while making Core, Agent, renderer summary,
+  and reference-cycle query-adjacent traversals iterative.
   **Remaining P3:** additional localized O(N) cleanups still listed in the plan; the ordinary renderer
   projection delta path no longer rebuilds `new Map(prev.byId)` or the whole render-revision map.
 
@@ -549,6 +553,24 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **search-query-complexity-budget**
+  (`codex/search-query-complexity-budget`, PR #421, codex, merged 2026-07-21,
+  fast-track) — canonical and saved search queries now compile into one bounded
+  iterative representation before validation or execution. Explicit limits
+  cover depth, total query nodes, operands per rule, and children per group;
+  Agent search-outline parsing and serialization plus renderer query summaries
+  avoid recursive query walks. Summary truncation is visible, and iterative
+  reference-cycle checks still allow large acyclic graphs.
+  **Gate (main):** the first review found four boundary regressions: Core could
+  persist over-budget configs, ordinary Agent outlines inherited the search
+  budget, large acyclic references were reported as cycles, and a 65-rule root
+  AND summary silently dropped one rule. Codex fixed all four on final head
+  `828db36`. Verified with typecheck, `docs:check`, diff check, focused search /
+  Agent outline / renderer reference tests (240 pass), full `test:core` (1690
+  pass), and full `test:renderer` (940 pass). The two related search-builder E2E
+  cases still hit the existing `main` Recents-click timeout before reaching the
+  feature surface.
 
 - **renderer-delta-reducer-surface**
   (`codex/renderer-delta-reducer-surface`, PR #420, codex, merged 2026-07-21,

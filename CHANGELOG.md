@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Search query complexity budget (PR #421, codex)** — canonical and saved
+  search queries now pass through bounded iterative compilation before
+  evaluation, with explicit depth, node, operand, and group-child limits.
+  Agent search outlines, renderer query summaries, and reference-cycle checks
+  avoid recursive traversal; truncated summaries disclose omitted rules instead
+  of silently hiding them. **Gate (main):** the first review found four boundary
+  regressions covering pre-mutation admission, ordinary outline validation,
+  large acyclic references, and summary truncation; codex fixed all four before
+  merge. Verified with typecheck, full Core and renderer tests, focused search /
+  outline / reference tests, docs check, and diff check. The two related search
+  builder E2E cases remain blocked by the existing `main` Recents-click timeout.
 - **Renderer delta reducer surface (PR #420, codex)** — renderer projection
   delta folding now keeps `byId` and per-node render revisions in bucketed
   copy-on-write sparse maps, with delta `projection.nodes` exposed through a
