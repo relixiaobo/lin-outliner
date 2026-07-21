@@ -323,6 +323,7 @@ describe('row interaction resolvers', () => {
 	        { kind: 'field', label: 'Status = Backlog' },
 	      ],
 	      resultCount: 1,
+	      truncated: false,
 	    });
 	    expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search', enMessages)).toBe([
 	      '- AND',
@@ -1904,6 +1905,41 @@ describe('row interaction resolvers', () => {
       targetId: 'target',
       byId,
     })).toBe('already_in_parent');
+  });
+
+  test('blocks cyclic reference targets without recursive resolution', () => {
+    const parent = makeNode('parent', 'Parent');
+    const cyclicReference = makeNode('ref', '', { type: 'reference', targetId: 'ref' });
+    const byId = new Map<string, any>([
+      [parent.id, parent],
+      [cyclicReference.id, cyclicReference],
+    ]);
+
+    expect(getTreeReferenceBlockReason({
+      parentId: 'parent',
+      targetId: 'ref',
+      byId,
+    })).toBe('would_create_display_cycle');
+  });
+
+  test('blocks over-budget reference target chains without recursive resolution', () => {
+    const parent = makeNode('parent', 'Parent');
+    const target = makeNode('target', 'Target');
+    const chain = Array.from({ length: 1_030 }, (_, index) => makeNode(`ref-${index}`, '', {
+      type: 'reference',
+      targetId: index === 1_029 ? 'target' : `ref-${index + 1}`,
+    }));
+    const byId = new Map<string, any>([
+      [parent.id, parent],
+      [target.id, target],
+      ...chain.map((node) => [node.id, node] as [string, any]),
+    ]);
+
+    expect(getTreeReferenceBlockReason({
+      parentId: 'parent',
+      targetId: 'ref-0',
+      byId,
+    })).toBe('would_create_display_cycle');
   });
 
   test('only disables cycle candidates when evaluating a tree reference insertion', () => {

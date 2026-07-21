@@ -19,6 +19,10 @@ import {
   searchQueryTerms,
   type TransientSearchOptions,
 } from '../core/searchEngine';
+import {
+  SEARCH_QUERY_COMPLEXITY_LIMITS,
+  compileSearchQueryExpr,
+} from '../core/searchQueryCompiler';
 import type { TextSearchIndex } from '../core/textSearchIndex';
 import { searchNodeQuery } from './nodeRetrievalService';
 import { parseLinOutline, type OutlineDocument, type OutlineNode, type OutlineValue } from './agentOutlineParser';
@@ -422,13 +426,33 @@ export function searchQueryOutlineLines(index: ProjectionIndex, node: NodeProjec
 }
 
 function validateSearchNode(index: ProjectionIndex, node: OutlineNode): NodeToolIssue | null {
-  if (node.search) {
-    const spec = resolveSearchSpecFromOutlineNode(index, node);
-    if ('error' in spec) return spec;
-  }
-  for (const child of node.children) {
-    const validation = validateSearchNode(index, child);
-    if (validation) return validation;
+  const stack: Array<{ node: OutlineNode; depth: number }> = [{ node, depth: 1 }];
+  let nodeCount = 0;
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.depth > SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth) {
+      return {
+        code: 'invalid_search_condition',
+        error: `Search outline is too deep; maximum depth is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth}.`,
+        instructions: 'Split the query into a smaller search outline.',
+      };
+    }
+    if (nodeCount >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes) {
+      return {
+        code: 'invalid_search_condition',
+        error: `Search outline is too large; maximum node count is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes}.`,
+        instructions: 'Split the query into a smaller search outline.',
+      };
+    }
+    nodeCount += 1;
+
+    if (current.node.search) {
+      const spec = resolveSearchSpecFromOutlineNode(index, current.node);
+      if ('error' in spec) return spec;
+    }
+    for (let index = current.node.children.length - 1; index >= 0; index -= 1) {
+      stack.push({ node: current.node.children[index]!, depth: current.depth + 1 });
+    }
   }
   return null;
 }
@@ -453,31 +477,118 @@ function parseSearchOutline(index: ProjectionIndex, outline: string): ResolvedSe
 }
 
 function queryExprFromOutlineNode(index: ProjectionIndex, node: OutlineNode): SearchQueryExpr | NodeToolIssue {
-  const token = node.title.trim().toUpperCase();
-  if (QUERY_LOGICS.has(token as QueryLogic)) {
-    if (node.fields.length > 0) {
+  type Frame = {
+    node: OutlineNode;
+    logic: QueryLogic;
+    children: SearchQueryExpr[];
+    nextChildIndex: number;
+    depth: number;
+  };
+
+  const stack: Frame[] = [];
+  let nodeCount = 0;
+  let finalQuery: SearchQueryExpr | null = null;
+
+  const completeQuery = (query: SearchQueryExpr) => {
+    const parent = stack.at(-1);
+    if (parent) parent.children.push(query);
+    else finalQuery = query;
+  };
+
+  const pushNode = (current: OutlineNode, depth: number): NodeToolIssue | null => {
+    if (depth > SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth) {
       return {
         code: 'invalid_search_condition',
-        error: `Search group "${token}" cannot contain operand fields.`,
-        instructions: 'Put operands under rule nodes, not group nodes.',
+        error: `Search query is too deep; maximum depth is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth}.`,
+        instructions: 'Split the query into a smaller search outline.',
       };
     }
-    if (node.children.length === 0) {
+    if (nodeCount >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes) {
       return {
         code: 'invalid_search_condition',
-        error: `Search group "${token}" has no child rules.`,
-        instructions: 'Add at least one child rule under the group.',
+        error: `Search query is too large; maximum node count is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes}.`,
+        instructions: 'Split the query into a smaller search outline.',
       };
     }
-    const children: SearchQueryExpr[] = [];
-    for (const child of node.children) {
-      const query = queryExprFromOutlineNode(index, child);
-      if ('error' in query) return query;
-      children.push(query);
+    nodeCount += 1;
+
+    const token = current.title.trim().toUpperCase();
+    if (QUERY_LOGICS.has(token as QueryLogic)) {
+      if (current.fields.length > 0) {
+        return {
+          code: 'invalid_search_condition',
+          error: `Search group "${token}" cannot contain operand fields.`,
+          instructions: 'Put operands under rule nodes, not group nodes.',
+        };
+      }
+      if (current.children.length === 0) {
+        return {
+          code: 'invalid_search_condition',
+          error: `Search group "${token}" has no child rules.`,
+          instructions: 'Add at least one child rule under the group.',
+        };
+      }
+      if (current.children.length > SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup) {
+        return {
+          code: 'invalid_search_condition',
+          error: `Search group "${token}" has too many child rules; maximum is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup}.`,
+          instructions: 'Split the group into a smaller query.',
+        };
+      }
+      stack.push({
+        node: current,
+        logic: token as QueryLogic,
+        children: [],
+        nextChildIndex: 0,
+        depth,
+      });
+      return null;
     }
-    return { kind: 'group', logic: token as QueryLogic, children };
+
+    const rule = queryRuleFromOutlineNode(index, current, token);
+    if ('error' in rule) return rule;
+    completeQuery(rule);
+    return null;
+  };
+
+  const firstIssue = pushNode(node, 1);
+  if (firstIssue) return firstIssue;
+
+  while (stack.length > 0) {
+    const frame = stack.at(-1)!;
+    if (frame.nextChildIndex >= frame.node.children.length) {
+      stack.pop();
+      completeQuery({ kind: 'group', logic: frame.logic, children: frame.children });
+      continue;
+    }
+    const child = frame.node.children[frame.nextChildIndex++]!;
+    const issue = pushNode(child, frame.depth + 1);
+    if (issue) return issue;
   }
 
+  if (!finalQuery) {
+    return {
+      code: 'invalid_search_condition',
+      error: 'Search query is empty.',
+      instructions: 'Add one executable search rule.',
+    };
+  }
+  const compiled = compileSearchQueryExpr(finalQuery);
+  if (!compiled.ok) {
+    return {
+      code: compiled.issue.code,
+      error: compiled.issue.message,
+      instructions: 'Reduce the search query size or depth, then retry.',
+    };
+  }
+  return finalQuery;
+}
+
+function queryRuleFromOutlineNode(
+  index: ProjectionIndex,
+  node: OutlineNode,
+  token: string,
+): SearchQueryRule | NodeToolIssue {
   if (!QUERY_OP_SET.has(token as QueryOp)) {
     return {
       code: 'unsupported_search_rule',
@@ -508,6 +619,15 @@ function queryExprFromOutlineNode(index: ProjectionIndex, node: OutlineNode): Se
       code: 'invalid_search_condition',
       error: `Unsupported search rule operand "${unknownField.name}".`,
       instructions: 'Use only field::, tag::, target::, value::, or operand:: under query rule nodes.',
+    };
+  }
+
+  const operandCount = valuesForField(node, 'value').length + valuesForField(node, 'operand').length;
+  if (operandCount > SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule) {
+    return {
+      code: 'invalid_search_condition',
+      error: `Search rule "${op}" has too many operands; maximum is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule}.`,
+      instructions: 'Split the query into smaller rules.',
     };
   }
 
@@ -710,14 +830,29 @@ function uniqueOperands(operands: SearchQueryOperand[]): SearchQueryOperand[] {
 }
 
 function serializeQueryExprOutlineLines(index: ProjectionIndex, query: SearchQueryExpr, level: number): string[] {
-  const indent = '  '.repeat(level);
-  if (query.kind === 'group') {
-    return [
-      `${indent}- ${query.logic}`,
-      ...query.children.flatMap((child) => serializeQueryExprOutlineLines(index, child, level + 1)),
-    ];
-  }
+  const compiled = compileSearchQueryExpr(query);
+  if (!compiled.ok) return [`${'  '.repeat(level)}- Invalid search query: ${compiled.issue.message}`];
 
+  const lines: string[] = [];
+  const stack: Array<{ nodeId: number; level: number }> = [{ nodeId: compiled.query.rootId, level }];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    const node = compiled.query.nodes[current.nodeId];
+    if (!node) continue;
+    if (node.kind === 'group') {
+      lines.push(`${'  '.repeat(current.level)}- ${node.logic}`);
+      for (let index = node.children.length - 1; index >= 0; index -= 1) {
+        stack.push({ nodeId: node.children[index]!, level: current.level + 1 });
+      }
+      continue;
+    }
+    lines.push(...serializeQueryRuleOutlineLines(index, node.rule, current.level));
+  }
+  return lines;
+}
+
+function serializeQueryRuleOutlineLines(index: ProjectionIndex, query: SearchQueryRule, level: number): string[] {
+  const indent = '  '.repeat(level);
   const lines = [`${indent}- ${query.op}`];
   if (query.fieldDefId) lines.push(`${indent}  - field:: ${nodeReference(index, query.fieldDefId)}`);
   if (query.tagDefId) lines.push(`${indent}  - tag:: ${nodeReference(index, query.tagDefId, tagLabel(index.nodes.get(query.tagDefId)) ?? undefined)}`);

@@ -49,6 +49,12 @@ import { buildReferenceSummary, type ReferenceSummary } from './references';
 import { cappedMultiplier } from './ranking';
 import { collectDescendantIds, nodeIsInSubtree } from './treeUtils';
 import {
+  SEARCH_QUERY_COMPLEXITY_LIMITS,
+  compileSearchQueryExpr,
+  type CompiledSearchQuery,
+  type CompiledSearchQueryNode,
+} from './searchQueryCompiler';
+import {
   nodeAccessRankingMultiplier,
   type NodeAccessStats,
 } from './nodeAccessRanking';
@@ -235,6 +241,12 @@ interface DateRange {
   isoStart: string;
 }
 
+interface PreparedSearchQueryEvaluation {
+  evalIndex: SearchIndex;
+  compiled: CompiledSearchQuery;
+  ruleNodes: Map<number, QueryBearingNode>;
+}
+
 type CalendarRangeUnit = 'day' | 'week' | 'year';
 
 interface CalendarNodeRange {
@@ -279,8 +291,10 @@ export function validateSearchQueries(
   const contextSearchNode = searchNode ?? virtualSearchNode();
   const references = referenceSummaryForSearchIndex(baseIndex);
   for (const [queryIndex, query] of queries.entries()) {
-    const prepared = prepareSearchQueryEvaluation(baseIndex, query, contextSearchNode);
-    const issue = validateConditionTree(prepared.evalIndex, prepared.root, {
+    const compiled = compileSearchQueryExpr(query);
+    if (!compiled.ok) return { ok: false, queryIndex, issue: compiled.issue };
+    const prepared = prepareSearchQueryEvaluation(baseIndex, compiled.query);
+    const issue = validateCompiledConditionTree(prepared, {
       searchNode: contextSearchNode,
       references,
     });
@@ -303,12 +317,14 @@ function runSearchExprInternal(
 
   const contextSearchNode = searchNode ?? virtualSearchNode();
   const references = referenceSummaryForSearchIndex(baseIndex);
-  const prepared = prepareSearchQueryEvaluation(baseIndex, query, contextSearchNode);
+  const compiled = compileSearchQueryExpr(query);
+  if (!compiled.ok) return { ok: false, issue: compiled.issue };
+  const prepared = prepareSearchQueryEvaluation(baseIndex, compiled.query);
   const validationContext: SearchContext = {
     searchNode: contextSearchNode,
     references,
   };
-  const issue = validateConditionTree(prepared.evalIndex, prepared.root, validationContext);
+  const issue = validateCompiledConditionTree(prepared, validationContext);
   if (issue) return { ok: false, issue };
   const context: SearchContext = {
     ...validationContext,
@@ -316,7 +332,7 @@ function runSearchExprInternal(
     textAnalysisByQuery: options.textIndex ? new Map<string, TextSearchQueryAnalysis>() : undefined,
   };
 
-  const candidateIds = candidateIdsForQuery(query, options.textIndex);
+  const candidateIds = candidateIdsForCompiledQuery(prepared.compiled, options.textIndex);
   const candidateNodes = candidateIds
     ? [...candidateIds].map((nodeId) => prepared.evalIndex.nodes.get(nodeId)).filter((node): node is SearchNode => Boolean(node))
     : prepared.evalIndex.allNodes;
@@ -324,7 +340,7 @@ function runSearchExprInternal(
   const scored: SearchHit[] = [];
   for (const node of candidateNodes) {
     if ((searchNode && node.id === searchNode.id) || !isSearchCandidate(prepared.evalIndex, node.id)) continue;
-    const evaluation = evaluateCondition(prepared.evalIndex, node, prepared.root, context);
+    const evaluation = evaluateCompiledCondition(prepared, node, context);
     if (!evaluation.ok) return evaluation;
     if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
   }
@@ -335,21 +351,30 @@ function runSearchExprInternal(
 
 function prepareSearchQueryEvaluation(
   baseIndex: SearchIndex,
-  query: SearchQueryExpr,
-  searchNode: SearchNode,
-): { evalIndex: SearchIndex; root: QueryBearingNode } {
+  compiled: CompiledSearchQuery,
+): PreparedSearchQueryEvaluation {
   const evalIndex: SearchIndex = {
     ...baseIndex,
     nodes: new Map(baseIndex.nodes),
   };
-  let virtualCounter = 0;
-  const virtualTree = virtualConditionTreeFromQueryExpr(
-    query,
-    searchNode.id,
-    () => `virtual:query:${virtualCounter++}`,
-  );
-  for (const node of virtualTree.nodes) evalIndex.nodes.set(node.id, node);
-  return { evalIndex, root: virtualTree.root };
+  const ruleNodes = new Map<number, QueryBearingNode>();
+  for (const compiledNode of compiled.nodes) {
+    if (compiledNode.kind !== 'rule') continue;
+    const conditionNode = virtualConditionNodeFromCompiledRule(compiledNode);
+    ruleNodes.set(compiledNode.id, conditionNode);
+    evalIndex.nodes.set(conditionNode.id, conditionNode);
+    for (const childId of conditionNode.children) {
+      const child = evalIndex.nodes.get(childId);
+      if (child) continue;
+      const operandIndex = Number(childId.slice(childId.lastIndexOf(':') + 1));
+      const operand = compiledNode.rule.operands?.[operandIndex];
+      if (!operand) continue;
+      const operandNode = virtualNode(childId, conditionNode.id, operand.targetId ? 'reference' : undefined, operand.text ?? '');
+      if (operand.targetId) (operandNode as Extract<SearchNode, { type: 'reference' }>).targetId = operand.targetId;
+      evalIndex.nodes.set(operandNode.id, operandNode);
+    }
+  }
+  return { evalIndex, compiled, ruleNodes };
 }
 
 function sortSearchHits(
@@ -475,12 +500,24 @@ function sortValuesForNode(index: SearchIndex, node: SearchNode, fieldId: string
 
 function nodeTreeText(index: SearchIndex, node: SearchNode | undefined): string {
   if (!node) return '';
-  const displayed = displaySearchNode(index, node);
-  if (displayed.content.text) return displayed.content.text;
-  return displayed.children
-    .map((childId) => nodeTreeText(index, index.nodes.get(childId)))
-    .filter(Boolean)
-    .join(' ');
+  const parts: string[] = [];
+  const visited = new Set<NodeId>();
+  const stack: SearchNode[] = [node];
+  while (stack.length > 0 && visited.size < SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes) {
+    const current = stack.pop()!;
+    const displayed = displaySearchNode(index, current);
+    if (visited.has(displayed.id)) continue;
+    visited.add(displayed.id);
+    if (displayed.content.text) {
+      parts.push(displayed.content.text);
+      continue;
+    }
+    for (let childIndex = displayed.children.length - 1; childIndex >= 0; childIndex -= 1) {
+      const child = index.nodes.get(displayed.children[childIndex]!);
+      if (child) stack.push(child);
+    }
+  }
+  return parts.join(' ');
 }
 
 function displaySearchNode(index: SearchIndex, node: SearchNode): SearchNode {
@@ -554,8 +591,8 @@ export function searchNodeToQueryExpr(document: SearchDocument, searchNodeId: No
   }
 
   if (children.length === 0) return { ok: true, query: null };
-  if (children.length === 1) return { ok: true, query: children[0]! };
-  return { ok: true, query: { kind: 'group', logic: 'AND', children } };
+  const query = children.length === 1 ? children[0]! : { kind: 'group' as const, logic: 'AND' as const, children };
+  return admitResolvedSearchQuery(query);
 }
 
 export function searchNodeHasRules(document: SearchDocument, searchNodeId: NodeId): boolean {
@@ -565,8 +602,8 @@ export function searchNodeHasRules(document: SearchDocument, searchNodeId: NodeI
 
 export function searchQueryHasRules(query: SearchQueryExpr | null | undefined): boolean {
   if (!query) return false;
-  if (query.kind === 'rule') return true;
-  return query.children.some(searchQueryHasRules);
+  const compiled = compileSearchQueryExpr(query);
+  return compiled.ok && compiled.query.hasRules;
 }
 
 export function searchNodeQueryTerms(document: SearchDocument, searchNodeId: NodeId): string[] {
@@ -575,9 +612,9 @@ export function searchNodeQueryTerms(document: SearchDocument, searchNodeId: Nod
 }
 
 export function searchQueryTerms(query: SearchQueryExpr | null | undefined): string[] {
-  const terms: string[] = [];
-  collectQueryExprTerms(query, terms);
-  return uniqueStrings(terms);
+  if (!query) return [];
+  const compiled = compileSearchQueryExpr(query);
+  return compiled.ok ? compiled.query.terms : [];
 }
 
 export function isCoreSearchCandidate(document: SearchDocument, nodeId: NodeId): boolean {
@@ -666,52 +703,169 @@ function deletedNodeIdSet(nodes: ReadonlyMap<NodeId, SearchNode>): Set<NodeId> {
 }
 
 function queryExprFromConditionNode(index: SearchIndex, conditionNode: QueryBearingNode): SearchQueryResolution {
-  if (conditionNode.queryOp) {
-    const text = QUERY_TEXT_CONTENT_OPS.has(conditionNode.queryOp)
-      ? conditionNode.content.text.trim()
-      : '';
-    return {
-      ok: true,
-      query: {
-        kind: 'rule',
-        op: conditionNode.queryOp,
-        ...(text ? { text } : {}),
-        ...(conditionNode.queryFieldDefId ? { fieldDefId: conditionNode.queryFieldDefId } : {}),
-        ...(conditionNode.queryTagDefId ? { tagDefId: conditionNode.queryTagDefId } : {}),
-        ...(conditionNode.queryTargetId ? { targetId: conditionNode.queryTargetId } : {}),
-        ...queryOperandsFromConditionNode(index, conditionNode),
-      },
-    };
+  type Frame = {
+    node: QueryBearingNode;
+    childConditions: QueryBearingNode[];
+    nextChildIndex: number;
+    children: SearchQueryExpr[];
+    depth: number;
+  };
+
+  const active = new Set<NodeId>();
+  const stack: Frame[] = [];
+  let nodeCount = 0;
+  let finalQuery: SearchQueryExpr | null = null;
+
+  const completeQuery = (query: SearchQueryExpr | null) => {
+    active.delete(stack.pop()!.node.id);
+    if (!query) return;
+    const parent = stack.at(-1);
+    if (parent) {
+      parent.children.push(query);
+    } else {
+      finalQuery = query;
+    }
+  };
+
+  const pushNode = (node: QueryBearingNode, depth: number): SearchConditionIssue | null => {
+    if (depth > SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth) {
+      return {
+        code: 'invalid_search_condition',
+        message: `Search condition tree is too deep; maximum depth is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth}.`,
+        nodeId: node.id,
+      };
+    }
+    if (nodeCount >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes) {
+      return {
+        code: 'invalid_search_condition',
+        message: `Search condition tree is too large; maximum node count is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes}.`,
+        nodeId: node.id,
+      };
+    }
+    if (active.has(node.id)) {
+      return {
+        code: 'invalid_search_condition',
+        message: `Search condition tree contains a cycle at ${node.id}.`,
+        nodeId: node.id,
+      };
+    }
+    nodeCount += 1;
+    active.add(node.id);
+
+    if (node.queryOp) {
+      const rule = queryRuleFromConditionNode(index, node);
+      active.delete(node.id);
+      if (!rule.ok) return rule.issue;
+      const parent = stack.at(-1);
+      if (parent) {
+        parent.children.push(rule.query);
+      } else {
+        finalQuery = rule.query;
+      }
+      return null;
+    }
+
+    if (!node.queryLogic) {
+      active.delete(node.id);
+      return {
+        code: 'invalid_search_condition',
+        message: `Search condition has no query operator: ${node.id}`,
+        nodeId: node.id,
+      };
+    }
+
+    const childConditions = directSearchConditionChildren(index, node);
+    if (childConditions.length > SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup) {
+      active.delete(node.id);
+      return {
+        code: 'invalid_search_condition',
+        message: `Search condition group has too many child conditions; maximum is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup}.`,
+        nodeId: node.id,
+        queryLogic: node.queryLogic,
+      };
+    }
+
+    stack.push({
+      node,
+      childConditions,
+      nextChildIndex: 0,
+      children: [],
+      depth,
+    });
+    return null;
+  };
+
+  const firstIssue = pushNode(conditionNode, 1);
+  if (firstIssue) return { ok: false, issue: firstIssue };
+
+  while (stack.length > 0) {
+    const frame = stack.at(-1)!;
+    if (frame.nextChildIndex >= frame.childConditions.length) {
+      completeQuery(frame.children.length > 0
+        ? { kind: 'group', logic: frame.node.queryLogic!, children: frame.children }
+        : null);
+      continue;
+    }
+    const child = frame.childConditions[frame.nextChildIndex++]!;
+    const issue = pushNode(child, frame.depth + 1);
+    if (issue) return { ok: false, issue };
   }
 
-  if (!conditionNode.queryLogic) {
+  return finalQuery ? admitResolvedSearchQuery(finalQuery) : { ok: true, query: null };
+}
+
+function queryRuleFromConditionNode(index: SearchIndex, conditionNode: QueryBearingNode): {
+  ok: true;
+  query: SearchQueryExpr;
+} | {
+  ok: false;
+  issue: SearchConditionIssue;
+} {
+  const operands = queryOperandsFromConditionNode(index, conditionNode);
+  if (!operands.ok) return operands;
+  const text = QUERY_TEXT_CONTENT_OPS.has(conditionNode.queryOp!)
+    ? conditionNode.content.text.trim()
+    : '';
+  return {
+    ok: true,
+    query: {
+      kind: 'rule',
+      op: conditionNode.queryOp!,
+      ...(text ? { text } : {}),
+      ...(conditionNode.queryFieldDefId ? { fieldDefId: conditionNode.queryFieldDefId } : {}),
+      ...(conditionNode.queryTagDefId ? { tagDefId: conditionNode.queryTagDefId } : {}),
+      ...(conditionNode.queryTargetId ? { targetId: conditionNode.queryTargetId } : {}),
+      ...(operands.operands ? { operands: operands.operands } : {}),
+    },
+  };
+}
+
+function queryOperandsFromConditionNode(index: SearchIndex, conditionNode: QueryBearingNode): {
+  ok: true;
+  operands?: SearchQueryOperand[];
+} | {
+  ok: false;
+  issue: SearchConditionIssue;
+} {
+  const operandChildIds = conditionNode.children.filter((childId) => {
+    const child = index.nodes.get(childId);
+    return Boolean(child && child.type !== 'queryCondition' && !isInTrash(index, child.id));
+  });
+  if (operandChildIds.length > SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule) {
     return {
       ok: false,
       issue: {
         code: 'invalid_search_condition',
-        message: `Search condition has no query operator: ${conditionNode.id}`,
+        message: `Search rule has too many operands; maximum is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule}.`,
         nodeId: conditionNode.id,
+        queryOp: conditionNode.queryOp,
       },
     };
   }
 
-  const childConditions = conditionNode.children
-    .map((childId) => index.nodes.get(childId))
-    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
-  const children: SearchQueryExpr[] = [];
-  for (const childCondition of childConditions) {
-    const resolved = queryExprFromConditionNode(index, childCondition);
-    if (!resolved.ok) return resolved;
-    if (resolved.query) children.push(resolved.query);
-  }
-
-  return { ok: true, query: { kind: 'group', logic: conditionNode.queryLogic, children } };
-}
-
-function queryOperandsFromConditionNode(index: SearchIndex, conditionNode: QueryBearingNode): { operands?: SearchQueryOperand[] } {
-  const operands = conditionNode.children.flatMap((childId): SearchQueryOperand[] => {
+  const operands = operandChildIds.flatMap((childId): SearchQueryOperand[] => {
     const child = index.nodes.get(childId);
-    if (!child || child.type === 'queryCondition' || isInTrash(index, child.id)) return [];
+    if (!child) return [];
     if (child.type === 'reference' && child.targetId) {
       const target = index.nodes.get(child.targetId);
       return [{ targetId: child.targetId, text: target?.content.text.trim() || child.content.text.trim() || undefined }];
@@ -724,130 +878,145 @@ function queryOperandsFromConditionNode(index: SearchIndex, conditionNode: Query
     const text = child.content.text.trim();
     return text ? [{ text }] : [];
   });
-  return operands.length > 0 ? { operands: uniqueQueryOperands(operands) } : {};
+  return operands.length > 0 ? { ok: true, operands: uniqueQueryOperands(operands) } : { ok: true };
+}
+
+function directSearchConditionChildren(index: SearchIndex, node: QueryBearingNode): QueryBearingNode[] {
+  return node.children
+    .map((childId) => index.nodes.get(childId))
+    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
+}
+
+function admitResolvedSearchQuery(query: SearchQueryExpr): SearchQueryResolution {
+  const compiled = compileSearchQueryExpr(query);
+  return compiled.ok ? { ok: true, query } : { ok: false, issue: compiled.issue };
 }
 
 type SearchEvaluation =
   | { ok: true; match: boolean; score: number }
   | { ok: false; issue: SearchConditionIssue };
 
-function evaluateSearchNode(index: SearchIndex, candidate: SearchNode, searchNode: SearchNode): SearchEvaluation {
-  const context: SearchContext = { searchNode, references: referenceSummaryForSearchIndex(index) };
-  const conditionNodes = searchNode.children
-    .map((childId) => index.nodes.get(childId))
-    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
-
-  if (conditionNodes.length > 0) return evaluateAnd(index, candidate, conditionNodes, context);
-  const inlineRule = asQueryBearing(searchNode);
-  if (inlineRule?.queryOp) return evaluateLeafNode(index, candidate, inlineRule, context);
-  return { ok: true, match: false, score: 0 };
-}
-
-type SearchConditionGroupResolution =
-  | { ok: true; logic: QueryLogic; children: QueryBearingNode[] }
-  | { ok: false; issue: SearchConditionIssue };
-
-function resolveConditionGroup(index: SearchIndex, conditionNode: QueryBearingNode): SearchConditionGroupResolution {
-  if (!conditionNode.queryLogic) {
-    return {
-      ok: false,
-      issue: {
-        code: 'invalid_search_condition',
-        message: `Search condition has no query operator: ${conditionNode.id}`,
-        nodeId: conditionNode.id,
-      },
-    };
-  }
-
-  const childConditions = conditionNode.children
-    .map((childId) => index.nodes.get(childId))
-    .filter((child): child is QueryBearingNode => child?.type === 'queryCondition' && !isInTrash(index, child.id));
-  if (childConditions.length === 0) {
-    return {
-      ok: false,
-      issue: {
-        code: 'invalid_search_condition',
-        message: `Search condition group has no child conditions: ${conditionNode.id}`,
-        nodeId: conditionNode.id,
-        queryLogic: conditionNode.queryLogic,
-      },
-    };
-  }
-
-  if (conditionNode.queryLogic !== 'AND' && conditionNode.queryLogic !== 'OR' && conditionNode.queryLogic !== 'NOT') {
-    return {
-      ok: false,
-      issue: {
-        code: 'unsupported_search_logic',
-        message: `Search logic "${conditionNode.queryLogic}" is not supported yet.`,
-        nodeId: conditionNode.id,
-        queryLogic: conditionNode.queryLogic,
-      },
-    };
-  }
-
-  return { ok: true, logic: conditionNode.queryLogic, children: childConditions };
-}
-
-function validateConditionTree(
-  index: SearchIndex,
-  conditionNode: QueryBearingNode,
+function validateCompiledConditionTree(
+  prepared: PreparedSearchQueryEvaluation,
   context: SearchContext,
 ): SearchConditionIssue | null {
-  if (conditionNode.queryOp) {
-    const evaluation = evaluateLeafNode(index, context.searchNode, conditionNode, context);
-    return evaluation.ok ? null : evaluation.issue;
-  }
-
-  const group = resolveConditionGroup(index, conditionNode);
-  if (!group.ok) return group.issue;
-  for (const child of group.children) {
-    const issue = validateConditionTree(index, child, context);
-    if (issue) return issue;
+  for (const compiledNode of prepared.compiled.nodes) {
+    if (compiledNode.kind !== 'rule') continue;
+    const conditionNode = prepared.ruleNodes.get(compiledNode.id);
+    if (!conditionNode) return invalidCompiledQueryNode(compiledNode.id);
+    const evaluation = evaluateLeafNode(prepared.evalIndex, context.searchNode, conditionNode, context);
+    if (!evaluation.ok) return evaluation.issue;
   }
   return null;
 }
 
-function evaluateCondition(index: SearchIndex, candidate: SearchNode, conditionNode: QueryBearingNode, context: SearchContext): SearchEvaluation {
-  if (conditionNode.queryOp) return evaluateLeafNode(index, candidate, conditionNode, context);
-  const group = resolveConditionGroup(index, conditionNode);
-  if (!group.ok) return group;
-  if (group.logic === 'AND') return evaluateAnd(index, candidate, group.children, context);
-  if (group.logic === 'OR') return evaluateOr(index, candidate, group.children, context);
-  return evaluateNot(index, candidate, group.children, context);
+interface CompiledEvaluationFrame {
+  logic: QueryLogic;
+  children: number[];
+  nextChildIndex: number;
+  score: number;
+  matched: boolean;
 }
 
-function evaluateAnd(index: SearchIndex, candidate: SearchNode, conditions: QueryBearingNode[], context: SearchContext): SearchEvaluation {
-  let score = 0;
-  for (const condition of conditions) {
-    const evaluation = evaluateCondition(index, candidate, condition, context);
-    if (!evaluation.ok) return evaluation;
-    if (!evaluation.match) return { ok: true, match: false, score: 0 };
-    score += evaluation.score;
+function evaluateCompiledCondition(
+  prepared: PreparedSearchQueryEvaluation,
+  candidate: SearchNode,
+  context: SearchContext,
+): SearchEvaluation {
+  const root = prepared.compiled.nodes[prepared.compiled.rootId];
+  if (!root) return { ok: false, issue: invalidCompiledQueryNode(prepared.compiled.rootId) };
+  if (root.kind === 'rule') return evaluateCompiledRule(prepared, candidate, root.id, context);
+
+  const stack: CompiledEvaluationFrame[] = [evaluationFrame(root)];
+  let finalResult: SearchEvaluation | null = null;
+
+  const finishResult = (result: SearchEvaluation) => {
+    if (!result.ok) {
+      finalResult = result;
+      return;
+    }
+
+    let current: SearchEvaluation = result;
+    while (true) {
+      const parent = stack.at(-1);
+      if (!parent) {
+        finalResult = current;
+        return;
+      }
+
+      if (parent.logic === 'AND') {
+        if (!current.match) {
+          stack.pop();
+          current = { ok: true, match: false, score: 0 };
+          continue;
+        }
+        parent.score += current.score;
+        return;
+      }
+
+      if (parent.logic === 'OR') {
+        if (current.match) {
+          parent.matched = true;
+          parent.score += current.score;
+        }
+        return;
+      }
+
+      if (current.match) {
+        stack.pop();
+        current = { ok: true, match: false, score: 0 };
+        continue;
+      }
+      return;
+    }
+  };
+
+  while (stack.length > 0 && !finalResult) {
+    const frame = stack.at(-1)!;
+    if (frame.nextChildIndex >= frame.children.length) {
+      stack.pop();
+      finishResult(finalizeEvaluationFrame(frame));
+      continue;
+    }
+
+    const childId = frame.children[frame.nextChildIndex++]!;
+    const child = prepared.compiled.nodes[childId];
+    if (!child) return { ok: false, issue: invalidCompiledQueryNode(childId) };
+    if (child.kind === 'rule') {
+      finishResult(evaluateCompiledRule(prepared, candidate, child.id, context));
+      continue;
+    }
+    stack.push(evaluationFrame(child));
   }
-  return { ok: true, match: true, score: Math.max(score, 1) };
+
+  return finalResult ?? { ok: false, issue: invalidCompiledQueryNode(prepared.compiled.rootId) };
 }
 
-function evaluateOr(index: SearchIndex, candidate: SearchNode, conditions: QueryBearingNode[], context: SearchContext): SearchEvaluation {
-  let score = 0;
-  let matched = false;
-  for (const condition of conditions) {
-    const evaluation = evaluateCondition(index, candidate, condition, context);
-    if (!evaluation.ok) return evaluation;
-    if (!evaluation.match) continue;
-    matched = true;
-    score += evaluation.score;
-  }
-  return { ok: true, match: matched, score: matched ? Math.max(score, 1) : 0 };
+function evaluationFrame(node: Extract<CompiledSearchQueryNode, { kind: 'group' }>): CompiledEvaluationFrame {
+  return {
+    logic: node.logic,
+    children: node.children,
+    nextChildIndex: 0,
+    score: 0,
+    matched: false,
+  };
 }
 
-function evaluateNot(index: SearchIndex, candidate: SearchNode, conditions: QueryBearingNode[], context: SearchContext): SearchEvaluation {
-  for (const condition of conditions) {
-    const evaluation = evaluateCondition(index, candidate, condition, context);
-    if (!evaluation.ok) return evaluation;
-    if (evaluation.match) return { ok: true, match: false, score: 0 };
-  }
+function finalizeEvaluationFrame(frame: CompiledEvaluationFrame): SearchEvaluation {
+  if (frame.logic === 'AND') return { ok: true, match: true, score: Math.max(frame.score, 1) };
+  if (frame.logic === 'OR') return { ok: true, match: frame.matched, score: frame.matched ? Math.max(frame.score, 1) : 0 };
   return { ok: true, match: true, score: 5 };
+}
+
+function evaluateCompiledRule(
+  prepared: PreparedSearchQueryEvaluation,
+  candidate: SearchNode,
+  compiledNodeId: number,
+  context: SearchContext,
+): SearchEvaluation {
+  const conditionNode = prepared.ruleNodes.get(compiledNodeId);
+  if (!conditionNode) return { ok: false, issue: invalidCompiledQueryNode(compiledNodeId) };
+  return evaluateLeafNode(prepared.evalIndex, candidate, conditionNode, context);
 }
 
 function evaluateLeafNode(index: SearchIndex, candidate: SearchNode, conditionNode: QueryBearingNode, context: SearchContext): SearchEvaluation {
@@ -1059,6 +1228,13 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
   };
 }
 
+function invalidCompiledQueryNode(nodeId: number): SearchConditionIssue {
+  return {
+    code: 'invalid_search_condition',
+    message: `Compiled search query node is missing: ${nodeId}`,
+  };
+}
+
 function missingEvaluationOperand(conditionNode: QueryBearingNode, op: QueryOp, operand: string): SearchEvaluation {
   return {
     ok: false,
@@ -1071,35 +1247,19 @@ function missingEvaluationOperand(conditionNode: QueryBearingNode, op: QueryOp, 
   };
 }
 
-function virtualConditionTreeFromQueryExpr(
-  query: SearchQueryExpr,
-  parentId: NodeId | undefined,
-  nextId: () => NodeId,
-): { root: QueryBearingNode; nodes: SearchNode[] } {
-  const node = virtualNode(nextId(), parentId, 'queryCondition', query.kind === 'rule' ? query.text ?? '' : '') as QueryBearingNode;
-  const nodes: SearchNode[] = [node];
-
-  if (query.kind === 'group') {
-    node.queryLogic = query.logic;
-    for (const child of query.children) {
-      const childTree = virtualConditionTreeFromQueryExpr(child, node.id, nextId);
-      node.children.push(childTree.root.id);
-      nodes.push(...childTree.nodes);
-    }
-    return { root: node, nodes };
+function virtualConditionNodeFromCompiledRule(
+  compiledNode: Extract<CompiledSearchQueryNode, { kind: 'rule' }>,
+): QueryBearingNode {
+  const rule = compiledNode.rule;
+  const node = virtualNode(`virtual:query:${compiledNode.id}`, undefined, 'queryCondition', rule.text ?? '') as QueryBearingNode;
+  node.queryOp = rule.op;
+  if (rule.fieldDefId) node.queryFieldDefId = rule.fieldDefId;
+  if (rule.tagDefId) node.queryTagDefId = rule.tagDefId;
+  if (rule.targetId) node.queryTargetId = rule.targetId;
+  for (const [index] of (rule.operands ?? []).entries()) {
+    node.children.push(`virtual:query:${compiledNode.id}:operand:${index}`);
   }
-
-  node.queryOp = query.op;
-  if (query.fieldDefId) node.queryFieldDefId = query.fieldDefId;
-  if (query.tagDefId) node.queryTagDefId = query.tagDefId;
-  if (query.targetId) node.queryTargetId = query.targetId;
-  for (const operand of query.operands ?? []) {
-    const operandNode = virtualNode(nextId(), node.id, operand.targetId ? 'reference' : undefined, operand.text ?? '');
-    if (operand.targetId) (operandNode as Extract<SearchNode, { type: 'reference' }>).targetId = operand.targetId;
-    node.children.push(operandNode.id);
-    nodes.push(operandNode);
-  }
-  return { root: node, nodes };
+  return node;
 }
 
 function virtualSearchNode(): SearchNode {
@@ -1169,26 +1329,34 @@ function scoreTerm(index: SearchIndex, node: SearchNode, term: string): number {
   return score;
 }
 
-function candidateIdsForQuery(query: SearchQueryExpr, textIndex: TextSearchIndex | undefined): Set<NodeId> | null {
+function candidateIdsForCompiledQuery(query: CompiledSearchQuery, textIndex: TextSearchIndex | undefined): Set<NodeId> | null {
   if (!textIndex) return null;
-  if (query.kind === 'rule') {
-    if (query.op !== 'STRING_MATCH' || !query.text?.trim()) return null;
-    const candidates = textIndex.candidateIds(query.text);
-    return candidates.size > 0 ? candidates : null;
-  }
+  const candidateSets = new Map<number, Set<NodeId> | null>();
+  for (let index = query.nodes.length - 1; index >= 0; index -= 1) {
+    const node = query.nodes[index]!;
+    if (node.kind === 'rule') {
+      if (node.rule.op !== 'STRING_MATCH' || !node.rule.text?.trim()) {
+        candidateSets.set(node.id, null);
+        continue;
+      }
+      const candidates = textIndex.candidateIds(node.rule.text);
+      candidateSets.set(node.id, candidates.size > 0 ? candidates : null);
+      continue;
+    }
 
-  const childSets = query.children.map((child) => candidateIdsForQuery(child, textIndex));
-  if (query.logic === 'NOT') return null;
-  if (query.logic === 'AND') {
-    const positiveSets = childSets.filter((set): set is Set<NodeId> => Boolean(set));
-    if (positiveSets.length === 0) return null;
-    return intersectSetList(positiveSets);
+    const childSets = node.children.map((childId) => candidateSets.get(childId) ?? null);
+    if (node.logic === 'NOT') {
+      candidateSets.set(node.id, null);
+    } else if (node.logic === 'AND') {
+      const positiveSets = childSets.filter((set): set is Set<NodeId> => Boolean(set));
+      candidateSets.set(node.id, positiveSets.length > 0 ? intersectSetList(positiveSets) : null);
+    } else if (childSets.length === 0 || childSets.some((set) => !set)) {
+      candidateSets.set(node.id, null);
+    } else {
+      candidateSets.set(node.id, unionSets(childSets as Set<NodeId>[]));
+    }
   }
-  if (query.logic === 'OR') {
-    if (childSets.length === 0 || childSets.some((set) => !set)) return null;
-    return unionSets(childSets as Set<NodeId>[]);
-  }
-  return null;
+  return candidateSets.get(query.rootId) ?? null;
 }
 
 function textSearchRecordForNode(index: SearchIndex, nodeId: NodeId): NodeTextSearchRecord | null {
@@ -1849,20 +2017,6 @@ function tagNames(index: SearchIndex, node: SearchNode): string[] {
   return node.tags
     .map((tagId) => index.nodes.get(tagId)?.content.text.trim())
     .filter((name): name is string => Boolean(name));
-}
-
-function collectQueryExprTerms(query: SearchQueryExpr | null | undefined, terms: string[]) {
-  if (!query) return;
-  if (query.kind === 'group') {
-    for (const child of query.children) collectQueryExprTerms(child, terms);
-    return;
-  }
-  if (query.op === 'STRING_MATCH') {
-    if (query.text?.trim()) terms.push(query.text.trim());
-    for (const operand of query.operands ?? []) {
-      if (operand.text?.trim()) terms.push(operand.text.trim());
-    }
-  }
 }
 
 function uniqueStrings(values: string[]): string[] {
