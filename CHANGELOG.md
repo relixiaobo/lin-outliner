@@ -22,6 +22,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Field-name reuse candidate index (PR #426, codex)** — active field
+  definitions and Trash ancestry are now indexed once per renderer projection
+  snapshot, so focused field-name queries avoid rescanning the complete document
+  on every keystroke while preserving complete prefix-first matches and localized
+  display sorting. **Gate (main):** the first review found that localized index
+  ordering could hide real ASCII prefixes and that a 24-result bound changed the
+  picker contract; Codex switched the search index to lowercase code-unit ordering
+  and restored complete results before merge. Verified with typecheck, 87 focused
+  renderer tests, the full renderer suite (961 pass), focused light/dark E2E,
+  docs check, and diff check.
 - **System reference values overlay (PR #424, codex)** — read-only References,
   Owner, and Day field rows now layer their synthetic projections over the
   renderer document index instead of copying the full `byId` map for every
