@@ -3848,6 +3848,15 @@ Lin should prefer adding semantic TypeScript core commands where the current com
 set is too UI-shaped. For example, semantic target/source merge is better for
 agents than only `merge_node_into_previous`.
 
+Agent node tools use the maintained document read model when the host exposes
+one. `node_read` and `node_search` read from that model directly. Mutating
+outline tools seed validation from the same model and keep a mutation-local
+projection view fresh with command `ProjectionUpdate` deltas; if a host lacks
+the read model or sparse mutation facts, the tools fall back to the public full
+projection for correctness. The normal DocumentService-backed `node_create`
+path must not rebuild the full projection after every created field, tag,
+search node, or visible result assembly step.
+
 ## Capability Boundary
 
 The capability model - `allow | unavailable`, explicit user blocks,

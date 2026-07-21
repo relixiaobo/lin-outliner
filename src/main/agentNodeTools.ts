@@ -1717,7 +1717,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
         return executeDefinitionCreate(host, params.definition, params.previewOnly === true, started, options);
       }
 
-      const initialIndex = indexProjection(host.getProjection());
+      const initialIndex = projectionIndexForHost(host);
       const insertion = resolveInsertion(initialIndex, params);
       if ('error' in insertion) {
         return nodeErrorResult(errorEnvelope('node_create', insertion.code, insertion.error, {
@@ -1781,7 +1781,8 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           }), visibleCreateResult(data, true, initialIndex));
         }
         try {
-          const createdId = await addReference(host, insertion.parentId, params.targetId, insertion.index);
+          const collector = createMutationEffectCollector(initialIndex);
+          const createdId = await addReference(host, insertion.parentId, params.targetId, insertion.index, collector);
           const data: NodeCreateData = {
             parentId: insertion.parentId,
             afterId: insertion.afterId,
@@ -1791,7 +1792,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           };
           return nodeToolResult(successEnvelope('node_create', data, {
             metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-          }), visibleCreateResult(data, false, indexProjection(host.getProjection())));
+          }), visibleCreateResult(data, false, currentMutationIndex(host, collector)));
         } catch (error) {
           return nodeErrorResult(errorEnvelope('node_create', 'mutation_failed', errorMessage(error), {
             instructions: 'Check that the parent and reference target are valid and retry.',
@@ -1868,12 +1869,13 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
       }
 
       const tracker = createMutationTracker();
+      const collector = createMutationEffectCollector(initialIndex);
       const warnings = [...parsed.warnings];
       let insertIndex = insertion.index;
       try {
         const usedFieldIds = new Set<string>();
         for (const field of parsed.document.fields) {
-          const latest = indexProjection(host.getProjection());
+          const latest = currentMutationIndex(host, collector);
           const resolution = resolveFieldWriteTarget(
             fieldResolutionMap(latest),
             insertion.parentId,
@@ -1885,13 +1887,13 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           await applyResolvedField(host, insertion.parentId, field, resolution.target, tracker, warnings, {
             index: fieldSectionInsertIndex(latest, insertion.parentId),
             usedFieldIds,
-          });
+          }, collector);
         }
         if (parsed.document.fields.length > 0) {
-          insertIndex = currentRootInsertionIndex(indexProjection(host.getProjection()), insertion);
+          insertIndex = currentRootInsertionIndex(currentMutationIndex(host, collector), insertion);
         }
         for (const root of parsed.document.roots) {
-          const createdId = await createOutlineNode(host, root, insertion.parentId, insertIndex, tracker, warnings);
+          const createdId = await createOutlineNode(host, root, insertion.parentId, insertIndex, tracker, warnings, collector);
           tracker.createdRootIds.push(createdId);
           if (insertIndex !== null) insertIndex += 1;
         }
@@ -1916,7 +1918,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
       return nodeToolResult(successEnvelope('node_create', data, {
         warnings: warnings.length ? unique(warnings) : undefined,
         metrics: { durationMs: elapsed(started), outputBytes: jsonByteLength(data) },
-      }), visibleCreateResult(data, false, indexProjection(host.getProjection())));
+      }), visibleCreateResult(data, false, currentMutationIndex(host, collector)));
     },
   };
 }
@@ -3940,43 +3942,44 @@ async function createOutlineNode(
   index: number | null,
   tracker: MutationTracker,
   warnings: string[],
+  collector?: MutationEffectCollector,
 ): Promise<string> {
   if (node.search) {
-    const spec = resolveSearchSpecFromOutlineNode(indexProjection(host.getProjection()), node);
+    const spec = resolveSearchSpecFromOutlineNode(currentMutationIndex(host, collector), node);
     if ('error' in spec) throw new Error(spec.error);
     warnings.push(...spec.warnings);
-    const createdId = focusFromOutcome(await host.handle('create_search_node', {
+    const createdId = focusFromOutcome(await handleMutation(host, collector, 'create_search_node', {
       parentId,
       index,
       config: searchNodeConfigFromSpec(spec),
     }));
-    await applySearchViewSpec(host, createdId, spec.view);
+    await applySearchViewSpec(host, createdId, spec.view, collector);
     tracker.createdNodeIds.push(createdId);
-    const createdSearch = indexProjection(host.getProjection()).nodes.get(createdId);
+    const createdSearch = currentMutationIndex(host, collector).nodes.get(createdId);
     if (createdSearch) tracker.createdNodeIds.push(...createdSearch.children);
     if (node.description) {
-      await host.handle('update_node_description', { nodeId: createdId, description: node.description });
+      await handleMutation(host, collector, 'update_node_description', { nodeId: createdId, description: node.description });
     }
-    await applyTags(host, createdId, node.tags, tracker);
+    await applyTags(host, createdId, node.tags, tracker, collector);
     return createdId;
   }
   if (node.view) warnings.push('View directives are only persisted on search nodes today.');
 
   const createdId = node.referenceTargetId
-    ? await addReference(host, parentId, node.referenceTargetId, index)
+    ? await addReference(host, parentId, node.referenceTargetId, index, collector)
     : node.codeBlock
-      ? await createCodeBlockNode(host, parentId, index, node.title, node.codeLanguage)
-      : await createPlainNode(host, parentId, index, node.title);
+      ? await createCodeBlockNode(host, parentId, index, node.title, node.codeLanguage, collector)
+      : await createPlainNode(host, parentId, index, node.title, collector);
   tracker.createdNodeIds.push(createdId);
 
   if (node.description && !node.referenceTargetId) {
-    await host.handle('update_node_description', { nodeId: createdId, description: node.description });
+    await handleMutation(host, collector, 'update_node_description', { nodeId: createdId, description: node.description });
   }
-  await setCheckboxState(host, createdId, node.checked);
+  await setCheckboxState(host, createdId, node.checked, collector);
 
-  await applyTags(host, createdId, node.tags, tracker);
+  await applyTags(host, createdId, node.tags, tracker, collector);
   for (const field of node.fields) {
-    const latest = indexProjection(host.getProjection());
+    const latest = currentMutationIndex(host, collector);
     const resolution = resolveFieldWriteTarget(
       fieldResolutionMap(latest),
       createdId,
@@ -3985,10 +3988,10 @@ async function createOutlineNode(
       { isDeleted: (nodeId) => isInTrash(latest, nodeId) },
     );
     if (!resolution.ok) throw new Error(`${resolution.error} ${resolution.instructions}`);
-    await applyResolvedField(host, createdId, field, resolution.target, tracker, warnings);
+    await applyResolvedField(host, createdId, field, resolution.target, tracker, warnings, {}, collector);
   }
   for (const child of node.children) {
-    await createOutlineNode(host, child, createdId, null, tracker, warnings);
+    await createOutlineNode(host, child, createdId, null, tracker, warnings, collector);
   }
   return createdId;
 }
@@ -4013,9 +4016,10 @@ async function createCodeBlockNode(
   index: number | null,
   text: string,
   codeLanguage?: string,
+  collector?: MutationEffectCollector,
 ): Promise<string> {
-  const createdId = focusFromOutcome(await host.handle('create_node', { parentId, index, text }));
-  await host.handle('set_code_block', { nodeId: createdId, codeLanguage: codeLanguage ?? null });
+  const createdId = focusFromOutcome(await handleMutation(host, collector, 'create_node', { parentId, index, text }));
+  await handleMutation(host, collector, 'set_code_block', { nodeId: createdId, codeLanguage: codeLanguage ?? null });
   return createdId;
 }
 
@@ -4039,13 +4043,19 @@ async function applySearchViewSpec(
   await handleMutation(host, collector, 'set_view_mode', { nodeId, mode: view });
 }
 
-async function applyTags(host: OutlinerToolHost, nodeId: string, tags: string[], tracker: MutationTracker) {
+async function applyTags(
+  host: OutlinerToolHost,
+  nodeId: string,
+  tags: string[],
+  tracker: MutationTracker,
+  collector?: MutationEffectCollector,
+) {
   for (const tagName of tags) {
-    const before = indexProjection(host.getProjection());
+    const before = currentMutationIndex(host, collector);
     const existing = findTagByName(before, tagName);
-    const tagId = existing?.id ?? focusFromOutcome(await host.handle('create_tag', { name: tagName }));
+    const tagId = existing?.id ?? focusFromOutcome(await handleMutation(host, collector, 'create_tag', { name: tagName }));
     if (!existing) tracker.createdTagIds.push(tagId);
-    await host.handle('apply_tag', { nodeId, tagId });
+    await handleMutation(host, collector, 'apply_tag', { nodeId, tagId });
   }
 }
 
