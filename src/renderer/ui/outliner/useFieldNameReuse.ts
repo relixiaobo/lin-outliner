@@ -2,9 +2,8 @@ import { useMemo, useState } from 'react';
 import type { NodeId, NodeProjection } from '../../api/types';
 import {
   buildSystemFieldReuseCandidates,
-  buildUserFieldReuseCandidates,
   filterFieldReuseCandidates,
-  sortFieldReuseCandidatesByLabel,
+  queryUserFieldReuseCandidates,
   type FieldReuseCandidate,
 } from '../interactions/fieldReuseCandidates';
 
@@ -30,9 +29,9 @@ interface UseFieldNameReuseArgs {
  * it until the name changes or the input refocuses). Keeping the resets here means
  * a missed reset can't leak across the row's other handlers.
  *
- * The candidate scan is the only full-document pass; it is memoized so a re-render
- * that doesn't touch the doc, the draft, or focus (hover, selection, a `>`
- * conversion's focus burst) never repeats it.
+ * User-field candidates are served from a byId-keyed active-field index: opening
+ * the picker may build that index once for the projection snapshot, but typed
+ * queries reuse it instead of rescanning the whole document and Trash ancestry.
  */
 export interface FieldNameReuse {
   open: boolean;
@@ -65,15 +64,19 @@ export function useFieldNameReuse(args: UseFieldNameReuseArgs): FieldNameReuse {
         ownerDefIds.add(child.fieldDefId);
       }
     }
-    const userAll = buildUserFieldReuseCandidates(byId, { excludeDefId: draftDefId, trashId })
-      .filter((candidate) => !ownerDefIds.has(candidate.id));
+    const userCandidates = queryUserFieldReuseCandidates(byId, nameDraft, {
+      excludeDefId: draftDefId,
+      excludeDefIds: ownerDefIds,
+      forceOpen,
+      trashId,
+    });
     const systemAll = buildSystemFieldReuseCandidates()
       .filter((candidate) => !ownerDefIds.has(candidate.id));
     if (forceOpen && nameDraft.trim() === '') {
-      return [...sortFieldReuseCandidatesByLabel(userAll), ...systemAll];
+      return [...userCandidates, ...systemAll];
     }
     return [
-      ...filterFieldReuseCandidates(userAll, nameDraft),
+      ...userCandidates,
       ...filterFieldReuseCandidates(systemAll, nameDraft),
     ];
   }, [focused, disabled, forceOpen, nameDraft, draftDefId, trashId, byId, parentId, entryId]);
