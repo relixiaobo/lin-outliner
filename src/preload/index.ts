@@ -41,12 +41,9 @@ import {
 import type { ExternalContext } from '../core/launcher/context';
 import type { CaptureIntent } from '../core/launcher/sources';
 import {
-  diagnosticErrorMessage,
-  diagnosticSourceLabel,
   LIN_EXPORT_DIAGNOSTICS_CHANNEL,
   LIN_REPORT_RENDERER_ERROR_CHANNEL,
   LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL,
-  serializeUnknownError,
   type DiagnosticsActionResult,
   type ErrorReport,
 } from '../core/errorObservability';
@@ -187,33 +184,6 @@ const nativeAttachmentPickerDisabled = process.env.LIN_ATTACHMENT_PICKER_METHOD 
 function reportRendererError(report: ErrorReport): void {
   void ipcRenderer.invoke(LIN_REPORT_RENDERER_ERROR_CHANNEL, report).catch(() => undefined);
 }
-
-window.addEventListener('error', (event) => {
-  const source = event.filename ? diagnosticSourceLabel(event.filename) : undefined;
-  reportRendererError({
-    domain: 'render',
-    severity: 'fatal',
-    code: 'window-error',
-    message: event.message || diagnosticErrorMessage(event.error, 'Renderer error'),
-    context: {
-      ...(source ? { source } : {}),
-      ...(typeof event.lineno === 'number' ? { line: event.lineno } : {}),
-      ...(typeof event.colno === 'number' ? { column: event.colno } : {}),
-    },
-    error: serializeUnknownError(event.error),
-  });
-});
-
-window.addEventListener('unhandledrejection', (event) => {
-  reportRendererError({
-    domain: 'render',
-    severity: 'fatal',
-    code: 'window-unhandled-rejection',
-    message: diagnosticErrorMessage(event.reason, 'Unhandled renderer promise rejection'),
-    context: { operation: 'unhandledRejection' },
-    error: serializeUnknownError(event.reason),
-  });
-});
 
 // Read the effective UI language synchronously at preload time so the renderer's
 // I18nProvider can seed its first render before paint (no English→target flash).
