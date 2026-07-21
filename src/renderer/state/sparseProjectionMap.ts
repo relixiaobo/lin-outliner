@@ -219,5 +219,12 @@ export function projectionNodesView(
       }
       return Reflect.getOwnPropertyDescriptor(arrayTarget, prop);
     },
+    ownKeys(arrayTarget) {
+      return [
+        ...Array.from({ length: ids.length }, (_value, index) => String(index)),
+        ...Reflect.ownKeys(arrayTarget).filter((key) => key !== 'length'),
+        'length',
+      ];
+    },
   });
 }

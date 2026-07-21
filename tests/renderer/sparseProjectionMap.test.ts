@@ -99,4 +99,21 @@ describe('projectionNodesView', () => {
     expect(nodes.find((candidate) => candidate.id === 'b')).toBe(b);
     expect(nodes.some((candidate) => candidate.id === 'a')).toBe(true);
   });
+
+  test('enumerates like a dense projection node array when asked', () => {
+    const a = node('a');
+    const b = node('b');
+    const byId = SparseProjectionMap.fromEntries([
+      ['a', a],
+      ['b', b],
+    ] as const);
+    const nodes = projectionNodesView(byId, byId.orderedIds);
+    const visitedKeys: string[] = [];
+
+    for (const key in nodes) visitedKeys.push(key);
+
+    expect(Object.keys(nodes)).toEqual(['0', '1']);
+    expect(visitedKeys).toEqual(['0', '1']);
+    expect(Object.entries(nodes)).toEqual([['0', a], ['1', b]]);
+  });
 });
