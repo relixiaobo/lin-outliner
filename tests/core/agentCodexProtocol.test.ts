@@ -12,6 +12,7 @@ import {
   decodeThreadItem,
   decodeThreadItemJson,
   decodeThreadJson,
+  decodeTurn,
   encodeThread,
   encodeThreadItem,
 } from '../../src/core/agent/codec';
@@ -313,6 +314,55 @@ describe('Codex Agent Core protocol codec', () => {
         completedAt: null,
       },
     })).toThrow('requires a terminal Turn');
+  });
+
+  test('enforces executable Item status at Item and terminal Turn boundaries', () => {
+    const executableItems = allItems.filter((item) => 'status' in item);
+    expect(executableItems.map((item) => item.type)).toEqual([
+      'commandExecution',
+      'fileChange',
+      'mcpToolCall',
+      'dynamicToolCall',
+      'collabAgentToolCall',
+      'webSearch',
+    ]);
+
+    for (const item of executableItems) {
+      const inProgressItem = { ...item, status: 'inProgress' } as ThreadItem;
+      expect(() => decodeAgentCoreNotification({
+        type: 'item/completed',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: item.id,
+        item: inProgressItem,
+        completedAt: 200,
+      })).toThrow('requires a terminal executable Item');
+      expect(() => decodeAgentCoreNotification({
+        type: 'item/started',
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: item.id,
+        item,
+        startedAt: 100,
+      })).toThrow('requires an in-progress executable Item');
+
+      for (const status of ['completed', 'interrupted', 'failed'] as const) {
+        expect(() => decodeTurn({
+          ...completedTurn,
+          status,
+          items: allItems.map((candidate) => candidate.id === item.id ? inProgressItem : candidate),
+        })).toThrow('terminal Turn cannot contain an in-progress Item');
+      }
+    }
+
+    expect(decodeAgentCoreNotification({
+      type: 'item/completed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      itemId: allItems[0]!.id,
+      item: allItems[0],
+      completedAt: 200,
+    }).type).toBe('item/completed');
   });
 
   test('rejects unknown item variants instead of adapting them', () => {

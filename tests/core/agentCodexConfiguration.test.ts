@@ -31,6 +31,9 @@ describe('Codex Agent Core configuration and Goal contracts', () => {
         model: 'explorer-model',
         reasoningEffort: 'medium',
         tools: ['file_read', 'file_edit', 'web_search'],
+        skills: ['repo-rules', 'role-added-skill'],
+        plugins: ['github', 'role-added-plugin'],
+        mcpServers: ['docs', 'role-added-server'],
       },
     };
 
@@ -39,9 +42,15 @@ describe('Codex Agent Core configuration and Goal contracts', () => {
     expect(child.model).toBe('explorer-model');
     expect(child.tools).toEqual(['file_read', 'file_edit']);
     expect(child.tools).not.toContain('web_search');
+    expect(child.skills).toEqual(['repo-rules']);
+    expect(child.plugins).toEqual(['github']);
+    expect(child.mcpServers).toEqual(['docs']);
     expect(child.developerInstructions).toEqual(['Parent instructions', 'Inspect and report.']);
     expect(Object.isFrozen(child)).toBe(true);
     expect(Object.isFrozen(child.tools)).toBe(true);
+    expect(Object.isFrozen(child.skills)).toBe(true);
+    expect(Object.isFrozen(child.plugins)).toBe(true);
+    expect(Object.isFrozen(child.mcpServers)).toBe(true);
   });
 
   test('defines one Goal per Thread with the exact Codex lifecycle statuses', () => {

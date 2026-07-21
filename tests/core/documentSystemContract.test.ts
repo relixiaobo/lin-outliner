@@ -4,6 +4,7 @@ import {
   DOCUMENT_COMMANDS,
   isDocumentCommand,
   isHostDocumentCommand,
+  type DocumentCommand,
 } from '../../src/core/commands';
 import {
   DocumentSystemContractError,
@@ -167,44 +168,115 @@ describe('projection-neutral document system contract', () => {
 
   test('locks definition identity mutations while allowing ordinary tag use', () => {
     const protectedIds = new Set([definition.tagId]);
+    const protectedTargetByCommand = {
+      init_workspace: null,
+      get_projection: null,
+      search_nodes: null,
+      backlinks: null,
+      create_node: { parentId: definition.tagId },
+      create_rich_text_node: { parentId: definition.tagId },
+      create_tagged_node: { parentId: definition.tagId },
+      create_tag_and_tagged_node: { parentId: definition.tagId },
+      create_nodes_from_tree: { parentId: definition.tagId },
+      create_capture: { input: { destinationParentId: definition.tagId } },
+      paste_nodes_into_node: { nodeId: definition.tagId },
+      split_node: { nodeId: definition.tagId },
+      apply_node_text_patch: { nodeId: definition.tagId },
+      update_node_description: { nodeId: definition.tagId },
+      set_node_checkbox_visible: { nodeId: definition.tagId },
+      set_code_block: { nodeId: definition.tagId },
+      set_code_language: { nodeId: definition.tagId },
+      create_image_node: { parentId: definition.tagId },
+      create_attachment_node: { parentId: definition.tagId },
+      set_node_image: { nodeId: definition.tagId },
+      set_view_toolbar_visible: { nodeId: definition.tagId },
+      set_view_mode: { nodeId: definition.tagId },
+      add_sort_rule: { nodeId: definition.tagId },
+      update_sort_rule: { ruleId: definition.tagId },
+      remove_sort_rule: { ruleId: definition.tagId },
+      clear_sort_rules: { nodeId: definition.tagId },
+      add_filter_rule: { nodeId: definition.tagId },
+      update_filter_rule: { ruleId: definition.tagId },
+      remove_filter_rule: { ruleId: definition.tagId },
+      clear_filter_rules: { nodeId: definition.tagId },
+      set_group_field: { nodeId: definition.tagId },
+      add_display_field: { nodeId: definition.tagId },
+      update_display_field: { displayFieldId: definition.tagId },
+      remove_display_field: { displayFieldId: definition.tagId },
+      set_node_icon: { nodeId: definition.tagId },
+      set_node_banner: { nodeId: definition.tagId },
+      merge_node_into: { targetId: definition.tagId },
+      move_node: { parentId: definition.tagId },
+      batch_move_nodes: { moves: [{ nodeId: 'node:ordinary', parentId: definition.tagId }] },
+      indent_node: { nodeId: definition.tagId },
+      outdent_node: { nodeId: definition.tagId },
+      trash_node: { nodeId: definition.tagId },
+      batch_trash_nodes: { nodeIds: [definition.tagId] },
+      batch_indent_nodes: { nodeIds: [definition.tagId] },
+      batch_outdent_nodes: { nodeIds: [definition.tagId] },
+      batch_toggle_done: { nodeIds: [definition.tagId] },
+      batch_cycle_done_state: { nodeIds: [definition.tagId] },
+      batch_duplicate_nodes: { nodeIds: [definition.tagId] },
+      batch_move_nodes_up: { nodeIds: [definition.tagId] },
+      batch_move_nodes_down: { nodeIds: [definition.tagId] },
+      batch_apply_tag: { nodeIds: [definition.tagId], tagId: 'tag:ordinary' },
+      restore_node: { nodeId: definition.tagId },
+      delete_node: { nodeId: definition.tagId },
+      toggle_done: { nodeId: definition.tagId },
+      cycle_done_state: { nodeId: definition.tagId },
+      create_tag: null,
+      apply_tag: { nodeId: definition.tagId, tagId: 'tag:ordinary' },
+      remove_tag: { nodeId: definition.tagId, tagId: 'tag:ordinary' },
+      set_tag_config: { tagId: definition.tagId },
+      set_field_config: { fieldId: definition.tagId },
+      create_field_definition: null,
+      create_field_def: { tagId: definition.tagId },
+      create_inline_field_after_node: { afterNodeId: definition.tagId },
+      create_inline_field: { parentId: definition.tagId },
+      reuse_field_definition: { entryId: definition.tagId },
+      merge_definitions: { targetId: 'tag:other', sourceIds: [definition.tagId] },
+      register_collected_option: { fieldDefId: definition.tagId },
+      create_collected_field_option: { fieldEntryId: definition.tagId },
+      select_field_option: { fieldEntryId: definition.tagId },
+      set_field_free_text_value: { fieldEntryId: definition.tagId },
+      clear_field_value: { fieldEntryId: definition.tagId },
+      remove_field_value: { valueId: definition.tagId },
+      add_reference: { parentId: definition.tagId },
+      add_reference_conversion: { parentId: definition.tagId },
+      set_reference_target: { referenceId: definition.tagId },
+      replace_node_with_reference: { nodeId: definition.tagId },
+      replace_node_with_reference_conversion: { nodeId: definition.tagId },
+      replace_node_with_inline_reference: { nodeId: definition.tagId },
+      convert_reference_to_inline_node: { referenceId: definition.tagId },
+      restore_inline_reference_node_to_reference: { nodeId: definition.tagId },
+      ensure_date_node: null,
+      ensure_tag_search: null,
+      create_search_node: { parentId: definition.tagId },
+      set_search_node: { nodeId: definition.tagId },
+      set_search_query_outline: { nodeId: definition.tagId },
+      refresh_search_node_results: { nodeId: definition.tagId },
+      undo: null,
+      redo: null,
+    } satisfies Record<DocumentCommand, Readonly<Record<string, unknown>> | null>;
+
+    expect(Object.keys(protectedTargetByCommand)).toEqual(DOCUMENT_COMMANDS);
+    for (const command of DOCUMENT_COMMANDS) {
+      const args = protectedTargetByCommand[command];
+      expect(documentCommandMutatesProtectedSystemTagDefinition(
+        command,
+        args ?? {},
+        protectedIds,
+      )).toBe(args !== null);
+    }
+
     expect(documentCommandMutatesProtectedSystemTagDefinition(
-      'apply_node_text_patch',
-      { nodeId: definition.tagId, patch: {} },
-      protectedIds,
-    )).toBe(true);
-    expect(documentCommandMutatesProtectedSystemTagDefinition(
-      'batch_move_nodes',
-      { moves: [{ nodeId: definition.tagId, parentId: 'trash' }] },
+      'create_node',
+      { id: definition.tagId, parentId: 'node:ordinary' },
       protectedIds,
     )).toBe(true);
     expect(documentCommandMutatesProtectedSystemTagDefinition(
       'split_node',
-      { nodeId: definition.tagId },
-      protectedIds,
-    )).toBe(true);
-    expect(documentCommandMutatesProtectedSystemTagDefinition(
-      'batch_move_nodes_up',
-      { nodeIds: [definition.tagId] },
-      protectedIds,
-    )).toBe(true);
-    expect(documentCommandMutatesProtectedSystemTagDefinition(
-      'set_node_image',
-      { nodeId: definition.tagId },
-      protectedIds,
-    )).toBe(true);
-    expect(documentCommandMutatesProtectedSystemTagDefinition(
-      'convert_reference_to_inline_node',
-      { referenceId: definition.tagId },
-      protectedIds,
-    )).toBe(true);
-    expect(documentCommandMutatesProtectedSystemTagDefinition(
-      'set_search_node',
-      { nodeId: definition.tagId },
-      protectedIds,
-    )).toBe(true);
-    expect(documentCommandMutatesProtectedSystemTagDefinition(
-      'merge_definitions',
-      { targetId: 'tag:other', sourceIds: [definition.tagId] },
+      { nodeId: 'node:ordinary', targetParentId: definition.tagId },
       protectedIds,
     )).toBe(true);
     expect(documentCommandMutatesProtectedSystemTagDefinition(
@@ -217,5 +289,25 @@ describe('projection-neutral document system contract', () => {
       { nodeId: 'note-1', tagId: definition.tagId },
       protectedIds,
     )).toBe(false);
+    expect(documentCommandMutatesProtectedSystemTagDefinition(
+      'create_tagged_node',
+      { parentId: 'node:ordinary', tagId: definition.tagId },
+      protectedIds,
+    )).toBe(false);
+    expect(documentCommandMutatesProtectedSystemTagDefinition(
+      'batch_apply_tag',
+      { nodeIds: ['node:ordinary'], tagId: definition.tagId },
+      protectedIds,
+    )).toBe(false);
+    expect(documentCommandMutatesProtectedSystemTagDefinition(
+      'ensure_tag_search',
+      { tagId: definition.tagId },
+      protectedIds,
+    )).toBe(false);
+    expect(documentCommandMutatesProtectedSystemTagDefinition(
+      'unknown_document_command' as never,
+      {},
+      protectedIds,
+    )).toBe(true);
   });
 });

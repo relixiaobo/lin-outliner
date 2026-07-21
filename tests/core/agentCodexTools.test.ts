@@ -98,6 +98,14 @@ describe('Codex Agent Core model-tool contract', () => {
       ...automation,
       schemaOwner: 'core',
     }])).toThrow('must be owned by extension');
+    expect(() => assembleModelToolRegistry(contributions, [{
+      ...automation,
+      identity: { namespace: 'foo__bar', name: 'baz' },
+    }])).toThrow('reserved flat-provider separator');
+    expect(() => assembleModelToolRegistry(contributions, [{
+      ...automation,
+      identity: { namespace: 'foo', name: 'bar__baz' },
+    }])).toThrow('reserved flat-provider separator');
   });
 
   test('keeps request_user_input root-only and normalizes its bounded contract', () => {

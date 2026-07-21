@@ -57,9 +57,6 @@ export function resolveChildConfiguration(
   request: ChildConfigurationRequest,
 ): EffectiveThreadConfiguration {
   const overrides = request.role.overrides;
-  const parentTools = new Set(parent.tools);
-  const requestedTools = overrides?.tools ?? parent.tools;
-  const tools = requestedTools.filter((tool) => parentTools.has(tool));
 
   return Object.freeze({
     profileName: parent.profileName,
@@ -69,9 +66,17 @@ export function resolveChildConfiguration(
     ]),
     model: request.model ?? overrides?.model ?? parent.model,
     reasoningEffort: request.reasoningEffort ?? overrides?.reasoningEffort ?? parent.reasoningEffort,
-    tools: Object.freeze([...new Set(tools)]),
-    skills: Object.freeze([...new Set(overrides?.skills ?? parent.skills)]),
-    plugins: Object.freeze([...new Set(overrides?.plugins ?? parent.plugins)]),
-    mcpServers: Object.freeze([...new Set(overrides?.mcpServers ?? parent.mcpServers)]),
+    tools: constrainChildCapabilities(parent.tools, overrides?.tools),
+    skills: constrainChildCapabilities(parent.skills, overrides?.skills),
+    plugins: constrainChildCapabilities(parent.plugins, overrides?.plugins),
+    mcpServers: constrainChildCapabilities(parent.mcpServers, overrides?.mcpServers),
   });
+}
+
+function constrainChildCapabilities(
+  parent: readonly string[],
+  requested: readonly string[] | undefined,
+): readonly string[] {
+  const parentCeiling = new Set(parent);
+  return Object.freeze([...new Set(requested ?? parent)].filter((capability) => parentCeiling.has(capability)));
 }

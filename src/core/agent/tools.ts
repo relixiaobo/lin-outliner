@@ -457,7 +457,9 @@ export function assembleModelToolRegistry(
     resolved.set(key, Object.freeze({ ...contract }));
   }
 
-  return Object.freeze([...resolved.values()]);
+  const registry = [...resolved.values()];
+  assertProviderToolNamesUnique(registry);
+  return Object.freeze(registry);
 }
 
 export type ProviderToolNameEncoding = 'canonical' | 'flat';
@@ -601,6 +603,20 @@ export function normalizeUpdatePlanToolInput(value: unknown): UpdatePlanToolInpu
 
 function validateToolName(value: string, field: string): void {
   if (!/^[a-z][a-z0-9_]*$/.test(value)) throw new Error(`${field} must be lowercase snake_case`);
+  if (value.includes('__')) throw new Error(`${field} must not contain the reserved flat-provider separator "__"`);
+}
+
+function assertProviderToolNamesUnique(registry: readonly ModelToolContract[]): void {
+  const seen = new Map<string, string>();
+  for (const contract of registry) {
+    const canonical = canonicalModelToolKey(contract.identity);
+    const flat = contract.identity.namespace === null
+      ? contract.identity.name
+      : `${contract.identity.namespace}__${contract.identity.name}`;
+    const existing = seen.get(flat);
+    if (existing) throw new Error(`Duplicate flat provider model tool: ${flat} (${existing}, ${canonical})`);
+    seen.set(flat, canonical);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

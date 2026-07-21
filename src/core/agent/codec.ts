@@ -149,6 +149,9 @@ export function decodeTurn(value: unknown): Turn {
   if (status !== 'inProgress' && result.completedAt === null) {
     fail('turn.completedAt', 'a terminal Turn requires a completion time');
   }
+  if (status !== 'inProgress' && result.items.some((item) => executionStatusOf(item) === 'inProgress')) {
+    fail('turn.items', 'a terminal Turn cannot contain an in-progress Item');
+  }
   return deepFreeze(result);
 }
 
@@ -462,6 +465,13 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       const item = decodeThreadItem(record.item);
       const itemId = stringValue(record.itemId, 'notification.itemId');
       if (item.id !== itemId) fail('notification.itemId', 'must match item.id');
+      const executionStatus = executionStatusOf(item);
+      if (type === 'item/started' && executionStatus !== null && executionStatus !== 'inProgress') {
+        fail('notification.item', 'item/started requires an in-progress executable Item');
+      }
+      if (type === 'item/completed' && executionStatus === 'inProgress') {
+        fail('notification.item', 'item/completed requires a terminal executable Item');
+      }
       const common = {
         threadId: uuidV7(record.threadId, 'notification.threadId'),
         turnId: uuidV7(record.turnId, 'notification.turnId'),
@@ -528,6 +538,28 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       fail('notification.type', `unknown notification: ${type}`);
   }
   return deepFreeze(result);
+}
+
+function executionStatusOf(item: ThreadItem): 'inProgress' | 'completed' | 'failed' | 'interrupted' | null {
+  switch (item.type) {
+    case 'commandExecution':
+    case 'fileChange':
+    case 'mcpToolCall':
+    case 'dynamicToolCall':
+    case 'collabAgentToolCall':
+    case 'webSearch':
+      return item.status;
+    case 'userMessage':
+    case 'agentMessage':
+    case 'plan':
+    case 'reasoning':
+    case 'subAgentActivity':
+    case 'imageView':
+    case 'contextCompaction':
+      return null;
+    default:
+      return assertNever(item);
+  }
 }
 
 export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
