@@ -12,6 +12,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **System reference values overlay (PR #424, codex)** — read-only References,
+  Owner, and Day field rows now layer their synthetic projections over the
+  renderer document index instead of copying the full `byId` map for every
+  visible field. The overlay preserves Map lookup and iteration semantics while
+  rejecting mutation. **Gate (main):** review found no reportable issues.
+  Verified with typecheck, 16 focused system-field tests, the full renderer suite
+  (955 pass), docs check, and diff check.
 - **Panel date navigation index (PR #422, codex)** — renderer document state now
   maintains day-note tag membership and per-date direct-child counts from
   projection deltas, and the panel calendar reads only its visible date window
