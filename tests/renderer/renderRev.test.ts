@@ -3,6 +3,7 @@ import type { NodeId, NodeProjection } from '../../src/core/types';
 import {
   buildReverseEdges,
   nextRevisions,
+  patchRevisions,
   patchReverseEdges,
   propagateDirty as propagateDirtyRaw,
 } from '../../src/renderer/state/renderRev';
@@ -215,5 +216,27 @@ describe('nextRevisions', () => {
     expect(second.get('a')).toBe(2);
     expect(second.get('root')).toBe(2);
     expect(second.get('a2')).toBe(1); // untouched sibling unchanged
+  });
+
+  test('patchRevisions bumps only affected live ids without iterating the previous revision map', () => {
+    const byId = tree();
+    const previous = nextRevisions(null, new Set(byId.keys()), byId.keys());
+    const fail = () => {
+      throw new Error('previous renderRev must not be fully iterated');
+    };
+    Object.defineProperties(previous, {
+      [Symbol.iterator]: { value: fail },
+      entries: { value: fail },
+      keys: { value: fail },
+      values: { value: fail },
+      forEach: { value: fail },
+    });
+
+    const next = patchRevisions(previous, new Set(['c', 'b', 'a', 'root']), byId, []);
+    expect(next.get('c')).toBe(2);
+    expect(next.get('b')).toBe(2);
+    expect(next.get('a')).toBe(2);
+    expect(next.get('root')).toBe(2);
+    expect(next.get('a2')).toBe(1);
   });
 });

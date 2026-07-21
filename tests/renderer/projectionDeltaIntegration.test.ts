@@ -54,6 +54,10 @@ function rebuiltById(core: Core): Map<NodeId, NodeProjection> {
   return new Map(rebuilt.projection().nodes.map((node) => [node.id, node]));
 }
 
+function materializedById(byId: ReadonlyMap<NodeId, NodeProjection>): Map<NodeId, NodeProjection> {
+  return new Map(byId);
+}
+
 describe('reduceProjection over real core deltas', () => {
   test('a folded delta stream stays byte-identical to a full rebuild', () => {
     const core = Core.new();
@@ -68,7 +72,7 @@ describe('reduceProjection over real core deltas', () => {
       state = reduceProjection(state, update);
       expect(state).not.toBeNull();
       // The renderer index must match an independent rebuild after every command.
-      expect(state!.index.byId).toEqual(rebuiltById(core));
+      expect(materializedById(state!.index.byId)).toEqual(rebuiltById(core));
       // ...and the incrementally-patched reverse edges must match a full rebuild.
       expect(state!.reverseEdges).toEqual(buildReverseEdges(state!.index.byId));
     };
@@ -131,6 +135,6 @@ describe('reduceProjection over real core deltas', () => {
     expect(byId.has(g2)).toBe(true);
     expect(byId.get(c)!.children).toEqual([g1, g2]); // C kept its children
     expect(byId.get(c)!.parentId).toBe(b);  // C re-parented under B
-    expect(byId).toEqual(rebuiltById(core)); // and the whole index matches a rebuild
+    expect(materializedById(byId)).toEqual(rebuiltById(core)); // and the whole index matches a rebuild
   });
 });
