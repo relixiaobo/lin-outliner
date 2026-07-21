@@ -54,8 +54,6 @@ describe('agent action catalog', () => {
     expect(agentToolActionKindProfile('outline_undo_stack', { action: 'list' })).toEqual(['outline.read']);
     expect(agentToolActionKindProfile('outline_undo_stack', { action: 'undo' })).toEqual(['outline.edit']);
     expect(agentToolActionKindProfile('generate_image')).toEqual(['agent.image.generate']);
-    expect(agentToolActionKindProfile('data_import')).toBeNull();
-    expect(readOnlyAgentToolNames()).not.toContain('data_import');
   });
 
   test('maps action-kind scope to the visible tool catalog', () => {

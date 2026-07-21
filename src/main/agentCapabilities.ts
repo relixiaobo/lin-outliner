@@ -139,7 +139,7 @@ function descriptorForKnownTool(toolName: string, args: unknown): ToolActionDesc
   if (toolName === 'past_chats') return simpleDescriptor(toolName, args, 'agent.memory.recall', 'past chat recall', 'Read local conversation history.');
   if (toolName === 'ask_user_question') return simpleDescriptor(toolName, args, 'agent.user_question.ask', 'user question', 'Ask the user for required product input.');
   if (toolName === 'node_read' || toolName === 'node_search') return simpleDescriptor(toolName, args, 'outline.read', 'outline read', 'Read local outline content.', 'local_system');
-  if (toolName === 'node_create' || toolName === 'node_edit' || toolName === 'data_import') return simpleDescriptor(toolName, args, 'outline.edit', 'outline edit', 'Change local outline content.', 'local_system');
+  if (toolName === 'node_create' || toolName === 'node_edit') return simpleDescriptor(toolName, args, 'outline.edit', 'outline edit', 'Change local outline content.', 'local_system');
   if (toolName === 'node_delete') return simpleDescriptor(toolName, args, 'outline.delete', 'outline delete', 'Delete local outline content.', 'local_system');
   if (toolName === 'outline_undo_stack') {
     const actionKind = firstActionKindForTool(toolName, args, 'outline.read') ?? 'outline.read';
@@ -329,7 +329,7 @@ function unavailable(
 function classifyToolAccess(toolName: string, args?: unknown): AgentCapabilityAccess {
   if (toolName === 'bash') return 'execute';
   if (toolName === 'bash_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'generate_image') return 'control';
-  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete' || toolName === 'data_import') return 'write';
+  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
   if (toolName === 'outline_undo_stack') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
   }

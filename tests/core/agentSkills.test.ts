@@ -936,10 +936,8 @@ describe('agent skills', () => {
     const skill = await runtime.getSkill('data-cleanup');
 
     expect(skill?.allowedTools).toContain('bash');
-    expect(skill?.allowedTools).not.toContain('data_import');
     expect(skill?.body).toContain('tenon-import preview');
     expect(skill?.body).toContain('tenon-import commit');
-    expect(skill?.body).not.toContain('Call `data_import`');
   });
 
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
