@@ -5,9 +5,11 @@ import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { projectFieldConfig } from '../../src/core/configProjection';
 import { LoroOutlinerDocument } from '../../src/core/loroDocument';
+import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
 import { LIBRARY_ID, plainText, replaceAllRichTextPatch, SCHEMA_ID, TRASH_ID, WORKSPACE_ID } from '../../src/core/types';
 import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agentNodeTools';
+import { validateSearchNodes } from '../../src/main/agentNodeToolSearch';
 import { DocumentReadModel } from '../../src/main/documentReadModel';
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
@@ -2053,6 +2055,26 @@ describe('agent node tools', () => {
 
     expect(envelope.ok).toBe(false);
     expect(envelope.error?.code).toBe('invalid_search_condition');
+  });
+
+  test('search validation does not apply query budgets to ordinary outline nodes', () => {
+    const ordinaryChildren = Array.from({ length: SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes + 1 }, (_, index) => ({
+      title: `Ordinary ${index}`,
+      tags: [],
+      fields: [],
+      children: [],
+    }));
+    const document = {
+      roots: [{
+        title: 'Ordinary root',
+        tags: [],
+        fields: [],
+        children: ordinaryChildren,
+      }],
+      fields: [],
+    };
+
+    expect(validateSearchNodes({} as any, document)).toBeNull();
   });
 
   test('node_search does not treat a saved search title as an implicit condition', async () => {

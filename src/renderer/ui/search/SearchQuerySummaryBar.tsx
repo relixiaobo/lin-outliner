@@ -391,6 +391,7 @@ function conditionChips(index: DocumentIndex, roots: QueryBearingProjection[], t
       if (condition.queryLogic) {
         const childChips = (childrenById.get(condition.id) ?? [])
           .flatMap((child) => chipsById.get(child.id) ?? []);
+        if (childChips.length > SEARCH_QUERY_SUMMARY_MAX_CHIPS) truncated = true;
         const chips = frame.depth === 0 && condition.queryLogic === 'AND'
           ? childChips
           : [{ kind: 'logic' as const, label: formatLogicGroup(condition.queryLogic, childChips, t) }];

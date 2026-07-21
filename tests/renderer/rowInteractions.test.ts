@@ -317,23 +317,51 @@ describe('row interaction resolvers', () => {
       ['target', makeNode('target', 'Task', { parentId: 'workspace' })],
     ]);
 
-	    expect(searchQuerySummaryModel({ byId, projection: {} } as any, 'search', enMessages)).toEqual({
-	      chips: [
-	        { kind: 'tag', label: '#card' },
-	        { kind: 'field', label: 'Status = Backlog' },
-	      ],
-	      resultCount: 1,
-	      truncated: false,
-	    });
-	    expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search', enMessages)).toBe([
-	      '- AND',
-	      '  - HAS_TAG',
-	      '    - tag:: [[node:#card^tag-card]]',
-	      '  - FIELD_IS',
-	      '    - field:: [[node:Status^field-status]]',
-	      '    - value:: Backlog',
-	    ].join('\n'));
-	  });
+    expect(searchQuerySummaryModel({ byId, projection: {} } as any, 'search', enMessages)).toEqual({
+      chips: [
+        { kind: 'tag', label: '#card' },
+        { kind: 'field', label: 'Status = Backlog' },
+      ],
+      resultCount: 1,
+      truncated: false,
+    });
+    expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search', enMessages)).toBe([
+      '- AND',
+      '  - HAS_TAG',
+      '    - tag:: [[node:#card^tag-card]]',
+      '  - FIELD_IS',
+      '    - field:: [[node:Status^field-status]]',
+      '    - value:: Backlog',
+    ].join('\n'));
+  });
+
+  test('marks root AND search summaries truncated when child chips exceed the display limit', () => {
+    const ruleIds = Array.from({ length: 65 }, (_, index) => `rule-${index}`);
+    const search = makeNode('search', 'Large search', {
+      type: 'search',
+      children: ['group'],
+    });
+    const group = makeNode('group', '', {
+      type: 'queryCondition',
+      parentId: 'search',
+      queryLogic: 'AND',
+      children: ruleIds,
+    });
+    const byId = new Map<string, any>([
+      ['search', search],
+      ['group', group],
+      ...ruleIds.map((id, index) => [id, makeNode(id, `Term ${index}`, {
+        type: 'queryCondition',
+        parentId: 'group',
+        queryOp: 'STRING_MATCH',
+      })] as [string, any]),
+    ]);
+
+    const model = searchQuerySummaryModel({ byId, projection: {} } as any, 'search', enMessages);
+    expect(model?.truncated).toBe(true);
+    expect(model?.chips).toHaveLength(65);
+    expect(model?.chips.at(-1)).toEqual({ kind: 'logic', label: enMessages.search.summary.truncated });
+  });
 
   test('applies sort, filter, and group view settings to row models', () => {
 	    const parent = makeNode('parent', 'Parent', {
@@ -1922,7 +1950,7 @@ describe('row interaction resolvers', () => {
     })).toBe('would_create_display_cycle');
   });
 
-  test('blocks over-budget reference target chains without recursive resolution', () => {
+  test('allows large acyclic reference target chains without recursive resolution', () => {
     const parent = makeNode('parent', 'Parent');
     const target = makeNode('target', 'Target');
     const chain = Array.from({ length: 1_030 }, (_, index) => makeNode(`ref-${index}`, '', {
@@ -1939,7 +1967,27 @@ describe('row interaction resolvers', () => {
       parentId: 'parent',
       targetId: 'ref-0',
       byId,
-    })).toBe('would_create_display_cycle');
+    })).toBeNull();
+  });
+
+  test('allows large acyclic display graphs that do not reach the parent', () => {
+    const parent = makeNode('parent', 'Parent');
+    const target = makeNode('target', 'Target', { children: ['chain-0'] });
+    const chain = Array.from({ length: 10_001 }, (_, index) => makeNode(`chain-${index}`, `Chain ${index}`, {
+      parentId: index === 0 ? 'target' : `chain-${index - 1}`,
+      children: index === 10_000 ? [] : [`chain-${index + 1}`],
+    }));
+    const byId = new Map<string, any>([
+      [parent.id, parent],
+      [target.id, target],
+      ...chain.map((node) => [node.id, node] as [string, any]),
+    ]);
+
+    expect(getTreeReferenceBlockReason({
+      parentId: 'parent',
+      targetId: 'target',
+      byId,
+    })).toBeNull();
   });
 
   test('only disables cycle candidates when evaluating a tree reference insertion', () => {

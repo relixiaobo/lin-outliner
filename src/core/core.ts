@@ -20,7 +20,8 @@ import {
 } from './operationJournal';
 import { createPersistenceId, isPersistenceId } from './persistenceIdentity';
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
-import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
+import { SEARCH_EXECUTABLE_QUERY_OPS, runSearchExpr, runSearchNode } from './searchEngine';
+import { SEARCH_QUERY_COMPLEXITY_LIMITS } from './searchQueryCompiler';
 import { DONE_FIELD, SYSTEM_FIELD_CHOICES, systemFieldLabel } from './systemFields';
 import {
   fieldEntryDisplayName,
@@ -234,6 +235,69 @@ const AUTO_INIT_PRIORITY: AutoInitStrategy[] = [
 ];
 const RETIRED_SETTINGS_ID = 'settings';
 const RETIRED_SETTINGS_TITLE = 'Settings';
+const SEARCH_CONFIG_QUERY_LOGICS = new Set<QueryLogic>(['AND', 'OR', 'NOT']);
+const SEARCH_CONFIG_QUERY_OPS = new Set<string>(SEARCH_EXECUTABLE_QUERY_OPS);
+
+type SearchConfigQueryFrame =
+  | { phase: 'enter'; query: SearchQueryExpr; depth: number }
+  | { phase: 'exit'; query: object };
+
+function assertSearchNodeConfigAdmitted(config: SearchNodeConfig): void {
+  const issue = searchConfigQueryAdmissionIssue(config.query);
+  if (issue) throw CoreError.invalidOperation(issue);
+}
+
+function searchConfigQueryAdmissionIssue(query: SearchQueryExpr): string | null {
+  const active = new WeakSet<object>();
+  const stack: SearchConfigQueryFrame[] = [{ phase: 'enter', query, depth: 1 }];
+  let nodeCount = 0;
+
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    if (frame.phase === 'exit') {
+      active.delete(frame.query);
+      continue;
+    }
+
+    const current = frame.query;
+    if (typeof current !== 'object' || current === null) return 'Search query must be a rule or group object.';
+    if (frame.depth > SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth) {
+      return `Search query is too deep; maximum depth is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth}.`;
+    }
+    if (nodeCount >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes) {
+      return `Search query is too large; maximum node count is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes}.`;
+    }
+    nodeCount += 1;
+
+    if (current.kind === 'rule') {
+      if (!SEARCH_CONFIG_QUERY_OPS.has(current.op)) {
+        return `Search rule "${String(current.op)}" is not supported yet.`;
+      }
+      const operands = Array.isArray(current.operands) ? current.operands : [];
+      if (operands.length > SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule) {
+        return `Search rule "${String(current.op)}" has too many operands; maximum is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule}.`;
+      }
+      continue;
+    }
+
+    if (current.kind !== 'group') return 'Search query node kind must be "rule" or "group".';
+    if (!SEARCH_CONFIG_QUERY_LOGICS.has(current.logic)) {
+      return `Search logic "${String(current.logic)}" is not supported yet.`;
+    }
+    if (!Array.isArray(current.children)) return 'Search query group children must be an array.';
+    if (current.children.length > SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup) {
+      return `Search group "${current.logic}" has too many child conditions; maximum is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup}.`;
+    }
+    if (active.has(current)) return 'Search query contains a cycle.';
+    active.add(current);
+    stack.push({ phase: 'exit', query: current });
+    for (let index = current.children.length - 1; index >= 0; index -= 1) {
+      stack.push({ phase: 'enter', query: current.children[index]!, depth: frame.depth + 1 });
+    }
+  }
+
+  return null;
+}
 
 export class Core {
   private loro: LoroOutlinerDocument;
@@ -2591,6 +2655,7 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
+      assertSearchNodeConfigAdmitted(config);
       const searchId = freshId('search');
       this.loro.createNodeWithId(searchId, parentId, index, 'search', (node) => {
         node.content = plainText(normalizeSearchTitle(config.title));
@@ -3017,6 +3082,7 @@ export class Core {
   }
 
   private writeSearchNodeConfigDirect(nodeId: string, config: SearchNodeConfig, textIndex?: TextSearchIndex) {
+    assertSearchNodeConfigAdmitted(config);
     const state = this.snapshot();
     const existing = clone(requiredNode(state, nodeId));
     // Rebuild as a search node with its inline query cleared (the query lives in
@@ -3046,9 +3112,7 @@ export class Core {
     const searchNode = requiredNode(state, nodeId);
     if (searchNode.type !== 'search') throw CoreError.invalidOperation('expected a search node');
 
-    const result = searchNodeHasRules(state, nodeId)
-      ? runSearchNode(state, nodeId, { textIndex })
-      : { ok: true, hits: [] } as const;
+    const result = runSearchNode(state, nodeId, { textIndex });
     if (!result.ok) throw CoreError.invalidOperation(result.issue.message);
 
     const hits = uniqueNodeIds(result.hits.map((hit) => hit.nodeId))

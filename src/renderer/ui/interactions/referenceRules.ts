@@ -8,9 +8,6 @@ export type TreeReferenceBlockReason =
   | 'already_in_parent'
   | 'would_create_display_cycle';
 
-const MAX_EFFECTIVE_REFERENCE_HOPS = 1_024;
-const MAX_DISPLAY_GRAPH_VISITS = 10_000;
-
 type EffectiveNodeResolution =
   | { ok: true; nodeId: NodeId }
   | { ok: false; reason: Extract<TreeReferenceBlockReason, 'missing_target' | 'would_create_display_cycle'> };
@@ -21,14 +18,12 @@ function resolveEffectiveNodeId(
 ): EffectiveNodeResolution {
   let currentId: NodeId | undefined = nodeId;
   const visited = new Set<NodeId>();
-  let hops = 0;
 
   while (currentId) {
-    if (visited.has(currentId) || hops >= MAX_EFFECTIVE_REFERENCE_HOPS) {
+    if (visited.has(currentId)) {
       return { ok: false, reason: 'would_create_display_cycle' };
     }
     visited.add(currentId);
-    hops += 1;
 
     const node = byId.get(currentId);
     if (!node) return { ok: false, reason: 'missing_target' };
@@ -52,7 +47,6 @@ function canReachInDisplayGraph(
     const currentId = stack.pop();
     if (!currentId || visited.has(currentId)) continue;
     visited.add(currentId);
-    if (visited.size > MAX_DISPLAY_GRAPH_VISITS) return true;
     const current = byId.get(currentId);
     if (!current) continue;
     for (const childId of current.children) {

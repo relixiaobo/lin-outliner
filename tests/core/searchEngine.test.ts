@@ -174,6 +174,54 @@ describe('core search engine', () => {
     if (!operandValidation.ok) expect(operandValidation.issue.message).toContain('too many operands');
   });
 
+  test('rejects over-budget saved-search configs before mutating nodes', () => {
+    const core = Core.new();
+    const searchesId = core.projection().searchesId;
+    const overDepthQuery = (() => {
+      let query: SearchQueryExpr = { kind: 'rule', op: 'STRING_MATCH', text: 'Alpha' };
+      for (let depth = 0; depth < SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth; depth += 1) {
+        query = { kind: 'group', logic: 'AND', children: [query] };
+      }
+      return query;
+    })();
+
+    const searchRootChildrenBefore = [...core.state().nodes[searchesId]!.children];
+    expect(() => core.createSearchNode(searchesId, null, {
+      title: 'Too deep',
+      query: overDepthQuery,
+    })).toThrow(/too deep/u);
+    expect(core.state().nodes[searchesId]!.children).toEqual(searchRootChildrenBefore);
+
+    expect(() => core.createSearchNode(searchesId, null, {
+      title: 'Unsupported',
+      query: { kind: 'rule', op: 'EDITED_BY' },
+    })).toThrow(/not supported/u);
+    expect(core.state().nodes[searchesId]!.children).toEqual(searchRootChildrenBefore);
+
+    const searchId = mustFocus(core.createSearchNode(searchesId, null, {
+      title: 'Valid',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'Alpha' },
+    }));
+    const savedBefore = core.state().nodes[searchId]!;
+    expect(() => core.setSearchNode(searchId, {
+      title: 'Too deep',
+      query: overDepthQuery,
+    })).toThrow(/too deep/u);
+    const savedAfter = core.state().nodes[searchId]!;
+    expect(savedAfter.content.text).toBe(savedBefore.content.text);
+    expect(savedAfter.children).toEqual(savedBefore.children);
+    expect(runSearchNode(core.state(), searchId).ok).toBe(true);
+
+    expect(() => core.setSearchNode(searchId, {
+      title: 'Unsupported',
+      query: { kind: 'rule', op: 'EDITED_BY' },
+    })).toThrow(/not supported/u);
+    const savedAfterUnsupported = core.state().nodes[searchId]!;
+    expect(savedAfterUnsupported.content.text).toBe(savedBefore.content.text);
+    expect(savedAfterUnsupported.children).toEqual(savedBefore.children);
+    expect(runSearchNode(core.state(), searchId).ok).toBe(true);
+  });
+
   test('compiles canonical query metadata iteratively', () => {
     const query: SearchQueryExpr = {
       kind: 'group',

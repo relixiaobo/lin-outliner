@@ -411,11 +411,24 @@ export function validateReferenceTargetIds(index: ProjectionIndex, targetIds: st
 }
 
 export function validateSearchNodes(index: ProjectionIndex, document: OutlineDocument): NodeToolIssue | null {
-  for (const root of document.roots) {
-    const validation = validateSearchNode(index, root);
-    if (validation) return validation;
+  const stack = [...document.roots].reverse();
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.search) {
+      const validation = validateSearchNode(index, current);
+      if (validation) return validation;
+      continue;
+    }
+    for (let index = current.children.length - 1; index >= 0; index -= 1) {
+      stack.push(current.children[index]!);
+    }
   }
   return null;
+}
+
+function validateSearchNode(index: ProjectionIndex, node: OutlineNode): NodeToolIssue | null {
+  const spec = resolveSearchSpecFromOutlineNode(index, node);
+  return 'error' in spec ? spec : null;
 }
 
 export function searchQueryOutlineLines(index: ProjectionIndex, node: NodeProjection, level: number): string[] {
@@ -423,38 +436,6 @@ export function searchQueryOutlineLines(index: ProjectionIndex, node: NodeProjec
   const spec = searchSpecFromSavedSearch(index, node);
   if ('error' in spec) return [`${indent}- Invalid search query: ${spec.error}`];
   return serializeQueryExprOutlineLines(index, spec.query, level);
-}
-
-function validateSearchNode(index: ProjectionIndex, node: OutlineNode): NodeToolIssue | null {
-  const stack: Array<{ node: OutlineNode; depth: number }> = [{ node, depth: 1 }];
-  let nodeCount = 0;
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    if (current.depth > SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth) {
-      return {
-        code: 'invalid_search_condition',
-        error: `Search outline is too deep; maximum depth is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth}.`,
-        instructions: 'Split the query into a smaller search outline.',
-      };
-    }
-    if (nodeCount >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes) {
-      return {
-        code: 'invalid_search_condition',
-        error: `Search outline is too large; maximum node count is ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes}.`,
-        instructions: 'Split the query into a smaller search outline.',
-      };
-    }
-    nodeCount += 1;
-
-    if (current.node.search) {
-      const spec = resolveSearchSpecFromOutlineNode(index, current.node);
-      if ('error' in spec) return spec;
-    }
-    for (let index = current.node.children.length - 1; index >= 0; index -= 1) {
-      stack.push({ node: current.node.children[index]!, depth: current.depth + 1 });
-    }
-  }
-  return null;
 }
 
 function parseSearchOutline(index: ProjectionIndex, outline: string): ResolvedSearchSpec | NodeToolIssue {
