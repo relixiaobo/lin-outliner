@@ -243,14 +243,18 @@ function installMainErrorHandlers(): void {
   process.on('uncaughtException', (error) => {
     console.error(error);
     void Promise.race([
-      diagnosticLog.reportError({
-        domain: 'uncaught',
-        severity: 'fatal',
-        code: 'uncaught-exception',
-        message: error.message || 'Uncaught exception',
-        context: { operation: 'uncaughtException' },
-        error,
-      }),
+      diagnosticLog
+        .reportError({
+          domain: 'uncaught',
+          severity: 'fatal',
+          code: 'uncaught-exception',
+          message: error.message || 'Uncaught exception',
+          context: { operation: 'uncaughtException' },
+          error,
+        })
+        .then(() =>
+          diagnosticLog.flushNow({ reason: 'fatal', timeoutMs: 750 }).catch(() => undefined),
+        ),
       new Promise((resolve) => setTimeout(resolve, 750)),
     ]).finally(() => app.exit(1));
   });
@@ -3167,6 +3171,7 @@ if (!app.requestSingleInstanceLock()) {
         previewTranslationCache.flushNow(),
         importApiServer.stop(),
         agentRuntime.drainPendingWrites(),
+        diagnosticLog.flushNow({ reason: 'before-quit' }),
         flushUrlPreviewSession(urlPreviewSession),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2500)),
