@@ -7,13 +7,16 @@ function listenerCount(source: string, eventName: 'error' | 'unhandledrejection'
 }
 
 describe('renderer diagnostics capture seam', () => {
-  test('normal renderer startup uses the preload diagnostics listeners only once', () => {
+  test('normal renderer startup uses the main-world diagnostics listeners only once', () => {
     const preload = readFileSync('src/preload/index.ts', 'utf8');
     const rendererMain = readFileSync('src/renderer/main.tsx', 'utf8');
+    const rendererDiagnostics = readFileSync('src/renderer/diagnostics.ts', 'utf8');
 
-    expect(listenerCount(preload, 'error')).toBe(1);
-    expect(listenerCount(preload, 'unhandledrejection')).toBe(1);
+    expect(listenerCount(preload, 'error')).toBe(0);
+    expect(listenerCount(preload, 'unhandledrejection')).toBe(0);
+    expect(listenerCount(rendererDiagnostics, 'error')).toBe(1);
+    expect(listenerCount(rendererDiagnostics, 'unhandledrejection')).toBe(1);
     expect(preload).toContain('LIN_REPORT_RENDERER_ERROR_CHANNEL');
-    expect(rendererMain).not.toContain('installRendererDiagnostics');
+    expect(rendererMain).toContain('installRendererDiagnostics();');
   });
 });
