@@ -257,6 +257,34 @@ describe('day note count index', () => {
     expect(dayNoteIsoDateForNode(node('plain', '2026-08-01'), index)).toBeNull();
   });
 
+  test('full build keeps many tiny tag member groups compact and only buckets hot groups', () => {
+    const uniqueTagCount = 1_000;
+    const hotMemberCount = 128;
+    const uniqueTags = Array.from({ length: uniqueTagCount }, (_, index) =>
+      tag(`tag:unique:${index}`, `unique ${index}`));
+    const uniqueMembers = Array.from({ length: uniqueTagCount }, (_, index) =>
+      node(`unique:${index}`, `Unique ${index}`, { tags: [`tag:unique:${index}`] }));
+    const hotTag = tag('tag:hot', 'hot');
+    const hotMembers = Array.from({ length: hotMemberCount }, (_, index) =>
+      node(`hot:${index}`, `Hot ${index}`, { tags: ['tag:hot'] }));
+
+    const index = buildDayNoteCountIndex(byId([
+      ...uniqueTags,
+      ...uniqueMembers,
+      hotTag,
+      ...hotMembers,
+    ]));
+
+    const tinyMembers = index.tagMembersByTagId.get('tag:unique:0');
+    const hotTagMembers = index.tagMembersByTagId.get('tag:hot');
+    expect(tinyMembers).toBeInstanceOf(Set);
+    expect(tinyMembers?.size).toBe(1);
+    expect(tinyMembers?.has('unique:0')).toBe(true);
+    expect(hotTagMembers).not.toBeInstanceOf(Set);
+    expect(hotTagMembers?.size).toBe(hotMemberCount);
+    expect(hotTagMembers?.has('hot:127')).toBe(true);
+  });
+
   test('delta patching does not iterate previous index maps on common write paths', () => {
     const noiseTag = tag('tag:noise', 'noise');
     const hotTagMembers = Array.from({ length: 512 }, (_, index) =>

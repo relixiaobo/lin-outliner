@@ -5,6 +5,7 @@ import type { NodeId, NodeProjection } from '../api/types';
 const DAY_NOTE_COUNT_WINDOW_CACHE_LIMIT = 128;
 const DAY_NOTE_INDEX_BUCKET_COUNT = 1024;
 const DAY_NOTE_INDEX_BUCKET_MASK = DAY_NOTE_INDEX_BUCKET_COUNT - 1;
+const BUCKETED_STRING_SET_MIN_SIZE = 64;
 
 const EMPTY_NODE_ID_SET = new Set<NodeId>();
 
@@ -31,17 +32,22 @@ const dateWindowCache = new Map<string, DateNoteCountWindow>();
 
 class BucketedStringMap<TKey extends string, TValue> implements ReadonlyMap<TKey, TValue> {
   private constructor(
-    private readonly buckets: readonly ReadonlyMap<TKey, TValue>[],
+    private readonly buckets: ReadonlyMap<number, ReadonlyMap<TKey, TValue>>,
     private readonly entryCount: number,
   ) {}
 
   static fromEntries<TKey extends string, TValue>(
     entries: Iterable<readonly [TKey, TValue]>,
   ): BucketedStringMap<TKey, TValue> {
-    const buckets = emptyBuckets<TKey, TValue>();
+    const buckets = new Map<number, Map<TKey, TValue>>();
     let entryCount = 0;
     for (const [key, value] of entries) {
-      const bucket = buckets[bucketIndex(key)]!;
+      const index = bucketIndex(key);
+      let bucket = buckets.get(index);
+      if (!bucket) {
+        bucket = new Map<TKey, TValue>();
+        buckets.set(index, bucket);
+      }
       if (!bucket.has(key)) entryCount += 1;
       bucket.set(key, value);
     }
@@ -63,11 +69,11 @@ class BucketedStringMap<TKey extends string, TValue> implements ReadonlyMap<TKey
   }
 
   get(key: TKey): TValue | undefined {
-    return this.buckets[bucketIndex(key)]!.get(key);
+    return this.buckets.get(bucketIndex(key))?.get(key);
   }
 
   has(key: TKey): boolean {
-    return this.buckets[bucketIndex(key)]!.has(key);
+    return this.buckets.get(bucketIndex(key))?.has(key) ?? false;
   }
 
   patch(
@@ -76,16 +82,13 @@ class BucketedStringMap<TKey extends string, TValue> implements ReadonlyMap<TKey
   ): BucketedStringMap<TKey, TValue> {
     if (upserts.length === 0 && removedKeys.length === 0) return this;
 
-    let buckets: Array<ReadonlyMap<TKey, TValue>> | null = null;
     const copiedBuckets = new Map<number, Map<TKey, TValue>>();
     const mutableBucket = (key: TKey): Map<TKey, TValue> => {
       const index = bucketIndex(key);
       const existing = copiedBuckets.get(index);
       if (existing) return existing;
-      const copy = new Map(this.buckets[index]);
+      const copy = new Map(this.buckets.get(index));
       copiedBuckets.set(index, copy);
-      buckets ??= this.buckets.slice();
-      buckets[index] = copy;
       return copy;
     };
 
@@ -106,12 +109,19 @@ class BucketedStringMap<TKey extends string, TValue> implements ReadonlyMap<TKey
       bucket.set(key, value);
     }
 
-    return buckets ? new BucketedStringMap(buckets, entryCount) : this;
+    if (copiedBuckets.size === 0) return this;
+
+    const buckets = new Map(this.buckets);
+    for (const [index, bucket] of copiedBuckets) {
+      if (bucket.size === 0) buckets.delete(index);
+      else buckets.set(index, bucket);
+    }
+    return new BucketedStringMap(buckets, entryCount);
   }
 
   entries(): MapIterator<[TKey, TValue]> {
     return mapIterator((function* entries(self: BucketedStringMap<TKey, TValue>) {
-      for (const bucket of self.buckets) {
+      for (const bucket of self.buckets.values()) {
         yield* bucket.entries();
       }
     }(this)));
@@ -119,7 +129,7 @@ class BucketedStringMap<TKey extends string, TValue> implements ReadonlyMap<TKey
 
   keys(): MapIterator<TKey> {
     return mapIterator((function* keys(self: BucketedStringMap<TKey, TValue>) {
-      for (const bucket of self.buckets) {
+      for (const bucket of self.buckets.values()) {
         yield* bucket.keys();
       }
     }(this)));
@@ -127,7 +137,7 @@ class BucketedStringMap<TKey extends string, TValue> implements ReadonlyMap<TKey
 
   values(): MapIterator<TValue> {
     return mapIterator((function* values(self: BucketedStringMap<TKey, TValue>) {
-      for (const bucket of self.buckets) {
+      for (const bucket of self.buckets.values()) {
         yield* bucket.values();
       }
     }(this)));
@@ -269,14 +279,14 @@ export function buildDayNoteCountIndex(byId: ReadonlyMap<NodeId, NodeProjection>
     countsByDate: BucketedStringMap.fromEntries(countsByDate.entries()),
     dateNodeIdsByDate: BucketedStringMap.fromEntries(dateNodeIdsByDate.entries()),
     dateRevisionByDate: BucketedStringMap.fromEntries(dateRevisionByDate.entries()),
-    dayTagIds: BucketedStringSet.fromEntries(dayTagIds),
+    dayTagIds: persistentStringSetFromEntries(dayTagIds),
     nodeDateById: BucketedStringMap.fromEntries(nodeDateById.entries()),
     nodeOrderById: BucketedStringMap.fromEntries(nodeOrderById.entries()),
     nextOrder: order,
     revision: 1,
     tagMembersByTagId: BucketedStringMap.fromEntries((function* tagMembers() {
       for (const [tagId, members] of tagMembersByTagId) {
-        yield [tagId, BucketedStringSet.fromEntries(members)] as const;
+        yield [tagId, persistentStringSetFromEntries(members)] as const;
       }
     }())),
     winningNodeIdByDate: BucketedStringMap.fromEntries(winningNodeIdByDate.entries()),
@@ -507,7 +517,7 @@ function patchMemberSet(
   additions: readonly NodeId[],
   removals: readonly NodeId[],
 ): ReadonlySet<NodeId> {
-  return BucketedStringSet.fromReadonlySet(members).patch(additions, removals);
+  return patchPersistentStringSet(members, additions, removals);
 }
 
 function patchTagMembership(
@@ -698,11 +708,26 @@ function deleteSetPatchValue<TKey extends string>(draft: SetPatchDraft<TKey>, va
 
 function materializeSetPatchDraft<TKey extends string>(draft: SetPatchDraft<TKey>): ReadonlySet<TKey> {
   if (draft.additions.size === 0 && draft.removals.size === 0) return draft.base;
-  return BucketedStringSet.fromReadonlySet(draft.base).patch([...draft.additions], [...draft.removals]);
+  return patchPersistentStringSet(draft.base, [...draft.additions], [...draft.removals]);
 }
 
-function emptyBuckets<TKey extends string, TValue>(): Map<TKey, TValue>[] {
-  return Array.from({ length: DAY_NOTE_INDEX_BUCKET_COUNT }, () => new Map<TKey, TValue>());
+function persistentStringSetFromEntries<TKey extends string>(values: Iterable<TKey>): ReadonlySet<TKey> {
+  const set = new Set(values);
+  return set.size >= BUCKETED_STRING_SET_MIN_SIZE ? BucketedStringSet.fromEntries(set) : set;
+}
+
+function patchPersistentStringSet<TKey extends string>(
+  set: ReadonlySet<TKey>,
+  additions: readonly TKey[],
+  removals: readonly TKey[],
+): ReadonlySet<TKey> {
+  if (set instanceof BucketedStringSet || set.size + additions.length >= BUCKETED_STRING_SET_MIN_SIZE) {
+    return BucketedStringSet.fromReadonlySet(set).patch(additions, removals);
+  }
+  const next = new Set(set);
+  for (const value of removals) next.delete(value);
+  for (const value of additions) next.add(value);
+  return next.size >= BUCKETED_STRING_SET_MIN_SIZE ? BucketedStringSet.fromEntries(next) : next;
 }
 
 function bucketIndex(key: string): number {
