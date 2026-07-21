@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Renderer delta reducer surface (PR #420, codex)** — renderer projection
+  delta folding now keeps `byId` and per-node render revisions in bucketed
+  copy-on-write sparse maps, with delta `projection.nodes` exposed through a
+  lazy array-shaped view. Ordinary deltas patch only changed/removed ids,
+  preserve unchanged node object identity, and avoid materializing the previous
+  map or full node array on the hot reducer path. **Gate (main):** review found
+  no reportable issues. Verified with typecheck, full renderer tests, focused
+  sparse projection / reducer / real-Core delta integration tests, docs check,
+  and diff check.
 - **Diagnostic log coalescing (PR #419, codex)** — diagnostic errors now
   aggregate in memory by fingerprint and flush through a bounded compact JSONL
   writer, reducing write amplification during repeated renderer/runtime error
