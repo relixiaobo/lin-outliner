@@ -16,7 +16,8 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   aggregate in memory by fingerprint and flush through a bounded compact JSONL
   writer, reducing write amplification during repeated renderer/runtime error
   storms while preserving reveal, export, fatal-error, and before-quit durability
-  paths. Renderer global diagnostics now install once through preload. **Gate
+  paths. Renderer global diagnostics now install once in the main world through
+  the preload IPC bridge. **Gate
   (main):** first review found a reveal path that could report success after a
   failed explicit flush; codex fixed it before merge. Verified with typecheck,
   focused diagnostics / JSON file-store / renderer capture tests, docs check,

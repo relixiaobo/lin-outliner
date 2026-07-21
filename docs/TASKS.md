@@ -553,12 +553,13 @@ anything.
   flush through a bounded compact JSONL writer. Repeated renderer/runtime error
   storms update one dirty aggregate instead of appending and compacting on every
   report, while reveal/export/fatal/before-quit paths explicitly flush pending
-  records. Renderer startup now relies on the preload diagnostics listeners
-  only, avoiding duplicate global error capture.
+  records. Renderer startup now installs the main-world diagnostics listeners
+  once and reports through the preload IPC bridge, avoiding duplicate global
+  error capture.
   **Gate (main):** first review found that explicit reveal flush failures were
   swallowed, causing the diagnostics action to return success for an unwritten
   log; codex fixed it before merge. Final review found no reportable issues on
-  head `12af5d6`. Verified with typecheck, `docs:check`, diff check, focused
+  head `f5d9a82`. Verified with typecheck, `docs:check`, diff check, focused
   diagnostic log / JSON file-store / renderer diagnostics capture tests, and an
   `ENOTDIR` repro for reveal-flush failure propagation.
 
