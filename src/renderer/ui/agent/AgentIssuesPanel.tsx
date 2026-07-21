@@ -35,6 +35,7 @@ import {
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { formatLocaleDateTime } from '../formatting';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentDetailDrawerResizeHandle, useAgentDetailDrawerHeight } from './AgentDetailDrawerResize';
 import { formatRunDuration } from './agentProcessTypes';
@@ -119,7 +120,7 @@ function issueDisplayTitleForDetail(issue: AgentIssue | undefined, recurringIssu
 }
 
 function activityTimestampTitle(timestamp: number, locale: string): string {
-  return new Date(timestamp).toLocaleString(locale);
+  return formatLocaleDateTime(timestamp, locale);
 }
 
 function activityActorLabel(actor: Activity['actor'], systemLabel: string): string {

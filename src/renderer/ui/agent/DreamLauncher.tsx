@@ -10,6 +10,15 @@ import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { Textarea } from '../primitives/Textarea';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
+import { formatDateTime } from '../formatting';
+
+const DREAM_NEXT_RUN_OPTIONS: Intl.DateTimeFormatOptions = {
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+};
 
 interface DreamLauncherProps {
   dreamSchedule?: string;
@@ -369,13 +378,7 @@ function DreamManualDateField({ endDate, maxDate, onChange, startDate }: DreamMa
 }
 
 function formatDreamNextRun(value: Date, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(value);
+  return formatDateTime(value, locale, DREAM_NEXT_RUN_OPTIONS);
 }
 
 function formatDreamDatePickerValue(startDate: string, endDate: string, includeRange: boolean): string {

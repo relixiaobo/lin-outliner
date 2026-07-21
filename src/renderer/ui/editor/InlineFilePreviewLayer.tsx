@@ -5,6 +5,7 @@ import {
 } from './inlineFileIcon';
 import type { InlineFilePreviewDescriptor } from './inlineFilePreviewData';
 import { useT } from '../../i18n/I18nProvider';
+import { formatDateTime } from '../formatting';
 import { wantsNewPaneFromClick } from '../shared';
 import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 import {
@@ -50,6 +51,10 @@ const HIDE_DELAY_MS = 80;
 const POPOVER_GAP = 8;
 const POPOVER_WIDTH = 292;
 const POPOVER_MIN_HEIGHT = 120;
+const INLINE_FILE_MODIFIED_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+};
 
 export function InlineFilePreviewLayer() {
   const t = useT();
@@ -470,8 +475,5 @@ function formatBytes(bytes: number): string {
 }
 
 function formatModifiedDate(value: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
+  return formatDateTime(value, undefined, INLINE_FILE_MODIFIED_DATE_OPTIONS);
 }

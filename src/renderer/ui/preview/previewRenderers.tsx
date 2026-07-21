@@ -47,6 +47,7 @@ import { inlineFileIconKind, INLINE_FILE_ICON_CLASS } from '../editor/inlineFile
 import { highlightCode, isKnownCodeLanguage, plainCodeHtml } from '../editor/shikiHighlighter';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { formatDateTime } from '../formatting';
 import { wantsNewPaneFromClick } from '../shared';
 import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import type { EpubTranslationDomAdapter } from './epubTranslationDom';
@@ -63,6 +64,10 @@ import { openUrlPreviewFromClick } from './urlPreviewRouting';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
+const PREVIEW_MODIFIED_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+};
 
 // React drops boolean values for this Electron-only attribute, so pass the
 // string value Electron expects while retaining React's intrinsic webview type.
@@ -1915,10 +1920,7 @@ function parseDelimitedRows(text: string, delimiter: string): string[][] {
 }
 
 export function formatModifiedDate(value: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
+  return formatDateTime(value, undefined, PREVIEW_MODIFIED_DATE_OPTIONS);
 }
 
 function loadPdfJs(): Promise<PdfJsModule> {

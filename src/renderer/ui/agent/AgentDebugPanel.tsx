@@ -19,6 +19,7 @@ import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { formatBytes } from '../preview/fileNode';
 import { ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
+import { formatDateTime } from '../formatting';
 import { AgentUsageBreakdown, formatUsageCostValue } from './AgentUsageBreakdown';
 import { formatRunDuration, previewText } from './agentProcessTypes';
 
@@ -40,6 +41,14 @@ type DebugLabels = ReturnType<typeof useT>['agentDebug'];
 
 // --- formatting -----------------------------------------------------------
 
+const DEBUG_TIMESTAMP_OPTIONS: Intl.DateTimeFormatOptions = {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+};
+
 function formatTokens(tokens: number): string {
   if (tokens < 1000) return `${tokens}`;
   return `${(tokens / 1000).toFixed(tokens >= 10_000 ? 0 : 1)}k`;
@@ -47,13 +56,7 @@ function formatTokens(tokens: number): string {
 
 function formatTimestamp(value: number | null): string {
   if (!value) return '—';
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(new Date(value));
+  return formatDateTime(value, undefined, DEBUG_TIMESTAMP_OPTIONS);
 }
 
 function formatRunTimeSpan(startedAt: number | null, completedAt: number | null): string {

@@ -47,6 +47,7 @@ import { SegmentedControl } from '../primitives/SegmentedControl';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
+import { formatDateTime, formatLocaleDateTime } from '../formatting';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { DreamHistoryGroup } from './DreamHistoryGroup';
 import {
@@ -74,6 +75,10 @@ type SettingsCategory = SettingsCategoryTarget;
 type SettingsRoute = { type: 'category'; category: SettingsCategory };
 type RequestScope = 'settings' | 'section' | 'mutation' | 'dream';
 type CapabilityRuleListKind = 'blocks';
+const SETTINGS_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+};
 
 interface DraftConfig {
   providerId: string;
@@ -1528,12 +1533,9 @@ function emptyCapabilitySettings(): AgentCapabilitySettingsView {
 
 function formatSettingsDate(timestamp: number): string {
   try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(new Date(timestamp));
+    return formatDateTime(timestamp, undefined, SETTINGS_DATE_OPTIONS);
   } catch {
-    return new Date(timestamp).toLocaleString();
+    return formatLocaleDateTime(timestamp);
   }
 }
 

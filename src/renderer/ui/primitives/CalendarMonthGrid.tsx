@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEve
 import { addLocalDays, isoLocalDate, parseIsoLocalDate } from '../../api/types';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import { ChevronLeftIcon, ChevronRightIcon } from '../icons';
+import { formatDateTime } from '../formatting';
 import { ButtonControl } from './ButtonControl';
 import { cx } from './cx';
 
@@ -30,6 +31,7 @@ interface CalendarMonthGridProps {
 }
 
 const DAYS_PER_WEEK = 7;
+const CALENDAR_MONTH_OPTIONS: Intl.DateTimeFormatOptions = { month: 'long', year: 'numeric' };
 
 export function CalendarMonthGrid({
   className,
@@ -251,8 +253,7 @@ export function CalendarMonthGrid({
 }
 
 export function calendarMonthLabel(year: number, monthIndex: number, locale: string): string {
-  return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' })
-    .format(new Date(year, monthIndex, 1));
+  return formatDateTime(new Date(year, monthIndex, 1), locale, CALENDAR_MONTH_OPTIONS);
 }
 
 export function shiftedCalendarMonth(year: number, monthIndex: number, delta: number): { year: number; month: number } {

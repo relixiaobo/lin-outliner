@@ -61,6 +61,7 @@ import {
   nearestScrollContainer,
   usePendingDisclosureAnchor,
 } from '../interactions/disclosureScrollAnchor';
+import { formatDateTime, formatNumber } from '../formatting';
 import { AgentUsageHoverCard, formatUsageCostValue } from './AgentUsageBreakdown';
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
@@ -68,6 +69,14 @@ const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
 const EMPTY_SUB_RUN_MAP: ReadonlyMap<string, AgentRenderRunEntity> = new Map();
 const EMPTY_OVERRIDES: Readonly<Record<string, boolean>> = Object.freeze({});
 const NOOP_UNSUBSCRIBE = () => {};
+const ABSOLUTE_TIMESTAMP_OPTIONS: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+};
 
 interface AgentMessageRowProps {
   /** Speaker name for Channel attribution; null/undefined renders no badge (DM, user, coordinator). */
@@ -301,19 +310,12 @@ function hasAssistantError(message: UserMessage | AssistantMessage): message is 
 }
 
 function formatAbsoluteTimestamp(timestamp: number, locale: string): string {
-  return new Date(timestamp).toLocaleString(locale, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  return formatDateTime(timestamp, locale, ABSOLUTE_TIMESTAMP_OPTIONS);
 }
 
 function formatTokenCount(value: number | undefined): string | null {
   if (!Number.isFinite(value) || !value || value <= 0) return null;
-  return new Intl.NumberFormat().format(value);
+  return formatNumber(value);
 }
 
 function usageSummary(message: AssistantMessage, labels: {
