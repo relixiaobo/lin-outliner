@@ -15,10 +15,11 @@ shared-interface-first rule:
 
 1. A human-led interface-only PR lands `src/core/agent/`, the coordinated shared
    exports, codecs, tool contracts, provenance contracts, the generic
-   projection-neutral document system-receipt contract, and protocol tests. It
-   does not add a second agent runtime, adapter, data reader, or migration path.
-   The old runtime remains the only executable agent consumer during this short
-   interface window.
+   projection-neutral document system-receipt contract, the generic protected
+   system-tag-definition contract, and protocol tests. It does not add a second
+   agent runtime, adapter, data reader, or migration path. The old runtime
+   remains the only executable agent consumer during this short interface
+   window.
 2. One complete replacement PR consumes that interface across persistence,
    runtime, transport, renderer, and deletion. It is complete only when the old
    Conversation / Channel / Run / Issue / AgentSession / Activity / Dream model
@@ -205,6 +206,43 @@ operation in its own control database and places only a digest over that record
 in the document receipt. The Core replacement implements this already-settled
 contract; Memory later consumes it without modifying `src/core/types.ts` or
 `src/core/commands.ts` again.
+
+#### Protected system tag definitions
+
+The interface-only PR also defines the generic document primitive used when a
+trusted host feature owns a stable, visible tag identity:
+
+```ts
+type DocumentSystemTagDefinition = {
+  namespace: string;
+  tagId: string;
+  name: string;
+};
+```
+
+The host-only `ensure_document_system_tag_definition` mutation atomically
+registers the claim and ensures that exact `tagId` is an active `tagDef` under
+`SCHEMA_ID` with its canonical name. A missing definition is created with the
+caller-supplied ID; a definition moved to Trash is restored with the same ID,
+never replaced by a random `create_tag` identity. A conflicting namespace,
+name, type, or identity claim fails the whole transaction instead of merging or
+silently adopting a user tag.
+
+The ownership claim lives in a projection-neutral document system map, while
+the ensured tag definition remains an ordinary visible tag definition. Public
+renderer commands and model Node tools cannot rename, move, trash, delete,
+merge, retype, unlock, or replace a registered definition. Users and ordinary
+Node tools may still apply or remove the tag from content Nodes. There is no
+public unregister command; a feature-specific reset cannot delete its reserved
+definitions. The ensure mutation is absent from renderer IPC and the model tool
+catalog, is excluded from user undo/redo, and can share one
+`DocumentService.transaction` with Node commands and a system receipt.
+
+Contract tests cover caller-supplied identity, idempotent ensure, same-ID restore
+from Trash, conflict rejection, definition locking, ordinary tag application
+and removal, reload, projection behavior, and public-surface exclusion. Memory
+later declares its fixed tag IDs through this primitive and does not reopen the
+shared document command contract.
 
 ### 3. Protocol model
 
@@ -437,7 +475,9 @@ the tool call and Turn, set `waitingOnUserInput`, and do not create a parallel
 The Goal extension contributes the plain `get_goal`, `create_goal`, and
 `update_goal` tools. The later Automation extension contributes
 `codex_app.automation_update`; the Memory extension contributes no model tools
-and instead scopes the existing Node tools to its canonical Node root.
+or parallel content backend. Foreground Threads use the existing Node tools,
+while Memory consolidation scopes those tools to the selected canonical tagged
+Memory graph inside Daily Notes rather than to a nonexistent Memory root.
 
 Provider-neutral capability tools survive with their names and behavior moved
 behind the new Turn runtime:
@@ -526,10 +566,21 @@ continue work without racing user input.
 A typed `ExtensionRegistry` provides only real lifecycle seams:
 
 - Thread start, resume, idle, and stop
-- Turn start, stop, abort, and error
+- Turn admission, start, stop, abort, and error
 - Thread context contribution
 - tool contribution and tool lifecycle
 - ordered Turn-item contribution
+
+Turn admission is a synchronous host-only seam under ThreadService's per-Thread
+admission barrier. After ThreadService allocates the Turn identity but before it
+persists the first Item, returns acceptance, or starts any side effect, each
+registered admission contributor may durably snapshot private extension state
+keyed by that `turnId`. A failed contribution rejects the Turn before it exists;
+startup reconciliation removes orphan snapshots whose Turns never became
+durable. Thread configuration changes that affect admission use the same barrier,
+so an extension can bind a Turn to the exact configuration state at acceptance
+without adding an extension-specific field to `Turn`, `TurnProvenance`, or
+`ThreadItem`.
 
 Host-session-, Thread-, and Turn-scoped typed stores hold ephemeral extension
 state. "Host session" here means the lifetime of the in-memory extension host,
@@ -656,11 +707,12 @@ both a zero-result active-repository scan and a zero-result fresh-storage scan;
 ### 8. Risks and mitigations
 
 - **Interface/runtime drift:** the human-led interface PR lands first with codecs,
-  provenance invariants, the projection-neutral system-receipt contract, and
-  contract tests; the replacement branch rebases on that exact commit and may
-  not redeclare or locally widen the shared contract. The interface window
-  contains no adapter, dual write, or second executable agent runtime and is
-  closed by the immediately following replacement PR.
+  provenance invariants, the projection-neutral system-receipt contract, the
+  protected system-tag-definition contract, and contract tests; the replacement
+  branch rebases on that exact commit and may not redeclare or locally widen the
+  shared contract. The interface window contains no adapter, dual write, or
+  second executable agent runtime and is closed by the immediately following
+  replacement PR.
 - **Capability loss hidden by old adapters:** inventory every provider/tool,
   Full Access audit/block, attachment, compaction, retry, and notification path
   and prove each through the canonical protocol before deleting its old consumer.
@@ -687,8 +739,9 @@ Profile/Role/child-Thread split, history-only fork semantics, separate
 core/history/Goal stores, rollout-as-history-source, the fixed
 `collaboration.*` v2 tool namespace, the exact `request_user_input` replacement,
 the exhaustive tool migration, immutable Turn/Item provenance, the retained Full
-Access boundary, the projection-neutral document system-receipt primitive, and
-the interface-first two-PR delivery order.
+Access boundary, the projection-neutral document system-receipt primitive, the
+protected system-tag-definition primitive, the synchronous extension admission
+barrier, and the interface-first two-PR delivery order.
 
 ## Implementation checklist
 
@@ -698,8 +751,14 @@ the interface-first two-PR delivery order.
   protocol and extension interfaces, including ThreadSource strings, immutable
   Turn/Item provenance, paginated-only history, immutable completed Items, client
   input idempotency, Node-backed MemoryCitation, configuration profiles, agent
-  roles, additional-context trust, Full Access exclusions, and the generic
-  projection-neutral `DocumentSystemReceipt` plus host-only atomic mutation.
+  roles, admission-barrier snapshots, additional-context trust, Full Access
+  exclusions, and the generic projection-neutral `DocumentSystemReceipt` plus
+  host-only atomic mutation.
+- [ ] In that interface PR, define and contract-test
+  `DocumentSystemTagDefinition` and host-only
+  `ensure_document_system_tag_definition`, including fixed caller identity,
+  same-ID restore, ownership conflicts, definition locking, ordinary tag
+  application/removal, reload, and public-surface exclusion.
 - [ ] In that interface PR, define and contract-test the canonical model-tool
   registry, fixed `collaboration` namespace, v2 Subagent suite, root-only
   `request_user_input`, `update_plan`, Goal tools, retained capability tools,
@@ -710,6 +769,8 @@ the interface-first two-PR delivery order.
 - [ ] Implement the settled system-receipt Loro map and host-only
   `put_document_system_receipt` path, including atomic Node-plus-receipt commits,
   reload, projection/search/model exclusion, and no user undo entry.
+- [ ] Implement the protected system-tag ownership map and host-only ensure path,
+  including fixed-ID creation/restore and public definition-mutation rejection.
 - [ ] Implement rollout recording, Thread metadata/spawn edges, the separate
   history projection, pagination, and replay equivalence.
 - [ ] Implement Thread/Turn runtimes and make GoalExtension exercise the real

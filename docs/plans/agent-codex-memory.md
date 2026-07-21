@@ -118,24 +118,42 @@ Memory uses these public concepts only:
 - `Memory Reset` as a confirmed user command
 
 Jobs, leases, fingerprints, usage counters, publication generations, reset
-epochs, evidence cutoffs, active-Turn exclusions, generated-node lineage, and
-publication journals are private pipeline control state. They are not Memory
-objects and are never rendered as Nodes or ThreadItems.
+epochs, evidence cutoffs, immutable Turn admission snapshots, active-Turn
+exclusions, generated-node lineage, and publication journals are private
+pipeline control state. They are not Memory objects and are never rendered as
+Nodes or ThreadItems.
 
 `memories.sqlite` contains only that control state: source Thread versions, job
 ownership and retry data, generated Node IDs and hashes, selected episode
 versions, evidence lineage, usage counters, publication generation, timeline
-fingerprints, the current reset epoch, per-Thread reset cutoffs, excluded active
-Turn IDs, and prepared/finalized operation rows. Published model-readable Memory
-content is canonical only in Nodes.
+fingerprints, the current reset epoch, per-Thread reset cutoffs, immutable
+per-Turn Memory admission rows, excluded active Turn IDs, and prepared/finalized
+operation rows. Published model-readable Memory content is canonical only in
+Nodes.
 
 ### 2. Canonical daily Memory graph
 
-`TimelineMemoryStore` ensures deterministic current tag identities for
-`#d-memory`, `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance`. It does
-not recognize tag identities from old userData. Standard Node IDs, RichText,
-tags, references, Daily Nodes, search, projection, Loro persistence, document
-commands, and Outliner UI remain the only content machinery.
+`TimelineMemoryStore` declares these deterministic current tag identities:
+
+| Tag | Fixed Node ID |
+|---|---|
+| `#d-memory` | `tag:d-memory` |
+| `#d-episode` | `tag:d-episode` |
+| `#d-belief` | `tag:d-belief` |
+| `#d-question` | `tag:d-question` |
+| `#d-guidance` | `tag:d-guidance` |
+
+At document startup, before renderer or agent document mutations are admitted,
+the host ensures all five through Core's already-landed
+`ensure_document_system_tag_definition` contract. Their definitions keep the
+same identity and canonical name, cannot be renamed, moved, trashed, deleted,
+merged, retyped, unlocked, or replaced through public commands, and survive
+feature disable and Memory Reset. Users and causation-authorized foreground Node
+tools may still apply or remove the tags from content Nodes. Memory does not
+recognize old tag identities or adopt a same-named personal tag. Standard Node
+IDs, RichText, tags, references, Daily Nodes, search, projection, Loro
+persistence, document commands, and Outliner UI remain the only content
+machinery.
 
 The generated canonical shape is:
 
@@ -172,9 +190,12 @@ a concurrent consolidation from overwriting it, and the next attempt reconciles
 from the user's version. Removing a category tag or moving a Node outside a
 `#d-memory` container removes it from canonical Memory; adding a reserved Memory
 tag makes a Node canonical Memory only when it satisfies the same date/container
-hierarchy. An invalid placement remains ordinary non-Memory outline content and
-is surfaced in diagnostics; the pipeline neither ingests nor silently relocates
-it.
+hierarchy. A canonical `#d-memory` container is the Reset ownership boundary, so
+everything intentionally nested beneath it moves and is deleted with that
+container even when a child is untagged or has a malformed category placement.
+A reserved-tag placement outside every canonical container remains ordinary
+non-Memory outline content and is surfaced in diagnostics; the pipeline neither
+ingests, deletes, nor silently relocates it.
 
 Memory consumes Core's generic projection-neutral `DocumentSystemReceipt`. Its
 receipt is scoped by namespace `agent.memory` and `DAILY_NOTES_ID`, but lives in
@@ -185,12 +206,13 @@ projection, tools, search, renderer IPC, or model context.
 
 Publication and Reset use Core's host-only
 `put_document_system_receipt` command in the same non-user-undoable
-DocumentService transaction as their Node commands. This plan adds no Node field
-or shared command. Phase 1 model work may run independently, but every Phase 1,
-Phase 2, explicit host reconciliation, and Reset document commit is serialized
-through one Memory document-write gate, so the single latest receipt for
-`(agent.memory, DAILY_NOTES_ID)` cannot be overwritten before its SQLite row is
-finalized.
+DocumentService transaction as their Node commands. Tag initialization uses the
+already-landed host-only `ensure_document_system_tag_definition` command. This
+plan adds no Node field or shared command. Phase 1 model work may run
+independently, but every Phase 1, Phase 2, explicit host reconciliation, and
+Reset document commit is serialized through one Memory document-write gate, so
+the single latest receipt for `(agent.memory, DAILY_NOTES_ID)` cannot be
+overwritten before its SQLite row is finalized.
 
 ### 3. Eligibility and per-Thread mode
 
@@ -198,19 +220,35 @@ Persistent interactive root Threads default to `ThreadMemoryMode.enabled`.
 Users can switch a Thread to `disabled`; the mode is persisted as Thread
 configuration and affects both Memory use and generation for subsequent Turns.
 
+Mode changes and Turn admission are serialized by the same per-Thread admission
+barrier. Before a root-user Turn is accepted, the Memory extension durably writes
+an immutable admission row keyed by `turnId` with `eligibleAtAdmission` and the
+current `resetEpoch`; ThreadService does not record its first Item or start side
+effects until that write commits. A missing admission row fails closed as
+ineligible. Orphan rows prepared for Turns that never become durable are removed
+during startup reconciliation.
+
+`eligibleAtAdmission` is true only when the Thread is an eligible persistent
+interactive root and its mode is `enabled` at that exact admission boundary. It
+never changes afterward. Disabling a Thread therefore excludes every later Turn
+accepted while disabled; re-enabling affects only newer Turns and cannot make
+the disabled interval eligible retroactively. An already active Turn keeps its
+admission value because mode changes apply to subsequent Turns.
+
 The pipeline wakes after the document, stores, and ThreadService start and when
 an eligible root Thread becomes idle. Each wake performs one bounded scan rather
 than creating a timer per Thread. Phase 1 may claim only a persistent,
-non-ephemeral interactive root Thread with no active Turn whose rollout passed
-the idle grace period, remains inside the configured age window, and whose
-eligible-origin evidence version changed since its last successful extraction.
+non-ephemeral interactive root Thread whose current mode is `enabled`, with no
+active Turn, whose rollout passed the idle grace period, remains inside the
+configured age window, and whose eligible-at-admission evidence version changed
+since its last successful extraction.
 
 Subagent Threads, standalone Automation Threads, `memory_consolidation` Threads,
-Threads without memory-relevant user-authored work, and disabled Threads are
-ineligible. A normal user Thread remains eligible when an Automation targets it,
-but every automation-origin Turn is excluded from its evidence. A valid
-extraction that finds no durable signal completes as `succeededNoOutput` and
-publishes no container or episode.
+Threads without memory-relevant user-authored work, and currently disabled
+Threads cannot be claimed. A normal user Thread remains claimable when an
+Automation targets it, but every automation-origin Turn is excluded from its
+evidence. A valid extraction that finds no durable signal completes as
+`succeededNoOutput` and publishes no container or episode.
 
 Completing a web search or another result explicitly marked as external context
 sets a private `polluted` extraction flag for that Thread. A polluted Thread is
@@ -226,7 +264,9 @@ timeline Memory graph.
 ### 4. Phase 1: Thread rollout to daily episodes
 
 Phase 1 reads the canonical rollout and first applies immutable Core provenance.
-It rejects every Turn whose `TurnProvenance.trigger` is
+It first rejects every Turn whose durable Memory admission row is missing or has
+`eligibleAtAdmission=false`; this decision is never recomputed from the Thread's
+current mode. It then rejects every Turn whose `TurnProvenance.trigger` is
 `{ kind: "feature", feature: "automation", ... }`, including such Turns inside
 an otherwise ordinary user Thread. It then rejects inherited fork Items: only
 Items whose ultimate `ItemProvenance.originThreadId` is the current Thread are
@@ -253,10 +293,11 @@ pipeline never performs an unbounded document scan.
 The source version is a deterministic fingerprint of ordered eligible
 `originItemId` values plus each Item's canonical content hash. It is not the
 Thread's `updatedAt`: excluded Automation Turns, copied fork prefixes,
-display-only edits, and other irrelevant Thread changes cannot make old evidence
-new. Reset cutoffs remove local Item positions at or before the barrier, and
-retained Reset exclusions remove every Item belonging to a Turn active at that
-barrier regardless of when the Item completed.
+Turns admitted while Memory was disabled, display-only edits, and other
+irrelevant Thread changes cannot make old evidence new. Reset cutoffs remove
+local Item positions at or before the barrier, and retained Reset exclusions
+remove every Item belonging to a Turn active at that barrier regardless of when
+the Item completed.
 
 One bounded internal extraction Turn produces a high-signal `Stage1Output`
 grouped by source date. Each non-empty group contains an episode summary plus
@@ -356,21 +397,41 @@ or a duplicate Node. Detailed recall uses existing `node_search` and `node_read`
 over the five Memory tags inside Daily Notes; the Memory extension defines no
 parallel list/read/search tools or private content backend.
 
-When the user explicitly asks to remember something, the foreground root Thread
-uses ordinary Node commands to ensure today's single `#d-memory` container and
-create or update the appropriate episode and category Nodes. Explicit update or
-forget requests search and read the relevant Memory Nodes, then edit, move, or
-trash them directly. These user-directed changes are authoritative immediately
-and wake Phase 2 for global reconciliation. There is no Memory Inbox or delayed
-intent object.
+When the user explicitly asks to remember something in a Turn admitted with
+Memory enabled, the foreground root Thread uses ordinary Node commands to ensure
+today's single `#d-memory` container and create or update the appropriate episode
+and category Nodes. Explicit update or forget requests search and read the
+relevant Memory Nodes, then edit, move, or trash them directly. These
+user-directed changes are authoritative immediately and wake Phase 2 for global
+reconciliation. There is no Memory Inbox or delayed intent object.
 
-Unsolicited foreground Memory writes are excluded by prompt and tool policy.
-Typed agent mutations that introduce or change the five reserved Memory tags
-also validate command causation: direct renderer/user edits, explicit foreground
-root-user Turns, and host-owned MemoryExtension publications are valid;
-Automation, Subagent, and unrelated feature Turns cannot create tagged Memory
-through the Node command path. This is a content-integrity invariant, not an
-approval or filesystem permission mode.
+Unsolicited foreground Memory writes are excluded by prompt and tool policy. A
+Memory-graph mutation is any document transaction whose pre/post image applies
+or removes a reserved tag, edits/moves/deletes a reserved-tagged Node, mutates a
+descendant of a canonical container, or changes ancestry so content enters or
+leaves the canonical hierarchy. The Node command path preflights that entire
+change set and validates command causation: direct renderer/user edits, explicit
+foreground root-user Turns, and host-owned MemoryExtension publications are
+valid; Automation, Subagent, and unrelated feature Turns cannot mutate Memory or
+turn a stray tagged Node into canonical Memory. This is a content-integrity
+invariant, not an approval or filesystem permission mode.
+
+For an explicit foreground root-user Turn, the Node-tool adapter also resolves
+its immutable Memory admission row. A Memory-graph mutation is allowed only
+when that row has `eligibleAtAdmission=true`, its `resetEpoch` equals the current
+epoch, and its `turnId` is absent from the retained Reset exclusion set. A Turn
+admitted while Memory is disabled receives a structured Memory-disabled result
+for explicit remember/update/forget; the user can still edit the Nodes directly.
+Every Memory-graph mutation, including a direct renderer edit, first acquires the
+Memory document-write gate; Reset holds that gate from its snapshot through epoch
+finalization. Validation occurs before the enclosing command's
+DocumentService transaction applies any Node command, so rejection cannot create
+canonical Memory or partially apply that transaction. Direct renderer/user edits
+waiting behind Reset remain valid afterward because they are new intentional
+document actions; host-owned MemoryExtension publications use their journaled
+current epoch. An old active Turn may continue ordinary work after Reset, but
+any delayed explicit remember/update/forget mutation returns a structured
+stale-Memory-epoch failure and cannot recreate Memory.
 
 Generated-node lineage in `memories.sqlite` maps each Memory Node to supporting
 `threadId`, `turnId`, and distinct `originItemId` values. It is rebuildable
@@ -421,28 +482,35 @@ Reset itself uses a durable cross-store journal:
    daily Memory container IDs, and the expected document-command hash.
    Preparing the row blocks new pipeline claims.
 2. One confirmed, non-user-undoable DocumentService transaction permanently
-   deletes every canonical `#d-memory` container and any stray tagged Memory
-   descendants under Daily Notes through the existing `delete_node` command,
-   then invokes Core's host-only `put_document_system_receipt` with the matching
-   Reset ID, epoch, and prepared-record digest. The five current tag definition
-   Nodes remain available for future Memory.
+   deletes only the snapshotted canonical `#d-memory` containers through the
+   existing `delete_node` command, then invokes Core's host-only
+   `put_document_system_receipt` with the matching Reset ID, epoch, and
+   prepared-record digest. A reserved-tag Node that is not inside a valid
+   source-date Daily Node/container hierarchy is ordinary non-Memory content: it
+   and its complete subtree survive Reset unchanged and remain diagnostic-only.
+   The five protected tag definition Nodes remain available for future Memory.
 3. SQLite finalizes the epoch and cutoffs, clears generated-node lineage, source
    jobs, leases, selections, usage, fingerprints, and publication rows, then
    releases the Turn-admission barrier and unblocks claims. It preserves the
-   reset epoch, cutoff rows, active-Turn exclusions, and per-Thread modes.
+   reset epoch, cutoff rows, immutable Turn admission rows, active-Turn
+   exclusions, and per-Thread modes.
 
 Startup reconciles Reset before ThreadService accepts a Turn, before publication
 reconciliation, and before any worker starts. A matching receipt completes
 SQLite finalization; a prepared Reset without a receipt reapplies its idempotent
 document transaction and then finalizes. Old timeline Memory and post-reset
-completions of an excluded Turn cannot repopulate Memory. Re-extracting old
-history would be a separately designed `Memory Rebuild`, not Reset behavior.
+completions of an excluded Turn cannot repopulate Memory through extraction or
+direct Node-tool mutation. Re-extracting old history would be a separately
+designed `Memory Rebuild`, not Reset behavior.
 
 The Reset regression contract is explicit: a user message accepted before
 Reset, plus tool results, steering input, and a final agent message written by
-that same Turn after Reset, contribute no evidence; the first eligible Turn
-accepted after the barrier does contribute. The same result must hold after a
-crash at each journal boundary and restart.
+that same Turn after Reset, contribute no evidence; an attempted reserved-tag
+Node mutation from that Turn is atomically rejected; and the first eligible Turn
+accepted after the barrier does contribute. A stray tagged Node and its untagged
+descendants survive Reset byte-for-byte, while a canonical daily Memory
+container is deleted. The same results must hold after a crash at each journal
+boundary and restart.
 
 Renderer state contains only ordinary Outliner selection/expansion, the tagged
 search projection, and settings status. Paths, line numbers, artifact trees,
@@ -492,7 +560,15 @@ shipping.
   receipts make publication and Reset idempotently reconcilable before workers
   start.
 - **Reset resurrects forgotten history:** retained cutoffs exclude pre-reset
-  positions and retained active-Turn IDs exclude their later completions.
+  positions, retained active-Turn IDs exclude their later completions, and old
+  admission epochs reject their delayed reserved-tag mutations.
+- **Reset deletes ordinary notes:** only canonical daily `#d-memory` containers
+  are deletion units; invalid reserved-tag placements remain diagnostic-only
+  ordinary content and survive with their subtrees.
+- **Disabled evidence is backfilled:** immutable per-Turn admission rows exclude
+  Turns accepted while disabled even after the Thread is re-enabled.
+- **Reserved tag identity drifts:** fixed `tag:d-*` IDs are installed and locked
+  through Core's host-only system-tag contract before public document mutation.
 - **External context becomes personal Memory:** pollution excludes the Thread and
   enqueues reconciliation when it previously contributed generated Memory.
 - **Dual Memory truth:** SQLite holds control/provenance only; all published,
@@ -503,18 +579,20 @@ shipping.
 
 At drafting time, open PR #422 owned unrelated renderer date-count files. There
 is no overlap. This plan consumes Core's Thread/Turn/MemoryCitation, mutation
-causation, extension, and projection-neutral system-receipt contracts. It uses
-existing Daily Node, tag, search, and Node command machinery plus the already
-landed host-only receipt command; it does not reopen `src/core/types.ts`,
+causation, extension admission-barrier, projection-neutral system-receipt, and
+protected system-tag-definition contracts. It uses existing Daily Node, tag,
+search, and Node command machinery plus the already-landed host-only receipt and
+tag-ensure commands; it does not reopen `src/core/types.ts`,
 `src/core/commands.ts`, the shared ThreadItem union, or Automation files.
 
 ## Open questions
 
 None. Ratifying this plan ratifies Codex's two-phase Memory behavior over the
 five-category daily timeline graph, source-date publication, generated daily
-headlines, user-authoritative edits, derived briefing plus Node-tool retrieval,
-Node/Thread citations, complete removal of Dream, and complete deletion rather
-than migration of all old Memory data.
+headlines, fixed protected tag identities, admission-time Memory eligibility,
+user-authoritative edits, derived briefing plus Node-tool retrieval, Node/Thread
+citations, canonical-container-only Reset deletion, complete removal of Dream,
+and complete deletion rather than migration of all old Memory data.
 
 ## Implementation checklist
 
@@ -522,28 +600,32 @@ than migration of all old Memory data.
   main agent add this plan to `docs/TASKS.md`; open the Draft PR claim.
 - [ ] Define current deterministic tag identities, `ThreadMemoryMode`,
   Node-backed `MemoryCitation`, tagged hierarchy validation, and the control-only
-  `memories.sqlite` schema, including journals, lineage, reset cutoffs, and
-  retained active-Turn exclusions.
+  `memories.sqlite` schema, including journals, lineage, immutable Turn admission,
+  reset cutoffs, and retained active-Turn exclusions.
+- [ ] Ensure and lock the five fixed `tag:d-*` definitions through Core's
+  host-only system-tag contract before public document mutation; prove same-ID
+  restore and public definition-mutation rejection.
 - [ ] Implement source-date grouping, at-most-one generated-headline
   `#d-memory` container per date, no-output behavior, and empty-userData tag
   creation.
 - [ ] Implement bounded Phase 1 eligibility, immutable provenance filtering,
-  origin evidence deduplication, tagged episode publication, redaction,
-  prepared-receipt reconciliation, source-version idempotence, and pollution
-  handling.
+  admission-time mode filtering, origin evidence deduplication, tagged episode
+  publication, redaction, prepared-receipt reconciliation, source-version
+  idempotence, and pollution handling.
 - [ ] Implement bounded Phase 2 selection, tagged Node change sets, isolated
   consolidation, daily headline/category reconciliation, fingerprint conflict
   detection, receipt-based crash recovery, and forgetting.
 - [ ] Integrate the derived bounded briefing and tagged `node_search`/`node_read`
   recall for enabled Threads; prove disabled Threads receive neither implicitly.
 - [ ] Implement explicit foreground remember/update/forget through existing Node
-  tools, command-causation validation for reserved Memory tags, and immediate
-  coalesced consolidation wakeup.
+  tools, pre/post Memory-graph causation validation across tag and ancestry
+  changes, and immediate coalesced consolidation wakeup.
 - [ ] Implement Memory citation navigation, source-Thread navigation, and
   citation-driven evidence usage accounting.
 - [ ] Implement journaled Reset across all daily Memory containers with
-  permanent history cutoffs and active-Turn exclusions; prove restart cannot
-  repopulate Memory from either source.
+  permanent history cutoffs, active-Turn exclusions, stale-epoch mutation
+  rejection, and stray-tag preservation; prove restart cannot repopulate Memory
+  from extraction or direct Node mutation.
 - [ ] Delete Dream, old chat-source Memory, profiles/actions/settings, old tag
   identities, old readers, and every compatibility path while retaining only the
   five ratified category names; add storage and terminology guards.
@@ -551,6 +633,7 @@ than migration of all old Memory data.
   architecture specs around the canonical timeline graph.
 - [ ] Validate from empty userData with `bun run typecheck`,
   `bun run test:core`, `bun run test:renderer`, focused hierarchy, provenance,
-  fork, Automation/Subagent exclusion, user-edit and retention races,
-  active-Turn Reset, every publication-crash boundary, and E2E coverage,
-  `bun run docs:check`, and `git diff --check`.
+  fork, Automation/Subagent exclusion, disable/activity/re-enable, user-edit and
+  retention races, active-Turn Reset evidence and Node mutation, stray-tag Reset
+  preservation, fixed-tag identity/locking, every publication-crash boundary,
+  and E2E coverage, `bun run docs:check`, and `git diff --check`.
