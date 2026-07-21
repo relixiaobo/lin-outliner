@@ -65,8 +65,10 @@ model. This plan deliberately follows Codex instead of importing those concepts.
 - Preserve or migrate any existing agent data. Development userData is wiped
   before validation; production compatibility code, old readers, aliases, and
   dual writes are forbidden.
-- Implement Memory or Automations. The old Dream and recurring-Issue paths are
-  removed here; their Codex replacements arrive as complete later features.
+- Implement Memory or Automations. The old Dream runtime and recurring-Issue
+  paths are removed here; their Codex replacements arrive as complete later
+  features. The Memory feature intentionally reuses Tenon's `#d-*` daily-timeline
+  vocabulary through a new Codex pipeline, not through compatibility code.
 - Copy Codex's Rust implementation or app-server wire format byte for byte.
   Tenon remains TypeScript/Electron and adopts the concepts and behavioral
   contracts that fit its host boundary.
@@ -97,7 +99,7 @@ The following mapping is destructive and exhaustive:
 | Delegated run or sub-run | Child `Thread` with `parentThreadId` |
 | Message branch | Forked `Thread` with `forkedFromId` |
 | RecurringIssue | Removed; a later `Automation` creates or resumes Threads |
-| Dream and the `#d-*` timeline-memory model | Removed; a later Memory extension publishes Codex Memory into canonical Outliner Nodes |
+| Dream runtime, schedule, and extraction path | Removed; a later Memory extension publishes Codex Memory as canonical `#d-*` Nodes on the daily timeline |
 
 `sessionId` is only the grouping key shared by a root Thread and its descendant
 Thread tree. It is not an AgentSession object. `parentThreadId` means subagent
