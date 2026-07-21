@@ -1460,6 +1460,63 @@ describe('row interaction resolvers', () => {
     }).map((item) => item.type === 'existing' ? item.tag.id : `create:${item.name}`)).toEqual(['create:deleted']);
   });
 
+  test('reuses active tag selector indexes for repeated queries on one document index', () => {
+    const backingNodes = [
+      makeNode('trash', 'Trash'),
+      makeNode('plain', 'Plain node'),
+      makeNode('tag-project', 'project', { type: 'tagDef', updatedAt: 30 }),
+      makeNode('tag-person', 'person', { type: 'tagDef', updatedAt: 20 }),
+      makeNode('tag-archived', 'archived', { type: 'tagDef', parentId: 'trash', updatedAt: 40 }),
+    ];
+    let projectionNodeIterations = 0;
+    const nodes = {
+      *[Symbol.iterator]() {
+        projectionNodeIterations += 1;
+        yield* backingNodes;
+      },
+    };
+    const index = {
+      projection: {
+        workspaceId: 'root',
+        rootId: 'root',
+        libraryId: 'root',
+        dailyNotesId: 'daily',
+        schemaId: 'schema',
+        searchesId: 'searches',
+        recentsId: 'recents',
+        trashId: 'trash',
+        todayId: 'today',
+        nodes,
+      },
+      byId: new Map(backingNodes.map((node) => [node.id, node])),
+    };
+
+    expect(tagSelectorItems({
+      query: '',
+      index: index as any,
+      existingTagIds: [],
+    }).map((item) => item.type === 'existing' ? item.tag.id : `create:${item.name}`)).toEqual([
+      'tag-project',
+      'tag-person',
+    ]);
+    expect(tagSelectorItems({
+      query: 'pro',
+      index: index as any,
+      existingTagIds: [],
+    }).map((item) => item.type === 'existing' ? item.tag.id : `create:${item.name}`)).toEqual([
+      'tag-project',
+      'create:pro',
+    ]);
+    expect(tagSelectorItems({
+      query: 'archived',
+      index: index as any,
+      existingTagIds: [],
+    }).map((item) => item.type === 'existing' ? item.tag.id : `create:${item.name}`)).toEqual([
+      'create:archived',
+    ]);
+    expect(projectionNodeIterations).toBe(1);
+  });
+
   test('parses indented multiline paste into an outliner tree', () => {
     expect(parsePlainTextOutlinerPaste('Parent\n  Child\n    Grandchild\nSibling')).toEqual([
       {
