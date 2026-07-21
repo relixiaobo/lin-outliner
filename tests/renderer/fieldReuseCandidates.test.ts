@@ -76,7 +76,7 @@ describe('queryUserFieldReuseCandidates', () => {
     expect(map.valuesCalls).toBe(1);
   });
 
-  test('serves broad prefix queries from a bounded sorted window', () => {
+  test('returns every broad prefix match from the cached sorted index', () => {
     const entries: Array<[NodeId, NodeProjection]> = [['trash', node('trash', 'node', 'Trash')]];
     for (let index = 0; index < 40; index += 1) {
       const id = `field-${String(index).padStart(2, '0')}`;
@@ -86,10 +86,21 @@ describe('queryUserFieldReuseCandidates', () => {
 
     const result = queryUserFieldReuseCandidates(map, 'field', { trashId: 'trash' });
 
-    expect(result).toHaveLength(24);
+    expect(result).toHaveLength(40);
     expect(result[0]?.label).toBe('Field 00');
-    expect(result.at(-1)?.label).toBe('Field 23');
+    expect(result.at(-1)?.label).toBe('Field 39');
     expect(map.valuesCalls).toBe(1);
+  });
+
+  test('does not let localized index ordering hide a real ASCII prefix candidate', () => {
+    const map = byId(
+      node('accented', 'fieldDef', 'Äther'),
+      node('ascii', 'fieldDef', 'Azure'),
+    );
+
+    expect(queryUserFieldReuseCandidates(map, 'a').map((c) => c.label)).toEqual([
+      'Azure',
+    ]);
   });
 
   test('falls back to substring matches when there are not enough prefix matches', () => {

@@ -24,7 +24,6 @@ interface ActiveFieldReuseIndex {
   sortedFields: IndexedFieldReuseCandidate[];
 }
 
-const TYPED_FIELD_REUSE_LIMIT = 24;
 const activeFieldReuseIndexCache = new WeakMap<Map<NodeId, NodeProjection>, Map<string, ActiveFieldReuseIndex>>();
 
 /**
@@ -54,8 +53,8 @@ function cacheKeyForTrashRoot(trashId: NodeId | undefined): string {
 }
 
 function compareIndexedFieldLabel(left: IndexedFieldReuseCandidate, right: IndexedFieldReuseCandidate): number {
-  const byLower = left.lowerLabel.localeCompare(right.lowerLabel, undefined, { sensitivity: 'base' });
-  if (byLower !== 0) return byLower;
+  if (left.lowerLabel < right.lowerLabel) return -1;
+  if (left.lowerLabel > right.lowerLabel) return 1;
   return left.id.localeCompare(right.id);
 }
 
@@ -110,10 +109,16 @@ function lowerBoundByLabel(
   let high = fields.length;
   while (low < high) {
     const mid = Math.floor((low + high) / 2);
-    if (fields[mid].lowerLabel.localeCompare(needle, undefined, { sensitivity: 'base' }) < 0) low = mid + 1;
+    if (fields[mid].lowerLabel < needle) low = mid + 1;
     else high = mid;
   }
   return low;
+}
+
+function compareDisplayLabel(left: { id: string; label: string }, right: { id: string; label: string }): number {
+  const byLabel = left.label.localeCompare(right.label, undefined, { sensitivity: 'base' });
+  if (byLabel !== 0) return byLabel;
+  return left.id.localeCompare(right.id);
 }
 
 function publicCandidate(candidate: IndexedFieldReuseCandidate): FieldReuseCandidate {
@@ -133,41 +138,42 @@ export function queryUserFieldReuseCandidates(
     excludeDefIds?: ReadonlySet<string>;
     trashId?: NodeId;
     forceOpen?: boolean;
-    limit?: number;
   } = {},
 ): FieldReuseCandidate[] {
   const fields = activeFieldReuseIndex(byId, options.trashId).sortedFields;
-  const limit = options.limit ?? TYPED_FIELD_REUSE_LIMIT;
   const needle = query.trim().toLowerCase();
 
   if (options.forceOpen && !needle) {
     return fields
       .filter((candidate) => !isExcluded(candidate, options.excludeDefId, options.excludeDefIds))
-      .map(publicCandidate);
+      .map(publicCandidate)
+      .sort(compareDisplayLabel);
   }
 
-  if (!needle || limit <= 0) return [];
+  if (!needle) return [];
 
-  const candidates: FieldReuseCandidate[] = [];
+  const prefixMatches: IndexedFieldReuseCandidate[] = [];
   const prefixStart = lowerBoundByLabel(fields, needle);
-  for (let index = prefixStart; index < fields.length && candidates.length < limit; index += 1) {
+  for (let index = prefixStart; index < fields.length; index += 1) {
     const candidate = fields[index];
     if (!candidate.lowerLabel.startsWith(needle)) break;
     if (!isExcluded(candidate, options.excludeDefId, options.excludeDefIds)) {
-      candidates.push(publicCandidate(candidate));
+      prefixMatches.push(candidate);
     }
   }
 
-  if (candidates.length >= limit) return candidates;
-
+  const substringMatches: IndexedFieldReuseCandidate[] = [];
   for (const candidate of fields) {
-    if (candidates.length >= limit) break;
     if (candidate.lowerLabel.startsWith(needle)) continue;
     if (!candidate.lowerLabel.includes(needle)) continue;
     if (isExcluded(candidate, options.excludeDefId, options.excludeDefIds)) continue;
-    candidates.push(publicCandidate(candidate));
+    substringMatches.push(candidate);
   }
-  return candidates;
+
+  return [
+    ...prefixMatches.sort(compareDisplayLabel).map(publicCandidate),
+    ...substringMatches.sort(compareDisplayLabel).map(publicCandidate),
+  ];
 }
 
 /**

@@ -156,7 +156,7 @@ instead of reusing the trashed one.
 
 | Interaction | Expected behavior |
 | --- | --- |
-| Type in field name | Show a reuse popover with a bounded, relevance-ordered window of matching active existing fields ("Fields") and matching built-in system fields ("System fields"). Field definitions in Trash are excluded. Nothing is highlighted by default. Fields already present on the same owner node are excluded — a node may not carry the same field twice. |
+| Type in field name | Show a reuse popover of matching active existing fields ("Fields") and built-in system fields ("System fields"). Field definitions in Trash are excluded. Nothing is highlighted by default. Fields already present on the same owner node are excluded — a node may not carry the same field twice. |
 | `Space` on an empty field name | Summon the full reuse picker (every reusable field + system field, alphabetical) without typing a leading space. Once the name has text, `Space` types normally. |
 | `ArrowDown` + `Enter` (or click) in the reuse popover | Reuse that definition: relink the entry to it (`reuse_field_definition`) and drop the throwaway draft def. |
 | `Enter` in field name | With no popover candidate highlighted, commit the typed name as a new field and create/focus a sibling row after the field entry. |

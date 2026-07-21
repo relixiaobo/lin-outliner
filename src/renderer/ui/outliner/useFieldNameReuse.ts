@@ -31,7 +31,7 @@ interface UseFieldNameReuseArgs {
  *
  * User-field candidates are served from a byId-keyed active-field index: opening
  * the picker may build that index once for the projection snapshot, but typed
- * queries reuse it and broad prefixes return only the visible candidate window.
+ * queries reuse it instead of rescanning the whole document and Trash ancestry.
  */
 export interface FieldNameReuse {
   open: boolean;
