@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { MAX_RAW_INLINE_IMAGE_BYTES } from '../../../core/agentAttachmentLimits';
-import type { Thread, ThreadAttachmentContent, ThreadUserContent, Turn } from '../../../core/agent/protocol';
+import type {
+  Thread,
+  ThreadAttachmentContent,
+  ThreadNodeReferenceContent,
+  ThreadUserContent,
+  Turn,
+} from '../../../core/agent/protocol';
 import type { ThreadGoal } from '../../../core/agent/goal';
-import { formatReferenceMarker } from '../../../core/referenceMarkup';
 import { useT } from '../../i18n/I18nProvider';
 import {
   acknowledgeThreadComposerNodeReferenceRequest,
@@ -17,6 +22,7 @@ import {
   RefreshIcon,
   SendIcon,
   StopIcon,
+  ReferenceIcon,
   WarningIcon,
 } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
@@ -28,7 +34,7 @@ interface ThreadViewProps {
   readonly thread: Thread;
   readonly turns: readonly Turn[];
   readonly waitingForInput: boolean;
-  readonly onEditUserMessage: (turn: Turn, text: string) => Promise<void>;
+  readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onFork: (turn: Turn, kind: 'beforeTurn' | 'afterTurn') => Promise<void>;
   readonly onInterrupt: () => Promise<void>;
   readonly onOpenNodeReference: (nodeId: string) => void;
@@ -55,6 +61,7 @@ export function ThreadView({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ThreadAttachmentContent[]>([]);
+  const [nodeReferences, setNodeReferences] = useState<ThreadNodeReferenceContent[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -69,28 +76,33 @@ export function ThreadView({
   }, [activeTurn, itemCount]);
 
   useEffect(() => onThreadComposerNodeReferenceRequest((request) => {
-    const marker = formatReferenceMarker(request.title, { kind: 'node', nodeId: request.nodeId });
-    setDraft((current) => current.trim() ? `${current.trimEnd()} ${marker}` : marker);
+    setNodeReferences((current) => current.some((reference) => reference.nodeId === request.nodeId)
+      ? current
+      : [...current, { type: 'nodeReference', nodeId: request.nodeId, note: request.title }]);
     acknowledgeThreadComposerNodeReferenceRequest(request);
     requestAnimationFrame(() => composerRef.current?.focus());
   }), []);
 
   async function submit() {
     const text = draft.trim();
-    if ((!text && attachments.length === 0) || sending || waitingForInput) return;
+    if ((!text && attachments.length === 0 && nodeReferences.length === 0) || sending || waitingForInput) return;
     const submittedAttachments = attachments;
+    const submittedNodeReferences = nodeReferences;
     setSending(true);
     setError(null);
     setDraft('');
     setAttachments([]);
+    setNodeReferences([]);
     try {
       await onSend([
         ...(text ? [{ type: 'text' as const, text }] : []),
+        ...submittedNodeReferences,
         ...submittedAttachments,
       ]);
     } catch (sendError) {
       setDraft(text);
       setAttachments(submittedAttachments);
+      setNodeReferences(submittedNodeReferences);
       setError(errorMessage(sendError));
     } finally {
       setSending(false);
@@ -156,7 +168,7 @@ export function ThreadView({
               <ThreadItemView
                 item={item}
                 key={item.id}
-                onEditUserMessage={(text) => onEditUserMessage(turn, text)}
+                onEditUserMessage={(content) => onEditUserMessage(turn, content)}
                 onOpenNodeReference={onOpenNodeReference}
                 onRegenerate={() => onRegenerate(turn)}
                 streaming={turn.status === 'inProgress'}
@@ -201,8 +213,24 @@ export function ThreadView({
       </div>
       <div className="thread-composer">
         {error ? <p className="thread-inline-error" role="status">{error}</p> : null}
-        {attachments.length > 0 ? (
+        {nodeReferences.length > 0 || attachments.length > 0 ? (
           <div className="thread-composer-attachments">
+            {nodeReferences.map((reference) => (
+              <div className="thread-composer-attachment" key={reference.nodeId}>
+                <span className="thread-composer-attachment-icon"><ReferenceIcon size={ICON_SIZE.menu} /></span>
+                <span className="thread-composer-attachment-meta">
+                  <span>{reference.note || reference.nodeId}</span>
+                  <small>{reference.nodeId}</small>
+                </span>
+                <IconButton
+                  icon={CloseIcon}
+                  iconSize={ICON_SIZE.tiny}
+                  label={t.agent.thread.removeReference({ name: reference.note || reference.nodeId })}
+                  onClick={() => setNodeReferences((current) => current.filter((item) => item.nodeId !== reference.nodeId))}
+                  variant="message"
+                />
+              </div>
+            ))}
             {attachments.map((attachment) => (
               <div className="thread-composer-attachment" key={attachment.id}>
                 <span className="thread-composer-attachment-icon"><FileImageIcon size={ICON_SIZE.menu} /></span>
@@ -256,7 +284,7 @@ export function ThreadView({
             />
           ) : null}
           <IconButton
-            disabled={(!draft.trim() && attachments.length === 0) || sending || waitingForInput}
+            disabled={(!draft.trim() && attachments.length === 0 && nodeReferences.length === 0) || sending || waitingForInput}
             icon={SendIcon}
             label={activeTurn ? t.agent.thread.steer : t.agent.thread.send}
             onClick={() => void submit()}

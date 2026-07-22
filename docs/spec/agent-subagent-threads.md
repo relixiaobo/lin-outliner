@@ -50,9 +50,10 @@ The fixed `collaboration` namespace contains:
 Providers that require flat names receive the reversible `namespace__name`
 encoding. Registry assembly rejects any collision before a tool reaches a model.
 
-Task paths are host-session addresses such as `/root/research`. They route live
-coordination and are not durable entity IDs. Durable relationships use Thread
-IDs.
+Task paths are host-session addresses such as `/root/research`. Their uniqueness
+and lookup scope is one `sessionId`, so independent root Thread trees may use the
+same path without conflict. They route live coordination and are not durable
+entity IDs. Durable relationships use Thread IDs.
 
 ## History And Activity
 

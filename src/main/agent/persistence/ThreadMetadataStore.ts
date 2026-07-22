@@ -36,6 +36,7 @@ export interface ClientInputBinding {
 }
 
 export interface SpawnEdge {
+  readonly sessionId: string;
   readonly parentThreadId: ThreadId;
   readonly childThreadId: ThreadId;
   readonly taskPath: string;
@@ -101,10 +102,12 @@ export class ThreadMetadataStore {
       CREATE INDEX IF NOT EXISTS threads_list_idx ON threads(archived, updated_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS threads_session_idx ON threads(session_id, created_at, id);
       CREATE TABLE IF NOT EXISTS spawn_edges (
+        session_id TEXT NOT NULL,
         parent_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
         child_thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
-        task_path TEXT NOT NULL UNIQUE,
-        created_at INTEGER NOT NULL
+        task_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(session_id, task_path)
       ) STRICT;
       CREATE TABLE IF NOT EXISTS client_inputs (
         thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
@@ -163,12 +166,13 @@ export class ThreadMetadataStore {
     if (record.thread.parentThreadId !== edge.parentThreadId || record.thread.id !== edge.childThreadId) {
       throw new Error('Spawn edge must match the child Thread lineage');
     }
+    if (record.thread.sessionId !== edge.sessionId) throw new Error('Spawn edge must match the child Thread session');
     this.transaction(() => {
       this.insertThread(record);
       this.db.prepare(`
-        INSERT INTO spawn_edges(parent_thread_id, child_thread_id, task_path, created_at)
-        VALUES (?, ?, ?, ?)
-      `).run(edge.parentThreadId, edge.childThreadId, edge.taskPath, edge.createdAt);
+        INSERT INTO spawn_edges(session_id, parent_thread_id, child_thread_id, task_path, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(edge.sessionId, edge.parentThreadId, edge.childThreadId, edge.taskPath, edge.createdAt);
     });
   }
 
@@ -235,7 +239,7 @@ export class ThreadMetadataStore {
     return {
       data: page.map((row) => recordFromRow(row).thread),
       nextCursor: hasNext && last
-        ? encodeCursor({ updatedAt: last.updated_at, id: last.id, direction })
+        ? encodeThreadListCursor({ updatedAt: last.updated_at, id: last.id }, direction)
         : null,
     };
   }
@@ -313,25 +317,27 @@ export class ThreadMetadataStore {
   childEdges(parentThreadId: ThreadId, recursive = false): readonly SpawnEdge[] {
     const rows = recursive
       ? this.db.prepare(`
-          WITH RECURSIVE descendants(parent_thread_id, child_thread_id, task_path, created_at) AS (
-            SELECT parent_thread_id, child_thread_id, task_path, created_at
+          WITH RECURSIVE descendants(session_id, parent_thread_id, child_thread_id, task_path, created_at) AS (
+            SELECT session_id, parent_thread_id, child_thread_id, task_path, created_at
             FROM spawn_edges WHERE parent_thread_id = ?
             UNION ALL
-            SELECT edge.parent_thread_id, edge.child_thread_id, edge.task_path, edge.created_at
+            SELECT edge.session_id, edge.parent_thread_id, edge.child_thread_id, edge.task_path, edge.created_at
             FROM spawn_edges edge JOIN descendants parent ON edge.parent_thread_id = parent.child_thread_id
           )
           SELECT * FROM descendants ORDER BY created_at, child_thread_id
         `).all(parentThreadId)
       : this.db.prepare(`
-          SELECT parent_thread_id, child_thread_id, task_path, created_at
+          SELECT session_id, parent_thread_id, child_thread_id, task_path, created_at
           FROM spawn_edges WHERE parent_thread_id = ? ORDER BY created_at, child_thread_id
         `).all(parentThreadId);
     return (rows as unknown as Array<{
+      session_id: string;
       parent_thread_id: string;
       child_thread_id: string;
       task_path: string;
       created_at: number;
     }>).map((row) => ({
+      sessionId: row.session_id,
       parentThreadId: row.parent_thread_id,
       childThreadId: row.child_thread_id,
       taskPath: row.task_path,
@@ -341,17 +347,17 @@ export class ThreadMetadataStore {
 
   spawnEdgeForChild(childThreadId: ThreadId): SpawnEdge | null {
     const row = this.db.prepare(`
-      SELECT parent_thread_id, child_thread_id, task_path, created_at
+      SELECT session_id, parent_thread_id, child_thread_id, task_path, created_at
       FROM spawn_edges WHERE child_thread_id = ?
     `).get(childThreadId) as SpawnEdgeRow | undefined;
     return row ? spawnEdgeFromRow(row) : null;
   }
 
-  spawnEdgeForPath(taskPath: string): SpawnEdge | null {
+  spawnEdgeForPath(sessionId: string, taskPath: string): SpawnEdge | null {
     const row = this.db.prepare(`
-      SELECT parent_thread_id, child_thread_id, task_path, created_at
-      FROM spawn_edges WHERE task_path = ?
-    `).get(taskPath) as SpawnEdgeRow | undefined;
+      SELECT session_id, parent_thread_id, child_thread_id, task_path, created_at
+      FROM spawn_edges WHERE session_id = ? AND task_path = ?
+    `).get(sessionId, taskPath) as SpawnEdgeRow | undefined;
     return row ? spawnEdgeFromRow(row) : null;
   }
 
@@ -373,6 +379,7 @@ export class ThreadMetadataStore {
 }
 
 interface SpawnEdgeRow {
+  session_id: string;
   parent_thread_id: string;
   child_thread_id: string;
   task_path: string;
@@ -381,6 +388,7 @@ interface SpawnEdgeRow {
 
 function spawnEdgeFromRow(row: SpawnEdgeRow): SpawnEdge {
   return {
+    sessionId: row.session_id,
     parentThreadId: row.parent_thread_id,
     childThreadId: row.child_thread_id,
     taskPath: row.task_path,
@@ -430,10 +438,22 @@ function decodeReasoningEffortOverride(
   return value as EffectiveThreadConfiguration['reasoningEffort'];
 }
 
-function decodeThreadCursor(
+export interface ThreadListCursor {
+  readonly updatedAt: number;
+  readonly id: string;
+}
+
+export function encodeThreadListCursor(
+  cursor: ThreadListCursor,
+  direction: 'asc' | 'desc',
+): string {
+  return encodeCursor({ ...cursor, direction });
+}
+
+export function decodeThreadCursor(
   encoded: string | null | undefined,
   direction: 'asc' | 'desc',
-): { updatedAt: number; id: string } | null {
+): ThreadListCursor | null {
   const cursor = decodeCursor(encoded);
   if (!cursor) return null;
   if (
@@ -445,4 +465,14 @@ function decodeThreadCursor(
     throw new Error('Invalid Thread pagination cursor');
   }
   return { updatedAt: cursor.updatedAt, id: cursor.id };
+}
+
+export function threadFollowsCursor(
+  thread: Pick<Thread, 'updatedAt' | 'id'>,
+  cursor: ThreadListCursor | null,
+  direction: 'asc' | 'desc',
+): boolean {
+  if (!cursor) return true;
+  const comparison = thread.updatedAt - cursor.updatedAt || thread.id.localeCompare(cursor.id);
+  return direction === 'asc' ? comparison > 0 : comparison < 0;
 }

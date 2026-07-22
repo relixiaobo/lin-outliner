@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
-import type { Thread, Turn } from '../../../core/agent/protocol';
+import type { Thread, ThreadUserContent, Turn } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import {
@@ -23,6 +23,7 @@ import { ThreadList } from './ThreadList';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
 import { ThreadView } from './ThreadView';
 import { UserInputRequest } from './UserInputRequest';
+import { turnUserContent } from '../threadInput';
 
 export type ThreadRailState = 'collapsed' | 'open';
 
@@ -109,13 +110,9 @@ export function ThreadDock({
 
   async function regenerate(turn: Turn) {
     if (!thread) return;
-    const prompt = turn.items
-      .filter((item) => item.type === 'userMessage')
-      .flatMap((item) => item.content.flatMap((content) => content.type === 'text' ? [content.text] : []))
-      .join('\n')
-      .trim();
-    if (!prompt) return;
-    await threadStore.forkAndSend(thread.id, turn.id, 'beforeTurn', prompt);
+    const content = turnUserContent(turn);
+    if (content.length === 0) return;
+    await threadStore.forkAndSend(thread.id, turn.id, 'beforeTurn', content);
   }
 
   return (
@@ -165,7 +162,9 @@ export function ThreadDock({
           <>
             <ThreadView
               goal={goal}
-              onEditUserMessage={(turn, text) => threadStore.forkAndSend(thread.id, turn.id, 'beforeTurn', text).then(() => undefined)}
+              onEditUserMessage={(turn, content: readonly ThreadUserContent[]) => (
+                threadStore.forkAndSend(thread.id, turn.id, 'beforeTurn', content).then(() => undefined)
+              )}
               onFork={(turn, kind) => threadStore.fork(thread.id, turn.id, kind).then(() => undefined)}
               onInterrupt={() => threadStore.interrupt(thread.id)}
               onOpenNodeReference={onOpenNodeReference}

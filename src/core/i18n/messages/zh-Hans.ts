@@ -915,6 +915,7 @@ commandPalette: {
       composerPlaceholder: '问点什么...',
       addAttachment: '添加附件',
       removeAttachment: ({ name }) => `移除 ${name}`,
+      removeReference: ({ name }) => `移除 ${name}`,
       send: '发送',
       steer: '引导',
       interrupt: '中断本轮',

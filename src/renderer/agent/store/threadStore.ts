@@ -35,11 +35,15 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   error: null,
 };
 
-class ThreadStore {
+export class ThreadStore {
   private snapshot = EMPTY_SNAPSHOT;
   private readonly listeners = new Set<() => void>();
   private unsubscribeNotifications: (() => void) | null = null;
   private initializePromise: Promise<void> | null = null;
+  private readonly loadGenerations = new Map<ThreadId, number>();
+  private readonly historyRevisions = new Map<ThreadId, number>();
+
+  constructor(private readonly client: Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'> = api) {}
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -50,7 +54,7 @@ class ThreadStore {
 
   initialize(): Promise<void> {
     if (!this.unsubscribeNotifications) {
-      this.unsubscribeNotifications = api.onAgentCoreNotification((notification) => this.applyNotification(notification));
+      this.unsubscribeNotifications = this.client.onAgentCoreNotification((notification) => this.applyNotification(notification));
     }
     if (this.initializePromise) return this.initializePromise;
     this.initializePromise = this.reloadThreads().catch((error) => {
@@ -69,7 +73,7 @@ class ThreadStore {
     const threads: Thread[] = [];
     let cursor: string | null = null;
     do {
-      const page: ThreadListResponse = await api.agentCoreRequest('thread/list', { cursor, limit: 100 });
+      const page: ThreadListResponse = await this.client.agentCoreRequest('thread/list', { cursor, limit: 100 });
       threads.push(...page.data);
       cursor = page.nextCursor;
     } while (cursor);
@@ -87,7 +91,7 @@ class ThreadStore {
   }
 
   async createThread(input: { name?: string } = {}): Promise<Thread> {
-    const response = await api.agentCoreRequest('thread/start', {
+    const response = await this.client.agentCoreRequest('thread/start', {
       source: 'app',
       threadSource: 'user',
       ...(input.name ? { name: input.name } : {}),
@@ -98,31 +102,37 @@ class ThreadStore {
   }
 
   async renameThread(threadId: ThreadId, name: string | null): Promise<void> {
-    await api.agentCoreRequest('thread/name/set', { threadId, name });
+    await this.client.agentCoreRequest('thread/name/set', { threadId, name });
     this.updateThread(threadId, (thread) => ({ ...thread, name }));
   }
 
   async deleteThread(threadId: ThreadId): Promise<void> {
-    await api.agentCoreRequest('thread/delete', { threadId });
+    await this.client.agentCoreRequest('thread/delete', { threadId });
     const deletedIds = descendantThreadIds(this.snapshot.threads, threadId);
     const threads = this.snapshot.threads.filter((thread) => !deletedIds.has(thread.id));
     const turnsByThread = new Map(this.snapshot.turnsByThread);
     const goalsByThread = new Map(this.snapshot.goalsByThread);
     const userInputByThread = new Map(this.snapshot.userInputByThread);
     for (const deletedId of deletedIds) {
+      this.loadGenerations.set(deletedId, (this.loadGenerations.get(deletedId) ?? 0) + 1);
       turnsByThread.delete(deletedId);
       goalsByThread.delete(deletedId);
       userInputByThread.delete(deletedId);
     }
+    const selectedThreadWasDeleted = Boolean(
+      this.snapshot.selectedThreadId && deletedIds.has(this.snapshot.selectedThreadId),
+    );
+    const replacementThreadId = selectedThreadWasDeleted
+      ? threads[0]?.id ?? null
+      : this.snapshot.selectedThreadId;
     this.patch({
       threads,
       turnsByThread,
       goalsByThread,
       userInputByThread,
-      selectedThreadId: this.snapshot.selectedThreadId && deletedIds.has(this.snapshot.selectedThreadId)
-        ? threads[0]?.id ?? null
-        : this.snapshot.selectedThreadId,
+      selectedThreadId: replacementThreadId,
     });
+    if (selectedThreadWasDeleted && replacementThreadId) await this.loadTurns(replacementThreadId);
   }
 
   async send(contentInput: readonly ThreadUserContent[]): Promise<void> {
@@ -135,14 +145,14 @@ class ThreadStore {
     if (!threadId || content.length === 0) return;
     const active = findLastInProgressTurn(this.turns(threadId));
     if (active) {
-      await api.agentCoreRequest('turn/steer', {
+      await this.client.agentCoreRequest('turn/steer', {
         threadId,
         expectedTurnId: active.id,
         input: content,
         clientUserMessageId: crypto.randomUUID(),
       });
     } else {
-      await api.agentCoreRequest('turn/start', {
+      await this.client.agentCoreRequest('turn/start', {
         threadId,
         input: content,
         clientUserMessageId: crypto.randomUUID(),
@@ -150,18 +160,14 @@ class ThreadStore {
     }
   }
 
-  async sendText(text: string): Promise<void> {
-    await this.send([{ type: 'text', text }]);
-  }
-
   async interrupt(threadId: ThreadId): Promise<void> {
     const active = findLastInProgressTurn(this.turns(threadId));
     if (!active) return;
-    await api.agentCoreRequest('turn/interrupt', { threadId, turnId: active.id });
+    await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId: active.id });
   }
 
   async fork(threadId: ThreadId, turnId: string, kind: 'beforeTurn' | 'afterTurn'): Promise<Thread> {
-    const response = await api.agentCoreRequest('thread/fork', {
+    const response = await this.client.agentCoreRequest('thread/fork', {
       threadId,
       boundary: { kind, turnId },
     });
@@ -174,10 +180,10 @@ class ThreadStore {
     threadId: ThreadId,
     turnId: string,
     kind: 'beforeTurn' | 'afterTurn',
-    text: string,
+    content: readonly ThreadUserContent[],
   ): Promise<Thread> {
     const thread = await this.fork(threadId, turnId, kind);
-    await this.sendText(text);
+    await this.send(content);
     return thread;
   }
 
@@ -185,7 +191,7 @@ class ThreadStore {
     request: RequestUserInputRequest,
     answers: readonly RequestUserInputAnswer[],
   ): Promise<void> {
-    await api.agentCoreRequest('userInput/respond', {
+    await this.client.agentCoreRequest('userInput/respond', {
       threadId: request.threadId,
       turnId: request.turnId,
       itemId: request.itemId,
@@ -199,10 +205,13 @@ class ThreadStore {
   }
 
   private async loadTurns(threadId: ThreadId): Promise<void> {
+    const generation = (this.loadGenerations.get(threadId) ?? 0) + 1;
+    this.loadGenerations.set(threadId, generation);
+    const startingRevision = this.historyRevisions.get(threadId) ?? 0;
     const turns: Turn[] = [];
     let cursor: string | null = null;
     do {
-      const page: ThreadTurnsListResponse = await api.agentCoreRequest('thread/turns/list', {
+      const page: ThreadTurnsListResponse = await this.client.agentCoreRequest('thread/turns/list', {
         threadId,
         cursor,
         limit: 100,
@@ -211,10 +220,19 @@ class ThreadStore {
       turns.push(...page.data);
       cursor = page.nextCursor;
     } while (cursor);
+    if (this.loadGenerations.get(threadId) !== generation) return;
+    if (!this.snapshot.threads.some((thread) => thread.id === threadId)) return;
     const turnsByThread = new Map(this.snapshot.turnsByThread);
-    turnsByThread.set(threadId, turns);
+    turnsByThread.set(
+      threadId,
+      (this.historyRevisions.get(threadId) ?? 0) === startingRevision
+        ? turns
+        : mergeLoadedTurns(turns, turnsByThread.get(threadId) ?? []),
+    );
     this.patch({ turnsByThread });
-    const goal = await api.agentCoreRequest('goal/get', { threadId });
+    const goal = await this.client.agentCoreRequest('goal/get', { threadId });
+    if (this.loadGenerations.get(threadId) !== generation) return;
+    if (!this.snapshot.threads.some((thread) => thread.id === threadId)) return;
     const goalsByThread = new Map(this.snapshot.goalsByThread);
     if (goal.goal) goalsByThread.set(threadId, goal.goal);
     else goalsByThread.delete(threadId);
@@ -222,6 +240,18 @@ class ThreadStore {
   }
 
   private applyNotification(notification: AgentCoreNotification): void {
+    if (
+      notification.type === 'turn/started'
+      || notification.type === 'turn/completed'
+      || notification.type === 'item/started'
+      || notification.type === 'item/completed'
+      || notification.type === 'item/delta'
+    ) {
+      this.historyRevisions.set(
+        notification.threadId,
+        (this.historyRevisions.get(notification.threadId) ?? 0) + 1,
+      );
+    }
     switch (notification.type) {
       case 'thread/started':
         this.patch({
@@ -352,6 +382,25 @@ function findLastInProgressTurn(turns: readonly Turn[]): Turn | undefined {
     if (turn?.status === 'inProgress') return turn;
   }
   return undefined;
+}
+
+export function mergeLoadedTurns(loaded: readonly Turn[], current: readonly Turn[]): Turn[] {
+  const currentById = new Map(current.map((turn) => [turn.id, turn]));
+  const merged = loaded.map((turn) => mergeLoadedTurn(turn, currentById.get(turn.id)));
+  const loadedIds = new Set(loaded.map((turn) => turn.id));
+  merged.push(...current.filter((turn) => !loadedIds.has(turn.id)));
+  return merged.sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
+}
+
+function mergeLoadedTurn(loaded: Turn, current: Turn | undefined): Turn {
+  if (!current) return loaded;
+  if (current.status !== 'inProgress') return current;
+  if (loaded.status !== 'inProgress') return loaded;
+  const currentItems = new Map(current.items.map((item) => [item.id, item]));
+  const items = loaded.items.map((item) => currentItems.get(item.id) ?? item);
+  const loadedItemIds = new Set(loaded.items.map((item) => item.id));
+  items.push(...current.items.filter((item) => !loadedItemIds.has(item.id)));
+  return { ...loaded, ...current, items };
 }
 
 function applyItemDelta(item: ThreadItem, delta: ThreadItemDelta): ThreadItem {

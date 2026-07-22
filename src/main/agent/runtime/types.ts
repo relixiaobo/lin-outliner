@@ -23,6 +23,12 @@ export interface TurnExecutionContext {
   readonly systemContext: readonly string[];
   readonly signal: AbortSignal;
   readonly recorder: ItemRecorder;
+  persistOutputImage(
+    itemId: string,
+    index: number,
+    dataBase64: string,
+    mimeType: string,
+  ): Promise<string>;
   onSteer(handler: (input: SteeredTurnInput) => void | Promise<void>): void;
 }
 

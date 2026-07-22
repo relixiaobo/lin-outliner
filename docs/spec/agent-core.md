@@ -97,6 +97,10 @@ Starting a Turn follows this order:
 7. Finish every remaining open Item, persist the terminal Turn, and set the
    Thread back to `idle` or `systemError`.
 
+Extension `turnStarted` hooks are part of the same launch boundary as executor
+startup. A hook exception terminalizes the accepted Turn as failed, releases
+the active-Turn lock, and cannot strand a Thread in `inProgress`.
+
 Steering appends input only to the active Turn. Interrupt requires the exact
 active Turn ID. Resume reopens a stored Thread, refreshes child Role
 configuration, and lets extensions reconcile their own state; it does not create
@@ -142,13 +146,18 @@ agent/
   goals.sqlite
   rollouts/
     <thread-id>.jsonl
+  payloads/
+    <thread-id>/
+      <content-hash>.<ext>
 ```
 
 `state.sqlite` is the Thread catalog and configuration snapshot.
 `thread_history.sqlite` is a rebuildable pagination projection. `goals.sqlite`
 owns Goal state. Each persistent Thread owns one append-only rollout JSONL as
-the history source of truth. Ephemeral Threads remain memory-only and never
-enter these stores.
+the history source of truth. Large binary tool outputs live in the Thread-owned
+payload directory and canonical Items retain file references. Ephemeral Threads
+remain memory-only except for temporary payload files, which follow the same
+Thread deletion lifecycle and are removed when the service closes.
 
 Startup reconciles catalog and history projections from rollouts. A Turn left
 `inProgress` by host restart is completed as `interrupted`; every unfinished

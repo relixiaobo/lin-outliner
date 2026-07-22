@@ -14,6 +14,7 @@ import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
 import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
+import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type { TurnExecutionContext, TurnExecutionResult, TurnExecutor } from '../../src/main/agent/runtime/types';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
@@ -497,6 +498,120 @@ describe('ThreadService', () => {
     expect(second.data).toHaveLength(1);
     expect(second.data[0]?.id).not.toBe(first.data[0]?.id);
     expect(fixture.stores.metadata.read(thread.id)).toBeNull();
+    await fixture.service.close();
+  });
+
+  test('paginates persistent and ephemeral Threads through one cursor without omissions', async () => {
+    const fixture = await createFixture();
+    const persistent: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      persistent.push((await fixture.service.startThread({
+        source: 'app',
+        threadSource: 'user',
+        modelProvider: 'openai',
+        cwd: fixture.root,
+        name: `Persistent ${index + 1}`,
+      })).thread.id);
+    }
+    const ephemeral = (await fixture.service.startThread({
+      ephemeral: true,
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      name: 'Ephemeral',
+    })).thread.id;
+
+    const listed: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = fixture.service.listThreads({ cursor, limit: 2 });
+      listed.push(...page.data.map((thread) => thread.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    expect(listed).toEqual([ephemeral, ...persistent.toReversed()]);
+    expect(new Set(listed).size).toBe(4);
+    await fixture.service.close();
+  });
+
+  test('terminalizes a Turn when an extension start hook throws and releases the active lock', async () => {
+    const registry = new ExtensionRegistry();
+    let shouldThrow = true;
+    registry.register({
+      id: 'throwing-start',
+      onTurnStarted: () => {
+        if (!shouldThrow) return;
+        shouldThrow = false;
+        throw new Error('Extension start failed');
+      },
+    });
+    const fixture = await createFixture(registry);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'First attempt' }],
+    });
+    await fixture.service.waitForIdle(thread.id);
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0]).toMatchObject({
+      id: accepted.turn.id,
+      status: 'failed',
+      error: { code: 'runtime_failure', message: 'Extension start failed' },
+    });
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Second attempt' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.at(-1)?.status)
+      .toBe('completed');
+    await fixture.service.close();
+  });
+
+  test('scopes identical Subagent task paths to their root Thread session', async () => {
+    const fixture = await createFixture();
+    const roots = await Promise.all([0, 1].map(async (index) => (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      name: `Root ${index + 1}`,
+    })).thread));
+    const parentTurns = await Promise.all(roots.map((root, index) => fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: `Delegate ${index + 1}` }],
+    })));
+    await fixture.executor.waitUntilWaiting(1);
+
+    const first = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: roots[0]!.id,
+      senderTurnId: parentTurns[0]!.turn.id,
+      parentItemId: 'spawn-first',
+      taskName: 'research',
+      message: 'Research first tree',
+    });
+    const second = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: roots[1]!.id,
+      senderTurnId: parentTurns[1]!.turn.id,
+      parentItemId: 'spawn-second',
+      taskName: 'research',
+      message: 'Research second tree',
+    });
+
+    expect(first.taskPath).toBe('/root/research');
+    expect(second.taskPath).toBe('/root/research');
+    expect(first.thread.id).not.toBe(second.thread.id);
+    expect(fixture.service.listCollaborationAgents(roots[0]!.id).map((view) => view.threadId)).toEqual([first.thread.id]);
+    expect(fixture.service.listCollaborationAgents(roots[1]!.id).map((view) => view.threadId)).toEqual([second.thread.id]);
     await fixture.service.close();
   });
 
@@ -1269,6 +1384,7 @@ function createStores(root: string): ThreadServiceStores {
     history: new ThreadHistoryProjectionStore(historyPath, database(historyPath)),
     rollout: new RolloutStore(join(root, 'agent', 'rollouts')),
     goals: new GoalStore(goalsPath, database(goalsPath)),
+    payloads: new ToolPayloadStore(join(root, 'agent', 'payloads')),
   };
 }
 

@@ -49,19 +49,35 @@ For an idle Thread, submit starts a Turn. For an active Thread, submit steers th
 exact active Turn. Stop interrupts that Turn. Buttons remain dimensionally stable
 while their icon and label state changes.
 
+The composer submits `ThreadUserContent[]` directly. Text, attachments, and
+Outliner Node references remain distinct structured parts. Sending a Node from
+its context menu adds a removable Node-reference part to the composer; it never
+inserts reference markup into text. Edit replaces only the message text, while
+retry and regenerate replay the complete original structured input. An
+attachment-only or Node-reference-only Turn is therefore sendable and retryable.
+
 `request_user_input` renders an in-dock blocking form tied to one Item. It is a
 product-input surface, never a permission prompt. A response includes the exact
 Thread, Turn, and Item IDs and is rejected if the request is no longer active.
 
 Rename uses the shared `Dialog`; delete uses `ConfirmDialog`. Browser-native
 prompt and confirm APIs are not used. Fork creates and selects the new Thread
-without mutating the source.
+without mutating the source. Deleting the selected Thread chooses the next
+catalog Thread and loads both its Turns and Goal before presenting it.
 
 ## Pagination And Notifications
 
-Thread list and history reads use opaque cursors. The store may append live
-notifications to loaded pages, but a reload always reconstructs the same view
-from canonical paged reads.
+Thread list and history reads use opaque cursors. Persistent and ephemeral
+Threads share one `(updatedAt, id, direction)` keyset and one cursor after they
+are merged, so an ephemeral row cannot displace a persistent row between pages.
+The store may append live notifications to loaded pages, but a reload always
+reconstructs the same view from canonical paged reads.
+
+Each history load carries a per-Thread generation and observes the Thread's live
+notification revision. A superseded request is discarded. If a notification
+lands during an older request, the response is merged monotonically: a terminal
+Turn cannot return to `inProgress`, completed Items cannot be replaced by older
+Items, and live-only Turns remain present.
 
 Notifications are decoded before entering renderer state. A notification for an
 unloaded Thread updates catalog metadata without manufacturing partial history.

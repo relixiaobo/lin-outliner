@@ -109,9 +109,10 @@ describe('Agent Core persistence', () => {
     expect(store.list({ threadSources: ['user'] }).data.map((entry) => entry.id)).toEqual([ids[1], ids[0]]);
 
     const childId = uuidV7(400);
+    const firstSessionId = store.require(ids[0]!).thread.sessionId;
     store.createChild({
       thread: thread(childId, 400, {
-        sessionId: store.require(ids[0]!).thread.sessionId,
+        sessionId: firstSessionId,
         parentThreadId: ids[0]!,
         threadSource: 'subagent',
         agentRole: 'worker',
@@ -122,12 +123,14 @@ describe('Agent Core persistence', () => {
       modelOverride: 'worker-model',
       reasoningEffortOverride: 'high',
     }, {
+      sessionId: firstSessionId,
       parentThreadId: ids[0]!,
       childThreadId: childId,
       taskPath: '/root/worker',
       createdAt: 400,
     });
     expect(store.childEdges(ids[0]!)).toEqual([{
+      sessionId: firstSessionId,
       parentThreadId: ids[0],
       childThreadId: childId,
       taskPath: '/root/worker',
@@ -136,6 +139,30 @@ describe('Agent Core persistence', () => {
     expect(store.require(childId).toolCeiling).toEqual(['node_read']);
     expect(store.require(childId).modelOverride).toBe('worker-model');
     expect(store.require(childId).reasoningEffortOverride).toBe('high');
+
+    const secondSessionId = store.require(ids[1]!).thread.sessionId;
+    const secondChildId = uuidV7(450);
+    store.createChild({
+      thread: thread(secondChildId, 450, {
+        sessionId: secondSessionId,
+        parentThreadId: ids[1]!,
+        threadSource: 'subagent',
+        agentRole: 'worker',
+      }),
+      archived: false,
+      configuration,
+      toolCeiling: null,
+      modelOverride: null,
+      reasoningEffortOverride: null,
+    }, {
+      sessionId: secondSessionId,
+      parentThreadId: ids[1]!,
+      childThreadId: secondChildId,
+      taskPath: '/root/worker',
+      createdAt: 450,
+    });
+    expect(store.spawnEdgeForPath(firstSessionId, '/root/worker')?.childThreadId).toBe(childId);
+    expect(store.spawnEdgeForPath(secondSessionId, '/root/worker')?.childThreadId).toBe(secondChildId);
 
     const firstBinding = store.bindClientInput({
       threadId: ids[0]!,

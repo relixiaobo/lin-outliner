@@ -977,6 +977,7 @@ commandPalette: {
       composerPlaceholder: 'Ask anything...',
       addAttachment: 'Add attachment',
       removeAttachment: ({ name }: { name: string }) => `Remove ${name}`,
+      removeReference: ({ name }: { name: string }) => `Remove ${name}`,
       send: 'Send',
       steer: 'Steer',
       interrupt: 'Interrupt Turn',

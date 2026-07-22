@@ -14,6 +14,20 @@ system context, restores prior model messages from canonical Items, and assemble
 the final model-tool registry. Provider messages remain in memory only for the
 duration of execution.
 
+Cancellation is registered before any asynchronous initialization. The runtime
+checks the Turn signal after provider resolution, tool assembly, Skill listing,
+system-prompt construction, and Agent construction, so Stop cannot cross an
+initialization boundary and still reach the provider.
+
+Prior provider input is rebuilt from the complete canonical Item sequence.
+Messages become assistant content, while reasoning becomes explicitly labelled
+assistant text because canonical history does not retain provider-private
+reasoning signatures. Command, file, MCP, dynamic,
+collaboration, and web Items become paired provider tool-call and tool-result
+messages; plans, Subagent activity, viewed images, and compaction remain visible
+as textual context. The active provider supplies message metadata. No hidden
+provider transcript is stored or used as a history authority.
+
 ## User Content And Attachments
 
 `ThreadService` resolves user content at admission before it records the
@@ -48,8 +62,16 @@ Provider events are converted as follows:
 
 An execution Item is recorded with `item/started`, optional typed deltas, and one
 terminal `item/completed`. The recorder validates local provenance and rejects
-completion before start. Tool results retain a structured `details` value and a
-bounded visible text representation.
+completion before start. Tool arguments and visible results use bounded
+projections with explicit truncation metadata. Tool-result details pass through
+the shared persistence slimmer before entering an Item. Dynamic image result
+lists also have a fixed maximum length.
+
+Binary image output never enters rollout JSON, SQLite projection, or IPC as a
+data URL. Existing readable outputs such as `file_read` and generated-image
+files retain their file path. Other provider images are written under the
+owning Thread's payload directory and the Item stores only that file reference.
+Deleting the Thread deletes the payload directory.
 
 ## Tools And Causation
 
@@ -72,7 +94,8 @@ The executor registers one steering handler. Input accepted before registration
 is queued and delivered in order. Steering is added to provider input without
 rewriting persisted prior Items.
 
-Interrupt aborts provider and tool work through the Turn signal. Any execution
+Interrupt aborts provider and tool work through the Turn signal, including
+provider and tool initialization before `prompt()`. Any execution
 Item still `inProgress` is completed as `interrupted`; unexpected executor
 failure completes it as `failed`. The terminal Turn records the corresponding
 status and error.

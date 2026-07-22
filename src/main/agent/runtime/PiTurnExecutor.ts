@@ -1,6 +1,8 @@
 import {
   Agent,
   type AgentEvent,
+  type AgentOptions,
+  type AgentState,
   type AgentTool,
 } from '@earendil-works/pi-agent-core';
 import type {
@@ -10,6 +12,8 @@ import type {
   Message,
   Model,
   TextContent,
+  ToolCall,
+  ToolResultMessage,
   UserMessage,
 } from '@earendil-works/pi-ai';
 import type {
@@ -21,12 +25,19 @@ import type {
 } from '../../../core/agent/protocol';
 import { resolveAgentModelEffort, resolveProviderModel } from '../capabilities/agentModelResolution';
 import { getProviderRuntimeConfig } from '../capabilities/agentSettings';
+import { persistedToolResultDetails } from '../capabilities/agentToolResultPersistence';
 import {
   piExternalProviderId,
   piResolveAuthApiKey,
   piStreamSimple,
 } from '../../piModels';
 import type { TurnExecutionContext, TurnExecutionResult, TurnExecutor } from './types';
+
+export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
+export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
+export const MAX_PERSISTED_TOOL_OUTPUT_IMAGES = 16;
+const MAX_PERSISTED_TOOL_STRING_CHARS = 8_000;
+const MAX_PERSISTED_WEB_RESULTS = 50;
 
 export type ModelRuntimeToolFactory = (
   context: TurnExecutionContext,
@@ -36,6 +47,22 @@ export interface PiTurnExecutorOptions {
   readonly createTools?: ModelRuntimeToolFactory;
   readonly systemPrompt?: (context: TurnExecutionContext) => string | Promise<string>;
   readonly skillListing?: (context: TurnExecutionContext) => string | null | Promise<string | null>;
+  readonly resolveRuntime?: (context: TurnExecutionContext) => Promise<PiRuntimeSelection>;
+  readonly createAgent?: (options: AgentOptions) => PiAgentRuntime;
+}
+
+export interface PiRuntimeSelection {
+  readonly model: Model<Api>;
+  readonly thinkingLevel: AgentState['thinkingLevel'];
+  getApiKey(providerId: string): Promise<string | undefined>;
+}
+
+export interface PiAgentRuntime {
+  readonly state: Pick<AgentState, 'errorMessage'>;
+  subscribe(listener: (event: AgentEvent) => void): () => void;
+  abort(): void;
+  steer(message: Message): void;
+  prompt(message: Message): Promise<void>;
 }
 
 export class PiTurnExecutor implements TurnExecutor {
@@ -43,40 +70,40 @@ export class PiTurnExecutor implements TurnExecutor {
 
   async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     if (context.signal.aborted) return { status: 'interrupted' };
-    const provider = await getProviderRuntimeConfig(context.thread.modelProvider);
-    if (!provider) throw new Error(`Provider is not configured: ${context.thread.modelProvider}`);
-    const { model, thinkingLevel } = resolveAgentModelEffort(
-      context.configuration.model,
-      context.configuration.reasoningEffort,
-      provider,
-      () => resolveProviderModel(provider),
-    );
-    const tools = [...(await this.options.createTools?.(context) ?? [])];
-    const skillListing = await this.options.skillListing?.(context) ?? null;
-    const systemPrompt = await this.options.systemPrompt?.(context) ?? defaultSystemPrompt(context, skillListing);
-    const normalizer = new PiEventNormalizer(context);
-    const agent = new Agent({
-      initialState: {
-        systemPrompt,
-        model,
-        thinkingLevel,
-        tools,
-        messages: historyMessages(context),
-      },
-      streamFn: piStreamSimple,
-      getApiKey: async (providerId) => {
-        if (piExternalProviderId(providerId) !== provider.providerId) return undefined;
-        return provider.apiKey ?? piResolveAuthApiKey(model);
-      },
-      steeringMode: 'all',
-      sessionId: context.thread.sessionId,
-      toolExecution: 'parallel',
-    });
-    const unsubscribe = agent.subscribe((event) => normalizer.handle(event));
-    const abort = () => agent.abort();
+    let agent: PiAgentRuntime | null = null;
+    let unsubscribe: (() => void) | null = null;
+    const abort = () => agent?.abort();
     context.signal.addEventListener('abort', abort, { once: true });
-    context.onSteer((input) => agent.steer(modelUserMessage(input.content)));
     try {
+      const runtime = await (this.options.resolveRuntime ?? resolveDefaultRuntime)(context);
+      if (context.signal.aborted) return { status: 'interrupted' };
+      const tools = [...(await this.options.createTools?.(context) ?? [])];
+      if (context.signal.aborted) return { status: 'interrupted' };
+      const skillListing = await this.options.skillListing?.(context) ?? null;
+      if (context.signal.aborted) return { status: 'interrupted' };
+      const systemPrompt = await this.options.systemPrompt?.(context) ?? defaultSystemPrompt(context, skillListing);
+      if (context.signal.aborted) return { status: 'interrupted' };
+      const normalizer = new PiEventNormalizer(context);
+      agent = (this.options.createAgent ?? ((options) => new Agent(options)))({
+        initialState: {
+          systemPrompt,
+          model: runtime.model,
+          thinkingLevel: runtime.thinkingLevel,
+          tools,
+          messages: historyMessages(context, runtime.model),
+        },
+        streamFn: piStreamSimple,
+        getApiKey: runtime.getApiKey,
+        steeringMode: 'all',
+        sessionId: context.thread.sessionId,
+        toolExecution: 'parallel',
+      });
+      if (context.signal.aborted) {
+        agent.abort();
+        return { status: 'interrupted' };
+      }
+      unsubscribe = agent.subscribe((event) => normalizer.handle(event));
+      context.onSteer((input) => agent?.steer(modelUserMessage(input.content)));
       await agent.prompt(currentPrompt(context));
       await normalizer.flush();
       if (context.signal.aborted || normalizer.stopReason === 'aborted') {
@@ -92,9 +119,28 @@ export class PiTurnExecutor implements TurnExecutor {
       return { status: 'completed', tokensUsed: normalizer.tokensUsed };
     } finally {
       context.signal.removeEventListener('abort', abort);
-      unsubscribe();
+      unsubscribe?.();
     }
   }
+}
+
+async function resolveDefaultRuntime(context: TurnExecutionContext): Promise<PiRuntimeSelection> {
+  const provider = await getProviderRuntimeConfig(context.thread.modelProvider);
+  if (!provider) throw new Error(`Provider is not configured: ${context.thread.modelProvider}`);
+  const { model, thinkingLevel } = resolveAgentModelEffort(
+    context.configuration.model,
+    context.configuration.reasoningEffort,
+    provider,
+    () => resolveProviderModel(provider),
+  );
+  return {
+    model,
+    thinkingLevel,
+    getApiKey: async (providerId) => {
+      if (piExternalProviderId(providerId) !== provider.providerId) return undefined;
+      return provider.apiKey ?? piResolveAuthApiKey(model);
+    },
+  };
 }
 
 export class PiEventNormalizer {
@@ -222,7 +268,8 @@ export class PiEventNormalizer {
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
     const active = this.toolItems.get(callId);
     if (!active) return;
-    await this.context.recorder.completed(completedToolItem(
+    await this.context.recorder.completed(await completedToolItem(
+      this.context,
       active.item,
       result,
       isError,
@@ -251,9 +298,11 @@ function startedToolItem(
       status: 'inProgress',
       senderThreadId: context.thread.id,
       receiverThreadIds: [],
-      prompt: typeof input.message === 'string' ? input.message : null,
-      model: typeof input.model === 'string' ? input.model : null,
-      reasoningEffort: typeof input.reasoning_effort === 'string' ? input.reasoning_effort : null,
+      prompt: typeof input.message === 'string' ? boundedText(input.message, MAX_PERSISTED_TOOL_STRING_CHARS) : null,
+      model: typeof input.model === 'string' ? boundedText(input.model, MAX_PERSISTED_TOOL_STRING_CHARS) : null,
+      reasoningEffort: typeof input.reasoning_effort === 'string'
+        ? boundedText(input.reasoning_effort, MAX_PERSISTED_TOOL_STRING_CHARS)
+        : null,
       agentsStates: {},
     };
   }
@@ -262,8 +311,11 @@ function startedToolItem(
     return {
       ...base,
       type: 'commandExecution',
-      command: typeof input.command === 'string' ? input.command : JSON.stringify(args),
-      cwd: typeof input.cwd === 'string' ? input.cwd : context.thread.cwd,
+      command: boundedText(
+        typeof input.command === 'string' ? input.command : JSON.stringify(boundedJsonValue(args)),
+        MAX_PERSISTED_TOOL_ARGUMENT_CHARS,
+      ),
+      cwd: boundedText(typeof input.cwd === 'string' ? input.cwd : context.thread.cwd, MAX_PERSISTED_TOOL_STRING_CHARS),
       processId: null,
       status: 'inProgress',
       commandActions: [],
@@ -307,7 +359,7 @@ function startedToolItem(
       server: identity.namespace,
       tool: identity.name,
       status: 'inProgress',
-      arguments: jsonValue(args),
+      arguments: boundedJsonValue(args),
       pluginId: null,
       result: null,
       error: null,
@@ -319,7 +371,7 @@ function startedToolItem(
     type: 'dynamicToolCall',
     namespace: identity.namespace,
     tool: identity.name,
-    arguments: jsonValue(args),
+    arguments: boundedJsonValue(args),
     status: 'inProgress',
     contentItems: null,
     success: null,
@@ -327,12 +379,13 @@ function startedToolItem(
   };
 }
 
-function completedToolItem(
+async function completedToolItem(
+  context: TurnExecutionContext,
   item: ThreadItem,
   result: unknown,
   isError: boolean,
   durationMs: number,
-): ThreadItem {
+): Promise<ThreadItem> {
   const status = isError ? 'failed' : 'completed';
   switch (item.type) {
     case 'commandExecution': {
@@ -342,7 +395,7 @@ function completedToolItem(
         ...item,
         status,
         processId: isRecord(data) && typeof data.processId === 'string' ? data.processId : item.processId,
-        aggregatedOutput: toolResultText(result),
+        aggregatedOutput: boundedText(toolResultText(result), MAX_PERSISTED_TOOL_OUTPUT_CHARS),
         exitCode: isRecord(data) && typeof data.exitCode === 'number' ? data.exitCode : isError ? 1 : 0,
         durationMs,
       };
@@ -354,21 +407,25 @@ function completedToolItem(
         ...item,
         status,
         results: webResults(result),
-        error: isError ? toolResultText(result) || 'Web search failed' : null,
+        error: isError
+          ? boundedText(toolResultText(result) || 'Web search failed', MAX_PERSISTED_TOOL_STRING_CHARS)
+          : null,
       };
     case 'mcpToolCall':
       return {
         ...item,
         status,
-        result: isError ? null : jsonValue(toolDetails(result)),
-        error: isError ? toolResultText(result) || 'MCP tool failed' : null,
+        result: isError ? null : boundedJsonValue(toolDetails(result), MAX_PERSISTED_TOOL_OUTPUT_CHARS),
+        error: isError
+          ? boundedText(toolResultText(result) || 'MCP tool failed', MAX_PERSISTED_TOOL_STRING_CHARS)
+          : null,
         durationMs,
       };
     case 'dynamicToolCall':
       return {
         ...item,
         status,
-        contentItems: dynamicOutput(result),
+        contentItems: await dynamicOutput(context, item, result),
         success: !isError,
         durationMs,
       };
@@ -421,12 +478,14 @@ function webResults(result: unknown): Array<{ title: string; url: string; snippe
   const details = toolDetails(result);
   const data = isRecord(details) && isRecord(details.data) ? details.data : details;
   const entries = isRecord(data) && Array.isArray(data.results) ? data.results : [];
-  return entries.flatMap((entry) => {
+  return entries.slice(0, MAX_PERSISTED_WEB_RESULTS).flatMap((entry) => {
     if (!isRecord(entry) || typeof entry.title !== 'string' || typeof entry.url !== 'string') return [];
     return [{
-      title: entry.title,
-      url: entry.url,
-      ...(typeof entry.snippet === 'string' ? { snippet: entry.snippet } : {}),
+      title: boundedText(entry.title, MAX_PERSISTED_TOOL_STRING_CHARS),
+      url: boundedText(entry.url, MAX_PERSISTED_TOOL_STRING_CHARS),
+      ...(typeof entry.snippet === 'string'
+        ? { snippet: boundedText(entry.snippet, MAX_PERSISTED_TOOL_STRING_CHARS) }
+        : {}),
     }];
   });
 }
@@ -466,15 +525,67 @@ function defaultSystemPrompt(context: TurnExecutionContext, skillListing: string
   ].filter(Boolean).join('\n\n');
 }
 
-function historyMessages(context: TurnExecutionContext): Message[] {
+export function historyMessages(context: TurnExecutionContext, model: Model<Api>): Message[] {
   const messages: Message[] = [];
   for (const turn of context.historyBeforeTurn) {
+    let assistantContent: Array<TextContent | ToolCall> = [];
+    let toolResults: ToolResultMessage[] = [];
+    const flushAssistant = () => {
+      if (assistantContent.length > 0) {
+        messages.push(assistantHistoryMessage(
+          assistantContent,
+          turn.completedAt ?? turn.startedAt,
+          model,
+          toolResults.length > 0 ? 'toolUse' : 'stop',
+        ));
+      }
+      messages.push(...toolResults);
+      assistantContent = [];
+      toolResults = [];
+    };
     for (const item of turn.items) {
-      if (item.type === 'userMessage') messages.push(modelUserMessage(item.content, turn.startedAt));
-      if (item.type === 'agentMessage' && item.text) {
-        messages.push(assistantHistoryMessage(item.text, turn.completedAt ?? turn.startedAt));
+      if (item.type === 'userMessage') {
+        flushAssistant();
+        messages.push(modelUserMessage(item.content, turn.startedAt));
+        continue;
+      }
+      if (isToolItem(item)) {
+        const tool = historyTool(item, turn.completedAt ?? turn.startedAt);
+        assistantContent.push(tool.call);
+        toolResults.push(tool.result);
+        continue;
+      }
+      if (toolResults.length > 0) flushAssistant();
+      switch (item.type) {
+        case 'agentMessage':
+          if (item.text) assistantContent.push({ type: 'text', text: item.text });
+          break;
+        case 'reasoning':
+          if (item.summary.length > 0 || item.content.length > 0) {
+            assistantContent.push({
+              type: 'text',
+              text: `[Reasoning]\n${[...item.summary, ...item.content].join('\n')}`,
+            });
+          }
+          break;
+        case 'plan':
+          if (item.text) assistantContent.push({ type: 'text', text: `[Plan]\n${item.text}` });
+          break;
+        case 'subAgentActivity':
+          assistantContent.push({
+            type: 'text',
+            text: `[Subagent ${item.kind}: ${item.agentPath} (${item.agentThreadId})]`,
+          });
+          break;
+        case 'imageView':
+          assistantContent.push({ type: 'text', text: `[Viewed image: ${item.path}]` });
+          break;
+        case 'contextCompaction':
+          assistantContent.push({ type: 'text', text: '[Context compacted]' });
+          break;
       }
     }
+    flushAssistant();
   }
   return messages;
 }
@@ -523,13 +634,18 @@ export function modelUserMessage(content: readonly ThreadUserContent[], timestam
   return { role: 'user', content: converted, timestamp };
 }
 
-function assistantHistoryMessage(text: string, timestamp: number): AssistantMessage {
+function assistantHistoryMessage(
+  content: AssistantMessage['content'],
+  timestamp: number,
+  model: Model<Api>,
+  stopReason: AssistantMessage['stopReason'],
+): AssistantMessage {
   return {
     role: 'assistant',
-    content: [{ type: 'text', text }],
-    api: 'openai-responses',
-    provider: 'openai',
-    model: 'history',
+    content,
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
     usage: {
       input: 0,
       output: 0,
@@ -538,9 +654,117 @@ function assistantHistoryMessage(text: string, timestamp: number): AssistantMess
       totalTokens: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
-    stopReason: 'stop',
+    stopReason,
     timestamp,
   };
+}
+
+type HistoryToolItem = Extract<ThreadItem, {
+  type:
+    | 'commandExecution'
+    | 'fileChange'
+    | 'mcpToolCall'
+    | 'dynamicToolCall'
+    | 'collabAgentToolCall'
+    | 'webSearch';
+}>;
+
+function isToolItem(item: ThreadItem): item is HistoryToolItem {
+  return item.type === 'commandExecution'
+    || item.type === 'fileChange'
+    || item.type === 'mcpToolCall'
+    || item.type === 'dynamicToolCall'
+    || item.type === 'collabAgentToolCall'
+    || item.type === 'webSearch';
+}
+
+function historyTool(item: HistoryToolItem, timestamp: number): { call: ToolCall; result: ToolResultMessage } {
+  const identity = historyToolIdentity(item);
+  const toolName = identity.namespace ? `${identity.namespace}__${identity.name}` : identity.name;
+  const call: ToolCall = {
+    type: 'toolCall',
+    id: item.id,
+    name: toolName,
+    arguments: historyToolArguments(item),
+  };
+  const result: ToolResultMessage = {
+    role: 'toolResult',
+    toolCallId: item.id,
+    toolName,
+    content: [{ type: 'text', text: historyToolResultText(item) }],
+    isError: item.status !== 'completed',
+    timestamp,
+  };
+  return { call, result };
+}
+
+function historyToolIdentity(item: HistoryToolItem): { namespace: string | null; name: string } {
+  switch (item.type) {
+    case 'commandExecution':
+      return { namespace: null, name: 'bash' };
+    case 'fileChange': {
+      const kinds = new Set(item.changes.map((change) => change.kind));
+      const name = kinds.size === 1 && kinds.has('add')
+        ? 'file_write'
+        : kinds.size === 1 && kinds.has('delete')
+          ? 'file_delete'
+          : 'file_edit';
+      return { namespace: null, name };
+    }
+    case 'mcpToolCall':
+      return { namespace: item.server, name: item.tool };
+    case 'dynamicToolCall':
+      return { namespace: item.namespace, name: item.tool };
+    case 'collabAgentToolCall':
+      return { namespace: 'collaboration', name: item.tool };
+    case 'webSearch':
+      return { namespace: null, name: 'web_search' };
+  }
+}
+
+function historyToolArguments(item: HistoryToolItem): Record<string, unknown> {
+  switch (item.type) {
+    case 'commandExecution':
+      return { command: item.command, cwd: item.cwd };
+    case 'fileChange':
+      return { changes: item.changes };
+    case 'mcpToolCall':
+    case 'dynamicToolCall':
+      return isRecord(item.arguments) ? item.arguments : { value: item.arguments };
+    case 'collabAgentToolCall':
+      return {
+        ...(item.prompt === null ? {} : { message: item.prompt }),
+        ...(item.model === null ? {} : { model: item.model }),
+        ...(item.reasoningEffort === null ? {} : { reasoning_effort: item.reasoningEffort }),
+      };
+    case 'webSearch':
+      return { query: item.query };
+  }
+}
+
+function historyToolResultText(item: HistoryToolItem): string {
+  switch (item.type) {
+    case 'commandExecution':
+      return item.aggregatedOutput ?? JSON.stringify({ status: item.status, exitCode: item.exitCode });
+    case 'fileChange':
+      return JSON.stringify({ status: item.status, changes: item.changes });
+    case 'mcpToolCall':
+      return item.error ?? JSON.stringify(item.result ?? { status: item.status });
+    case 'dynamicToolCall':
+      return (item.contentItems ?? []).map((content) => {
+        if (content.type === 'text') return content.text;
+        if (content.type === 'image') return `[Image output: ${content.imageRef}]`;
+        return JSON.stringify(content.value);
+      }).join('\n') || JSON.stringify({ status: item.status, success: item.success });
+    case 'collabAgentToolCall':
+      return JSON.stringify({
+        status: item.status,
+        receiverThreadIds: item.receiverThreadIds,
+        agentsStates: item.agentsStates,
+      });
+    case 'webSearch':
+      return item.error ?? JSON.stringify(item.results);
+  }
 }
 
 function messagePhase(message: AssistantMessage): MessagePhase {
@@ -564,23 +788,91 @@ function canonicalIdentity(providerName: string): { namespace: string | null; na
     : { namespace: providerName.slice(0, separator), name: providerName.slice(separator + 2) };
 }
 
-function dynamicOutput(result: unknown): readonly DynamicToolOutputContent[] {
+async function dynamicOutput(
+  context: TurnExecutionContext,
+  item: Extract<ThreadItem, { type: 'dynamicToolCall' }>,
+  result: unknown,
+): Promise<readonly DynamicToolOutputContent[]> {
   if (!isRecord(result) || !Array.isArray(result.content)) {
-    return [{ type: 'json', value: jsonValue(result) }];
+    return [{ type: 'json', value: boundedJsonValue(result, MAX_PERSISTED_TOOL_OUTPUT_CHARS) }];
   }
   const content: DynamicToolOutputContent[] = [];
+  let remainingText = MAX_PERSISTED_TOOL_OUTPUT_CHARS;
+  let imageIndex = 0;
+  let persistedImages = 0;
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
-    if (part.type === 'text' && typeof part.text === 'string') content.push({ type: 'text', text: part.text });
+    if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
+      const text = boundedText(part.text, remainingText);
+      content.push({ type: 'text', text });
+      remainingText -= text.length;
+    }
     if (part.type === 'image' && typeof part.data === 'string') {
+      const sourceImageIndex = imageIndex;
+      imageIndex += 1;
+      if (persistedImages >= MAX_PERSISTED_TOOL_OUTPUT_IMAGES) continue;
+      const mimeType = typeof part.mimeType === 'string' ? part.mimeType : 'image/png';
+      const existingPath = toolImagePath(item.tool, result, sourceImageIndex);
+      const imageRef = existingPath ?? await context.persistOutputImage(
+        item.id,
+        sourceImageIndex,
+        part.data,
+        mimeType,
+      );
       content.push({
         type: 'image',
-        imageRef: `data:${typeof part.mimeType === 'string' ? part.mimeType : 'image/png'};base64,${part.data}`,
+        imageRef,
       });
+      persistedImages += 1;
     }
   }
-  if ('details' in result && result.details !== undefined) content.push({ type: 'json', value: jsonValue(result.details) });
+  const persistedDetails = persistedToolResultDetails({ toolName: item.tool, details: result.details });
+  if (persistedDetails !== undefined) {
+    content.push({ type: 'json', value: boundedJsonValue(persistedDetails, MAX_PERSISTED_TOOL_OUTPUT_CHARS) });
+  } else if (content.length === 0 && result.details !== undefined) {
+    content.push({ type: 'json', value: boundedJsonValue(result.details, MAX_PERSISTED_TOOL_OUTPUT_CHARS) });
+  }
   return content;
+}
+
+function toolImagePath(toolName: string, result: Record<string, unknown>, imageIndex: number): string | null {
+  const details = toolDetails(result);
+  if (!isRecord(details) || !isRecord(details.data)) return null;
+  if (toolName === 'file_read' && isRecord(details.data.file)) {
+    if (details.data.type === 'image' && typeof details.data.file.filePath === 'string') {
+      return details.data.file.filePath;
+    }
+  }
+  if (toolName === 'generate_image' && Array.isArray(details.data.images)) {
+    const image = details.data.images[imageIndex];
+    if (isRecord(image) && typeof image.path === 'string') return image.path;
+  }
+  return null;
+}
+
+function boundedJsonValue(
+  value: unknown,
+  maxChars = MAX_PERSISTED_TOOL_ARGUMENT_CHARS,
+): JsonValue {
+  const normalized = jsonValue(value);
+  const encoded = JSON.stringify(normalized);
+  if (encoded.length <= maxChars) return normalized;
+  const previewBudget = Math.max(0, maxChars - 160);
+  return {
+    truncated: true,
+    originalChars: encoded.length,
+    preview: boundedText(encoded, previewBudget),
+  };
+}
+
+function boundedText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  if (maxChars <= 0) return '';
+  const marker = `\n... ${value.length - maxChars} chars omitted ...\n`;
+  if (marker.length >= maxChars) return value.slice(0, maxChars);
+  const available = maxChars - marker.length;
+  const head = Math.ceil(available / 2);
+  return `${value.slice(0, head)}${marker}${value.slice(value.length - (available - head))}`;
 }
 
 function jsonValue(value: unknown): JsonValue {

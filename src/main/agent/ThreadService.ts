@@ -75,9 +75,13 @@ import { KeyedMutex, Mutex } from './Mutex';
 import { RolloutStore } from './persistence/RolloutStore';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
+  decodeThreadCursor,
+  encodeThreadListCursor,
+  threadFollowsCursor,
   ThreadMetadataStore,
   type ThreadCatalogRecord,
 } from './persistence/ThreadMetadataStore';
+import { ToolPayloadStore } from './persistence/ToolPayloadStore';
 import { ItemRecorder } from './runtime/ItemRecorder';
 import { decodeCursor, encodeCursor, pageLimit } from './persistence/cursor';
 import type {
@@ -98,6 +102,7 @@ export interface AgentCorePaths {
   readonly state: string;
   readonly history: string;
   readonly goals: string;
+  readonly payloads: string;
 }
 
 export interface ThreadServiceStores {
@@ -105,6 +110,7 @@ export interface ThreadServiceStores {
   readonly history: ThreadHistoryProjectionStore;
   readonly rollout: RolloutStore;
   readonly goals: GoalStore;
+  readonly payloads: ToolPayloadStore;
 }
 
 export interface ThreadServiceOptions {
@@ -228,6 +234,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly metadata: ThreadMetadataStore;
   private readonly history: ThreadHistoryProjectionStore;
   private readonly rollout: RolloutStore;
+  private readonly payloads: ToolPayloadStore;
   private readonly executor: TurnExecutor;
   private readonly extensions: ExtensionRegistry;
   private readonly resolveConfiguration: (
@@ -247,7 +254,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly activeTurns = new Map<ThreadId, ActiveTurn>();
   private readonly pendingUserInputs = new Map<ThreadId, PendingUserInput>();
   private readonly mailbox = new Map<ThreadId, SteeredTurnInput[]>();
-  private readonly ephemeralSpawnEdges = new Map<ThreadId, { parentThreadId: ThreadId; taskPath: string; createdAt: number }>();
+  private readonly ephemeralSpawnEdges = new Map<ThreadId, {
+    sessionId: string;
+    parentThreadId: ThreadId;
+    taskPath: string;
+    createdAt: number;
+  }>();
   private readonly pendingSubagentActivities = new Map<ThreadId, PendingSubagentActivity[]>();
   private readonly collaborationActivity = new Map<ThreadId, CollaborationActivityState>();
   private readonly stoppingThreads = new Set<ThreadId>();
@@ -263,6 +275,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.metadata = options.stores.metadata;
     this.history = options.stores.history;
     this.rollout = options.stores.rollout;
+    this.payloads = options.stores.payloads;
     this.executor = options.executor;
     this.extensions = options.extensions ?? new ExtensionRegistry();
     this.resolveConfiguration = options.resolveConfiguration ?? defaultConfiguration;
@@ -290,6 +303,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         history: new ThreadHistoryProjectionStore(paths.history),
         rollout: new RolloutStore(paths.rollouts),
         goals: new GoalStore(paths.goals),
+        payloads: new ToolPayloadStore(paths.payloads),
       },
     });
   }
@@ -327,6 +341,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     for (const pending of this.pendingUserInputs.values()) pending.abort();
     await Promise.all(active.map((turn) => turn.completion));
     await this.rollout.flush();
+    await Promise.all([...this.ephemeral.keys()].map((threadId) => this.payloads.deleteThread(threadId)));
     this.metadata.close();
     this.history.close();
     this.goalStore.close();
@@ -438,21 +453,28 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   listThreads(request: ThreadListRequest = {}): ThreadListResponse {
-    const persisted = this.metadata.list(request);
-    if (request.cursor || request.archived === true) return persisted;
-    const ephemeral = [...this.ephemeral.values()]
-      .filter((state) => !state.record.archived)
-      .map((state) => state.record.thread)
-      .filter((thread) => !request.threadSources || request.threadSources.includes(thread.threadSource));
-    if (ephemeral.length === 0) return persisted;
     const direction = request.sortDirection ?? 'desc';
-    const limit = request.limit ?? 50;
-    const data = [...persisted.data, ...ephemeral]
+    const limit = pageLimit(request.limit);
+    const cursor = decodeThreadCursor(request.cursor, direction);
+    const persisted = this.metadata.list({ ...request, limit });
+    const ephemeral = request.archived === true ? [] : [...this.ephemeral.values()]
+      .filter((state) => state.record.archived === (request.archived ?? false))
+      .map((state) => state.record.thread)
+      .filter((thread) => !request.threadSources || request.threadSources.includes(thread.threadSource))
+      .filter((thread) => threadFollowsCursor(thread, cursor, direction));
+    const candidates = [...persisted.data, ...ephemeral]
       .sort((left, right) => direction === 'desc'
         ? right.updatedAt - left.updatedAt || right.id.localeCompare(left.id)
-        : left.updatedAt - right.updatedAt || left.id.localeCompare(right.id))
-      .slice(0, limit);
-    return { data, nextCursor: persisted.nextCursor };
+        : left.updatedAt - right.updatedAt || left.id.localeCompare(right.id));
+    const data = candidates.slice(0, limit);
+    const hasNext = candidates.length > limit || persisted.nextCursor !== null;
+    const last = data.at(-1);
+    return {
+      data,
+      nextCursor: hasNext && last
+        ? encodeThreadListCursor({ updatedAt: last.updatedAt, id: last.id }, direction)
+        : null,
+    };
   }
 
   readThread(request: ThreadReadRequest): ThreadReadResponse {
@@ -587,6 +609,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         await this.goals.clear(descendantId);
         this.history.deleteThread(descendantId);
         await this.rollout.delete(descendantId);
+        await this.payloads.deleteThread(descendantId);
       }
       for (const record of [...subtree.records].reverse()) {
         await this.extensions.threadStopped(record.thread);
@@ -955,7 +978,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     const parentPath = this.taskPathForThread(input.senderThreadId) ?? '/root';
     const taskPath = `${parentPath}/${input.taskName}`;
-    if (this.findSpawnEdgeByPath(taskPath)) throw new Error(`Subagent task path already exists: ${taskPath}`);
+    const sessionId = this.requireThread(input.senderThreadId).thread.sessionId;
+    if (this.findSpawnEdgeByPath(sessionId, taskPath)) throw new Error(`Subagent task path already exists: ${taskPath}`);
     const additionalContext = collaborationHistoryContext(this.allTurns(input.senderThreadId), input.forkTurns);
     const result = await this.spawnChild({
       parentThreadId: input.senderThreadId,
@@ -1110,8 +1134,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ? await this.hostRootMutex.run(accept)
       : await accept();
     if (accepted.active) {
-      await this.extensions.turnStarted(accepted.thread, accepted.response.turn);
-      void this.executeActiveTurn(accepted.active)
+      void this.launchActiveTurn(accepted)
         .catch((error) => this.failActiveTurn(
           accepted.active!,
           error instanceof Error ? error : new Error(String(error)),
@@ -1119,6 +1142,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
         .finally(accepted.active.resolveCompletion);
     }
     return accepted;
+  }
+
+  private async launchActiveTurn(accepted: AcceptedTurn): Promise<void> {
+    if (!accepted.active) return;
+    await this.extensions.turnStarted(accepted.thread, accepted.response.turn);
+    await this.executeActiveTurn(accepted.active);
   }
 
   private async acceptTurn(
@@ -1241,6 +1270,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
         systemContext,
         signal: active.controller.signal,
         recorder: active.recorder,
+        persistOutputImage: (itemId, index, dataBase64, mimeType) => this.payloads.writeImage(
+          active.threadId,
+          itemId,
+          index,
+          dataBase64,
+          mimeType,
+        ),
         onSteer: (handler) => {
           active.steeringHandler = handler;
           const queued = active.queuedSteering.splice(0);
@@ -1384,6 +1420,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.ephemeral.set(thread.id, { record, turns: [], completedItemIds: new Set() });
       if (thread.parentThreadId) {
         this.ephemeralSpawnEdges.set(thread.id, {
+          sessionId: thread.sessionId,
           parentThreadId: thread.parentThreadId,
           taskPath: lineage.taskPath ?? `/root/${thread.id}`,
           createdAt: now,
@@ -1391,6 +1428,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
     } else if (thread.parentThreadId) {
       this.metadata.createChild(record, {
+        sessionId: thread.sessionId,
         parentThreadId: thread.parentThreadId,
         childThreadId: thread.id,
         taskPath: lineage.taskPath ?? `/root/${thread.id}`,
@@ -1598,11 +1636,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ?? null;
   }
 
-  private findSpawnEdgeByPath(taskPath: string): { childThreadId: ThreadId; taskPath: string } | null {
-    const persisted = this.metadata.spawnEdgeForPath(taskPath);
+  private findSpawnEdgeByPath(
+    sessionId: string,
+    taskPath: string,
+  ): { childThreadId: ThreadId; taskPath: string } | null {
+    const persisted = this.metadata.spawnEdgeForPath(sessionId, taskPath);
     if (persisted) return persisted;
     for (const [childThreadId, edge] of this.ephemeralSpawnEdges) {
-      if (edge.taskPath === taskPath) return { childThreadId, taskPath };
+      if (edge.sessionId === sessionId && edge.taskPath === taskPath) return { childThreadId, taskPath };
     }
     return null;
   }
@@ -1612,7 +1653,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const sender = this.requireThread(senderThreadId).thread;
     const senderPath = this.taskPathForThread(senderThreadId) ?? '/root';
     const path = target.startsWith('/') ? target : `${senderPath}/${target}`;
-    const edge = this.findSpawnEdgeByPath(path);
+    const edge = this.findSpawnEdgeByPath(sender.sessionId, path);
     if (!edge) throw new Error(`Subagent task path not found: ${target}`);
     const thread = this.requireThread(edge.childThreadId).thread;
     if (thread.sessionId !== sender.sessionId) throw new Error('Subagent target is outside the current Thread tree');
@@ -1805,6 +1846,7 @@ export function agentCorePaths(userDataPath: string): AgentCorePaths {
     state: join(root, 'state.sqlite'),
     history: join(root, 'thread_history.sqlite'),
     goals: join(root, 'goals.sqlite'),
+    payloads: join(root, 'payloads'),
   };
 }
 

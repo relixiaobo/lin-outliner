@@ -5,6 +5,7 @@ import type {
   DynamicToolOutputContent,
   ItemExecutionStatus,
   ThreadItem,
+  ThreadUserContent,
   UserMessageThreadItem,
 } from '../../../../core/agent/protocol';
 import { useT } from '../../../i18n/I18nProvider';
@@ -22,11 +23,12 @@ import {
   WarningIcon,
 } from '../../../ui/icons';
 import { IconButton } from '../../../ui/primitives/IconButton';
+import { replaceUserContentText } from '../../threadInput';
 
 interface ThreadItemViewProps {
   readonly item: ThreadItem;
   readonly streaming: boolean;
-  readonly onEditUserMessage: (text: string) => Promise<void>;
+  readonly onEditUserMessage: (content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onOpenNodeReference: (nodeId: string) => void;
   readonly onRegenerate: () => Promise<void>;
 }
@@ -191,7 +193,7 @@ function UserMessageItem({
     if (!text.trim() || saving) return;
     setSaving(true);
     try {
-      await onEditUserMessage(text);
+      await onEditUserMessage(replaceUserContentText(item.content, text));
       setEditing(false);
     } finally {
       setSaving(false);

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { commandCalls, openMockedApp } from './outlinerMock';
+import { commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
 
 test.describe('canonical agent Thread surface', () => {
   test.beforeEach(async ({ page }) => {
@@ -64,6 +64,22 @@ test.describe('canonical agent Thread surface', () => {
     expect((await commandCalls(page)).map((call) => call.cmd)).toContain('thread/fork');
   });
 
+  test('sends an Outliner Node to the Thread as structured input', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await rowBody(page, ids.alpha).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Send to composer' }).click();
+
+    await expect(page.locator('.thread-composer-attachment')).toContainText('Alpha');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
+    expect(start?.args.input).toEqual([{
+      type: 'nodeReference',
+      nodeId: ids.alpha,
+      note: 'Alpha',
+    }]);
+  });
+
   test('renames and deletes a Thread through in-app dialogs', async ({ page }) => {
     await page.getByRole('button', { name: 'New Thread' }).last().click();
 
@@ -83,5 +99,29 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByText('Start a Thread to work with the agent.')).toBeVisible();
     const calls = (await commandCalls(page)).map((call) => call.cmd);
     expect(calls).toEqual(expect.arrayContaining(['thread/name/set', 'thread/delete']));
+  });
+});
+
+test.describe('structured Thread retries', () => {
+  test('retries an attachment-only failed Turn with the original attachment', async ({ page }) => {
+    await openMockedApp(page, { agentTurnFailure: true });
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.locator('.thread-composer-file-input').setInputFiles({
+      name: 'diagram.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('mock image'),
+    });
+    await expect(page.locator('.thread-composer-attachment')).toContainText('diagram.png');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByRole('button', { name: 'Retry response' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Retry response' }).click();
+
+    const starts = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start');
+    expect(starts).toHaveLength(2);
+    expect(starts[1]?.args.input).toEqual(starts[0]?.args.input);
+    expect(starts[1]?.args.input).toEqual([
+      expect.objectContaining({ type: 'attachment', name: 'diagram.png', mimeType: 'image/png' }),
+    ]);
   });
 });

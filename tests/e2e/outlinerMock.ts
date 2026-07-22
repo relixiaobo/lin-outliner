@@ -51,6 +51,8 @@ interface MockFixtureOptions {
   translationPreferences?: UrlPageTranslationPreferences;
   /** Keeps translated blocks pending long enough for loader assertions. */
   translationDelayMs?: number;
+  /** Completes mock Agent Turns as failed without an assistant message. */
+  agentTurnFailure?: boolean;
 }
 
 type E2EWindow = Window & {
@@ -435,7 +437,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       type: 'userMessage' | 'agentMessage';
       provenance: { originThreadId: string; originTurnId: string; originItemId: string };
       clientId?: string | null;
-      content?: Array<{ type: 'text'; text: string }>;
+      content?: Array<
+        | { type: 'text'; text: string }
+        | { type: 'nodeReference'; nodeId: string; note?: string }
+        | {
+            type: 'attachment';
+            id: string;
+            name: string;
+            mimeType: string;
+            sizeBytes: number;
+            source: { kind: 'asset'; assetId: string } | { kind: 'localFile'; path: string } | { kind: 'inline'; dataBase64: string };
+          }
+      >;
       text?: string;
       phase?: 'commentary' | 'final_answer' | null;
       memoryCitation?: null;
@@ -1501,15 +1514,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const turnId = nextCanonicalId();
           const userItemId = nextCanonicalId();
           const responseItemId = nextCanonicalId();
-          const content = Array.isArray(input.input)
-            ? input.input.filter((entry): entry is { type: 'text'; text: string } => (
-                Boolean(entry)
-                && typeof entry === 'object'
-                && (entry as { type?: unknown }).type === 'text'
-                && typeof (entry as { text?: unknown }).text === 'string'
-              ))
-            : [];
-          const prompt = content.map((entry) => entry.text).join('\n');
+          const content = Array.isArray(input.input) ? clone(input.input) as NonNullable<MockThreadItem['content']> : [];
+          const prompt = content.flatMap((entry) => entry.type === 'text' ? [entry.text] : []).join('\n');
           const userItem: MockThreadItem = {
             id: userItemId,
             type: 'userMessage',
@@ -1540,8 +1546,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           };
           const completedTurn: MockTurn = {
             ...activeTurn,
-            items: [userItem, responseItem],
-            status: 'completed',
+            items: options.agentTurnFailure ? [userItem] : [userItem, responseItem],
+            status: options.agentTurnFailure ? 'failed' : 'completed',
+            error: options.agentTurnFailure ? { message: 'Mock provider failure' } : null,
             completedAt: startedAt + 24,
             durationMs: 24,
           };
@@ -1551,7 +1558,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           thread.status = { type: 'active', activeFlags: [] };
           emitAgentCoreNotification({ type: 'thread/status/changed', threadId: thread.id, status: thread.status });
           emitAgentCoreNotification({ type: 'turn/started', threadId: thread.id, turnId, turn: activeTurn });
-          emitAgentCoreNotification({ type: 'item/completed', threadId: thread.id, turnId, itemId: responseItemId, item: responseItem });
+          if (!options.agentTurnFailure) {
+            emitAgentCoreNotification({ type: 'item/completed', threadId: thread.id, turnId, itemId: responseItemId, item: responseItem });
+          }
           thread.status = { type: 'idle' };
           emitAgentCoreNotification({ type: 'turn/completed', threadId: thread.id, turnId, turn: completedTurn });
           emitAgentCoreNotification({ type: 'thread/status/changed', threadId: thread.id, status: thread.status });
