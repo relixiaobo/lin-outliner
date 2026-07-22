@@ -840,9 +840,14 @@ function decodeThreadConfigurationSummary(
   path: string,
 ): AgentCoreResponseByMethod['thread/configuration/get']['configuration'] {
   exactKeys(record, ['modelProvider', 'model', 'reasoningEffort'], path);
+  const modelProvider = nonEmptyTrimmedString(record.modelProvider, `${path}.modelProvider`);
+  const model = nonEmptyTrimmedString(record.model, `${path}.model`);
+  if ((model !== 'inherit' && !model.startsWith(`${modelProvider}/`)) || model === `${modelProvider}/`) {
+    fail(`${path}.model`, 'expected inherit or a model qualified by modelProvider');
+  }
   return deepFreeze({
-    modelProvider: nonEmptyTrimmedString(record.modelProvider, `${path}.modelProvider`),
-    model: nonEmptyTrimmedString(record.model, `${path}.model`),
+    modelProvider,
+    model,
     reasoningEffort: enumValue(record.reasoningEffort, REASONING_EFFORTS, `${path}.reasoningEffort`),
   });
 }

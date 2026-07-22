@@ -500,6 +500,18 @@ describe('Codex Agent Core protocol codec', () => {
         reasoningEffort: 'medium',
       },
     })).toThrow('non-empty');
+    expect(() => decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: 'openai',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'medium',
+    })).toThrow('qualified by modelProvider');
+    expect(decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: 'openai',
+      model: 'inherit',
+      reasoningEffort: 'medium',
+    })).toMatchObject({ modelProvider: 'openai', model: 'inherit' });
   });
 
   test('keeps user-input requests in the control plane with matching ids', () => {
