@@ -279,6 +279,10 @@ export class ThreadMetadataStore {
     } : null;
   }
 
+  deleteClientInput(threadId: ThreadId, clientId: string): void {
+    this.db.prepare('DELETE FROM client_inputs WHERE thread_id = ? AND client_id = ?').run(threadId, clientId);
+  }
+
   childEdges(parentThreadId: ThreadId, recursive = false): readonly SpawnEdge[] {
     const rows = recursive
       ? this.db.prepare(`
