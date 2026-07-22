@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentCoreExtension, TurnAdmissionContext } from '../../src/core/agent/extensions';
 import type { AgentRole, EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
-import type { AgentCoreNotification, ThreadItem } from '../../src/core/agent/protocol';
+import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../src/core/agent/tools';
+import type { AgentCoreNotification, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { ExtensionRegistry } from '../../src/main/agent/ExtensionRegistry';
 import { ThreadService, type ThreadServiceStores } from '../../src/main/agent/ThreadService';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
@@ -18,6 +19,7 @@ import type { TurnExecutionContext, TurnExecutionResult, TurnExecutor } from '..
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { Core } from '../../src/core/core';
 import { createNodeTools, type OutlinerToolHost } from '../../src/main/agentNodeTools';
+import { uuidV7 } from '../../src/main/agent/uuid';
 
 const roots: string[] = [];
 
@@ -184,6 +186,90 @@ describe('ThreadService', () => {
     expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0]?.status)
       .toBe('interrupted');
     await fixture.service.close();
+  });
+
+  test('closes and replays a partially streamed Item after host restart', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.close();
+
+    const turnId = uuidV7(fixture.clock());
+    const userItem: ThreadItem = {
+      type: 'userMessage',
+      id: 'restart-user',
+      provenance: { originThreadId: thread.id, originTurnId: turnId, originItemId: 'restart-user' },
+      clientId: null,
+      content: [{ type: 'text', text: 'Stream a response' }],
+    };
+    const agentItem: ThreadItem = {
+      type: 'agentMessage',
+      id: 'restart-agent',
+      provenance: { originThreadId: thread.id, originTurnId: turnId, originItemId: 'restart-agent' },
+      text: '',
+      phase: 'final_answer',
+      memoryCitation: null,
+    };
+    const startedTurn: Turn = {
+      id: turnId,
+      items: [userItem],
+      itemsView: 'full',
+      provenance: {
+        originThreadId: thread.id,
+        originTurnId: turnId,
+        trigger: { kind: 'user' },
+      },
+      status: 'inProgress',
+      error: null,
+      startedAt: fixture.clock(),
+      completedAt: null,
+      durationMs: null,
+    };
+    const rollout = new RolloutStore(join(fixture.root, 'agent', 'rollouts'));
+    for (const notification of [
+      { type: 'turn/started', threadId: thread.id, turnId, turn: startedTurn },
+      {
+        type: 'item/completed',
+        threadId: thread.id,
+        turnId,
+        itemId: userItem.id,
+        item: userItem,
+        completedAt: fixture.clock(),
+      },
+      {
+        type: 'item/started',
+        threadId: thread.id,
+        turnId,
+        itemId: agentItem.id,
+        item: agentItem,
+        startedAt: fixture.clock(),
+      },
+      {
+        type: 'item/delta',
+        threadId: thread.id,
+        turnId,
+        itemId: agentItem.id,
+        delta: { type: 'agentMessageText', delta: 'Partial output' },
+      },
+    ] satisfies AgentCoreNotification[]) {
+      await rollout.append(thread.id, notification);
+    }
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    const recovered = reopened.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0];
+    expect(recovered).toMatchObject({
+      id: turnId,
+      status: 'interrupted',
+      error: { code: 'host_restart' },
+    });
+    expect(recovered?.items.at(-1)).toMatchObject({ type: 'agentMessage', text: 'Partial output' });
+    expect(reopened.stores.history.unfinishedItems(thread.id, turnId)).toEqual([]);
+    await reopened.service.close();
   });
 
   test('forks immutable history with local ids and ultimate provenance without reusing client ids', async () => {
@@ -438,6 +524,99 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('re-resolves a child Role and current parent ceiling on resume', async () => {
+    const parentConfiguration: EffectiveThreadConfiguration = {
+      profileName: 'root',
+      developerInstructions: ['Initial parent instructions'],
+      model: 'parent-model',
+      reasoningEffort: 'medium',
+      tools: ['node_read', 'bash'],
+      skills: ['initial-skill', 'shared-skill'],
+      plugins: ['initial-plugin'],
+      mcpServers: ['initial-mcp'],
+    };
+    let role: AgentRole = {
+      name: 'mutable',
+      source: 'user',
+      description: 'Initial child role.',
+      developerInstructions: 'Initial role instructions',
+      overrides: {
+        model: 'initial-role-model',
+        reasoningEffort: 'low',
+        tools: ['node_read', 'bash'],
+        skills: ['initial-skill'],
+        plugins: ['initial-plugin'],
+        mcpServers: ['initial-mcp'],
+      },
+    };
+    const fixture = await createFixture(undefined, {
+      resolveConfiguration: () => parentConfiguration,
+      resolveRole: () => role,
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const child = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentItemId: 'spawn-item',
+      prompt: 'Initial child work',
+      taskPath: '/root/mutable',
+      role: 'mutable',
+      allowedTools: ['node_read'],
+    });
+    await fixture.executor.waitUntilWaiting();
+    expect(fixture.executor.contexts[0]?.configuration.model).toBe('initial-role-model');
+    expect(fixture.executor.contexts[0]?.configuration.reasoningEffort).toBe('low');
+    expect(fixture.executor.contexts[0]?.configuration.tools).toEqual(['node_read']);
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(child.thread.id);
+
+    const currentParent: EffectiveThreadConfiguration = {
+      ...parentConfiguration,
+      developerInstructions: ['Current parent instructions'],
+      tools: ['node_read', 'file_read'],
+      skills: ['current-skill'],
+      plugins: ['current-plugin'],
+      mcpServers: ['current-mcp'],
+    };
+    fixture.stores.metadata.setConfiguration(root.id, currentParent);
+    role = {
+      ...role,
+      developerInstructions: 'Current role instructions',
+      overrides: {
+        model: 'current-role-model',
+        reasoningEffort: 'high',
+        tools: ['node_read', 'file_read'],
+        skills: ['current-skill'],
+        plugins: ['current-plugin'],
+        mcpServers: ['current-mcp'],
+      },
+    };
+
+    await fixture.service.resumeThread(child.thread.id);
+    await fixture.service.startPrivilegedTurn({
+      threadId: child.thread.id,
+      input: [{ type: 'text', text: 'Resume with current configuration' }],
+      trigger: { kind: 'subagent', parentThreadId: root.id, parentItemId: 'followup-item' },
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    expect(fixture.executor.contexts[1]?.configuration).toMatchObject({
+      developerInstructions: ['Current parent instructions', 'Current role instructions'],
+      model: 'current-role-model',
+      reasoningEffort: 'high',
+      tools: ['node_read'],
+      skills: ['current-skill'],
+      plugins: ['current-plugin'],
+      mcpServers: ['current-mcp'],
+    });
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(child.thread.id);
+    await fixture.service.close();
+  });
+
   test('exposes canonical control tools and executes plan, Goal, and collaboration paths', async () => {
     const fixture = await createFixture();
     const root = (await fixture.service.startThread({
@@ -504,6 +683,153 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('stops Goal continuation before admission when the token budget is exhausted', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.request('goal/create', {
+      threadId: thread.id,
+      objective: 'Finish within one Turn',
+      tokenBudget: 7,
+    });
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Complete the Goal' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish(0, { status: 'completed', tokensUsed: 7 });
+    await fixture.service.waitForIdle(thread.id);
+
+    expect(fixture.executor.contexts).toHaveLength(1);
+    expect((await fixture.service.request('goal/get', { threadId: thread.id })).goal?.status)
+      .toBe('budgetLimited');
+    await fixture.service.close();
+  });
+
+  test('retries a deferred Goal continuation at the next real idle boundary', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.request('goal/create', {
+      threadId: thread.id,
+      objective: 'Recover the deferred continuation',
+    });
+    const record = fixture.stores.goals.read(thread.id)!;
+    fixture.stores.goals.deferContinuation(thread.id, record.generation, 'User Turn won admission');
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Finish the competing Turn' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.executor.waitUntilWaiting(1);
+
+    expect(fixture.executor.contexts[1]?.turn.provenance.trigger).toEqual({
+      kind: 'feature',
+      feature: 'goal_continuation',
+      ref: String(record.generation),
+    });
+    expect(fixture.stores.goals.readDeferral(thread.id)).toBeNull();
+    await fixture.service.request('goal/update', { threadId: thread.id, status: 'complete' });
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    expect(fixture.executor.contexts).toHaveLength(2);
+    await fixture.service.close();
+  });
+
+  test('resumes an active Goal continuation after host restart', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.request('goal/create', {
+      threadId: thread.id,
+      objective: 'Continue after restart',
+    });
+    await fixture.service.close();
+
+    const executor = new ControlledExecutor();
+    const reopened = await openFixture(fixture.root, executor, fixture.clock);
+    await reopened.service.initialize();
+    await executor.waitUntilWaiting();
+    expect(executor.contexts[0]?.turn.provenance.trigger).toMatchObject({
+      kind: 'feature',
+      feature: 'goal_continuation',
+    });
+
+    await reopened.service.request('goal/update', { threadId: thread.id, status: 'complete' });
+    executor.finish();
+    await reopened.service.waitForIdle(thread.id);
+    await reopened.service.close();
+  });
+
+  test('assembles extension and capability tools through one executable registry', async () => {
+    const registry = new ExtensionRegistry();
+    registry.register(new ToolContributionProbe());
+    const configuration: EffectiveThreadConfiguration = {
+      profileName: 'extension-test',
+      developerInstructions: [],
+      model: 'test-model',
+      reasoningEffort: 'medium',
+      tools: MODEL_TOOL_CATALOG.map((contract) => canonicalModelToolKey(contract.identity)),
+      skills: [],
+      plugins: ['automation-probe'],
+      mcpServers: [],
+    };
+    const fixture = await createFixture(registry, { resolveConfiguration: () => configuration });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'test',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Use extension tools' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    const runtime = new ToolRuntime(fixture.service, {
+      capabilityTools: runtimeSchemaTools,
+      assembleRegistry: true,
+      dynamicTools: () => [{
+        name: 'codex_app__automation_update',
+        label: 'Update Automation',
+        description: AUTOMATION_TOOL_CONTRACT.description,
+        parameters: AUTOMATION_TOOL_CONTRACT.inputSchema!,
+        executionMode: 'sequential',
+        execute: async () => ({ content: [{ type: 'text', text: 'updated' }], details: { updated: true } }),
+      }],
+    });
+    const tools = await runtime.createTools(context);
+    expect(tools.map((tool) => tool.name)).toContain('generate_image');
+    expect(tools.map((tool) => tool.name)).toContain('codex_app__automation_update');
+
+    const missingImplementation = new ToolRuntime(fixture.service, {
+      capabilityTools: runtimeSchemaTools,
+      assembleRegistry: true,
+    });
+    await expect(missingImplementation.createTools(context)).rejects.toThrow(
+      'Enabled extension model tool has no runtime implementation',
+    );
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
   test('binds document tool mutations to the executing Thread, Turn, and Item', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
@@ -561,6 +887,41 @@ class AdmissionProbe implements AgentCoreExtension {
     this.contexts.push(context);
     return { extensionId: this.id, snapshotId: `snapshot-${this.contexts.length}` };
   }
+}
+
+const AUTOMATION_TOOL_CONTRACT = {
+  identity: { namespace: 'codex_app', name: 'automation_update' },
+  description: 'Create or update one Automation.',
+  scope: 'rootThread',
+  schemaOwner: 'extension',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: { title: { type: 'string' } },
+    required: ['title'],
+  },
+  actionKinds: ['agent.plan.update'],
+} as const;
+
+class ToolContributionProbe implements AgentCoreExtension {
+  readonly id = 'automation-probe';
+
+  contributeTools() {
+    return { extensionId: this.id, tools: [AUTOMATION_TOOL_CONTRACT] };
+  }
+}
+
+function runtimeSchemaTools(): import('@earendil-works/pi-agent-core').AgentTool[] {
+  return MODEL_TOOL_CATALOG.flatMap((contract) => contract.inputSchema === null
+    ? [{
+        name: canonicalModelToolKey(contract.identity),
+        label: contract.identity.name,
+        description: contract.description,
+        parameters: { type: 'object', additionalProperties: false },
+        executionMode: 'sequential' as const,
+        execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: { ok: true } }),
+      }]
+    : []);
 }
 
 interface Fixture {

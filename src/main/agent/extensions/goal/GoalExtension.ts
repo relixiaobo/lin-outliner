@@ -70,7 +70,9 @@ export class GoalExtension implements AgentCoreExtension {
   async onThreadIdle(thread: Thread): Promise<void> {
     const record = this.read(thread.id);
     if (!record || record.goal.status !== 'active' || !this.host) return;
-    if (!thread.ephemeral && this.store.readDeferral(thread.id)?.generation === record.generation) return;
+    if (!thread.ephemeral && this.store.readDeferral(thread.id)) {
+      this.store.clearDeferral(thread.id);
+    }
     const turn = await this.host.tryStartTurnIfIdle({
       threadId: thread.id,
       input: [{ type: 'text', text: `Continue working toward the active Goal: ${record.goal.objective}` }],

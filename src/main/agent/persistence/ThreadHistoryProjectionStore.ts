@@ -16,6 +16,7 @@ import type {
 import { decodeCursor, encodeCursor, pageLimit } from './cursor';
 import type { RolloutEntry } from './RolloutStore';
 import { openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
+import { applyThreadItemDelta } from '../itemDelta';
 
 interface TurnRow {
   thread_id: string;
@@ -226,6 +227,15 @@ export class ThreadHistoryProjectionStore {
     return row ? this.turnFromRow(row, itemsView) : null;
   }
 
+  unfinishedItems(threadId: ThreadId, turnId: string): readonly ThreadItem[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM thread_items
+      WHERE thread_id = ? AND turn_id = ? AND completed_at IS NULL
+      ORDER BY item_index
+    `).all(threadId, turnId) as unknown as ItemRow[];
+    return rows.map((row) => decodeThreadItem(JSON.parse(row.item_json)));
+  }
+
   private applyInside(entry: RolloutEntry): void {
     const threadId = entry.notification.threadId;
     const watermark = this.watermark(threadId);
@@ -243,20 +253,41 @@ export class ThreadHistoryProjectionStore {
   private projectNotification(ordinal: number, notification: AgentCoreNotification): void {
     switch (notification.type) {
       case 'turn/started':
-      case 'turn/completed':
-        this.upsertTurn(notification.threadId, ordinal, notification.turn);
-        if (notification.type === 'turn/completed') {
-          this.db.prepare(`
-            DELETE FROM thread_items WHERE thread_id = ? AND turn_id = ? AND item_index >= ?
-          `).run(notification.threadId, notification.turnId, notification.turn.items.length);
+        if (this.readTurnRow(notification.threadId, notification.turnId)) {
+          throw new Error(`Turn was already started: ${notification.turnId}`);
         }
+        this.upsertTurn(notification.threadId, ordinal, notification.turn);
         notification.turn.items.forEach((item, index) => {
           this.upsertItem(notification.threadId, notification.turnId, ordinal, index, item, null, null);
         });
         return;
-      case 'item/started':
-      case 'item/completed': {
-        const turnPosition = this.requireTurnPosition(notification.threadId, notification.turnId);
+      case 'turn/completed': {
+        const existing = this.readTurnRow(notification.threadId, notification.turnId);
+        if (!existing) {
+          this.upsertTurn(notification.threadId, ordinal, notification.turn);
+          notification.turn.items.forEach((item, index) => {
+            this.upsertItem(
+              notification.threadId,
+              notification.turnId,
+              ordinal,
+              index,
+              item,
+              notification.turn.startedAt,
+              notification.turn.completedAt,
+            );
+          });
+          return;
+        }
+        if (existing.status !== 'inProgress') throw new Error(`Terminal Turn is immutable: ${notification.turnId}`);
+        this.assertTurnItemsMatch(notification.threadId, notification.turnId, notification.turn.items);
+        this.upsertTurn(notification.threadId, ordinal, notification.turn);
+        return;
+      }
+      case 'item/started': {
+        const turnPosition = this.requireMutableTurnPosition(notification.threadId, notification.turnId);
+        if (this.readItemRow(notification.threadId, notification.itemId)) {
+          throw new Error(`Thread Item was already started: ${notification.itemId}`);
+        }
         const itemIndex = this.nextItemIndex(notification.threadId, notification.turnId, notification.itemId);
         this.upsertItem(
           notification.threadId,
@@ -264,13 +295,30 @@ export class ThreadHistoryProjectionStore {
           turnPosition,
           itemIndex,
           notification.item,
-          notification.type === 'item/started' ? notification.startedAt : null,
-          notification.type === 'item/completed' ? notification.completedAt : null,
+          notification.startedAt,
+          null,
+        );
+        return;
+      }
+      case 'item/completed': {
+        const turnPosition = this.requireMutableTurnPosition(notification.threadId, notification.turnId);
+        const existing = this.readItemRow(notification.threadId, notification.itemId);
+        if (!existing) throw new Error(`Item completion precedes item start: ${notification.itemId}`);
+        if (existing.completed_at !== null) throw new Error(`Completed Thread Item is immutable: ${notification.itemId}`);
+        const itemIndex = this.nextItemIndex(notification.threadId, notification.turnId, notification.itemId);
+        this.upsertItem(
+          notification.threadId,
+          notification.turnId,
+          turnPosition,
+          itemIndex,
+          notification.item,
+          null,
+          notification.completedAt,
         );
         return;
       }
       case 'item/delta':
-        this.applyItemDelta(notification.threadId, notification.itemId, notification.delta);
+        this.applyItemDelta(notification.threadId, notification.turnId, notification.itemId, notification.delta);
         return;
       default:
         return;
@@ -339,54 +387,53 @@ export class ThreadHistoryProjectionStore {
 
   private applyItemDelta(
     threadId: ThreadId,
+    turnId: string,
     itemId: string,
     delta: Extract<AgentCoreNotification, { type: 'item/delta' }>['delta'],
   ): void {
-    const row = this.db.prepare(`
-      SELECT item_json FROM thread_items WHERE thread_id = ? AND item_id = ?
-    `).get(threadId, itemId) as { item_json: string } | undefined;
+    this.requireMutableTurnPosition(threadId, turnId);
+    const row = this.readItemRow(threadId, itemId);
     if (!row) throw new Error(`Item delta precedes item start: ${itemId}`);
+    if (row.turn_id !== turnId) throw new Error(`Thread Item does not belong to Turn: ${itemId}`);
+    if (row.completed_at !== null) throw new Error(`Completed Thread Item is immutable: ${itemId}`);
     const item = decodeThreadItem(JSON.parse(row.item_json));
-    let updated: ThreadItem;
-    switch (delta.type) {
-      case 'agentMessageText':
-        if (item.type !== 'agentMessage') throw deltaMismatch(item, delta.type);
-        updated = { ...item, text: item.text + delta.delta };
-        break;
-      case 'planText':
-        if (item.type !== 'plan') throw deltaMismatch(item, delta.type);
-        updated = { ...item, text: item.text + delta.delta };
-        break;
-      case 'reasoningSummary':
-      case 'reasoningContent': {
-        if (item.type !== 'reasoning') throw deltaMismatch(item, delta.type);
-        const key = delta.type === 'reasoningSummary' ? 'summary' : 'content';
-        const values = [...item[key]];
-        if (values.length === 0) values.push(delta.delta);
-        else values[values.length - 1] = values.at(-1)! + delta.delta;
-        updated = { ...item, [key]: values };
-        break;
-      }
-      case 'commandOutput':
-        if (item.type !== 'commandExecution') throw deltaMismatch(item, delta.type);
-        updated = { ...item, aggregatedOutput: (item.aggregatedOutput ?? '') + delta.delta };
-        break;
-      case 'dynamicToolOutput':
-        if (item.type !== 'dynamicToolCall') throw deltaMismatch(item, delta.type);
-        updated = { ...item, contentItems: [...(item.contentItems ?? []), delta.delta] };
-        break;
-    }
+    const updated = applyThreadItemDelta(item, delta);
     this.db.prepare(`
       UPDATE thread_items SET item_json = ?, item_type = ? WHERE thread_id = ? AND item_id = ?
-    `).run(JSON.stringify(decodeThreadItem(updated)), updated.type, threadId, itemId);
+    `).run(JSON.stringify(updated), updated.type, threadId, itemId);
   }
 
-  private requireTurnPosition(threadId: ThreadId, turnId: string): number {
-    const row = this.db.prepare(`
-      SELECT position FROM thread_turns WHERE thread_id = ? AND turn_id = ?
-    `).get(threadId, turnId) as { position: number } | undefined;
+  private requireMutableTurnPosition(threadId: ThreadId, turnId: string): number {
+    const row = this.readTurnRow(threadId, turnId);
     if (!row) throw new Error(`Item lifecycle precedes Turn start: ${turnId}`);
+    if (row.status !== 'inProgress') throw new Error(`Terminal Turn is immutable: ${turnId}`);
     return row.position;
+  }
+
+  private readTurnRow(threadId: ThreadId, turnId: string): TurnRow | null {
+    return (this.db.prepare(`
+      SELECT * FROM thread_turns WHERE thread_id = ? AND turn_id = ?
+    `).get(threadId, turnId) as TurnRow | undefined) ?? null;
+  }
+
+  private readItemRow(threadId: ThreadId, itemId: string): ItemRow | null {
+    return (this.db.prepare(`
+      SELECT * FROM thread_items WHERE thread_id = ? AND item_id = ?
+    `).get(threadId, itemId) as ItemRow | undefined) ?? null;
+  }
+
+  private assertTurnItemsMatch(threadId: ThreadId, turnId: string, items: readonly ThreadItem[]): void {
+    const rows = this.db.prepare(`
+      SELECT * FROM thread_items WHERE thread_id = ? AND turn_id = ? ORDER BY item_index
+    `).all(threadId, turnId) as unknown as ItemRow[];
+    if (rows.length !== items.length) throw new Error(`Terminal Turn Items do not match recorded Items: ${turnId}`);
+    for (const [index, item] of items.entries()) {
+      const row = rows[index]!;
+      if (row.item_id !== item.id || row.item_json !== JSON.stringify(decodeThreadItem(item))) {
+        throw new Error(`Terminal Turn Item mutation is not allowed: ${item.id}`);
+      }
+      if (row.completed_at === null) throw new Error(`Terminal Turn contains an unfinished Item: ${item.id}`);
+    }
   }
 
   private nextItemIndex(threadId: ThreadId, turnId: string, itemId: string): number {
@@ -485,8 +532,4 @@ function itemCursor(row: ItemRow, direction: 'asc' | 'desc'): string {
 
 function opposite(direction: 'asc' | 'desc'): 'asc' | 'desc' {
   return direction === 'asc' ? 'desc' : 'asc';
-}
-
-function deltaMismatch(item: ThreadItem, deltaType: string): Error {
-  return new Error(`Cannot apply ${deltaType} delta to ${item.type} Item`);
 }

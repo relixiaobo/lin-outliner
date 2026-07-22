@@ -77,12 +77,29 @@ describe('Agent Core persistence', () => {
     const statePath = join(root, 'state.sqlite');
     const store = new ThreadMetadataStore(statePath, testDatabase(statePath));
     const ids = [uuidV7(100), uuidV7(200), uuidV7(300)];
-    store.create({ thread: thread(ids[0]!, 100), archived: false, configuration });
-    store.create({ thread: thread(ids[1]!, 200), archived: false, configuration });
+    store.create({
+      thread: thread(ids[0]!, 100),
+      archived: false,
+      configuration,
+      toolCeiling: null,
+      modelOverride: null,
+      reasoningEffortOverride: null,
+    });
+    store.create({
+      thread: thread(ids[1]!, 200),
+      archived: false,
+      configuration,
+      toolCeiling: null,
+      modelOverride: null,
+      reasoningEffortOverride: null,
+    });
     store.create({
       thread: thread(ids[2]!, 300, { threadSource: 'memory_consolidation' }),
       archived: false,
       configuration,
+      toolCeiling: null,
+      modelOverride: null,
+      reasoningEffortOverride: null,
     });
 
     const first = store.list({ limit: 2 });
@@ -101,6 +118,9 @@ describe('Agent Core persistence', () => {
       }),
       archived: false,
       configuration,
+      toolCeiling: ['node_read'],
+      modelOverride: 'worker-model',
+      reasoningEffortOverride: 'high',
     }, {
       parentThreadId: ids[0]!,
       childThreadId: childId,
@@ -113,6 +133,9 @@ describe('Agent Core persistence', () => {
       taskPath: '/root/worker',
       createdAt: 400,
     }]);
+    expect(store.require(childId).toolCeiling).toEqual(['node_read']);
+    expect(store.require(childId).modelOverride).toBe('worker-model');
+    expect(store.require(childId).reasoningEffortOverride).toBe('high');
 
     const firstBinding = store.bindClientInput({
       threadId: ids[0]!,
@@ -177,6 +200,90 @@ describe('Agent Core persistence', () => {
     expect(rebuilt.watermark(threadId)).toEqual(incremental.watermark(threadId));
     incremental.close();
     rebuilt.close();
+  });
+
+  test('replays an interrupted Turn with a completed partial stream exactly', async () => {
+    const root = await tempRoot();
+    const rollout = new RolloutStore(join(root, 'interrupted-rollouts'));
+    const threadId = uuidV7(2_250);
+    for (const notification of interruptedLifecycle(threadId, true)) {
+      await rollout.append(threadId, notification);
+    }
+    const entries = await rollout.read(threadId);
+    const incremental = new ThreadHistoryProjectionStore(
+      join(root, 'interrupted-history.sqlite'),
+      testDatabase(join(root, 'interrupted-history.sqlite')),
+    );
+    incremental.applyMany(entries);
+
+    const projected = incremental.listTurns({ threadId, itemsView: 'full' });
+    expect(projected.data[0]).toMatchObject({
+      status: 'interrupted',
+      error: { code: 'host_restart' },
+    });
+    expect(projected.data[0]?.items.at(-1)).toMatchObject({
+      type: 'agentMessage',
+      text: 'Partial output',
+    });
+    expect(incremental.unfinishedItems(threadId, projected.data[0]!.id)).toEqual([]);
+
+    const rebuilt = new ThreadHistoryProjectionStore(
+      join(root, 'interrupted-history-rebuilt.sqlite'),
+      testDatabase(join(root, 'interrupted-history-rebuilt.sqlite')),
+    );
+    rebuilt.rebuildThread(threadId, entries);
+    expect(rebuilt.listTurns({ threadId, itemsView: 'full' })).toEqual(projected);
+    expect(rebuilt.listItems({ threadId })).toEqual(incremental.listItems({ threadId }));
+    incremental.close();
+    rebuilt.close();
+  });
+
+  test('rejects Item and Turn mutation after terminal lifecycle facts', async () => {
+    const root = await tempRoot();
+    const threadId = uuidV7(2_500);
+    const notifications = lifecycle(threadId);
+    const rollout = new RolloutStore(join(root, 'immutable-rollouts'));
+    for (const notification of notifications) await rollout.append(threadId, notification);
+    const entries = await rollout.read(threadId);
+    const beforeTurnCompletion = entries.slice(0, -1);
+    const store = new ThreadHistoryProjectionStore(
+      join(root, 'immutable-history.sqlite'),
+      testDatabase(join(root, 'immutable-history.sqlite')),
+    );
+    store.applyMany(beforeTurnCompletion);
+
+    const agentCompletion = notifications.find((notification) => (
+      notification.type === 'item/completed' && notification.item.type === 'agentMessage'
+    ));
+    if (!agentCompletion || agentCompletion.type !== 'item/completed') throw new Error('Missing agent completion fixture');
+    expect(() => store.apply({
+      ordinal: beforeTurnCompletion.length,
+      byteOffset: 0,
+      byteLength: 1,
+      notification: {
+        type: 'item/delta',
+        threadId,
+        turnId: agentCompletion.turnId,
+        itemId: agentCompletion.itemId,
+        delta: { type: 'agentMessageText', delta: ' late mutation' },
+      },
+    })).toThrow('Completed Thread Item is immutable');
+
+    const terminal = notifications.at(-1)!;
+    if (terminal.type !== 'turn/completed') throw new Error('Missing terminal Turn fixture');
+    store.apply({
+      ordinal: beforeTurnCompletion.length,
+      byteOffset: 0,
+      byteLength: 1,
+      notification: terminal,
+    });
+    expect(() => store.apply({
+      ordinal: entries.length,
+      byteOffset: 1,
+      byteLength: 1,
+      notification: terminal,
+    })).toThrow('Terminal Turn is immutable');
+    store.close();
   });
 
   test('keeps Goal state authoritative with generations, accounting, and stale-deferral rejection', async () => {
@@ -251,6 +358,14 @@ function lifecycle(threadId: string): AgentCoreNotification[] {
   return [
     { type: 'turn/started', threadId, turnId, turn: startedTurn },
     {
+      type: 'item/completed',
+      threadId,
+      turnId,
+      itemId: userItem.id,
+      item: userItem,
+      completedAt: 4_000,
+    },
+    {
       type: 'item/started',
       threadId,
       turnId,
@@ -274,5 +389,102 @@ function lifecycle(threadId: string): AgentCoreNotification[] {
       completedAt: 4_090,
     },
     { type: 'turn/completed', threadId, turnId, turn: completedTurn },
+  ];
+}
+
+function interruptedLifecycle(
+  threadId: string,
+  includeTerminalFacts: boolean,
+): AgentCoreNotification[] {
+  const turnId = uuidV7(4_500);
+  const userItem: ThreadItem = {
+    type: 'userMessage',
+    id: 'item-interrupted-user',
+    provenance: {
+      originThreadId: threadId,
+      originTurnId: turnId,
+      originItemId: 'item-interrupted-user',
+    },
+    clientId: null,
+    content: [{ type: 'text', text: 'Start streaming' }],
+  };
+  const startedAgentItem: ThreadItem = {
+    type: 'agentMessage',
+    id: 'item-interrupted-agent',
+    provenance: {
+      originThreadId: threadId,
+      originTurnId: turnId,
+      originItemId: 'item-interrupted-agent',
+    },
+    text: '',
+    phase: 'final_answer',
+    memoryCitation: null,
+  };
+  const partialAgentItem: ThreadItem = { ...startedAgentItem, text: 'Partial output' };
+  const startedTurn: Turn = {
+    id: turnId,
+    items: [userItem],
+    itemsView: 'full',
+    provenance: {
+      originThreadId: threadId,
+      originTurnId: turnId,
+      trigger: { kind: 'user' },
+    },
+    status: 'inProgress',
+    error: null,
+    startedAt: 4_500,
+    completedAt: null,
+    durationMs: null,
+  };
+  const prefix: AgentCoreNotification[] = [
+    { type: 'turn/started', threadId, turnId, turn: startedTurn },
+    {
+      type: 'item/completed',
+      threadId,
+      turnId,
+      itemId: userItem.id,
+      item: userItem,
+      completedAt: 4_500,
+    },
+    {
+      type: 'item/started',
+      threadId,
+      turnId,
+      itemId: startedAgentItem.id,
+      item: startedAgentItem,
+      startedAt: 4_510,
+    },
+    {
+      type: 'item/delta',
+      threadId,
+      turnId,
+      itemId: startedAgentItem.id,
+      delta: { type: 'agentMessageText', delta: 'Partial output' },
+    },
+  ];
+  if (!includeTerminalFacts) return prefix;
+  return [
+    ...prefix,
+    {
+      type: 'item/completed',
+      threadId,
+      turnId,
+      itemId: partialAgentItem.id,
+      item: partialAgentItem,
+      completedAt: 4_550,
+    },
+    {
+      type: 'turn/completed',
+      threadId,
+      turnId,
+      turn: {
+        ...startedTurn,
+        items: [userItem, partialAgentItem],
+        status: 'interrupted',
+        error: { message: 'Turn interrupted by host restart', code: 'host_restart' },
+        completedAt: 4_550,
+        durationMs: 50,
+      },
+    },
   ];
 }

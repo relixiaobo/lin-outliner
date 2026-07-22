@@ -292,7 +292,7 @@ reasons, and stale-entry gate.
 
 | File | Count | Reason |
 | --- | --- | --- |
-| `src/renderer/agent/components/ThreadDock.tsx` | 3 | Native buttons inside compact Thread action and empty-state surfaces. |
+| `src/renderer/agent/components/ThreadDock.tsx` | 4 | Native buttons inside compact Thread action and empty-state surfaces. |
 | `src/renderer/agent/components/ThreadList.tsx` | 1 | Native row button owns full-width Thread selection semantics. |
 | `src/renderer/agent/components/ThreadView.tsx` | 2 | Native textarea and hidden file input own the persistent Thread composer and attachment fallback. |
 | `src/renderer/agent/components/UserInputRequest.tsx` | 4 | Native radio, checkbox, text, and submit controls preserve form semantics. |

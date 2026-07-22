@@ -1710,7 +1710,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_upsert_provider_config') {
           // Connection-only: the provider config carries credentials + endpoint
-          // only; model/effort now live on the agent profile, never here.
+          // only; model/effort now live on the Configuration Profile, never here.
           const provider = args.provider as {
             providerId: string;
             baseUrl?: string | null;

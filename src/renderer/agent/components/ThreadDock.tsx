@@ -6,6 +6,7 @@ import { threadStore, useThreadStore } from '../store/threadStore';
 import {
   AddIcon,
   ICON_SIZE,
+  InfoIcon,
   ListIcon,
   MoreIcon,
   PencilIcon,
@@ -19,6 +20,7 @@ import { Dialog } from '../../ui/primitives/Dialog';
 import { Input } from '../../ui/primitives/Input';
 import { ResizeHandle } from '../../ui/primitives/ResizeHandle';
 import { ThreadList } from './ThreadList';
+import { ThreadDetailsDialog } from './ThreadDetailsDialog';
 import { ThreadView } from './ThreadView';
 import { UserInputRequest } from './UserInputRequest';
 
@@ -47,6 +49,7 @@ export function ThreadDock({
   const [renameTarget, setRenameTarget] = useState<Thread | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Thread | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const renameTitleId = useId();
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const open = railState === 'open';
@@ -135,6 +138,7 @@ export function ThreadDock({
             <div className="thread-header-actions">
               <IconButton icon={MoreIcon} label={t.agent.thread.actions} variant="panel" />
               <div className="thread-header-menu">
+                <button onClick={() => setDetailsOpen(true)} type="button"><InfoIcon size={ICON_SIZE.menu} />{t.agent.thread.details}</button>
                 <button onClick={() => beginRename(thread)} type="button"><PencilIcon size={ICON_SIZE.menu} />{t.agent.thread.rename}</button>
                 <button onClick={() => setDeleteTarget(thread)} type="button"><TrashIcon size={ICON_SIZE.menu} />{t.agent.thread.delete}</button>
               </div>
@@ -223,6 +227,9 @@ export function ThreadDock({
             </div>
           </form>
         </Dialog>
+      ) : null}
+      {detailsOpen && thread ? (
+        <ThreadDetailsDialog onClose={() => setDetailsOpen(false)} thread={thread} turns={turns} />
       ) : null}
       {deleteTarget ? (
         <ConfirmDialog

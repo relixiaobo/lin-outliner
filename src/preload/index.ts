@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { decodeAgentCoreNotification, decodeAgentCoreResponse } from '../core/agent/codec';
 import type {
   AgentCoreMethod,
   AgentCoreNotification,
@@ -228,9 +229,12 @@ const api = {
   agentCoreRequest: <Method extends AgentCoreMethod>(
     method: Method,
     input: AgentCoreRequestByMethod[Method],
-  ) => ipcRenderer.invoke(AGENT_CORE_REQUEST_CHANNEL, method, input) as Promise<AgentCoreResponseByMethod[Method]>,
+  ) => ipcRenderer.invoke(AGENT_CORE_REQUEST_CHANNEL, method, input)
+    .then((response) => decodeAgentCoreResponse(method, response)) as Promise<AgentCoreResponseByMethod[Method]>,
   onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, notification: AgentCoreNotification) => listener(notification);
+    const handler = (_event: Electron.IpcRendererEvent, notification: unknown) => (
+      listener(decodeAgentCoreNotification(notification))
+    );
     ipcRenderer.on(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
     return () => ipcRenderer.removeListener(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
   },

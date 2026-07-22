@@ -35,12 +35,12 @@ export function resolveProviderModel(config: AgentProviderRuntimeConfig): Model<
   const model = resolveProviderCatalogModel(config);
   if (model) return model;
   if (config.baseUrl) {
-    throw new Error(`No catalog model for custom provider ${config.providerId}; set a model on the agent profile.`);
+    throw new Error(`No catalog model for custom provider ${config.providerId}; set a model on the Thread Configuration Profile.`);
   }
   throw new Error(`model not found for provider ${config.providerId}`);
 }
 
-/** Resolve an agent profile's model selection over a provider connection. */
+/** Resolve a Thread Configuration Profile's model selection over a provider connection. */
 export function resolveAgentModel(
   modelInput: string | undefined,
   config: AgentProviderRuntimeConfig,
@@ -50,7 +50,7 @@ export function resolveAgentModel(
   if (!requested || requested === 'inherit') {
     const resolved = fallback();
     if (resolved) return resolved;
-    throw new Error('No model is configured for this agent. Set a default model in the agent profile.');
+    throw new Error('No model is configured for this Thread. Set a model in its Configuration Profile.');
   }
   const resolved = resolveAgentModelOverride(requested, config);
   if (resolved) return resolved;
@@ -59,7 +59,7 @@ export function resolveAgentModel(
   throw new Error(`Model not found for provider ${config.providerId}: ${requested}`);
 }
 
-/** Resolve the effective model and thinking level for an agent profile. */
+/** Resolve the effective model and thinking level for a Thread Configuration Profile. */
 export function resolveAgentModelEffort(
   modelInput: string | undefined,
   effortInput: string | undefined,

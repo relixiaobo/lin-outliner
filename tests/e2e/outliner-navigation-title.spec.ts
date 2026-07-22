@@ -664,8 +664,7 @@ test.describe('outliner navigation and page title parity', () => {
 
   test('Cmd+Enter in row editor commits current text while cycling checkbox state', async ({ page }) => {
     const editor = rowEditor(page, ids.alpha);
-    await editor.click();
-    await page.keyboard.press('Meta+A');
+    await editor.click({ clickCount: 3 });
     await page.keyboard.type('Alpha done');
     await page.keyboard.press('Meta+Enter');
 

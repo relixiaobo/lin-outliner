@@ -21,6 +21,20 @@ test.describe('canonical agent Thread surface', () => {
     await expect(turn.locator('.thread-agent-message')).toContainText('Current outline focuses on design-system work.');
     await expect(turn.locator('.thread-turn-footer')).toContainText('24 ms');
 
+    await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
+    await page.locator('.thread-header-menu').getByRole('button', { name: 'Thread Details' }).click();
+    const details = page.getByRole('dialog', { name: 'Thread Details' });
+    await expect(details).toContainText('Thread ID');
+    await expect(details).toContainText('Turn');
+    await expect(details).toContainText('Item');
+    await expect(details).toContainText('userMessage');
+    await expect(details).toContainText('agentMessage');
+    const canonicalIds = (await details.locator('code').allTextContents())
+      .filter((value) => /^019[0-9a-f]{5}-[0-9a-f]{4}-7[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/.test(value));
+    expect(canonicalIds).toHaveLength(4);
+    expect(new Set(canonicalIds).size).toBe(4);
+    await details.getByRole('button', { name: 'Close Thread Details' }).click();
+
     const calls = await commandCalls(page);
     expect(calls.map((call) => call.cmd)).toEqual(expect.arrayContaining([
       'thread/list',

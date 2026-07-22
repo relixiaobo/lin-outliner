@@ -90,6 +90,57 @@ describe('PiTurnExecutor event normalization', () => {
       prompt: 'Inspect it',
     });
   });
+
+  test('keeps completed Items immutable in the authoritative recorder', async () => {
+    const fixture = createContext();
+    const itemId = fixture.recorder.createItemId();
+    const started = {
+      type: 'agentMessage' as const,
+      id: itemId,
+      provenance: fixture.recorder.localProvenance(itemId),
+      text: '',
+      phase: 'final_answer' as const,
+      memoryCitation: null,
+    };
+    const completed = { ...started, text: 'Done' };
+    await fixture.recorder.started(started);
+    await fixture.recorder.completed(completed);
+
+    await expect(fixture.recorder.delta(itemId, {
+      type: 'agentMessageText',
+      delta: ' late mutation',
+    })).rejects.toThrow('Completed Thread Item is immutable');
+    await expect(fixture.recorder.completed(completed)).rejects.toThrow('already completed');
+    expect(fixture.notifications.map((notification) => notification.type)).toEqual([
+      'item/started',
+      'item/completed',
+    ]);
+  });
+
+  test('preserves partial stream content when an open Item is failed', async () => {
+    const fixture = createContext();
+    const itemId = fixture.recorder.createItemId();
+    await fixture.recorder.started({
+      type: 'agentMessage',
+      id: itemId,
+      provenance: fixture.recorder.localProvenance(itemId),
+      text: '',
+      phase: null,
+      memoryCitation: null,
+    });
+    await fixture.recorder.delta(itemId, { type: 'agentMessageText', delta: 'Partial output' });
+
+    await fixture.recorder.finishOpenItems('failed');
+
+    expect(fixture.recorder.item(itemId)).toMatchObject({
+      type: 'agentMessage',
+      text: 'Partial output',
+    });
+    expect(fixture.notifications.at(-1)).toMatchObject({
+      type: 'item/completed',
+      item: { type: 'agentMessage', text: 'Partial output' },
+    });
+  });
 });
 
 function createContext(): {

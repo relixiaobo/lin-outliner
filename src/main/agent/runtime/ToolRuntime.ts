@@ -2,8 +2,13 @@ import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import type { TSchema } from 'typebox';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
+  assembleModelToolRegistry,
+  canonicalModelToolKey,
+  decodeProviderToolName,
   modelToolContract,
+  type ModelToolContract,
   type ModelToolIdentity,
+  type ModelToolSchemaContribution,
 } from '../../../core/agent/tools';
 import type { AgentMutationCausation, JsonValue } from '../../../core/agent/protocol';
 import type { ReasoningEffort } from '../../../core/agent/configuration';
@@ -21,11 +26,13 @@ export interface ToolRuntimeOptions {
   readonly outliner?: OutlinerToolHost;
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
   readonly skillRuntime?: AgentSkillRuntime | ((context: TurnExecutionContext) => AgentSkillRuntime);
-  readonly imageGeneration?: AgentImageGenerationRuntime;
+  readonly imageGeneration?: AgentImageGenerationRuntime | ((context: TurnExecutionContext) => AgentImageGenerationRuntime);
   readonly capabilityTools?: (
     context: TurnExecutionContext,
     outliner: OutlinerToolHost | undefined,
   ) => readonly AgentTool[];
+  /** Test/custom host seam; production always assembles the canonical registry. */
+  readonly assembleRegistry?: boolean;
   readonly dynamicTools?: (context: TurnExecutionContext) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
   readonly capabilityConfig?: AgentCapabilityConfig | (() => AgentCapabilityConfig | Promise<AgentCapabilityConfig>);
 }
@@ -50,31 +57,73 @@ export class ToolRuntime {
     const workspace = typeof this.options.localWorkspace === 'function'
       ? this.options.localWorkspace(context)
       : this.options.localWorkspace;
+    const imageGeneration = typeof this.options.imageGeneration === 'function'
+      ? this.options.imageGeneration(context)
+      : this.options.imageGeneration;
     const capabilityTools = this.options.capabilityTools
       ? this.options.capabilityTools(context, this.outliner)
       : (await import('../../agentTools')).createAgentTools(this.outliner, {
           localFileRoot: context.thread.cwd,
           ...(workspace === undefined ? {} : { localWorkspace: workspace }),
           ...(skillRuntime === undefined ? {} : { skillRuntime }),
-          ...(this.options.imageGeneration === undefined ? {} : { imageGeneration: this.options.imageGeneration }),
-          allowedTools: context.configuration.tools,
+          ...(imageGeneration === undefined ? {} : { imageGeneration }),
         });
+    const dynamicTools = await this.options.dynamicTools?.(context) ?? [];
     const tools = [
       ...capabilityTools,
       ...(this.importService ? [this.createDataImportTool()] : []),
       ...this.createControlTools(context),
-      ...(await this.options.dynamicTools?.(context) ?? []),
+      ...dynamicTools,
     ];
+    const extensionContributions = await this.service.extensionToolContributions(context.thread.id);
+    const extensionContracts = extensionContributions.flatMap((contribution) => contribution.tools);
+    const extensionOwners = new Map<string, string>();
+    for (const contribution of extensionContributions) {
+      for (const contract of contribution.tools) {
+        const key = canonicalModelToolKey(contract.identity);
+        if (extensionOwners.has(key)) throw new Error(`Duplicate extension runtime model tool: ${key}`);
+        extensionOwners.set(key, contribution.extensionId);
+      }
+    }
+    const shouldAssembleRegistry = this.options.assembleRegistry ?? this.options.capabilityTools === undefined;
+    const registry = shouldAssembleRegistry
+      ? assembleModelToolRegistry(schemaContributions(tools), extensionContracts)
+      : null;
+    const contracts = new Map((registry ?? extensionContracts).map((contract) => [
+      canonicalModelToolKey(contract.identity),
+      contract,
+    ]));
     const allowed = new Set(context.configuration.tools);
+    const enabledExtensions = new Set([...context.configuration.plugins, ...context.configuration.mcpServers]);
     const unique = new Map<string, AgentTool>();
+    const enabledCanonical = new Set<string>();
     for (const tool of tools) {
-      const identity = identityFromProviderName(tool.name);
-      const canonical = identity.namespace ? `${identity.namespace}.${identity.name}` : identity.name;
-      if (!allowed.has(canonical)) continue;
-      const contract = modelToolContract(canonical);
+      const identity = registry
+        ? decodeProviderToolName(tool.name, 'flat', registry)
+        : identityFromProviderName(tool.name);
+      if (!identity) throw new Error(`Runtime model tool has no canonical contract: ${tool.name}`);
+      const canonical = canonicalModelToolKey(identity);
+      const contract = contracts.get(canonical) ?? modelToolContract(canonical);
+      if (!contract) throw new Error(`Runtime model tool has no canonical contract: ${canonical}`);
+      if (registry && !sameSchema(tool.parameters, contract.inputSchema)) {
+        throw new Error(`Runtime model-tool schema does not match its contract: ${canonical}`);
+      }
+      const extensionOwner = extensionOwners.get(canonical);
+      const enabled = extensionOwner
+        ? allowed.has(canonical) || enabledExtensions.has(extensionOwner)
+        : allowed.has(canonical);
+      if (!enabled) continue;
       if (contract?.scope === 'rootThread' && context.thread.parentThreadId !== null) continue;
       if (unique.has(tool.name)) throw new Error(`Duplicate runtime model tool: ${tool.name}`);
       unique.set(tool.name, this.instrumentTool(context, tool, identity));
+      enabledCanonical.add(canonical);
+    }
+    for (const contract of extensionContracts) {
+      const canonical = canonicalModelToolKey(contract.identity);
+      const owner = extensionOwners.get(canonical)!;
+      if ((allowed.has(canonical) || enabledExtensions.has(owner)) && !enabledCanonical.has(canonical)) {
+        throw new Error(`Enabled extension model tool has no runtime implementation: ${canonical}`);
+      }
     }
     return [...unique.values()];
   }
@@ -425,6 +474,31 @@ function identityFromProviderName(name: string): ModelToolIdentity {
   return separator < 0
     ? { namespace: null, name }
     : { namespace: name.slice(0, separator), name: name.slice(separator + 2) };
+}
+
+function schemaContributions(tools: readonly AgentTool[]): ModelToolSchemaContribution[] {
+  const contributions = new Map<string, ModelToolSchemaContribution>();
+  for (const tool of tools) {
+    const identity = identityFromProviderName(tool.name);
+    const contract = modelToolContract(identity);
+    if (!contract || contract.inputSchema !== null) continue;
+    if (contract.schemaOwner !== 'capability' && contract.schemaOwner !== 'configuration') continue;
+    const canonical = canonicalModelToolKey(identity);
+    if (contributions.has(canonical)) throw new Error(`Duplicate runtime model-tool schema: ${canonical}`);
+    contributions.set(canonical, {
+      identity,
+      owner: contract.schemaOwner,
+      inputSchema: tool.parameters as Readonly<Record<string, unknown>>,
+    });
+  }
+  return [...contributions.values()];
+}
+
+function sameSchema(
+  runtime: unknown,
+  contract: ModelToolContract['inputSchema'],
+): boolean {
+  return contract !== null && JSON.stringify(runtime) === JSON.stringify(contract);
 }
 
 function record(value: unknown, path: string): Record<string, unknown> {

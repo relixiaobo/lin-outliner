@@ -8,8 +8,9 @@ const SELF = 'tests/core/agentCodexLegacyResidue.test.ts';
 // Main archives these superseded or destructive plans together with its board
 // update at the integration gate. Active code, tests, and specs have no such
 // exception.
-const PLANS_PENDING_MAIN_ARCHIVAL = new Set([
+const PLANS_WITH_SCOPED_LEGACY_ASSERTIONS = new Set([
   'docs/plans/agent-codex-core.md',
+  'docs/plans/agent-codex-automations.md',
   'docs/plans/agent-codex-memory.md',
   'docs/plans/agent-conversation-model.md',
   'docs/plans/agent-data-model.md',
@@ -27,6 +28,10 @@ const LEGACY_PATTERNS: ReadonlyArray<{ readonly label: string; readonly pattern:
     pattern: /\b(?:AgentChatPanel|AgentRunsPanel|AgentIssuesPanel|AgentRunDetailsPanel|ChannelConfigWindow|DreamLauncher|DreamHistoryGroup|AgentPastChats\w*|AgentDream\w*|AgentIssue\w*|AgentRunLedger|AgentRunProfiles|AgentRunStateMachine)\b/,
   },
   {
+    label: 'legacy domain type',
+    pattern: /\b(?:AgentDefinition|AgentSessionState|AgentSession|AgentRunMeta|AgentRunRecord|AgentRunStatus|AgentRunProfileId)\b/,
+  },
+  {
     label: 'legacy module identifier',
     pattern: /\bagent(?:Channel|Conversation|EventLog|Issue|Dream|PastChats|RunLedger|RunProfiles|RunStateMachine)\w*\b/,
   },
@@ -42,6 +47,14 @@ const LEGACY_PATTERNS: ReadonlyArray<{ readonly label: string; readonly pattern:
     label: 'deprecated rollback transport',
     pattern: /\bthread\/rollback\b/,
   },
+  {
+    label: 'legacy model tool',
+    pattern: /\b(?:ask_user_question|agent_session_start|agent_session_read|agent_session_send_message|agent_session_stop|past_chats|internal_delegation)\b/,
+  },
+  {
+    label: 'legacy profile terminology',
+    pattern: /\bagent[- ]profiles?\b/i,
+  },
 ];
 
 describe('Agent Core clean replacement', () => {
@@ -49,7 +62,11 @@ describe('Agent Core clean replacement', () => {
     const violations: string[] = [];
     for (const file of scanFiles()) {
       const rel = relative(ROOT, file);
-      if (rel === SELF || rel.startsWith('docs/plans/archive/') || PLANS_PENDING_MAIN_ARCHIVAL.has(rel)) continue;
+      if (
+        rel === SELF
+        || rel.startsWith('docs/plans/archive/')
+        || PLANS_WITH_SCOPED_LEGACY_ASSERTIONS.has(rel)
+      ) continue;
       for (const [index, line] of readFileSync(file, 'utf8').split('\n').entries()) {
         for (const { label, pattern } of LEGACY_PATTERNS) {
           if (pattern.test(line)) violations.push(`${rel}:${index + 1} ${label}: ${line.trim()}`);

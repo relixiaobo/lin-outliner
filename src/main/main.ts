@@ -4,18 +4,31 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
-import { AssetService, mimeTypeForFilename } from './assetService';
+import { AssetService, mimeTypeForFilename, sniffMimeType } from './assetService';
 import { ThreadService } from './agent/ThreadService';
+import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
 import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
 import { AgentSkillRuntime } from './agentSkills';
 import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
-import { createAgentLocalWorkspaceContext } from './agentLocalTools';
+import {
+  createAgentLocalWorkspaceContext,
+  resolveAgentLocalReadPath,
+  type AgentLocalWorkspaceContext,
+} from './agentLocalTools';
+import type { AgentImageGenerationRuntime } from './agentImageGenerationTool';
+import { resolveGeneratedImageReadPath } from './generatedImagePaths';
+import {
+  piFindImageModel,
+  piGenerateImages,
+  piImageModelsForProvider,
+  validateImageGenerationOptions,
+} from './piImageModels';
 import type { AgentCoreMethod, AgentCoreRequestByMethod } from '../core/agent/protocol';
 import {
   REASONING_EFFORTS,
@@ -161,7 +174,12 @@ import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
 import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
-import { agentAttachmentDir, pruneAgentScratch, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
+import {
+  AGENT_GENERATED_IMAGE_DIR,
+  agentAttachmentDir,
+  pruneAgentScratch,
+  pruneOldAgentAttachments,
+} from './agentAttachmentMaterialization';
 import {
   isSafeLocalFileOpenTarget,
   resolveTrustedLocalFileReference,
@@ -419,6 +437,7 @@ void getAgentRuntimeSettings().then((settings) => {
   }
 }).catch((error) => console.error('[agent] failed to load skill settings', error));
 let toolRuntime!: ToolRuntime;
+const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
 const threadService = ThreadService.open(
   resolvedUserDataDir,
   new PiTurnExecutor({
@@ -426,6 +445,11 @@ const threadService = ThreadService.open(
     skillListing: (context) => toolRuntime.skillListing(context),
   }),
   {
+    resolveConfiguration: (request) => agentConfigurationLoader.resolveProfile(
+      request.configurationProfile,
+      request.cwd,
+    ),
+    resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
     resolveRendererStartDefaults: async () => {
       const provider = await getActiveProviderRuntimeConfig();
       if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
@@ -504,19 +528,109 @@ function parseSkillReasoningEffort(value: string): ReasoningEffort {
   if ((REASONING_EFFORTS as readonly string[]).includes(normalized)) return normalized as ReasoningEffort;
   throw new Error(`Unsupported isolated Skill reasoning effort: ${value}`);
 }
-toolRuntime = new ToolRuntime(threadService, {
-  outliner: documentService,
-  localWorkspace: (context) => createAgentLocalWorkspaceContext(
+
+function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentLocalWorkspaceContext {
+  return createAgentLocalWorkspaceContext(
     agentLocalFileRoot,
     agentScratchRoot,
     skillRuntimeForTurn(context),
-  ),
+  );
+}
+
+toolRuntime = new ToolRuntime(threadService, {
+  outliner: documentService,
+  localWorkspace: localWorkspaceForTurn,
   skillRuntime: skillRuntimeForTurn,
+  imageGeneration: (context) => createThreadImageGenerationRuntime(
+    context.turn.id,
+    localWorkspaceForTurn(context),
+  ),
 });
 threadService.subscribe((notification) => {
   if (notification.type === 'turn/completed') turnSkillRuntimes.delete(notification.turnId);
   liveWindow(mainWindow)?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, notification);
 });
+
+function createThreadImageGenerationRuntime(
+  turnId: string,
+  workspace: AgentLocalWorkspaceContext,
+): AgentImageGenerationRuntime {
+  return {
+    listModels: async () => {
+      const settings = await getProviderSettings();
+      const activeProviderId = (await getActiveProviderRuntimeConfig().catch(() => null))?.providerId
+        ?? settings.activeProviderId
+        ?? null;
+      const priority = [...new Set([
+        activeProviderId,
+        'openai',
+        'google',
+        'openrouter',
+      ].filter((value): value is string => Boolean(value)))];
+      return settings.providers
+        .filter((provider) => provider.enabled && (provider.auth?.credentialed ?? (provider.hasApiKey || provider.hasEnvApiKey)))
+        .sort((left, right) => imageProviderPriority(priority, left.providerId) - imageProviderPriority(priority, right.providerId))
+        .flatMap((provider) => piImageModelsForProvider(provider.providerId).map((model) => ({
+          providerId: provider.providerId,
+          id: model.id,
+          name: model.name,
+          input: [...model.input],
+          output: [...model.output],
+        })));
+    },
+    getActiveProviderId: async () => (
+      await getActiveProviderRuntimeConfig().catch(() => null)
+    )?.providerId ?? null,
+    getDefaultModel: async () => (await getProviderSettings()).imageGeneration.defaultModel ?? null,
+    validateOptions: ({ providerId, modelId, options }) => (
+      validateImageGenerationOptions(providerId, modelId, options)
+    ),
+    readLocalImage: async ({ filePath }) => {
+      const resolvedPath = await resolveGeneratedImageReadPath(workspace, filePath)
+        ?? resolveAgentLocalReadPath(workspace, filePath);
+      const data = await readFile(resolvedPath);
+      const mimeType = sniffMimeType(data, resolvedPath);
+      if (!mimeType?.startsWith('image/')) throw new Error(`File is not a supported image: ${filePath}`);
+      return { data, mimeType, label: basename(resolvedPath) };
+    },
+    writeGeneratedImage: async ({ toolCallId, index, data, mimeType }) => {
+      const turnPart = shortGeneratedImagePathPart(turnId, 'turn');
+      const directory = join(workspace.scratchRoot, AGENT_GENERATED_IMAGE_DIR, turnPart);
+      await mkdir(directory, { recursive: true });
+      const callDigest = createHash('sha256').update(toolCallId).digest('hex').slice(0, 6);
+      const fileName = `image-${index}-${callDigest}${generatedImageExtension(mimeType)}`;
+      await writeFile(join(directory, fileName), data);
+      return { path: posix.join(AGENT_GENERATED_IMAGE_DIR, turnPart, fileName) };
+    },
+    generateImages: async ({ providerId, modelId, context, options }) => {
+      const model = piFindImageModel(providerId, modelId);
+      if (!model) throw new Error(`Unknown image model: ${providerId}:${modelId}`);
+      const settings = await getProviderSettings();
+      const provider = settings.providers.find((candidate) => candidate.providerId === providerId);
+      return piGenerateImages(model, context, { ...options, baseUrl: provider?.baseUrl });
+    },
+  };
+}
+
+function imageProviderPriority(priority: readonly string[], providerId: string): number {
+  const index = priority.indexOf(providerId);
+  return index >= 0 ? index : priority.length;
+}
+
+function shortGeneratedImagePathPart(value: string, fallback: string): string {
+  const safe = safeAttachmentFileName(value).slice(0, 10).replace(/[._-]+$/u, '') || fallback;
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 6);
+  return `${safe}-${digest}`;
+}
+
+function generatedImageExtension(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'image/jpeg') return '.jpg';
+  if (normalized === 'image/webp') return '.webp';
+  if (normalized === 'image/gif') return '.gif';
+  return '.png';
+}
+
 const previewTranslationCache = new PreviewTranslationCacheStore(
   join(app.getPath('userData'), 'preview-translation-cache'),
   {

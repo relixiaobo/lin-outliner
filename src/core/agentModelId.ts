@@ -1,4 +1,4 @@
-// The wire format for an agent profile's model selection: a provider-qualified
+// The wire format for a Configuration Profile's model selection: a provider-qualified
 // `providerId/modelId` string. One parser/composer pair, shared across the process
 // seam (the renderer writes it, the main runtime reads it) so the two sides can
 // never disagree on how a saved selection splits.

@@ -302,7 +302,7 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
 /**
  * The runtime's default model for a provider connection: the first model after the
  * shared ranking sort (newest, thinking-capable first). Used as the connection
- * probe model and the catalog fallback when no agent profile names one. Returns
+ * probe model and the catalog fallback when no Configuration Profile names one. Returns
  * null for a custom endpoint with no catalog.
  */
 /** A provider's catalog models, sorted by the shared ranking (newest, thinking-first). */

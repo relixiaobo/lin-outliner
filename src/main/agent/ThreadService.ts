@@ -5,17 +5,18 @@ import {
   type HostRootTurnAdmissionBarrierSnapshot,
   type ThreadAdmissionBarrierSnapshot,
   type ThreadServiceExtensionHost,
+  type ExtensionToolContribution,
 } from '../../core/agent/extensions';
 import {
+  decodeAgentCoreNotification,
   decodeAgentCoreRequest,
+  decodeAgentCoreResponse,
   decodePrivilegedTurnStartRequest,
   decodeThread,
   decodeThreadItem,
   decodeTurn,
 } from '../../core/agent/codec';
 import {
-  MODEL_TOOL_CATALOG,
-  canonicalModelToolKey,
   normalizeRequestUserInputToolInput,
   normalizeUpdatePlanToolInput,
   type RequestUserInputToolInput,
@@ -85,6 +86,11 @@ import type {
   TurnExecutor,
 } from './runtime/types';
 import { uuidV7 } from './uuid';
+import {
+  BUILT_IN_AGENT_ROLE_DEFINITIONS,
+  defaultEffectiveThreadConfiguration,
+} from './AgentConfigurationLoader';
+import { applyThreadItemDelta } from './itemDelta';
 
 export interface AgentCorePaths {
   readonly root: string;
@@ -111,7 +117,7 @@ export interface ThreadServiceOptions {
   readonly resolveRendererStartDefaults?: () =>
     | RendererThreadStartDefaults
     | Promise<RendererThreadStartDefaults>;
-  readonly resolveRole?: (name: string) => AgentRole;
+  readonly resolveRole?: (name: string, cwd: string) => AgentRole;
   readonly now?: () => number;
 }
 
@@ -164,6 +170,7 @@ export interface CollaborationAgentView {
 interface EphemeralThreadState {
   record: ThreadCatalogRecord;
   turns: Turn[];
+  completedItemIds: Set<string>;
 }
 
 interface ActiveTurn {
@@ -207,7 +214,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ) => EffectiveThreadConfiguration | Promise<EffectiveThreadConfiguration>;
   private readonly resolveRendererStartDefaults: () =>
     RendererThreadStartDefaults | Promise<RendererThreadStartDefaults>;
-  private readonly resolveRole: (name: string) => AgentRole;
+  private readonly resolveRole: (name: string, cwd: string) => AgentRole;
   private readonly now: () => number;
   private readonly goals: GoalExtension;
   private readonly goalStore: GoalStore;
@@ -260,15 +267,29 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    const resumableThreadIds: ThreadId[] = [];
     for (const archived of [false, true]) {
       let cursor: string | null = null;
       do {
         const page = this.metadata.list({ archived, cursor, limit: 100 });
-        for (const thread of page.data) await this.reconcileThread(thread.id);
+        for (const thread of page.data) {
+          await this.reconcileThread(thread.id);
+          if (!archived) resumableThreadIds.push(thread.id);
+        }
         cursor = page.nextCursor;
       } while (cursor);
     }
+    const resumableThreads: Thread[] = [];
+    for (const threadId of resumableThreadIds) {
+      const { thread } = await this.resumeThread(threadId);
+      resumableThreads.push(thread);
+    }
     this.initialized = true;
+    for (const thread of resumableThreads) {
+      if (thread.status.type === 'idle') {
+        await this.extensions.threadIdle(this.requireThread(thread.id).thread);
+      }
+    }
   }
 
   async close(): Promise<void> {
@@ -288,7 +309,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   async waitForIdle(threadId: ThreadId): Promise<void> {
-    await this.activeTurns.get(threadId)?.completion;
+    while (true) {
+      const active = this.activeTurns.get(threadId);
+      if (!active) return;
+      await active.completion;
+    }
+  }
+
+  async extensionToolContributions(threadId: ThreadId): Promise<readonly ExtensionToolContribution[]> {
+    return this.extensions.tools(this.requireThread(threadId).thread);
   }
 
   async request<Method extends AgentCoreMethod>(
@@ -296,6 +325,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
     input: AgentCoreRequestByMethod[Method],
   ): Promise<AgentCoreResponseByMethod[Method]> {
     const decoded = decodeAgentCoreRequest(method, input);
+    const response = await this.dispatchRequest(method, decoded);
+    return decodeAgentCoreResponse(method, response);
+  }
+
+  private async dispatchRequest<Method extends AgentCoreMethod>(
+    method: Method,
+    decoded: AgentCoreRequestByMethod[Method],
+  ): Promise<AgentCoreResponseByMethod[Method]> {
     switch (method) {
       case 'thread/list':
         return this.listThreads(decoded as AgentCoreRequestByMethod['thread/list']) as AgentCoreResponseByMethod[Method];
@@ -419,9 +456,30 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   async resumeThread(threadId: ThreadId): Promise<{ thread: Thread }> {
-    const thread = this.requireThread(threadId).thread;
-    await this.extensions.threadResumed(thread);
-    return { thread };
+    return this.threadMutex.run(threadId, async () => {
+      const record = this.requireThread(threadId);
+      if (record.thread.parentThreadId && record.thread.agentRole) {
+        const parent = this.requireThread(record.thread.parentThreadId);
+        const role = this.resolveRole(record.thread.agentRole, record.thread.cwd);
+        const resolved = resolveChildConfiguration(parent.configuration, {
+          role,
+          ...(record.modelOverride === null ? {} : { model: record.modelOverride }),
+          ...(record.reasoningEffortOverride === null
+            ? {}
+            : { reasoningEffort: record.reasoningEffortOverride }),
+        });
+        const configuration = applyToolCeiling(resolved, record.toolCeiling);
+        if (record.thread.ephemeral) {
+          const state = this.ephemeral.get(threadId)!;
+          state.record = { ...record, configuration };
+        } else {
+          this.metadata.setConfiguration(threadId, configuration);
+        }
+      }
+      const thread = this.requireThread(threadId).thread;
+      await this.extensions.threadResumed(thread);
+      return { thread };
+    });
   }
 
   async forkThread(request: ThreadForkRequest): Promise<{ thread: Thread }> {
@@ -695,18 +753,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
     const parent = this.requireThread(input.parentThreadId);
-    const role = this.resolveRole(input.role ?? 'default');
+    const role = this.resolveRole(input.role ?? 'default', parent.thread.cwd);
     const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
       role,
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
     });
-    const configuration = input.allowedTools === undefined
-      ? resolvedConfiguration
-      : Object.freeze({
-          ...resolvedConfiguration,
-          tools: Object.freeze(resolvedConfiguration.tools.filter((tool) => input.allowedTools!.includes(tool))),
-        });
+    const toolCeiling = input.allowedTools === undefined ? null : Object.freeze([...new Set(input.allowedTools)]);
+    const configuration = applyToolCeiling(resolvedConfiguration, toolCeiling);
     const thread = await this.createThread({
       name: input.taskPath.split('/').at(-1) ?? 'Subagent',
       ephemeral: parent.thread.ephemeral,
@@ -721,6 +775,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
       agentRole: role.name,
       agentNickname: input.nickname ?? role.nicknameCandidates?.[0] ?? null,
       configuration,
+      toolCeiling,
+      modelOverride: input.model ?? null,
+      reasoningEffortOverride: input.reasoningEffort ?? null,
       taskPath: input.taskPath,
     });
     const response = await this.startPrivilegedTurn({
@@ -1054,7 +1111,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
     const aborted = active.controller.signal.aborted;
     const status = aborted ? 'interrupted' : thrown ? 'failed' : result.status ?? 'completed';
-    await active.recorder.finishInProgressItems(status === 'completed' ? 'failed' : status);
+    await active.recorder.finishOpenItems(status === 'completed' ? 'failed' : status);
     const completedAt = this.now();
     let turn = decodeTurn({
       id: active.turnId,
@@ -1104,7 +1161,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
       return;
     }
-    await active.recorder.finishInProgressItems('failed').catch(() => undefined);
+    await active.recorder.finishOpenItems('failed').catch(() => undefined);
     const initial = this.readTurn(active.threadId, active.turnId);
     if (initial) {
       const completedAt = this.now();
@@ -1137,6 +1194,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
       agentRole: string | null;
       agentNickname: string | null;
       configuration?: EffectiveThreadConfiguration;
+      toolCeiling?: readonly string[] | null;
+      modelOverride?: string | null;
+      reasoningEffortOverride?: EffectiveThreadConfiguration['reasoningEffort'] | null;
       taskPath?: string;
     },
   ): Promise<Thread> {
@@ -1162,9 +1222,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
       historyMode: 'paginated',
     });
     const configuration = lineage.configuration ?? await this.resolveConfiguration(request);
-    const record = { thread, archived: false, configuration };
+    const record = {
+      thread,
+      archived: false,
+      configuration,
+      toolCeiling: lineage.toolCeiling ?? null,
+      modelOverride: lineage.modelOverride ?? null,
+      reasoningEffortOverride: lineage.reasoningEffortOverride ?? null,
+    };
     if (thread.ephemeral) {
-      this.ephemeral.set(thread.id, { record, turns: [] });
+      this.ephemeral.set(thread.id, { record, turns: [], completedItemIds: new Set() });
       if (thread.parentThreadId) {
         this.ephemeralSpawnEdges.set(thread.id, {
           parentThreadId: thread.parentThreadId,
@@ -1202,15 +1269,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   private async recordNotification(notification: AgentCoreNotification): Promise<void> {
-    const record = this.requireThread(notification.threadId);
+    const decoded = decodeAgentCoreNotification(notification);
+    const record = this.requireThread(decoded.threadId);
     if (record.thread.ephemeral) {
-      this.applyEphemeralNotification(notification);
+      this.applyEphemeralNotification(decoded);
     } else {
-      const entry = await this.rollout.append(notification.threadId, notification);
+      const entry = await this.rollout.append(decoded.threadId, decoded);
       this.history.apply(entry);
     }
-    for (const listener of this.listeners) listener(notification);
-    await this.extensions.notification(notification);
+    for (const listener of this.listeners) listener(decoded);
+    await this.extensions.notification(decoded);
     this.signalActivity();
   }
 
@@ -1219,24 +1287,71 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (!state) throw new Error(`Ephemeral Thread not found: ${notification.threadId}`);
     switch (notification.type) {
       case 'turn/started':
+        if (state.turns.some((turn) => turn.id === notification.turnId)) {
+          throw new Error(`Turn was already started: ${notification.turnId}`);
+        }
         state.turns.push(notification.turn);
         return;
-      case 'item/started':
+      case 'item/started': {
+        const index = state.turns.findIndex((turn) => turn.id === notification.turnId);
+        if (index < 0) throw new Error(`Item lifecycle precedes Turn start: ${notification.turnId}`);
+        const turn = state.turns[index]!;
+        if (turn.status !== 'inProgress') throw new Error(`Terminal Turn is immutable: ${notification.turnId}`);
+        const itemIndex = turn.items.findIndex((item) => item.id === notification.itemId);
+        if (itemIndex >= 0) throw new Error(`Thread Item was already started: ${notification.itemId}`);
+        state.turns[index] = decodeTurn({ ...turn, items: [...turn.items, notification.item] });
+        return;
+      }
       case 'item/completed': {
         const index = state.turns.findIndex((turn) => turn.id === notification.turnId);
-        if (index < 0) return;
+        if (index < 0) throw new Error(`Item lifecycle precedes Turn start: ${notification.turnId}`);
         const turn = state.turns[index]!;
+        if (turn.status !== 'inProgress') throw new Error(`Terminal Turn is immutable: ${notification.turnId}`);
         const itemIndex = turn.items.findIndex((item) => item.id === notification.itemId);
+        if (itemIndex < 0) throw new Error(`Item completion precedes item start: ${notification.itemId}`);
+        if (state.completedItemIds.has(notification.itemId)) {
+          throw new Error(`Completed Thread Item is immutable: ${notification.itemId}`);
+        }
         const items = [...turn.items];
-        if (itemIndex < 0) items.push(notification.item);
-        else items[itemIndex] = notification.item;
+        items[itemIndex] = notification.item;
+        state.turns[index] = decodeTurn({ ...turn, items });
+        state.completedItemIds.add(notification.itemId);
+        return;
+      }
+      case 'item/delta': {
+        const index = state.turns.findIndex((turn) => turn.id === notification.turnId);
+        if (index < 0) throw new Error(`Item delta precedes Turn start: ${notification.turnId}`);
+        const turn = state.turns[index]!;
+        if (turn.status !== 'inProgress') throw new Error(`Terminal Turn is immutable: ${notification.turnId}`);
+        if (state.completedItemIds.has(notification.itemId)) {
+          throw new Error(`Completed Thread Item is immutable: ${notification.itemId}`);
+        }
+        const itemIndex = turn.items.findIndex((item) => item.id === notification.itemId);
+        if (itemIndex < 0) throw new Error(`Item delta precedes item start: ${notification.itemId}`);
+        const items = [...turn.items];
+        items[itemIndex] = applyThreadItemDelta(items[itemIndex]!, notification.delta);
         state.turns[index] = decodeTurn({ ...turn, items });
         return;
       }
       case 'turn/completed': {
         const index = state.turns.findIndex((turn) => turn.id === notification.turnId);
-        if (index < 0) state.turns.push(notification.turn);
-        else state.turns[index] = notification.turn;
+        if (index < 0) {
+          state.turns.push(notification.turn);
+          for (const item of notification.turn.items) state.completedItemIds.add(item.id);
+          return;
+        }
+        const turn = state.turns[index]!;
+        if (turn.status !== 'inProgress') throw new Error(`Terminal Turn is immutable: ${notification.turnId}`);
+        if (
+          turn.items.length !== notification.turn.items.length
+          || turn.items.some((item, itemIndex) => JSON.stringify(item) !== JSON.stringify(notification.turn.items[itemIndex]))
+        ) {
+          throw new Error(`Terminal Turn Items do not match recorded Items: ${notification.turnId}`);
+        }
+        if (turn.items.some((item) => !state.completedItemIds.has(item.id))) {
+          throw new Error(`Terminal Turn contains an unfinished Item: ${notification.turnId}`);
+        }
+        state.turns[index] = notification.turn;
         return;
       }
       default:
@@ -1410,22 +1525,23 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   private async finishCrashedTurn(threadId: ThreadId, turn: Turn): Promise<void> {
     const completedAt = this.now();
+    const unfinishedItemIds = new Set(
+      this.history.unfinishedItems(threadId, turn.id).map((item) => item.id),
+    );
     const items = turn.items.map((item) => {
-      if (!('status' in item) || item.status !== 'inProgress') return item;
+      if (!unfinishedItemIds.has(item.id) || !('status' in item) || item.status !== 'inProgress') return item;
       return decodeThreadItem({ ...item, status: 'interrupted' });
     });
     for (const item of items) {
-      const previous = turn.items.find((candidate) => candidate.id === item.id);
-      if (previous && 'status' in previous && previous.status === 'inProgress') {
-        await this.recordNotification({
-          type: 'item/completed',
-          threadId,
-          turnId: turn.id,
-          itemId: item.id,
-          item,
-          completedAt,
-        });
-      }
+      if (!unfinishedItemIds.has(item.id)) continue;
+      await this.recordNotification({
+        type: 'item/completed',
+        threadId,
+        turnId: turn.id,
+        itemId: item.id,
+        item,
+        completedAt,
+      });
     }
     const interrupted = decodeTurn({
       ...turn,
@@ -1464,45 +1580,15 @@ export function agentCorePaths(userDataPath: string): AgentCorePaths {
 }
 
 function defaultConfiguration(request: ThreadStartRequest): EffectiveThreadConfiguration {
-  return Object.freeze({
-    profileName: request.configurationProfile ?? 'default',
-    developerInstructions: Object.freeze([]),
-    model: 'inherit',
-    reasoningEffort: 'medium',
-    tools: Object.freeze(MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity))),
-    skills: Object.freeze([]),
-    plugins: Object.freeze([]),
-    mcpServers: Object.freeze([]),
-  });
+  return defaultEffectiveThreadConfiguration(request.configurationProfile ?? 'default');
 }
 
 function missingRendererStartDefaults(): never {
   throw new Error('Thread start requires a model provider and working directory.');
 }
 
-const DEFAULT_AGENT_ROLES: Readonly<Record<string, AgentRole>> = Object.freeze({
-  default: Object.freeze({
-    name: 'default',
-    source: 'builtIn',
-    description: 'General-purpose Subagent.',
-    developerInstructions: 'Work on the assigned task and report concrete results to the parent Thread.',
-  }),
-  worker: Object.freeze({
-    name: 'worker',
-    source: 'builtIn',
-    description: 'Implementation-focused Subagent.',
-    developerInstructions: 'Execute the assigned implementation carefully, verify it, and report the changed artifacts.',
-  }),
-  explorer: Object.freeze({
-    name: 'explorer',
-    source: 'builtIn',
-    description: 'Read-oriented research Subagent.',
-    developerInstructions: 'Inspect the assigned area, gather evidence, and report findings without speculative changes.',
-  }),
-});
-
 function defaultAgentRole(name: string): AgentRole {
-  const role = DEFAULT_AGENT_ROLES[name];
+  const role = BUILT_IN_AGENT_ROLE_DEFINITIONS[name];
   if (!role) throw new Error(`Unknown Agent Role: ${name}`);
   return role;
 }
@@ -1676,6 +1762,18 @@ function copyItem(source: ThreadItem, _targetThreadId: ThreadId, _targetTurnId: 
     ...source,
     id,
     ...(source.type === 'userMessage' ? { clientId: null } : {}),
+  });
+}
+
+function applyToolCeiling(
+  configuration: EffectiveThreadConfiguration,
+  toolCeiling: readonly string[] | null,
+): EffectiveThreadConfiguration {
+  if (toolCeiling === null) return configuration;
+  const allowed = new Set(toolCeiling);
+  return Object.freeze({
+    ...configuration,
+    tools: Object.freeze(configuration.tools.filter((tool) => allowed.has(tool))),
   });
 }
 

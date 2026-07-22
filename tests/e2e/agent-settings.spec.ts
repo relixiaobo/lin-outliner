@@ -385,7 +385,7 @@ test.describe('provider config windows', () => {
     await expect(config.getByRole('heading', { name: /OpenAI/ })).toBeVisible();
     await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', 'sk*****************');
     await expect(config.getByLabel('Base URL')).toBeVisible();
-    // Model and effort moved to the agent profile — neither control lives here now.
+    // Model and effort moved to the Configuration Profile; neither control lives here now.
     await expect(config.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
     await expect(config.getByRole('combobox', { name: 'Thinking level' })).toHaveCount(0);
     // A configured provider can be removed from its window.

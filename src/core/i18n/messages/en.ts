@@ -958,6 +958,18 @@ commandPalette: {
       noThreads: 'No Threads yet.',
       loading: 'Loading Threads...',
       actions: 'Thread actions',
+      details: 'Thread Details',
+      detailsTitle: 'Thread Details',
+      closeDetails: 'Close Thread Details',
+      threadId: 'Thread ID',
+      parentThreadId: 'Parent Thread ID',
+      forkedFromId: 'Forked From ID',
+      turn: 'Turn',
+      itemLabel: 'Item',
+      status: 'Status',
+      source: 'Source',
+      none: 'None',
+      noTurns: 'No Turns recorded.',
       rename: 'Rename Thread',
       delete: 'Delete Thread',
       deleteConfirm: ({ name }: { name: string }) => `Delete "${name}" and its child Threads?`,
@@ -1224,9 +1236,6 @@ commandPalette: {
       connectorOr: ' or ',
     },
   },
-  // The agent debug panel — a developer diagnostic surface. Its OWN chrome is
-  // localized; the raw protocol it mirrors (message role names, part kinds like
-  // `tool_call`/`json`, wire hashes) stays verbatim by design.
 };
 
 export type Messages = typeof en;

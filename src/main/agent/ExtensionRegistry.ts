@@ -68,7 +68,16 @@ export class ExtensionRegistry {
   }
 
   async tools(thread: Thread): Promise<readonly ExtensionToolContribution[]> {
-    return this.collect(async (extension) => extension.contributeTools?.(thread) ?? null);
+    const contributions: ExtensionToolContribution[] = [];
+    for (const extension of this.extensions) {
+      const contribution = await extension.contributeTools?.(thread) ?? null;
+      if (!contribution) continue;
+      if (contribution.extensionId !== extension.id) {
+        throw new Error(`Extension tool contribution owner mismatch: ${extension.id}`);
+      }
+      contributions.push(contribution);
+    }
+    return contributions;
   }
 
   async toolStarted(context: ToolLifecycleContext): Promise<void> {

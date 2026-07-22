@@ -23,13 +23,37 @@ A `ThreadItem` is the smallest persisted history fact. Canonical Item kinds are:
 - `webSearch`, `imageView`, and `contextCompaction`
 
 Items with execution status start as `inProgress` and complete with a terminal
-status. `item/completed` never accepts an `inProgress` Item, and a terminal Turn
-cannot contain one. Completed Items are immutable.
+status. Every started Item, including streamed messages and reasoning without an
+execution-status field, receives exactly one `item/completed` fact before its
+Turn becomes terminal. `item/completed` never accepts an `inProgress` executable
+Item. Completed Items and terminal Turns are immutable.
 
 A `ThreadGoal` is attached one-to-one to a Thread and stored separately from
 history. It carries objective, lifecycle status, optional token budget, token
 usage, continuation deferrals, and timestamps. Goal updates emit canonical Goal
 notifications but do not create another execution entity.
+
+## Configuration Profiles And Roles
+
+A named `ConfigurationProfile` supplies root Thread defaults. User definitions
+load from `<userData>/agent/config.json`; project definitions load from
+`<cwd>/.tenon/agent.json` and replace same-name user definitions. Both exact-key
+JSON files may define `defaultProfile`, `profiles`, and `roles`. Invalid JSON,
+unknown fields, invalid names, duplicate capability identities, and unsupported
+reasoning effort values fail closed.
+
+Root Thread creation resolves its selected Profile into one persisted
+`EffectiveThreadConfiguration` snapshot. Later file edits do not rewrite that
+root snapshot or completed Turns.
+
+An `AgentRole` configures a child Thread. Built-in Roles are `default`, `worker`,
+and `explorer`; user and project files may add or deliberately replace Roles.
+Child spawn applies the current parent configuration, the selected Role,
+explicit model/effort choices, and an optional tool ceiling. Tools, skills,
+plugins, and MCP servers are each intersected with the parent capability
+ceiling. Child resume reloads its stored Role and the parent's current snapshot,
+while private metadata preserves only actual spawn-time model/effort overrides
+and the explicit tool ceiling.
 
 ## Identity And Provenance
 
@@ -61,12 +85,21 @@ Starting a Turn follows this order:
 4. Persist `turn/started` and the completed user Item.
 5. Return acceptance before starting model side effects.
 6. Execute the Turn and persist Item events as they occur.
-7. Finish any remaining execution Items, persist the terminal Turn, and set the
+7. Finish every remaining open Item, persist the terminal Turn, and set the
    Thread back to `idle` or `systemError`.
 
 Steering appends input only to the active Turn. Interrupt requires the exact
-active Turn ID. Resume reopens a stored Thread and lets extensions reconcile
-their own state; it does not create a Turn.
+active Turn ID. Resume reopens a stored Thread, refreshes child Role
+configuration, and lets extensions reconcile their own state; it does not create
+a Turn.
+
+When a Turn becomes idle, an active Goal may admit a continuation through the
+same single-Turn coordinator. Usage is committed before continuation admission,
+so reaching a token budget changes the Goal to `budgetLimited` and stops the
+chain. A deferral records a lost admission race for one idle boundary; the next
+real idle boundary clears it and retries the same Goal generation. Startup
+resumes active Goals on non-archived idle Threads. `waitForIdle` follows the
+whole continuation chain rather than returning after only its first Turn.
 
 ## Fork Semantics
 
@@ -98,8 +131,12 @@ owns Goal state. Each persistent Thread owns one append-only rollout JSONL as
 the history source of truth. Ephemeral Threads remain memory-only and never
 enter these stores.
 
-Startup reconciles catalog and history projections from rollouts. There is one
-storage format and no alternate reader or dual-write path.
+Startup reconciles catalog and history projections from rollouts. A Turn left
+`inProgress` by host restart is completed as `interrupted`; every unfinished
+streamed or executable Item first receives its terminal completion fact. Clean
+replay then produces the same paginated Turns and Items as incremental
+projection. There is one storage format and no alternate reader or dual-write
+path.
 
 ## Transport
 
@@ -126,6 +163,7 @@ contribute:
 - additional model context for a Thread
 - terminal Items after execution
 - lifecycle reconciliation hooks
+- canonical tool contracts owned by the contributing extension
 
 Host-wide and per-Thread admission barriers linearize configuration changes with
 new root Turns. They do not interrupt an already active Turn; an extension that
@@ -133,6 +171,16 @@ needs exclusion must persist it explicitly.
 
 Extensions do not add fields to Core entities or write Core stores directly.
 They own their private state and communicate through typed extension contracts.
+The host assembles extension and capability contracts into one executable
+registry, validates provider-name uniqueness and runtime schemas, and fails
+closed if an enabled extension contract has no runtime implementation.
+
+## Renderer Diagnostics
+
+The Thread Details dialog is the canonical diagnostic surface. It renders the
+same Thread, Turn, and Item DTOs used by the transcript and shows their canonical
+IDs, status, source, parent/fork lineage, Item types, and Turn status. It does not
+create a debug projection, execution ledger, or alternative view model.
 
 ## Trusted Document Transactions
 

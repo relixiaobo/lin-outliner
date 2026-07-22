@@ -966,9 +966,9 @@ export interface AgentSlashCommandView {
 
 /**
  * A provider is a CONNECTION, not a model choice. It proves credentials and an
- * endpoint are reachable; which model/effort actually runs is owned by the agent
- * profile that runs (see `AgentDefinition.model` / `effort` and the built-in
- * assistant's settings-owned default). Provider config therefore carries no
+ * endpoint are reachable; which model/effort actually runs is owned by the
+ * selected Thread Configuration Profile and its persisted effective snapshot.
+ * Provider config therefore carries no
  * `modelId` / `reasoningLevel`.
  */
 export interface AgentProviderConfigInput {

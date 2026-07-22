@@ -993,7 +993,8 @@ test.describe('cursor affordances', () => {
       return getComputedStyle(label).cursor;
     });
 
-    expect(threadActionCursors).toEqual(['default', 'default']);
+    expect(threadActionCursors.length).toBeGreaterThan(0);
+    expect(threadActionCursors.every((cursor) => cursor === 'default')).toBe(true);
     expect(tagLabelCursor).not.toBe('pointer');
   });
 

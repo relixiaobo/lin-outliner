@@ -277,7 +277,7 @@ inside one neutral `--radius-pill` capsule with a center divider. The content
 scrollport starts below fixed chrome via margin, not scroll padding.
 
 **Category rail and content.** The left rail lists categories: General,
-Providers, Security, Skills, Agent Profiles. The content pane is a flat opaque
+Providers, Security, Skills, Configuration Profiles. The content pane is a flat opaque
 Preferences base with constrained grouped content (`--settings-content-max-width`,
 920px). There is no permanent detail pane; per-provider config opens a native
 child window. Categories, not providers, are top-level rail rows. The rail,
@@ -312,7 +312,7 @@ trailing More button is icon-only and unboxed at rest.
 (`?surface=provider-config`) and owns connection only. It has no traffic lights,
 no in-renderer backdrop, and closes through Cancel / Save / Escape. One inset card
 holds credential mode, key/base URL/provider id as needed, and async
-non-blocking validation. Model and effort belong to the agent profile, not the
+non-blocking validation. Model and effort belong to the Thread Configuration Profile, not the
 provider connection. Saved user-pasted keys stay masked until explicit show/copy;
 externally managed keys such as CC Switch registry keys are never shown or copied.
 Raw-key show/copy is available only inside the provider config child window, and
