@@ -52,6 +52,7 @@ import type {
   TagConfigPatch,
   ViewMode,
 } from '../core/types';
+import type { AgentMutationCausation } from '../core/agent/protocol';
 import type { CreateCaptureInput } from '../core/launcher/sources';
 import { parseLinOutline } from './agentOutlineParser';
 import { indexProjection } from './agentNodeToolProjection';
@@ -70,6 +71,7 @@ export interface DocumentMutationMeta {
   command?: string;
   tool?: string;
   summary?: string;
+  causation?: AgentMutationCausation;
 }
 
 interface TextEditGroup {
@@ -289,6 +291,7 @@ export class DocumentService implements DocumentSystemHost {
           operationId: systemContext.operationId,
           command: `system:${systemContext.namespace}`,
           summary: `Applied ${systemContext.namespace} document transaction.`,
+          causation: systemContext.causation,
         }
       : contextOrMeta;
     const task = this.mutationQueue.then(async () => {
@@ -1163,6 +1166,7 @@ function transactionMetadata(meta: DocumentMutationMeta): CoreTransactionMetadat
     command: meta.command,
     tool: meta.tool,
     summary: meta.summary,
+    causation: meta.causation,
   };
 }
 

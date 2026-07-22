@@ -1,11 +1,10 @@
 import path from 'node:path';
-import type { AgentSourceKind } from '../core/agentEventLog';
 import { type AgentSkillContentTarget, parseSkillMarkdown, skillContentHash } from './agentSkills';
 import { containsSecretLikeContent } from './agentSecretRedaction';
 
 export interface AgentSkillWriteAudit {
   skillName: string;
-  source: AgentSourceKind;
+  source: AgentSkillContentTarget['source'];
   skillRoot: string;
   relativePath: string;
   changeType: 'create' | 'patch' | 'replace' | 'support-file-write';

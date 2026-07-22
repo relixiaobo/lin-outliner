@@ -1374,65 +1374,7 @@ function normalizeReferenceTarget(value: unknown): RichText['inlineRefs'][number
   ) {
     return { kind: 'local-file', path: record.path, entryKind: record.entryKind };
   }
-  if (
-    record.kind === 'chat-source'
-    && (record.stream === 'conversation' || record.stream === 'run')
-    && typeof record.streamId === 'string'
-    && record.streamId
-    && record.range
-    && typeof record.range === 'object'
-    && !Array.isArray(record.range)
-  ) {
-    const range = record.range as Record<string, unknown>;
-    const fromSeqExclusive = numberInteger(range.fromSeqExclusive);
-    const throughSeq = numberInteger(range.throughSeq);
-    const throughEventId = typeof range.throughEventId === 'string'
-      ? range.throughEventId
-      : range.throughEventId === null ? null : undefined;
-    const fromCreatedAtInclusive = numberInteger(range.fromCreatedAtInclusive);
-    const throughCreatedAtExclusive = numberInteger(range.throughCreatedAtExclusive);
-    const createdAtClamp = normalizeCreatedAtClamp(fromCreatedAtInclusive, throughCreatedAtExclusive);
-    if (
-      fromSeqExclusive !== null
-      && fromSeqExclusive >= 0
-      && throughSeq !== null
-      && throughSeq > fromSeqExclusive
-      && ((fromCreatedAtInclusive === null && throughCreatedAtExclusive === null) || createdAtClamp)
-    ) {
-      return {
-        kind: 'chat-source',
-        stream: record.stream,
-        streamId: record.streamId,
-        range: {
-          fromSeqExclusive,
-          throughSeq,
-          ...(throughEventId !== undefined ? { throughEventId } : {}),
-          ...(createdAtClamp ?? {}),
-        },
-      };
-    }
-  }
   return undefined;
-}
-
-function numberInteger(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
-}
-
-function normalizeCreatedAtClamp(
-  fromCreatedAtInclusive: number | null,
-  throughCreatedAtExclusive: number | null,
-): { fromCreatedAtInclusive: number; throughCreatedAtExclusive: number } | null {
-  if (fromCreatedAtInclusive === null && throughCreatedAtExclusive === null) return null;
-  if (
-    fromCreatedAtInclusive !== null
-    && fromCreatedAtInclusive >= 0
-    && throughCreatedAtExclusive !== null
-    && throughCreatedAtExclusive > fromCreatedAtInclusive
-  ) {
-    return { fromCreatedAtInclusive, throughCreatedAtExclusive };
-  }
-  return null;
 }
 
 function stringifyRecord(value: object): Record<string, string> {

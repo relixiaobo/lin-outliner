@@ -74,10 +74,7 @@ Center — per-pane breadcrumb headers:
 
 Right corner — agent chrome:
 
-- The agent dock's header (channel hash glyph + conversation title) when open —
-  every conversation is one of Neva's channels, so there is no per-conversation
-  agent avatar (it would always be the same single agent), matching the channel
-  list rows.
+- The selected Thread title and compact Thread actions when the dock is open.
 - The agent toggle, pinned to the top-right corner as a fixed window-chrome
   control.
 
@@ -106,13 +103,13 @@ Pane (outline panel):
 
 A document or outline view inside the canvas — the single canvas primitive.
 Panes are tiled in a single row. They may be resizable, but they do not overlap.
-A pane is one of two variants: an outliner pane (a node root) or an agent-debug
-pane (a session inspector). Both tile identically.
+A pane hosts an outliner or file-preview view. Both tile identically and share
+the same per-pane navigation history.
 
 Agent dock:
 
-The conversation surface on the right side. It can read and edit the outliner
-through tools, using the active pane as default context.
+The Thread surface on the right side. It can read and edit the outliner through
+tools, using the active pane as default context.
 
 Sidebar dock:
 
@@ -186,7 +183,6 @@ interface WorkspacePanelBase {
 type PreviewTarget =
   | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory'; label?: string }
   | { kind: 'asset'; assetId: string; label?: string }
-  | { kind: 'agent-payload'; conversationId: string; runId?: string; payloadId: string; label?: string }
   | { kind: 'url'; url: string; label?: string };
 
 type PanelView =
@@ -200,13 +196,7 @@ interface WorkspaceContentPanelState extends WorkspacePanelBase {
   forwardStack: PanelView[];
 }
 
-interface AgentDebugPanelState extends WorkspacePanelBase {
-  type: 'agent-debug';
-  conversationId: string | null;
-  runId: string | null;
-}
-
-type WorkspacePanelState = WorkspaceContentPanelState | AgentDebugPanelState;
+type WorkspacePanelState = WorkspaceContentPanelState;
 
 interface WorkspaceLayout {
   activePanelId: string;
@@ -242,15 +232,13 @@ File preview uses the same workspace panel host and the same history stack:
 The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
 one array is the whole layout truth, so adding/closing a pane cannot desync a
 side table. The layout is persisted to `localStorage`
-(`lin-outliner:workspace-layout:v4`). It is UI state; document content remains in
+(`lin-outliner:workspace-layout:v5`). It is UI state; document content remains in
 the TypeScript-backed document model. Pre-release layout shape changes do not
 ship migrations or legacy readers; old dev userData can be wiped.
 
-The canvas is anchored by at least one outliner view (current or in a workspace
-pane's view history) so startup can restore focus. A restored layout that
-sanitizes down to only agent-debug panes has nothing to anchor, so it is treated
-as corrupt and replaced by the default single pane rather than booting into a
-rootless canvas.
+The canvas is anchored by at least one outliner view, either current or in a
+workspace pane's view history, so startup can restore focus. A sanitized layout
+without one is replaced by the default single pane.
 
 The layout does **not** include:
 
@@ -260,7 +248,7 @@ The layout does **not** include:
   and not part of the event-sourced document.
 - Outliner row expansion state. Each root node page has renderer-local outline
   view state, stored separately from the pane layout.
-- Agent conversation state, scroll, or input.
+- Agent Thread state, scroll, or input.
 - Document operation undo/redo state. Per-pane view history is navigation
   history only and must not change document history.
 
@@ -278,11 +266,10 @@ shared renderer expansion set; it does not live in the pane layout record.
 
 ### Extensibility seam (preview, etc.)
 
-`WorkspacePanelState` is an **extensible discriminated union** (`type`
-discriminant over a shared `WorkspacePanelBase`). The reusable document-content
+`WorkspacePanelState` uses a shared `WorkspacePanelBase`. The document-content
 host is `type: 'workspace'`; its `view` decides whether `WorkspaceCanvas` renders
-the outliner or the file preview. New non-document chrome panels, such as
-`agent-debug`, are still added as union members.
+the outliner or file preview. Agent details remain in the dock rather than adding
+a parallel canvas-panel kind.
 
 Per-pane history is a **view-state stack** (`backStack: PanelView[]`,
 `forwardStack: PanelView[]`). Opening a node in the current pane pushes the
@@ -389,12 +376,8 @@ Source authority stays source-specific:
   when the view is bound to a file node via `nodeId`; a persisted `file-preview`
   view whose target is an `asset` but has no `nodeId` is dropped on restore
   (pre-launch — no migration).
-- `agent-payload` targets resolve only through the active replay state for the
-  referenced conversation and payload id. Normal conversation payloads can be
-  previewed; debug-only payloads are not exposed through the normal preview
-  router. Renderer code never receives a payload file path.
 - `url` targets are first-class loose previews. Ordinary `http(s)` links from the
-  outliner and agent transcript route into a Tenon split preview pane by default.
+  outliner and Thread history route into a Tenon split preview pane by default.
   URL targets normalize through one shared `http(s)`-only helper in core. The pane
   renders the webpage through a dedicated sandboxed Electron webview that allows
   only `http(s)` navigation, strips preload/Node privileges at attach time,
@@ -862,18 +845,9 @@ Rules:
   resulting pane count can fit after rail re-clamping. The hard cap remains
   `MAX_PERSISTED_PANELS` (4). At the count cap, or when a root/file-preview split
   cannot fit at the current width, opening repurposes an existing workspace pane
-  (rightmost first) rather than adding another pane. Agent-debug panes are added
-  only when the resulting count fits; a too-narrow window reports the capacity
-  failure and does not drop an existing workspace pane just to show debug chrome.
-- Opening run details from an assistant reply opens an agent-debug pane keyed by
-  that concrete `(conversationId, runId)`. If that same run pane already exists it
-  is activated; a different reply/run is a different details target. The agent
-  dock does not expose a standalone debug button; details are opened from a
-  concrete assistant reply. The agent-debug pane uses the same sticky breadcrumb /
-  close chrome as node and file panes so pane headers align across the workspace.
+  (rightmost first) rather than adding another pane.
 - Closing a pane removes it from the layout. If it was active, focus moves to the
-  nearest remaining pane, and clears when that pane is an agent-debug pane (which
-  carries no node to focus).
+  nearest remaining pane.
 
 Avoid making every pane independent `position:absolute` — the product does not do
 freeform window management.
@@ -1020,7 +994,7 @@ interface SidebarState {
 interface AgentPanelState {
   widthPx: number;
   collapsed: boolean;
-  activeConversationId: string | null;
+  selectedThreadId: string | null;
 }
 ```
 

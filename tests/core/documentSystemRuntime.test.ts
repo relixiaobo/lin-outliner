@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SCHEMA_ID, TRASH_ID } from '../../src/core/types';
+import { uuidV7 } from '../../src/main/agent/uuid';
 
 let electronUserDataRoot = '';
 
@@ -108,6 +109,28 @@ describe('Document system runtime', () => {
     expect(instance.projectionSnapshot().revision).toBe(revisionBeforeFailure);
     expect(instance.getProjection().nodes.some((node) => node.id === rolledBackId)).toBe(false);
     expect(await instance.readDocumentSystemReceipt('memory', 'daily-notes')).toEqual(receipt);
+  });
+
+  test('persists Agent Turn causation in document operation metadata', async () => {
+    const instance = await service();
+    const causation = {
+      threadId: uuidV7(),
+      turnId: uuidV7(),
+      itemId: uuidV7(),
+    };
+
+    await instance.handle('create_node', {
+      parentId: instance.getProjection().rootId,
+      index: null,
+      text: 'Causation audit',
+    }, {
+      origin: 'agent',
+      tool: 'node_create',
+      causation,
+    });
+
+    const history = await instance.operationHistory({ action: 'list', origin: 'agent' });
+    expect(history.items?.[0]).toMatchObject({ tool: 'node_create', causation });
   });
 
   test('ensures deterministic protected tags and permits only ordinary tag application', async () => {

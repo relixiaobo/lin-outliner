@@ -1,6 +1,3 @@
-import type { AgentRenderProjection } from './agentRenderProjection';
-import type { AgentUserQuestionPendingView } from './agentTypes';
-import type { AgentPrincipal } from './agentEventLog';
 import type { CaptureNodeMetadata } from './launcher/sources';
 
 export type {
@@ -224,19 +221,7 @@ export interface TextMark {
 
 export type ReferenceTarget =
   | { kind: 'node'; nodeId: NodeId }
-  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' }
-  | {
-      kind: 'chat-source';
-      stream: 'conversation' | 'run';
-      streamId: string;
-      range: {
-        fromSeqExclusive: number;
-        throughSeq: number;
-        throughEventId?: string | null;
-        fromCreatedAtInclusive?: number;
-        throughCreatedAtExclusive?: number;
-      };
-    };
+  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
 
 export interface InlineRef {
   offset: number;
@@ -719,30 +704,6 @@ export interface SearchHit {
   score: number;
 }
 
-export interface AgentConversation {
-  conversationId: string;
-  renderProjection: AgentRenderProjection;
-  pendingUserQuestion?: AgentUserQuestionPendingView | null;
-}
-
-export interface AgentCreateConversationOptions {
-  title?: string;
-}
-
-export interface AgentConversationListMeta {
-  id: string;
-  title: string | null;
-  members: AgentPrincipal[];
-  goal?: string;
-  settings?: Record<string, unknown>;
-  createdAt: number;
-  updatedAt: number;
-  messageCount: number;
-  lastMessageSnippet?: string | null;
-  lastMessageAt?: number | null;
-  unreadCount?: number;
-}
-
 /**
  * The reasoning ladder, lowest → highest. The single ordered source for effort
  * option ordering (renderer) and nearest-supported-level coercion (runtime), so the
@@ -754,31 +715,21 @@ export type AgentReasoningLevelLabels = Partial<Record<AgentReasoningLevel, stri
 export type AgentCacheRetention = 'none' | 'short' | 'long';
 
 export interface AgentRuntimeSettings {
-  automaticSkillsEnabled: boolean;
-  slashSkillsEnabled: boolean;
-  compactEnabled: boolean;
-  dreamSchedule?: string;
   additionalSkillDirectories: string[];
   providerTimeoutMs: number | null;
   providerMaxRetries: number | null;
   providerMaxRetryDelayMs: number | null;
   providerCacheRetention: AgentCacheRetention;
   disabledSkills?: string[];
-  disabledAgents?: string[];
 }
 
 export interface AgentRuntimeSettingsInput {
-  automaticSkillsEnabled?: boolean;
-  slashSkillsEnabled?: boolean;
-  compactEnabled?: boolean;
-  dreamSchedule?: string;
   additionalSkillDirectories?: string[];
   providerTimeoutMs?: number | null;
   providerMaxRetries?: number | null;
   providerMaxRetryDelayMs?: number | null;
   providerCacheRetention?: AgentCacheRetention;
   disabledSkills?: string[];
-  disabledAgents?: string[];
 }
 
 export interface AgentImageGenerationSettings {
@@ -792,23 +743,6 @@ export interface AgentImageGenerationSettings {
 export interface AgentImageGenerationSettingsInput {
   /** Provider-qualified model id, or null/empty to use Auto. */
   defaultModel?: string | null;
-}
-
-export interface AgentDefinition {
-  name: string;
-  displayName?: string;
-  source: 'built-in' | 'user' | 'project';
-  rootDir: string;
-  agentFile: string;
-  description: string;
-  tools?: string[];
-  disallowedTools?: string[];
-  model?: string;
-  effort?: AgentReasoningLevel | string;
-  maxTurns?: number;
-  skills?: string[];
-  background?: boolean;
-  body: string;
 }
 
 export type SkillSourceKind = 'built-in' | 'managed' | 'user' | 'project';
@@ -1199,25 +1133,12 @@ export function inlineRefNodeId(ref: InlineRef): NodeId | null {
 export function referenceTargetsEqual(left: ReferenceTarget, right: ReferenceTarget): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === 'node') return left.nodeId === (right as Extract<ReferenceTarget, { kind: 'node' }>).nodeId;
-  if (left.kind === 'chat-source') {
-    const chatRight = right as Extract<ReferenceTarget, { kind: 'chat-source' }>;
-    return left.stream === chatRight.stream
-      && left.streamId === chatRight.streamId
-      && left.range.fromSeqExclusive === chatRight.range.fromSeqExclusive
-      && left.range.throughSeq === chatRight.range.throughSeq
-      && (left.range.throughEventId ?? null) === (chatRight.range.throughEventId ?? null)
-      && (left.range.fromCreatedAtInclusive ?? null) === (chatRight.range.fromCreatedAtInclusive ?? null)
-      && (left.range.throughCreatedAtExclusive ?? null) === (chatRight.range.throughCreatedAtExclusive ?? null);
-  }
   const localRight = right as Extract<ReferenceTarget, { kind: 'local-file' }>;
   return left.path === localRight.path && left.entryKind === localRight.entryKind;
 }
 
 export function referenceTargetSortKey(target: ReferenceTarget): string {
   if (target.kind === 'node') return `node:${target.nodeId}`;
-  if (target.kind === 'chat-source') {
-    return `chat:${target.stream}:${target.streamId}:${target.range.fromSeqExclusive}:${target.range.throughSeq}:${target.range.throughEventId ?? ''}:${target.range.fromCreatedAtInclusive ?? ''}:${target.range.throughCreatedAtExclusive ?? ''}`;
-  }
   return `file:${target.entryKind}:${target.path}`;
 }
 

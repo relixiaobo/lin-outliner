@@ -4,7 +4,6 @@ import {
   ids,
   nodeById,
   openMockedApp,
-  openMockRunDetailsFromAssistantDetailsButton,
   row,
   rowEditor,
   trailingEditor,
@@ -213,7 +212,7 @@ test.describe('outliner navigation and page title parity', () => {
     }));
     const savedScrollTop = await panel.evaluate((element) => element.scrollTop);
     await expect.poll(async () => page.evaluate((rootId) => {
-      const raw = window.localStorage.getItem('lin-outliner:workspace-layout:v4');
+      const raw = window.localStorage.getItem('lin-outliner:workspace-layout:v5');
       if (!raw) return 0;
       const layout = JSON.parse(raw) as {
         activePanelId?: string;
@@ -310,36 +309,6 @@ test.describe('outliner navigation and page title parity', () => {
       month: Number(todayLabel.slice(5, 7)),
       day: Number(todayLabel.slice(8, 10)),
     });
-  });
-
-  test('page-history navigation keeps the outliner pane context when a debug pane shares the canvas', async ({ page }) => {
-    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
-    await openMockRunDetailsFromAssistantDetailsButton(page);
-    // The debug surface is now a pane in the canvas alongside the outliner pane
-    // (there is no tab strip). Opening it makes the debug pane active.
-    await expect(page.locator('.outline-panel-surface.is-agent-debug')).toHaveCount(1);
-    await expect(page.locator('.outline-panel-surface.active-panel')).toHaveClass(/is-agent-debug/);
-
-    // The dissolved TopBar (#57) removed the global Back/Forward chrome. The
-    // outliner pane keeps its "Previous page" back button even when an agent
-    // debug pane shares the canvas; clicking it re-activates the outliner context.
-    const back = page.getByRole('button', { name: 'Previous page' }).first();
-    await expect(back).toBeEnabled();
-    await back.click();
-
-    // Back re-activates the outliner pane and returns it to the day page. The day
-    // title humanizes the *fixed* mock date 2026-05-13 to "May 13" (only the
-    // optional Today/Yesterday prefix is date-environment-dependent, and the
-    // substring match ignores it), so asserting "May 13" both confirms the correct
-    // page and is strong enough to catch a back-nav that lands on the wrong pane.
-    await expect(page.locator('.outline-panel-surface.active-panel')).toHaveClass(/is-outliner/);
-    await expect(page.locator('.outline-panel-surface.is-outliner .panel-title-editor').first()).toContainText('May 13');
-
-    // Forward history survives the round trip; keyboard forward returns to the
-    // drilled page (the new shell exposes forward through the keyboard only).
-    await page.getByRole('button', { name: 'Collapse sidebar' }).focus();
-    await page.keyboard.press('Alt+ArrowRight');
-    await expect(page.locator('.outline-panel-surface.is-outliner .panel-title-editor').first()).toContainText('Alpha');
   });
 
   test('sticky breadcrumb absorbs the current page title while the panel scrolls', async ({ page }) => {

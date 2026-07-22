@@ -5,7 +5,6 @@ import type {
 } from './agentCapabilities';
 
 export interface AgentToolCapabilityLogInput {
-  runId?: string;
   requestId: string;
   toolCall: ToolCall;
   decision: AgentCapabilityDecision;

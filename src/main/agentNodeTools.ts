@@ -1,6 +1,5 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import path from 'node:path';
-import type { AgentRunScope } from '../core/agentEventLog';
 import type { DocumentCommand } from '../core/commands';
 import { normalizeDateFieldValue } from '../core/dateFieldValue';
 import { isInternalConfigNode } from '../core/configSchema';
@@ -152,18 +151,15 @@ import { DONE_FIELD, isSystemFieldId } from '../core/systemFields';
 export type { OutlinerToolHost } from './agentNodeToolTypes';
 
 export interface NodeToolsOptions {
-  chatSourceValidator?: ChatSourceValidator;
   localFileRoot?: string;
-  runScope?: AgentRunScope;
+  nodeScope?: NodeToolScope;
 }
 
-export type ChatSourceValidator = (
-  target: Extract<ReferenceTarget, { kind: 'chat-source' }>,
-) => Promise<ChatSourceValidationResult> | ChatSourceValidationResult;
-
-export type ChatSourceValidationResult =
-  | { ok: true }
-  | { ok: false; code?: string; error?: string; instructions?: string };
+export interface NodeToolScope {
+  readonly nodes?: readonly string[];
+  readonly writableNodes?: readonly string[];
+  readonly creatableNodeParents?: readonly string[];
+}
 
 export function createNodeTools(host: OutlinerToolHost, options: NodeToolsOptions = {}): AgentTool<any>[] {
   const agentHost = asAgentToolHost(host);
@@ -173,7 +169,7 @@ export function createNodeTools(host: OutlinerToolHost, options: NodeToolsOption
     createNodeCreateTool(agentHost, options),
     createNodeEditTool(agentHost, options),
     createNodeDeleteTool(agentHost, options),
-    ...(options.runScope ? [] : [createOutlineUndoStackTool(agentHost)]),
+    ...(options.nodeScope ? [] : [createOutlineUndoStackTool(agentHost)]),
   ];
   return tools.map((tool) => tool.name === 'outline_undo_stack' ? tool : withAgentToolTransaction(tool, agentHost));
 }
@@ -287,7 +283,7 @@ interface NodeScopeIssue {
 type NodeScopeAccess = 'read' | 'write' | 'create';
 
 function scopedNodeRoots(options: NodeToolsOptions, access: NodeScopeAccess = 'read'): string[] | null {
-  const resources = options.runScope?.resources;
+  const resources = options.nodeScope;
   const nodeIds = access === 'create'
     ? resources?.creatableNodeParents ?? resources?.writableNodes ?? resources?.nodes
     : access === 'write'
@@ -315,7 +311,7 @@ function validateNodeResourceScope(
   const roots = scopedNodeRoots(options, access);
   if (!roots) return null;
   const exactCreateParents = access === 'create'
-    && options.runScope?.resources?.creatableNodeParents !== undefined;
+    && options.nodeScope?.creatableNodeParents !== undefined;
   const outside = nodeIds.find((nodeId) => exactCreateParents
     ? !roots.includes(nodeId)
     : !nodeIsInsideResourceScope(index, nodeId, roots));
@@ -329,8 +325,8 @@ function nodeIsInsideResourceScope(index: ProjectionIndex, nodeId: string, roots
 function nodeScopeIssueDetails(issue: NodeScopeIssue): { code: string; error: string; instructions: string } {
   return {
     code: 'outside_scope',
-    error: issue.error ?? `Node is outside this run's confirmed resource scope: ${issue.nodeId}`,
-    instructions: 'Stop and ask for an Issue scope change or a new authorized Agent Session instead of broadening the work silently.',
+    error: issue.error ?? `Node is outside the configured Node scope: ${issue.nodeId}`,
+    instructions: 'Keep the operation inside the configured Node scope or ask the host feature to select a broader scope.',
   };
 }
 
@@ -1729,7 +1725,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
       const parentValidation = validateCreateParent(
         initialIndex,
         insertion.parentId,
-        options.runScope?.resources?.creatableNodeParents !== undefined,
+        options.nodeScope?.creatableNodeParents !== undefined,
       );
       if (parentValidation) {
         return nodeErrorResult(errorEnvelope('node_create', parentValidation.code, parentValidation.error, {
@@ -4365,26 +4361,6 @@ async function validateOutlineReferenceTargets(
   const scopeIssue = validateNodeResourceScope(options, index, nodeTargetIds);
   if (scopeIssue) return nodeScopeIssueDetails(scopeIssue);
 
-  const chatSources = targets
-    .filter((target): target is Extract<ReferenceTarget, { kind: 'chat-source' }> => target.kind === 'chat-source');
-  if (chatSources.length === 0) return null;
-  if (!options.chatSourceValidator) {
-    return {
-      code: 'invalid_chat_source',
-      error: 'Chat source references cannot be validated in this runtime.',
-      instructions: 'Retry later after the agent conversation history service is available.',
-    };
-  }
-  for (const source of chatSources) {
-    const validation = await options.chatSourceValidator(source);
-    if (!validation.ok) {
-      return {
-        code: validation.code ?? 'invalid_chat_source',
-        error: validation.error ?? `Chat source reference not found: ${source.stream}:${source.streamId}`,
-        instructions: validation.instructions ?? 'Use past_chats search/recent/read to get a current source object, then retry with that exact chat reference marker.',
-      };
-    }
-  }
   return null;
 }
 
@@ -4419,7 +4395,7 @@ function validateLocalFileReferenceMarkers(
   return {
     code: 'invalid_file_reference',
     error: `Local file reference is outside the workspace-local reference root: ${outside}`,
-    instructions: 'Attach external files through the composer, or store a reference under the Run workdir.',
+    instructions: 'Attach external files through the composer, or store a reference under the Thread workdir.',
   };
 }
 

@@ -31,7 +31,6 @@ import {
   localGatewayProviderDefinition,
   type LocalGatewayProviderDefinition,
 } from '../core/localGatewayProviders';
-import { parseDateSchedule } from '../core/dateSchedule';
 import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
 import { compareModels } from './modelRanking';
 import {
@@ -74,34 +73,12 @@ import {
 const PROVIDERS_FILE = 'agent-providers.json';
 const SECRETS_FILE = 'agent-secrets.json';
 
-// A provider config is a CONNECTION record only — credentials + endpoint. The
-// model/effort that actually runs is owned by the agent profile (user/project
-// `AgentDefinition`, or the built-in assistant's `builtInAgentProfiles` overlay
-// below), never by the provider. See `docs/spec/agent-delegation-runtime.md`.
+// A provider config is a connection record only. Thread configuration owns the
+// model and reasoning effort selected for execution.
 interface AgentProviderConfig {
   providerId: string;
   baseUrl?: string;
   enabled: boolean;
-}
-
-// Settings-owned editable profile for the built-in assistant (Neva), keyed by
-// agentId. The built-in definition is code, not a file, so the user's edits layer
-// here as an overlay on top of `createTenonAssistantAgentDefinition()` — keeping
-// `name` (the stable id and memory anchor) fixed while everything the user sees is
-// editable ([[single-agent-collapse]]). Absent fields fall back to the built-in
-// default; an empty/`inherit` model or unset effort means "use the catalog default
-// for the active provider", which the runtime coerces to the model's levels.
-export interface StoredBuiltInAgentProfile {
-  displayName?: string;
-  description?: string;
-  body?: string;
-  model?: string;
-  effort?: string;
-  maxTurns?: number;
-  tools?: string[];
-  disallowedTools?: string[];
-  skills?: string[];
-  background?: boolean;
 }
 
 interface ProviderConfigFile {
@@ -109,7 +86,6 @@ interface ProviderConfigFile {
   agent?: StoredAgentRuntimeSettings;
   imageGeneration?: StoredImageGenerationSettings;
   providers: AgentProviderConfig[];
-  builtInAgentProfiles?: Record<string, StoredBuiltInAgentProfile>;
 }
 
 type StoredAgentRuntimeSettings = Partial<AgentRuntimeSettings>;
@@ -142,19 +118,13 @@ function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
 
 const AGENT_REASONING_LEVELS = AGENT_REASONING_LADDER;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
-export const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
-  automaticSkillsEnabled: true,
-  slashSkillsEnabled: true,
-  compactEnabled: true,
-  dreamSchedule: DEFAULT_DREAM_SCHEDULE,
   additionalSkillDirectories: [],
   providerTimeoutMs: null,
   providerMaxRetries: null,
   providerMaxRetryDelayMs: 60_000,
   providerCacheRetention: 'short',
   disabledSkills: [],
-  disabledAgents: [],
 };
 
 type OpenAICompatibleApiId = CcSwitchOpenAICompatibleApiId;
@@ -247,91 +217,6 @@ export async function getProviderRuntimeConfig(
     return resolveCcSwitchRuntimeConfig(localGatewayProvider, provider);
   }
   return { ...provider };
-}
-
-/**
- * The settings-owned editable overlay for the built-in assistant (Neva). Built-in
- * definitions are code, so the user's edits (display name, persona, model/effort,
- * tools, skills, …) live here and layer over the code default. Empty when never
- * set — the runtime then falls back to the built-in default / provider catalog.
- */
-export async function getBuiltInAgentProfile(agentId: string): Promise<StoredBuiltInAgentProfile> {
-  const file = await readProviderFile();
-  const stored = file.builtInAgentProfiles?.[agentId];
-  if (!stored) return {};
-  const profile: StoredBuiltInAgentProfile = {};
-  if (typeof stored.displayName === 'string' && stored.displayName.trim()) profile.displayName = stored.displayName.trim();
-  if (typeof stored.description === 'string' && stored.description.trim()) profile.description = stored.description.trim();
-  if (typeof stored.body === 'string' && stored.body.trim()) profile.body = stored.body;
-  if (typeof stored.model === 'string' && stored.model.trim()) profile.model = stored.model.trim();
-  if (isAgentReasoningLevel(stored.effort)) profile.effort = stored.effort;
-  if (typeof stored.maxTurns === 'number' && Number.isInteger(stored.maxTurns) && stored.maxTurns > 0) profile.maxTurns = stored.maxTurns;
-  const tools = normalizeBuiltInProfileStringList(stored.tools);
-  if (tools) profile.tools = tools;
-  const disallowedTools = normalizeBuiltInProfileStringList(stored.disallowedTools);
-  if (disallowedTools) profile.disallowedTools = disallowedTools;
-  const skills = normalizeBuiltInProfileStringList(stored.skills);
-  if (skills) profile.skills = skills;
-  if (typeof stored.background === 'boolean') profile.background = stored.background;
-  return profile;
-}
-
-/**
- * Persist the built-in assistant's editable profile overlay. Each field clears when
- * empty/default (falling back to the code default); when every field clears, the
- * whole overlay entry is removed. The stable `name` is never stored here — it stays
- * the code constant so renaming Neva never orphans her memory ([[single-agent-collapse]]).
- */
-export async function setBuiltInAgentProfile(
-  agentId: string,
-  input: {
-    displayName?: string | null;
-    description?: string | null;
-    body?: string | null;
-    model?: string | null;
-    effort?: string | null;
-    maxTurns?: number | null;
-    tools?: readonly string[] | null;
-    disallowedTools?: readonly string[] | null;
-    skills?: readonly string[] | null;
-    background?: boolean | null;
-  },
-): Promise<void> {
-  const id = agentId.trim();
-  if (!id) throw new Error('agentId is required');
-  const next: StoredBuiltInAgentProfile = {};
-  const displayName = input.displayName?.trim();
-  if (displayName) next.displayName = displayName;
-  const description = input.description?.trim();
-  if (description) next.description = description;
-  if (typeof input.body === 'string' && input.body.trim()) next.body = input.body;
-  const model = input.model?.trim();
-  if (model && model !== 'inherit') next.model = model;
-  if (isAgentReasoningLevel(input.effort)) next.effort = input.effort;
-  if (typeof input.maxTurns === 'number' && Number.isInteger(input.maxTurns) && input.maxTurns > 0) next.maxTurns = input.maxTurns;
-  const tools = normalizeBuiltInProfileStringList(input.tools);
-  if (tools) next.tools = tools;
-  const disallowedTools = normalizeBuiltInProfileStringList(input.disallowedTools);
-  if (disallowedTools) next.disallowedTools = disallowedTools;
-  const skills = normalizeBuiltInProfileStringList(input.skills);
-  if (skills) next.skills = skills;
-  if (input.background === true) next.background = true;
-  const file = await readProviderFile();
-  const profiles = { ...(file.builtInAgentProfiles ?? {}) };
-  if (Object.keys(next).length === 0) delete profiles[id];
-  else profiles[id] = next;
-  file.builtInAgentProfiles = profiles;
-  await writeProviderFile(file);
-}
-
-/** Trim + drop blanks, preserving order; returns undefined for an empty result. */
-function normalizeBuiltInProfileStringList(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const list = value
-    .filter((item): item is string => typeof item === 'string')
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return list.length > 0 ? list : undefined;
 }
 
 export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInput) {
@@ -607,10 +492,6 @@ function normalizeImageGenerationSettings(input?: StoredImageGenerationSettings 
 
 function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null): AgentRuntimeSettings {
   return {
-    automaticSkillsEnabled: booleanOrDefault(input?.automaticSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.automaticSkillsEnabled),
-    slashSkillsEnabled: booleanOrDefault(input?.slashSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.slashSkillsEnabled),
-    compactEnabled: booleanOrDefault(input?.compactEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.compactEnabled),
-    dreamSchedule: normalizeDreamSchedule(input?.dreamSchedule, DEFAULT_DREAM_SCHEDULE),
     additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories),
     providerTimeoutMs: normalizeNullablePositiveInteger(input?.providerTimeoutMs, DEFAULT_AGENT_RUNTIME_SETTINGS.providerTimeoutMs),
     providerMaxRetries: normalizeNullableNonNegativeInteger(input?.providerMaxRetries, DEFAULT_AGENT_RUNTIME_SETTINGS.providerMaxRetries),
@@ -622,18 +503,7 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
       ? input.providerCacheRetention
       : DEFAULT_AGENT_RUNTIME_SETTINGS.providerCacheRetention,
     disabledSkills: normalizeStringList(input?.disabledSkills),
-    disabledAgents: normalizeStringList(input?.disabledAgents),
   };
-}
-
-function booleanOrDefault(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function normalizeDreamSchedule(value: unknown, fallback: string): string {
-  if (typeof value !== 'string') return fallback;
-  const trimmed = value.trim();
-  return trimmed && parseDateSchedule(trimmed) ? trimmed : fallback;
 }
 
 function normalizeStringList(value: unknown): string[] {

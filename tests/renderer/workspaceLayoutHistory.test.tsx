@@ -197,48 +197,13 @@ describe('useWorkspaceLayout history focus', () => {
     expect(h.clearFocusAndSelectionCalls).toBe(0);
   });
 
-  test('opening a different run detail reuses the existing run details pane', () => {
-    const h = renderLayout({
-      activePanelId: 'debug-panel',
-      panels: [
-        {
-          id: 'panel-test',
-          type: 'workspace',
-          size: 1,
-          view: { kind: 'outliner', rootId: 'today' },
-          backStack: [],
-          forwardStack: [],
-        },
-        {
-          id: 'debug-panel',
-          type: 'agent-debug',
-          size: 1,
-          conversationId: 'conversation-a',
-          runId: 'run-a',
-        },
-      ],
-    });
-
-    act(() => {
-      h.api.openAgentRunDetailsPanel('conversation-a', 'run-b');
-    });
-
-    expect(h.api.panels).toHaveLength(2);
-    expect(h.api.activePanelId).toBe('debug-panel');
-    expect(h.api.panels[1]).toMatchObject({
-      id: 'debug-panel',
-      type: 'agent-debug',
-      conversationId: 'conversation-a',
-      runId: 'run-b',
-    });
-  });
 });
 
 function renderLayout(layout: WorkspaceLayout) {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   const storage = new MemoryStorage();
-  storage.setItem('lin-outliner:workspace-layout:v4', JSON.stringify({
-    version: 3,
+  storage.setItem('lin-outliner:workspace-layout:v5', JSON.stringify({
+    version: 5,
     localDate: todayIsoLocalDate(),
     ...layout,
   }));

@@ -35,6 +35,7 @@ export type ModelRuntimeToolFactory = (
 export interface PiTurnExecutorOptions {
   readonly createTools?: ModelRuntimeToolFactory;
   readonly systemPrompt?: (context: TurnExecutionContext) => string | Promise<string>;
+  readonly skillListing?: (context: TurnExecutionContext) => string | null | Promise<string | null>;
 }
 
 export class PiTurnExecutor implements TurnExecutor {
@@ -51,7 +52,8 @@ export class PiTurnExecutor implements TurnExecutor {
       () => resolveProviderModel(provider),
     );
     const tools = [...(await this.options.createTools?.(context) ?? [])];
-    const systemPrompt = await this.options.systemPrompt?.(context) ?? defaultSystemPrompt(context);
+    const skillListing = await this.options.skillListing?.(context) ?? null;
+    const systemPrompt = await this.options.systemPrompt?.(context) ?? defaultSystemPrompt(context, skillListing);
     const normalizer = new PiEventNormalizer(context);
     const agent = new Agent({
       initialState: {
@@ -452,7 +454,7 @@ function collaborationStatus(value: unknown, isError: boolean): 'pendingInit' | 
   return 'completed';
 }
 
-function defaultSystemPrompt(context: TurnExecutionContext): string {
+function defaultSystemPrompt(context: TurnExecutionContext, skillListing: string | null): string {
   return [
     'You are Tenon, an agent working directly in the user\'s Outliner and local workspace.',
     'Use Thread, Turn, Item, Goal, Subagent, Memory, and Automation as the canonical product vocabulary.',
@@ -460,6 +462,7 @@ function defaultSystemPrompt(context: TurnExecutionContext): string {
     'Do not invent approval, sandbox, permission-profile, or legacy agent entities.',
     ...context.configuration.developerInstructions,
     ...context.systemContext,
+    skillListing,
   ].filter(Boolean).join('\n\n');
 }
 

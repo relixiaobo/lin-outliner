@@ -137,11 +137,3 @@
   margin: 0 auto;
   padding: 0 var(--panel-content-x);
 }
-
-.outline-panel-surface.is-agent-debug {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg-content);
-}

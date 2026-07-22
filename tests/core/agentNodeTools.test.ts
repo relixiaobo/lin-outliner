@@ -13,7 +13,7 @@ import { validateSearchNodes } from '../../src/main/agentNodeToolSearch';
 import { DocumentReadModel } from '../../src/main/documentReadModel';
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
-import { formatChatSourceReferenceMarker, formatFileReferenceMarker, formatNodeReferenceMarker, splitChatSourceReferenceMarkers, splitFileReferenceMarkers } from '../../src/core/referenceMarkup';
+import { formatFileReferenceMarker, formatNodeReferenceMarker, splitFileReferenceMarkers } from '../../src/core/referenceMarkup';
 import { richTextToMarkdownReferenceMarkup } from '../../src/core/markdownRichText';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
@@ -228,14 +228,6 @@ function parseVisibleToolResult<TData>(contentText: string): TData {
 }
 
 describe('agent node tools', () => {
-  test('omits the global undo stack from scoped Runs', () => {
-    const scopedTools = createNodeTools(hostFor(Core.new()), {
-      runScope: { resources: { nodes: [] } },
-    });
-
-    expect(scopedTools.some((tool) => tool.name === 'outline_undo_stack')).toBe(false);
-    expect(createNodeTools(hostFor(Core.new())).some((tool) => tool.name === 'outline_undo_stack')).toBe(true);
-  });
 
   test('node tool schemas use operational descriptions for agent guidance', () => {
     const tools = createNodeTools(hostFor(Core.new()));
@@ -352,416 +344,6 @@ describe('agent node tools', () => {
     expect(projectionReads).toBe(0);
   });
 
-  test('node tools enforce run-scoped node resources for Issue Sessions', async () => {
-    const core = Core.new();
-    const today = core.projection().todayId;
-    const allowed = mustFocus(core.createNode(today, null, 'Allowed invoice'));
-    const outside = mustFocus(core.createNode(today, null, 'Outside invoice'));
-    const options = { runScope: { resources: { nodes: [allowed] } } };
-
-    const outsideRead = await executeTool(core, 'node_read', { node_id: outside }, options);
-    expect(outsideRead.ok).toBe(false);
-    expect(outsideRead.error?.code).toBe('outside_scope');
-
-    const search = await executeTool<{
-      total: number;
-      items?: Array<{ nodeId: string; title: string }>;
-    }>(core, 'node_search', {
-      outline: '- %%search%% Invoice\n  - STRING_MATCH\n    - value:: invoice',
-      limit: 10,
-    }, options);
-    expect(search.ok).toBe(true);
-    expect(search.data?.total).toBe(1);
-    expect(search.data?.items?.map((item) => item.nodeId)).toEqual([allowed]);
-
-    const blockedCreate = await executeTool(core, 'node_create', {
-      parent_id: outside,
-      outline: '- Should not be created',
-    }, options);
-    expect(blockedCreate.ok).toBe(false);
-    expect(blockedCreate.error?.code).toBe('outside_scope');
-
-    const allowedCreate = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
-      parent_id: allowed,
-      outline: '- Scoped child',
-    }, options);
-    expect(allowedCreate.ok).toBe(true);
-    expect(allowedCreate.data?.createdRootIds).toHaveLength(1);
-
-    const createdChildId = allowedCreate.data!.createdRootIds[0]!;
-    const createdRead = await executeTool(core, 'node_read', { node_id: createdChildId, depth: 0 }, options);
-    expect(createdRead.ok).toBe(true);
-
-    const blockedDefinitionCreate = await executeTool(core, 'node_create', {
-      definition: { kind: 'field', name: 'Scoped definition create' },
-    }, options);
-    expect(blockedDefinitionCreate.ok).toBe(false);
-    expect(blockedDefinitionCreate.error?.code).toBe('outside_scope');
-
-    const configOwner = mustFocus(core.createNode(today, null, 'Config owner'));
-    const configEntryId = mustFocus(core.createInlineField(configOwner, null, 'Scoped config field', 'plain'));
-    const configEntry = core.projection().nodes.find((node) => node.id === configEntryId);
-    if (configEntry?.type !== 'fieldEntry' || !configEntry.fieldDefId) throw new Error('Expected a field entry definition.');
-    const blockedConfig = await executeTool(core, 'node_edit', {
-      operation: 'configure_definition',
-      node_id: configEntry.fieldDefId,
-      definition_patch: { field_type: 'url' },
-    }, { runScope: { resources: { nodes: [configEntry.fieldDefId] } } });
-    expect(blockedConfig.ok).toBe(false);
-    expect(blockedConfig.error?.code).toBe('outside_scope');
-
-    const scopedEntryId = mustFocus(core.createInlineField(allowed, null, 'Scoped draft field', 'plain'));
-    const targetOwner = mustFocus(core.createNode(today, null, 'Target definition owner'));
-    const targetEntryId = mustFocus(core.createInlineField(targetOwner, null, 'Canonical scoped field', 'plain'));
-    const targetEntry = core.projection().nodes.find((node) => node.id === targetEntryId);
-    if (targetEntry?.type !== 'fieldEntry' || !targetEntry.fieldDefId) throw new Error('Expected a target field definition.');
-    const blockedReuse = await executeTool(core, 'node_edit', {
-      operation: 'reuse_field_definition',
-      node_id: scopedEntryId,
-      target_definition_id: targetEntry.fieldDefId,
-    }, options);
-    expect(blockedReuse.ok).toBe(false);
-    expect(blockedReuse.error?.code).toBe('outside_scope');
-
-    const sourceOwner = mustFocus(core.createNode(today, null, 'Source definition owner'));
-    const sourceEntryId = mustFocus(core.createInlineField(sourceOwner, null, 'Duplicate scoped field', 'plain'));
-    const sourceEntry = core.projection().nodes.find((node) => node.id === sourceEntryId);
-    if (sourceEntry?.type !== 'fieldEntry' || !sourceEntry.fieldDefId) throw new Error('Expected a source field definition.');
-    const blockedMerge = await executeTool(core, 'node_edit', {
-      operation: 'merge_definition',
-      node_id: targetEntry.fieldDefId,
-      merge_from_node_ids: [sourceEntry.fieldDefId],
-    }, { runScope: { resources: { nodes: [targetEntry.fieldDefId, sourceEntry.fieldDefId] } } });
-    expect(blockedMerge.ok).toBe(false);
-    expect(blockedMerge.error?.code).toBe('outside_scope');
-  });
-
-  test('treats an explicit empty node resource scope as deny-all', async () => {
-    const core = Core.new();
-    const today = core.projection().todayId;
-    const nodeId = mustFocus(core.createNode(today, null, 'Outside empty scope'));
-    const options = { runScope: { resources: { nodes: [] as string[] } } };
-
-    const read = await executeTool(core, 'node_read', { node_id: nodeId }, options);
-    expect(read.ok).toBe(false);
-    expect(read.error?.code).toBe('outside_scope');
-
-    const search = await executeTool<{ total: number }>(core, 'node_search', {
-      outline: '- %%search%% Outside\n  - STRING_MATCH\n    - value:: Outside',
-      limit: 10,
-    }, options);
-    expect(search.ok).toBe(true);
-    expect(search.data?.total).toBe(0);
-  });
-
-  test('keeps Session input nodes read-only while allowing confirmed output writes', async () => {
-    const core = Core.new();
-    const today = core.projection().todayId;
-    const inputNode = mustFocus(core.createNode(today, null, 'Read-only input'));
-    const outputNode = mustFocus(core.createNode(today, null, 'Writable output'));
-    const options = {
-      runScope: {
-        resources: {
-          nodes: [inputNode, outputNode],
-          writableNodes: [outputNode],
-        },
-      },
-    };
-
-    expect((await executeTool(core, 'node_read', { node_id: inputNode }, options)).ok).toBe(true);
-
-    const blockedInputWrite = await executeTool(core, 'node_create', {
-      parent_id: inputNode,
-      outline: '- Must stay blocked',
-    }, options);
-    expect(blockedInputWrite.ok).toBe(false);
-    expect(blockedInputWrite.error?.code).toBe('outside_scope');
-
-    const allowedOutputWrite = await executeTool(core, 'node_create', {
-      parent_id: outputNode,
-      outline: '- Confirmed output child',
-    }, options);
-    expect(allowedOutputWrite.ok).toBe(true);
-  });
-
-  test('enforces create-only Session output without widening existing-node or Schema writes', async () => {
-    const core = Core.new();
-    const today = core.projection().todayId;
-    const outputParent = mustFocus(core.createNode(today, null, 'Create-only output'));
-    const existingChild = mustFocus(core.createNode(outputParent, null, 'Existing child'));
-    const existingTagId = mustFocus(core.createTag('existing-tag'));
-    const seed = mustFocus(core.createNode(today, null, 'Field seed'));
-    const existingFieldEntryId = mustFocus(core.createInlineField(seed, null, 'Existing field', 'plain'));
-    const existingFieldDefId = core.state().nodes[existingFieldEntryId]!.fieldDefId!;
-    const optionEntryId = mustFocus(core.createInlineField(seed, null, 'Existing option', 'options'));
-    const optionFieldDefId = core.state().nodes[optionEntryId]!.fieldDefId!;
-    core.registerCollectedOption(optionFieldDefId, 'Known');
-    const options = {
-      runScope: {
-        resources: {
-          nodes: [outputParent],
-          writableNodes: [] as string[],
-          creatableNodeParents: [outputParent],
-        },
-      },
-    };
-
-    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
-      parent_id: outputParent,
-      outline: '- Allowed child #existing-tag\n  - Existing field:: value\n  - Existing option:: Known',
-    }, options);
-    expect(created.ok).toBe(true);
-    expect(created.data?.createdRootIds).toHaveLength(1);
-    const createdNode = core.state().nodes[created.data!.createdRootIds[0]!]!;
-    expect(createdNode.tags).toContain(existingTagId);
-    expect(fieldEntryByName(core, createdNode.id, 'Existing field')).toBeTruthy();
-    expect(fieldEntryByName(core, createdNode.id, 'Existing option')).toBeTruthy();
-
-    const savedSearch = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
-      parent_id: outputParent,
-      outline: '- %%search%% Scoped search\n  - STRING_MATCH\n    - value:: needle',
-    }, options);
-    expect(savedSearch.ok).toBe(true);
-    expect(core.state().nodes[savedSearch.data!.createdRootIds[0]!]!.type).toBe('search');
-
-    const blockedNestedCreate = await executeTool(core, 'node_create', {
-      parent_id: existingChild,
-      outline: '- Must not be nested under an existing child',
-    }, options);
-    expect(blockedNestedCreate.error?.code).toBe('outside_scope');
-
-    const blockedEdit = await executeTool(core, 'node_edit', {
-      operation: 'replace_outline',
-      node_id: outputParent,
-      old_string: '- Create-only output',
-      new_string: '- Mutated output',
-    }, options);
-    expect(blockedEdit.error?.code).toBe('outside_scope');
-    const blockedDelete = await executeTool(core, 'node_delete', {
-      node_id: outputParent,
-    }, options);
-    expect(blockedDelete.error?.code).toBe('outside_scope');
-
-    const childCountBefore = core.state().nodes[outputParent]!.children.length;
-    const blockedTopLevelField = await executeTool(core, 'node_create', {
-      parent_id: outputParent,
-      outline: '- Existing field:: parent mutation\n- Must not exist',
-    }, options);
-    expect(blockedTopLevelField.error?.code).toBe('outside_scope');
-    expect(core.state().nodes[outputParent]!.children).toHaveLength(childCountBefore);
-
-    for (const outline of [
-      '- Missing tag #new-session-tag',
-      '- Missing field\n  - New session field:: value',
-      '- Missing option\n  - Existing option:: New option',
-    ]) {
-      const blocked = await executeTool(core, 'node_create', {
-        parent_id: outputParent,
-        outline,
-      }, options);
-      expect(blocked.error?.code).toBe('outside_scope');
-      expect(core.state().nodes[outputParent]!.children).toHaveLength(childCountBefore);
-    }
-    expect(core.state().nodes[existingFieldDefId]).toBeDefined();
-    expect(core.state().nodes[optionFieldDefId]!.children.some((childId) => (
-      core.state().nodes[childId]?.content.text === 'New option'
-    ))).toBe(false);
-  });
-
-  test('rejects inactive create parents and trashed tag definitions before mutation', async () => {
-    const core = Core.new();
-    const today = core.projection().todayId;
-    const trashedParent = mustFocus(core.createNode(today, null, 'Trashed output parent'));
-    core.trashNode(trashedParent);
-    const trashedParentResult = await executeTool(core, 'node_create', {
-      parent_id: trashedParent,
-      outline: '- Must not be hidden in Trash',
-    }, {
-      runScope: {
-        resources: {
-          nodes: [trashedParent],
-          writableNodes: [] as string[],
-          creatableNodeParents: [trashedParent],
-        },
-      },
-    });
-    expect(trashedParentResult.error?.code).toBe('node_in_trash');
-    expect(core.state().nodes[trashedParent]!.children).toEqual([]);
-
-    const activeParent = mustFocus(core.createNode(today, null, 'Active output parent'));
-    const trashedTag = mustFocus(core.createTag('trashed-session-tag'));
-    core.trashNode(trashedTag);
-    const childCountBefore = core.state().nodes[activeParent]!.children.length;
-    const trashedTagResult = await executeTool(core, 'node_create', {
-      parent_id: activeParent,
-      outline: '- Must not partially persist #trashed-session-tag',
-    }, {
-      runScope: {
-        resources: {
-          nodes: [activeParent],
-          writableNodes: [] as string[],
-          creatableNodeParents: [activeParent],
-        },
-      },
-    });
-    expect(trashedTagResult.error?.code).toBe('outside_scope');
-    expect(core.state().nodes[activeParent]!.children).toHaveLength(childCountBefore);
-
-    const lockedDay = mustFocus(core.ensureDateNode(2035, 4, 6));
-    expect(core.state().nodes[lockedDay]!.locked).toBe(true);
-    const lockedDayResult = await executeTool(core, 'node_create', {
-      parent_id: lockedDay,
-      outline: '- Allowed Daily Note child',
-    }, {
-      runScope: {
-        resources: {
-          nodes: [lockedDay],
-          writableNodes: [] as string[],
-          creatableNodeParents: [lockedDay],
-        },
-      },
-    });
-    expect(lockedDayResult.ok).toBe(true);
-  });
-
-  test('allows implicit definitions only when the Run explicitly grants Schema writes', async () => {
-    const core = Core.new();
-    const outputParent = mustFocus(core.createNode(core.projection().todayId, null, 'Schema-authorized output'));
-    const result = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
-      parent_id: outputParent,
-      outline: '- Authorized #new-authorized-tag\n  - New authorized field:: value',
-    }, {
-      runScope: {
-        resources: {
-          nodes: [outputParent, SCHEMA_ID],
-          writableNodes: [SCHEMA_ID],
-          creatableNodeParents: [outputParent],
-        },
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.data?.createdRootIds).toHaveLength(1);
-    expect(Object.values(core.state().nodes)).toContainEqual(expect.objectContaining({
-      type: 'tagDef',
-      content: expect.objectContaining({ text: 'new-authorized-tag' }),
-    }));
-    expect(Object.values(core.state().nodes)).toContainEqual(expect.objectContaining({
-      type: 'fieldDef',
-      content: expect.objectContaining({ text: 'New authorized field' }),
-    }));
-  });
-
-  test('keeps readable definition resources immutable when writable scope is empty', async () => {
-    const core = Core.new();
-    const today = core.projection().todayId;
-    const targetOwner = mustFocus(core.createNode(today, null, 'Target definition owner'));
-    const sourceOwner = mustFocus(core.createNode(today, null, 'Source definition owner'));
-    const draftOwner = mustFocus(core.createNode(today, null, 'Draft definition owner'));
-    const targetEntryId = mustFocus(core.createInlineField(targetOwner, null, 'Canonical field', 'plain'));
-    const sourceEntryId = mustFocus(core.createInlineField(sourceOwner, null, 'Duplicate field', 'plain'));
-    const draftEntryId = mustFocus(core.createInlineField(draftOwner, null, 'Draft field', 'plain'));
-    const targetDefId = core.state().nodes[targetEntryId]!.fieldDefId!;
-    const sourceDefId = core.state().nodes[sourceEntryId]!.fieldDefId!;
-    const draftDefId = core.state().nodes[draftEntryId]!.fieldDefId!;
-    const options = {
-      runScope: {
-        resources: {
-          nodes: [SCHEMA_ID, targetOwner, sourceOwner, draftOwner],
-          writableNodes: [] as string[],
-        },
-      },
-    };
-
-    expect((await executeTool(core, 'node_read', { node_id: targetDefId, depth: 0 }, options)).ok).toBe(true);
-    const revisionBefore = core.projection().revision;
-
-    const blockedConfig = await executeTool(core, 'node_edit', {
-      operation: 'configure_definition',
-      node_id: targetDefId,
-      definition_patch: { field_type: 'url' },
-    }, options);
-    expect(blockedConfig.ok).toBe(false);
-    expect(blockedConfig.error?.code).toBe('outside_scope');
-    expect(fieldTypeOf(core, targetEntryId)).toBe('plain');
-
-    const blockedReuse = await executeTool(core, 'node_edit', {
-      operation: 'reuse_field_definition',
-      node_id: draftEntryId,
-      target_definition_id: targetDefId,
-    }, options);
-    expect(blockedReuse.ok).toBe(false);
-    expect(blockedReuse.error?.code).toBe('outside_scope');
-    expect(core.state().nodes[draftEntryId]!.fieldDefId).toBe(draftDefId);
-
-    const blockedMerge = await executeTool(core, 'node_edit', {
-      operation: 'merge_definition',
-      node_id: targetDefId,
-      merge_from_node_ids: [sourceDefId],
-    }, options);
-    expect(blockedMerge.ok).toBe(false);
-    expect(blockedMerge.error?.code).toBe('outside_scope');
-    expect(core.state().nodes[sourceDefId]).toBeDefined();
-    expect(core.state().nodes[sourceEntryId]!.fieldDefId).toBe(sourceDefId);
-
-    const definitionName = 'Must not be created';
-    const blockedCreate = await executeTool(core, 'node_create', {
-      definition: { kind: 'field', name: definitionName },
-    }, options);
-    expect(blockedCreate.ok).toBe(false);
-    expect(blockedCreate.error?.code).toBe('outside_scope');
-    expect(Object.values(core.state().nodes).some((node) => (
-      node.type === 'fieldDef' && node.content.text === definitionName
-    ))).toBe(false);
-    expect(core.projection().revision).toBe(revisionBefore);
-  });
-
-  test('keeps definition reference targets read-only while mutations use writable scope', async () => {
-    const core = Core.new();
-    const fieldDefId = mustFocus(core.createFieldDefinition('Linked field', 'plain'));
-    const sourceTagId = mustFocus(core.createTag('Allowed source tag'));
-    const configure = await executeTool(core, 'node_edit', {
-      operation: 'configure_definition',
-      node_id: fieldDefId,
-      definition_patch: {
-        field_type: 'options_from_supertag',
-        source_supertag: sourceTagId,
-      },
-    }, {
-      runScope: {
-        resources: {
-          nodes: [fieldDefId, sourceTagId],
-          writableNodes: [fieldDefId],
-        },
-      },
-    });
-    expect(configure.ok).toBe(true);
-    const configured = projectFieldConfig(
-      new Map(Object.values(core.state().nodes).map((node) => [node.id, node])),
-      core.state().nodes[fieldDefId]!,
-    );
-    expect(configured).toMatchObject({ fieldType: 'options_from_supertag', sourceSupertag: sourceTagId });
-
-    const today = core.projection().todayId;
-    const owner = mustFocus(core.createNode(today, null, 'Scoped reuse owner'));
-    const draftEntryId = mustFocus(core.createInlineField(owner, null, 'Draft reusable field', 'plain'));
-    const previousDefId = core.state().nodes[draftEntryId]!.fieldDefId!;
-    const targetDefId = mustFocus(core.createFieldDefinition('Canonical reusable field', 'plain'));
-    const reuse = await executeTool(core, 'node_edit', {
-      operation: 'reuse_field_definition',
-      node_id: draftEntryId,
-      target_definition_id: targetDefId,
-    }, {
-      runScope: {
-        resources: {
-          nodes: [draftEntryId, previousDefId, targetDefId],
-          writableNodes: [draftEntryId, previousDefId],
-        },
-      },
-    });
-    expect(reuse.ok).toBe(true);
-    expect(core.state().nodes[draftEntryId]!.fieldDefId).toBe(targetDefId);
-  });
 
   test('node_create creates outline trees with tags fields descriptions and completion', async () => {
     const core = Core.new();
@@ -1748,72 +1330,6 @@ describe('agent node tools', () => {
     }
   });
 
-  test('node_create persists validated chat-source inline refs', async () => {
-    const core = Core.new();
-    const today = core.projection().todayId;
-    const target = {
-      kind: 'chat-source',
-      stream: 'conversation',
-      streamId: 'lin-agent-1',
-      range: { fromSeqExclusive: 4, throughSeq: 8, throughEventId: 'event-8' },
-    } as const;
-    const marker = formatChatSourceReferenceMarker('source chat', target);
-
-    const result = await executeRawTool<{ createdRootIds: string[] }>(core, 'node_create', {
-      parent_id: today,
-      outline: `- Memory episode ${marker}`,
-    }, {
-      chatSourceValidator: (source) => source.streamId === target.streamId ? { ok: true } : { ok: false },
-    });
-
-    expect(result.details.ok).toBe(true);
-    const nodeId = result.details.data!.createdRootIds[0]!;
-    const node = core.state().nodes[nodeId]!;
-    expect(node.content.text).toBe('Memory episode ');
-    expect(node.content.inlineRefs).toEqual([{
-      offset: 'Memory episode '.length,
-      target,
-      displayName: 'source chat',
-    }]);
-
-    const read = await executeRawTool<{ items: Array<{ outline?: string; title: string }> }>(core, 'node_read', {
-      node_id: nodeId,
-      depth: 0,
-    });
-    expect(read.details.data!.items[0]!.title).toBe(`Memory episode ${marker}`);
-    expect(read.details.data!.items[0]!.outline).toBe(`- Memory episode ${marker}`);
-    expect(splitChatSourceReferenceMarkers(read.details.data!.items[0]!.title)[1]).toMatchObject({
-      type: 'chat',
-      target,
-    });
-  });
-
-  test('node_create rejects fabricated chat-source inline refs before mutation', async () => {
-    const core = Core.new();
-    const today = core.projection().todayId;
-    const marker = formatChatSourceReferenceMarker('bad source', {
-      kind: 'chat-source',
-      stream: 'conversation',
-      streamId: 'missing-conversation',
-      range: { fromSeqExclusive: 1, throughSeq: 2, throughEventId: 'event-2' },
-    });
-
-    const result = await executeRawTool(core, 'node_create', {
-      parent_id: today,
-      outline: `- Memory episode ${marker}`,
-    }, {
-      chatSourceValidator: () => ({
-        ok: false,
-        code: 'invalid_chat_source',
-        error: 'No source stream was found.',
-      }),
-    });
-
-    expect(result.details.ok).toBe(false);
-    expect(result.details.error?.code).toBe('invalid_chat_source');
-    expect(core.state().nodes[today]!.children).toHaveLength(0);
-  });
-
   test('node_create preserves unchecked checkbox markers', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -2457,12 +1973,7 @@ describe('agent node tools', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const root = mustFocus(core.createNode(today, null, 'Task'));
-    const staleMarker = formatChatSourceReferenceMarker('stale', {
-      kind: 'chat-source',
-      stream: 'conversation',
-      streamId: 'deleted-conversation',
-      range: { fromSeqExclusive: 1, throughSeq: 2, throughEventId: 'event-2' },
-    });
+    const staleMarker = '[[unknown:stale-marker]]';
 
     const envelope = await executeTool<{ status: 'updated' | 'unchanged' }>(core, 'node_edit', {
       node_id: root,
@@ -3576,7 +3087,7 @@ describe('agent node tools', () => {
         { name: 'beta', query: '- STRING_MATCH\n  - value:: Beta' },
         { name: 'author_field', query: `- FIELD_IS_SET\n  - field:: ${authorField}` },
       ],
-    }, { runScope: { resources: { nodes: [alpha] } } }, {
+    }, undefined, {
       recordNodeAccess: (nodeIds, source) => recorded.push({ nodeIds: [...nodeIds], source }),
       getTextSearchIndex: () => {
         searchIndexReads += 1;
@@ -3592,12 +3103,12 @@ describe('agent node tools', () => {
     expect(result.details.ok).toBe(true);
     expect(result.details.data!.results.map((item) => ({ name: item.name, total: item.total }))).toEqual([
       { name: 'alpha', total: 1 },
-      { name: 'beta', total: 0 },
+      { name: 'beta', total: 1 },
       { name: 'author_field', total: 1 },
     ]);
     expect(result.details.data!.results.every((item) => item.query.kind === 'group')).toBe(true);
     expect(result.details.data!.results.every((item) => item.durationMs >= 0)).toBe(true);
-    expect(visible).toEqual({ ok: true, data: { counts: { alpha: 1, beta: 0, author_field: 1 } } });
+    expect(visible).toEqual({ ok: true, data: { counts: { alpha: 1, beta: 1, author_field: 1 } } });
     expect(visible.instructions).toBeUndefined();
     expect(searchIndexReads).toBe(1);
     expect(recorded).toEqual([]);

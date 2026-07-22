@@ -82,6 +82,7 @@
   gap: var(--space-3);
   background: transparent;
   color: var(--text-strong);
+  cursor: default;
   padding: var(--space-3) var(--space-5);
   text-align: left;
 }

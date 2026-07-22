@@ -2,9 +2,9 @@ import path from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import {
-  agentToolActionKindProfile,
-  isReadOnlyActionKind,
-} from '../core/agentActionCatalog';
+  isReadOnlyModelToolActionKind,
+  modelToolActionKinds,
+} from '../core/agent/tools';
 import {
   matchingBlockForDescriptor,
   parseAgentCapabilitySettings,
@@ -60,21 +60,6 @@ export interface AgentCapabilityEvaluationInput {
   args: unknown;
   policy: AgentCapabilityPolicyInput;
 }
-
-const TOOL_ALIASES = new Map<string, string>([
-  ['shell', 'bash'],
-  ['read', 'file_read'],
-  ['glob', 'file_glob'],
-  ['grep', 'file_grep'],
-  ['edit', 'file_edit'],
-  ['write', 'file_write'],
-  ['delete', 'file_delete'],
-  ['webfetch', 'web_fetch'],
-  ['websearch', 'web_search'],
-  ['generateimage', 'generate_image'],
-  ['pastchats', 'past_chats'],
-  ['askuserquestion', 'ask_user_question'],
-]);
 
 export function createAgentCapabilityPolicy(input: AgentCapabilityPolicyInput = {}): AgentCapabilityPolicy {
   const workspaceRoot = canonicalPathPreservingSuffix(input.workspaceRoot ?? process.cwd());
@@ -136,8 +121,7 @@ function descriptorForKnownTool(toolName: string, args: unknown): ToolActionDesc
   if (toolName === 'web_search') return simpleDescriptor(toolName, args, 'web.search', 'web search', 'Search public web information.', 'external_system');
   if (toolName === 'web_fetch') return simpleDescriptor(toolName, args, 'web.fetch', 'web fetch', 'Fetch an external web resource.', 'external_system');
   if (toolName === 'generate_image') return simpleDescriptor(toolName, args, 'agent.image.generate', 'image generation', 'Generate an image with an enabled provider.', 'external_system');
-  if (toolName === 'past_chats') return simpleDescriptor(toolName, args, 'agent.memory.recall', 'past chat recall', 'Read local conversation history.');
-  if (toolName === 'ask_user_question') return simpleDescriptor(toolName, args, 'agent.user_question.ask', 'user question', 'Ask the user for required product input.');
+  if (toolName === 'request_user_input') return simpleDescriptor(toolName, args, 'agent.user_input.request', 'user input', 'Request missing product input.');
   if (toolName === 'node_read' || toolName === 'node_search') return simpleDescriptor(toolName, args, 'outline.read', 'outline read', 'Read local outline content.', 'local_system');
   if (toolName === 'node_create' || toolName === 'node_edit') return simpleDescriptor(toolName, args, 'outline.edit', 'outline edit', 'Change local outline content.', 'local_system');
   if (toolName === 'node_delete') return simpleDescriptor(toolName, args, 'outline.delete', 'outline delete', 'Delete local outline content.', 'local_system');
@@ -147,8 +131,8 @@ function descriptorForKnownTool(toolName: string, args: unknown): ToolActionDesc
   }
   if (toolName === 'bash_stop') return simpleDescriptor(toolName, args, 'shell.stop', 'process stop', 'Stop an agent-launched background process.');
   if (toolName === 'skill') return simpleDescriptor(toolName, args, 'agent.skill.invoke', 'skill invocation', 'Invoke installed skill instructions.');
-  const issueAction = firstActionKindForTool(toolName, args, null);
-  if (issueAction) return simpleDescriptor(toolName, args, issueAction, issueAction, `Run ${issueAction}.`);
+  const catalogAction = firstActionKindForTool(toolName, args, null);
+  if (catalogAction) return simpleDescriptor(toolName, args, catalogAction, catalogAction, `Execute ${catalogAction}.`);
   return null;
 }
 
@@ -276,7 +260,7 @@ function firstActionKindForTool(
   args: unknown,
   fallback: AgentToolActionKind | null,
 ): AgentToolActionKind | null {
-  return agentToolActionKindProfile(toolName, args)?.[0] ?? fallback;
+  return modelToolActionKinds(toolName, args)?.[0] ?? fallback;
 }
 
 function fileActionKind(
@@ -328,13 +312,12 @@ function unavailable(
 
 function classifyToolAccess(toolName: string, args?: unknown): AgentCapabilityAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'bash_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'generate_image') return 'control';
-  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
-  if (toolName === 'outline_undo_stack') {
-    return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
-  }
-  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search') return 'read';
-  return 'unknown';
+  const actionKinds = modelToolActionKinds(toolName, args);
+  if (!actionKinds || actionKinds.length === 0) return 'unknown';
+  if (actionKinds.every(isReadOnlyModelToolActionKind)) return 'read';
+  if (actionKinds.some((kind) => kind.startsWith('file.') || kind === 'outline.edit' || kind === 'outline.delete')) return 'write';
+  if (actionKinds.some((kind) => kind.startsWith('shell.'))) return 'execute';
+  return 'control';
 }
 
 function looksLikeNetworkWrite(command: string): boolean {
@@ -381,8 +364,7 @@ function isSensitivePath(filePath: string): boolean {
 }
 
 function normalizeToolName(value: string): string {
-  const normalized = value.trim().replace(/^\//, '').replace(/-/g, '_').toLowerCase();
-  return TOOL_ALIASES.get(normalized) ?? normalized;
+  return value.trim().toLowerCase();
 }
 
 function getUnknownArg(args: unknown, name: string): unknown {

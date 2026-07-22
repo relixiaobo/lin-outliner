@@ -334,7 +334,7 @@ describe('skill ratification provenance', () => {
     await settingsRuntime.notifySkillContentWritten([skillFile]);
     expect((await conversationRuntime.getSkill('shared'))).toMatchObject({ ratified: true, accepted: false });
 
-    // The conversationless Settings runtime accepts; the live conversation's own registry only
+    // The Settings runtime accepts; the live Thread's own registry only
     // sees acceptedHash after a trust refresh (its in-memory snapshot is otherwise stale).
     await settingsRuntime.acceptSkill('shared', skillContentHash(content));
     expect((await conversationRuntime.getSkill('shared'))).toMatchObject({ ratified: true, accepted: false });
@@ -369,7 +369,7 @@ describe('skill ratification provenance', () => {
 });
 
 describe('agent skills', () => {
-  test('lists model-invocable skills once per conversation', async () => {
+  test('lists model-invocable skills once per Thread', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: [
         'description: Demo skill',
@@ -631,11 +631,11 @@ describe('agent skills', () => {
     expect(body).toContain('Ask only for a missing identity');
     expect(body).toContain('show the complete `SKILL.md`');
     expect(body).toContain('only when that preview is needed');
-    expect(body).toContain('ask_user_question');
+    expect(body).toContain('request_user_input');
     expect(body).not.toContain('Save, revise, or cancel choices');
 
     expect(body).toContain('Separate authoring tools from runtime tools');
-    expect(body).toContain('omitted `allowed-tools` creates a tool-free Run');
+    expect(body).toContain('omitted `allowed-tools` creates a tool-free child Thread');
     expect(body).toContain('`allowed-tools` selects whole tools, not command patterns');
     expect(body).toContain('Flag broad `allowed-tools` in the preview summary');
     expect(body).toContain('Default to `execution: inline`');
@@ -684,7 +684,7 @@ describe('agent skills', () => {
       expect(await runtime.getSkill(name)).toBeNull();
       expect(listing).not.toContain(`- ${name}:`);
     }
-    for (const name of ['skillify', 'research', 'issue-planning', 'data-cleanup', 'memory-dream']) {
+    for (const name of ['skillify', 'research', 'data-cleanup']) {
       expect(await runtime.getSkill(name)).not.toBeNull();
     }
   });
@@ -924,8 +924,6 @@ describe('agent skills', () => {
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
       'data-cleanup',
-      'issue-planning',
-      'memory-dream',
       'research',
       'skillify',
     ]);
@@ -955,9 +953,8 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
       executeIsolatedSkill: async ({ renderedContent, readOnlyIsolated }) => ({
-        runId: 'research-run',
-        // Isolated skills always use the current agent (Neva) with a run profile, not a per-skill agent type.
-        runProfile: 'default',
+        threadId: 'research-thread',
+        agentRole: 'explorer',
         status: readOnlyIsolated ? 'completed' : 'failed',
         result: renderedContent,
       }),
@@ -985,7 +982,6 @@ describe('agent skills', () => {
       'file_grep',
       'web_search',
       'web_fetch',
-      'past_chats',
     ]);
     expect(skill?.body).toContain('codebase research specialist');
     expect(skill?.body).toContain('READ-ONLY MODE - NO MODIFICATIONS');
@@ -1003,39 +999,6 @@ describe('agent skills', () => {
     if (!invocation.ok) return;
     expect(invocation.execution).toBe('isolated');
     expect(invocation.isolated?.status).toBe('completed');
-  });
-
-  test('ships issue-planning as a built-in durable Issue guidance skill', async () => {
-    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
-    const automaticListing = await runtime.buildSkillListingReminderText(200_000);
-    const skill = await runtime.getSkill('issue-planning');
-
-    expect(automaticListing).toContain('- issue-planning:');
-    expect(automaticListing).not.toContain('- goal-launching:');
-    expect(skill).toMatchObject({
-      name: 'issue-planning',
-      source: 'built-in',
-      modelInvocable: true,
-      userInvocable: false,
-      ratified: true,
-      argumentHint: '<durable work request>',
-      argumentNames: ['objective'],
-    });
-    expect(skill?.body).toContain('Use `issue_create` with a concrete objective, explicit acceptance criteria');
-    expect(skill?.body).toContain('district-level queries are coverage requirements and execution-local steps inside those Issues');
-    expect(skill?.body).toContain('A good Issue definition gives the Agent Session enough scope, coverage, output, and verification guidance');
-    expect(skill?.body).toContain('Represent per-city, per-district, per-file, or per-node coverage as a clear coverage list');
-    expect(skill?.body).toContain('create a child Issue only when a sub-outcome needs its own durable lifecycle or independent Agent Session');
-    expect(skill?.body).toContain('Runtime derives the parent from the creating Session');
-    expect(skill?.body).toContain('owned outcome, boundaries/non-goals, required coverage, expected final response or artifact');
-    expect(skill?.body).toContain('Use `relations` only after both sides are independently user-visible Issues');
-    expect(skill?.body).toContain('Use the default when-ready trigger for ordinary durable work');
-    expect(skill?.body).toContain('Background handoff: for durable work, create a when-ready, scheduled, or recurring Issue and let runtime start eligible work');
-    expect(skill?.body).toContain('A terminal result is delivered to the immediate origin target');
-    expect(skill?.body).toContain('parent Agent Session for a child Issue, visible conversation for a root Issue');
-    expect(skill?.body).toContain('Explicit wait: only when the user asks to wait here');
-    expect(skill?.body).toContain('Use `agent_session_start` for existing eligible Issues that need a retry, continuation, verification attempt');
-    expect(skill?.body).toContain('Claim completion only from Issue status, criteria, Activity, and verifier evidence');
   });
 
   test('disabled skill gates apply to built-in research', async () => {
@@ -1099,8 +1062,8 @@ describe('agent skills', () => {
       localRoot: root,
       includeUserSkills: false,
       executeIsolatedSkill: async ({ skill, renderedContent }) => ({
-        runId: 'isolated-run-test',
-        runProfile: skill.agent ?? 'isolated',
+        threadId: 'isolated-thread-test',
+        agentRole: 'worker',
         status: 'completed',
         result: `isolated result: ${renderedContent}`,
       }),
@@ -1117,7 +1080,7 @@ describe('agent skills', () => {
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
     expect(invocation.execution).toBe('isolated');
-    expect(invocation.isolated?.runId).toBe('isolated-run-test');
+    expect(invocation.isolated?.threadId).toBe('isolated-thread-test');
     expect(invocation.renderedContent).toContain('Requires isolated execution for demo.');
     expect(runtime.consumePendingTurnEffect()).toBeNull();
     const messageText = invocation.message.content[0]?.type === 'text'
@@ -1126,10 +1089,10 @@ describe('agent skills', () => {
     expect(messageText).toContain('isolated result:');
   });
 
-  test('maps legacy context-fork skills to isolated execution', async () => {
+  test('does not retain the legacy context-fork execution alias', async () => {
     const root = await createSkillFixture('forked', {
       frontmatter: [
-        'description: Legacy fork skill',
+        'description: Unsupported legacy fork skill',
         'context: fork',
       ],
       body: 'Requires isolated execution.',
@@ -1137,9 +1100,9 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({
       localRoot: root,
       includeUserSkills: false,
-      executeIsolatedSkill: async ({ skill, renderedContent }) => ({
-        runId: 'isolated-run-test',
-        runProfile: skill.agent ?? 'general',
+      executeIsolatedSkill: async ({ renderedContent }) => ({
+        threadId: 'isolated-thread-test',
+        agentRole: 'worker',
         status: 'completed',
         result: renderedContent,
       }),
@@ -1147,11 +1110,11 @@ describe('agent skills', () => {
     await acceptSkillForTest(runtime, 'forked');
 
     const skill = await runtime.getSkill('forked');
-    expect(skill?.execution).toBe('isolated');
+    expect(skill?.execution).toBe('inline');
     const invocation = await runtime.invokeSkill({ skill: 'forked', trigger: 'agent' });
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
-    expect(invocation.execution).toBe('isolated');
+    expect(invocation.execution).toBe('inline');
   });
 
   test('does not restore slash isolated skill results as reusable skill guidance', async () => {
@@ -1165,9 +1128,9 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({
       localRoot: root,
       includeUserSkills: false,
-      executeIsolatedSkill: async ({ skill }) => ({
-        runId: 'isolated-run-test',
-        runProfile: skill.agent ?? 'general',
+      executeIsolatedSkill: async () => ({
+        threadId: 'isolated-thread-test',
+        agentRole: 'worker',
         status: 'completed',
         result: 'one-shot isolated result',
       }),
@@ -1465,9 +1428,8 @@ describe('built-in skill resource packaging', () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['data-cleanup', 'memory-dream']);
+    expect((await readdir(generatedRoot)).sort()).toEqual(['data-cleanup']);
     expect(await readFile(path.join(generatedRoot, 'data-cleanup', 'SKILL.md'), 'utf8')).toContain('Data Cleanup');
-    expect(await readFile(path.join(generatedRoot, 'memory-dream', 'SKILL.md'), 'utf8')).toContain('Memory Dream');
     for (const name of ['data-analysis', 'document', 'feed-processing', 'pdf', 'presentation', 'spreadsheet']) {
       await expect(readFile(path.join(generatedRoot, name, 'SKILL.md'), 'utf8')).rejects.toThrow();
     }

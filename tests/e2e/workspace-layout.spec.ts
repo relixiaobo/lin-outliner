@@ -8,12 +8,11 @@ import {
   emitDocumentEvent,
   ids,
   openMockedApp,
-  openMockRunDetailsFromAssistantDetailsButton,
   row,
   rowBody,
 } from './outlinerMock';
 
-const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v4';
+const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v5';
 const WORKSPACE_PINNED_NODES_STORAGE_KEY = 'lin-outliner:workspace-layout:v3:pinned';
 const OUTLINE_VIEW_STATE_STORAGE_KEY = 'lin-outliner:outline-view-state:v1';
 
@@ -234,13 +233,6 @@ test.describe('workspace layout resizing', () => {
       .toBeGreaterThanOrEqual(preferredWidth - 1);
   });
 
-  test('debug panel capacity failures show feedback instead of silently no-oping', async ({ page }) => {
-    await page.setViewportSize({ width: 760, height: 900 });
-    await openMockRunDetailsFromAssistantDetailsButton(page);
-
-    await expect(page.locator('.outline-panel-surface')).toHaveCount(1);
-    await expect(page.locator('.error')).toContainText('Window is too narrow to open another pane.');
-  });
 
   test('page title tag bars wrap instead of overflowing in narrow windows', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 900 });
@@ -814,7 +806,7 @@ test.describe('workspace layout resizing', () => {
         String(date.getDate()).padStart(2, '0'),
       ].join('-');
       window.localStorage.setItem(layoutStorageKey, JSON.stringify({
-        version: 3,
+        version: 5,
         localDate,
         activePanelId: 'panel-root',
         panels: [{
@@ -854,7 +846,7 @@ test.describe('workspace layout resizing', () => {
         String(date.getDate()).padStart(2, '0'),
       ].join('-');
       window.localStorage.setItem(layoutStorageKey, JSON.stringify({
-        version: 3,
+        version: 5,
         localDate,
         activePanelId: 'panel-daily',
         panels: [{
@@ -908,8 +900,8 @@ test.describe('workspace layout resizing', () => {
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
     await page.evaluate(() => {
-      window.localStorage.setItem('lin-outliner:workspace-layout:v4', JSON.stringify({
-        version: 3,
+      window.localStorage.setItem('lin-outliner:workspace-layout:v5', JSON.stringify({
+        version: 5,
         localDate: '1999-01-01',
         activePanelId: 'panel-stale',
         panels: [{

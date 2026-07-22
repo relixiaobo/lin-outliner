@@ -1,48 +1,61 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import type { TSchema } from 'typebox';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   modelToolContract,
   type ModelToolIdentity,
 } from '../../../core/agent/tools';
-import type { JsonValue } from '../../../core/agent/protocol';
+import type { AgentMutationCausation, JsonValue } from '../../../core/agent/protocol';
 import type { ReasoningEffort } from '../../../core/agent/configuration';
 import type { AgentImageGenerationRuntime } from '../../agentImageGenerationTool';
 import { AgentImportService, visibleImportServiceResult } from '../../agentImportService';
 import type { AgentLocalWorkspaceContext } from '../../agentLocalTools';
 import type { OutlinerToolHost } from '../../agentNodeTools';
 import type { AgentSkillRuntime } from '../../agentSkills';
+import { evaluateAgentToolCapability } from '../../agentCapabilities';
+import type { AgentCapabilityConfig } from '../../agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
 import type { TurnExecutionContext } from './types';
 
 export interface ToolRuntimeOptions {
   readonly outliner?: OutlinerToolHost;
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
-  readonly skillRuntime?: AgentSkillRuntime;
+  readonly skillRuntime?: AgentSkillRuntime | ((context: TurnExecutionContext) => AgentSkillRuntime);
   readonly imageGeneration?: AgentImageGenerationRuntime;
-  readonly capabilityTools?: (context: TurnExecutionContext) => readonly AgentTool[];
+  readonly capabilityTools?: (
+    context: TurnExecutionContext,
+    outliner: OutlinerToolHost | undefined,
+  ) => readonly AgentTool[];
   readonly dynamicTools?: (context: TurnExecutionContext) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
+  readonly capabilityConfig?: AgentCapabilityConfig | (() => AgentCapabilityConfig | Promise<AgentCapabilityConfig>);
 }
 
 export class ToolRuntime {
+  private readonly mutationCausation = new AsyncLocalStorage<AgentMutationCausation>();
+  private readonly outliner: OutlinerToolHost | undefined;
   private readonly importService: AgentImportService | null;
 
   constructor(
     private readonly service: ThreadService,
     private readonly options: ToolRuntimeOptions = {},
   ) {
-    this.importService = options.outliner ? new AgentImportService(options.outliner) : null;
+    this.outliner = options.outliner
+      ? outlinerWithCausation(options.outliner, () => this.mutationCausation.getStore())
+      : undefined;
+    this.importService = this.outliner ? new AgentImportService(this.outliner) : null;
   }
 
   async createTools(context: TurnExecutionContext): Promise<readonly AgentTool[]> {
+    const skillRuntime = this.skillRuntime(context);
     const workspace = typeof this.options.localWorkspace === 'function'
       ? this.options.localWorkspace(context)
       : this.options.localWorkspace;
     const capabilityTools = this.options.capabilityTools
-      ? this.options.capabilityTools(context)
-      : (await import('../../agentTools')).createAgentTools(this.options.outliner, {
+      ? this.options.capabilityTools(context, this.outliner)
+      : (await import('../../agentTools')).createAgentTools(this.outliner, {
           localFileRoot: context.thread.cwd,
           ...(workspace === undefined ? {} : { localWorkspace: workspace }),
-          ...(this.options.skillRuntime === undefined ? {} : { skillRuntime: this.options.skillRuntime }),
+          ...(skillRuntime === undefined ? {} : { skillRuntime }),
           ...(this.options.imageGeneration === undefined ? {} : { imageGeneration: this.options.imageGeneration }),
           allowedTools: context.configuration.tools,
         });
@@ -64,6 +77,16 @@ export class ToolRuntime {
       unique.set(tool.name, this.instrumentTool(context, tool, identity));
     }
     return [...unique.values()];
+  }
+
+  skillListing(context: TurnExecutionContext): Promise<string | null> {
+    return this.skillRuntime(context)?.buildSkillListingReminderText() ?? Promise.resolve(null);
+  }
+
+  private skillRuntime(context: TurnExecutionContext): AgentSkillRuntime | undefined {
+    return typeof this.options.skillRuntime === 'function'
+      ? this.options.skillRuntime(context)
+      : this.options.skillRuntime;
   }
 
   private createControlTools(context: TurnExecutionContext): AgentTool[] {
@@ -225,8 +248,47 @@ export class ToolRuntime {
       execute: async (itemId, params, signal, onUpdate) => {
         const args = jsonValue(params);
         await this.service.notifyToolStarted(context.thread.id, context.turn.id, itemId, identity, args);
+        const canonicalIdentity = identity.namespace ? `${identity.namespace}.${identity.name}` : identity.name;
+        const capability = evaluateAgentToolCapability({
+          toolName: canonicalIdentity,
+          args,
+          policy: {
+            workspaceRoot: context.thread.cwd,
+            capabilityConfig: await this.capabilityConfig(),
+          },
+        });
+        if (capability.behavior === 'unavailable') {
+          const result = toolResult({
+            ok: false,
+            tool: canonicalIdentity,
+            status: 'unavailable',
+            error: {
+              code: 'operation_unavailable',
+              message: capability.reason,
+              recoverable: false,
+              details: { reason: capability.code },
+            },
+            instructions: 'This operation is unavailable in the current context. Continue with another available approach.',
+            capabilityAudit: capabilityAudit(capability),
+          });
+          await this.service.notifyToolCompleted(
+            context.thread.id,
+            context.turn.id,
+            itemId,
+            identity,
+            args,
+            jsonValue(result.details),
+            capability.reason,
+          );
+          return result;
+        }
         try {
-          const result = await tool.execute(itemId, params, signal, onUpdate);
+          const rawResult = await this.mutationCausation.run({
+            threadId: context.thread.id,
+            turnId: context.turn.id,
+            itemId,
+          }, () => tool.execute(itemId, params, signal, onUpdate));
+          const result = withCapabilityAudit(rawResult, capabilityAudit(capability));
           await this.service.notifyToolCompleted(
             context.thread.id,
             context.turn.id,
@@ -253,6 +315,66 @@ export class ToolRuntime {
       },
     };
   }
+
+  private async capabilityConfig(): Promise<AgentCapabilityConfig> {
+    const configured = this.options.capabilityConfig;
+    if (typeof configured === 'function') return configured();
+    if (configured) return configured;
+    const { readAgentCapabilityConfig } = await import('../../agentCapabilityStore');
+    return readAgentCapabilityConfig();
+  }
+}
+
+function outlinerWithCausation(
+  host: OutlinerToolHost,
+  causation: () => AgentMutationCausation | undefined,
+): OutlinerToolHost {
+  const mutationMeta = (meta: Parameters<OutlinerToolHost['handle']>[2]) => ({
+    ...meta,
+    ...(causation() ? { causation: causation() } : {}),
+  });
+  return {
+    getProjection: () => host.getProjection(),
+    getDocumentReadModel: host.getDocumentReadModel ? () => host.getDocumentReadModel!() : undefined,
+    drainTransactionProjectionChanges: host.drainTransactionProjectionChanges
+      ? () => host.drainTransactionProjectionChanges!()
+      : undefined,
+    getTextSearchIndex: host.getTextSearchIndex ? () => host.getTextSearchIndex!() : undefined,
+    getTransientSearchOptions: host.getTransientSearchOptions ? () => host.getTransientSearchOptions!() : undefined,
+    recordNodeAccess: host.recordNodeAccess
+      ? (nodeIds, source) => host.recordNodeAccess!(nodeIds, source)
+      : undefined,
+    handle: (command, args, meta) => host.handle(command, args, mutationMeta(meta)),
+    transaction: host.transaction
+      ? (meta, operation) => host.transaction!(mutationMeta(meta), operation)
+      : undefined,
+    createNodesFromTreeYielding: host.createNodesFromTreeYielding
+      ? (parentId, nodes, meta, options) => host.createNodesFromTreeYielding!(
+          parentId,
+          nodes,
+          mutationMeta(meta),
+          options,
+        )
+      : undefined,
+    operationHistory: host.operationHistory ? (query) => host.operationHistory!(query) : undefined,
+  };
+}
+
+function capabilityAudit(capability: ReturnType<typeof evaluateAgentToolCapability>): JsonValue {
+  return jsonValue({
+    behavior: capability.behavior,
+    access: capability.access,
+    source: capability.source,
+    descriptors: capability.descriptors,
+    ...(capability.behavior === 'unavailable' ? { code: capability.code } : {}),
+  });
+}
+
+function withCapabilityAudit(result: AgentToolResult<unknown>, audit: JsonValue): AgentToolResult<JsonValue> {
+  const details = isRecord(result.details)
+    ? { ...result.details, capabilityAudit: audit }
+    : { result: jsonValue(result.details), capabilityAudit: audit };
+  return { ...result, details } as AgentToolResult<JsonValue>;
 }
 
 function coreTool(
@@ -348,4 +470,8 @@ function jsonValue(value: unknown): JsonValue {
   } catch {
     return String(value);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, JsonValue> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

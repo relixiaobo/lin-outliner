@@ -140,7 +140,7 @@ export function validateFieldValuesForType(
     return {
       ok: false,
       error: `Field "${label}" is a ${fieldType} field and cannot store inline reference values.`,
-      instructions: 'Use a plain field for local-file, chat-source, or mixed inline references.',
+      instructions: 'Use a plain field for local-file or mixed inline references.',
     };
   }
 

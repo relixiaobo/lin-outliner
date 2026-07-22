@@ -12,6 +12,15 @@ import type {
 import type { TextSearchIndex } from '../core/textSearchIndex';
 import type { NodeAccessSource } from '../core/nodeAccessRanking';
 import type { TransientSearchOptions } from '../core/searchEngine';
+import type { AgentMutationCausation } from '../core/agent/protocol';
+
+export interface OutlinerToolMutationMeta {
+  origin?: 'user' | 'agent' | 'system';
+  command?: string;
+  tool?: string;
+  summary?: string;
+  causation?: AgentMutationCausation;
+}
 
 export interface OutlinerToolHost {
   getProjection(): DocumentProjection;
@@ -23,16 +32,16 @@ export interface OutlinerToolHost {
   handle(
     command: DocumentCommand,
     args?: Record<string, unknown>,
-    meta?: { origin?: 'user' | 'agent' | 'system'; command?: string; tool?: string; summary?: string },
+    meta?: OutlinerToolMutationMeta,
   ): Promise<unknown>;
   transaction?<T>(
-    meta: { origin?: 'user' | 'agent' | 'system'; command?: string; tool?: string; summary?: string },
+    meta: OutlinerToolMutationMeta,
     fn: () => Promise<T>,
   ): Promise<T>;
   createNodesFromTreeYielding?(
     parentId: string,
     nodes: CreateNodeTree[],
-    meta: { origin?: 'user' | 'agent' | 'system'; command?: string; tool?: string; summary?: string },
+    meta: OutlinerToolMutationMeta,
     options?: { yieldEveryNodes?: number; commitEveryNodes?: number },
   ): Promise<{ focus?: FocusHint }>;
   operationHistory?(query: OperationHistoryParams): Promise<OperationHistoryData> | OperationHistoryData;

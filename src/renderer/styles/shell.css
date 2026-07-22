@@ -197,7 +197,7 @@
   filter: saturate(0.45) brightness(0.985);
 }
 
-/* ── Top-left more menu (kept for the agent/conversation menus that reuse it) ─────── */
+/* Top-left more menu shared by compact chrome action surfaces. */
 .top-chrome-more-menu {
   z-index: var(--z-popover);
   display: flex;

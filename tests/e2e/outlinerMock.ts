@@ -1,5 +1,4 @@
 import { expect, type Page } from '@playwright/test';
-import { DEFAULT_DREAM_CHANNEL_ID, DEFAULT_GENERAL_CHANNEL_ID, usesChannelActivitySurface } from '../../src/core/agentChannel';
 import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
 
@@ -40,20 +39,12 @@ interface MockFixtureOptions {
   tableRowCount?: number;
   /** Adds an OAuth sign-in provider (GitHub Copilot) to the catalog for the OAuth specs. */
   oauthProvider?: boolean;
-  /** Leaves every provider uncredentialed so the agent panel shows the no-provider onboarding. */
-  noProvider?: boolean;
   /** Preloads user blocklist rules for settings/security specs. */
   capabilityBlocks?: string[];
   /** Delays initial workspace restoration so startup chrome can be asserted before data arrives. */
   initWorkspaceDelayMs?: number;
   /** Delays provider settings so Settings chrome can be asserted before settings data arrives. */
   providerSettingsDelayMs?: number;
-  /** Delays agent definitions so agent-config first paint can be asserted before data arrives. */
-  agentDefinitionsDelayMs?: number;
-  /** Delays agent skills so agent-config first paint can be asserted before data arrives. */
-  agentSkillsDelayMs?: number;
-  /** Delays conversation list loading so channel-config first paint can be asserted before data arrives. */
-  agentConversationsDelayMs?: number;
   /** Seeds the shared preview-translation target language. */
   translationLanguage?: TranslationLanguage;
   /** Seeds URL/EPUB automatic translation and model preferences. */
@@ -62,38 +53,15 @@ interface MockFixtureOptions {
   translationDelayMs?: number;
 }
 
-const DEBUG_USAGE = {
-  input: 12000,
-  output: 420,
-  cacheRead: 48000,
-  cacheWrite: 6000,
-  totalTokens: 66420,
-  costUsd: 0.0005,
-  cost: {
-    input: 0.00012,
-    output: 0.0002,
-    cacheRead: 0.00008,
-    cacheWrite: 0.0001,
-    total: 0.0005,
-  },
-};
-
 type E2EWindow = Window & {
   __LIN_E2E__?: {
     calls: Array<{ cmd: string; args: Record<string, unknown> }>;
     projection: () => unknown;
     clipboardText: () => string;
-    emitAgentEvent: (event: unknown) => void;
+    emitAgentCoreNotification: (notification: unknown) => void;
     emitDocumentEvent: (event: unknown) => void;
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
-    setAgentIssues: (
-      rows: unknown[],
-      details?: Record<string, unknown>,
-      sessionTranscripts?: Record<string, unknown>,
-    ) => void;
-    setAgentRuns: (runs: unknown[]) => void;
-    setAgentMessageContextMenuAction: (action: 'copy' | 'retry' | 'regenerate' | 'details' | null) => void;
     setTranslationDelayMs: (delayMs: number) => void;
     setTranslationLanguage: (language: TranslationLanguage) => void;
     setTranslationPreferences: (preferences: UrlPageTranslationPreferences) => void;
@@ -102,8 +70,9 @@ type E2EWindow = Window & {
     initialTranslationLanguage?: TranslationLanguage;
     initialUrlPageTranslationPreferences?: UrlPageTranslationPreferences;
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+    agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
     getProviderApiKey: (providerId: string) => Promise<{ providerId: string; apiKey?: string }>;
-    onAgentEvent: (listener: (event: unknown) => void) => () => void;
+    onAgentCoreNotification: (listener: (notification: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
     onTranslationLanguageChanged?: (listener: (language: TranslationLanguage) => void) => () => void;
@@ -112,21 +81,10 @@ type E2EWindow = Window & {
     setTranslationLanguage?: (language: TranslationLanguage) => Promise<void>;
     setUrlPageTranslationPreferences?: (preferences: UrlPageTranslationPreferences) => Promise<UrlPageTranslationPreferences>;
     openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
-    openAgentConfig?: (params: { agentId?: string }) => Promise<void>;
-    openChannelConfig?: (params: { conversationId?: string; mode: string }) => Promise<void>;
     openSettings?: (target?: unknown) => Promise<void>;
-    agentNavigateToConversation?: (conversationId: string) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
-    closeAgentConfig?: () => Promise<void>;
-    closeChannelConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
     onSettingsNavigate?: (listener: (target: unknown) => void) => () => void;
-    showAgentMessageContextMenu?: (request: {
-      canCopy: boolean;
-      canRetry: boolean;
-      canRegenerate: boolean;
-      canShowDetails: boolean;
-    }) => Promise<'copy' | 'retry' | 'regenerate' | 'details' | null>;
     openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }>;
     previewLocalFile?: (options: { id: string }) => Promise<{ thumbnailDataUrl: string | null }>;
     previewLocalFileReference?: (options: { path: string }) => Promise<{
@@ -167,17 +125,7 @@ type E2EWindow = Window & {
 
 export type E2EReferenceTarget =
   | { kind: 'node'; nodeId: string }
-  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' }
-  | {
-      kind: 'chat-source';
-      stream: 'conversation' | 'run';
-      streamId: string;
-      range: {
-        fromSeqExclusive: number;
-        throughSeq: number;
-        throughEventId?: string | null;
-      };
-    };
+  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
 
 export interface E2EInlineRef {
   offset: number;
@@ -199,33 +147,11 @@ export function e2eNodeInlineRef(offset: number, nodeId: string, displayName?: s
   };
 }
 
-export function e2eChatSourceInlineRef(
-  offset: number,
-  target: Extract<E2EReferenceTarget, { kind: 'chat-source' }>,
-  displayName?: string,
-): E2EInlineRef {
-  return {
-    offset,
-    target,
-    ...(displayName ? { displayName } : {}),
-  };
-}
-
 export async function installElectronMock(page: Page, options: MockFixtureOptions = {}) {
-  await page.addInitScript(({ ids, options, defaultDreamChannelId, generalChannelId, debugUsageFixture }) => {
+  await page.addInitScript(({ ids, options }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
-      | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' }
-      | {
-          kind: 'chat-source';
-          stream: 'conversation' | 'run';
-          streamId: string;
-          range: {
-            fromSeqExclusive: number;
-            throughSeq: number;
-            throughEventId?: string | null;
-          };
-        };
+      | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
     type RichText = { text: string; marks: unknown[]; inlineRefs: Array<{ offset: number; target: ReferenceTarget; displayName?: string; mimeType?: string; sizeBytes?: number }> };
     type RichTextPatch = {
       ops: Array<
@@ -238,14 +164,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const referenceTargetsEqual = (left: ReferenceTarget, right: ReferenceTarget) => {
       if (left.kind !== right.kind) return false;
       if (left.kind === 'node') return left.nodeId === (right as Extract<ReferenceTarget, { kind: 'node' }>).nodeId;
-      if (left.kind === 'chat-source') {
-        const chatRight = right as Extract<ReferenceTarget, { kind: 'chat-source' }>;
-        return left.stream === chatRight.stream
-          && left.streamId === chatRight.streamId
-          && left.range.fromSeqExclusive === chatRight.range.fromSeqExclusive
-          && left.range.throughSeq === chatRight.range.throughSeq
-          && (left.range.throughEventId ?? null) === (chatRight.range.throughEventId ?? null);
-      }
       const localRight = right as Extract<ReferenceTarget, { kind: 'local-file' }>;
       return left.path === localRight.path && left.entryKind === localRight.entryKind;
     };
@@ -337,14 +255,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     // separately (reduceProjection.test.ts).
     let revision = 0;
     let clipboardText = '';
-    const MAIN_AGENT_ID = 'built-in:tenon:assistant';
-    const USER_AGENT_ID = 'user:mock:self';
-    const REVIEWER_AGENT_ID = 'user:mock:reviewer';
-    const ASSISTANT_DM_ID = 'mock-agent-conversation';
-    const USER_DM_ID = 'mock-agent-dm-self';
-    const GENERAL_CHANNEL_ID = generalChannelId;
-    const DREAM_CHANNEL_ID = defaultDreamChannelId;
-    const PLANNING_CHANNEL_ID = 'lin-agent-channel-planning';
     const assets = new Map<string, {
       id: string;
       mimeType: string;
@@ -359,8 +269,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       videoDurationMs?: number;
     }>();
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
-    const dreamHistory: unknown[] = [];
-    const agentListeners: Array<(event: unknown) => void> = [];
+    const agentCoreListeners: Array<(notification: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
     const oauthListeners: Array<(envelope: unknown) => void> = [];
     const translationLanguageListeners: Array<(language: TranslationLanguage) => void> = [];
@@ -372,11 +281,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       autoTranslateUrls: false,
     };
     let translationDelayMs = options.translationDelayMs ?? 80;
-    let messageContextMenuAction: 'copy' | 'retry' | 'regenerate' | 'details' | null = null;
-    let agentIssueRows: unknown[] = [];
-    let agentIssueDetails: Record<string, unknown> = {};
-    let agentSessionTranscripts: Record<string, unknown> = {};
-    let agentRuns: unknown[] = [];
     const providerApiKeys = new Map<string, string>([['openai', 'sk-openai-saved']]);
     // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
     // the event stream (emitOAuthEvent) and completes it (resolveOAuthLogin), so
@@ -385,15 +289,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentSettings = {
       activeProviderId: 'openai',
       agent: {
-        automaticSkillsEnabled: true,
-        slashSkillsEnabled: true,
-        compactEnabled: true,
         additionalSkillDirectories: [],
         providerTimeoutMs: null,
         providerMaxRetries: null,
         providerMaxRetryDelayMs: 60_000,
         providerCacheRetention: 'short',
-        dreamSchedule: '2026-01-01T03:00 RRULE:FREQ=DAILY',
       },
       imageGeneration: {},
       providers: [{
@@ -483,15 +383,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ],
       }],
     };
-    // Strip every credential so the agent panel renders the no-provider
-    // onboarding and the send-guard engages (settings still LOAD — they just
-    // report no usable provider).
-    if (options.noProvider) {
-      for (const provider of agentSettings.providers) {
-        provider.hasApiKey = false;
-        provider.auth = { authKind: 'api-key', credentialed: false, hasStoredKey: false };
-      }
-    }
     // An OAuth sign-in provider for the OAuth specs. Gated so the api-key /
     // managed specs keep their fixed catalog. `authKind: 'oauth'` makes the
     // config window render the sign-in surface (ProviderOAuthForm).
@@ -537,295 +428,90 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       contentLength: 64,
       body: 'Review workspace conventions before automatic use.',
     }];
-    const agentDefinitions = [
-      {
-        agentId: MAIN_AGENT_ID,
-        name: 'assistant',
-        displayName: 'Neva',
-        source: 'built-in',
-        rootDir: 'built-in',
-        agentFile: 'built-in/assistant',
-        writable: false,
-        description: 'Default Tenon assistant profile.',
-        model: 'inherit',
-        body: 'You are Neva, the built-in default agent for Tenon.',
-        tools: ['*'],
-        maxTurns: null,
-      },
-      {
-        agentId: USER_AGENT_ID,
-        name: 'self',
-        displayName: 'self',
-        source: 'user',
-        rootDir: '/mock/home/.agents/agents/self',
-        agentFile: '/mock/home/.agents/agents/self/AGENT.md',
-        writable: true,
-        description: 'User-owned personal agent.',
-        model: 'gpt-5.4-mini',
-        body: [
-          'You are a focused child agent running inside Lin.',
-          'Complete the assigned task independently and report only the result that matters.',
-        ].join('\n'),
-        maxTurns: null,
-      },
-      {
-        agentId: REVIEWER_AGENT_ID,
-        name: 'reviewer',
-        displayName: 'reviewer',
-        source: 'user',
-        rootDir: '/mock/home/.agents/agents/reviewer',
-        agentFile: '/mock/home/.agents/agents/reviewer/AGENT.md',
-        writable: true,
-        description: 'Reviews Channel plans.',
-        model: 'gpt-5.4-mini',
-        body: 'Review plans and identify risks.',
-        maxTurns: null,
-      },
-    ];
-    const debugUsage = debugUsageFixture;
-    // Replayed transcript for the delegated run's own ledger, served whole by
-    // `agent_run_transcript` (the payload-pinned snapshot is gone).
-    const childRunTranscriptMessages = [
-        {
-          role: 'user',
-          timestamp: now - 500,
-          content: [{ type: 'text', text: 'Inspect the current UI.' }],
-        },
-        {
-          role: 'assistant',
-          timestamp: now - 400,
-          api: 'openai-completions',
-          provider: 'openai',
-          model: 'gpt-5.4',
-          usage: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 0,
-            cost: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              total: 0,
-            },
-          },
-          stopReason: 'toolUse',
-          content: [
-            { type: 'thinking', thinking: 'Read the visible outline before summarizing.', redacted: false },
-            { type: 'toolCall', id: 'child-run-tool-read-1', name: 'node_read', arguments: { node_id: 'today' } },
-          ],
-        },
-        {
-          role: 'toolResult',
-          toolCallId: 'child-run-tool-read-1',
-          toolName: 'node_read',
-          timestamp: now - 300,
-          content: [{ type: 'text', text: 'Daily note content from the Run.' }],
-          isError: false,
-        },
-        {
-          role: 'assistant',
-          timestamp: now - 200,
-          api: 'openai-completions',
-          provider: 'openai',
-          model: 'gpt-5.4',
-          usage: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 0,
-            cost: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              total: 0,
-            },
-          },
-          stopReason: 'stop',
-          content: [{ type: 'text', text: 'The Run finished inspecting the UI.' }],
-        },
-      ];
-    // Run Details fixture: the reply Details button opens this concrete run via
-    // agent_debug_run. agent_debug_view remains mocked for older tests but is not
-    // used by the run-details pane.
-    const debugRunSummary = {
-      runId: 'mock-run-1',
-      agentId: MAIN_AGENT_ID,
-      kind: 'turn',
-      status: 'completed',
-      parentRunId: null,
-      parentToolCallId: null,
-      provider: 'openai',
-      modelId: 'gpt-5.4',
-      usage: debugUsage,
-      createdAt: 1_800_000_000_000,
-      roundCount: 1,
-    };
-    const debugView = {
-      conversationId: 'mock-agent-conversation',
-      shape: 'dm',
-      members: [MAIN_AGENT_ID],
-      runs: [debugRunSummary],
-      totals: { ...debugUsage, queries: 1, rounds: 1 },
-    };
-    const debugChannelView = {
-      ...debugView,
-      conversationId: GENERAL_CHANNEL_ID,
-      shape: 'channel',
-      members: [MAIN_AGENT_ID, USER_AGENT_ID, REVIEWER_AGENT_ID],
-    };
-    const longToolCallId = 'call_hY7YSWjtewOewQfepRMCajzMlfc_00128e64f08e3fd6016a3a61cb0a9c8197a9c011';
-    const deniedToolCallId = 'call_unavailable_tool_00128e64f08e3fd6016a3a61cb0a9c8197a9c012';
-    const deniedToolResult = '{"ok":false,"tool":"bash","status":"unavailable","error":{"code":"operation_unavailable","message":"Blocked by user rule Command(git push --force origin main)."}}';
-    const debugRun = {
-      ...debugRunSummary,
-      systemPrompt: 'You are Lin agent.\nLong unbroken diagnostic prompt segment: abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789.',
-      tools: [{
-        name: 'node_read',
-        description: 'Read node context',
-        schema: '{"type":"object","properties":{"nodeId":{"type":"string"}}}',
-        bytes: 58,
-      }],
-      modelInputMessages: [
-        {
-          id: 'model-input-1',
-          role: 'user',
-          summary: 'user: Generate a PPT about Fable 5.',
-          bytes: 40,
-          parts: [{ kind: 'text', body: 'Generate a PPT about Fable 5.', isReminder: false }],
-        },
-        {
-          id: 'model-input-2',
-          role: 'assistant',
-          summary: 'assistant: PPT generated.',
-          bytes: 36,
-          parts: [{ kind: 'text', body: 'PPT generated with 11 slides.', isReminder: false }],
-        },
-        {
-          id: 'model-input-3',
-          role: 'user',
-          summary: 'user: Summarize current outline.',
-          bytes: 56,
-          parts: [{ kind: 'text', body: 'Summarize current outline.', isReminder: false }],
-        },
-      ],
-      modelInputMessagesSource: 'captured',
-      rounds: [{
-        index: 0,
-        messageId: 'a1',
-        provider: 'openai',
-        modelId: 'gpt-5.4',
-        status: 'completed',
-        requestWindow: [{
-          id: 'msg-1',
-          role: 'user',
-          summary: 'user: Summarize current outline.',
-          bytes: 56,
-          parts: [{ kind: 'text', body: 'Summarize current outline.', isReminder: false }],
-        }],
-        responseParts: [
-          { kind: 'thinking', body: 'Identify relevant outline nodes.' },
-          { kind: 'toolCall', name: 'bash', toolUseId: longToolCallId, body: '{"command":"git push origin main"}' },
-          { kind: 'text', body: 'Current outline focuses on UI work.', isReminder: false },
-          { kind: 'toolCall', name: 'bash', toolUseId: deniedToolCallId, body: '{"command":"git push --force origin main"}' },
-        ],
-        stopReason: 'stop',
-        usage: debugUsage,
-        toolExchanges: [
-          { toolCallId: longToolCallId, toolName: 'bash', args: '{"command":"git push origin main"}', result: 'Pushed to origin/main.', isError: false },
-          { toolCallId: deniedToolCallId, toolName: 'bash', args: '{"command":"git push --force origin main"}', result: deniedToolResult, isError: true },
-        ],
-        startedAt: 1_799_999_999_800,
-        completedAt: 1_800_000_000_000,
-      }],
-    };
-    const agentConversations = [
-      {
-        id: ASSISTANT_DM_ID,
-        title: 'Neva',
-        members: [
-          { type: 'user', userId: 'local-user' },
-          { type: 'agent', agentId: MAIN_AGENT_ID },
-        ],
-        canonicalDmAgentId: MAIN_AGENT_ID,
-        createdAt: now - 100_000,
-        updatedAt: now - 1_000,
-        messageCount: 33,
-        lastMessageSnippet: 'Current outline focuses on UI work.',
-        lastMessageAt: now - 1_000,
-        unreadCount: 0,
-      },
-      {
-        id: USER_DM_ID,
-        title: 'self',
-        members: [
-          { type: 'user', userId: 'local-user' },
-          { type: 'agent', agentId: USER_AGENT_ID },
-        ],
-        canonicalDmAgentId: USER_AGENT_ID,
-        createdAt: now - 200_000,
-        updatedAt: now - 80_000,
-        messageCount: 0,
-        lastMessageSnippet: null,
-        lastMessageAt: null,
-        unreadCount: 0,
-      },
-      {
-        id: GENERAL_CHANNEL_ID,
-        title: 'General',
-        members: [
-          { type: 'user', userId: 'local-user' },
-          { type: 'agent', agentId: MAIN_AGENT_ID },
-          { type: 'agent', agentId: USER_AGENT_ID },
-          { type: 'agent', agentId: REVIEWER_AGENT_ID },
-        ],
-        goal: 'General',
-        createdAt: now - 220_000,
-        updatedAt: now - 70_000,
-        messageCount: 0,
-        lastMessageSnippet: null,
-        lastMessageAt: null,
-        unreadCount: 0,
-      },
-      {
-        id: DREAM_CHANNEL_ID,
-        title: 'Dream',
-        members: [
-          { type: 'user', userId: 'local-user' },
-          { type: 'agent', agentId: MAIN_AGENT_ID },
-        ],
-        goal: 'Dream',
-        createdAt: now - 210_000,
-        updatedAt: now - 65_000,
-        messageCount: 0,
-        lastMessageSnippet: null,
-        lastMessageAt: null,
-        unreadCount: 0,
-      },
-      {
-        id: PLANNING_CHANNEL_ID,
-        title: 'Planning Channel',
-        members: [
-          { type: 'user', userId: 'local-user' },
-          { type: 'agent', agentId: MAIN_AGENT_ID },
-          { type: 'agent', agentId: USER_AGENT_ID },
-        ],
-        goal: 'Planning Channel',
-        createdAt: now - 180_000,
-        updatedAt: now - 60_000,
-        messageCount: 1,
-        lastMessageSnippet: 'Coordinate the launch plan.',
-        lastMessageAt: now - 60_000,
-        unreadCount: 3,
-      },
-    ];
-
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
     const delay = (ms: number) => new Promise((resolve) => { window.setTimeout(resolve, ms); });
+    type MockThreadItem = {
+      id: string;
+      type: 'userMessage' | 'agentMessage';
+      provenance: { originThreadId: string; originTurnId: string; originItemId: string };
+      clientId?: string | null;
+      content?: Array<{ type: 'text'; text: string }>;
+      text?: string;
+      phase?: 'commentary' | 'final_answer' | null;
+      memoryCitation?: null;
+    };
+    type MockTurn = {
+      id: string;
+      items: MockThreadItem[];
+      itemsView: 'full';
+      provenance: { originThreadId: string; originTurnId: string; trigger: { kind: 'user' } };
+      status: 'inProgress' | 'completed' | 'interrupted';
+      error: null;
+      startedAt: number;
+      completedAt: number | null;
+      durationMs: number | null;
+    };
+    type MockThread = {
+      id: string;
+      sessionId: string;
+      parentThreadId: string | null;
+      forkedFromId: string | null;
+      agentNickname: string | null;
+      agentRole: string | null;
+      name: string | null;
+      preview: string;
+      ephemeral: boolean;
+      source: string;
+      threadSource: 'user';
+      modelProvider: string;
+      cwd: string;
+      createdAt: number;
+      updatedAt: number;
+      status: { type: 'idle' } | { type: 'active'; activeFlags: [] };
+      historyMode: 'paginated';
+    };
+    const mockThreads: MockThread[] = [];
+    const mockTurns = new Map<string, MockTurn[]>();
+    const mockGoals = new Map<string, unknown>();
+    const nextCanonicalId = () => `01910000-0000-7000-8000-${(++sequence).toString(16).padStart(12, '0')}`;
+    const threadById = (threadId: string) => {
+      const thread = mockThreads.find((candidate) => candidate.id === threadId);
+      if (!thread) throw new Error(`Thread not found: ${threadId}`);
+      return thread;
+    };
+    const emitAgentCoreNotification = (notification: unknown) => {
+      for (const listener of agentCoreListeners) listener(clone(notification));
+    };
+    const createMockThread = (input: Record<string, unknown>, forkedFromId: string | null = null) => {
+      const timestamp = ++now;
+      const thread: MockThread = {
+        id: typeof input.id === 'string' ? input.id : nextCanonicalId(),
+        sessionId: nextCanonicalId(),
+        parentThreadId: null,
+        forkedFromId,
+        agentNickname: null,
+        agentRole: null,
+        name: typeof input.name === 'string' ? input.name : null,
+        preview: '',
+        ephemeral: input.ephemeral === true,
+        source: 'app',
+        threadSource: 'user',
+        modelProvider: typeof input.modelProvider === 'string' ? input.modelProvider : 'openai/gpt-5.4',
+        cwd: typeof input.cwd === 'string' ? input.cwd : '/mock/workspace',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        status: { type: 'idle' },
+        historyMode: 'paginated',
+      };
+      mockThreads.push(thread);
+      mockTurns.set(thread.id, []);
+      return thread;
+    };
+    const itemProvenance = (threadId: string, turnId: string, itemId: string) => ({
+      originThreadId: threadId,
+      originTurnId: turnId,
+      originItemId: itemId,
+    });
     const previewPdfBytes = () => {
       const base64 = 'JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUiA1IDAgUiA3IDAgUl0gL0NvdW50IDMgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA5IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0OSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDcyIDcyMCBUZCAoUHJldmlldyBQREYgUGFnZSAxKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA5IDAgUiA+PiA+PiAvQ29udGVudHMgNiAwIFIgPj4KZW5kb2JqCjYgMCBvYmoKPDwgL0xlbmd0aCA0OSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDcyIDcyMCBUZCAoUHJldmlldyBQREYgUGFnZSAyKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjcgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA5IDAgUiA+PiA+PiAvQ29udGVudHMgOCAwIFIgPj4KZW5kb2JqCjggMCBvYmoKPDwgL0xlbmd0aCA0OSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDcyIDcyMCBUZCAoUHJldmlldyBQREYgUGFnZSAzKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjkgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgMTAKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDEyNyAwMDAwMCBuIAowMDAwMDAwMjUzIDAwMDAwIG4gCjAwMDAwMDAzNTIgMDAwMDAgbiAKMDAwMDAwMDQ3OCAwMDAwMCBuIAowMDAwMDAwNTc3IDAwMDAwIG4gCjAwMDAwMDA3MDMgMDAwMDAgbiAKMDAwMDAwMDgwMiAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDEwIC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo4NzIKJSVFT0YK';
       const binary = atob(base64);
@@ -1652,12 +1338,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       configurable: true,
     });
 
-    const emitAgentEvent = (event: unknown) => {
-      for (const listener of agentListeners) {
-        listener(clone(event));
-      }
-    };
-
     const emitDocumentEvent = (event: unknown) => {
       // Test-boundary adapter: specs author `projection_changed` events with a
       // legacy `{ projection }` field; the renderer now consumes a
@@ -1729,112 +1409,191 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       calls,
       projection,
       clipboardText: () => clipboardText,
-      emitAgentEvent,
+      emitAgentCoreNotification,
       emitDocumentEvent,
       emitOAuthEvent,
       resolveOAuthLogin,
-      setAgentIssues: (rows, details = {}, sessionTranscripts = {}) => {
-        agentIssueRows = rows;
-        agentIssueDetails = details;
-        agentSessionTranscripts = sessionTranscripts;
-      },
-      setAgentRuns: (runs) => { agentRuns = runs; },
-      setAgentMessageContextMenuAction: (action) => { messageContextMenuAction = action; },
       setTranslationDelayMs: (delayMs) => { translationDelayMs = Math.max(0, delayMs); },
       setTranslationLanguage: setMockTranslationLanguage,
       setTranslationPreferences: setMockTranslationPreferences,
     };
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
 
-    const agentLabel = (agentId: string) => {
-      if (agentId === MAIN_AGENT_ID) return 'Neva';
-      if (agentId === USER_AGENT_ID) return 'self';
-      return 'reviewer';
-    };
-    const agentMention = (agentId: string) => {
-      if (agentId === MAIN_AGENT_ID) return 'assistant';
-      if (agentId === USER_AGENT_ID) return 'self';
-      return 'reviewer';
-    };
-    const renderMembers = (agentIds: string[]) => [
-      { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
-      ...agentIds.map((agentId) => ({
-        principal: { type: 'agent', agentId },
-        mention: agentMention(agentId),
-        displayName: agentLabel(agentId),
-        ...(agentId === MAIN_AGENT_ID ? { coordinator: true } : {}),
-      })),
-    ];
-    const agentIdsForConversation = (conversationId: string, fallback: string[] = [MAIN_AGENT_ID]) => {
-      if (conversationId === USER_DM_ID) return [USER_AGENT_ID];
-      const entry = agentConversations.find((conversation) => conversation.id === conversationId);
-      const ids = entry?.members
-        .filter((member): member is { type: 'agent'; agentId: string } => member.type === 'agent')
-        .map((member) => member.agentId);
-      return ids && ids.length > 0 ? ids : fallback;
-    };
-    const agentProjection = (
-      conversationId: string,
-      options: {
-        title?: string | null;
-        agentIds?: string[];
-      } = {},
-    ) => {
-      const agentIds = options.agentIds ?? agentIdsForConversation(conversationId);
-      const title = options.title ?? (
-        conversationId === USER_DM_ID ? 'self'
-          : conversationId === GENERAL_CHANNEL_ID ? 'General'
-            : conversationId === DREAM_CHANNEL_ID ? 'Dream'
-            : conversationId === PLANNING_CHANNEL_ID ? 'Planning Channel'
-              : 'Neva'
-      );
-      const rows: Array<{ id: string; kind: 'message'; messageId: string }> = [];
-      const messages: Record<string, unknown> = {};
-      const addMessage = (id: string, text: string, actor: unknown, timestamp: number) => {
-        rows.push({ id: `user:${id}`, kind: 'message', messageId: id });
-        messages[id] = {
-          id,
-          role: 'user',
-          status: 'completed',
-          parentMessageId: null,
-          content: [{ type: 'text', text }],
-          createdAt: timestamp,
-          updatedAt: timestamp,
-          branches: null,
-          actor,
-        };
-      };
-      return {
-        conversationId,
-        revision: 1,
-        conversationTitle: title,
-        members: renderMembers(agentIds),
-        activeRunId: null,
-        activeRuns: [],
-        channelActivityEntries: [],
-        activeCompaction: null,
-        activeDream: null,
-        runActive: false,
-        channelRunsActive: false,
-        model: { id: 'gpt-5.4', provider: 'openai' },
-        thinkingLevel: 'medium',
-        pendingToolCallIds: [],
-        errorMessage: null,
-        rows,
-        transcriptRows: rows,
-        runIds: [],
-        entities: { messages, runs: {}, compactions: {}, contextClears: {}, dreams: {} },
-        streaming: null,
-        dmStreaming: null,
-      };
-    };
-    const restoreAgentConversation = (conversationId: string) => ({
-      conversationId,
-      renderProjection: agentProjection(conversationId),
-    });
     win.lin = {
       initialTranslationLanguage: translationLanguage,
       initialUrlPageTranslationPreferences: clone(translationPreferences),
+      agentCoreRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
+        calls.push({ cmd: method, args: clone(input) });
+        if (method === 'thread/list') {
+          return clone({ data: [...mockThreads].sort((left, right) => right.updatedAt - left.updatedAt), nextCursor: null }) as T;
+        }
+        if (method === 'thread/read') {
+          const thread = threadById(String(input.threadId));
+          return clone({ thread: input.includeTurns ? { ...thread, turns: mockTurns.get(thread.id) ?? [] } : thread }) as T;
+        }
+        if (method === 'thread/start') {
+          const thread = createMockThread(input);
+          emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
+          return clone({ thread }) as T;
+        }
+        if (method === 'thread/resume') {
+          return clone({ thread: threadById(String(input.threadId)) }) as T;
+        }
+        if (method === 'thread/fork') {
+          const source = threadById(String(input.threadId));
+          const sourceTurns = mockTurns.get(source.id) ?? [];
+          const boundary = input.boundary as { kind?: string; turnId?: string } | undefined;
+          const boundaryIndex = sourceTurns.findIndex((turn) => turn.id === boundary?.turnId);
+          if (boundaryIndex < 0) throw new Error('Fork boundary Turn not found.');
+          const includeCount = boundary?.kind === 'afterTurn' ? boundaryIndex + 1 : boundaryIndex;
+          const thread = createMockThread({ name: input.name ?? source.name }, source.id);
+          thread.preview = source.preview;
+          mockTurns.set(thread.id, clone(sourceTurns.slice(0, includeCount)));
+          emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
+          return clone({ thread }) as T;
+        }
+        if (method === 'thread/name/set') {
+          const thread = threadById(String(input.threadId));
+          thread.name = typeof input.name === 'string' ? input.name : null;
+          thread.updatedAt = ++now;
+          return {} as T;
+        }
+        if (method === 'thread/archive' || method === 'thread/unarchive') return {} as T;
+        if (method === 'thread/delete') {
+          const targetId = String(input.threadId);
+          const deleted = new Set([targetId]);
+          let changed = true;
+          while (changed) {
+            changed = false;
+            for (const thread of mockThreads) {
+              if ((thread.parentThreadId && deleted.has(thread.parentThreadId)) || (thread.forkedFromId && deleted.has(thread.forkedFromId))) {
+                if (!deleted.has(thread.id)) {
+                  deleted.add(thread.id);
+                  changed = true;
+                }
+              }
+            }
+          }
+          for (let index = mockThreads.length - 1; index >= 0; index -= 1) {
+            if (deleted.has(mockThreads[index]!.id)) mockThreads.splice(index, 1);
+          }
+          for (const threadId of deleted) {
+            mockTurns.delete(threadId);
+            mockGoals.delete(threadId);
+          }
+          return {} as T;
+        }
+        if (method === 'thread/turns/list') {
+          return clone({ data: mockTurns.get(String(input.threadId)) ?? [], nextCursor: null, backwardsCursor: null }) as T;
+        }
+        if (method === 'thread/items/list') {
+          const turns = mockTurns.get(String(input.threadId)) ?? [];
+          const turnId = typeof input.turnId === 'string' ? input.turnId : null;
+          return clone({
+            data: turns.filter((turn) => !turnId || turn.id === turnId)
+              .flatMap((turn) => turn.items.map((item) => ({ turnId: turn.id, item }))),
+            nextCursor: null,
+            backwardsCursor: null,
+          }) as T;
+        }
+        if (method === 'turn/start') {
+          const thread = threadById(String(input.threadId));
+          const turnId = nextCanonicalId();
+          const userItemId = nextCanonicalId();
+          const responseItemId = nextCanonicalId();
+          const content = Array.isArray(input.input)
+            ? input.input.filter((entry): entry is { type: 'text'; text: string } => (
+                Boolean(entry)
+                && typeof entry === 'object'
+                && (entry as { type?: unknown }).type === 'text'
+                && typeof (entry as { text?: unknown }).text === 'string'
+              ))
+            : [];
+          const prompt = content.map((entry) => entry.text).join('\n');
+          const userItem: MockThreadItem = {
+            id: userItemId,
+            type: 'userMessage',
+            provenance: itemProvenance(thread.id, turnId, userItemId),
+            clientId: typeof input.clientUserMessageId === 'string' ? input.clientUserMessageId : null,
+            content,
+          };
+          const responseItem: MockThreadItem = {
+            id: responseItemId,
+            type: 'agentMessage',
+            provenance: itemProvenance(thread.id, turnId, responseItemId),
+            text: 'Current outline focuses on design-system work.',
+            phase: 'final_answer',
+            memoryCitation: null,
+          };
+          const startedAt = ++now;
+          const provenance = { originThreadId: thread.id, originTurnId: turnId, trigger: { kind: 'user' as const } };
+          const activeTurn: MockTurn = {
+            id: turnId,
+            items: [userItem],
+            itemsView: 'full',
+            provenance,
+            status: 'inProgress',
+            error: null,
+            startedAt,
+            completedAt: null,
+            durationMs: null,
+          };
+          const completedTurn: MockTurn = {
+            ...activeTurn,
+            items: [userItem, responseItem],
+            status: 'completed',
+            completedAt: startedAt + 24,
+            durationMs: 24,
+          };
+          mockTurns.get(thread.id)!.push(completedTurn);
+          thread.preview = prompt;
+          thread.updatedAt = startedAt + 24;
+          thread.status = { type: 'active', activeFlags: [] };
+          emitAgentCoreNotification({ type: 'thread/status/changed', threadId: thread.id, status: thread.status });
+          emitAgentCoreNotification({ type: 'turn/started', threadId: thread.id, turnId, turn: activeTurn });
+          emitAgentCoreNotification({ type: 'item/completed', threadId: thread.id, turnId, itemId: responseItemId, item: responseItem });
+          thread.status = { type: 'idle' };
+          emitAgentCoreNotification({ type: 'turn/completed', threadId: thread.id, turnId, turn: completedTurn });
+          emitAgentCoreNotification({ type: 'thread/status/changed', threadId: thread.id, status: thread.status });
+          return clone({ turn: activeTurn, acceptedItemId: userItemId, deduplicated: false }) as T;
+        }
+        if (method === 'turn/steer') {
+          return clone({
+            turnId: String(input.expectedTurnId),
+            acceptedItemId: nextCanonicalId(),
+            deduplicated: false,
+          }) as T;
+        }
+        if (method === 'turn/interrupt') {
+          const threadId = String(input.threadId);
+          const turnId = String(input.turnId);
+          const turn = (mockTurns.get(threadId) ?? []).find((candidate) => candidate.id === turnId);
+          if (turn) {
+            turn.status = 'interrupted';
+            turn.completedAt = ++now;
+            turn.durationMs = Math.max(0, turn.completedAt - turn.startedAt);
+            emitAgentCoreNotification({ type: 'turn/completed', threadId, turnId, turn });
+          }
+          return clone({ turnId }) as T;
+        }
+        if (method === 'goal/get') return clone({ goal: mockGoals.get(String(input.threadId)) ?? null }) as T;
+        if (method === 'goal/create' || method === 'goal/update') {
+          const threadId = String(input.threadId);
+          const goal = { ...input, threadId, updatedAt: ++now };
+          mockGoals.set(threadId, goal);
+          emitAgentCoreNotification({ type: 'goal/updated', threadId, goal });
+          return clone({ goal }) as T;
+        }
+        if (method === 'userInput/respond') return clone({ response: input }) as T;
+        throw new Error(`Unhandled Agent Core mock request: ${method}`);
+      },
+      onAgentCoreNotification: (listener) => {
+        agentCoreListeners.push(listener);
+        return () => {
+          const index = agentCoreListeners.indexOf(listener);
+          if (index >= 0) agentCoreListeners.splice(index, 1);
+        };
+      },
       setTranslationLanguage: async (language) => {
         setMockTranslationLanguage(language);
       },
@@ -1863,35 +1622,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       openProviderConfig: async (params: { providerId: string; mode: string }) => {
         calls.push({ cmd: 'open_provider_config', args: clone(params) });
       },
-      openAgentConfig: async (params: { agentId?: string }) => {
-        calls.push({ cmd: 'open_agent_config', args: clone(params) });
-      },
-      openChannelConfig: async (params: { conversationId?: string; mode: string }) => {
-        calls.push({ cmd: 'open_channel_config', args: clone(params) });
-      },
       // The Settings window opens natively; in tests just record the request so
       // the onboarding CTA can be asserted (it deep-links to Providers).
       openSettings: async (target?: unknown) => {
         calls.push({ cmd: 'open_settings', args: clone(target ?? {}) });
       },
-      agentNavigateToConversation: async (conversationId: string) => {
-        calls.push({ cmd: 'agent_navigate_conversation', args: { conversationId } });
-      },
       closeProviderConfig: async () => {},
-      closeAgentConfig: async () => {},
-      closeChannelConfig: async () => {},
       notifySettingsChanged: async () => {},
       onSettingsNavigate: () => () => {},
-      showAgentMessageContextMenu: async (request) => {
-        calls.push({ cmd: 'agent_message_context_menu', args: clone(request) });
-        if (!messageContextMenuAction) return null;
-        if (messageContextMenuAction === 'copy' && !request.canCopy) return null;
-        if (messageContextMenuAction === 'retry' && !request.canRetry) return null;
-        if (messageContextMenuAction === 'regenerate' && !request.canRegenerate) return null;
-        if (messageContextMenuAction === 'details' && !request.canShowDetails) return null;
-        return messageContextMenuAction;
-      },
-      agentMarkConversationRead: async () => {},
       recentLocalFiles: async () => ({
         files: [{
           entryKind: 'file',
@@ -1941,40 +1679,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'url_page_translation_cancel') {
           return clone({ cancelled: true }) as T;
         }
-        if (cmd === 'agent_restore_latest_conversation') {
-          return clone(restoreAgentConversation(ASSISTANT_DM_ID)) as T;
-        }
-        if (cmd === 'agent_restore_conversation') {
-          return clone(restoreAgentConversation(String(args.conversationId ?? ASSISTANT_DM_ID))) as T;
-        }
-        if (cmd === 'agent_create_conversation') {
-          const agentIds = Array.isArray(args.agentIds) ? args.agentIds.map(String) : [];
-          const title = String(args.title ?? args.goal ?? '').trim() || 'Untitled';
-          const conversationId = `lin-agent-channel-created-${++sequence}`;
-          const members = [
-            { type: 'user', userId: 'local-user' },
-            ...Array.from(new Set([MAIN_AGENT_ID, ...agentIds])).map((agentId) => ({ type: 'agent', agentId })),
-          ];
-          agentConversations.push({
-            id: conversationId,
-            title,
-            members,
-            goal: title,
-            createdAt: now,
-            updatedAt: now += 1,
-            messageCount: 0,
-            lastMessageSnippet: null,
-            lastMessageAt: now,
-            unreadCount: 0,
-          });
-          return clone({
-            conversationId,
-            renderProjection: agentProjection(conversationId, {
-              title,
-              agentIds: Array.from(new Set(agentIds)),
-            }),
-          }) as T;
-        }
         if (cmd === 'agent_get_provider_settings') {
           if (options.providerSettingsDelayMs) await delay(options.providerSettingsDelayMs);
           return clone(agentSettings) as T;
@@ -2003,99 +1707,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             ];
           }
           return clone(agentSettings) as T;
-        }
-        if (cmd === 'agent_list_conversations') {
-          if (options.agentConversationsDelayMs) await delay(options.agentConversationsDelayMs);
-          return clone(agentConversations) as T;
-        }
-        if (cmd === 'agent_list_runs') return clone(agentRuns) as T;
-        if (cmd === 'agent_issue_search') {
-          const targets = Array.isArray(args.targets) ? new Set(args.targets.map(String)) : null;
-          const filter = args.filter && typeof args.filter === 'object' ? args.filter as Record<string, unknown> : {};
-          const statusCategories = Array.isArray(filter.statusCategories) ? new Set(filter.statusCategories.map(String)) : null;
-          const rows = agentIssueRows.filter((row) => {
-            if (!row || typeof row !== 'object') return false;
-            const record = row as Record<string, unknown>;
-            const target = record.target && typeof record.target === 'object' ? record.target as Record<string, unknown> : {};
-            if (targets && !targets.has(String(target.type))) return false;
-            if (filter.hasActiveSession === true && record.hasActiveSession !== true) return false;
-            if (filter.hasActiveSession === false && record.hasActiveSession === true) return false;
-            const hasParentIssue = typeof record.parentIssueId === 'string' && record.parentIssueId.length > 0;
-            if (filter.hasParentIssue === true && !hasParentIssue) return false;
-            if (filter.hasParentIssue === false && hasParentIssue) return false;
-            if (filter.archived === false && record.archived === true) return false;
-            if (statusCategories) {
-              const buckets = [
-                ...(Array.isArray(record.viewBuckets) ? record.viewBuckets.map(String) : []),
-                ...(Array.isArray(record.statusCategories) ? record.statusCategories.map(String) : []),
-                String(record.statusCategory ?? ''),
-              ].filter(Boolean);
-              if (!buckets.some((bucket) => statusCategories.has(bucket))) return false;
-            }
-            return true;
-          });
-          return clone({ rows }) as T;
-        }
-        if (cmd === 'agent_issue_read') {
-          const target = args.target && typeof args.target === 'object' ? args.target as Record<string, unknown> : {};
-          const key = `${String(target.type)}:${String(target.id)}`;
-          return clone(agentIssueDetails[key] ?? { target }) as T;
-        }
-        if (cmd === 'agent_session_read') {
-          const agentSessionId = String(args.agentSessionId ?? '');
-          for (const detail of Object.values(agentIssueDetails)) {
-            if (!detail || typeof detail !== 'object') continue;
-            const sessions = Array.isArray((detail as Record<string, unknown>).sessions)
-              ? (detail as Record<string, unknown>).sessions as Record<string, unknown>[]
-              : [];
-            const session = sessions.find((entry) => String(entry.id ?? '') === agentSessionId);
-            if (session) {
-              return clone({
-                agentSession: session,
-                activity: Array.isArray((detail as Record<string, unknown>).activity)
-                  ? (detail as Record<string, unknown>).activity
-                  : [],
-              }) as T;
-            }
-          }
-          return clone(null) as T;
-        }
-        if (cmd === 'agent_session_transcript') {
-          const agentSessionId = String(args.agentSessionId ?? '');
-          return clone(agentSessionTranscripts[agentSessionId] ?? null) as T;
-        }
-        if (cmd === 'agent_rename_conversation') {
-          const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
-          if (target) {
-            const title = String(args.title ?? '').trim() || 'Untitled';
-            target.title = title;
-            target.goal = title;
-            target.updatedAt = now += 1;
-          }
-          return clone(target ?? null) as T;
-        }
-        if (cmd === 'agent_add_conversation_member') {
-          const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
-          const agentId = String(args.agentId ?? '');
-          if (target && agentId && !target.members.some((member) => member.type === 'agent' && member.agentId === agentId)) {
-            target.members.push({ type: 'agent', agentId });
-            target.updatedAt = now += 1;
-          }
-          return clone(restoreAgentConversation(String(args.conversationId ?? ASSISTANT_DM_ID))) as T;
-        }
-        if (cmd === 'agent_remove_conversation_member') {
-          const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
-          const agentId = String(args.agentId ?? '');
-          if (target && agentId) {
-            target.members = target.members.filter((member) => member.type !== 'agent' || member.agentId !== agentId);
-            target.updatedAt = now += 1;
-          }
-          return clone(restoreAgentConversation(String(args.conversationId ?? ASSISTANT_DM_ID))) as T;
-        }
-        if (cmd === 'agent_delete_conversation') {
-          const index = agentConversations.findIndex((conversation) => conversation.id === args.conversationId);
-          if (index >= 0) agentConversations.splice(index, 1);
-          return clone({ ok: true }) as T;
         }
         if (cmd === 'agent_upsert_provider_config') {
           // Connection-only: the provider config carries credentials + endpoint
@@ -2129,20 +1740,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_update_runtime_settings') {
           const settings = args.settings as {
-            automaticSkillsEnabled?: boolean;
-            slashSkillsEnabled?: boolean;
-            compactEnabled?: boolean;
             additionalSkillDirectories?: string[];
             providerTimeoutMs?: number | null;
             providerMaxRetries?: number | null;
             providerMaxRetryDelayMs?: number | null;
             providerCacheRetention?: string;
-            dreamSchedule?: string;
           };
           agentSettings.agent = {
-            automaticSkillsEnabled: settings.automaticSkillsEnabled ?? agentSettings.agent.automaticSkillsEnabled,
-            slashSkillsEnabled: settings.slashSkillsEnabled ?? agentSettings.agent.slashSkillsEnabled,
-            compactEnabled: settings.compactEnabled ?? agentSettings.agent.compactEnabled,
             additionalSkillDirectories: Array.isArray(settings.additionalSkillDirectories)
               ? settings.additionalSkillDirectories.map(String)
               : agentSettings.agent.additionalSkillDirectories,
@@ -2160,9 +1764,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               : settings.providerCacheRetention === 'short'
                 ? 'short'
                 : agentSettings.agent.providerCacheRetention,
-            dreamSchedule: typeof settings.dreamSchedule === 'string'
-              ? settings.dreamSchedule
-              : agentSettings.agent.dreamSchedule,
           };
           return clone(agentSettings) as T;
         }
@@ -2195,10 +1796,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             skill.accepted = false;
           }
           return clone(agentSkills) as T;
-        }
-        if (cmd === 'agent_list_all_definitions') {
-          if (options.agentDefinitionsDelayMs) await delay(options.agentDefinitionsDelayMs);
-          return clone(agentDefinitions) as T;
         }
         if (cmd === 'agent_apply_capability_settings_patch') {
           const patch = args.patch as {
@@ -2293,203 +1890,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (pending) { oauthPending.delete(providerId); pending.reject(new Error('cancelled')); }
           return undefined as T;
         }
-        if (cmd === 'agent_debug_view') {
-          const conversationId = String(args.conversationId);
-          return clone(conversationId === GENERAL_CHANNEL_ID
-            ? debugChannelView
-            : conversationId === ASSISTANT_DM_ID
-              ? debugView
-              : { conversationId, shape: 'dm', members: [], runs: [], totals: { ...debugUsage, queries: 0, rounds: 0 } }) as T;
-        }
-        if (cmd === 'agent_debug_run') {
-          return clone(String(args.runId) === 'mock-run-1' ? debugRun : null) as T;
-        }
-        if (cmd === 'agent_payload_text') {
-          const payloadId = String(args.payloadId);
-          if (payloadId === 'payload-full-output') return clone('Full persisted tool output from payload') as T;
-          return clone(null) as T;
-        }
-        if (cmd === 'agent_run_detail') {
-          const runId = String(args.runId);
-          const requestedConversationId = args.conversationId === undefined ? '' : String(args.conversationId);
-          const runEntry = agentRuns.find((entry): entry is Record<string, any> => (
-            typeof entry === 'object'
-            && entry !== null
-            && String((entry as any).runId) === runId
-            && (!requestedConversationId || String((entry as any).conversationId) === requestedConversationId)
-          ));
-          const fixtureConversationId = runId === 'child-run-1' ? ASSISTANT_DM_ID : generalChannelId;
-          const conversationId = String(runEntry?.conversationId ?? fixtureConversationId);
-          return clone((!requestedConversationId || requestedConversationId === conversationId)
-            && (runEntry || runId === 'child-run-1' || runId === 'child-run-source-e2e')
-            ? {
-                runId,
-                conversationId,
-                agentId: String(runEntry?.agentId ?? 'built-in:tenon:assistant'),
-                kind: 'delegation',
-                title: String(runEntry?.title ?? 'Mock Run'),
-                status: runEntry?.status ?? 'completed',
-                runProfile: 'default',
-                runProfileLabel: 'Default',
-                context: 'full',
-                disposition: 'attended',
-                startedAt: Number(runEntry?.startedAt ?? 1),
-                updatedAt: Number(runEntry?.updatedAt ?? 2),
-                completedAt: runEntry?.completedAt ?? (runEntry?.status === 'running' ? undefined : 2),
-                ancestors: [],
-                subRuns: [],
-                verificationRuns: [],
-                transcriptMessageCount: Array.isArray(runEntry?.transcriptMessages)
-                  ? runEntry.transcriptMessages.length
-                  : childRunTranscriptMessages.length,
-              }
-            : null) as T;
-        }
-        if (cmd === 'agent_run_transcript') {
-          const runId = String(args.runId);
-          const requestedConversationId = args.conversationId === undefined ? '' : String(args.conversationId);
-          const runEntry = agentRuns.find((entry): entry is Record<string, any> => (
-            typeof entry === 'object'
-            && entry !== null
-            && String((entry as any).runId) === runId
-            && (!requestedConversationId || String((entry as any).conversationId) === requestedConversationId)
-          ));
-          const fixtureConversationId = runId === 'child-run-1' ? ASSISTANT_DM_ID : generalChannelId;
-          const conversationId = String(runEntry?.conversationId ?? fixtureConversationId);
-          const transcriptMessages = Array.isArray(runEntry?.transcriptMessages)
-            ? runEntry.transcriptMessages
-            : runId === 'child-run-1' || runId === 'child-run-source-e2e'
-              ? childRunTranscriptMessages
-              : null;
-          return clone(transcriptMessages && (!requestedConversationId || requestedConversationId === conversationId)
-            ? { messages: transcriptMessages }
-            : null) as T;
-        }
-        if (cmd === 'agent_run_conversation_id') {
-          const runId = String(args.runId);
-          const runEntry = agentRuns.find((entry): entry is Record<string, any> => (
-            typeof entry === 'object'
-            && entry !== null
-            && String((entry as any).runId) === runId
-          ));
-          return clone(runEntry
-            ? String(runEntry.conversationId)
-            : runId === 'child-run-1'
-              ? ASSISTANT_DM_ID
-              : runId === 'child-run-source-e2e'
-                ? generalChannelId
-                : null) as T;
-        }
-        if (cmd === 'agent_run_status') {
-          const runId = String(args.runId);
-          return clone({
-            status: 'running',
-            runId,
-            description: 'Inspect Run UI',
-            runProfile: 'default',
-            context_mode: 'brief',
-            started_at: now - 500,
-            updated_at: now,
-            transcript_message_count: 4,
-          }) as T;
-        }
-        if (cmd === 'agent_run_steer') {
-          const runId = String(args.runId);
-          return clone({
-            status: 'queued',
-            runId,
-            description: 'Inspect Run UI',
-            runProfile: 'default',
-            context_mode: 'brief',
-            started_at: now - 500,
-            updated_at: now,
-            transcript_message_count: 4,
-            instructions: 'Message queued for the running background agent.',
-          }) as T;
-        }
-        if (cmd === 'agent_run_stop') {
-          const runId = String(args.runId);
-          return clone({
-            status: 'cancelled',
-            runId,
-            description: 'Inspect Run UI',
-            runProfile: 'default',
-            context_mode: 'brief',
-            started_at: now - 500,
-            updated_at: now,
-            completed_at: now,
-            transcript_message_count: 4,
-          }) as T;
-        }
-        if (cmd === 'agent_list_slash_commands') {
-          return clone([
-            {
-              id: 'clear',
-              kind: 'runtime',
-              label: '/clear',
-              description: 'Clear model context from this point',
-              insertText: '/clear',
-            },
-            {
-              id: 'compact',
-              kind: 'runtime',
-              label: '/compact',
-              description: 'Compact the current conversation',
-              insertText: '/compact ',
-            },
-            {
-              id: 'skill:auto-skill',
-              kind: 'skill',
-              label: '/auto-skill',
-              description: 'Run automatic skill',
-              insertText: '/auto-skill ',
-            },
-          ]) as T;
-        }
-        if (cmd === 'agent_queue_follow_up') return clone({ queued: true }) as T;
-        if (cmd === 'agent_steer_conversation') return clone({ queued: true }) as T;
-        if (cmd === 'agent_list_dream_history') return clone(dreamHistory) as T;
-        // Above the volume bar so the manual "Dream now" pre-check passes through
-        // to agent_run_dream_now instead of showing the thin-data advisory.
-        if (cmd === 'agent_dream_readiness') {
-          return clone({
-            newMessageCount: 12,
-            newCharCount: 4000,
-            thresholdChars: 1000,
-            belowThreshold: false,
-            window: {
-              start: '2026-06-24',
-              end: '2026-06-24',
-            },
-          }) as T;
-        }
-        if (cmd === 'agent_run_dream_now') {
-          const entry = {
-            id: 'dream-e2e-1',
-            kind: 'dream',
-            status: 'completed',
-            trigger: 'manual',
-            principal: { type: 'agent', agentId: MAIN_AGENT_ID },
-            startedAt: now,
-            updatedAt: now + 500,
-            completedAt: now + 500,
-            runId: 'dream-run-e2e-1',
-            processed: {
-              totalMessageCount: 12,
-              totalCharCount: 4000,
-              consolidateOnly: false,
-            },
-            changes: {
-              added: 1,
-              updated: 0,
-              forgotten: 0,
-              skipped: 0,
-            },
-          };
-          dreamHistory.splice(0, dreamHistory.length, entry);
-          return clone(dreamHistory) as T;
-        }
-        if (cmd.startsWith('agent_')) return undefined as T;
         if (cmd === 'init_workspace' || cmd === 'get_projection') {
           if (cmd === 'init_workspace' && options.initWorkspaceDelayMs) await delay(options.initWorkspaceDelayMs);
           return clone(projectionSnapshot()) as T;
@@ -2529,12 +1929,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const target = args.target as {
             kind?: string;
             assetId?: string;
-            conversationId?: string;
             entryKind?: 'file' | 'directory';
             label?: string;
             path?: string;
-            payloadId?: string;
-            runId?: string;
             url?: string;
           } | undefined;
           if (target?.kind === 'asset' && target.assetId) {
@@ -2579,24 +1976,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               },
             }) as T;
           }
-          if (target?.kind === 'agent-payload' && target.payloadId) {
-            if (target.payloadId === 'payload-full-output' && target.runId !== 'run-payload-output') {
-              return clone({ source: null, error: 'missing' }) as T;
-            }
-            return clone({
-              source: {
-                kind: 'file',
-                sourceKind: 'agent-payload',
-                id: `agent-payload:${target.conversationId ?? ''}:${target.runId ?? ''}:${target.payloadId}`,
-                target,
-                name: target.label || `${target.payloadId}.txt`,
-                ext: 'txt',
-                mimeType: 'text/plain',
-                entryKind: 'file',
-                sizeBytes: 39,
-              },
-            }) as T;
-          }
           return clone({ source: null, error: 'missing' }) as T;
         }
         if (cmd === 'preview_read_text') {
@@ -2604,15 +1983,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             assetId?: string;
             kind?: string;
             path?: string;
-            payloadId?: string;
-            runId?: string;
           } | undefined;
-          if (target?.kind === 'agent-payload') {
-            if (target.payloadId === 'payload-full-output' && target.runId !== 'run-payload-output') {
-              return clone({ text: null, error: 'missing' }) as T;
-            }
-            return clone({ text: 'Full persisted tool output from payload' }) as T;
-          }
           if (target?.kind === 'local-file') return clone({ text: `# ${target.path?.split('/').pop() ?? 'file'}\n\nMock preview text.` }) as T;
           if (target?.kind === 'asset' && target.assetId) {
             const asset = assets.get(target.assetId);
@@ -2647,11 +2018,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ text: 'Mock asset preview text.' }) as T;
         }
         if (cmd === 'preview_read_bytes') {
-          const target = args.target as { kind?: string; assetId?: string; path?: string; payloadId?: string } | undefined;
+          const target = args.target as { kind?: string; assetId?: string; path?: string } | undefined;
           if (
             (target?.kind === 'asset' && target.assetId && assets.get(target.assetId)?.mimeType === 'application/pdf')
             || (target?.kind === 'local-file' && target.path?.toLowerCase().endsWith('.pdf'))
-            || (target?.kind === 'agent-payload' && target.payloadId?.toLowerCase().endsWith('pdf'))
           ) {
             return { bytes: previewPdfBytes(), mimeType: 'application/pdf' } as T;
           }
@@ -3422,14 +2792,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         throw new Error(`Unhandled mock invoke: ${cmd}`);
       },
-      onAgentEvent: (listener: (event: unknown) => void) => {
-        agentListeners.push(listener);
-        listener({ type: 'ready' });
-        return () => {
-          const index = agentListeners.indexOf(listener);
-          if (index >= 0) agentListeners.splice(index, 1);
-        };
-      },
       onDocumentEvent: (listener: (event: unknown) => void) => {
         documentListeners.push(listener);
         return () => {
@@ -3445,7 +2807,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         };
       },
     };
-  }, { ids, options, defaultDreamChannelId: DEFAULT_DREAM_CHANNEL_ID, generalChannelId: DEFAULT_GENERAL_CHANNEL_ID, debugUsageFixture: DEBUG_USAGE });
+  }, { ids, options });
 }
 
 export function row(page: Page, id: string) {
@@ -3488,11 +2850,11 @@ export async function configurePreviewTranslationMock(
   }, options);
 }
 
-export async function emitAgentEvent(page: Page, event: unknown) {
-  await page.evaluate((nextEvent) => {
+export async function emitAgentCoreNotification(page: Page, notification: unknown) {
+  await page.evaluate((nextNotification) => {
     const win = window as E2EWindow;
-    win.__LIN_E2E__?.emitAgentEvent(nextEvent);
-  }, event);
+    win.__LIN_E2E__?.emitAgentCoreNotification(nextNotification);
+  }, notification);
 }
 
 // Push one main->renderer OAuth login event (device-code / auth / progress /
@@ -3511,360 +2873,6 @@ export async function resolveOAuthLogin(page: Page, providerId: string) {
     const win = window as E2EWindow;
     win.__LIN_E2E__?.resolveOAuthLogin(providerId);
   }, providerId);
-}
-
-export async function setAgentMessageContextMenuAction(
-  page: Page,
-  action: 'copy' | 'retry' | 'regenerate' | 'details' | null,
-) {
-  await page.evaluate((action) => {
-    const win = window as E2EWindow;
-    win.__LIN_E2E__?.setAgentMessageContextMenuAction(action);
-  }, action);
-}
-
-export async function emitAgentProjection(page: Page, conversationId: string, state: Record<string, any>, revision = 1) {
-  const entities: Record<string, any> = {};
-  const compactions: Record<string, any> = {};
-  const rows: Array<{ id: string; kind: string; messageId?: string; compactionId?: string; childRunId?: string }> = [];
-  const now = state.now ?? Date.now();
-
-  const persistedContent = (message: any) => {
-    const content = typeof message.content === 'string'
-      ? [{ type: 'text', text: message.content }]
-      : message.content ?? [];
-    return content.map((part: any, index: number) => {
-      if (part.type === 'text') return { type: 'text', text: part.text };
-      if (part.type === 'thinking') return { type: 'thinking', thinking: part.thinking, redacted: part.redacted };
-      if (part.type === 'toolCall') return { type: 'toolCall', id: part.id, name: part.name, arguments: part.arguments ?? {} };
-      if (part.type === 'payload_ref') return part;
-      if (part.type === 'image') {
-        const mimeType = part.mimeType ?? 'image/png';
-        return {
-          type: 'image',
-          alt: part.alt ?? 'Image attachment',
-          imageRef: {
-            kind: 'payload_ref',
-            id: `mock-image-${index}`,
-            storage: 'file',
-            mimeType,
-            byteLength: 0,
-            sha256: `mock-image-${index}`,
-            role: 'source',
-            summary: part.alt ?? 'Image attachment',
-          },
-        };
-      }
-      return { type: 'text', text: JSON.stringify(part) };
-    });
-  };
-  const rawChildRuns = state.childRuns ?? {};
-  const childRuns = Array.isArray(rawChildRuns)
-    ? Object.fromEntries(rawChildRuns.map((childRun: any) => [childRun.id, childRun]))
-    : rawChildRuns;
-  const contextPolicyForRun = (run: any) => {
-    const context = run.context ?? run.contextMode;
-    return context === 'brief' || context === 'none' || context === 'full' ? context : 'full';
-  };
-  const runEntities = Object.fromEntries(Object.values(childRuns).map((childRun: any) => {
-    const agentId = childRun.executingAgentId ?? 'built-in:tenon:assistant';
-    return [childRun.id, {
-      id: childRun.id,
-      agentId,
-      anchor: { type: 'conversation', agentId, conversationId },
-      conversationId,
-      title: (childRun.objective ?? childRun.description ?? '').trim() || childRun.id,
-      parentRunId: childRun.parentRunId,
-      parentToolCallId: childRun.parentToolCallId,
-      runProfile: childRun.runProfile ?? 'default',
-      runProfileLabel: childRun.runProfileLabel ?? 'Default',
-      status: childRun.status,
-      objectiveStatus: childRun.objectiveStatus,
-      objectiveRole: childRun.objectiveRole,
-      context: contextPolicyForRun(childRun),
-      startedAt: childRun.startedAt,
-      updatedAt: childRun.updatedAt,
-      completedAt: childRun.completedAt,
-    }];
-  }));
-  const runIds = state.runIds
-    ?? (Array.isArray(rawChildRuns) ? rawChildRuns.map((childRun: any) => childRun.id) : Object.keys(runEntities));
-  const runListEntries = Object.values(childRuns).map((childRun: any) => ({
-    runId: childRun.id,
-    conversationId,
-    conversationTitle: state.conversationTitle ?? 'General',
-    agentId: childRun.executingAgentId ?? 'built-in:tenon:assistant',
-    kind: 'delegation',
-    runProfile: childRun.runProfile ?? 'default',
-    runProfileLabel: childRun.runProfileLabel ?? 'Default',
-    status: childRun.status,
-    objectiveStatus: childRun.objectiveStatus,
-    purpose: childRun.purpose,
-    parentRunId: childRun.parentRunId ?? null,
-    title: (childRun.objective ?? childRun.description ?? '').trim() || childRun.id,
-    startedAt: childRun.startedAt,
-    updatedAt: childRun.updatedAt,
-    completedAt: childRun.status === 'running' ? undefined : childRun.completedAt ?? childRun.updatedAt,
-  }));
-  await page.evaluate((runs) => {
-    const win = window as E2EWindow;
-    win.__LIN_E2E__?.setAgentRuns(runs);
-  }, runListEntries);
-  const sourceSeqs = (entry: any, message: any) => {
-    const values = entry.sourceSeqs ?? message.sourceSeqs;
-    if (Array.isArray(values)) return values;
-    const value = entry.sourceSeq ?? message.sourceSeq;
-    return typeof value === 'number' ? [value] : undefined;
-  };
-
-  for (const entry of state.conversation ?? []) {
-    if (entry.kind === 'compaction') {
-      const compaction = entry.compaction;
-      const messageId = compaction.messageId ?? entry.nodeId ?? `compact-${compaction.id}`;
-      rows.push({ id: `compaction:${messageId}`, kind: 'compaction', messageId, compactionId: compaction.id });
-      entities[messageId] = {
-        id: messageId,
-        role: 'user',
-        status: 'completed',
-        parentMessageId: null,
-        content: [{ type: 'text', text: 'Conversation compacted.' }],
-        createdAt: compaction.createdAt,
-        updatedAt: compaction.createdAt,
-        branches: null,
-      };
-      compactions[compaction.id] = {
-        createdAt: compaction.createdAt,
-        id: compaction.id,
-        messageId,
-        source: compaction.source ?? { fromMessageId: messageId, throughMessageId: messageId },
-        summary: compaction.summary,
-        trigger: compaction.trigger ?? 'manual',
-      };
-      continue;
-    }
-
-    const message = entry.message;
-    const messageId = entry.nodeId;
-    const actor = entry.actor ?? (message.role === 'user'
-      ? { type: 'user', userId: 'local-user' }
-      : { type: 'agent', agentId: 'built-in:tenon:assistant' });
-    rows.push({ id: `${message.role}:${messageId}`, kind: 'message', messageId });
-    entities[messageId] = {
-      id: messageId,
-      role: message.role,
-      status: 'completed',
-      parentMessageId: null,
-      content: persistedContent(message),
-      createdAt: message.timestamp,
-      updatedAt: message.timestamp,
-      sourceSeq: entry.sourceSeq ?? message.sourceSeq,
-      sourceSeqs: sourceSeqs(entry, message),
-      branches: entry.branches ?? null,
-      actor,
-      addressedTo: entry.addressedTo ?? message.addressedTo,
-      addressedByMessageId: entry.addressedByMessageId ?? message.addressedByMessageId,
-      apiId: message.api,
-      providerId: message.provider,
-      modelId: message.model,
-      runId: entry.runId ?? message.runId,
-      runUsage: entry.runUsage ?? message.runUsage,
-      runDurationMs: entry.runDurationMs ?? message.runDurationMs,
-      turnInterrupted: entry.turnInterrupted ?? message.turnInterrupted,
-      stopReason: message.stopReason,
-      usage: message.usage,
-      errorMessage: message.errorMessage,
-      issueNotification: entry.issueNotification ?? message.issueNotification,
-    };
-  }
-
-  let streaming = null;
-  const streamingMessage = state.streamingMessage;
-  if (streamingMessage?.role === 'assistant') {
-    const messageId = 'assistant-streaming';
-    rows.push({ id: `assistant:${messageId}`, kind: 'message', messageId });
-    entities[messageId] = {
-      id: messageId,
-      role: 'assistant',
-      status: 'streaming',
-      parentMessageId: null,
-      content: persistedContent(streamingMessage),
-      createdAt: streamingMessage.timestamp,
-      updatedAt: streamingMessage.timestamp,
-      sourceSeq: streamingMessage.sourceSeq,
-      sourceSeqs: sourceSeqs(streamingMessage, streamingMessage),
-      branches: null,
-      actor: streamingMessage.actor ?? { type: 'agent', agentId: 'built-in:tenon:assistant' },
-      addressedByMessageId: streamingMessage.addressedByMessageId ?? null,
-      apiId: streamingMessage.api,
-      providerId: streamingMessage.provider,
-      modelId: streamingMessage.model,
-      runId: streamingMessage.runId,
-      stopReason: streamingMessage.stopReason,
-      usage: streamingMessage.usage,
-      errorMessage: streamingMessage.errorMessage,
-    };
-    streaming = {
-      messageId,
-      rowId: `assistant:${messageId}`,
-      text: persistedContent(streamingMessage)
-        .filter((part: any) => part.type === 'text')
-        .map((part: any) => part.text)
-        .join(''),
-      updatedAt: streamingMessage.timestamp,
-    };
-  }
-
-  for (const message of state.messages ?? []) {
-    if (message.role !== 'toolResult') continue;
-    const messageId = `tool-result:${message.toolCallId}`;
-    entities[messageId] = {
-      id: messageId,
-      role: 'toolResult',
-      status: 'completed',
-      parentMessageId: null,
-      content: persistedContent(message),
-      createdAt: message.timestamp,
-      updatedAt: message.timestamp,
-      sourceSeq: message.sourceSeq,
-      sourceSeqs: sourceSeqs(message, message),
-      branches: null,
-      actor: message.actor ?? { type: 'tool', toolName: message.toolName, toolCallId: message.toolCallId },
-      toolCallId: message.toolCallId,
-      toolName: message.toolName,
-      isError: message.isError,
-    };
-  }
-
-  const projectionMembers = state.members ?? [
-    { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
-    {
-      principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-      mention: 'assistant',
-      displayName: 'Neva',
-      coordinator: true,
-    },
-  ];
-  const projectionChannel = usesChannelActivitySurface(
-    conversationId,
-    projectionMembers.map((member: any) => member.principal),
-  );
-  const activeRunId = state.activeRunId ?? (state.isStreaming ? 'run-e2e' : null);
-  const activeRunIds = new Set<string>(
-    (state.activeRuns ?? [])
-      .map((run: any) => run?.runId)
-      .filter((runId: unknown): runId is string => typeof runId === 'string' && runId.length > 0),
-  );
-  if (activeRunId) activeRunIds.add(activeRunId);
-
-  const projectionChannelActivity = state.channelActivityEntries ?? state.activityEntries ?? [];
-  const transcriptRows = (state.transcriptRows ?? rows).filter((row: any) => row.kind !== 'child-run');
-  const projectedTranscriptRows = projectionChannel && activeRunIds.size > 0
-    ? transcriptRows.filter((row) => {
-        if (row.kind === 'message') return !activeRunIds.has(entities[row.messageId ?? '']?.runId);
-        return true;
-      })
-    : transcriptRows;
-  await emitAgentEvent(page, {
-    type: 'projection',
-    conversationId,
-    lastEventType: null,
-    revision,
-    renderProjection: {
-      conversationId,
-      revision,
-      conversationTitle: state.conversationTitle ?? null,
-      members: projectionMembers,
-      activeRunId,
-      activeRuns: state.activeRuns ?? (activeRunId ? [{
-        runId: activeRunId,
-        agentId: 'built-in:tenon:assistant',
-        addressedByMessageId: null,
-        startedAt: now,
-      }] : []),
-      channelActivityEntries: projectionChannelActivity,
-      activeCompaction: state.activeCompaction ?? null,
-      activeDream: state.activeDream ?? null,
-      runActive: state.runActive ?? (!!state.isStreaming && !projectionChannel),
-      channelRunsActive: state.channelRunsActive
-        ?? (projectionChannelActivity.length > 0 || (!!state.isStreaming && projectionChannel)),
-      model: state.model ?? {},
-      thinkingLevel: state.thinkingLevel ?? 'off',
-      pendingToolCallIds: state.pendingToolCallIds ?? [],
-      errorMessage: state.errorMessage ?? null,
-      rows,
-      transcriptRows: projectedTranscriptRows,
-      runIds,
-      entities: { messages: entities, runs: runEntities, compactions, contextClears: {}, dreams: {} },
-      streaming: projectionChannel ? null : streaming,
-      dmStreaming: projectionChannel ? null : streaming,
-    },
-    timestamp: Date.now(),
-  });
-}
-
-export async function openMockRunDetailsFromAssistantDetailsButton(
-  page: Page,
-  replyText = 'Open the details pane from this response.',
-  options: { openDetails?: boolean } = {},
-) {
-  await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
-    conversationTitle: 'General',
-    members: [
-      { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
-      {
-        principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-        mention: 'assistant',
-        displayName: 'Neva',
-        coordinator: true,
-      },
-    ],
-    model: { id: 'gpt-5.4', provider: 'openai' },
-    conversation: [
-      {
-        nodeId: 'agent-user-more-details',
-        actor: { type: 'user', userId: 'local-user' },
-        message: {
-          role: 'user',
-          timestamp: 1_800_000_000_000,
-          content: [{ type: 'text', text: 'Summarize current outline.' }],
-        },
-      },
-      {
-        nodeId: 'assistant-more-details',
-        runId: 'mock-run-1',
-        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-        message: {
-          role: 'assistant',
-          timestamp: 1_800_000_000_100,
-          api: 'openai-completions',
-          provider: 'openai',
-          model: 'gpt-5.4',
-          usage: {
-            input: 2499,
-            output: 92,
-            cacheRead: 19968,
-            cacheWrite: 0,
-            totalTokens: 22559,
-            cost: {
-              input: 0.0125,
-              output: 0.00276,
-              cacheRead: 0.00998,
-              cacheWrite: 0,
-              total: 0.0252,
-            },
-          },
-          runUsage: DEBUG_USAGE,
-          stopReason: 'stop',
-          content: [{ type: 'text', text: replyText }],
-        },
-      },
-    ],
-  });
-
-  const row = page.locator('.agent-message-row.assistant', { hasText: replyText });
-  await row.hover();
-  if (options.openDetails === false) return;
-  await row.getByRole('button', { name: 'Details' }).click();
 }
 
 export async function emitDocumentEvent(page: Page, event: unknown) {

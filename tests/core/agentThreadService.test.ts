@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentCoreExtension, TurnAdmissionContext } from '../../src/core/agent/extensions';
@@ -16,6 +16,8 @@ import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMeta
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type { TurnExecutionContext, TurnExecutionResult, TurnExecutor } from '../../src/main/agent/runtime/types';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
+import { Core } from '../../src/core/core';
+import { createNodeTools, type OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const roots: string[] = [];
 
@@ -67,6 +69,19 @@ class ControlledExecutor implements TurnExecutor {
 }
 
 describe('ThreadService', () => {
+  test('resolves renderer-owned Thread defaults at the host boundary', async () => {
+    const fixture = await createFixture(undefined, {
+      resolveRendererStartDefaults: () => ({ modelProvider: 'openai', cwd: '/tmp/agent-workdir' }),
+    });
+
+    const thread = (await fixture.service.startThread({ name: 'Host defaults' })).thread;
+
+    expect(thread.modelProvider).toBe('openai');
+    expect(thread.cwd).toBe('/tmp/agent-workdir');
+    expect(fixture.service.readThread({ threadId: thread.id }).thread).toEqual(thread);
+    await fixture.service.close();
+  });
+
   test('enforces one active Turn, deduplicates client input, steers, and persists canonical history', async () => {
     const fixture = await createFixture();
     const notifications: AgentCoreNotification[] = [];
@@ -122,6 +137,34 @@ describe('ThreadService', () => {
     await reopened.service.close();
   });
 
+  test('creates only the declared Agent Core storage tree from fresh userData', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Persist canonical storage' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+
+    const files = await storageFiles(join(fixture.root, 'agent'));
+    expect(files.filter((file) => !file.endsWith('-shm') && !file.endsWith('-wal'))).toEqual([
+      'goals.sqlite',
+      `rollouts/${thread.id}.jsonl`,
+      'state.sqlite',
+      'thread_history.sqlite',
+    ]);
+    expect(files.filter((file) => file.endsWith('-shm') || file.endsWith('-wal')).every((file) =>
+      /^(?:goals|state|thread_history)\.sqlite-(?:shm|wal)$/.test(file))).toBe(true);
+  });
+
   test('interrupts the exact active Turn and records a terminal history fact', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
@@ -174,6 +217,50 @@ describe('ThreadService', () => {
     expect(copied.items[0]?.id).not.toBe(sourceTurn.items[0]?.id);
     expect(copied.items[0]?.provenance).toEqual(sourceTurn.items[0]?.provenance);
     expect(copied.items[0]).toMatchObject({ type: 'userMessage', clientId: null });
+    await fixture.service.close();
+  });
+
+  test('omits forked history without reverting document, file, shell, MCP, process, or external effects', async () => {
+    const fixture = await createFixture();
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Produce observable effects' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(source.id);
+
+    const document = Core.new();
+    const nodeId = document.createNode(document.projection().todayId, null, 'Effect remains').focus!.nodeId;
+    const filePath = join(fixture.root, 'effect.txt');
+    await writeFile(filePath, 'file effect remains', 'utf8');
+    const nonDocumentEffects = {
+      shell: ['command completed'],
+      mcp: ['remote mutation accepted'],
+      processes: ['process-1'],
+      external: ['message delivered'],
+    };
+
+    const fork = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'beforeTurn', turnId: accepted.turn.id },
+    })).thread;
+
+    expect(fixture.service.readThread({ threadId: fork.id, includeTurns: true }).thread.turns).toEqual([]);
+    expect(document.projection().nodes.find((node) => node.id === nodeId)?.content.text).toBe('Effect remains');
+    expect(await readFile(filePath, 'utf8')).toBe('file effect remains');
+    expect(nonDocumentEffects).toEqual({
+      shell: ['command completed'],
+      mcp: ['remote mutation accepted'],
+      processes: ['process-1'],
+      external: ['message delivered'],
+    });
     await fixture.service.close();
   });
 
@@ -329,6 +416,23 @@ describe('ThreadService', () => {
     });
     fixture.executor.finish(1);
     await fixture.service.waitForIdle(child.thread.id);
+
+    const isolated = await fixture.service.spawnIsolatedSkillThread({
+      parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
+      parentItemId: 'skill-item',
+      skillName: 'research',
+      prompt: 'Inspect without tools',
+      allowedTools: [],
+      readOnly: true,
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    expect(isolated.thread.parentThreadId).toBe(root.id);
+    expect(isolated.thread.threadSource).toBe('subagent');
+    expect(fixture.executor.contexts[2]?.configuration.tools).toEqual([]);
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(isolated.thread.id);
+
     fixture.executor.finish(0);
     await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
@@ -348,7 +452,10 @@ describe('ThreadService', () => {
     });
     await fixture.executor.waitUntilWaiting();
     const context = fixture.executor.contexts[0]!;
-    const runtime = new ToolRuntime(fixture.service, { capabilityTools: () => [] });
+    const runtime = new ToolRuntime(fixture.service, {
+      capabilityTools: () => [],
+      capabilityConfig: { blocks: [] },
+    });
     const tools = await runtime.createTools(context);
     expect(tools.map((tool) => tool.name)).toEqual([
       'request_user_input',
@@ -381,7 +488,10 @@ describe('ThreadService', () => {
     await fixture.executor.waitUntilWaiting(1);
     expect(spawned.details).toMatchObject({ task_name: '/root/helper' });
     const listed = await executeTool(tools, 'collaboration__list_agents', 'list-item', {});
-    expect(listed.details).toMatchObject([{ taskPath: '/root/helper', status: 'running' }]);
+    expect(listed.details).toMatchObject({
+      result: [{ taskPath: '/root/helper', status: 'running' }],
+      capabilityAudit: { behavior: 'allow' },
+    });
     await executeTool(tools, 'update_goal', 'goal-update', { status: 'complete' });
 
     fixture.executor.finish(1);
@@ -391,6 +501,54 @@ describe('ThreadService', () => {
     await fixture.service.waitForIdle(root.id);
     const stored = fixture.service.readThread({ threadId: root.id, includeTurns: true }).thread;
     expect(stored.turns?.[0]?.items.some((item) => item.type === 'plan')).toBe(true);
+    await fixture.service.close();
+  });
+
+  test('binds document tool mutations to the executing Thread, Turn, and Item', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      modelProvider: 'test',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Read the outline' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const context = fixture.executor.contexts[0]!;
+    const core = Core.new();
+    const metadata: Array<Parameters<NonNullable<OutlinerToolHost['transaction']>>[0]> = [];
+    const outliner: OutlinerToolHost = {
+      getProjection: () => core.projection(),
+      handle: async () => {
+        throw new Error('node_read must not mutate the document');
+      },
+      transaction: async (meta, operation) => {
+        metadata.push(meta);
+        return operation();
+      },
+    };
+    const runtime = new ToolRuntime(fixture.service, {
+      outliner,
+      capabilityConfig: { blocks: [] },
+      capabilityTools: (_runtimeContext, wrappedOutliner) => createNodeTools(wrappedOutliner!),
+    });
+    const tools = await runtime.createTools({
+      ...context,
+      configuration: { ...context.configuration, tools: ['node_read'] },
+    });
+    const itemId = context.recorder.createItemId();
+
+    await executeTool(tools, 'node_read', itemId, {
+      node_id: core.projection().todayId,
+      depth: 0,
+    });
+
+    expect(metadata).toEqual([expect.objectContaining({
+      causation: { threadId: thread.id, turnId: context.turn.id, itemId },
+    })]);
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
     await fixture.service.close();
   });
 });
@@ -432,7 +590,10 @@ async function openFixture(
   executor: ControlledExecutor,
   clock: () => number,
   extensions?: ExtensionRegistry,
-  options: Pick<ConstructorParameters<typeof ThreadService>[0], 'resolveConfiguration' | 'resolveRole'> = {},
+  options: Pick<
+    ConstructorParameters<typeof ThreadService>[0],
+    'resolveConfiguration' | 'resolveRendererStartDefaults' | 'resolveRole'
+  > = {},
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
   const stores = createStores(root);
   return {
@@ -460,6 +621,16 @@ function createStores(root: string): ThreadServiceStores {
 
 function database(path: string): SqliteDatabase {
   return new Database(path, { create: true }) as unknown as SqliteDatabase;
+}
+
+async function storageFiles(root: string, prefix = ''): Promise<string[]> {
+  const files: string[] = [];
+  for (const entry of await readdir(join(root, prefix), { withFileTypes: true })) {
+    const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) files.push(...await storageFiles(root, relativePath));
+    else files.push(relativePath);
+  }
+  return files.sort();
 }
 
 async function executeTool(

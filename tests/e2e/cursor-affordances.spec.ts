@@ -25,37 +25,28 @@ const inlineNativeAffordanceCssProperties = new Set([
   'user-select',
 ]);
 const pointerCursorSelectors = new Set([
-  '.inline-ref.agent-message-inline-ref[href]',
   '.inline-ref:hover',
   '.row-editor .inline-ref:hover',
 ]);
 const helpCursorSelectors = new Map([
-  ['src/renderer/styles/agent-debug.css|.agent-debug-cost', 'Debug cost diagnostic tooltip.'],
   ['src/renderer/styles/outliner.css|.field-value-hint', 'Field-value validation hint uses a native title tooltip.'],
 ]);
 const textCursorSelectors = new Map([
-  ['src/renderer/styles/agent-composer.css|.agent-composer-editor', 'Agent composer text editor.'],
+  ['src/renderer/styles/thread.css|.thread-composer textarea', 'Thread composer text editor.'],
   ['src/renderer/styles/file-preview.css|.file-preview-pdf-text-layer :is(span, br)', 'Selectable PDF text layer glyphs.'],
   ['src/renderer/styles/outliner.css|.field-option-picker-row', 'Field option value opens into an inline filter input.'],
   ['src/renderer/styles/outliner.css|.node-description', 'Outliner node description textarea.'],
   ['src/renderer/styles/outliner.css|.row.ref-converting .row-editor .inline-ref:hover', 'Inline reference returns to text cursor while converting inside row text.'],
 ]);
 const tooltipSurfaceSelectors = new Map([
-  ['.agent-debug-usage-popover', 'Agent debug usage tooltip.'],
-  ['.agent-message-usage-hover-card', 'Agent message usage tooltip.'],
   ['.inline-file-preview-popover', 'Pointer-delayed inline file preview tooltip.'],
   ['.view-toolbar-tooltip', 'View toolbar tooltip.'],
 ]);
 const readOnlyTooltipComponents = new Map([
-  ['AgentUsageBreakdown', 'Read-only agent usage token/cost rows.'],
   ['FilePreviewIcon', 'Read-only inline file identity glyph.'],
-  ['RoundInfoContent', 'Read-only agent debug round usage details.'],
 ]);
 const chromeIconControlSelectors = [
-  '.agent-dock-run-back',
-  '.agent-dock-title-button',
-  '.agent-run-icon-button',
-  '.agent-run-panel-button',
+  '.thread-dock-header .icon-button',
   '.outline-panel-close',
   '.panel-breadcrumb-close',
   '.panel-page-back-button',
@@ -64,10 +55,6 @@ const chromeIconControlSelectors = [
   '.settings-row-menu-trigger',
 ];
 const focusVisibleRingSuppressionExceptions = new Map([
-  [
-    'src/renderer/styles/agent-message.css|.agent-channel-working-stop-all:focus-visible',
-    'Compact text action uses underline as its keyboard-focus indicator.',
-  ],
   [
     'src/renderer/styles/code.css|.code-block-textarea:focus-visible',
     'Code editor textarea is a transparent caret plane over syntax-highlighted text.',
@@ -934,6 +921,7 @@ test.describe('cursor affordances', () => {
 
   test('core controls keep the native arrow cursor', async ({ page }) => {
     await openMockedApp(page);
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
 
     const cursors = await page.evaluate((ids) => {
       const cursor = (selector: string) => {
@@ -945,8 +933,8 @@ test.describe('cursor affordances', () => {
       return {
         panelMore: cursor('.panel-title-more-button'),
         rowBullet: cursor(`[data-node-id="${ids.alpha}"] .row-bullet-button`),
-        composerSend: cursor('.agent-composer-action-button'),
-        agentTitle: cursor('.agent-dock-title-button'),
+        composerSend: cursor('.thread-composer .icon-button'),
+        threadList: cursor('.thread-dock-header .icon-button'),
       };
     }, ids);
 
@@ -954,7 +942,7 @@ test.describe('cursor affordances', () => {
     expect(cursors.panelMore).toBe('default');
     expect(cursors.rowBullet).toBe('default');
     expect(cursors.composerSend).toBe('default');
-    expect(cursors.agentTitle).toBe('default');
+    expect(cursors.threadList).toBe('default');
   });
 
   test('shared icon buttons and definition switches stay on the arrow cursor', async ({ page }) => {
@@ -990,31 +978,23 @@ test.describe('cursor affordances', () => {
     expect(definitionSwitchCursor).toBe('default');
   });
 
-  test('de-pointered non-link controls never use the hand cursor (A5)', async ({ page }) => {
+  test('Thread actions and tag controls never use the hand cursor (A5)', async ({ page }) => {
     await openMockedApp(page);
 
-    // These three controls used to carry cursor: pointer even though none is a
-    // content hyperlink (an approval toggle, an approval action button, a tag
-    // label). PR-C removed the pointer; guard that it never comes back. These are
-    // class-only probes (no ancestor context), so they catch a pointer re-added to
-    // the class rule itself — not one inherited via a different selector/ancestor.
-    const cursors = await page.evaluate(() => {
-      const probe = (tag: string, className: string) => {
-        const element = document.createElement(tag);
-        element.className = className;
-        document.body.appendChild(element);
-        return getComputedStyle(element).cursor;
-      };
-      return {
-        approvalToggle: probe('button', 'agent-approval-details-toggle'),
-        approvalButton: probe('button', 'agent-approval-button'),
-        tagLabel: probe('span', 'tag-badge-label clickable'),
-      };
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
+    const threadActionCursors = await page.locator('.thread-header-menu button').evaluateAll((buttons) =>
+      buttons.map((button) => getComputedStyle(button).cursor));
+
+    const tagLabelCursor = await page.evaluate(() => {
+      const label = document.createElement('span');
+      label.className = 'tag-badge-label clickable';
+      document.body.appendChild(label);
+      return getComputedStyle(label).cursor;
     });
 
-    expect(cursors.approvalToggle).not.toBe('pointer');
-    expect(cursors.approvalButton).not.toBe('pointer');
-    expect(cursors.tagLabel).not.toBe('pointer');
+    expect(threadActionCursors).toEqual(['default', 'default']);
+    expect(tagLabelCursor).not.toBe('pointer');
   });
 
   test('settings inset rows, row menu and provider sheet keep the arrow cursor', async ({ page }) => {

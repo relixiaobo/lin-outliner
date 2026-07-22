@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { AgentUserViewContext } from '../../core/agentTypes';
 import type { PreviewTarget } from '../../core/preview';
 import { api } from '../api/client';
 import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHint, type NodeId } from '../api/types';
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
-import { AgentDock, type AgentRailState } from './AgentDock';
+import { ThreadDock, type ThreadRailState } from '../agent/components/ThreadDock';
 import { CommandPalette } from './CommandPalette';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
@@ -25,11 +24,9 @@ import { BatchTagSelector } from './outliner/BatchTagSelector';
 import { ButtonControl } from './primitives/ButtonControl';
 import type { NavigateRootOptions, TriggerState } from './shared';
 import { useCommandRunner } from './shared';
-import { buildAgentUserViewContext, insertionTargetFor } from './agent/userViewContext';
 import { createAssetNode } from './interactions/attachmentIngest';
-import { onInsertFileIntoOutlinerRequest } from '../agent/agentFileInsert';
 import { ingestPreviewTargetToAsset, onAddPreviewTargetToOutlineRequest } from './preview/previewIngest';
-import { onAgentComposerRevealRequest, onAgentRevealRequest } from '../agent/agentReveal';
+import { onThreadRailRevealRequest } from '../agent/agentReveal';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { useResizableLayout } from './useResizableLayout';
 import { useSelectionDismissal } from './useSelectionDismissal';
@@ -59,7 +56,7 @@ export function App() {
   const [agentOpen, setAgentOpen] = useState(true);
   const agentOpenRef = useRef(agentOpen);
   agentOpenRef.current = agentOpen;
-  const agentRailState: AgentRailState = agentOpen ? 'open' : 'collapsed';
+  const agentRailState: ThreadRailState = agentOpen ? 'open' : 'collapsed';
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +65,7 @@ export function App() {
   const indexRef = useRef(index);
   const run = useCommandRunner(applyProjectionUpdate, setPendingFocus, setError);
   const nodeAccessTimersRef = useRef<Map<NodeId, number>>(new Map());
+  const commandRestoreFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => () => {
     for (const timer of nodeAccessTimersRef.current.values()) window.clearTimeout(timer);
@@ -86,6 +84,9 @@ export function App() {
   }, []);
 
   const setCommandOpen = useCallback((commandOpen: boolean) => {
+    if (commandOpen && document.activeElement instanceof HTMLElement) {
+      commandRestoreFocusRef.current = document.activeElement;
+    }
     setUi((prev) => ({ ...prev, commandOpen }));
   }, [setUi]);
 
@@ -152,7 +153,6 @@ export function App() {
     navigatePanelPreview: setPanelPreview,
     navigatePanelRoot: setPanelRoot,
     navigateRoot: setActivePanelRoot,
-    openAgentRunDetailsPanel,
     openPanel,
     openPreview,
     panels,
@@ -212,8 +212,7 @@ export function App() {
   // Deep content rows can ask to surface the agent panel without prop-drilling
   // App-local rail state. Reveals are layout no-ops while the rail is already
   // open; only the collapsed -> open transition preflows rail width.
-  useEffect(() => onAgentRevealRequest(() => openAgentRail()), [openAgentRail]);
-  useEffect(() => onAgentComposerRevealRequest(() => openAgentRail()), [openAgentRail]);
+  useEffect(() => onThreadRailRevealRequest(() => openAgentRail()), [openAgentRail]);
 
   useDragSelection({ rootId, index, ui, setUi });
 
@@ -496,51 +495,6 @@ export function App() {
     });
   }, []);
 
-  const agentUserViewContext = useMemo<AgentUserViewContext>(() => {
-    if (!index) {
-      return {
-        activePanelId,
-        focusedPanelId: ui.focusedPanelId,
-        focusSurface: ui.focusSurface,
-        focusedNode: null,
-        nodePanels: [],
-      };
-    }
-    return buildAgentUserViewContext({
-      activePanelId,
-      panels,
-      index,
-      ui,
-    });
-  }, [activePanelId, index, panels, ui]);
-
-  // The ingest bridge (agent-file-model F4): a file chip deep in the agent tree asks
-  // to save its working file into the outliner. Resolve where the file lands the way
-  // paste/drop does (insertionTargetFor — a sibling after the focused row, else the
-  // current root), ingest the path into a committed asset in main, then create the
-  // matching image/attachment node -- identical to a user-added file. Focus stays in
-  // the agent panel (applyFocus: false). A ref keeps the bridge reading the latest
-  // doc state while registering once (so it does not re-subscribe on every mutation).
-  const insertFileBridgeRef = useRef({ index, agentUserViewContext, run });
-  useEffect(() => {
-    insertFileBridgeRef.current = { index, agentUserViewContext, run };
-  }, [index, agentUserViewContext, run]);
-  useEffect(() => onInsertFileIntoOutlinerRequest(async (path) => {
-    const bridge = insertFileBridgeRef.current;
-    if (!bridge.index) return false;
-    const target = insertionTargetFor(bridge.agentUserViewContext, bridge.index);
-    if (!target) return false;
-    // Null when the file is gone or outside the trusted roots (e.g. a stale chip in
-    // an old conversation): report not-inserted so the chip never falsely confirms.
-    const asset = await api.ingestLocalFileToAsset(path);
-    if (!asset) return false;
-    // run() swallows a failed command into a null result (it never rejects), so a
-    // create that fails mid-insert (e.g. the parent was deleted between resolve and
-    // now) would otherwise still report success. Confirm only on a real CommandResult.
-    const result = await createAssetNode(bridge.run, target.parentId, target.index, asset, { applyFocus: false });
-    return result !== null;
-  }), []);
-
   // The non-node preview "Add to outline" bridge: copy the previewed source into an
   // asset and create a file node under Today. Both callers (the pane "Add to outline"
   // and a transcript chip's "Add to Today") land it under today's daily note; the
@@ -676,12 +630,9 @@ export function App() {
           ui={ui}
         />
 
-        <AgentDock
-          index={index}
+        <ThreadDock
           railState={agentRailState}
-          userViewContext={agentUserViewContext}
           onOpenNodeReference={openNodeReferenceFromAgent}
-          onOpenRunDetailsPanel={(conversationId, runId) => openAgentRunDetailsPanel(conversationId, runId) === 'opened'}
           onResizeKeyDown={resizeAgentWithKeyboard}
           onResizeReset={resetAgentWidth}
           onResizeStart={beginAgentResize}
@@ -714,6 +665,7 @@ export function App() {
           onEnsureToday={ensureTodayNode}
           onFocus={focusNode}
           onRoot={navigateRoot}
+          restoreFocus={() => commandRestoreFocusRef.current}
           run={run}
         />
       )}

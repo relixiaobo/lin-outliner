@@ -105,9 +105,19 @@ export interface ThreadServiceOptions {
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
   readonly extensions?: ExtensionRegistry;
-  readonly resolveConfiguration?: (request: ThreadStartRequest) => EffectiveThreadConfiguration;
+  readonly resolveConfiguration?: (
+    request: ThreadStartRequest,
+  ) => EffectiveThreadConfiguration | Promise<EffectiveThreadConfiguration>;
+  readonly resolveRendererStartDefaults?: () =>
+    | RendererThreadStartDefaults
+    | Promise<RendererThreadStartDefaults>;
   readonly resolveRole?: (name: string) => AgentRole;
   readonly now?: () => number;
+}
+
+export interface RendererThreadStartDefaults {
+  readonly modelProvider: string;
+  readonly cwd: string;
 }
 
 export interface SpawnChildThreadInput {
@@ -119,6 +129,8 @@ export interface SpawnChildThreadInput {
   readonly nickname?: string;
   readonly model?: string;
   readonly reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
+  /** Additional child-only ceiling. Values absent from the parent/role result are ignored. */
+  readonly allowedTools?: readonly string[];
   readonly additionalContext?: AdditionalContext;
 }
 
@@ -126,6 +138,18 @@ export interface SpawnChildThreadResult {
   readonly thread: Thread;
   readonly turn: Turn;
   readonly taskPath: string;
+}
+
+export interface SpawnIsolatedSkillThreadInput {
+  readonly parentThreadId: ThreadId;
+  readonly parentTurnId: string;
+  readonly parentItemId: string;
+  readonly skillName: string;
+  readonly prompt: string;
+  readonly allowedTools: readonly string[];
+  readonly model?: string;
+  readonly reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
+  readonly readOnly: boolean;
 }
 
 export interface CollaborationAgentView {
@@ -178,7 +202,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly rollout: RolloutStore;
   private readonly executor: TurnExecutor;
   private readonly extensions: ExtensionRegistry;
-  private readonly resolveConfiguration: (request: ThreadStartRequest) => EffectiveThreadConfiguration;
+  private readonly resolveConfiguration: (
+    request: ThreadStartRequest,
+  ) => EffectiveThreadConfiguration | Promise<EffectiveThreadConfiguration>;
+  private readonly resolveRendererStartDefaults: () =>
+    RendererThreadStartDefaults | Promise<RendererThreadStartDefaults>;
   private readonly resolveRole: (name: string) => AgentRole;
   private readonly now: () => number;
   private readonly goals: GoalExtension;
@@ -203,6 +231,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.executor = options.executor;
     this.extensions = options.extensions ?? new ExtensionRegistry();
     this.resolveConfiguration = options.resolveConfiguration ?? defaultConfiguration;
+    this.resolveRendererStartDefaults = options.resolveRendererStartDefaults ?? missingRendererStartDefaults;
     this.resolveRole = options.resolveRole ?? defaultAgentRole;
     this.now = options.now ?? Date.now;
     this.goalStore = options.stores.goals;
@@ -211,10 +240,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.extensions.register(this.goals);
   }
 
-  static open(userDataPath: string, executor: TurnExecutor): ThreadService {
+  static open(
+    userDataPath: string,
+    executor: TurnExecutor,
+    options: Omit<ThreadServiceOptions, 'stores' | 'executor'> = {},
+  ): ThreadService {
     const paths = agentCorePaths(userDataPath);
     return new ThreadService({
       executor,
+      ...options,
       stores: {
         metadata: new ThreadMetadataStore(paths.state),
         history: new ThreadHistoryProjectionStore(paths.history),
@@ -362,10 +396,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   async startThread(requestInput: AgentCoreRequestByMethod['thread/start']): Promise<ThreadStartResponse> {
+    const defaults = requestInput.modelProvider && requestInput.cwd
+      ? null
+      : await this.resolveRendererStartDefaults();
     const request: ThreadStartRequest = {
       ...requestInput,
       source: requestInput.source ?? 'app',
       threadSource: requestInput.threadSource ?? 'user',
+      modelProvider: requestInput.modelProvider ?? defaults?.modelProvider ?? '',
+      cwd: requestInput.cwd ?? defaults?.cwd ?? '',
     };
     return this.hostRootMutex.run(async () => {
       const thread = await this.createThread(request, {
@@ -657,11 +696,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
     const parent = this.requireThread(input.parentThreadId);
     const role = this.resolveRole(input.role ?? 'default');
-    const configuration = resolveChildConfiguration(parent.configuration, {
+    const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
       role,
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
     });
+    const configuration = input.allowedTools === undefined
+      ? resolvedConfiguration
+      : Object.freeze({
+          ...resolvedConfiguration,
+          tools: Object.freeze(resolvedConfiguration.tools.filter((tool) => input.allowedTools!.includes(tool))),
+        });
     const thread = await this.createThread({
       name: input.taskPath.split('/').at(-1) ?? 'Subagent',
       ephemeral: parent.thread.ephemeral,
@@ -689,6 +734,23 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
     });
     return { thread, turn: response.turn, taskPath: input.taskPath };
+  }
+
+  async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> {
+    this.requireActiveTurn(input.parentThreadId, input.parentTurnId);
+    const parentPath = this.taskPathForThread(input.parentThreadId) ?? '/root';
+    const skillSlug = input.skillName.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'skill';
+    const identity = uuidV7(this.now()).replace(/-/g, '').slice(-12);
+    return this.spawnChild({
+      parentThreadId: input.parentThreadId,
+      parentItemId: input.parentItemId,
+      prompt: input.prompt,
+      taskPath: `${parentPath}/skill_${skillSlug}_${identity}`,
+      role: input.readOnly ? 'explorer' : 'worker',
+      allowedTools: input.allowedTools,
+      ...(input.model === undefined ? {} : { model: input.model }),
+      ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
+    });
   }
 
   async spawnCollaborationAgent(input: {
@@ -1099,7 +1161,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       status: { type: 'idle' },
       historyMode: 'paginated',
     });
-    const configuration = lineage.configuration ?? this.resolveConfiguration(request);
+    const configuration = lineage.configuration ?? await this.resolveConfiguration(request);
     const record = { thread, archived: false, configuration };
     if (thread.ephemeral) {
       this.ephemeral.set(thread.id, { record, turns: [] });
@@ -1412,6 +1474,10 @@ function defaultConfiguration(request: ThreadStartRequest): EffectiveThreadConfi
     plugins: Object.freeze([]),
     mcpServers: Object.freeze([]),
   });
+}
+
+function missingRendererStartDefaults(): never {
+  throw new Error('Thread start requires a model provider and working directory.');
 }
 
 const DEFAULT_AGENT_ROLES: Readonly<Record<string, AgentRole>> = Object.freeze({

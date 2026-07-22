@@ -31,21 +31,16 @@ import {
   translationLanguagePromptName,
   type TranslationLanguage,
 } from '../core/translationLanguage';
-import { agentDefinitionAgentId } from './agentDelegationIdentity';
-import { createTenonAssistantAgentDefinition } from './agentDelegation';
-import { assistantMessageText } from './agentCompaction';
 import { awaitWithAbort, isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 import { isRetryableResponsesRequestError } from './agentStreamAbort';
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
-  getBuiltInAgentProfile,
   getProviderRuntimeConfig,
   providerStreamOptionsFromRuntimeSettings,
 } from './agentSettings';
 import {
   lowestThinkingLevel,
-  resolveAgentModel,
   resolveAgentModelOverride,
   resolveProviderModel,
 } from './agentModelResolution';
@@ -433,7 +428,10 @@ async function completePageTranslationWithConfiguredModel(
   if (response.stopReason === 'error' || response.stopReason === 'aborted') {
     throw new Error(response.errorMessage || 'Page translation failed.');
   }
-  const text = assistantMessageText(response);
+  const text = response.content
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
   if (!text) throw new PageTranslationResponseError('Page translation returned no text.');
   return text;
 }
@@ -447,15 +445,8 @@ async function resolveFollowAgentTranslationModel(): Promise<PageTranslationReso
   if (!providerConfig) {
     throw new PageTranslationConfigurationError('No enabled agent provider is configured.');
   }
-  const definition = createTenonAssistantAgentDefinition();
-  const agentId = agentDefinitionAgentId(definition);
-  const profile = await getBuiltInAgentProfile(agentId);
   try {
-    const model = resolveAgentModel(
-      profile.model ?? definition.model,
-      providerConfig,
-      () => tryResolveProviderModel(providerConfig),
-    );
+    const model = resolveProviderModel(providerConfig);
     return {
       cacheIdentity: pageTranslationModelCacheIdentity(model, providerConfig.providerId),
       model,
@@ -584,14 +575,6 @@ function validateId(value: unknown, label: string): string {
     throw new Error(`Invalid page translation ${label}.`);
   }
   return value;
-}
-
-function tryResolveProviderModel(providerConfig: Parameters<typeof resolveProviderModel>[0]): Model<Api> | null {
-  try {
-    return resolveProviderModel(providerConfig);
-  } catch {
-    return null;
-  }
 }
 
 function validateOptionalModel(value: unknown): string | undefined {

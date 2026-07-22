@@ -27,37 +27,6 @@ afterEach(() => {
 });
 
 describe('InlineFilePreviewLayer routing', () => {
-  test('live transcript file chips open the workspace file-only reader instead of the OS default app', async () => {
-    const openedExternal: Array<{ path: string }> = [];
-    const rendered = render({
-      openLocalFile: (options) => {
-        openedExternal.push(options);
-        return Promise.resolve();
-      },
-    });
-    const workspacePreviews: PreviewTargetOpenDetail[] = [];
-    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
-      workspacePreviews.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
-    });
-    const transcriptRoot = rendered.document.createElement('div');
-    transcriptRoot.setAttribute('data-agent-transcript-chips', 'true');
-    transcriptRoot.appendChild(localFileChip(rendered.document));
-    rendered.document.body.appendChild(transcriptRoot);
-
-    await click(rendered, transcriptRoot.querySelector('[data-inline-ref-kind="local-file"]'));
-
-    expect(openedExternal).toEqual([]);
-    expect(workspacePreviews).toEqual([{
-      presentation: 'reader',
-      target: {
-        kind: 'local-file',
-        path: '/workdir/report.md',
-        entryKind: 'file',
-        label: 'report.md',
-      },
-    }]);
-  });
-
   test('non-transcript file chips keep the workspace preview route', async () => {
     const rendered = render({});
     const workspacePreviews: PreviewTargetOpenDetail[] = [];
@@ -117,30 +86,6 @@ describe('InlineFilePreviewLayer routing', () => {
     }]);
   });
 
-  test('live transcript menu preview action keeps the file-only reader route', async () => {
-    const rendered = render({});
-    const workspacePreviews: PreviewTargetOpenDetail[] = [];
-    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
-      workspacePreviews.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
-    });
-    const transcriptRoot = rendered.document.createElement('div');
-    transcriptRoot.setAttribute('data-agent-transcript-chips', 'true');
-    transcriptRoot.appendChild(localFileChip(rendered.document));
-    rendered.document.body.appendChild(transcriptRoot);
-
-    await contextMenu(rendered, transcriptRoot.querySelector('[data-inline-ref-kind="local-file"]'));
-    await clickMenuItem(rendered, labels.previewInTenon);
-
-    expect(workspacePreviews).toEqual([{
-      presentation: 'reader',
-      target: {
-        kind: 'local-file',
-        path: '/workdir/report.md',
-        entryKind: 'file',
-        label: 'report.md',
-      },
-    }]);
-  });
 });
 
 function render(lin: LinStub): Rendered {

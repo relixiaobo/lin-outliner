@@ -1,12 +1,14 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type {
+  AgentCoreMethod,
+  AgentCoreNotification,
+  AgentCoreRequestByMethod,
+  AgentCoreResponseByMethod,
+} from '../core/agent/protocol';
 import {
-  LIN_AGENT_EVENT_CHANNEL,
-  LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL,
-  LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL,
-  type AgentMessageContextMenuAction,
-  type AgentMessageContextMenuRequest,
-  type AgentRuntimeEvent,
-} from '../core/agentTypes';
+  AGENT_CORE_NOTIFICATION_CHANNEL,
+  AGENT_CORE_REQUEST_CHANNEL,
+} from '../core/agent/transport';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
   LIN_DOCUMENT_EVENT_CHANNEL,
@@ -223,15 +225,17 @@ const api = {
   windowMaterial: windowMaterialKind(process.platform),
   invoke: <T>(command: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke('lin:invoke', command, args) as Promise<T>,
+  agentCoreRequest: <Method extends AgentCoreMethod>(
+    method: Method,
+    input: AgentCoreRequestByMethod[Method],
+  ) => ipcRenderer.invoke(AGENT_CORE_REQUEST_CHANNEL, method, input) as Promise<AgentCoreResponseByMethod[Method]>,
+  onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, notification: AgentCoreNotification) => listener(notification);
+    ipcRenderer.on(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
+  },
   recordNodeAccess: (nodeId: string) =>
     ipcRenderer.invoke('lin:record-node-access', nodeId) as Promise<void>,
-  onAgentEvent: (listener: (event: AgentRuntimeEvent) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, payload: AgentRuntimeEvent) => listener(payload);
-    ipcRenderer.on(LIN_AGENT_EVENT_CHANNEL, handler);
-    return () => {
-      ipcRenderer.removeListener(LIN_AGENT_EVENT_CHANNEL, handler);
-    };
-  },
   onAgentOAuthEvent: (listener: (envelope: OAuthLoginEventEnvelope) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OAuthLoginEventEnvelope) => listener(payload);
     ipcRenderer.on(LIN_AGENT_OAUTH_EVENT_CHANNEL, handler);
@@ -267,25 +271,6 @@ const api = {
     ipcRenderer.invoke(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL) as Promise<ClearUrlPreviewDataResult>,
   clearPreviewTranslationCache: () =>
     ipcRenderer.invoke(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL) as Promise<ClearPreviewTranslationCacheResult>,
-  // Durably mark a conversation read (the user opened/viewed it). Separate from
-  // restoreConversation so a config reload never clears unread.
-  agentMarkConversationRead: (conversationId: string) =>
-    ipcRenderer.invoke('lin:agent-mark-conversation-read', conversationId) as Promise<void>,
-  // Report the conversation the user can actually see (dock open), or null when the
-  // dock is collapsed — used to suppress an OS banner only when truly looking at it.
-  agentSetViewedConversation: (conversationId: string | null) =>
-    ipcRenderer.invoke('lin:agent-set-viewed-conversation', conversationId) as Promise<void>,
-  agentNavigateToConversation: (conversationId: string) =>
-    ipcRenderer.invoke('lin:agent-navigate-conversation', conversationId) as Promise<void>,
-  // The user clicked an OS notification banner — route the agent panel to the
-  // originating conversation.
-  onNavigateToConversation: (listener: (conversationId: string) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, conversationId: string) => listener(conversationId);
-    ipcRenderer.on(LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL, handler);
-    return () => {
-      ipcRenderer.removeListener(LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL, handler);
-    };
-  },
   // Language preference. initialLanguage is the synchronously-resolved effective
   // locale for first paint; setLanguage applies immediately across all windows (the
   // main process broadcasts it + rebuilds the native menu) and persists;
@@ -339,12 +324,6 @@ const api = {
   closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,
   getProviderApiKey: (providerId: string) =>
     ipcRenderer.invoke('lin:get-provider-api-key', { providerId }) as Promise<AgentProviderStoredApiKey>,
-  openAgentConfig: (params: { agentId: string }) =>
-    ipcRenderer.invoke('lin:open-agent-config', params) as Promise<void>,
-  closeAgentConfig: () => ipcRenderer.invoke('lin:close-agent-config') as Promise<void>,
-  openChannelConfig: (params: { conversationId?: string; mode: 'create' | 'configure' }) =>
-    ipcRenderer.invoke('lin:open-channel-config', params) as Promise<void>,
-  closeChannelConfig: () => ipcRenderer.invoke('lin:close-channel-config') as Promise<void>,
   notifySettingsChanged: () => ipcRenderer.invoke('lin:settings-changed') as Promise<void>,
   revealDiagnosticsLog: () =>
     ipcRenderer.invoke(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL) as Promise<DiagnosticsActionResult>,
@@ -365,8 +344,6 @@ const api = {
       ipcRenderer.removeListener(LIN_SETTINGS_NAVIGATE_CHANNEL, handler);
     };
   },
-  showAgentMessageContextMenu: (request: AgentMessageContextMenuRequest) =>
-    ipcRenderer.invoke(LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL, request) as Promise<AgentMessageContextMenuAction | null>,
   // The main process forwards the window's OS focus state so the chrome can
   // desaturate while the window is inactive (the macOS inactive-window look).
   onWindowActiveChange: (listener: (active: boolean) => void) => {

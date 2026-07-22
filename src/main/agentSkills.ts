@@ -1,4 +1,3 @@
-import { coerceString, parseBoolean } from '../core/agentMarkdown';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -8,7 +7,8 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
-import type { AgentMessage, TextContent, UserMessage } from '../core/agentTypes';
+import type { Message, TextContent, UserMessage } from '@earendil-works/pi-ai';
+import type { TurnStatus } from '../core/agent/protocol';
 import type { SkillDefinition } from '../core/types';
 import { systemReminder } from '../core/agentAttachments';
 // Runtime-only cycle: agentSkillAuthoring imports the shared resolver/hash from this
@@ -48,9 +48,9 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     'Use this workflow only when the user explicitly asks to save, create, update, or fix a reusable Tenon skill. Do not silently curate skills in the background.',
     '',
     '1. Understand before asking.',
-    '   - Inspect the current conversation for the repeatable process, inputs, outputs, constraints, user corrections, required artifacts, tool needs, and success criteria.',
+    '   - Inspect the current Thread for the repeatable process, inputs, outputs, constraints, user corrections, required artifacts, tool needs, and success criteria.',
     '   - Do not over-interview. For a simple explicit request, ask only for missing name, storage, or trigger details. For ambiguous or broad workflows, run a short structured interview.',
-    '   - Use `ask_user_question` when available for real choices; otherwise ask concise plain-language questions in the conversation.',
+    '   - Use `request_user_input` when available for real choices; otherwise ask one concise question in the Thread.',
     '',
     '2. Choose the Tenon skill identity and storage target.',
     '   - Store personal workflows at `~/.agents/skills/<skill-name>/SKILL.md` and repo/workspace workflows at `<workspace>/.agents/skills/<skill-name>/SKILL.md`.',
@@ -71,13 +71,13 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - Prefer a focused `file_edit` patch for existing skills. Use `file_write` for new skills, major rewrites, or malformed files that cannot be safely patched.',
     '',
     '5. Treat `allowed-tools` as an authored runtime contract.',
-    '   - Separate authoring tools from runtime tools: tools used to create the skill are not automatically visible to a future isolated Run.',
-    '   - For `execution: isolated`, list every tool the Run needs; omitted `allowed-tools` creates a tool-free Run.',
-    '   - `allowed-tools` selects whole tools, not command patterns. Inline skills keep the parent Run catalog unchanged.',
+    '   - Separate authoring tools from runtime tools: tools used to create the skill are not automatically visible to a future isolated child Thread.',
+    '   - For `execution: isolated`, list every tool the child Thread needs; omitted `allowed-tools` creates a tool-free child Thread.',
+    '   - `allowed-tools` selects whole tools, not command patterns. Inline skills keep the parent Turn catalog unchanged.',
     '   - Flag broad `allowed-tools` in the preview summary.',
     '',
     '6. Resolve ambiguity, then write.',
-    '   - When the explicit request and conversation determine the skill contract, write it directly without a second confirmation.',
+    '   - When the explicit request and Thread context determine the skill contract, write it directly without a second confirmation.',
     '   - Ask only for a missing identity, storage target, trigger, or behavioral choice that cannot be inferred. Do not ask merely because the skill is persistent or agent-authored.',
     '   - For materially ambiguous requests, show the complete `SKILL.md` or a focused update diff only when that preview is needed to obtain the missing decision.',
     '',
@@ -90,54 +90,8 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     'Do not write executable or binary support files in this workflow. Do not copy secrets into skills.',
   ].join('\n'),
 }, {
-  name: 'issue-planning',
-  description: 'Define durable Issues from natural-language work requests.',
-  whenToUse: 'Use when the user asks to create, schedule, hand off, arrange, pursue, or keep working on durable Issue work that should persist beyond the current answer. Do not use for direct one-turn answers, discussion, analysis, or simple edits you can finish immediately.',
-  userInvocable: false,
-  argumentHint: '<durable work request>',
-  argumentNames: ['objective'],
-  body: [
-    'Use this workflow when the user wants Tenon to define durable work as verified Issues, not when the user only wants an immediate answer.',
-    '',
-    '1. Choose the durable Issue boundary from the outcome the user expects to see and manage.',
-    '   - Default to one Issue per independently user-visible outcome the user would recognize in the Work panel.',
-    '   - For "query Beijing districts and Chengdu districts weather", create one Beijing Issue and one Chengdu Issue; district-level queries are coverage requirements and execution-local steps inside those Issues.',
-    '   - If the user says "break down", "steps", or "each X", encode that as required internal structure in the Issue definition unless they explicitly ask to manage each item as its own durable Work row.',
-    '   - A good Issue definition gives the Agent Session enough scope, coverage, output, and verification guidance to make its own execution plan.',
-    '   - Represent per-city, per-district, per-file, or per-node coverage as a clear coverage list and acceptance criteria inside the Issue definition.',
-    '   - Use `relations` only after both sides are independently user-visible Issues with their own lifecycle, such as a true external blocker, duplicate, or related outcome.',
-    '',
-    '2. Separate the objective from acceptance criteria.',
-    '   - The objective is the durable work the Issue owns.',
-    '   - Acceptance criteria are independently checkable conditions for done.',
-    '   - Include the coverage list, verification expectations, and output shape in the Issue description and criteria.',
-    '   - A complete Issue normally names: owned outcome, boundaries/non-goals, required coverage, expected final response or artifact, evidence/source requirements, and review policy.',
-    '   - Leave execution sequencing, per-item work allocation, retries, intermediate checks, and short-lived subtasks to the Agent Session that runs from this Issue snapshot.',
-    '   - During execution, create a child Issue only when a sub-outcome needs its own durable lifecycle or independent Agent Session. Runtime derives the parent from the creating Session.',
-    '   - If criteria are missing or too vague, ask one concise clarification before creating durable work unless the user already gave enough constraints to derive them safely.',
-    '',
-    '3. Define durable work as an Issue, not as ad hoc execution state.',
-    '   - Use `issue_search` first when a duplicate or existing related Issue may exist.',
-    '   - Use `issue_create` with a concrete objective, explicit acceptance criteria, the narrowest practical input scope, and an appropriate trigger.',
-    '   - Use the default when-ready trigger for ordinary durable work; use a scheduled or recurring trigger only when the user asked for time-based work.',
-    '   - Persistent user requests should keep a verification policy; runtime completes eligible Issues when execution satisfies criteria and the review policy allows it.',
-    '',
-    '4. Pick the interaction mode.',
-    '   - Direct answer: if the work can be completed in this turn, answer directly instead of creating an Issue.',
-    '   - Background handoff: for durable work, create a when-ready, scheduled, or recurring Issue and let runtime start eligible work. A terminal result is delivered to the immediate origin target: parent Agent Session for a child Issue, visible conversation for a root Issue.',
-    '   - Explicit wait: only when the user asks to wait here for an already-running or explicitly started Session, use `agent_session_read` with a bounded wait.',
-    '   - Use `agent_session_start` for existing eligible Issues that need a retry, continuation, verification attempt, or an explicit user-requested start outside the normal runtime trigger path.',
-    '   - Use `issue_read` and `agent_session_read` to inspect durable state, Activity, current execution, output, errors, or blockers.',
-    '   - Use `agent_session_send_message` for soft guidance to a live Session and `issue_update` when the durable Issue objective, criteria, trigger, or scope changed.',
-    '   - More scope requires `issue_update`; do not silently widen an executing Session snapshot.',
-    '',
-    '5. Outcomes are Issue status, Agent Session status, Activity, and verification evidence.',
-    '   - Claim completion only from Issue status, criteria, Activity, and verifier evidence, not from a live Session being merely started.',
-    '   - If blocked, state the blocker and the smallest next user decision needed.',
-  ].join('\n'),
-}, {
   name: 'research',
-  description: 'Research or explore a question in an isolated read-only Run.',
+  description: 'Research or explore a question in an isolated read-only child Thread.',
   whenToUse: 'Use when the user asks to research, explore, inspect, map, survey, or verify context before deciding or editing. Examples: "research this area", "explore how backlinks work", "verify this assumption", "find the relevant files". Do not use for direct implementation or edits.',
   argumentHint: '<question or area to research>',
   argumentNames: ['question'],
@@ -151,10 +105,9 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     'file_grep',
     'web_search',
     'web_fetch',
-    'past_chats',
   ],
   body: [
-    'You are a codebase research specialist running in an isolated same-agent Run. You excel at thoroughly navigating and exploring existing context.',
+    'You are a codebase research specialist running in an isolated child Thread. You excel at thoroughly navigating and exploring existing context.',
     '',
     '=== CRITICAL: READ-ONLY MODE - NO MODIFICATIONS ===',
     'This is a read-only exploration task. You are strictly prohibited from:',
@@ -173,7 +126,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '',
     'Guidelines:',
     '1. Restate the concrete research question and scope before searching.',
-    '2. Prefer local evidence first: node_search/node_read for outline context and timeline memory nodes, past_chats for prior conversation history, file_glob for broad file pattern matching, file_grep for content and regex search, and file_read when you know the specific path.',
+    '2. Prefer local evidence first: node_search/node_read for outline context and timeline memory nodes, file_glob for broad file pattern matching, file_grep for content and regex search, and file_read when you know the specific path.',
     '3. Start broad and narrow down. Use multiple search strategies if the first one does not find the right files; check related names, conventions, tests, specs, and call sites.',
     '4. Adapt thoroughness to the caller: quick means basic targeted searches; medium means moderate exploration across likely locations; very thorough means comprehensive analysis across multiple locations and naming conventions.',
     '5. Make efficient use of read/search tools. When independent searches or reads do not depend on each other, issue them in parallel.',
@@ -234,7 +187,7 @@ export interface SkillLoadOptions {
   builtInSkillDirectories?: string[];
   builtInSkillRoots?: string[];
   builtInSkills?: BuiltInSkillInput[];
-  conversationId?: string;
+  threadId?: string;
   executeSkillShell?: SkillShellExecutor;
   executeIsolatedSkill?: SkillIsolatedExecutor;
   provenanceStore?: AgentSkillProvenanceStore;
@@ -282,7 +235,7 @@ export interface AgentSkillPreviousVersion {
 /**
  * Persists per-skill trust records (agent-write provenance, user acceptance, one undo
  * version), so ratification survives a restart. The registry always keeps an in-memory
- * record as well, so within a conversation the gate holds even without a wired store.
+ * record as well, so within a Thread the gate holds even without a wired store.
  */
 export interface AgentSkillProvenanceStore {
   load(): Promise<Record<string, AgentSkillProvenanceRecord>>;
@@ -343,9 +296,9 @@ export interface SkillIsolatedExecutionInput {
 }
 
 export interface SkillIsolatedExecutionResult {
-  runId: string;
-  runProfile: string;
-  status: string;
+  threadId: string;
+  agentRole: string;
+  status: Exclude<TurnStatus, 'inProgress'>;
   result?: string;
   error?: string;
 }
@@ -386,8 +339,8 @@ export interface SkillToolData {
   allowedTools?: string[];
   model?: string;
   effort?: string;
-  runId?: string;
-  runProfile?: string;
+  threadId?: string;
+  agentRole?: string;
   result?: string;
   error?: string;
 }
@@ -452,7 +405,7 @@ class SkillListingState {
 
 export class AgentSkillRuntime {
   private readonly registry: SkillRegistry;
-  private readonly conversationId: string;
+  private readonly threadId: string;
   private readonly executeSkillShell?: SkillShellExecutor;
   private readonly executeIsolatedSkill?: SkillIsolatedExecutor;
   private readonly assertManagedSkillInvocable?: SkillLoadOptions['assertManagedSkillInvocable'];
@@ -465,7 +418,7 @@ export class AgentSkillRuntime {
 
   constructor(options: SkillLoadOptions = {}) {
     this.registry = new SkillRegistry(options);
-    this.conversationId = options.conversationId?.trim() || 'lin-agent-conversation';
+    this.threadId = options.threadId?.trim() || 'lin-agent-thread';
     this.executeSkillShell = options.executeSkillShell;
     this.executeIsolatedSkill = options.executeIsolatedSkill;
     this.assertManagedSkillInvocable = options.assertManagedSkillInvocable;
@@ -479,7 +432,7 @@ export class AgentSkillRuntime {
     this.disabledSkills = disabledSkills;
   }
 
-  resetConversationState(): void {
+  resetThreadState(): void {
     this.listedSkills.clear();
     this.pendingSteeringMessages.length = 0;
     this.pendingTurnEffect = null;
@@ -504,7 +457,7 @@ export class AgentSkillRuntime {
     return [...roots];
   }
 
-  restoreInvokedSkillsFromMessages(messages: readonly AgentMessage[]): void {
+  restoreInvokedSkillsFromMessages(messages: readonly Message[]): void {
     for (const message of messages) {
       for (const text of messageTextParts(message)) {
         for (const skillName of parseListedSkillNamesFromText(text)) {
@@ -612,8 +565,8 @@ export class AgentSkillRuntime {
 
   /**
    * Re-derive trust from the persisted store after a trust change made through a
-   * different runtime (the Settings panel runs conversationless). A freshly ratified
-   * skill is steered into the conversation's model listing like any skill write.
+   * different runtime (the Settings panel runs outside a Thread). A freshly ratified
+   * skill is steered into the Thread's model listing like any skill write.
    */
   async refreshTrustRecords(): Promise<void> {
     this.registry.refreshTrustRecords();
@@ -686,7 +639,7 @@ export class AgentSkillRuntime {
     }
     let renderedContent: string;
     try {
-      renderedContent = await renderSkillContent(skill, input.args ?? '', this.conversationId, this.executeSkillShell, input.signal);
+      renderedContent = await renderSkillContent(skill, input.args ?? '', this.threadId, this.executeSkillShell, input.signal);
     } catch (error) {
       return {
         ok: false,
@@ -840,7 +793,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
     name: SKILL_TOOL_NAME,
     label: 'Skill',
     description: [
-      'Execute a skill within the main conversation',
+      'Execute a skill within the current Thread',
       'When users ask you to perform tasks, check if any available skills match. Skills provide specialized capabilities and domain knowledge.',
       'When users reference a slash skill or "/<something>" (e.g., "/commit", "/review-pr"), they are referring to a skill. Use this tool to invoke it.',
       'How to invoke:',
@@ -850,12 +803,12 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       '  - `skill: "commit", args: "-m \'Fix bug\'"` - invoke with arguments',
       '  - `skill: "review-pr", args: "123"` - invoke with arguments',
       'Important:',
-      '- Available skills are listed in system-reminder messages in the conversation.',
+      '- Available skills are listed in system-reminder messages in the Thread.',
       `- When a skill matches the user's request, this is a BLOCKING REQUIREMENT: invoke the relevant ${SKILL_TOOL_NAME} tool BEFORE generating any other response about the task.`,
       '- NEVER mention a skill without actually calling this tool.',
       '- Do not invoke a skill that is already running.',
       '- Do not use this tool for built-in commands.',
-      '- If you see a <skill-name> tag in the current conversation turn, the skill has already been loaded. Follow the loaded instructions instead of calling this tool again.',
+      '- If you see a <skill-name> tag in the current Turn, the Skill has already been loaded. Follow the loaded instructions instead of calling this tool again.',
     ].join('\n'),
     parameters: SKILL_TOOL_PARAMETERS,
     executionMode: 'sequential',
@@ -886,8 +839,8 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
         allowedTools: invocation.skill.allowedTools.length > 0 ? invocation.skill.allowedTools : undefined,
         model: invocation.skill.model,
         effort: invocation.skill.effort,
-        runId: invocation.isolated?.runId,
-        runProfile: invocation.isolated?.runProfile,
+        threadId: invocation.isolated?.threadId,
+        agentRole: invocation.isolated?.agentRole,
         result: invocation.isolated?.result,
         error: invocation.isolated?.error,
       };
@@ -1078,7 +1031,7 @@ class SkillRegistry {
     try {
       await this.provenanceStore?.save(normalized, record);
     } catch {
-      // The in-memory record still guards this conversation; a persistence failure must
+      // The in-memory record still guards this Thread; a persistence failure must
       // not fail the skill write itself.
     }
   }
@@ -1159,7 +1112,7 @@ class SkillRegistry {
     }
     await writeFile(skill.skillFile, previous.content, 'utf8');
     // The file write is the primary mutation; provenance restore is best-effort like
-    // the agent-write path (the in-memory record still guards this conversation).
+    // the agent-write path (the in-memory record still guards this Thread).
     const record: AgentSkillProvenanceRecord = {
       ...(previous.agentHash ? { agentHash: previous.agentHash } : {}),
       ...(existing?.acceptedHash ? { acceptedHash: existing.acceptedHash } : {}),
@@ -1201,7 +1154,7 @@ class SkillRegistry {
   /**
    * Re-derive trust for this registry from the persisted store: drop the in-memory
    * trust map and reload. Used to propagate a trust change made through ANOTHER
-   * registry instance over the same store (each live conversation holds its own). The
+   * registry instance over the same store (each live Thread holds its own). The
    * in-memory-newer-wins merge is intentionally bypassed — after an explicit trust
    * action the store IS the newest state.
    */
@@ -1224,7 +1177,7 @@ class SkillRegistry {
       }
     } catch {
       // A corrupt provenance store must not break skill loading; the in-memory
-      // record still guards the current conversation.
+      // record still guards the current Thread.
     }
   }
 
@@ -1736,7 +1689,7 @@ const SKILL_SHELL_INLINE_PATTERN = /(?<=^|\s)!`([^`]+)`/gm;
 async function renderSkillContent(
   skill: SkillDefinition,
   args: string,
-  conversationId: string,
+  threadId: string,
   executeSkillShell?: SkillShellExecutor,
   signal?: AbortSignal,
 ): Promise<string> {
@@ -1750,7 +1703,7 @@ async function renderSkillContent(
       .replace(/\$\{AGENT_SKILL_DIR\}/g, skillDir)
       .replace(/\{baseDir\}/g, skillDir);
   }
-  content = content.replace(/\$\{AGENT_CONVERSATION_ID\}/g, conversationId);
+  content = content.replace(/\$\{AGENT_THREAD_ID\}/g, threadId);
   return executeShellCommandsInSkillContent(content, skill, executeSkillShell, signal);
 }
 
@@ -1851,9 +1804,9 @@ function createIsolatedSkillResultMessage(
     : '';
   const body = [
     metadata,
-    `Skill ${skill.name} ran in an isolated Run.`,
-    `runId: ${result.runId}`,
-    `runProfile: ${result.runProfile}`,
+    `Skill ${skill.name} ran in an isolated child Thread.`,
+    `threadId: ${result.threadId}`,
+    `agentRole: ${result.agentRole}`,
     '',
     '<skill-result>',
     result.result || result.error || 'Skill execution completed without a text result.',
@@ -1866,11 +1819,11 @@ function formatIsolatedSkillToolResult(
   skill: SkillDefinition,
   result: SkillIsolatedExecutionResult | undefined,
 ): string {
-  if (!result) return `Skill ${skill.name} completed in an isolated Run.`;
+  if (!result) return `Skill ${skill.name} completed in an isolated child Thread.`;
   return [
-    `Skill ${skill.name} completed in an isolated Run.`,
-    `runId: ${result.runId}`,
-    `runProfile: ${result.runProfile}`,
+    `Skill ${skill.name} completed in an isolated child Thread.`,
+    `threadId: ${result.threadId}`,
+    `agentRole: ${result.agentRole}`,
     result.error ? `error: ${result.error}` : '',
     '',
     result.result || 'Skill execution completed without a text result.',
@@ -1893,7 +1846,7 @@ function messageText(message: UserMessage): string {
     .join('\n');
 }
 
-function messageTextParts(message: AgentMessage): string[] {
+function messageTextParts(message: Message): string[] {
   if (message.role === 'assistant') {
     return message.content
       .filter((part): part is TextContent => part.type === 'text')
@@ -2156,10 +2109,20 @@ function parseSkillExecutionFrontmatter(frontmatter: Record<string, unknown>): S
   if (rawExecution !== undefined) {
     throw new Error(`Invalid skill execution value "${rawExecution}". Use "inline" or "isolated".`);
   }
-  // Legacy alias retained for existing skills authored before the public DSL
-  // described skill execution as `context: fork`.
-  if (coerceString(frontmatter.context) === 'fork') return 'isolated';
   return 'inline';
+}
+
+function parseBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (['true', 'yes', '1'].includes(normalized)) return true;
+  if (['false', 'no', '0'].includes(normalized)) return false;
+  return undefined;
+}
+
+function coerceString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function parseArgumentNames(value: unknown): string[] {

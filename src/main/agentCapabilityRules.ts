@@ -1,13 +1,16 @@
 import {
-  SUPPORTED_AGENT_TOOL_ACTION_KINDS,
-  actionKindFromRuleValue,
-  type AgentToolActionKind,
-} from '../core/agentActionCatalog';
+  MODEL_TOOL_ACTION_KINDS,
+  modelToolActionKindFromRule,
+  normalizeModelToolCommandForBlockMatch,
+  type ModelToolActionKind,
+} from '../core/agent/tools';
 
 export {
-  SUPPORTED_AGENT_TOOL_ACTION_KINDS,
-  type AgentToolActionKind,
-} from '../core/agentActionCatalog';
+  MODEL_TOOL_ACTION_KINDS,
+  type ModelToolActionKind,
+} from '../core/agent/tools';
+export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = MODEL_TOOL_ACTION_KINDS;
+export type AgentToolActionKind = ModelToolActionKind;
 export type ToolAccessScope = 'local_system' | 'external_system' | 'none';
 
 export interface ToolActionDescriptor {
@@ -111,7 +114,7 @@ function parseAgentCapabilityBlock(
   }
 
   if (kind === 'action') {
-    const actionKind = actionKindFromRuleValue(`Action(${rawValue})`);
+    const actionKind = modelToolActionKindFromRule(`Action(${rawValue})`);
     if (!actionKind || !SUPPORTED_ACTION_KIND_SET.has(actionKind)) {
       return diagnostic(ruleValue, 'unsupported_block', `Unsupported action kind: ${rawValue}.`);
     }
@@ -132,49 +135,7 @@ function blockMatchesDescriptor(block: AgentCapabilityBlock, descriptor: ToolAct
 }
 
 function commandsEqual(left: string, right: string): boolean {
-  return normalizeCommandForBlockMatch(left) === normalizeCommandForBlockMatch(right);
-}
-
-function normalizeCommandForBlockMatch(command: string): string {
-  const trimmed = command.trim();
-  let normalized = '';
-  let quote: '"' | "'" | null = null;
-  let escaped = false;
-  let pendingSpace = false;
-  for (const char of trimmed) {
-    if (escaped) {
-      normalized += char;
-      escaped = false;
-      continue;
-    }
-    if (char === '\\') {
-      if (pendingSpace && normalized) normalized += ' ';
-      pendingSpace = false;
-      normalized += char;
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      normalized += char;
-      if (char === quote) quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      if (pendingSpace && normalized) normalized += ' ';
-      pendingSpace = false;
-      quote = char;
-      normalized += char;
-      continue;
-    }
-    if (/\s/u.test(char)) {
-      if (normalized) pendingSpace = true;
-      continue;
-    }
-    if (pendingSpace && normalized) normalized += ' ';
-    pendingSpace = false;
-    normalized += char;
-  }
-  return normalized;
+  return normalizeModelToolCommandForBlockMatch(left) === normalizeModelToolCommandForBlockMatch(right);
 }
 
 function diagnostic(

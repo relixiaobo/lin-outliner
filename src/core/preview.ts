@@ -1,5 +1,5 @@
 export type PreviewEntryKind = 'file' | 'directory';
-export type PreviewSourceKind = 'local-file' | 'asset' | 'agent-payload';
+export type PreviewSourceKind = 'local-file' | 'asset';
 
 export type PreviewTarget =
   | {
@@ -11,13 +11,6 @@ export type PreviewTarget =
   | {
       kind: 'asset';
       assetId: string;
-      label?: string;
-    }
-  | {
-      kind: 'agent-payload';
-      conversationId: string;
-      runId?: string;
-      payloadId: string;
       label?: string;
     }
   | {
@@ -91,8 +84,6 @@ export function previewTargetKey(target: PreviewTarget): string {
       return `local-file:${target.entryKind}:${target.path}`;
     case 'asset':
       return `asset:${target.assetId}`;
-    case 'agent-payload':
-      return `agent-payload:${target.conversationId}:${target.runId ?? ''}:${target.payloadId}`;
     case 'url':
       return `url:${target.url}`;
   }
@@ -113,17 +104,6 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
   if (value.kind === 'asset') {
     if (typeof value.assetId !== 'string' || !value.assetId) return null;
     return { kind: 'asset', assetId: value.assetId, ...(label ? { label } : {}) };
-  }
-  if (value.kind === 'agent-payload') {
-    if (typeof value.conversationId !== 'string' || !value.conversationId) return null;
-    if (typeof value.payloadId !== 'string' || !value.payloadId) return null;
-    return {
-      kind: 'agent-payload',
-      conversationId: value.conversationId,
-      ...(typeof value.runId === 'string' && value.runId ? { runId: value.runId } : {}),
-      payloadId: value.payloadId,
-      ...(label ? { label } : {}),
-    };
   }
   if (value.kind === 'url') {
     if (typeof value.url !== 'string' || !value.url) return null;

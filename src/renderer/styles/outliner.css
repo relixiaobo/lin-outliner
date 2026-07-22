@@ -2935,8 +2935,8 @@ button.outliner-table-column-kind:focus-visible {
   flex-wrap: wrap;
   column-gap: var(--space-3);
   row-gap: var(--space-1);
-  margin-left: 6px;
-  max-width: 100%;
+  margin-left: var(--space-3);
+  max-width: calc(100% - var(--space-3));
   min-width: 0;
   vertical-align: middle;
 }

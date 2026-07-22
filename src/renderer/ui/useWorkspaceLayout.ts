@@ -5,7 +5,6 @@ import type { NavigateRootOptions } from './shared';
 import type {
   FilePreviewNavigationOptions,
   FilePreviewPresentation,
-  AgentDebugPanelState,
   OutlinerPanelView,
   PanelView,
   WorkspaceContentPanelState,
@@ -15,7 +14,7 @@ import type {
 import { isRecord } from '../state/persistence';
 
 let nextWorkspaceId = 0;
-const STORAGE_KEY = 'lin-outliner:workspace-layout:v4';
+const STORAGE_KEY = 'lin-outliner:workspace-layout:v5';
 const MAX_PERSISTED_PANELS = 4;
 const MAX_PANEL_PAGE_HISTORY = 50;
 
@@ -123,15 +122,6 @@ function filePreviewPanel(
   return workspacePanel(id, filePreviewView(target, nodeId, undefined, presentation), size);
 }
 
-function agentDebugPanel(
-  id: string,
-  conversationId: string | null,
-  size = 1,
-  runId: string | null = null,
-): AgentDebugPanelState {
-  return { id, type: 'agent-debug', conversationId, runId, size };
-}
-
 function navigateWorkspacePanel(panel: WorkspaceContentPanelState, view: PanelView): WorkspaceContentPanelState {
   if (samePanelView(panel.view, view)) return panel;
   return {
@@ -195,20 +185,6 @@ function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelStat
   if (!isRecord(value) || typeof value.id !== 'string') return null;
   rememberId(value.id);
   const size = sanitizeSize(value.size);
-  if (value.type === 'agent-debug') {
-    const runId = typeof value.runId === 'string'
-      ? value.runId
-      : typeof value.selectedRunId === 'string'
-        ? value.selectedRunId
-        : null;
-    return {
-      id: value.id,
-      type: 'agent-debug',
-      size,
-      conversationId: typeof value.conversationId === 'string' ? value.conversationId : null,
-      runId,
-    };
-  }
   if (value.type !== 'workspace') return null;
   const view = sanitizePanelView(value.view, nodeIds);
   if (!view) return null;
@@ -229,9 +205,8 @@ function sanitizeLayout(value: unknown, nodeIds: Set<NodeId>): WorkspaceLayout |
     .map((panel) => sanitizePanel(panel, nodeIds))
     .filter((panel): panel is WorkspacePanelState => Boolean(panel));
   if (panels.length === 0) return null;
-  // The canvas is anchored by at least one outliner view (current or in a
-  // workspace pane's view history). A restored layout of only agent-debug panes
-  // has nothing to anchor, so treat it as corrupt and fall back to default.
+  // The canvas is anchored by at least one outliner view, current or in a pane's
+  // view history.
   if (!panels.some((panel) => Boolean(panelOutlinerAnchor(panel)))) return null;
 
   const panelIds = new Set(panels.map((panel) => panel.id));
@@ -247,7 +222,7 @@ function loadPersistedLayout(initial: DocumentProjection): WorkspaceLayout | nul
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed) || parsed.version !== 3) return null;
+    if (!isRecord(parsed) || parsed.version !== 5) return null;
     if (parsed.localDate !== todayIsoLocalDate()) return null;
     return sanitizeLayout(parsed, nodeIds);
   } catch {
@@ -259,7 +234,7 @@ function persistLayout(activePanelId: string | null, panels: WorkspacePanelState
   if (!activePanelId || panels.length === 0) return;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      version: 3,
+      version: 5,
       localDate: todayIsoLocalDate(),
       activePanelId,
       panels,
@@ -297,8 +272,6 @@ interface UseWorkspaceLayoutOptions {
   onPanelOpenRejected?: () => void;
   preparePanelCount?: (nextPanelCount: number) => void;
 }
-
-export type OpenPanelResult = 'opened' | 'rejected';
 
 interface InitializedWorkspaceLayout {
   focusRootId: NodeId;
@@ -429,9 +402,7 @@ export function useWorkspaceLayout({
       keepActive(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
         panel.id === replacePanel.id
-          ? isWorkspacePanel(panel)
-            ? navigateWorkspacePanel(panel, filePreviewView(target, nodeId, undefined, presentation))
-            : filePreviewPanel(panel.id, target, panel.size, nodeId, presentation)
+          ? navigateWorkspacePanel(panel, filePreviewView(target, nodeId, undefined, presentation))
           : panel
       )));
     } else {
@@ -558,9 +529,7 @@ export function useWorkspaceLayout({
     setPanels(nextPanels);
     if (activePanelId === panelId) {
       setActivePanelId(nextActivePanel.id);
-      // Move focus to the next pane's root, or clear it when that pane is a debug
-      // pane — leaving focus on a node from the just-closed outliner would surface
-      // a stale focused node to the agent view-context.
+      // Move focus to the next pane's root, or clear it for a file preview.
       focusNode(isOutlinerPanel(nextActivePanel) ? nextActivePanel.view.rootId : null);
     }
   }, [activePanelId, focusNode, panels]);
@@ -572,10 +541,7 @@ export function useWorkspaceLayout({
       window.requestAnimationFrame(() => setActivePanelId(panelId));
     };
     if (panels.length >= MAX_PERSISTED_PANELS || !canFitPanelCount(panels.length + 1)) {
-      // At the cap, repurpose an existing workspace pane (rightmost first) so a
-      // debug conversation is never silently dropped — symmetric with how
-      // openAgentRunDetailsPanel reverse-finds a debug pane. Falls back to the last
-      // pane only if somehow none is a workspace pane.
+      // At the cap, repurpose the rightmost workspace pane.
       const replacePanel = [...panels].reverse().find(isWorkspacePanel) ?? panels.at(-1);
       if (!replacePanel) return;
       keepActive(replacePanel.id);
@@ -590,46 +556,6 @@ export function useWorkspaceLayout({
     }
     focusNode(nodeId);
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
-
-  const openAgentRunDetailsPanel = useCallback((conversationId: string | null, runId: string | null): OpenPanelResult => {
-    const existing = panels.find((panel) => (
-      panel.type === 'agent-debug' && panel.conversationId === conversationId && panel.runId === runId
-    ));
-    if (existing) {
-      setActivePanelId(existing.id);
-      return 'opened';
-    }
-
-    const reusableDebugPanel = panels.find((panel) => panel.type === 'agent-debug');
-    if (reusableDebugPanel) {
-      setActivePanelId(reusableDebugPanel.id);
-      setPanels((prev) => prev.map((panel) => (
-        panel.id === reusableDebugPanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, runId) : panel
-      )));
-      return 'opened';
-    }
-
-    if (panels.length >= MAX_PERSISTED_PANELS) {
-      const replacePanel = [...panels].reverse().find((panel) => panel.type === 'agent-debug') ?? panels.at(-1);
-      if (!replacePanel) return 'rejected';
-      setActivePanelId(replacePanel.id);
-      setPanels((prev) => prev.map((panel) => (
-        panel.id === replacePanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, runId) : panel
-      )));
-      return 'opened';
-    }
-
-    if (!canFitPanelCount(panels.length + 1)) {
-      onPanelOpenRejected?.();
-      return 'rejected';
-    }
-
-    const panelId = nextId('panel');
-    preparePanelCount(panels.length + 1);
-    setActivePanelId(panelId);
-    setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId, 1, runId)]);
-    return 'opened';
-  }, [canFitPanelCount, onPanelOpenRejected, panels, preparePanelCount]);
 
   const repairMissingOutlinerRoots = useCallback((projection: DocumentProjection, nodeIds: NodeLookup): NodeId | null => {
     if (!initializedRef.current || panels.length === 0) return null;
@@ -700,7 +626,6 @@ export function useWorkspaceLayout({
     navigatePanelBack,
     navigatePanelForward,
     navigateRoot,
-    openAgentRunDetailsPanel,
     openPanel,
     openPreview,
     panels,

@@ -8,17 +8,13 @@ import {
   type WebContentsWillRedirectEventParams,
 } from 'electron';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
-import type { AgentRunScope } from '../core/agentEventLog';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { createNodeTools, type ChatSourceValidator, type OutlinerToolHost } from './agentNodeTools';
+import { createNodeTools, type NodeToolScope, type OutlinerToolHost } from './agentNodeTools';
 import { createLocalTools, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
-import { createAgentIssueTools, type AgentIssueToolRuntime } from './agentIssueTools';
 import { normalizeAgentToolNames } from './agentToolRules';
-import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
-import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
 import { createGenerateImageTool, type AgentImageGenerationRuntime } from './agentImageGenerationTool';
 import {
   agentToolResult,
@@ -216,15 +212,10 @@ export interface AgentToolsOptions {
   localFileRoot?: string;
   localWorkspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
-  skillToolEnabled?: boolean;
-  issueRuntime?: AgentIssueToolRuntime;
-  pastChats?: PastChatsToolRuntime;
-  askUserQuestion?: AgentAskUserQuestionRuntime;
   imageGeneration?: AgentImageGenerationRuntime;
-  chatSourceValidator?: ChatSourceValidator;
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
-  runScope?: AgentRunScope;
+  nodeScope?: NodeToolScope;
 }
 
 interface AgentToolCatalogEntry {
@@ -251,9 +242,8 @@ function buildAgentToolCatalog(
   return [{
     precondition: !!outliner,
     create: () => outliner ? createNodeTools(outliner, {
-      chatSourceValidator: options.chatSourceValidator,
       localFileRoot: options.localFileRoot,
-      runScope: options.runScope,
+      nodeScope: options.nodeScope,
     }) : [],
   }, {
     precondition: true,
@@ -269,19 +259,10 @@ function buildAgentToolCatalog(
     precondition: true,
     create: () => [createWebFetchTool(scratchRoot)],
   }, {
-    precondition: !!options.issueRuntime,
-    create: () => options.issueRuntime ? createAgentIssueTools(options.issueRuntime) : [],
-  }, {
-    precondition: !!options.pastChats,
-    create: () => options.pastChats ? [createPastChatsTool(options.pastChats)] : [],
-  }, {
-    precondition: !!options.askUserQuestion,
-    create: () => options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : [],
-  }, {
     precondition: !!options.imageGeneration,
     create: () => options.imageGeneration ? [createGenerateImageTool(options.imageGeneration)] : [],
   }, {
-    precondition: !!options.skillRuntime && options.skillToolEnabled !== false,
+    precondition: !!options.skillRuntime,
     create: () => options.skillRuntime ? [createSkillTool(options.skillRuntime)] : [],
   }];
 }

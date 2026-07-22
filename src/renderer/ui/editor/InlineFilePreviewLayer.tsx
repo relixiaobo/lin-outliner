@@ -14,18 +14,6 @@ import {
   previewTargetForInlineFile,
 } from './InlineFileContextMenu';
 
-// A transcript file chip points at a working file on disk: clicking it opens the
-// workspace file-only reader in the main canvas (not a split pane). The split is by
-// LOCATION: a chip with a `[data-agent-transcript-chips]`
-// ancestor is in the live transcript. That marker is set ONCE per live transcript
-// message frame (user or assistant), so user attachment chips, answer prose, interim
-// narration, and file_write/file_edit result chips all open in the workspace reader,
-// while the same components on meta surfaces (compaction/sub-run summaries, the
-// Run details + PoV inspector panels) have no such ancestor and keep the normal
-// workspace preview. An outliner file reference is a node-model field, never under
-// this marker, so it too keeps its workspace preview behavior.
-const TRANSCRIPT_CHIP_CONTAINER_SELECTOR = '[data-agent-transcript-chips]';
-
 interface InlineFileMenuState {
   file: InlineFileMenuFile;
   presentation?: 'reader';
@@ -188,21 +176,6 @@ export function InlineFilePreviewLayer() {
         hidePreview();
         return;
       }
-      // A transcript chip is a pointer to a working file on disk → preview in the
-      // main workspace as a file-only reader. An outliner file reference → normal
-      // workspace preview pane.
-      if (isTranscriptChipElement(element)) {
-        dispatchPreviewTargetOpen({
-          presentation: 'reader',
-          target: previewTargetForInlineFile({
-            entryKind: file.entryKind,
-            name: file.name,
-            path: file.path,
-          }),
-        });
-        hidePreview();
-        return;
-      }
       dispatchPreviewTargetOpen({
         newPane: wantsNewPaneFromClick(event),
         target: {
@@ -225,7 +198,6 @@ export function InlineFilePreviewLayer() {
       hidePreview();
       setFileMenu({
         file: { path: file.path, name: file.name, entryKind: file.entryKind },
-        ...(isTranscriptChipElement(element) ? { presentation: 'reader' } : {}),
         x: event.clientX,
         y: event.clientY,
       });
@@ -361,15 +333,8 @@ function inlineFileElementFromTarget(target: EventTarget | null): HTMLElement | 
   return target.closest<HTMLElement>('[data-inline-ref-kind="local-file"]');
 }
 
-/** True when the chip is rendered inside an agent-transcript render root (prose file
- *  links, file_write/file_edit result chips). Such chips open in the workspace
- *  file-only reader; other inline files keep the standard preview-pane route. */
-function isTranscriptChipElement(element: HTMLElement): boolean {
-  return Boolean(element.closest(TRANSCRIPT_CHIP_CONTAINER_SELECTOR));
-}
-
 function isEditableInlineFileElement(element: HTMLElement): boolean {
-  return Boolean(element.closest('.ProseMirror, [contenteditable="true"], .agent-composer-editor'));
+  return Boolean(element.closest('.ProseMirror, [contenteditable="true"]'));
 }
 
 function isPreviewPreservingKey(event: KeyboardEvent): boolean {

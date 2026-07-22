@@ -40,8 +40,8 @@ interface DateValuePickerProps {
   // Whether the end-date (range) toggle is offered. Off for single-date callers
   // where a range has no meaning.
   allowRange?: boolean;
-  // Whether the time toggle is offered. Off for date-only callers such as the
-  // Dream launcher, which persists strict YYYY-MM-DD windows.
+  // Whether the time toggle is offered. Date-only callers persist strict
+  // YYYY-MM-DD values.
   allowTime?: boolean;
   // Whether the recurrence selector is offered for single dates. Recurring
   // workflows need it; plain date pickers do not.

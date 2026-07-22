@@ -3,15 +3,10 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const MIGRATED_RENDERER_FILES = [
-  'src/renderer/ui/agent/AgentDebugPanel.tsx',
-  'src/renderer/ui/agent/AgentMessageRow.tsx',
-  'src/renderer/ui/agent/AgentUsageBreakdown.tsx',
-  'src/renderer/ui/agent/AgentToolCallBlock.tsx',
-  'src/renderer/ui/agent/agentIssueViewModel.ts',
-  'src/renderer/ui/agent/AgentIssuesPanel.tsx',
-  'src/renderer/ui/agent/AgentRunDetailsPanel.tsx',
-  'src/renderer/ui/agent/DreamLauncher.tsx',
   'src/renderer/ui/agent/AgentSettingsView.tsx',
+  'src/renderer/agent/components/ThreadDock.tsx',
+  'src/renderer/agent/components/ThreadView.tsx',
+  'src/renderer/agent/components/items/ThreadItemView.tsx',
   'src/renderer/ui/primitives/CalendarMonthGrid.tsx',
   'src/renderer/ui/preview/previewRenderers.tsx',
   'src/renderer/ui/editor/InlineFilePreviewLayer.tsx',

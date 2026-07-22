@@ -340,7 +340,7 @@ Window material mapping:
 | Menus / popovers inside the app | Same main-window material underneath | CSS elevated-overlay tier: `--material-popover` + `--material-backdrop` + level-1 shadow. |
 | Dialogs / in-app command palette | Same main-window material underneath | Opaque `--bg-elevated` + level-2 shadow; never translucent. |
 | Global launcher window | macOS `vibrancy: 'hud'` | Transparent launcher surface over HUD material; functional fills tint the glass, no second `backdrop-filter`. |
-| Settings / provider / agent / channel child windows | No OS material | Opaque preferences/config surfaces; Settings rail may reuse `--rail-surface-shadow` without material; no `data-window-material` glass contract. |
+| Settings and provider child windows | No OS material | Opaque preferences/config surfaces; Settings rail may reuse `--rail-surface-shadow` without material; no `data-window-material` glass contract. |
 
 There is no separate full-width toolbar material: the top strip is the window's
 drag region; over the content base it is transparent, over a rail it is the

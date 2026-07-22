@@ -1796,14 +1796,12 @@ export function sourceMeta(source: PreviewSourceDescriptor, labels: FilePreviewL
 
 function sourceKindLabel(kind: PreviewFileSource['sourceKind'], labels: FilePreviewLabels): string {
   if (kind === 'local-file') return labels.sourceLocalFile;
-  if (kind === 'asset') return labels.sourceAsset;
-  return labels.sourceAgentPayload;
+  return labels.sourceAsset;
 }
 
 export function targetTitleFallback(target: PreviewTarget): string {
   if (target.kind === 'local-file') return target.path.split('/').filter(Boolean).at(-1) ?? target.path;
   if (target.kind === 'asset') return target.assetId;
-  if (target.kind === 'agent-payload') return target.payloadId;
   return target.url;
 }
 

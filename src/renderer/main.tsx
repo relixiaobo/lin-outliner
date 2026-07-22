@@ -9,8 +9,6 @@ import { windowSurfaceFromSearch } from '../core/settingsWindow';
 import { App } from './ui/App';
 import { SettingsWindow } from './ui/SettingsWindow';
 import { ProviderConfigWindow } from './ui/agent/ProviderConfigWindow';
-import { AgentConfigWindow } from './ui/agent/AgentConfigWindow';
-import { ChannelConfigWindow } from './ui/agent/ChannelConfigWindow';
 import { I18nProvider } from './i18n/I18nProvider';
 import { installRendererDiagnostics } from './diagnostics';
 import { installInputModalityTracking } from './ui/focus/inputModality';
@@ -58,10 +56,6 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
         <SettingsWindow />
       ) : surface === 'provider-config' ? (
         <ProviderConfigWindow />
-      ) : surface === 'agent-config' ? (
-        <AgentConfigWindow />
-      ) : surface === 'channel-config' ? (
-        <ChannelConfigWindow />
       ) : (
         <App />
       )}

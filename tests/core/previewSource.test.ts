@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
-import type { AgentPayloadRef } from '../../src/core/agentEventLog';
 import { normalizePreviewHttpUrl, type PreviewListDirectoryResult, type PreviewReadTextResult, type PreviewResolveSourceResult } from '../../src/core/preview';
 import { PREVIEW_LOCAL_URL_SCHEME } from '../../src/core/assets';
 import { handlePreviewCommand, type PreviewCommandContext } from '../../src/main/previewSource';
@@ -150,113 +149,6 @@ describe('preview source commands', () => {
     expect(fallback.source?.kind === 'file' ? fallback.source.streamUrl : 'unexpected-source').toBeUndefined();
   });
 
-  test('keeps agent payload preview conversation/run scoped', async () => {
-    const calls: Array<[conversationId: string, payloadId: string, runId: string | undefined]> = [];
-    const payload: AgentPayloadRef = {
-      kind: 'payload_ref',
-      id: 'payload-1',
-      storage: 'file',
-      mimeType: 'text/plain',
-      byteLength: 12,
-      sha256: 'sha',
-      role: 'tool_output',
-      scope: { type: 'run', conversationId: 'conversation-1', runId: 'run-1' },
-      summary: 'Tool output',
-    };
-    const context = previewContext({
-      agentRuntime: {
-        previewPayload: async (conversationId, payloadId, runId) => {
-          calls.push([conversationId, payloadId, runId]);
-          return conversationId === 'conversation-1' && payloadId === 'payload-1' && runId === 'run-1'
-            ? payload
-            : null;
-        },
-        previewPayloadBytes: async (conversationId, payloadId, runId) => (
-          conversationId === 'conversation-1' && payloadId === 'payload-1' && runId === 'run-1'
-            ? Buffer.from('payload text')
-            : null
-        ),
-      },
-    });
-
-    const resolved = await handlePreviewCommand('preview_resolve_source', {
-      target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        runId: 'run-1',
-        payloadId: 'payload-1',
-      },
-    }, context) as PreviewResolveSourceResult;
-
-    expect(resolved.source).toMatchObject({
-      kind: 'file',
-      sourceKind: 'agent-payload',
-      name: 'Tool output',
-      target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        runId: 'run-1',
-        payloadId: 'payload-1',
-      },
-    });
-    expect(resolved.source && 'displayPath' in resolved.source ? resolved.source.displayPath : undefined).toBeUndefined();
-
-    const text = await handlePreviewCommand('preview_read_text', {
-      target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        runId: 'run-1',
-        payloadId: 'payload-1',
-      },
-    }, context) as PreviewReadTextResult;
-    expect(text.text).toBe('payload text');
-    expect(calls).toContainEqual(['conversation-1', 'payload-1', 'run-1']);
-
-    const missingRun = await handlePreviewCommand('preview_resolve_source', {
-      target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        payloadId: 'payload-1',
-      },
-    }, context) as PreviewResolveSourceResult;
-    expect(missingRun.source).toBeNull();
-  });
-
-  test('derives EPUB source extension from MIME when the payload has no filename', async () => {
-    const payload: AgentPayloadRef = {
-      kind: 'payload_ref',
-      id: 'book-payload',
-      storage: 'file',
-      mimeType: 'application/epub+zip',
-      byteLength: 4,
-      sha256: 'sha',
-      role: 'tool_output',
-      scope: { type: 'run', conversationId: 'conversation-1', runId: 'run-1' },
-    };
-    const context = previewContext({
-      agentRuntime: {
-        previewPayload: async () => payload,
-        previewPayloadBytes: async () => Buffer.from([0x50, 0x4b, 0x03, 0x04]),
-      },
-    });
-
-    const resolved = await handlePreviewCommand('preview_resolve_source', {
-      target: {
-        kind: 'agent-payload',
-        conversationId: 'conversation-1',
-        runId: 'run-1',
-        payloadId: 'book-payload',
-      },
-    }, context) as PreviewResolveSourceResult;
-
-    expect(resolved.source).toMatchObject({
-      kind: 'file',
-      name: 'book-payload.epub',
-      ext: 'epub',
-      mimeType: 'application/epub+zip',
-    });
-  });
-
   test('resolves local HTML files as text/html preview sources', async () => {
     const filePath = join(root, 'index.html');
     await writeFile(filePath, '<!doctype html><title>Preview</title>');
@@ -327,10 +219,6 @@ describe('preview source commands', () => {
     return {
       agentLocalFileRoots: [root],
       agentGeneratedImageRoots: [],
-      agentRuntime: {
-        previewPayload: async () => null,
-        previewPayloadBytes: async () => null,
-      },
       assetService: {
         lookup: async () => null,
         pathFor: async () => null,

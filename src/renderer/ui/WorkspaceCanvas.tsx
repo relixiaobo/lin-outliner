@@ -3,7 +3,6 @@ import type { NodeId } from '../api/types';
 import type { DocumentIndex, UiState } from '../state/document';
 import { NodePanel } from './NodePanel';
 import { WorkspacePanelSurface } from './WorkspacePanelSurface';
-import { AgentDebugPanel } from './agent/AgentDebugPanel';
 import { FilePreviewPanel } from './preview/FilePreviewPanel';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared';
@@ -65,7 +64,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
             showClose={activePanels.length > 1}
             size={panel.size}
           >
-            {panel.type === 'workspace' && panel.view.kind === 'outliner' ? (
+            {panel.view.kind === 'outliner' ? (
               <NodePanel
                 panelId={panel.id}
                 rootId={panel.view.rootId}
@@ -87,7 +86,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 dragId={props.dragId}
                 setDragId={props.setDragId}
               />
-            ) : panel.type === 'workspace' && panel.view.kind === 'file-preview' ? (
+            ) : panel.view.kind === 'file-preview' ? (
               <FilePreviewPanel
                 activePanel={props.activePanelId === panel.id}
                 panelId={panel.id}
@@ -113,15 +112,6 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 target={panel.view.target}
                 trigger={props.trigger}
                 ui={props.ui}
-              />
-            ) : panel.type === 'agent-debug' ? (
-              <AgentDebugPanel
-                canGoBack={false}
-                conversationId={panel.conversationId}
-                onBack={() => undefined}
-                onClose={() => props.onClosePanel(panel.id)}
-                runId={panel.runId}
-                showClose={activePanels.length > 1}
               />
             ) : (
               null

@@ -25,14 +25,14 @@ describe('DiagnosticLogStore', () => {
   test('deduplicates repeated reports by fingerprint', async () => {
     const { store } = await createStore();
     await store.reportError({
-      domain: 'dream',
+      domain: 'memory',
       severity: 'warn',
       code: 'provider-400',
       message: 'Provider returned HTTP 400 for run 1234567890',
       context: { providerId: 'openai', statusCode: 400 },
     });
     await store.reportError({
-      domain: 'dream',
+      domain: 'memory',
       severity: 'warn',
       code: 'provider-400',
       message: 'Provider returned HTTP 400 for run 9876543210',
@@ -56,7 +56,7 @@ describe('DiagnosticLogStore', () => {
       severity: 'error',
       message: 'Failed request with private content',
       context: {
-        conversationId: 'conv-1',
+        threadId: 'thread-1',
         statusCode: 400,
         providerId: 'anthropic',
         source: '/Users/example/Tenon/src/preload/index.ts?cache=private',
@@ -68,7 +68,7 @@ describe('DiagnosticLogStore', () => {
 
     const [record] = await store.readRecords();
     expect(record?.context).toEqual({
-      conversationId: 'conv-1',
+      threadId: 'thread-1',
       statusCode: 400,
       providerId: 'anthropic',
       source: 'index.ts',

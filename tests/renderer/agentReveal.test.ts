@@ -1,35 +1,35 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  acknowledgeAgentComposerNodeReferenceRequest,
-  onAgentComposerNodeReferenceRequest,
-  onAgentComposerRevealRequest,
-  requestSendNodeReferenceToComposer,
+  acknowledgeThreadComposerNodeReferenceRequest,
+  onThreadComposerNodeReferenceRequest,
+  onThreadRailRevealRequest,
+  requestSendNodeReferenceToThreadComposer,
 } from '../../src/renderer/agent/agentReveal';
 
-describe('agent composer reveal requests', () => {
-  test('keeps a node reference pending until a mounted Composer acknowledges insertion', () => {
+describe('Thread composer reveal requests', () => {
+  test('keeps a Node reference pending until a mounted composer acknowledges insertion', () => {
     const request = { nodeId: 'node:pending', title: 'Pending reference' };
     let revealCount = 0;
-    const stopReveal = onAgentComposerRevealRequest(() => {
+    const stopReveal = onThreadRailRevealRequest(() => {
       revealCount += 1;
     });
 
-    requestSendNodeReferenceToComposer(request);
+    requestSendNodeReferenceToThreadComposer(request);
     expect(revealCount).toBe(1);
 
     const firstDelivery: typeof request[] = [];
-    const stopFirstComposer = onAgentComposerNodeReferenceRequest((pending) => firstDelivery.push(pending));
+    const stopFirstComposer = onThreadComposerNodeReferenceRequest((pending) => firstDelivery.push(pending));
     expect(firstDelivery).toEqual([request]);
     stopFirstComposer();
 
     const replayedDelivery: typeof request[] = [];
-    const stopSecondComposer = onAgentComposerNodeReferenceRequest((pending) => replayedDelivery.push(pending));
+    const stopSecondComposer = onThreadComposerNodeReferenceRequest((pending) => replayedDelivery.push(pending));
     expect(replayedDelivery).toEqual([request]);
-    acknowledgeAgentComposerNodeReferenceRequest(request);
+    acknowledgeThreadComposerNodeReferenceRequest(request);
     stopSecondComposer();
 
     const afterAcknowledgement: typeof request[] = [];
-    const stopThirdComposer = onAgentComposerNodeReferenceRequest((pending) => afterAcknowledgement.push(pending));
+    const stopThirdComposer = onThreadComposerNodeReferenceRequest((pending) => afterAcknowledgement.push(pending));
     expect(afterAcknowledgement).toEqual([]);
     stopThirdComposer();
     stopReveal();

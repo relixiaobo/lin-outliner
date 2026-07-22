@@ -83,31 +83,6 @@ describe('editor text patch', () => {
     expect(docToRichText(richTextToDoc(content))).toEqual(content);
   });
 
-  test('round-trips chat-source created-at clamps through the editor doc', () => {
-    const content = {
-      text: 'See ',
-      marks: [],
-      inlineRefs: [{
-        offset: 4,
-        target: {
-          kind: 'chat-source' as const,
-          stream: 'conversation' as const,
-          streamId: 'conversation-1',
-          range: {
-            fromSeqExclusive: 1,
-            throughSeq: 5,
-            throughEventId: 'event-5',
-            fromCreatedAtInclusive: 1_800_000_000_000,
-            throughCreatedAtExclusive: 1_800_086_400_000,
-          },
-        },
-        displayName: 'source chat',
-      }],
-    };
-
-    expect(docToRichText(richTextToDoc(content))).toEqual(content);
-  });
-
   test('preserves visible text for inline reference atoms without a target', () => {
     const doc = pmSchema.nodes.doc.create(null, pmSchema.nodes.paragraph.create(null, [
       pmSchema.nodes.inlineReference.create({
