@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, unlink } f
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import type { AssetIngestInput, AssetMetadata } from '../core/types';
-import { isPathInside } from './agentAttachmentMaterialization';
+import { isPathInside } from './agent/capabilities/agentAttachmentMaterialization';
 import { sha256Bytes, sha256File } from './fileHashing';
 import { atomicWriteFile, writeJsonFile } from './jsonFileStore';
 import { parseRangeHeader } from './localFilePreviewStream';

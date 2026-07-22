@@ -1,12 +1,12 @@
-import { parseCheckboxMarker } from '../core/textSyntax';
-import { parseNodeReferenceMarkers } from '../core/referenceMarkup';
-import { normalizeCodeLanguage } from '../core/codeLanguages';
+import { parseCheckboxMarker } from '../../../core/textSyntax';
+import { parseNodeReferenceMarkers } from '../../../core/referenceMarkup';
+import { normalizeCodeLanguage } from '../../../core/codeLanguages';
 import {
   decodeSemanticEscapes,
   markdownInlineProtectedRanges,
   scanMarkdownInline,
-} from '../core/semanticIngest/inlineScanner';
-import type { SourceSpan } from '../core/semanticIngest/types';
+} from '../../../core/semanticIngest/inlineScanner';
+import type { SourceSpan } from '../../../core/semanticIngest/types';
 
 export interface OutlineDocument {
   roots: OutlineNode[];

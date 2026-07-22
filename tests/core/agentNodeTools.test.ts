@@ -8,11 +8,11 @@ import { LoroOutlinerDocument } from '../../src/core/loroDocument';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
 import { LIBRARY_ID, plainText, replaceAllRichTextPatch, SCHEMA_ID, TRASH_ID, WORKSPACE_ID } from '../../src/core/types';
-import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agentNodeTools';
-import { validateSearchNodes } from '../../src/main/agentNodeToolSearch';
+import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
+import { validateSearchNodes } from '../../src/main/agent/capabilities/agentNodeToolSearch';
 import { DocumentReadModel } from '../../src/main/documentReadModel';
-import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
-import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
+import type { OperationHistoryData } from '../../src/main/agent/capabilities/agentNodeToolTypes';
+import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { formatFileReferenceMarker, formatNodeReferenceMarker, splitFileReferenceMarkers } from '../../src/core/referenceMarkup';
 import { richTextToMarkdownReferenceMarkup } from '../../src/core/markdownRichText';
 

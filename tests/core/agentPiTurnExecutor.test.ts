@@ -4,7 +4,7 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
 import type { AgentCoreNotification } from '../../src/core/agent/protocol';
 import { ItemRecorder } from '../../src/main/agent/runtime/ItemRecorder';
-import { PiEventNormalizer } from '../../src/main/agent/runtime/PiTurnExecutor';
+import { PiEventNormalizer, modelUserMessage } from '../../src/main/agent/runtime/PiTurnExecutor';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
@@ -140,6 +140,22 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'item/completed',
       item: { type: 'agentMessage', text: 'Partial output' },
     });
+  });
+
+  test('gives the model a readable path for non-image attachments', () => {
+    const message = modelUserMessage([{
+      type: 'attachment',
+      id: 'attachment-1',
+      name: 'report.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 512,
+      source: { kind: 'localFile', path: '/workspace/agent-attachments/report.pdf' },
+    }], 1_720_000_000_000);
+
+    expect(message.content).toEqual([{
+      type: 'text',
+      text: '[Attachment: report.pdf, application/pdf, 512 bytes]\nReadable path: /workspace/agent-attachments/report.pdf\nUse file_read with this path to inspect the attachment.',
+    }]);
   });
 });
 

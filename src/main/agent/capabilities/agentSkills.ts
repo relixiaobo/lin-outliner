@@ -5,12 +5,11 @@ import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import type { Message, TextContent, UserMessage } from '@earendil-works/pi-ai';
-import type { TurnStatus } from '../core/agent/protocol';
-import type { SkillDefinition } from '../core/types';
-import { systemReminder } from '../core/agentAttachments';
+import type { TurnStatus } from '../../../core/agent/protocol';
+import type { SkillDefinition } from '../../../core/types';
+import { systemReminder } from '../../../core/agentAttachments';
 // Runtime-only cycle: agentSkillAuthoring imports the shared resolver/hash from this
 // module; we import its validator for the undo restore path. Neither side touches the
 // other's bindings at module-evaluation time, so the cycle is safe under ESM.
@@ -18,7 +17,7 @@ import { AgentSkillAuthoringError, validateAgentSkillContentWrite } from './agen
 import {
   BUILT_IN_SKILL_RESOURCE_DIR_NAME,
   BUILT_IN_SKILL_SOURCE_DIR,
-} from './builtInSkillConfig';
+} from '../../builtInSkillConfig';
 import {
   errorEnvelope,
   successEnvelope,
@@ -204,7 +203,7 @@ export interface SkillLoadOptions {
 export interface BuiltInSkillResourceRootOptions {
   isPackaged?: boolean;
   resourcesPath?: string;
-  moduleDir?: string;
+  appPath?: string;
 }
 
 /**
@@ -1395,8 +1394,7 @@ export function resolveBuiltInSkillResourceRoot(options: BuiltInSkillResourceRoo
     }
     return path.join(resourcesPath, BUILT_IN_SKILL_RESOURCE_DIR_NAME);
   }
-  const moduleDir = options.moduleDir ?? fileURLToPath(new URL('.', import.meta.url));
-  return path.resolve(moduleDir, '../../', BUILT_IN_SKILL_SOURCE_DIR);
+  return path.resolve(options.appPath ?? developmentAppPath(), BUILT_IN_SKILL_SOURCE_DIR);
 }
 
 function appIsPackaged(): boolean {
@@ -1405,6 +1403,15 @@ function appIsPackaged(): boolean {
     return Boolean(electron.app?.isPackaged);
   } catch {
     return false;
+  }
+}
+
+function developmentAppPath(): string {
+  try {
+    const electron = requireForElectron('electron') as typeof import('electron');
+    return electron.app?.getAppPath() ?? process.cwd();
+  } catch {
+    return process.cwd();
   }
 }
 

@@ -57,12 +57,19 @@ IDs.
 ## History And Activity
 
 Spawning records a `collabAgentToolCall` in the sender and a
-`subAgentActivity` edge for child lifecycle changes. Child output remains in the
-child rollout. Parent-visible summaries are Items, not copied child history.
+`subAgentActivity` `started` Item in the sender's active Turn. Child terminal
+status queues a parent-scoped `completed`, `interrupted`, or `errored` activity
+Item. The queue is flushed into the active parent Turn while it waits, before a
+new parent Turn reaches the provider, or before an active parent Turn becomes
+terminal. If no parent Turn is active, the activity remains pending for the next
+one. Child output remains in the child rollout. Parent-visible summaries are
+Items, not copied child history.
 
-Waiting is interruptible and returns on mailbox activity, child completion,
-steered root input, or timeout. Interrupt changes only the active child Turn and
-retains the Thread for follow-up work.
+Waiting is interruptible and uses a pending latch scoped to the sender Thread.
+It returns on that Thread's mailbox or steering activity, direct-child terminal
+activity, or timeout. Activity that arrives immediately before the wait is
+retained; unrelated Thread activity cannot wake it. Interrupt changes only the
+active child Turn and retains the Thread for follow-up work.
 
 An isolated Skill uses the same child-Thread mechanism with a bounded tool
 catalog. Read-only isolation is a catalog constraint, not an operating-system

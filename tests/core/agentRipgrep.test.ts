@@ -6,7 +6,7 @@ import {
   clearRipgrepCommandCacheForTests,
   getBundledRipgrepExecutablePath,
   resolveRipgrepCommand,
-} from '../../src/main/agentRipgrep';
+} from '../../src/main/agent/capabilities/agentRipgrep';
 
 beforeEach(() => {
   clearRipgrepCommandCacheForTests();

@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import {
   isReadOnlyModelToolActionKind,
   modelToolActionKinds,
-} from '../core/agent/tools';
+} from '../../../core/agent/tools';
 import {
   matchingBlockForDescriptor,
   parseAgentCapabilitySettings,

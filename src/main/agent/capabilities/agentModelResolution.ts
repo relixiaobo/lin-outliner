@@ -1,15 +1,15 @@
 import { getSupportedThinkingLevels, type Api, type Model } from '@earendil-works/pi-ai';
-import { parseProviderQualifiedModel } from '../core/agentModelId';
-import { defaultThinkingLevelFor } from '../core/agentReasoning';
-import { isLocalGatewayProviderId } from '../core/localGatewayProviders';
-import { AGENT_REASONING_LADDER, type AgentReasoningLevel } from '../core/types';
+import { parseProviderQualifiedModel } from '../../../core/agentModelId';
+import { defaultThinkingLevelFor } from '../../../core/agentReasoning';
+import { isLocalGatewayProviderId } from '../../../core/localGatewayProviders';
+import { AGENT_REASONING_LADDER, type AgentReasoningLevel } from '../../../core/types';
 import { rankedModels, type AgentProviderRuntimeConfig } from './agentSettings';
 import {
   createOpenAICompatibleModel,
   ensurePiCustomProvider,
   piFindModel,
   piProviders,
-} from './piModels';
+} from '../../piModels';
 
 const AGENT_REASONING_LEVELS = new Set<AgentReasoningLevel>(AGENT_REASONING_LADDER);
 

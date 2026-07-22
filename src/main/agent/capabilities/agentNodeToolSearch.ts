@@ -7,8 +7,8 @@ import {
   type SearchQueryExpr,
   type SearchQueryOperand,
   type SearchQueryRule,
-} from '../core/types';
-import { formatNodeReferenceMarker } from '../core/referenceMarkup';
+} from '../../../core/types';
+import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
 import {
   SEARCH_EXECUTABLE_QUERY_OPS,
   runTransientSearchExpr,
@@ -18,13 +18,13 @@ import {
   searchQueryHasRules,
   searchQueryTerms,
   type TransientSearchOptions,
-} from '../core/searchEngine';
+} from '../../../core/searchEngine';
 import {
   SEARCH_QUERY_COMPLEXITY_LIMITS,
   compileSearchQueryExpr,
-} from '../core/searchQueryCompiler';
-import type { TextSearchIndex } from '../core/textSearchIndex';
-import { searchNodeQuery } from './nodeRetrievalService';
+} from '../../../core/searchQueryCompiler';
+import type { TextSearchIndex } from '../../../core/textSearchIndex';
+import { searchNodeQuery } from '../../nodeRetrievalService';
 import { parseLinOutline, type OutlineDocument, type OutlineNode, type OutlineValue } from './agentOutlineParser';
 import {
   NODE_REFERENCE_GUIDANCE,
@@ -53,7 +53,7 @@ import type {
   ProjectionIndex,
   ResolvedSearchSpec,
 } from './agentNodeToolTypes';
-import { escapeSemanticText } from '../core/semanticIngest/inlineScanner';
+import { escapeSemanticText } from '../../../core/semanticIngest/inlineScanner';
 import { asRecord, clampInteger, firstDuplicate } from './agentNodeToolUtils';
 
 const QUERY_LOGICS = new Set<QueryLogic>(['AND', 'OR', 'NOT']);

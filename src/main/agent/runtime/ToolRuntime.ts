@@ -12,13 +12,13 @@ import {
 } from '../../../core/agent/tools';
 import type { AgentMutationCausation, JsonValue } from '../../../core/agent/protocol';
 import type { ReasoningEffort } from '../../../core/agent/configuration';
-import type { AgentImageGenerationRuntime } from '../../agentImageGenerationTool';
-import { AgentImportService, visibleImportServiceResult } from '../../agentImportService';
-import type { AgentLocalWorkspaceContext } from '../../agentLocalTools';
-import type { OutlinerToolHost } from '../../agentNodeTools';
-import type { AgentSkillRuntime } from '../../agentSkills';
-import { evaluateAgentToolCapability } from '../../agentCapabilities';
-import type { AgentCapabilityConfig } from '../../agentCapabilityRules';
+import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGenerationTool';
+import { AgentImportService, visibleImportServiceResult } from '../capabilities/agentImportService';
+import type { AgentLocalWorkspaceContext } from '../capabilities/agentLocalTools';
+import type { OutlinerToolHost } from '../capabilities/agentNodeTools';
+import type { AgentSkillRuntime } from '../capabilities/agentSkills';
+import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
+import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
 import type { TurnExecutionContext } from './types';
 
@@ -62,7 +62,7 @@ export class ToolRuntime {
       : this.options.imageGeneration;
     const capabilityTools = this.options.capabilityTools
       ? this.options.capabilityTools(context, this.outliner)
-      : (await import('../../agentTools')).createAgentTools(this.outliner, {
+      : (await import('../capabilities/agentTools')).createAgentTools(this.outliner, {
           localFileRoot: context.thread.cwd,
           ...(workspace === undefined ? {} : { localWorkspace: workspace }),
           ...(skillRuntime === undefined ? {} : { skillRuntime }),
@@ -210,6 +210,7 @@ export class ToolRuntime {
         const input = record(params, 'collaboration.wait_agent');
         return this.service.waitForCollaborationActivity(
           threadId,
+          turnId,
           optionalNonNegativeNumber(input.timeout_ms, 'timeout_ms'),
           signal,
         );
@@ -369,7 +370,7 @@ export class ToolRuntime {
     const configured = this.options.capabilityConfig;
     if (typeof configured === 'function') return configured();
     if (configured) return configured;
-    const { readAgentCapabilityConfig } = await import('../../agentCapabilityStore');
+    const { readAgentCapabilityConfig } = await import('../capabilities/agentCapabilityStore');
     return readAgentCapabilityConfig();
   }
 }

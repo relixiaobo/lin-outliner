@@ -274,7 +274,7 @@ export class ThreadMetadataStore {
 
   delete(threadId: ThreadId): void {
     const result = this.db.prepare('DELETE FROM threads WHERE id = ?').run(threadId);
-    if (result.changes !== 1) throw new Error(`Thread not found: ${threadId}`);
+    if (Number(result.changes) < 1) throw new Error(`Thread not found: ${threadId}`);
   }
 
   bindClientInput(binding: ClientInputBinding): ClientInputBinding {

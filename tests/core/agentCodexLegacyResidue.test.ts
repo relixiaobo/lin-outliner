@@ -55,6 +55,14 @@ const LEGACY_PATTERNS: ReadonlyArray<{ readonly label: string; readonly pattern:
     label: 'legacy profile terminology',
     pattern: /\bagent[- ]profiles?\b/i,
   },
+  {
+    label: 'legacy Run working-directory terminology',
+    pattern: /\brun[- ]workdir\b/i,
+  },
+  {
+    label: 'legacy Run execution scope terminology',
+    pattern: /\b(?:node-scoped run|run scope|run receives)\b/i,
+  },
 ];
 
 describe('Agent Core clean replacement', () => {
@@ -74,6 +82,13 @@ describe('Agent Core clean replacement', () => {
       }
     }
     expect(violations).toEqual([]);
+  });
+
+  test('keeps retained main-process capabilities under the canonical agent ownership tree', () => {
+    const flatAgentModules = readdirSync(join(ROOT, 'src', 'main'), { withFileTypes: true })
+      .filter((entry) => entry.isFile() && /^agent[A-Z].*\.ts$/.test(entry.name))
+      .map((entry) => entry.name);
+    expect(flatAgentModules).toEqual([]);
   });
 });
 

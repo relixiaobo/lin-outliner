@@ -15,7 +15,7 @@ import {
   skillContentHash,
   type AgentSkillProvenanceRecord,
   type AgentSkillProvenanceStore,
-} from '../../src/main/agentSkills';
+} from '../../src/main/agent/capabilities/agentSkills';
 const execFile = promisify(execFileCallback);
 
 describe('resolveSkillContentTarget (single skill-path source of truth)', () => {
@@ -940,10 +940,9 @@ describe('agent skills', () => {
 
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
     const repoRoot = path.join(path.sep, 'repo');
-    const moduleDir = path.join(repoRoot, 'out', 'main');
     const resourcesPath = path.join(path.sep, 'Applications', 'Tenon.app', 'Contents', 'Resources');
 
-    expect(resolveBuiltInSkillResourceRoot({ isPackaged: false, moduleDir }))
+    expect(resolveBuiltInSkillResourceRoot({ isPackaged: false, appPath: repoRoot }))
       .toBe(path.join(repoRoot, 'src', 'main', 'builtInSkills'));
     expect(resolveBuiltInSkillResourceRoot({ isPackaged: true, resourcesPath }))
       .toBe(path.join(resourcesPath, 'built-in-skills'));

@@ -1,5 +1,5 @@
-import type { NodeProjection } from '../core/types';
-import { nodeIsDone, nodeShowsCheckbox, projectFieldConfig, projectTagConfig } from '../core/configProjection';
+import type { NodeProjection } from '../../../core/types';
+import { nodeIsDone, nodeShowsCheckbox, projectFieldConfig, projectTagConfig } from '../../../core/configProjection';
 import {
   backlinks,
   breadcrumb,
@@ -15,8 +15,8 @@ import {
   tagLabels,
 } from './agentNodeToolProjection';
 import { searchQueryOutlineLines, searchViewModeOf } from './agentNodeToolSearch';
-import { escapeSemanticText } from '../core/semanticIngest/inlineScanner';
-import { richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
+import { escapeSemanticText } from '../../../core/semanticIngest/inlineScanner';
+import { richTextToMarkdownReferenceMarkup } from '../../../core/markdownRichText';
 import type {
   ChildrenPage,
   NodeChildSummary,

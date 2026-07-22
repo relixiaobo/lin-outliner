@@ -31,19 +31,19 @@ import {
   translationLanguagePromptName,
   type TranslationLanguage,
 } from '../core/translationLanguage';
-import { awaitWithAbort, isAbortError, throwIfAborted } from './agentAwaitWithAbort';
-import { isRetryableResponsesRequestError } from './agentStreamAbort';
+import { awaitWithAbort, isAbortError, throwIfAborted } from './agent/capabilities/agentAwaitWithAbort';
+import { isRetryableResponsesRequestError } from './agent/capabilities/agentStreamAbort';
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
   getProviderRuntimeConfig,
   providerStreamOptionsFromRuntimeSettings,
-} from './agentSettings';
+} from './agent/capabilities/agentSettings';
 import {
   lowestThinkingLevel,
   resolveAgentModelOverride,
   resolveProviderModel,
-} from './agentModelResolution';
+} from './agent/capabilities/agentModelResolution';
 import { customOpenAIResponsesPayloadProfileOption } from './openAIResponsesCompat';
 import { piCompleteSimple, piExternalProviderId } from './piModels';
 import type {

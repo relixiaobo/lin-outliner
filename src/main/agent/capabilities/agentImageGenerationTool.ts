@@ -12,7 +12,7 @@ import {
   parseLocalFileReferenceUrl,
   splitFileReferenceMarkers,
   type FileReferenceSegment,
-} from '../core/referenceMarkup';
+} from '../../../core/referenceMarkup';
 
 export const GENERATE_IMAGE_TOOL_NAME = 'generate_image';
 

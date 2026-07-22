@@ -5,7 +5,7 @@ import type {
   AgentSkillProvenanceRecord,
   AgentSkillProvenanceStore,
 } from './agentSkills';
-import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile } from './jsonFileStore';
+import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile } from '../../jsonFileStore';
 
 const AGENT_SKILL_PROVENANCE_FILE = 'agent-skill-provenance.json';
 

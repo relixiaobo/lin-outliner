@@ -54,9 +54,9 @@ import type {
 } from '../core/types';
 import type { AgentMutationCausation } from '../core/agent/protocol';
 import type { CreateCaptureInput } from '../core/launcher/sources';
-import { parseLinOutline } from './agentOutlineParser';
-import { indexProjection } from './agentNodeToolProjection';
-import { resolveSearchSpecFromOutlineNode } from './agentNodeToolSearch';
+import { parseLinOutline } from './agent/capabilities/agentOutlineParser';
+import { indexProjection } from './agent/capabilities/agentNodeToolProjection';
+import { resolveSearchSpecFromOutlineNode } from './agent/capabilities/agentNodeToolSearch';
 import { DocumentReadModel } from './documentReadModel';
 import { atomicWriteFile } from './jsonFileStore';
 import { loadOrCreateInstallationId } from './installationIdentity';

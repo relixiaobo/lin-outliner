@@ -3,12 +3,12 @@ import {
   modelToolActionKindFromRule,
   normalizeModelToolCommandForBlockMatch,
   type ModelToolActionKind,
-} from '../core/agent/tools';
+} from '../../../core/agent/tools';
 
 export {
   MODEL_TOOL_ACTION_KINDS,
   type ModelToolActionKind,
-} from '../core/agent/tools';
+} from '../../../core/agent/tools';
 export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = MODEL_TOOL_ACTION_KINDS;
 export type AgentToolActionKind = ModelToolActionKind;
 export type ToolAccessScope = 'local_system' | 'external_system' | 'none';

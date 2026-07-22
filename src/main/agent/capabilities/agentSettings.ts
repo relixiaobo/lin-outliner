@@ -4,7 +4,7 @@ import {
 } from '@earendil-works/pi-ai';
 import type { Api, Credential, Model, OAuthCredentials, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { join } from 'node:path';
-import { AGENT_REASONING_LADDER } from '../core/types';
+import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type {
   AgentModelOption,
   AgentProviderAuthKind,
@@ -22,17 +22,17 @@ import type {
   AgentProviderStoredApiKey,
   AgentProviderSettingsView,
   ProviderAuthView,
-} from '../core/types';
-import { isLocalBaseUrl } from '../core/localEndpoint';
+} from '../../../core/types';
+import { isLocalBaseUrl } from '../../../core/localEndpoint';
 import {
   CC_SWITCH_LOCAL_PROVIDER_ID,
   LOCAL_GATEWAY_PROVIDER_REGISTRY,
   isExternalSecretProviderId,
   localGatewayProviderDefinition,
   type LocalGatewayProviderDefinition,
-} from '../core/localGatewayProviders';
-import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
-import { compareModels } from './modelRanking';
+} from '../../../core/localGatewayProviders';
+import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from '../../jsonFileStore';
+import { compareModels } from '../../modelRanking';
 import {
   configurePiCredentialStorage,
   createOpenAICompatibleModel,
@@ -46,12 +46,12 @@ import {
   piProviderHasAmbientAuth,
   piProviders,
   piResolveAuthApiKey,
-} from './piModels';
+} from '../../piModels';
 import {
   imageModelOptionsForProvider,
   piRefreshImageModels,
-} from './piImageModels';
-import { customOpenAIResponsesPayloadProfileOption } from './openAIResponsesCompat';
+} from '../../piImageModels';
+import { customOpenAIResponsesPayloadProfileOption } from '../../openAIResponsesCompat';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
   ccSwitchModelOptionId,
@@ -68,7 +68,7 @@ import {
   type CcSwitchOpenAICompatibleApiId,
   type CcSwitchProviderSource,
   type CcSwitchRegistrySnapshot,
-} from './ccSwitchRegistry';
+} from '../../ccSwitchRegistry';
 
 const PROVIDERS_FILE = 'agent-providers.json';
 const SECRETS_FILE = 'agent-secrets.json';

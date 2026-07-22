@@ -3,7 +3,7 @@ import type {
   OAuthLoginCallbacks,
   OAuthProviderInterface,
 } from '@earendil-works/pi-ai';
-import type { AgentProviderSettingsView, OAuthLoginEvent, OAuthLoginEventEnvelope } from '../core/types';
+import type { AgentProviderSettingsView, OAuthLoginEvent, OAuthLoginEventEnvelope } from '../../../core/types';
 
 // Pure orchestration: callback bridging, response correlation, cancellation. It
 // imports nothing from Electron, the secret store, or pi-ai's runtime — only

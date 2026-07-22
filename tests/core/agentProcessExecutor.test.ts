@@ -5,8 +5,8 @@ import path from 'node:path';
 import {
   AgentProcessExecutor,
   sanitizeAgentProcessEnv,
-} from '../../src/main/agentProcessExecutor';
-import { runAgentToolProcess } from '../../src/main/agentToolProcess';
+} from '../../src/main/agent/capabilities/agentProcessExecutor';
+import { runAgentToolProcess } from '../../src/main/agent/capabilities/agentToolProcess';
 
 const roots: string[] = [];
 

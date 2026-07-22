@@ -7,7 +7,7 @@ import {
   type Model,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
-import { isCustomOpenAIResponsesEndpoint } from './openAIResponsesCompat';
+import { isCustomOpenAIResponsesEndpoint } from '../../openAIResponsesCompat';
 
 type AssistantToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>;
 type RetryOutcome = 'settled' | 'retry-request' | 'retry-stream';

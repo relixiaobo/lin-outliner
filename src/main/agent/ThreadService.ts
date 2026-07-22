@@ -117,6 +117,10 @@ export interface ThreadServiceOptions {
   readonly resolveRendererStartDefaults?: () =>
     | RendererThreadStartDefaults
     | Promise<RendererThreadStartDefaults>;
+  readonly resolveUserContent?: (
+    content: readonly ThreadUserContent[],
+    context: ThreadUserContentResolutionContext,
+  ) => readonly ThreadUserContent[] | Promise<readonly ThreadUserContent[]>;
   readonly resolveRole?: (name: string, cwd: string) => AgentRole;
   readonly now?: () => number;
 }
@@ -126,8 +130,14 @@ export interface RendererThreadStartDefaults {
   readonly cwd: string;
 }
 
+export interface ThreadUserContentResolutionContext {
+  readonly threadId: ThreadId;
+  readonly cwd: string;
+}
+
 export interface SpawnChildThreadInput {
   readonly parentThreadId: ThreadId;
+  readonly parentTurnId: string;
   readonly parentItemId: string;
   readonly prompt: string;
   readonly taskPath: string;
@@ -195,6 +205,17 @@ interface PendingUserInput {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
+interface PendingSubagentActivity {
+  readonly agentThreadId: ThreadId;
+  readonly agentPath: string;
+  readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
+}
+
+interface CollaborationActivityState {
+  pending: boolean;
+  readonly waiters: Set<() => void>;
+}
+
 interface AcceptedTurn {
   readonly response: TurnStartResponse;
   readonly thread: Thread;
@@ -214,6 +235,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ) => EffectiveThreadConfiguration | Promise<EffectiveThreadConfiguration>;
   private readonly resolveRendererStartDefaults: () =>
     RendererThreadStartDefaults | Promise<RendererThreadStartDefaults>;
+  private readonly resolveUserContent: (
+    content: readonly ThreadUserContent[],
+    context: ThreadUserContentResolutionContext,
+  ) => readonly ThreadUserContent[] | Promise<readonly ThreadUserContent[]>;
   private readonly resolveRole: (name: string, cwd: string) => AgentRole;
   private readonly now: () => number;
   private readonly goals: GoalExtension;
@@ -223,10 +248,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly pendingUserInputs = new Map<ThreadId, PendingUserInput>();
   private readonly mailbox = new Map<ThreadId, SteeredTurnInput[]>();
   private readonly ephemeralSpawnEdges = new Map<ThreadId, { parentThreadId: ThreadId; taskPath: string; createdAt: number }>();
+  private readonly pendingSubagentActivities = new Map<ThreadId, PendingSubagentActivity[]>();
+  private readonly collaborationActivity = new Map<ThreadId, CollaborationActivityState>();
+  private readonly stoppingThreads = new Set<ThreadId>();
   private readonly listeners = new Set<NotificationListener>();
-  private readonly activityWaiters = new Set<() => void>();
   private readonly threadMutex = new KeyedMutex();
   private readonly hostRootMutex = new Mutex();
+  private readonly threadTreeMutex = new Mutex();
   private readonly threadBarrierGenerations = new Map<ThreadId, number>();
   private hostBarrierGeneration = 0;
   private initialized = false;
@@ -239,6 +267,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.extensions = options.extensions ?? new ExtensionRegistry();
     this.resolveConfiguration = options.resolveConfiguration ?? defaultConfiguration;
     this.resolveRendererStartDefaults = options.resolveRendererStartDefaults ?? missingRendererStartDefaults;
+    this.resolveUserContent = options.resolveUserContent ?? ((content) => content);
     this.resolveRole = options.resolveRole ?? defaultAgentRole;
     this.now = options.now ?? Date.now;
     this.goalStore = options.stores.goals;
@@ -531,38 +560,118 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   async setThreadArchived(threadId: ThreadId, archived: boolean): Promise<void> {
-    await this.threadMutex.run(threadId, async () => {
-      const state = this.ephemeral.get(threadId);
-      const now = this.now();
-      if (state) state.record = { ...state.record, archived, thread: decodeThread({ ...state.record.thread, updatedAt: now }) };
-      else this.metadata.setArchived(threadId, archived, now);
-    });
+    if (!archived) {
+      await this.threadMutex.run(threadId, async () => this.updateThreadArchived(threadId, false));
+      return;
+    }
+    const subtree = await this.beginThreadSubtreeStop(threadId);
+    try {
+      await this.stopThreadSubtree(subtree.threadIds);
+      await this.threadTreeMutex.run(async () => {
+        for (const descendantId of subtree.threadIds) this.updateThreadArchived(descendantId, true);
+        this.clearThreadCoordinationState(subtree.threadIds);
+      });
+      for (const record of [...subtree.records].reverse()) {
+        await this.extensions.threadStopped(record.thread);
+      }
+    } finally {
+      this.finishThreadSubtreeStop(subtree.threadIds);
+    }
   }
 
   async deleteThread(threadId: ThreadId): Promise<void> {
-    await this.threadMutex.run(threadId, async () => {
-      if (this.activeTurns.has(threadId)) throw new Error('Cannot delete a Thread with an active Turn');
-      const ephemeral = this.ephemeral.get(threadId);
-      if (ephemeral) {
-        await this.goals.clear(threadId);
-        this.ephemeralSpawnEdges.delete(threadId);
-        this.ephemeral.delete(threadId);
-        await this.extensions.threadStopped(ephemeral.record.thread);
-        return;
-      }
-      const record = this.metadata.require(threadId);
-      const descendants = this.metadata.childEdges(threadId, true).map((edge) => edge.childThreadId);
-      for (const descendantId of [...descendants].reverse()) {
+    const subtree = await this.beginThreadSubtreeStop(threadId);
+    try {
+      await this.stopThreadSubtree(subtree.threadIds);
+      for (const descendantId of [...subtree.threadIds].reverse()) {
         await this.goals.clear(descendantId);
         this.history.deleteThread(descendantId);
         await this.rollout.delete(descendantId);
       }
-      await this.goals.clear(threadId);
-      this.metadata.delete(threadId);
-      this.history.deleteThread(threadId);
-      await this.rollout.delete(threadId);
-      await this.extensions.threadStopped(record.thread);
+      for (const record of [...subtree.records].reverse()) {
+        await this.extensions.threadStopped(record.thread);
+      }
+      await this.threadTreeMutex.run(async () => {
+        if (subtree.records[0]?.thread.ephemeral) {
+          for (const descendantId of [...subtree.threadIds].reverse()) {
+            this.ephemeralSpawnEdges.delete(descendantId);
+            this.ephemeral.delete(descendantId);
+          }
+        } else {
+          this.metadata.delete(threadId);
+        }
+        this.clearThreadCoordinationState(subtree.threadIds);
+      });
+    } finally {
+      this.finishThreadSubtreeStop(subtree.threadIds);
+    }
+  }
+
+  private async beginThreadSubtreeStop(threadId: ThreadId): Promise<{
+    readonly threadIds: readonly ThreadId[];
+    readonly records: readonly ThreadCatalogRecord[];
+  }> {
+    return this.threadTreeMutex.run(async () => {
+      const threadIds = this.threadSubtreeIds(threadId);
+      if (threadIds.some((id) => this.stoppingThreads.has(id))) {
+        throw new ThreadBusyError('Thread subtree is already stopping');
+      }
+      const records = threadIds.map((id) => this.requireThread(id));
+      for (const id of threadIds) this.stoppingThreads.add(id);
+      return { threadIds, records };
     });
+  }
+
+  private async stopThreadSubtree(threadIds: readonly ThreadId[]): Promise<void> {
+    for (const id of threadIds) {
+      await this.threadMutex.run(id, async () => {
+        this.activeTurns.get(id)?.controller.abort();
+        this.pendingUserInputs.get(id)?.abort();
+      });
+    }
+    await Promise.all(threadIds.map((id) => this.waitForIdle(id)));
+  }
+
+  private finishThreadSubtreeStop(threadIds: readonly ThreadId[]): void {
+    for (const id of threadIds) this.stoppingThreads.delete(id);
+  }
+
+  private threadSubtreeIds(threadId: ThreadId): ThreadId[] {
+    const root = this.requireThread(threadId).thread;
+    if (!root.ephemeral) {
+      return [threadId, ...this.metadata.childEdges(threadId, true).map((edge) => edge.childThreadId)];
+    }
+    const ids = [threadId];
+    for (let index = 0; index < ids.length; index += 1) {
+      const parentId = ids[index]!;
+      for (const [childId, edge] of this.ephemeralSpawnEdges) {
+        if (edge.parentThreadId === parentId) ids.push(childId);
+      }
+    }
+    return ids;
+  }
+
+  private updateThreadArchived(threadId: ThreadId, archived: boolean): void {
+    const state = this.ephemeral.get(threadId);
+    const now = this.now();
+    if (state) {
+      state.record = {
+        ...state.record,
+        archived,
+        thread: decodeThread({ ...state.record.thread, updatedAt: now }),
+      };
+    } else {
+      this.metadata.setArchived(threadId, archived, now);
+    }
+  }
+
+  private clearThreadCoordinationState(threadIds: readonly ThreadId[]): void {
+    for (const id of threadIds) {
+      this.mailbox.delete(id);
+      this.pendingSubagentActivities.delete(id);
+      this.collaborationActivity.delete(id);
+      this.threadBarrierGenerations.delete(id);
+    }
   }
 
   async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> {
@@ -594,12 +703,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
       if (existing) {
         return { turnId: existing.turnId, acceptedItemId: existing.itemId, deduplicated: true };
       }
-      const item = userMessage(request.threadId, active.turnId, request.input, request.clientUserMessageId ?? null);
+      const thread = this.requireThread(request.threadId).thread;
+      const input = await this.resolveUserContent(request.input, {
+        threadId: thread.id,
+        cwd: thread.cwd,
+      });
+      const item = userMessage(request.threadId, active.turnId, input, request.clientUserMessageId ?? null);
       await active.recorder.completedImmediately(item, this.now());
       if (request.clientUserMessageId) this.bindClientInput(request.threadId, request.clientUserMessageId, active.turnId, item.id);
-      const steered = { content: request.input, additionalContext: request.additionalContext };
+      const steered = { content: input, additionalContext: request.additionalContext };
       if (active.steeringHandler) await active.steeringHandler(steered);
       else active.queuedSteering.push(steered);
+      this.signalCollaborationActivity(request.threadId);
       return { turnId: active.turnId, acceptedItemId: item.id, deduplicated: false };
     });
   }
@@ -752,45 +867,57 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
-    const parent = this.requireThread(input.parentThreadId);
-    const role = this.resolveRole(input.role ?? 'default', parent.thread.cwd);
-    const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
-      role,
-      ...(input.model === undefined ? {} : { model: input.model }),
-      ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
-    });
-    const toolCeiling = input.allowedTools === undefined ? null : Object.freeze([...new Set(input.allowedTools)]);
-    const configuration = applyToolCeiling(resolvedConfiguration, toolCeiling);
-    const thread = await this.createThread({
-      name: input.taskPath.split('/').at(-1) ?? 'Subagent',
-      ephemeral: parent.thread.ephemeral,
-      source: 'collaboration',
-      threadSource: 'subagent',
-      modelProvider: parent.thread.modelProvider,
-      cwd: parent.thread.cwd,
-    }, {
-      sessionId: parent.thread.sessionId,
-      parentThreadId: parent.thread.id,
-      forkedFromId: null,
-      agentRole: role.name,
-      agentNickname: input.nickname ?? role.nicknameCandidates?.[0] ?? null,
-      configuration,
-      toolCeiling,
-      modelOverride: input.model ?? null,
-      reasoningEffortOverride: input.reasoningEffort ?? null,
-      taskPath: input.taskPath,
-    });
-    const response = await this.startPrivilegedTurn({
-      threadId: thread.id,
-      input: [{ type: 'text', text: input.prompt }],
-      trigger: {
-        kind: 'subagent',
+    this.requireActiveTurn(input.parentThreadId, input.parentTurnId);
+    const result = await this.threadTreeMutex.run(async () => {
+      if (this.stoppingThreads.has(input.parentThreadId)) throw new ThreadBusyError('Parent Thread is stopping');
+      const parent = this.requireThread(input.parentThreadId);
+      const role = this.resolveRole(input.role ?? 'default', parent.thread.cwd);
+      const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
+        role,
+        ...(input.model === undefined ? {} : { model: input.model }),
+        ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
+      });
+      const toolCeiling = input.allowedTools === undefined ? null : Object.freeze([...new Set(input.allowedTools)]);
+      const configuration = applyToolCeiling(resolvedConfiguration, toolCeiling);
+      const thread = await this.createThread({
+        name: input.taskPath.split('/').at(-1) ?? 'Subagent',
+        ephemeral: parent.thread.ephemeral,
+        source: 'collaboration',
+        threadSource: 'subagent',
+        modelProvider: parent.thread.modelProvider,
+        cwd: parent.thread.cwd,
+      }, {
+        sessionId: parent.thread.sessionId,
         parentThreadId: parent.thread.id,
-        parentItemId: input.parentItemId,
-      },
-      ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
+        forkedFromId: null,
+        agentRole: role.name,
+        agentNickname: input.nickname ?? role.nicknameCandidates?.[0] ?? null,
+        configuration,
+        toolCeiling,
+        modelOverride: input.model ?? null,
+        reasoningEffortOverride: input.reasoningEffort ?? null,
+        taskPath: input.taskPath,
+      });
+      const response = await this.startPrivilegedTurn({
+        threadId: thread.id,
+        input: [{ type: 'text', text: input.prompt }],
+        trigger: {
+          kind: 'subagent',
+          parentThreadId: parent.thread.id,
+          parentItemId: input.parentItemId,
+        },
+        ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
+      });
+      return { thread, turn: response.turn, taskPath: input.taskPath };
     });
-    return { thread, turn: response.turn, taskPath: input.taskPath };
+    await this.recordSubagentActivity(
+      input.parentThreadId,
+      input.parentTurnId,
+      result.thread.id,
+      result.taskPath,
+      'started',
+    );
+    return result;
   }
 
   async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> {
@@ -800,6 +927,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const identity = uuidV7(this.now()).replace(/-/g, '').slice(-12);
     return this.spawnChild({
       parentThreadId: input.parentThreadId,
+      parentTurnId: input.parentTurnId,
       parentItemId: input.parentItemId,
       prompt: input.prompt,
       taskPath: `${parentPath}/skill_${skillSlug}_${identity}`,
@@ -831,6 +959,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const additionalContext = collaborationHistoryContext(this.allTurns(input.senderThreadId), input.forkTurns);
     const result = await this.spawnChild({
       parentThreadId: input.senderThreadId,
+      parentTurnId: input.senderTurnId,
       parentItemId: input.parentItemId,
       prompt: input.message,
       taskPath,
@@ -839,7 +968,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
       ...(additionalContext === undefined ? {} : { additionalContext }),
     });
-    this.signalActivity();
     return result;
   }
 
@@ -860,7 +988,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       queued.push({ content });
       this.mailbox.set(targetThread.id, queued);
     }
-    this.signalActivity();
+    this.signalCollaborationActivity(targetThread.id);
     return this.collaborationView(targetThread.id);
   }
 
@@ -890,7 +1018,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         },
       });
     }
-    this.signalActivity();
+    this.signalCollaborationActivity(targetThread.id);
     return this.collaborationView(targetThread.id);
   }
 
@@ -913,33 +1041,42 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const thread = this.resolveCollaborationTarget(senderThreadId, target);
     const active = this.activeTurns.get(thread.id);
     if (active) await this.interruptTurn(thread.id, active.turnId);
-    this.signalActivity();
     return this.collaborationView(thread.id);
   }
 
   async waitForCollaborationActivity(
     senderThreadId: ThreadId,
+    senderTurnId: string,
     timeoutMs: number | undefined,
     signal?: AbortSignal,
   ): Promise<readonly CollaborationAgentView[]> {
+    this.requireActiveTurn(senderThreadId, senderTurnId);
+    if (signal?.aborted) throw new Error('Collaboration wait was interrupted');
     const bounded = Math.max(0, Math.min(timeoutMs ?? 30_000, 60_000));
+    if (this.takePendingCollaborationActivity(senderThreadId)) {
+      await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
+      return this.listCollaborationAgents(senderThreadId);
+    }
+    const state = this.collaborationActivityState(senderThreadId);
     await new Promise<void>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
       const done = () => {
         if (timer) clearTimeout(timer);
-        this.activityWaiters.delete(done);
+        state.waiters.delete(done);
         signal?.removeEventListener('abort', aborted);
         resolve();
       };
       const aborted = () => {
         if (timer) clearTimeout(timer);
-        this.activityWaiters.delete(done);
+        state.waiters.delete(done);
         reject(new Error('Collaboration wait was interrupted'));
       };
-      this.activityWaiters.add(done);
+      state.waiters.add(done);
       signal?.addEventListener('abort', aborted, { once: true });
       timer = setTimeout(done, bounded);
     });
+    this.takePendingCollaborationActivity(senderThreadId);
+    await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
     return this.listCollaborationAgents(senderThreadId);
   }
 
@@ -1004,12 +1141,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
         };
       }
     }
+    if (this.stoppingThreads.has(request.threadId)) throw new ThreadBusyError('Thread is stopping');
+    if (record.archived) throw new ThreadBusyError('Thread is archived');
     if (this.activeTurns.has(request.threadId)) throw new ThreadBusyError('Thread already has an active Turn');
     if (onlyIfIdle && record.thread.status.type !== 'idle') throw new ThreadBusyError('Thread is not idle');
 
     const startedAt = this.now();
     const turnId = request.turnId ?? uuidV7(startedAt);
-    const item = userMessage(request.threadId, turnId, request.input, request.clientUserMessageId ?? null);
+    const input = await this.resolveUserContent(request.input, {
+      threadId: record.thread.id,
+      cwd: record.thread.cwd,
+    });
+    const item = userMessage(request.threadId, turnId, input, request.clientUserMessageId ?? null);
     const turn = decodeTurn({
       id: turnId,
       items: [item],
@@ -1077,6 +1220,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   private async executeActiveTurn(active: ActiveTurn): Promise<void> {
+    this.takePendingCollaborationActivity(active.threadId);
+    await this.flushPendingSubagentActivities(active.threadId, active.turnId);
     let result: TurnExecutionResult = {};
     let thrown: Error | null = null;
     const initialTurn = this.readTurn(active.threadId, active.turnId)!;
@@ -1109,6 +1254,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
       thrown = error instanceof Error ? error : new Error(String(error));
     }
 
+    this.takePendingCollaborationActivity(active.threadId);
+    await this.flushPendingSubagentActivities(active.threadId, active.turnId);
     const aborted = active.controller.signal.aborted;
     const status = aborted ? 'interrupted' : thrown ? 'failed' : result.status ?? 'completed';
     await active.recorder.finishOpenItems(status === 'completed' ? 'failed' : status);
@@ -1152,6 +1299,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (status === 'interrupted') await this.extensions.turnAborted(thread, turn);
     else if (thrown) await this.extensions.turnError(thread, turn, thrown);
     else await this.extensions.turnStopped(thread, turn);
+    this.queueChildTurnActivity(thread, status);
     await this.extensions.threadIdle(this.requireThread(active.threadId).thread);
   }
 
@@ -1183,6 +1331,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     this.activeTurns.delete(active.threadId);
     await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
+    const thread = this.ephemeral.get(active.threadId)?.record.thread ?? this.metadata.read(active.threadId)?.thread;
+    if (thread) this.queueChildTurnActivity(thread, 'failed');
   }
 
   private async createThread(
@@ -1279,7 +1429,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     for (const listener of this.listeners) listener(decoded);
     await this.extensions.notification(decoded);
-    this.signalActivity();
   }
 
   private applyEphemeralNotification(notification: AgentCoreNotification): void {
@@ -1494,8 +1643,88 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
   }
 
-  private signalActivity(): void {
-    for (const resolve of [...this.activityWaiters]) resolve();
+  private async recordSubagentActivity(
+    ownerThreadId: ThreadId,
+    ownerTurnId: string,
+    agentThreadId: ThreadId,
+    agentPath: string,
+    kind: PendingSubagentActivity['kind'],
+  ): Promise<void> {
+    const active = this.requireActiveTurn(ownerThreadId, ownerTurnId);
+    const id = active.recorder.createItemId();
+    await active.recorder.completedImmediately({
+      type: 'subAgentActivity',
+      id,
+      provenance: active.recorder.localProvenance(id),
+      kind,
+      agentThreadId,
+      agentPath,
+    }, this.now());
+  }
+
+  private queueChildTurnActivity(thread: Thread, status: Turn['status']): void {
+    if (!thread.parentThreadId) return;
+    const agentPath = this.taskPathForThread(thread.id);
+    if (!agentPath) return;
+    const kind: PendingSubagentActivity['kind'] = status === 'completed'
+      ? 'completed'
+      : status === 'interrupted'
+        ? 'interrupted'
+        : 'errored';
+    const queued = this.pendingSubagentActivities.get(thread.parentThreadId) ?? [];
+    queued.push({ agentThreadId: thread.id, agentPath, kind });
+    this.pendingSubagentActivities.set(thread.parentThreadId, queued);
+    this.signalCollaborationActivity(thread.parentThreadId);
+  }
+
+  private async flushPendingSubagentActivities(threadId: ThreadId, turnId: string): Promise<void> {
+    const queued = this.pendingSubagentActivities.get(threadId);
+    if (!queued || queued.length === 0) return;
+    this.pendingSubagentActivities.delete(threadId);
+    let index = 0;
+    try {
+      for (; index < queued.length; index += 1) {
+        const activity = queued[index]!;
+        await this.recordSubagentActivity(
+          threadId,
+          turnId,
+          activity.agentThreadId,
+          activity.agentPath,
+          activity.kind,
+        );
+      }
+    } catch (error) {
+      const remaining = queued.slice(index);
+      if (remaining.length > 0) {
+        this.pendingSubagentActivities.set(threadId, [
+          ...remaining,
+          ...(this.pendingSubagentActivities.get(threadId) ?? []),
+        ]);
+      }
+      throw error;
+    }
+  }
+
+  private collaborationActivityState(threadId: ThreadId): CollaborationActivityState {
+    let state = this.collaborationActivity.get(threadId);
+    if (!state) {
+      state = { pending: false, waiters: new Set() };
+      this.collaborationActivity.set(threadId, state);
+    }
+    return state;
+  }
+
+  private signalCollaborationActivity(threadId: ThreadId): void {
+    const state = this.collaborationActivityState(threadId);
+    state.pending = true;
+    for (const resolve of [...state.waiters]) resolve();
+  }
+
+  private takePendingCollaborationActivity(threadId: ThreadId): boolean {
+    const state = this.collaborationActivity.get(threadId);
+    if (!state?.pending) return false;
+    state.pending = false;
+    return true;
   }
 
   private async reconcileThread(threadId: ThreadId): Promise<void> {

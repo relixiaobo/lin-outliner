@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { plainText, type CreateNodeTree } from '../core/types';
+import { plainText, type CreateNodeTree } from '../../../core/types';
 import {
   checkedState,
   fieldReads,

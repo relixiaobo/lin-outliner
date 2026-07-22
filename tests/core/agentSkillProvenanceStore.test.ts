@@ -17,7 +17,7 @@ mock.module('electron', () => ({
   },
 }));
 
-const { createAgentSkillProvenanceStore } = await import('../../src/main/agentSkillProvenanceStore');
+const { createAgentSkillProvenanceStore } = await import('../../src/main/agent/capabilities/agentSkillProvenanceStore');
 
 beforeEach(async () => {
   userData = await mkdtemp(path.join(tmpdir(), 'tenon-skill-provenance-'));

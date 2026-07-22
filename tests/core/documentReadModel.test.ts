@@ -9,7 +9,7 @@ import {
   type NodeProjection,
   type ProjectionUpdate,
 } from '../../src/core/types';
-import { indexProjection } from '../../src/main/agentNodeToolProjection';
+import { indexProjection } from '../../src/main/agent/capabilities/agentNodeToolProjection';
 import { DocumentReadModel } from '../../src/main/documentReadModel';
 
 function mustFocus(outcome: { focus?: { nodeId: string } }): string {

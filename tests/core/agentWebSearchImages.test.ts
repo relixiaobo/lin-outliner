@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { parseHTML } from 'linkedom';
-import type { WebSearchResult } from '../../src/main/agentWebTools';
+import type { WebSearchResult } from '../../src/main/agent/capabilities/agentWebTools';
 import {
   bingImagesExtractorExpression,
   extractBingImages,
-} from '../../src/main/agentWebSearchSerp';
+} from '../../src/main/agent/capabilities/agentWebSearchSerp';
 
 function runBingImagesExtractor(html: string, max = 10): { htmlLength: number; results: WebSearchResult[] } {
   const { document } = parseHTML(html);

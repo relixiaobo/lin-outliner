@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { copyFile, lstat, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
-import { MAX_MATERIALIZED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
+import { safeAttachmentFileName } from '../../../core/agentAttachmentPaths';
+import { MAX_MATERIALIZED_ATTACHMENT_BYTES } from '../../../core/agentAttachmentLimits';
 
 export const AGENT_ATTACHMENT_DIR = 'agent-attachments';
 export const AGENT_GENERATED_IMAGE_DIR = 'generated-images';
@@ -27,7 +27,7 @@ export async function materializePathBackedAttachment<T extends PathBackedAttach
 }
 
 // Sources already in the workdir or scratch are returned as-is. Other attachments are copied
-// into app-owned scratch so the Run receives a stable local snapshot instead of depending on
+// into app-owned scratch so the Thread receives a stable local snapshot instead of depending on
 // the lifetime of the original selection path.
 export async function materializeAgentLocalPath(
   localRoot: string,
@@ -47,7 +47,7 @@ export async function materializeAgentLocalPath(
 
   const sourceStat = await stat(sourceRealPath);
   if (sourceStat.isDirectory()) {
-    throw new Error('Directory attachments outside the Run workdir cannot be materialized as stable snapshots.');
+    throw new Error('Directory attachments outside the Thread working directory cannot be materialized as stable snapshots.');
   }
   if (!sourceStat.isFile()) {
     throw new Error('Only regular file attachments can be materialized for agent access.');

@@ -1,10 +1,10 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import path from 'node:path';
-import type { DocumentCommand } from '../core/commands';
-import { normalizeDateFieldValue } from '../core/dateFieldValue';
-import { isInternalConfigNode } from '../core/configSchema';
-import { projectFieldConfig, projectTagConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
-import { validateSearchQueries } from '../core/searchEngine';
+import type { DocumentCommand } from '../../../core/commands';
+import { normalizeDateFieldValue } from '../../../core/dateFieldValue';
+import { isInternalConfigNode } from '../../../core/configSchema';
+import { projectFieldConfig, projectTagConfig, nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
+import { validateSearchQueries } from '../../../core/searchEngine';
 import {
   SCHEMA_ID,
   plainText,
@@ -21,7 +21,7 @@ import {
   type RichText,
   type SearchQueryExpr,
   type TagConfigPatch,
-} from '../core/types';
+} from '../../../core/types';
 import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from './agentToolEnvelope';
 import {
   parseLinOutline,
@@ -134,8 +134,8 @@ import type {
   ProjectionIndex,
   TransactionProjectionChanges,
 } from './agentNodeToolTypes';
-import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
-import { mergeEquivalentTextMarks, textMarkIdentity } from '../core/textMarks';
+import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../../../core/markdownRichText';
+import { mergeEquivalentTextMarks, textMarkIdentity } from '../../../core/textMarks';
 import { isPathInside } from './agentAttachmentMaterialization';
 import {
   inferFieldTypeFromValues,
@@ -145,8 +145,8 @@ import {
   type FieldResolutionNode,
   type FieldResolutionValue,
   type FieldWriteTarget,
-} from '../core/fieldResolution';
-import { DONE_FIELD, isSystemFieldId } from '../core/systemFields';
+} from '../../../core/fieldResolution';
+import { DONE_FIELD, isSystemFieldId } from '../../../core/systemFields';
 
 export type { OutlinerToolHost } from './agentNodeToolTypes';
 
@@ -717,7 +717,7 @@ async function executeMoveEdit(
   if (hasNodeResourceScope(options, 'write') && params.move.structuralAction) {
     return nodeScopeError<NodeEditData>('node_edit', {
       nodeId: params.move.structuralAction,
-      error: 'Structural moves infer a destination outside the explicit request and are not available in a node-scoped run.',
+      error: 'Structural moves infer a destination outside the explicit request and are not available in a node-scoped Thread.',
     }, started);
   }
 
@@ -1956,7 +1956,7 @@ function createNodeReadTool(host: OutlinerToolHost, options: NodeToolsOptions): 
       if (params.includeBacklinks && hasNodeResourceScope(options)) {
         return nodeScopeError<NodeReadData>('node_read', {
           nodeId: 'backlinks',
-          error: 'Backlinks can expose nodes outside this run scope.',
+          error: 'Backlinks can expose nodes outside this Thread scope.',
         }, started);
       }
       const scopeIssue = validateNodeResourceScope(

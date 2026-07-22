@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { containsSecretLikeContent, elideLargeBlobs, redactSecretKeyedValues, redactSecretLikeContent } from '../../src/main/agentSecretRedaction';
+import { containsSecretLikeContent, elideLargeBlobs, redactSecretKeyedValues, redactSecretLikeContent } from '../../src/main/agent/capabilities/agentSecretRedaction';
 
 describe('agent secret redaction', () => {
   test('detects truncated private key headers for skill write rejection', () => {

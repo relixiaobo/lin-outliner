@@ -1,5 +1,5 @@
 import type { AgentToolResult } from '@earendil-works/pi-agent-core';
-import { projectFieldConfig, projectTagConfig } from '../core/configProjection';
+import { projectFieldConfig, projectTagConfig } from '../../../core/configProjection';
 import { agentToolResult, dropUndefinedFields, modelVisibleEnvelope, type ToolEnvelope } from './agentToolEnvelope';
 import { normalChildIds } from './agentNodeToolProjection';
 import { serializeAnnotatedOutlines } from './agentNodeToolRead';

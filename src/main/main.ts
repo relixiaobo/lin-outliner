@@ -13,15 +13,16 @@ import { ThreadService } from './agent/ThreadService';
 import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
 import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
-import { AgentSkillRuntime } from './agentSkills';
-import { createAgentSkillProvenanceStore } from './agentSkillProvenanceStore';
-import { executeAgentSkillShellCommand } from './agentSkillShell';
+import { AttachmentResolver } from './agent/tools/attachments';
+import { AgentSkillRuntime } from './agent/capabilities/agentSkills';
+import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
+import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
 import {
   createAgentLocalWorkspaceContext,
   resolveAgentLocalReadPath,
   type AgentLocalWorkspaceContext,
-} from './agentLocalTools';
-import type { AgentImageGenerationRuntime } from './agentImageGenerationTool';
+} from './agent/capabilities/agentLocalTools';
+import type { AgentImageGenerationRuntime } from './agent/capabilities/agentImageGenerationTool';
 import { resolveGeneratedImageReadPath } from './generatedImagePaths';
 import {
   piFindImageModel,
@@ -44,8 +45,8 @@ import {
   managedSkillErrorView,
 } from './managedSkillService';
 import { ManagedSkillStore } from './managedSkillStore';
-import { AgentImportService } from './agentImportService';
-import { AgentImportApiServer } from './agentImportApi';
+import { AgentImportService } from './agent/capabilities/agentImportService';
+import { AgentImportApiServer } from './agent/capabilities/agentImportApi';
 import { configureTenonImportRuntime } from './tenonImportRuntime';
 import { isRendererPermissionAllowed } from './rendererPermissions';
 import {
@@ -129,12 +130,12 @@ import {
   updateAgentRuntimeSettings,
   upsertProviderConfig,
   testProviderConnection,
-} from './agentSettings';
+} from './agent/capabilities/agentSettings';
 import {
   applyAgentCapabilitySettingsPatchView,
   appendAgentCapabilityBlockView,
   readAgentCapabilitySettingsView,
-} from './agentCapabilityStore';
+} from './agent/capabilities/agentCapabilityStore';
 import {
   isAgentCommand,
   isAssetCommand,
@@ -144,10 +145,10 @@ import {
   type AssetCommand,
   type PreviewCommand,
 } from '../core/commands';
-import { oauthLoginManager } from './agentOAuthManager';
+import { oauthLoginManager } from './agent/capabilities/agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
-import { resolveRipgrepCommand } from './agentRipgrep';
-import { buildAgentLocalToolProcessEnv } from './agentToolProcess';
+import { resolveRipgrepCommand } from './agent/capabilities/agentRipgrep';
+import { buildAgentLocalToolProcessEnv } from './agent/capabilities/agentToolProcess';
 import type {
   AgentImageGenerationSettingsInput,
   AgentProviderConfigInput,
@@ -179,7 +180,7 @@ import {
   agentAttachmentDir,
   pruneAgentScratch,
   pruneOldAgentAttachments,
-} from './agentAttachmentMaterialization';
+} from './agent/capabilities/agentAttachmentMaterialization';
 import {
   isSafeLocalFileOpenTarget,
   resolveTrustedLocalFileReference,
@@ -214,7 +215,7 @@ import {
   hasExplicitAgentLocalRoot,
   resolveAgentScratchRoot,
   resolveAgentWorkdir,
-} from './agentLocalRoot';
+} from './agent/capabilities/agentLocalRoot';
 import { DiagnosticLogStore } from './diagnosticLog';
 import { NodeAccessStore } from './nodeAccessStore';
 import { resolveUserDataDir } from './userDataPath';
@@ -438,6 +439,10 @@ void getAgentRuntimeSettings().then((settings) => {
 }).catch((error) => console.error('[agent] failed to load skill settings', error));
 let toolRuntime!: ToolRuntime;
 const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
+const attachmentResolver = new AttachmentResolver({
+  scratchRoot: agentScratchRoot,
+  resolveAssetPath: (assetId) => assetService.pathFor(assetId),
+});
 const threadService = ThreadService.open(
   resolvedUserDataDir,
   new PiTurnExecutor({
@@ -455,6 +460,7 @@ const threadService = ThreadService.open(
       if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
       return { modelProvider: provider.providerId, cwd: agentLocalFileRoot };
     },
+    resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
   },
 );
 function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentSkillRuntime {

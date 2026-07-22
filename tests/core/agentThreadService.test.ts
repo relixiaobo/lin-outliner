@@ -18,7 +18,7 @@ import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type { TurnExecutionContext, TurnExecutionResult, TurnExecutor } from '../../src/main/agent/runtime/types';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { Core } from '../../src/core/core';
-import { createNodeTools, type OutlinerToolHost } from '../../src/main/agentNodeTools';
+import { createNodeTools, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 const roots: string[] = [];
@@ -81,6 +81,59 @@ describe('ThreadService', () => {
     expect(thread.modelProvider).toBe('openai');
     expect(thread.cwd).toBe('/tmp/agent-workdir');
     expect(fixture.service.readThread({ threadId: thread.id }).thread).toEqual(thread);
+    await fixture.service.close();
+  });
+
+  test('normalizes attachment content before start and steer Items become authoritative', async () => {
+    const resolvedPaths: string[] = [];
+    const fixture = await createFixture(undefined, {
+      resolveUserContent: (content, context) => content.map((part) => {
+        if (part.type !== 'attachment') return part;
+        const path = join(context.cwd, 'resolved', part.name);
+        resolvedPaths.push(path);
+        return { ...part, source: { kind: 'localFile' as const, path } };
+      }),
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{
+        type: 'attachment',
+        id: 'start-attachment',
+        name: 'start.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 10,
+        source: { kind: 'asset', assetId: 'asset-start' },
+      }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    await fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      input: [{
+        type: 'attachment',
+        id: 'steer-attachment',
+        name: 'steer.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 10,
+        source: { kind: 'localFile', path: '/outside/steer.txt' },
+      }],
+    });
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+
+    const userItems = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0]?.items
+      .filter((item) => item.type === 'userMessage') ?? [];
+    expect(userItems.map((item) => item.content[0])).toMatchObject([
+      { source: { kind: 'localFile', path: join(fixture.root, 'resolved', 'start.pdf') } },
+      { source: { kind: 'localFile', path: join(fixture.root, 'resolved', 'steer.txt') } },
+    ]);
+    expect(resolvedPaths).toHaveLength(2);
     await fixture.service.close();
   });
 
@@ -447,6 +500,144 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('archives a persistent Thread subtree after interrupting every active Turn', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate before archive' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const child = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
+      parentItemId: 'archive-spawn',
+      prompt: 'Keep working until archived',
+      taskPath: '/root/archive_child',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    await fixture.service.setThreadArchived(root.id, true);
+
+    expect(fixture.service.readThread({ threadId: root.id, includeTurns: true }).thread.turns?.at(-1)?.status)
+      .toBe('interrupted');
+    expect(fixture.service.readThread({ threadId: child.thread.id, includeTurns: true }).thread.turns?.at(-1)?.status)
+      .toBe('interrupted');
+    expect(fixture.service.listThreads({ archived: false }).data.map((thread) => thread.id))
+      .not.toContain(root.id);
+    expect(fixture.service.listThreads({ archived: true }).data.map((thread) => thread.id))
+      .toEqual(expect.arrayContaining([root.id, child.thread.id]));
+    await expect(fixture.service.startRendererTurn({
+      threadId: child.thread.id,
+      input: [{ type: 'text', text: 'Archived work must not restart' }],
+    })).rejects.toThrow('archived');
+
+    await fixture.service.setThreadArchived(root.id, false);
+    expect(fixture.service.listThreads({ archived: false }).data.map((thread) => thread.id)).toContain(root.id);
+    expect(fixture.service.listThreads({ archived: true }).data.map((thread) => thread.id)).toContain(child.thread.id);
+    await fixture.service.close();
+  });
+
+  test('rejects overlapping subtree teardown while the first operation is stopping active Turns', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Remain active during teardown' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+
+    const archive = fixture.service.setThreadArchived(thread.id, true);
+    await expect(fixture.service.deleteThread(thread.id)).rejects.toThrow('already stopping');
+    await archive;
+
+    expect(fixture.service.listThreads({ archived: true }).data.map((candidate) => candidate.id))
+      .toContain(thread.id);
+    await fixture.service.close();
+  });
+
+  test('deletes a persistent Thread subtree only after active descendants stop', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Build a child tree' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const child = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
+      parentItemId: 'delete-child',
+      prompt: 'Spawn a grandchild',
+      taskPath: '/root/delete_child',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const grandchild = await fixture.service.spawnChild({
+      parentThreadId: child.thread.id,
+      parentTurnId: child.turn.id,
+      parentItemId: 'delete-grandchild',
+      prompt: 'Remain active',
+      taskPath: '/root/delete_child/grandchild',
+    });
+    await fixture.executor.waitUntilWaiting(2);
+
+    await fixture.service.deleteThread(root.id);
+
+    for (const threadId of [root.id, child.thread.id, grandchild.thread.id]) {
+      expect(fixture.stores.metadata.read(threadId)).toBeNull();
+      expect(() => fixture.service.readThread({ threadId })).toThrow('Thread not found');
+      await expect(readFile(fixture.stores.rollout.pathFor(threadId))).rejects.toThrow();
+    }
+    expect(fixture.service.listThreads().data).toEqual([]);
+    await fixture.service.close();
+  });
+
+  test('deletes every ephemeral descendant without leaving orphan Threads', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      ephemeral: true,
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create ephemeral child' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const child = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
+      parentItemId: 'ephemeral-child',
+      prompt: 'Remain active',
+      taskPath: '/root/ephemeral_child',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    await fixture.service.deleteThread(root.id);
+
+    expect(() => fixture.service.readThread({ threadId: root.id })).toThrow('Thread not found');
+    expect(() => fixture.service.readThread({ threadId: child.thread.id })).toThrow('Thread not found');
+    expect(fixture.service.listThreads().data).toEqual([]);
+    await fixture.service.close();
+  });
+
   test('applies the parent ceiling to every child capability source', async () => {
     const parentConfiguration: EffectiveThreadConfiguration = {
       profileName: 'restricted',
@@ -559,19 +750,25 @@ describe('ThreadService', () => {
       modelProvider: 'openai',
       cwd: fixture.root,
     })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate mutable role work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
     const child = await fixture.service.spawnChild({
       parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
       parentItemId: 'spawn-item',
       prompt: 'Initial child work',
       taskPath: '/root/mutable',
       role: 'mutable',
       allowedTools: ['node_read'],
     });
-    await fixture.executor.waitUntilWaiting();
-    expect(fixture.executor.contexts[0]?.configuration.model).toBe('initial-role-model');
-    expect(fixture.executor.contexts[0]?.configuration.reasoningEffort).toBe('low');
-    expect(fixture.executor.contexts[0]?.configuration.tools).toEqual(['node_read']);
-    fixture.executor.finish();
+    await fixture.executor.waitUntilWaiting(1);
+    expect(fixture.executor.contexts[1]?.configuration.model).toBe('initial-role-model');
+    expect(fixture.executor.contexts[1]?.configuration.reasoningEffort).toBe('low');
+    expect(fixture.executor.contexts[1]?.configuration.tools).toEqual(['node_read']);
+    fixture.executor.finish(1);
     await fixture.service.waitForIdle(child.thread.id);
 
     const currentParent: EffectiveThreadConfiguration = {
@@ -602,8 +799,8 @@ describe('ThreadService', () => {
       input: [{ type: 'text', text: 'Resume with current configuration' }],
       trigger: { kind: 'subagent', parentThreadId: root.id, parentItemId: 'followup-item' },
     });
-    await fixture.executor.waitUntilWaiting(1);
-    expect(fixture.executor.contexts[1]?.configuration).toMatchObject({
+    await fixture.executor.waitUntilWaiting(2);
+    expect(fixture.executor.contexts[2]?.configuration).toMatchObject({
       developerInstructions: ['Current parent instructions', 'Current role instructions'],
       model: 'current-role-model',
       reasoningEffort: 'high',
@@ -612,8 +809,10 @@ describe('ThreadService', () => {
       plugins: ['current-plugin'],
       mcpServers: ['current-mcp'],
     });
-    fixture.executor.finish(1);
+    fixture.executor.finish(2);
     await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
   });
 
@@ -680,6 +879,96 @@ describe('ThreadService', () => {
     await fixture.service.waitForIdle(root.id);
     const stored = fixture.service.readThread({ threadId: root.id, includeTurns: true }).thread;
     expect(stored.turns?.[0]?.items.some((item) => item.type === 'plan')).toBe(true);
+    expect(stored.turns?.[0]?.items.filter((item) => item.type === 'subAgentActivity')).toMatchObject([
+      { kind: 'started', agentThreadId: childId, agentPath: '/root/helper' },
+      { kind: 'completed', agentThreadId: childId, agentPath: '/root/helper' },
+    ]);
+    await fixture.service.close();
+  });
+
+  test('scopes collaboration waits and preserves child activity that arrived before waiting', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Coordinate child work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const interrupted = new AbortController();
+    interrupted.abort();
+    await expect(fixture.service.waitForCollaborationActivity(
+      root.id,
+      rootTurn.turn.id,
+      1_000,
+      interrupted.signal,
+    )).rejects.toThrow('interrupted');
+    const child = await fixture.service.spawnCollaborationAgent({
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'wait-spawn',
+      taskName: 'wait_child',
+      message: 'Complete once',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(child.thread.id);
+
+    const alreadyPending = await fixture.service.waitForCollaborationActivity(
+      root.id,
+      rootTurn.turn.id,
+      1_000,
+    );
+    expect(alreadyPending).toMatchObject([{ threadId: child.thread.id, status: 'completed' }]);
+
+    await fixture.service.followupCollaborationTask(
+      root.id,
+      rootTurn.turn.id,
+      'wait-followup',
+      '/root/wait_child',
+      'Complete again',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+    let resolved = false;
+    const waiting = fixture.service.waitForCollaborationActivity(
+      root.id,
+      rootTurn.turn.id,
+      1_000,
+    ).then((result) => {
+      resolved = true;
+      return result;
+    });
+
+    const unrelated = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const unrelatedTurn = await fixture.service.startRendererTurn({
+      threadId: unrelated.id,
+      input: [{ type: 'text', text: 'Unrelated activity' }],
+    });
+    await fixture.executor.waitUntilWaiting(3);
+    await fixture.service.steerTurn({
+      threadId: unrelated.id,
+      expectedTurnId: unrelatedTurn.turn.id,
+      input: [{ type: 'text', text: 'Still unrelated' }],
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(resolved).toBe(false);
+
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(child.thread.id);
+    expect(await waiting).toMatchObject([{ threadId: child.thread.id, status: 'completed' }]);
+    fixture.executor.finish(0);
+    fixture.executor.finish(3);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.waitForIdle(unrelated.id);
     await fixture.service.close();
   });
 
@@ -934,7 +1223,10 @@ interface Fixture {
 
 async function createFixture(
   extensions?: ExtensionRegistry,
-  options: Pick<ConstructorParameters<typeof ThreadService>[0], 'resolveConfiguration' | 'resolveRole'> = {},
+  options: Pick<
+    ConstructorParameters<typeof ThreadService>[0],
+    'resolveConfiguration' | 'resolveRole' | 'resolveUserContent'
+  > = {},
 ): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
   roots.push(root);
@@ -953,7 +1245,7 @@ async function openFixture(
   extensions?: ExtensionRegistry,
   options: Pick<
     ConstructorParameters<typeof ThreadService>[0],
-    'resolveConfiguration' | 'resolveRendererStartDefaults' | 'resolveRole'
+    'resolveConfiguration' | 'resolveRendererStartDefaults' | 'resolveRole' | 'resolveUserContent'
   > = {},
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
   const stores = createStores(root);

@@ -19,8 +19,8 @@ import type {
   ThreadItem,
   ThreadUserContent,
 } from '../../../core/agent/protocol';
-import { resolveAgentModelEffort, resolveProviderModel } from '../../agentModelResolution';
-import { getProviderRuntimeConfig } from '../../agentSettings';
+import { resolveAgentModelEffort, resolveProviderModel } from '../capabilities/agentModelResolution';
+import { getProviderRuntimeConfig } from '../capabilities/agentSettings';
 import {
   piExternalProviderId,
   piResolveAuthApiKey,
@@ -75,7 +75,7 @@ export class PiTurnExecutor implements TurnExecutor {
     const unsubscribe = agent.subscribe((event) => normalizer.handle(event));
     const abort = () => agent.abort();
     context.signal.addEventListener('abort', abort, { once: true });
-    context.onSteer((input) => agent.steer(userMessage(input.content)));
+    context.onSteer((input) => agent.steer(modelUserMessage(input.content)));
     try {
       await agent.prompt(currentPrompt(context));
       await normalizer.flush();
@@ -470,7 +470,7 @@ function historyMessages(context: TurnExecutionContext): Message[] {
   const messages: Message[] = [];
   for (const turn of context.historyBeforeTurn) {
     for (const item of turn.items) {
-      if (item.type === 'userMessage') messages.push(userMessage(item.content, turn.startedAt));
+      if (item.type === 'userMessage') messages.push(modelUserMessage(item.content, turn.startedAt));
       if (item.type === 'agentMessage' && item.text) {
         messages.push(assistantHistoryMessage(item.text, turn.completedAt ?? turn.startedAt));
       }
@@ -489,10 +489,10 @@ function currentPrompt(context: TurnExecutionContext): UserMessage {
         text: `[${entry.kind} context: ${key}]\n${entry.value}`,
       }))
     : [];
-  return userMessage([...input, ...additional], context.turn.startedAt);
+  return modelUserMessage([...input, ...additional], context.turn.startedAt);
 }
 
-function userMessage(content: readonly ThreadUserContent[], timestamp = Date.now()): UserMessage {
+export function modelUserMessage(content: readonly ThreadUserContent[], timestamp = Date.now()): UserMessage {
   const converted: Array<TextContent | ImageContent> = [];
   for (const part of content) {
     switch (part.type) {
@@ -506,9 +506,14 @@ function userMessage(content: readonly ThreadUserContent[], timestamp = Date.now
         if (part.source.kind === 'inline' && part.mimeType.startsWith('image/')) {
           converted.push({ type: 'image', data: part.source.dataBase64, mimeType: part.mimeType });
         } else {
+          const location = part.source.kind === 'localFile'
+            ? `\nReadable path: ${part.source.path}\nUse file_read with this path to inspect the attachment.`
+            : part.source.kind === 'asset'
+              ? `\nAsset id: ${part.source.assetId}`
+              : '';
           converted.push({
             type: 'text',
-            text: `[Attachment: ${part.name}, ${part.mimeType}, ${part.sizeBytes} bytes]${part.extractedText ? `\n${part.extractedText}` : ''}`,
+            text: `[Attachment: ${part.name}, ${part.mimeType}, ${part.sizeBytes} bytes]${location}${part.extractedText ? `\n${part.extractedText}` : ''}`,
           });
         }
         break;

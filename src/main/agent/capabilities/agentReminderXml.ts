@@ -1,7 +1,7 @@
 // `escapeXml` now lives in core (`src/core/reminderXml.ts`) so the POV flatten can
 // share it; re-exported here so the main-process reminder builders keep their import.
-export { escapeXml } from '../core/reminderXml';
-import { escapeXml } from '../core/reminderXml';
+export { escapeXml } from '../../../core/reminderXml';
+import { escapeXml } from '../../../core/reminderXml';
 
 // Serialize a leading ` key="value" ...` attribute string for the reminder blocks.
 // Null / undefined / empty values are dropped; the rest are escaped verbatim — values

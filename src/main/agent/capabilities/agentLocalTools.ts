@@ -13,7 +13,7 @@ import {
   type FileIngestionOutput,
 } from './agentFileIngestion';
 import { agentDerivedFileCache, derivedFileCacheKey } from './agentFileIngestionCache';
-import { sha256Buffer, sha256File } from './fileHashing';
+import { sha256Buffer, sha256File } from '../../fileHashing';
 import {
   agentToolResult,
   errorEnvelope,
@@ -47,7 +47,7 @@ interface LocalToolOptions {
 }
 
 export interface AgentLocalWorkspaceContext {
-  // The Run workdir: cwd, default file-tool search root, and relative-path base.
+  // The Thread working directory: cwd, default file-tool search root, and relative-path base.
   root: string;
   // App-owned ephemeral area for materialized attachments, web fetches, tool output, and PDF
   // pages. A sibling of `root`, so it does not appear in default workdir listings. Defaults to
@@ -490,7 +490,7 @@ const FILE_READ_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative path to the file to read.' },
+    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the Thread working directory.' },
     offset: { type: 'integer', minimum: 0, description: 'The line number to start reading from. Only provide if the file is too large to read at once.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_FILE_READ_LIMIT, description: 'The number of lines to read. Only provide if the file is too large to read at once.' },
     pages: { type: 'string', description: `Page range for PDF files, for example "1-5", "3", or "10-20". Only applicable to PDF files. Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.` },
@@ -503,7 +503,7 @@ const FILE_GLOB_PARAMETERS = {
   required: ['pattern'],
   properties: {
     pattern: { type: 'string', minLength: 1, description: 'The glob pattern to match files against.' },
-    path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative directory to search. Omit it to search the Run workdir.' },
+    path: { type: 'string', minLength: 1, description: 'An absolute directory or one relative to the Thread working directory. Omit it to search the Thread working directory.' },
   },
 };
 
@@ -513,7 +513,7 @@ const FILE_GREP_PARAMETERS = {
   required: ['pattern'],
   properties: {
     pattern: { type: 'string', minLength: 1, description: 'The regular expression pattern to search for in file contents.' },
-    path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative file or directory to search. Defaults to the Run workdir.' },
+    path: { type: 'string', minLength: 1, description: 'An absolute file or directory, or one relative to the Thread working directory. Defaults to the Thread working directory.' },
     glob: { type: 'string', minLength: 1, description: 'Glob pattern to filter files, for example "*.js" or "*.{ts,tsx}".' },
     output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'], description: 'Output mode: "content" shows matching lines, "files_with_matches" shows file paths, "count" shows match counts. Defaults to "files_with_matches".' },
     '-B': { type: 'integer', minimum: 0, description: 'Number of lines to show before each match. Requires output_mode: "content", ignored otherwise.' },
@@ -534,7 +534,7 @@ const FILE_EDIT_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path', 'old_string', 'new_string'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative path to the file to modify.' },
+    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the Thread working directory.' },
     old_string: { type: 'string', description: 'The exact text to replace.' },
     new_string: { type: 'string', description: 'The text to replace it with. Must be different from old_string.' },
     replace_all: { type: 'boolean', description: 'Replace all occurrences of old_string. Defaults to false.' },
@@ -546,7 +546,7 @@ const FILE_WRITE_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path', 'content'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative path to the file to write.' },
+    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the Thread working directory.' },
     content: { type: 'string', description: 'The content to write to the file.' },
   },
 };
@@ -556,7 +556,7 @@ const FILE_DELETE_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'The absolute or Run-workdir-relative path to move to agent trash.' },
+    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the Thread working directory to move to agent trash.' },
   },
 };
 
@@ -829,7 +829,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
     label: 'File Read',
     description: [
       'Reads a local file.',
-      'Use an absolute file_path when known; relative paths resolve from the Run workdir.',
+      'Use an absolute file_path when known; relative paths resolve from the Thread working directory.',
       `By default, it reads up to ${DEFAULT_FILE_READ_LIMIT} lines starting from the beginning of the file.`,
       'You can optionally specify a line offset and limit, especially for long files.',
       'This tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. PDFs are read as extracted text by default; use pages when page images or layout inspection are needed. It can only read files, not directories.',
@@ -1257,7 +1257,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
     label: 'File Delete',
     description: [
       'Moves a local file or directory to agent trash instead of permanently deleting it.',
-      'Use this for reversible cleanup. It cannot delete the Run workdir root.',
+      'Use this for reversible cleanup. It cannot delete the Thread working directory root.',
       'The result includes the trash path so the item can be recovered if needed.',
     ].join('\n'),
     parameters: FILE_DELETE_PARAMETERS,
@@ -1276,7 +1276,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
           );
         }
         if (isWorkdirRoot(workspace, filePath)) {
-          throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the Run workdir root.', 'Delete a specific file or subdirectory instead.');
+          throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the Thread working directory root.', 'Delete a specific file or subdirectory instead.');
         }
         const trashRoot = agentTrashRoot(workspace);
         if (isResolvedPathInside(trashRoot, path.resolve(filePath))) {
@@ -1309,7 +1309,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
     name: 'bash',
     label: 'Bash',
     description: [
-      'Executes a shell command in the Run workdir with the current OS account authority.',
+      'Executes a shell command in the Thread working directory with the current OS account authority.',
       'Use file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.',
       'For document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).',
       'Use run_in_background for long-running commands. You do not need to append "&"; use bash_stop if the task needs to be stopped.',
@@ -3096,7 +3096,7 @@ function countOccurrences(content: string, needle: string): number {
 }
 
 function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string): string {
-  // Relative paths use the Run workdir. Absolute paths address the host filesystem directly.
+  // Relative paths use the Thread working directory. Absolute paths address the host filesystem directly.
   const root = path.resolve(workspace.root);
   const expanded = expandHome(inputPath);
   return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));

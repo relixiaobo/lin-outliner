@@ -1,4 +1,4 @@
-import { setBoundedMapEntry } from './boundedMap';
+import { setBoundedMapEntry } from '../../boundedMap';
 
 type CacheOptionValue = string | number | boolean | null | undefined;
 

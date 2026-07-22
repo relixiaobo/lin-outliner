@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { SCHEMA_ID, type CommandResult, type DocumentProjectionChangedEvent } from '../../src/core/types';
-import { createNodeTools } from '../../src/main/agentNodeTools';
+import { createNodeTools } from '../../src/main/agent/capabilities/agentNodeTools';
 import type { ProjectionChangedDelivery } from '../../src/main/documentService';
 
 let electronUserDataRoot = '';

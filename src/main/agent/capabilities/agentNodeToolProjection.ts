@@ -9,14 +9,14 @@ import {
   WORKSPACE_ID,
   type DocumentProjection,
   type NodeProjection,
-} from '../core/types';
-import { formatNodeReferenceMarker } from '../core/referenceMarkup';
-import { richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
-import { formatTag } from '../core/textSyntax';
-import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
-import { isInternalConfigNode } from '../core/configSchema';
-import { referencesForTarget, type ReferenceSource } from '../core/references';
-import { systemFieldLabel } from '../core/systemFields';
+} from '../../../core/types';
+import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
+import { richTextToMarkdownReferenceMarkup } from '../../../core/markdownRichText';
+import { formatTag } from '../../../core/textSyntax';
+import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
+import { isInternalConfigNode } from '../../../core/configSchema';
+import { referencesForTarget, type ReferenceSource } from '../../../core/references';
+import { systemFieldLabel } from '../../../core/systemFields';
 import type {
   NodeBacklink,
   NodeFieldRead,

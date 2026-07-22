@@ -10,7 +10,7 @@ import {
   PRIVATE_JSON_FILE_OPTIONS,
   readJsonOrDefault,
   updateJsonFile,
-} from './jsonFileStore';
+} from '../../jsonFileStore';
 
 const AGENT_CAPABILITIES_FILE = 'agent-capabilities.json';
 const EMPTY_DOCUMENT = { blocks: [] as string[] };

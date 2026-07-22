@@ -19,15 +19,15 @@ import {
   type FileGlobData,
   type FileGrepData,
   type BashStopData,
-} from '../../src/main/agentLocalTools';
-import { AgentSkillRuntime } from '../../src/main/agentSkills';
-import { agentAttachmentDir, materializePathBackedAttachment } from '../../src/main/agentAttachmentMaterialization';
-import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
-import { agentDerivedFileCache } from '../../src/main/agentFileIngestionCache';
+} from '../../src/main/agent/capabilities/agentLocalTools';
+import { AgentSkillRuntime } from '../../src/main/agent/capabilities/agentSkills';
+import { agentAttachmentDir, materializePathBackedAttachment } from '../../src/main/agent/capabilities/agentAttachmentMaterialization';
+import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
+import { agentDerivedFileCache } from '../../src/main/agent/capabilities/agentFileIngestionCache';
 import {
   clearRipgrepCommandCacheForTests,
   getBundledRipgrepExecutablePath,
-} from '../../src/main/agentRipgrep';
+} from '../../src/main/agent/capabilities/agentRipgrep';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
 
@@ -571,7 +571,7 @@ describe('agent local tools', () => {
     const bash = tools.find((tool) => tool.name === 'bash')!;
     const bashStop = tools.find((tool) => tool.name === 'bash_stop')!;
 
-    expect(fileRead.description).toContain('relative paths resolve from the Run workdir');
+    expect(fileRead.description).toContain('relative paths resolve from the Thread working directory');
     expect(JSON.stringify(fileRead.parameters)).toContain('The line number to start reading from');
     expect(JSON.stringify(fileRead.parameters)).toContain('Maximum 20 pages per request');
     expect(fileEdit.description).toContain('Performs exact string replacements in files');
@@ -1377,7 +1377,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_delete refuses the Run workdir root and the agent trash itself', async () => {
+  test('file_delete refuses the Thread working directory root and the agent trash itself', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const rootDelete = await executeTool(workspaceRoot, 'file_delete', {
         file_path: workspaceRoot,

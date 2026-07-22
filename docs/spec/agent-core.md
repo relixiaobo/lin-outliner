@@ -33,6 +33,15 @@ history. It carries objective, lifecycle status, optional token budget, token
 usage, continuation deferrals, and timestamps. Goal updates emit canonical Goal
 notifications but do not create another execution entity.
 
+## Runtime Ownership
+
+Canonical execution and persistence live under `src/main/agent/`. Retained
+provider, filesystem, Node, Skill, import, and web capabilities live under
+`src/main/agent/capabilities/`; they may contribute tools and configuration but
+may not own Thread history or lifecycle state. There are no flat
+`src/main/agent*.ts` implementations, forwarding wrappers, alternate runtimes,
+or compatibility readers.
+
 ## Configuration Profiles And Roles
 
 A named `ConfigurationProfile` supplies root Thread defaults. User definitions
@@ -100,6 +109,16 @@ chain. A deferral records a lost admission race for one idle boundary; the next
 real idle boundary clears it and retries the same Goal generation. Startup
 resumes active Goals on non-archived idle Threads. `waitForIdle` follows the
 whole continuation chain rather than returning after only its first Turn.
+
+Archiving or deleting a Thread is a subtree operation over `parentThreadId`
+lineage. `ThreadService` first fences the complete subtree against new Turn and
+child admission, interrupts every active Turn and pending structured-input
+request, and waits for every descendant to become idle. Archive then marks the
+root and every descendant archived; unarchive restores only the explicitly
+selected Thread and never revives descendants implicitly. Delete removes every
+descendant Goal, history projection, rollout, catalog row, spawn edge, mailbox,
+pending activity, and barrier state. Concurrent overlapping teardown requests
+fail closed. Archived or stopping Threads cannot admit a Turn.
 
 ## Fork Semantics
 

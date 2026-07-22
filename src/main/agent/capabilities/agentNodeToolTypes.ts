@@ -1,4 +1,4 @@
-import type { DocumentCommand } from '../core/commands';
+import type { DocumentCommand } from '../../../core/commands';
 import type {
   CreateNodeTree,
   DocumentProjection,
@@ -8,11 +8,11 @@ import type {
   NodeProjection,
   SearchQueryExpr,
   TagConfigPatch,
-} from '../core/types';
-import type { TextSearchIndex } from '../core/textSearchIndex';
-import type { NodeAccessSource } from '../core/nodeAccessRanking';
-import type { TransientSearchOptions } from '../core/searchEngine';
-import type { AgentMutationCausation } from '../core/agent/protocol';
+} from '../../../core/types';
+import type { TextSearchIndex } from '../../../core/textSearchIndex';
+import type { NodeAccessSource } from '../../../core/nodeAccessRanking';
+import type { TransientSearchOptions } from '../../../core/searchEngine';
+import type { AgentMutationCausation } from '../../../core/agent/protocol';
 
 export interface OutlinerToolMutationMeta {
   origin?: 'user' | 'agent' | 'system';

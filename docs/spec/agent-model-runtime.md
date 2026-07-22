@@ -14,6 +14,25 @@ system context, restores prior model messages from canonical Items, and assemble
 the final model-tool registry. Provider messages remain in memory only for the
 duration of execution.
 
+## User Content And Attachments
+
+`ThreadService` resolves user content at admission before it records the
+`userMessage` Item. The same normalized content is persisted and passed to the
+provider for initial input, steering, and later history reconstruction.
+
+Inline images remain provider image input. Local-file attachments, asset-backed
+attachments, and non-image inline attachments resolve to a readable local path.
+Files already inside the Thread working directory or app-owned scratch retain
+their real path; other regular files are copied into bounded app-owned scratch
+as a stable snapshot. Assets resolve through the host asset service. External
+directories, missing assets, oversized files, and unsupported file kinds fail
+admission instead of producing an unreadable transcript Item.
+
+Provider input describes a path-backed attachment with its readable path and
+directs the model to `file_read`; it never relies on an asset ID or a transient
+renderer selection path. Scratch attachments are ephemeral host data and use
+the same pruning policy as other agent scratch artifacts.
+
 ## Stream Normalization
 
 Provider events are converted as follows:

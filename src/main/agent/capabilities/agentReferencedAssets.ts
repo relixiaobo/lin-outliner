@@ -1,4 +1,4 @@
-import type { DocumentProjection } from '../core/types';
+import type { DocumentProjection } from '../../../core/types';
 import { xmlAttrs } from './agentReminderXml';
 
 export interface ReferencedAssetNode {

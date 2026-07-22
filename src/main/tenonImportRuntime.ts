@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { EXTRA_TOOL_PATH_ENV, pathSegments } from './agentToolPath';
+import { EXTRA_TOOL_PATH_ENV, pathSegments } from './agent/capabilities/agentToolPath';
 
 export interface TenonImportRuntimeConfig {
   binDir: string;
