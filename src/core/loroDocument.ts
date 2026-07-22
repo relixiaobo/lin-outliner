@@ -52,6 +52,8 @@ export interface LoroImportResult {
 }
 
 const LORO_TREE_NAME = 'nodes';
+const DOCUMENT_SYSTEM_RECEIPTS_MAP = 'documentSystemReceipts';
+const DOCUMENT_SYSTEM_TAGS_MAP = 'documentSystemTags';
 const MAX_SNAPSHOT_EXPORT_DEPTH = 1_024;
 const INLINE_REF_MARK = 'inlineRef';
 const INLINE_REF_PLACEHOLDER = '\uFFFC';
@@ -136,6 +138,7 @@ export class LoroOutlinerDocument {
   private userUndoManager: UndoManager;
   private nodeIdToTreeId = new Map<string, TreeID>();
   private touchedNodeIds = new Set<string>();
+  private systemDataChanged = false;
   private pendingUndoValue: Value | undefined;
   private undoGroupActive = false;
   // The id→TreeID map is maintained incrementally (create sets, delete removes,
@@ -412,6 +415,44 @@ export class LoroOutlinerDocument {
     const ids = [...this.touchedNodeIds].sort();
     this.clearTouchedNodeIds();
     return ids;
+  }
+
+  clearSystemDataChanged() {
+    this.systemDataChanged = false;
+  }
+
+  drainSystemDataChanged() {
+    const changed = this.systemDataChanged;
+    this.systemDataChanged = false;
+    return changed;
+  }
+
+  readDocumentSystemReceipt(key: string): string | null {
+    return readString(this.doc.getMap(DOCUMENT_SYSTEM_RECEIPTS_MAP).get(key)) ?? null;
+  }
+
+  writeDocumentSystemReceipt(key: string, encoded: string): void {
+    const map = this.doc.getMap(DOCUMENT_SYSTEM_RECEIPTS_MAP);
+    if (readString(map.get(key)) === encoded) return;
+    map.set(key, encoded);
+    this.systemDataChanged = true;
+  }
+
+  readDocumentSystemTagClaim(tagId: string): string | null {
+    return readString(this.doc.getMap(DOCUMENT_SYSTEM_TAGS_MAP).get(tagId)) ?? null;
+  }
+
+  writeDocumentSystemTagClaim(tagId: string, encoded: string): void {
+    const map = this.doc.getMap(DOCUMENT_SYSTEM_TAGS_MAP);
+    if (readString(map.get(tagId)) === encoded) return;
+    map.set(tagId, encoded);
+    this.systemDataChanged = true;
+  }
+
+  documentSystemTagIds(): string[] {
+    return this.doc.getMap(DOCUMENT_SYSTEM_TAGS_MAP).keys()
+      .filter((key): key is string => typeof key === 'string')
+      .sort();
   }
 
   hasNode(nodeId: string) {

@@ -1,0 +1,492 @@
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { decodeThreadItem, decodeTurn } from '../../../core/agent/codec';
+import type {
+  AgentCoreNotification,
+  ThreadId,
+  ThreadItem,
+  ThreadItemEntry,
+  ThreadItemsListRequest,
+  ThreadItemsListResponse,
+  ThreadTurnsListRequest,
+  ThreadTurnsListResponse,
+  Turn,
+  TurnItemsView,
+} from '../../../core/agent/protocol';
+import { decodeCursor, encodeCursor, pageLimit } from './cursor';
+import type { RolloutEntry } from './RolloutStore';
+import { openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
+
+interface TurnRow {
+  thread_id: string;
+  turn_id: string;
+  position: number;
+  provenance_json: string;
+  status: string;
+  error_json: string;
+  started_at: number;
+  completed_at: number | null;
+  duration_ms: number | null;
+}
+
+interface ItemRow {
+  thread_id: string;
+  turn_id: string;
+  item_id: string;
+  turn_position: number;
+  item_index: number;
+  item_type: string;
+  item_json: string;
+  started_at: number | null;
+  completed_at: number | null;
+}
+
+export interface ProjectionWatermark {
+  readonly threadId: ThreadId;
+  readonly ordinal: number;
+  readonly byteOffset: number;
+}
+
+export class ThreadHistoryProjectionStore {
+  private readonly db: SqliteDatabase;
+
+  constructor(path: string, database?: SqliteDatabase) {
+    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+    this.db = database ?? openSqlite(path);
+    this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS thread_turns (
+        thread_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        provenance_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        error_json TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        duration_ms INTEGER,
+        PRIMARY KEY(thread_id, turn_id),
+        UNIQUE(thread_id, position)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS thread_turns_page_idx
+        ON thread_turns(thread_id, position, turn_id);
+      CREATE TABLE IF NOT EXISTS thread_items (
+        thread_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        turn_position INTEGER NOT NULL,
+        item_index INTEGER NOT NULL,
+        item_type TEXT NOT NULL,
+        item_json TEXT NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        PRIMARY KEY(thread_id, item_id),
+        UNIQUE(thread_id, turn_id, item_index),
+        FOREIGN KEY(thread_id, turn_id) REFERENCES thread_turns(thread_id, turn_id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS thread_items_page_idx
+        ON thread_items(thread_id, turn_position, item_index, item_id);
+      CREATE TABLE IF NOT EXISTS rollout_watermarks (
+        thread_id TEXT PRIMARY KEY,
+        ordinal INTEGER NOT NULL,
+        byte_offset INTEGER NOT NULL
+      ) STRICT;
+    `);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  watermark(threadId: ThreadId): ProjectionWatermark {
+    const row = this.db.prepare(`
+      SELECT thread_id, ordinal, byte_offset FROM rollout_watermarks WHERE thread_id = ?
+    `).get(threadId) as { thread_id: string; ordinal: number; byte_offset: number } | undefined;
+    return row
+      ? { threadId: row.thread_id, ordinal: row.ordinal, byteOffset: row.byte_offset }
+      : { threadId, ordinal: -1, byteOffset: 0 };
+  }
+
+  apply(entry: RolloutEntry): void {
+    this.transaction(() => this.applyInside(entry));
+  }
+
+  applyMany(entries: readonly RolloutEntry[]): void {
+    if (entries.length === 0) return;
+    this.transaction(() => {
+      for (const entry of entries) this.applyInside(entry);
+    });
+  }
+
+  rebuildThread(threadId: ThreadId, entries: readonly RolloutEntry[]): void {
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(threadId);
+      this.db.prepare('DELETE FROM rollout_watermarks WHERE thread_id = ?').run(threadId);
+      for (const entry of entries) {
+        if (entry.notification.threadId !== threadId) throw new Error('Cannot rebuild a Thread from another rollout');
+        this.applyInside(entry);
+      }
+    });
+  }
+
+  deleteThread(threadId: ThreadId): void {
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(threadId);
+      this.db.prepare('DELETE FROM rollout_watermarks WHERE thread_id = ?').run(threadId);
+    });
+  }
+
+  listTurns(request: ThreadTurnsListRequest): ThreadTurnsListResponse {
+    const limit = pageLimit(request.limit);
+    const direction = request.sortDirection ?? 'asc';
+    const itemsView = request.itemsView ?? 'full';
+    const cursor = decodeHistoryCursor(request.cursor, direction, 'turn');
+    const comparison = direction === 'asc' ? '>' : '<';
+    const ordering = direction === 'asc' ? 'ASC' : 'DESC';
+    const params: SqliteValue[] = [request.threadId];
+    const cursorClause = cursor
+      ? `AND (position ${comparison} ? OR (position = ? AND turn_id ${comparison} ?))`
+      : '';
+    if (cursor) params.push(cursor.position, cursor.position, cursor.id);
+    params.push(limit + 1);
+    const rows = this.db.prepare(`
+      SELECT * FROM thread_turns
+      WHERE thread_id = ? ${cursorClause}
+      ORDER BY position ${ordering}, turn_id ${ordering}
+      LIMIT ?
+    `).all(...params) as unknown as TurnRow[];
+    const hasNext = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const turns = page.map((row) => this.turnFromRow(row, itemsView));
+    const first = page[0];
+    const last = page.at(-1);
+    return {
+      data: turns,
+      nextCursor: hasNext && last
+        ? encodeCursor({ kind: 'turn', position: last.position, id: last.turn_id, direction })
+        : null,
+      backwardsCursor: first
+        ? encodeCursor({ kind: 'turn', position: first.position, id: first.turn_id, direction: opposite(direction) })
+        : null,
+    };
+  }
+
+  listItems(request: ThreadItemsListRequest): ThreadItemsListResponse {
+    const limit = pageLimit(request.limit);
+    const direction = request.sortDirection ?? 'asc';
+    const cursor = decodeItemCursor(request.cursor, direction);
+    const comparison = direction === 'asc' ? '>' : '<';
+    const ordering = direction === 'asc' ? 'ASC' : 'DESC';
+    const where = ['thread_id = ?'];
+    const params: SqliteValue[] = [request.threadId];
+    if (request.turnId) {
+      where.push('turn_id = ?');
+      params.push(request.turnId);
+    }
+    if (cursor) {
+      where.push(`(
+        turn_position ${comparison} ?
+        OR (turn_position = ? AND item_index ${comparison} ?)
+        OR (turn_position = ? AND item_index = ? AND item_id ${comparison} ?)
+      )`);
+      params.push(
+        cursor.turnPosition,
+        cursor.turnPosition,
+        cursor.itemIndex,
+        cursor.turnPosition,
+        cursor.itemIndex,
+        cursor.id,
+      );
+    }
+    params.push(limit + 1);
+    const rows = this.db.prepare(`
+      SELECT * FROM thread_items
+      WHERE ${where.join(' AND ')}
+      ORDER BY turn_position ${ordering}, item_index ${ordering}, item_id ${ordering}
+      LIMIT ?
+    `).all(...params) as unknown as ItemRow[];
+    const hasNext = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const first = page[0];
+    const last = page.at(-1);
+    return {
+      data: page.map((row): ThreadItemEntry => ({
+        turnId: row.turn_id,
+        item: decodeThreadItem(JSON.parse(row.item_json)),
+      })),
+      nextCursor: hasNext && last ? itemCursor(last, direction) : null,
+      backwardsCursor: first ? itemCursor(first, opposite(direction)) : null,
+    };
+  }
+
+  readTurn(threadId: ThreadId, turnId: string, itemsView: TurnItemsView = 'full'): Turn | null {
+    const row = this.db.prepare(`
+      SELECT * FROM thread_turns WHERE thread_id = ? AND turn_id = ?
+    `).get(threadId, turnId) as TurnRow | undefined;
+    return row ? this.turnFromRow(row, itemsView) : null;
+  }
+
+  private applyInside(entry: RolloutEntry): void {
+    const threadId = entry.notification.threadId;
+    const watermark = this.watermark(threadId);
+    if (entry.ordinal <= watermark.ordinal) return;
+    if (entry.ordinal !== watermark.ordinal + 1) {
+      throw new Error(`Rollout projection gap for ${threadId}: expected ${watermark.ordinal + 1}, got ${entry.ordinal}`);
+    }
+    this.projectNotification(entry.ordinal, entry.notification);
+    this.db.prepare(`
+      INSERT INTO rollout_watermarks(thread_id, ordinal, byte_offset) VALUES (?, ?, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET ordinal = excluded.ordinal, byte_offset = excluded.byte_offset
+    `).run(threadId, entry.ordinal, entry.byteOffset + entry.byteLength);
+  }
+
+  private projectNotification(ordinal: number, notification: AgentCoreNotification): void {
+    switch (notification.type) {
+      case 'turn/started':
+      case 'turn/completed':
+        this.upsertTurn(notification.threadId, ordinal, notification.turn);
+        if (notification.type === 'turn/completed') {
+          this.db.prepare(`
+            DELETE FROM thread_items WHERE thread_id = ? AND turn_id = ? AND item_index >= ?
+          `).run(notification.threadId, notification.turnId, notification.turn.items.length);
+        }
+        notification.turn.items.forEach((item, index) => {
+          this.upsertItem(notification.threadId, notification.turnId, ordinal, index, item, null, null);
+        });
+        return;
+      case 'item/started':
+      case 'item/completed': {
+        const turnPosition = this.requireTurnPosition(notification.threadId, notification.turnId);
+        const itemIndex = this.nextItemIndex(notification.threadId, notification.turnId, notification.itemId);
+        this.upsertItem(
+          notification.threadId,
+          notification.turnId,
+          turnPosition,
+          itemIndex,
+          notification.item,
+          notification.type === 'item/started' ? notification.startedAt : null,
+          notification.type === 'item/completed' ? notification.completedAt : null,
+        );
+        return;
+      }
+      case 'item/delta':
+        this.applyItemDelta(notification.threadId, notification.itemId, notification.delta);
+        return;
+      default:
+        return;
+    }
+  }
+
+  private upsertTurn(threadId: ThreadId, position: number, turn: Turn): void {
+    const decoded = decodeTurn(turn);
+    this.db.prepare(`
+      INSERT INTO thread_turns(
+        thread_id, turn_id, position, provenance_json, status, error_json,
+        started_at, completed_at, duration_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(thread_id, turn_id) DO UPDATE SET
+        provenance_json = excluded.provenance_json,
+        status = excluded.status,
+        error_json = excluded.error_json,
+        started_at = excluded.started_at,
+        completed_at = excluded.completed_at,
+        duration_ms = excluded.duration_ms
+    `).run(
+      threadId,
+      decoded.id,
+      position,
+      JSON.stringify(decoded.provenance),
+      decoded.status,
+      JSON.stringify(decoded.error),
+      decoded.startedAt,
+      decoded.completedAt,
+      decoded.durationMs,
+    );
+  }
+
+  private upsertItem(
+    threadId: ThreadId,
+    turnId: string,
+    turnPosition: number,
+    itemIndex: number,
+    item: ThreadItem,
+    startedAt: number | null,
+    completedAt: number | null,
+  ): void {
+    const decoded = decodeThreadItem(item);
+    this.db.prepare(`
+      INSERT INTO thread_items(
+        thread_id, turn_id, item_id, turn_position, item_index, item_type,
+        item_json, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(thread_id, item_id) DO UPDATE SET
+        item_type = excluded.item_type,
+        item_json = excluded.item_json,
+        started_at = COALESCE(thread_items.started_at, excluded.started_at),
+        completed_at = COALESCE(excluded.completed_at, thread_items.completed_at)
+    `).run(
+      threadId,
+      turnId,
+      decoded.id,
+      turnPosition,
+      itemIndex,
+      decoded.type,
+      JSON.stringify(decoded),
+      startedAt,
+      completedAt,
+    );
+  }
+
+  private applyItemDelta(
+    threadId: ThreadId,
+    itemId: string,
+    delta: Extract<AgentCoreNotification, { type: 'item/delta' }>['delta'],
+  ): void {
+    const row = this.db.prepare(`
+      SELECT item_json FROM thread_items WHERE thread_id = ? AND item_id = ?
+    `).get(threadId, itemId) as { item_json: string } | undefined;
+    if (!row) throw new Error(`Item delta precedes item start: ${itemId}`);
+    const item = decodeThreadItem(JSON.parse(row.item_json));
+    let updated: ThreadItem;
+    switch (delta.type) {
+      case 'agentMessageText':
+        if (item.type !== 'agentMessage') throw deltaMismatch(item, delta.type);
+        updated = { ...item, text: item.text + delta.delta };
+        break;
+      case 'planText':
+        if (item.type !== 'plan') throw deltaMismatch(item, delta.type);
+        updated = { ...item, text: item.text + delta.delta };
+        break;
+      case 'reasoningSummary':
+      case 'reasoningContent': {
+        if (item.type !== 'reasoning') throw deltaMismatch(item, delta.type);
+        const key = delta.type === 'reasoningSummary' ? 'summary' : 'content';
+        const values = [...item[key]];
+        if (values.length === 0) values.push(delta.delta);
+        else values[values.length - 1] = values.at(-1)! + delta.delta;
+        updated = { ...item, [key]: values };
+        break;
+      }
+      case 'commandOutput':
+        if (item.type !== 'commandExecution') throw deltaMismatch(item, delta.type);
+        updated = { ...item, aggregatedOutput: (item.aggregatedOutput ?? '') + delta.delta };
+        break;
+      case 'dynamicToolOutput':
+        if (item.type !== 'dynamicToolCall') throw deltaMismatch(item, delta.type);
+        updated = { ...item, contentItems: [...(item.contentItems ?? []), delta.delta] };
+        break;
+    }
+    this.db.prepare(`
+      UPDATE thread_items SET item_json = ?, item_type = ? WHERE thread_id = ? AND item_id = ?
+    `).run(JSON.stringify(decodeThreadItem(updated)), updated.type, threadId, itemId);
+  }
+
+  private requireTurnPosition(threadId: ThreadId, turnId: string): number {
+    const row = this.db.prepare(`
+      SELECT position FROM thread_turns WHERE thread_id = ? AND turn_id = ?
+    `).get(threadId, turnId) as { position: number } | undefined;
+    if (!row) throw new Error(`Item lifecycle precedes Turn start: ${turnId}`);
+    return row.position;
+  }
+
+  private nextItemIndex(threadId: ThreadId, turnId: string, itemId: string): number {
+    const existing = this.db.prepare(`
+      SELECT item_index FROM thread_items WHERE thread_id = ? AND item_id = ?
+    `).get(threadId, itemId) as { item_index: number } | undefined;
+    if (existing) return existing.item_index;
+    const row = this.db.prepare(`
+      SELECT COALESCE(MAX(item_index), -1) + 1 AS next_index
+      FROM thread_items WHERE thread_id = ? AND turn_id = ?
+    `).get(threadId, turnId) as { next_index: number };
+    return row.next_index;
+  }
+
+  private turnFromRow(row: TurnRow, itemsView: TurnItemsView): Turn {
+    const items = itemsView === 'notLoaded'
+      ? []
+      : (this.db.prepare(`
+          SELECT item_json FROM thread_items
+          WHERE thread_id = ? AND turn_id = ? ORDER BY item_index
+        `).all(row.thread_id, row.turn_id) as unknown as Array<{ item_json: string }>)
+        .map((itemRow) => decodeThreadItem(JSON.parse(itemRow.item_json)));
+    return decodeTurn({
+      id: row.turn_id,
+      items,
+      itemsView,
+      provenance: JSON.parse(row.provenance_json),
+      status: row.status,
+      error: JSON.parse(row.error_json),
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      durationMs: row.duration_ms,
+    });
+  }
+
+  private transaction(operation: () => void): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      operation();
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+}
+
+function decodeHistoryCursor(
+  encoded: string | null | undefined,
+  direction: 'asc' | 'desc',
+  kind: string,
+): { position: number; id: string } | null {
+  const cursor = decodeCursor(encoded);
+  if (!cursor) return null;
+  if (
+    cursor.kind !== kind
+    || cursor.direction !== direction
+    || typeof cursor.position !== 'number'
+    || !Number.isSafeInteger(cursor.position)
+    || typeof cursor.id !== 'string'
+  ) {
+    throw new Error('Invalid history pagination cursor');
+  }
+  return { position: cursor.position, id: cursor.id };
+}
+
+function decodeItemCursor(
+  encoded: string | null | undefined,
+  direction: 'asc' | 'desc',
+): { turnPosition: number; itemIndex: number; id: string } | null {
+  const cursor = decodeCursor(encoded);
+  if (!cursor) return null;
+  if (
+    cursor.kind !== 'item'
+    || cursor.direction !== direction
+    || typeof cursor.turnPosition !== 'number'
+    || !Number.isSafeInteger(cursor.turnPosition)
+    || typeof cursor.itemIndex !== 'number'
+    || !Number.isSafeInteger(cursor.itemIndex)
+    || typeof cursor.id !== 'string'
+  ) {
+    throw new Error('Invalid Item pagination cursor');
+  }
+  return { turnPosition: cursor.turnPosition, itemIndex: cursor.itemIndex, id: cursor.id };
+}
+
+function itemCursor(row: ItemRow, direction: 'asc' | 'desc'): string {
+  return encodeCursor({
+    kind: 'item',
+    turnPosition: row.turn_position,
+    itemIndex: row.item_index,
+    id: row.item_id,
+    direction,
+  });
+}
+
+function opposite(direction: 'asc' | 'desc'): 'asc' | 'desc' {
+  return direction === 'asc' ? 'desc' : 'asc';
+}
+
+function deltaMismatch(item: ThreadItem, deltaType: string): Error {
+  return new Error(`Cannot apply ${deltaType} delta to ${item.type} Item`);
+}
