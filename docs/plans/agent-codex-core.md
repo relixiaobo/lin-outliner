@@ -234,8 +234,10 @@ renderer commands and model Node tools cannot rename, move, trash, delete,
 merge, retype, unlock, or replace a registered definition. Users and ordinary
 Node tools may still apply or remove the tag from content Nodes. There is no
 public unregister command; a feature-specific reset cannot delete its reserved
-definitions. The ensure mutation is absent from renderer IPC and the model tool
-catalog, is excluded from user undo/redo, and can share one
+definitions. The public mutation gate exhaustively classifies every
+`DocumentCommand`, including owner, parent, target, and nested batch IDs; an
+unknown command fails closed. The ensure mutation is absent from renderer IPC
+and the model tool catalog, is excluded from user undo/redo, and can share one
 `DocumentService.transaction` with Node commands and a system receipt.
 
 Contract tests cover caller-supplied identity, idempotent ensure, same-ID restore
@@ -360,7 +362,9 @@ Every lifecycle notification carries `threadId`, `turnId`, and, for item events,
 `itemId`. The renderer receives `thread/started`, `thread/status/changed`,
 `turn/started`, `item/started`, typed item deltas, `item/completed`, and
 `turn/completed`. A completed item is authoritative; delta concatenation is never
-the final stored value and no later notification patches it.
+the final stored value and no later notification patches it. For executable
+Items, `item/started` requires `inProgress`, `item/completed` requires a terminal
+status, and a terminal Turn cannot contain an `inProgress` Item.
 
 Every mutation dispatched by a Turn also carries the same
 `threadId`/`turnId`/`itemId` causation into its owning subsystem. Document
@@ -410,9 +414,10 @@ through the same configuration machinery. A role has a stable name,
 description, developer instructions, optional nickname candidates, and optional
 execution overrides. Child configuration is resolved from the parent's current
 effective configuration, explicit spawn-time model/effort choices, the selected
-role layer, and the parent's effective tool catalog; a role may narrow but never
-silently broaden that catalog. Current explicit user blocks are evaluated again
-at every child-tool dispatch rather than copied into role configuration.
+role layer, and the parent's effective capability ceiling. A role may narrow but
+never add a tool, skill, plugin, or MCP server that the parent did not enable.
+Current explicit user blocks are evaluated again at every child-tool dispatch
+rather than copied into role configuration.
 
 The former editable built-in Agent profile and `AgentRunProfileId` family are
 deleted. Research and verification behavior become Agent Roles; browser, coding,
@@ -428,7 +433,10 @@ canonical model-tool identity is an optional namespace plus a function name;
 provider adapters may encode that identity for transports that require flat
 function names, but source modules, audit/block rules, ThreadItems, debug views,
 and tests use the canonical identity. Preload methods such as `threadStart` and
-`turnInterrupt` are never registered as model tools.
+`turnInterrupt` are never registered as model tools. The flat provider encoding
+uses `namespace__name`; `__` is therefore reserved and rejected inside either
+identity component, and registry assembly verifies that canonical and encoded
+names are unique before exposing tools to a provider.
 
 Core reserves the fixed `collaboration` namespace and implements Codex's v2
 subagent suite exactly:
