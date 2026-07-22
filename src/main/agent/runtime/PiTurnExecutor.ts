@@ -76,6 +76,7 @@ export class PiTurnExecutor implements TurnExecutor {
     context.onSteer((input) => agent.steer(userMessage(input.content)));
     try {
       await agent.prompt(currentPrompt(context));
+      await normalizer.flush();
       if (context.signal.aborted || normalizer.stopReason === 'aborted') {
         return { status: 'interrupted', tokensUsed: normalizer.tokensUsed };
       }
@@ -94,17 +95,26 @@ export class PiTurnExecutor implements TurnExecutor {
   }
 }
 
-class PiEventNormalizer {
+export class PiEventNormalizer {
   tokensUsed = 0;
   stopReason: AssistantMessage['stopReason'] | null = null;
   errorMessage: string | null = null;
   private activeMessageItem: Extract<ThreadItem, { type: 'agentMessage' }> | null = null;
   private activeReasoningItem: Extract<ThreadItem, { type: 'reasoning' }> | null = null;
   private readonly toolItems = new Map<string, { item: ThreadItem; startedAt: number }>();
+  private tail: Promise<void> = Promise.resolve();
 
   constructor(private readonly context: TurnExecutionContext) {}
 
-  async handle(event: AgentEvent): Promise<void> {
+  handle(event: AgentEvent): void {
+    this.tail = this.tail.then(() => this.process(event));
+  }
+
+  async flush(): Promise<void> {
+    await this.tail;
+  }
+
+  private async process(event: AgentEvent): Promise<void> {
     switch (event.type) {
       case 'message_start':
         if (event.message.role === 'assistant') await this.ensureMessageItem();
@@ -203,35 +213,243 @@ class PiEventNormalizer {
 
   private async startTool(callId: string, providerName: string, args: unknown): Promise<void> {
     const identity = canonicalIdentity(providerName);
-    const id = this.context.recorder.createItemId();
-    const item: ThreadItem = {
-      type: 'dynamicToolCall',
-      id,
-      provenance: this.context.recorder.localProvenance(id),
-      namespace: identity.namespace,
-      tool: identity.name,
-      arguments: jsonValue(args),
-      status: 'inProgress',
-      contentItems: null,
-      success: null,
-      durationMs: null,
-    };
+    const item = startedToolItem(this.context, callId, identity, args);
     this.toolItems.set(callId, { item: await this.context.recorder.started(item), startedAt: Date.now() });
   }
 
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
     const active = this.toolItems.get(callId);
-    if (!active || active.item.type !== 'dynamicToolCall') return;
-    const contentItems = dynamicOutput(result);
-    await this.context.recorder.completed({
-      ...active.item,
-      status: isError ? 'failed' : 'completed',
-      contentItems,
-      success: !isError,
-      durationMs: Math.max(0, Date.now() - active.startedAt),
-    });
+    if (!active) return;
+    await this.context.recorder.completed(completedToolItem(
+      active.item,
+      result,
+      isError,
+      Math.max(0, Date.now() - active.startedAt),
+    ));
     this.toolItems.delete(callId);
   }
+}
+
+function startedToolItem(
+  context: TurnExecutionContext,
+  itemId: string,
+  identity: { namespace: string | null; name: string },
+  args: unknown,
+): ThreadItem {
+  const base = {
+    id: itemId,
+    provenance: context.recorder.localProvenance(itemId),
+  };
+  if (identity.namespace === 'collaboration' && isCollaborationToolName(identity.name)) {
+    const input = isRecord(args) ? args : {};
+    return {
+      ...base,
+      type: 'collabAgentToolCall',
+      tool: identity.name,
+      status: 'inProgress',
+      senderThreadId: context.thread.id,
+      receiverThreadIds: [],
+      prompt: typeof input.message === 'string' ? input.message : null,
+      model: typeof input.model === 'string' ? input.model : null,
+      reasoningEffort: typeof input.reasoning_effort === 'string' ? input.reasoning_effort : null,
+      agentsStates: {},
+    };
+  }
+  if (identity.name === 'bash' && identity.namespace === null) {
+    const input = isRecord(args) ? args : {};
+    return {
+      ...base,
+      type: 'commandExecution',
+      command: typeof input.command === 'string' ? input.command : JSON.stringify(args),
+      cwd: typeof input.cwd === 'string' ? input.cwd : context.thread.cwd,
+      processId: null,
+      status: 'inProgress',
+      commandActions: [],
+      aggregatedOutput: null,
+      exitCode: null,
+      durationMs: null,
+    };
+  }
+  if (identity.namespace === null && isFileMutationTool(identity.name)) {
+    const input = isRecord(args) ? args : {};
+    const path = typeof input.path === 'string'
+      ? input.path
+      : typeof input.file_path === 'string'
+        ? input.file_path
+        : '(unknown path)';
+    return {
+      ...base,
+      type: 'fileChange',
+      changes: [{
+        path,
+        kind: identity.name === 'file_delete' ? 'delete' : identity.name === 'file_write' ? 'add' : 'update',
+      }],
+      status: 'inProgress',
+    };
+  }
+  if (identity.name === 'web_search' && identity.namespace === null) {
+    const input = isRecord(args) ? args : {};
+    return {
+      ...base,
+      type: 'webSearch',
+      query: typeof input.query === 'string' ? input.query : '',
+      status: 'inProgress',
+      results: [],
+      error: null,
+    };
+  }
+  if (identity.namespace && context.configuration.mcpServers.includes(identity.namespace)) {
+    return {
+      ...base,
+      type: 'mcpToolCall',
+      server: identity.namespace,
+      tool: identity.name,
+      status: 'inProgress',
+      arguments: jsonValue(args),
+      pluginId: null,
+      result: null,
+      error: null,
+      durationMs: null,
+    };
+  }
+  return {
+    ...base,
+    type: 'dynamicToolCall',
+    namespace: identity.namespace,
+    tool: identity.name,
+    arguments: jsonValue(args),
+    status: 'inProgress',
+    contentItems: null,
+    success: null,
+    durationMs: null,
+  };
+}
+
+function completedToolItem(
+  item: ThreadItem,
+  result: unknown,
+  isError: boolean,
+  durationMs: number,
+): ThreadItem {
+  const status = isError ? 'failed' : 'completed';
+  switch (item.type) {
+    case 'commandExecution': {
+      const details = toolDetails(result);
+      const data = isRecord(details) && isRecord(details.data) ? details.data : details;
+      return {
+        ...item,
+        status,
+        processId: isRecord(data) && typeof data.processId === 'string' ? data.processId : item.processId,
+        aggregatedOutput: toolResultText(result),
+        exitCode: isRecord(data) && typeof data.exitCode === 'number' ? data.exitCode : isError ? 1 : 0,
+        durationMs,
+      };
+    }
+    case 'fileChange':
+      return { ...item, status };
+    case 'webSearch':
+      return {
+        ...item,
+        status,
+        results: webResults(result),
+        error: isError ? toolResultText(result) || 'Web search failed' : null,
+      };
+    case 'mcpToolCall':
+      return {
+        ...item,
+        status,
+        result: isError ? null : jsonValue(toolDetails(result)),
+        error: isError ? toolResultText(result) || 'MCP tool failed' : null,
+        durationMs,
+      };
+    case 'dynamicToolCall':
+      return {
+        ...item,
+        status,
+        contentItems: dynamicOutput(result),
+        success: !isError,
+        durationMs,
+      };
+    case 'collabAgentToolCall': {
+      const views = collaborationViews(result);
+      const receiverThreadIds = views.flatMap((view) => typeof view.threadId === 'string' ? [view.threadId] : []);
+      const agentsStates = Object.fromEntries(views.flatMap((view) => {
+        if (typeof view.threadId !== 'string') return [];
+        return [[view.threadId, collaborationStatus(view.status, isError)]];
+      }));
+      return {
+        ...item,
+        status,
+        receiverThreadIds,
+        agentsStates,
+      };
+    }
+    default:
+      throw new Error(`Unexpected executable Thread Item: ${item.type}`);
+  }
+}
+
+function isCollaborationToolName(value: string): value is Extract<ThreadItem, { type: 'collabAgentToolCall' }>['tool'] {
+  return [
+    'spawn_agent',
+    'send_message',
+    'followup_task',
+    'wait_agent',
+    'list_agents',
+    'interrupt_agent',
+  ].includes(value);
+}
+
+function isFileMutationTool(value: string): boolean {
+  return value === 'file_edit' || value === 'file_write' || value === 'file_delete';
+}
+
+function toolDetails(result: unknown): unknown {
+  return isRecord(result) && 'details' in result ? result.details : result;
+}
+
+function toolResultText(result: unknown): string {
+  if (!isRecord(result) || !Array.isArray(result.content)) return '';
+  return result.content.flatMap((part) => isRecord(part) && part.type === 'text' && typeof part.text === 'string'
+    ? [part.text]
+    : []).join('\n');
+}
+
+function webResults(result: unknown): Array<{ title: string; url: string; snippet?: string }> {
+  const details = toolDetails(result);
+  const data = isRecord(details) && isRecord(details.data) ? details.data : details;
+  const entries = isRecord(data) && Array.isArray(data.results) ? data.results : [];
+  return entries.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.title !== 'string' || typeof entry.url !== 'string') return [];
+    return [{
+      title: entry.title,
+      url: entry.url,
+      ...(typeof entry.snippet === 'string' ? { snippet: entry.snippet } : {}),
+    }];
+  });
+}
+
+function collaborationViews(result: unknown): Array<Record<string, unknown>> {
+  const details = toolDetails(result);
+  if (Array.isArray(details)) return details.filter(isRecord);
+  if (!isRecord(details)) return [];
+  if (typeof details.thread_id === 'string') {
+    return [{ threadId: details.thread_id, status: 'running' }];
+  }
+  return [details];
+}
+
+function collaborationStatus(value: unknown, isError: boolean): 'pendingInit' | 'running' | 'interrupted' | 'completed' | 'errored' | 'notFound' {
+  if (isError) return 'errored';
+  if (
+    value === 'pendingInit'
+    || value === 'running'
+    || value === 'interrupted'
+    || value === 'completed'
+    || value === 'errored'
+    || value === 'notFound'
+  ) return value;
+  return 'completed';
 }
 
 function defaultSystemPrompt(context: TurnExecutionContext): string {

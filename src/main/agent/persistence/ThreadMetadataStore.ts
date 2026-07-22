@@ -312,6 +312,22 @@ export class ThreadMetadataStore {
     }));
   }
 
+  spawnEdgeForChild(childThreadId: ThreadId): SpawnEdge | null {
+    const row = this.db.prepare(`
+      SELECT parent_thread_id, child_thread_id, task_path, created_at
+      FROM spawn_edges WHERE child_thread_id = ?
+    `).get(childThreadId) as SpawnEdgeRow | undefined;
+    return row ? spawnEdgeFromRow(row) : null;
+  }
+
+  spawnEdgeForPath(taskPath: string): SpawnEdge | null {
+    const row = this.db.prepare(`
+      SELECT parent_thread_id, child_thread_id, task_path, created_at
+      FROM spawn_edges WHERE task_path = ?
+    `).get(taskPath) as SpawnEdgeRow | undefined;
+    return row ? spawnEdgeFromRow(row) : null;
+  }
+
   private updateOne(sql: string, params: readonly SqliteValue[], threadId: ThreadId): void {
     const result = this.db.prepare(sql).run(...params);
     if (result.changes !== 1) throw new Error(`Thread not found: ${threadId}`);
@@ -327,6 +343,22 @@ export class ThreadMetadataStore {
       throw error;
     }
   }
+}
+
+interface SpawnEdgeRow {
+  parent_thread_id: string;
+  child_thread_id: string;
+  task_path: string;
+  created_at: number;
+}
+
+function spawnEdgeFromRow(row: SpawnEdgeRow): SpawnEdge {
+  return {
+    parentThreadId: row.parent_thread_id,
+    childThreadId: row.child_thread_id,
+    taskPath: row.task_path,
+    createdAt: row.created_at,
+  };
 }
 
 function recordFromRow(row: ThreadRow): ThreadCatalogRecord {
