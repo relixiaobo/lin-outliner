@@ -39,6 +39,7 @@ import {
   THREAD_GOAL_STATUSES,
   type ThreadGoal,
 } from './goal';
+import { REASONING_EFFORTS } from './configuration';
 
 export class AgentProtocolCodecError extends Error {
   constructor(message: string) {
@@ -578,6 +579,7 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
       decoded = decodeRendererThreadStartRequest(value);
       break;
     case 'thread/resume':
+    case 'thread/configuration/get':
     case 'thread/archive':
     case 'thread/unarchive':
     case 'thread/delete':
@@ -588,6 +590,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
       break;
     case 'thread/name/set':
       decoded = decodeThreadNameSetRequest(value);
+      break;
+    case 'thread/configuration/set':
+      decoded = decodeThreadConfigurationSetRequest(value);
       break;
     case 'thread/turns/list':
       decoded = decodeThreadTurnsListRequest(value);
@@ -643,6 +648,10 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
     case 'thread/resume':
     case 'thread/fork':
       decoded = decodeThreadResponse(value);
+      break;
+    case 'thread/configuration/get':
+    case 'thread/configuration/set':
+      decoded = decodeThreadConfigurationResponse(value);
       break;
     case 'thread/name/set':
     case 'thread/archive':
@@ -794,6 +803,47 @@ function decodeThreadNameSetRequest(value: unknown): AgentCoreRequestByMethod['t
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'thread/name/set.threadId'),
     name: nullableString(record.name, 'thread/name/set.name'),
+  });
+}
+
+function decodeThreadConfigurationSetRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/configuration/set'] {
+  const record = recordValue(value, 'thread/configuration/set');
+  exactKeys(record, ['threadId', 'modelProvider', 'model', 'reasoningEffort'], 'thread/configuration/set');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'thread/configuration/set.threadId'),
+    ...decodeThreadConfigurationSummary({
+      modelProvider: record.modelProvider,
+      model: record.model,
+      reasoningEffort: record.reasoningEffort,
+    }, 'thread/configuration/set'),
+  });
+}
+
+function decodeThreadConfigurationResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/configuration/get'] {
+  const record = recordValue(value, 'thread/configuration response');
+  exactKeys(record, ['thread', 'configuration'], 'thread/configuration response');
+  return deepFreeze({
+    thread: decodeThread(record.thread),
+    configuration: decodeThreadConfigurationSummary(
+      recordValue(record.configuration, 'thread/configuration response.configuration'),
+      'thread/configuration response.configuration',
+    ),
+  });
+}
+
+function decodeThreadConfigurationSummary(
+  record: Record<string, unknown>,
+  path: string,
+): AgentCoreResponseByMethod['thread/configuration/get']['configuration'] {
+  exactKeys(record, ['modelProvider', 'model', 'reasoningEffort'], path);
+  return deepFreeze({
+    modelProvider: nonEmptyTrimmedString(record.modelProvider, `${path}.modelProvider`),
+    model: nonEmptyTrimmedString(record.model, `${path}.model`),
+    reasoningEffort: enumValue(record.reasoningEffort, REASONING_EFFORTS, `${path}.reasoningEffort`),
   });
 }
 
@@ -1353,6 +1403,14 @@ function stringArray(value: unknown, path: string): string[] {
 function stringValue(value: unknown, path: string, allowEmpty = false): string {
   if (typeof value !== 'string' || (!allowEmpty && value.length === 0)) fail(path, 'expected a string');
   return value;
+}
+
+function nonEmptyTrimmedString(value: unknown, path: string): string {
+  if (typeof value !== 'string') fail(path, 'expected a string');
+  const result = value;
+  if (!result.trim()) fail(path, 'expected a non-empty string');
+  if (result !== result.trim()) fail(path, 'expected a trimmed string');
+  return result;
 }
 
 function nullableString(value: unknown, path: string, allowEmpty = false): string | null {

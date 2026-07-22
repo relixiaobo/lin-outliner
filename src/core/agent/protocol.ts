@@ -7,6 +7,7 @@ import type {
   UpdateGoalInput,
   UpdateGoalResponse,
 } from './goal';
+import type { ReasoningEffort } from './configuration';
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
@@ -98,6 +99,22 @@ export interface Thread {
   readonly status: ThreadStatus;
   readonly historyMode: ThreadHistoryMode;
   readonly turns?: readonly Turn[];
+}
+
+/** Renderer-visible execution choices. Capability ceilings remain host-private. */
+export interface ThreadConfigurationSummary {
+  readonly modelProvider: string;
+  readonly model: string;
+  readonly reasoningEffort: ReasoningEffort;
+}
+
+export interface ThreadConfigurationSetRequest extends ThreadConfigurationSummary {
+  readonly threadId: ThreadId;
+}
+
+export interface ThreadConfigurationResponse {
+  readonly thread: Thread;
+  readonly configuration: ThreadConfigurationSummary;
 }
 
 export interface TurnError {
@@ -547,6 +564,8 @@ export const AGENT_CORE_METHODS = [
   'thread/resume',
   'thread/fork',
   'thread/name/set',
+  'thread/configuration/get',
+  'thread/configuration/set',
   'thread/archive',
   'thread/unarchive',
   'thread/delete',
@@ -570,6 +589,8 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/resume': ThreadResumeRequest;
   readonly 'thread/fork': ThreadForkRequest;
   readonly 'thread/name/set': ThreadNameSetRequest;
+  readonly 'thread/configuration/get': ThreadIdentityRequest;
+  readonly 'thread/configuration/set': ThreadConfigurationSetRequest;
   readonly 'thread/archive': ThreadIdentityRequest;
   readonly 'thread/unarchive': ThreadIdentityRequest;
   readonly 'thread/delete': ThreadIdentityRequest;
@@ -591,6 +612,8 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/resume': ThreadResumeResponse;
   readonly 'thread/fork': ThreadForkResponse;
   readonly 'thread/name/set': EmptyAgentCoreResponse;
+  readonly 'thread/configuration/get': ThreadConfigurationResponse;
+  readonly 'thread/configuration/set': ThreadConfigurationResponse;
   readonly 'thread/archive': EmptyAgentCoreResponse;
   readonly 'thread/unarchive': EmptyAgentCoreResponse;
   readonly 'thread/delete': EmptyAgentCoreResponse;

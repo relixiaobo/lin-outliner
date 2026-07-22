@@ -391,6 +391,13 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/resume': { threadId: THREAD_ID },
       'thread/fork': { threadId: THREAD_ID, boundary: { kind: 'beforeTurn', turnId: TURN_ID } },
       'thread/name/set': { threadId: THREAD_ID, name: 'Renamed' },
+      'thread/configuration/get': { threadId: THREAD_ID },
+      'thread/configuration/set': {
+        threadId: THREAD_ID,
+        modelProvider: 'openai',
+        model: 'openai/gpt-5',
+        reasoningEffort: 'high',
+      },
       'thread/archive': { threadId: THREAD_ID },
       'thread/unarchive': { threadId: THREAD_ID },
       'thread/delete': { threadId: THREAD_ID },
@@ -425,6 +432,14 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/resume': { thread },
       'thread/fork': { thread },
       'thread/name/set': {},
+      'thread/configuration/get': {
+        thread,
+        configuration: { modelProvider: 'openai', model: 'openai/gpt-5', reasoningEffort: 'high' },
+      },
+      'thread/configuration/set': {
+        thread,
+        configuration: { modelProvider: 'openai', model: 'openai/gpt-5', reasoningEffort: 'high' },
+      },
       'thread/archive': {},
       'thread/unarchive': {},
       'thread/delete': {},
@@ -462,6 +477,29 @@ describe('Codex Agent Core protocol codec', () => {
       threadId: THREAD_ID,
       status: 'paused',
     })).toThrow('complete, blocked');
+  });
+
+  test('validates Thread configuration as one canonical execution selection', () => {
+    expect(() => decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: 'openai',
+      model: 'openai/gpt-5',
+      reasoningEffort: 'extreme',
+    })).toThrow('off, minimal, low, medium, high, xhigh, max');
+    expect(() => decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: ' openai ',
+      model: 'openai/gpt-5',
+      reasoningEffort: 'medium',
+    })).toThrow('trimmed');
+    expect(() => decodeAgentCoreResponse('thread/configuration/get', {
+      thread,
+      configuration: {
+        modelProvider: 'openai',
+        model: '',
+        reasoningEffort: 'medium',
+      },
+    })).toThrow('non-empty');
   });
 
   test('keeps user-input requests in the control plane with matching ids', () => {
