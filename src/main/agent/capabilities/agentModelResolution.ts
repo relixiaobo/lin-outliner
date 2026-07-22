@@ -73,6 +73,22 @@ export function resolveAgentModelEffort(
   return { model, thinkingLevel };
 }
 
+export function validateAgentModelSelection(
+  modelInput: string,
+  effort: AgentReasoningLevel,
+  config: AgentProviderRuntimeConfig,
+): void {
+  const requested = modelInput.trim();
+  const model = requested === 'inherit'
+    ? resolveProviderModel(config)
+    : resolveAgentModelOverride(requested, config);
+  if (!model) throw new Error(`Model not found for provider ${config.providerId}: ${requested}`);
+  const supported = getSupportedThinkingLevels(model);
+  if (!supported.includes(effort)) {
+    throw new Error(`Reasoning effort ${effort} is not supported by ${config.providerId}/${model.id}`);
+  }
+}
+
 export function defaultThinkingLevel(model: Model<Api>): AgentReasoningLevel {
   return defaultThinkingLevelFor(getSupportedThinkingLevels(model));
 }

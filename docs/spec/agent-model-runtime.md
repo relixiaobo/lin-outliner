@@ -71,7 +71,10 @@ Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Existing readable outputs such as `file_read` and generated-image
 files retain their file path. Other provider images are written under the
 owning Thread's payload directory and the Item stores only that file reference.
-Deleting the Thread deletes the payload directory.
+Base64 length is validated before decoding, with independent per-image and
+per-tool-call byte budgets. Invalid, oversized, over-count, and over-total image
+outputs produce one structured omission summary instead of bytes or unbounded
+Item entries. Deleting the Thread deletes the payload directory.
 
 ## Tools And Causation
 

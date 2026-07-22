@@ -631,6 +631,7 @@ export function App() {
         />
 
         <ThreadDock
+          index={index}
           railState={agentRailState}
           onOpenNodeReference={openNodeReferenceFromAgent}
           onResizeKeyDown={resizeAgentWithKeyboard}

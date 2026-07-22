@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
+import {
+  MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS,
+  ToolPayloadStore,
+  measureToolPayloadImage,
+} from '../../src/main/agent/persistence/ToolPayloadStore';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 const roots: string[] = [];
@@ -26,5 +30,20 @@ describe('Agent tool payload store', () => {
 
     await store.deleteThread(threadId);
     await expect(stat(first)).rejects.toThrow();
+  });
+
+  test('rejects invalid and oversized base64 before writing image bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const oversized = 'A'.repeat(MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS + 4);
+
+    expect(measureToolPayloadImage(oversized)).toEqual({ ok: false, reason: 'imageByteLimit' });
+    expect(measureToolPayloadImage('not base64!')).toEqual({ ok: false, reason: 'invalidBase64' });
+    await expect(store.writeImage(threadId, 'tool-call', 0, oversized, 'image/png'))
+      .rejects.toThrow('imageByteLimit');
+    await expect(store.writeImage(threadId, 'tool-call', 0, 'not base64!', 'image/png'))
+      .rejects.toThrow('invalidBase64');
   });
 });

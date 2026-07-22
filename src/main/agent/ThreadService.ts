@@ -45,6 +45,9 @@ import type {
   RequestUserInputResponse,
   RendererTurnStartRequest,
   Thread,
+  ThreadConfigurationResponse,
+  ThreadConfigurationSetRequest,
+  ThreadConfigurationSummary,
   ThreadForkRequest,
   ThreadId,
   ThreadItem,
@@ -123,6 +126,9 @@ export interface ThreadServiceOptions {
   readonly resolveRendererStartDefaults?: () =>
     | RendererThreadStartDefaults
     | Promise<RendererThreadStartDefaults>;
+  readonly validateRendererConfiguration?: (
+    configuration: ThreadConfigurationSummary,
+  ) => void | Promise<void>;
   readonly resolveUserContent?: (
     content: readonly ThreadUserContent[],
     context: ThreadUserContentResolutionContext,
@@ -242,6 +248,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ) => EffectiveThreadConfiguration | Promise<EffectiveThreadConfiguration>;
   private readonly resolveRendererStartDefaults: () =>
     RendererThreadStartDefaults | Promise<RendererThreadStartDefaults>;
+  private readonly validateRendererConfiguration: (
+    configuration: ThreadConfigurationSummary,
+  ) => void | Promise<void>;
   private readonly resolveUserContent: (
     content: readonly ThreadUserContent[],
     context: ThreadUserContentResolutionContext,
@@ -280,6 +289,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.extensions = options.extensions ?? new ExtensionRegistry();
     this.resolveConfiguration = options.resolveConfiguration ?? defaultConfiguration;
     this.resolveRendererStartDefaults = options.resolveRendererStartDefaults ?? missingRendererStartDefaults;
+    this.validateRendererConfiguration = options.validateRendererConfiguration ?? (() => undefined);
     this.resolveUserContent = options.resolveUserContent ?? ((content) => content);
     this.resolveRole = options.resolveRole ?? defaultAgentRole;
     this.now = options.now ?? Date.now;
@@ -393,6 +403,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
         await this.setThreadName(request.threadId, request.name);
         return emptyResponse() as AgentCoreResponseByMethod[Method];
       }
+      case 'thread/configuration/get':
+        return this.getThreadConfiguration(
+          (decoded as AgentCoreRequestByMethod['thread/configuration/get']).threadId,
+        ) as AgentCoreResponseByMethod[Method];
+      case 'thread/configuration/set':
+        return await this.setThreadConfiguration(
+          decoded as AgentCoreRequestByMethod['thread/configuration/set'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'thread/archive':
         await this.setThreadArchived((decoded as AgentCoreRequestByMethod['thread/archive']).threadId, true);
         return emptyResponse() as AgentCoreResponseByMethod[Method];
@@ -483,6 +501,52 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return { thread: decodeThread({ ...record.thread, turns: this.allTurns(request.threadId) }) };
   }
 
+  getThreadConfiguration(threadId: ThreadId): ThreadConfigurationResponse {
+    const record = this.requireRendererConfigurableThread(threadId);
+    return {
+      thread: record.thread,
+      configuration: threadConfigurationSummary(record),
+    };
+  }
+
+  async setThreadConfiguration(request: ThreadConfigurationSetRequest): Promise<ThreadConfigurationResponse> {
+    return this.threadMutex.run(request.threadId, async () => {
+      const record = this.requireRendererConfigurableThread(request.threadId);
+      if (this.activeTurns.has(request.threadId)) {
+        throw new ThreadBusyError('Cannot change Thread configuration during an active Turn');
+      }
+      const configuration: ThreadConfigurationSummary = {
+        modelProvider: request.modelProvider,
+        model: request.model,
+        reasoningEffort: request.reasoningEffort,
+      };
+      await this.validateRendererConfiguration(configuration);
+      const effectiveConfiguration: EffectiveThreadConfiguration = Object.freeze({
+        ...record.configuration,
+        model: configuration.model,
+        reasoningEffort: configuration.reasoningEffort,
+      });
+      const now = this.now();
+      const thread = decodeThread({
+        ...record.thread,
+        modelProvider: configuration.modelProvider,
+        updatedAt: now,
+      });
+      const state = this.ephemeral.get(request.threadId);
+      if (state) {
+        state.record = { ...record, thread, configuration: effectiveConfiguration };
+      } else {
+        this.metadata.setRootConfiguration(
+          request.threadId,
+          configuration.modelProvider,
+          effectiveConfiguration,
+          now,
+        );
+      }
+      return { thread, configuration };
+    });
+  }
+
   async startThread(requestInput: AgentCoreRequestByMethod['thread/start']): Promise<ThreadStartResponse> {
     const defaults = requestInput.modelProvider && requestInput.cwd
       ? null
@@ -535,7 +599,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   async forkThread(request: ThreadForkRequest): Promise<{ thread: Thread }> {
     return this.hostRootMutex.run(async () => this.threadMutex.run(request.threadId, async () => {
-      const source = this.requireThread(request.threadId).thread;
+      const sourceRecord = this.requireThread(request.threadId);
+      const source = sourceRecord.thread;
       const turns = this.allTurns(source.id);
       const boundaryIndex = turns.findIndex((turn) => turn.id === request.boundary.turnId);
       if (boundaryIndex < 0) throw new Error(`Fork boundary Turn not found: ${request.boundary.turnId}`);
@@ -555,6 +620,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         forkedFromId: source.id,
         agentRole: null,
         agentNickname: null,
+        configuration: sourceRecord.configuration,
       });
       for (const inheritedTurn of inherited) {
         const copied = copyTurn(inheritedTurn, thread.id, now);
@@ -1442,6 +1508,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return thread;
   }
 
+  private requireRendererConfigurableThread(threadId: ThreadId): ThreadCatalogRecord {
+    const record = this.requireThread(threadId);
+    if (record.thread.parentThreadId || record.thread.threadSource !== 'user') {
+      throw new Error('Only root user Threads have renderer-editable configuration');
+    }
+    return record;
+  }
+
   private async setStatus(threadId: ThreadId, status: ThreadStatus): Promise<void> {
     const now = this.now();
     const state = this.ephemeral.get(threadId);
@@ -1852,6 +1926,14 @@ export function agentCorePaths(userDataPath: string): AgentCorePaths {
 
 function defaultConfiguration(request: ThreadStartRequest): EffectiveThreadConfiguration {
   return defaultEffectiveThreadConfiguration(request.configurationProfile ?? 'default');
+}
+
+function threadConfigurationSummary(record: ThreadCatalogRecord): ThreadConfigurationSummary {
+  return Object.freeze({
+    modelProvider: record.thread.modelProvider,
+    model: record.configuration.model,
+    reasoningEffort: record.configuration.reasoningEffort,
+  });
 }
 
 function missingRendererStartDefaults(): never {

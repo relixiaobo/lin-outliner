@@ -268,6 +268,19 @@ export class ThreadMetadataStore {
     );
   }
 
+  setRootConfiguration(
+    threadId: ThreadId,
+    modelProvider: string,
+    configuration: EffectiveThreadConfiguration,
+    updatedAt: number,
+  ): void {
+    this.updateOne(
+      'UPDATE threads SET model_provider = ?, configuration_json = ?, updated_at = ? WHERE id = ?',
+      [modelProvider, JSON.stringify(configuration), updatedAt, threadId],
+      threadId,
+    );
+  }
+
   setArchived(threadId: ThreadId, archived: boolean, updatedAt: number): void {
     this.updateOne(
       'UPDATE threads SET archived = ?, updated_at = ? WHERE id = ?',

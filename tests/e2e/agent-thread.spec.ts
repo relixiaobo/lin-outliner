@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
-import { commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
+import { MAX_INLINE_IMAGE_BASE64_CHARS, MAX_RAW_INLINE_IMAGE_BYTES } from '../../src/core/agentAttachmentLimits';
+import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
 
 test.describe('canonical agent Thread surface', () => {
   test.beforeEach(async ({ page }) => {
@@ -22,7 +23,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(turn.locator('.thread-turn-footer')).toContainText('24 ms');
 
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
-    await page.locator('.thread-header-menu').getByRole('button', { name: 'Thread Details' }).click();
+    await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Thread Details' }).click();
     const details = page.getByRole('dialog', { name: 'Thread Details' });
     await expect(details).toContainText('Thread ID');
     await expect(details).toContainText('Turn');
@@ -60,7 +61,10 @@ test.describe('canonical agent Thread surface', () => {
 
     const rows = page.locator('.thread-list-row');
     await expect(rows).toHaveCount(2);
-    await expect(rows.filter({ has: page.locator('.thread-list-actions') })).toHaveCSS('--thread-depth', '1');
+    await expect(rows.filter({ has: page.locator('.thread-list-select').getByText('Keep this history.') })).toHaveCSS(
+      '--thread-depth',
+      '1',
+    );
     expect((await commandCalls(page)).map((call) => call.cmd)).toContain('thread/fork');
   });
 
@@ -69,7 +73,7 @@ test.describe('canonical agent Thread surface', () => {
     await rowBody(page, ids.alpha).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Send to composer' }).click();
 
-    await expect(page.locator('.thread-composer-attachment')).toContainText('Alpha');
+    await expect(page.locator('.thread-composer-inline-ref')).toContainText('Alpha');
     await page.getByRole('button', { name: 'Send' }).click();
 
     const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
@@ -80,18 +84,317 @@ test.describe('canonical agent Thread surface', () => {
     }]);
   });
 
+  test('preserves inline content order when text surrounds a Node reference', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Before ');
+    await rowBody(page, ids.alpha).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Send to composer' }).click();
+    await composer.pressSequentially('after');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
+    expect(start?.args.input).toEqual([
+      { type: 'text', text: 'Before' },
+      { type: 'nodeReference', nodeId: ids.alpha, note: 'Alpha' },
+      { type: 'text', text: 'after' },
+    ]);
+  });
+
+  test('keeps same-named files from distinct sources and accepts a regular file above the image limit', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const fileInput = page.locator('.thread-composer-file-input');
+    await fileInput.setInputFiles({
+      name: 'report.bin',
+      mimeType: 'application/octet-stream',
+      buffer: Buffer.from('first'),
+    });
+    await fileInput.setInputFiles({
+      name: 'report.bin',
+      mimeType: 'application/octet-stream',
+      buffer: Buffer.from('other'),
+    });
+    await fileInput.setInputFiles({
+      name: 'archive.bin',
+      mimeType: 'application/octet-stream',
+      buffer: Buffer.alloc(MAX_RAW_INLINE_IMAGE_BYTES + 1),
+    });
+
+    await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(3);
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
+    const input = start?.args.input as Array<{
+      name?: string;
+      sizeBytes?: number;
+      source?: { kind?: string; path?: string };
+      type?: string;
+    }>;
+    const reports = input.filter((part) => part.type === 'attachment' && part.name === 'report.bin');
+    expect(reports).toHaveLength(2);
+    expect(new Set(reports.map((part) => part.source?.path)).size).toBe(2);
+    expect(input).toContainEqual(expect.objectContaining({
+      type: 'attachment',
+      name: 'archive.bin',
+      sizeBytes: MAX_RAW_INLINE_IMAGE_BYTES + 1,
+    }));
+  });
+
+  test('skips a pathless file that is already attached by content identity', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const fileInput = page.locator('.thread-composer-file-input');
+    const file = {
+      name: 'duplicate.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('same content'),
+    };
+    await fileInput.setInputFiles(file);
+    await fileInput.setInputFiles(file);
+
+    await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(1);
+    await expect(page.getByRole('status')).toContainText("Skipped 1 file that's already attached.");
+  });
+
+  test('preserves a directory selected from the composer mention menu', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('@');
+    await page.getByRole('option', { name: /workspace.*mock\/local-root/i }).click();
+
+    const directoryRef = page.locator('.thread-composer-inline-ref[data-inline-ref-entry-kind="directory"]');
+    await expect(directoryRef).toContainText('workspace');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
+    expect(start?.args.input).toEqual([expect.objectContaining({
+      type: 'attachment',
+      name: 'workspace',
+      mimeType: 'inode/directory',
+      sizeBytes: 0,
+      source: { kind: 'localFile', path: '/mock/local-root/workspace' },
+    })]);
+  });
+
+  test('keeps a native selected image as canonical inline vision input', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('@');
+    await page.getByRole('option', { name: /reference\.png.*mock\/local-root/i }).click();
+
+    const imageRef = page.locator('.thread-composer-inline-ref[data-inline-ref-path="/mock/local-root/reference.png"]');
+    await expect(imageRef).toContainText('reference.png');
+    await expect(imageRef).toHaveAttribute('data-inline-ref-thumbnail-data-url', /^blob:/);
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
+    expect(start?.args.input).toEqual([expect.objectContaining({
+      type: 'attachment',
+      name: 'reference.png',
+      mimeType: 'image/png',
+      source: { kind: 'inline', dataBase64: 'bW9jayBpbWFnZQ==' },
+    })]);
+  });
+
+  test('rejects an image above the raw image limit before decoding it', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.locator('.thread-composer-file-input').setInputFiles({
+      name: 'oversized.png',
+      mimeType: 'image/png',
+      buffer: Buffer.alloc(MAX_RAW_INLINE_IMAGE_BYTES + 1),
+    });
+
+    await expect(page.getByRole('status')).toContainText('oversized.png is larger than 10 MB');
+    await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(0);
+  });
+
+  test('compresses a pathless image to the bounded inline model payload', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const originalSize = await page.locator('.thread-composer-file-input').evaluate(async (element) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1_536;
+      canvas.height = 1_536;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Canvas is unavailable');
+      const image = context.createImageData(canvas.width, canvas.height);
+      for (let offset = 0; offset < image.data.length; offset += 65_536) {
+        crypto.getRandomValues(image.data.subarray(offset, Math.min(offset + 65_536, image.data.length)));
+      }
+      for (let offset = 3; offset < image.data.length; offset += 4) image.data[offset] = 255;
+      context.putImageData(image, 0, 0);
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((value) => value ? resolve(value) : reject(new Error('PNG encoding failed')), 'image/png');
+      });
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([blob], 'noise.png', { type: 'image/png' }));
+      const input = element as HTMLInputElement;
+      input.files = transfer.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return blob.size;
+    });
+    expect(originalSize * 4 / 3).toBeGreaterThan(MAX_INLINE_IMAGE_BASE64_CHARS);
+
+    const imageRef = page.locator('.thread-composer-inline-ref');
+    await expect(imageRef).toContainText('noise.png');
+    await expect(imageRef).toHaveAttribute('data-inline-ref-thumbnail-data-url', /^blob:/);
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
+    const attachment = (start?.args.input as Array<{
+      mimeType?: string;
+      source?: { kind?: string; dataBase64?: string };
+    }>)[0];
+    expect(attachment?.mimeType).toBe('image/jpeg');
+    expect(attachment?.source?.kind).toBe('inline');
+    expect(attachment?.source?.dataBase64?.length).toBeLessThanOrEqual(MAX_INLINE_IMAGE_BASE64_CHARS);
+  });
+
+  test('retains measured long-message disclosure behavior', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Line 1');
+    for (let line = 2; line <= 9; line += 1) {
+      await composer.press('Shift+Enter');
+      await composer.pressSequentially(`Line ${line}`);
+    }
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const disclosure = page.getByRole('button', { name: 'Show more' });
+    await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    await disclosure.click();
+    await expect(page.getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  test('restores composer focus when the Agent rail reopens', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+
+    await page.getByRole('button', { name: 'Collapse agent' }).click();
+    await page.getByRole('button', { name: 'Expand agent' }).click();
+
+    await expect(composer).toBeFocused();
+  });
+
+  test('retains the established full-bleed composer geometry', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const metrics = await page.locator('.thread-view').evaluate((view) => {
+      const dock = view.closest('.thread-dock');
+      const composer = view.querySelector('.thread-composer-region');
+      const surface = view.querySelector('.thread-composer-surface');
+      const editor = view.querySelector('.thread-composer-editor');
+      const editorText = editor?.querySelector('.ProseMirror');
+      const attachment = surface?.querySelector('.icon-button-composerTool');
+      const action = surface?.querySelector('.icon-button-composerAction');
+      if (!(dock instanceof HTMLElement)
+        || !(composer instanceof HTMLElement)
+        || !(surface instanceof HTMLElement)
+        || !(editor instanceof HTMLElement)
+        || !(editorText instanceof HTMLElement)
+        || !(attachment instanceof HTMLElement)
+        || !(action instanceof HTMLElement)) return null;
+      const viewBox = view.getBoundingClientRect();
+      const dockBox = dock.getBoundingClientRect();
+      const composerBox = composer.getBoundingClientRect();
+      const surfaceBox = surface.getBoundingClientRect();
+      const editorBox = editor.getBoundingClientRect();
+      const editorTextBox = editorText.getBoundingClientRect();
+      const attachmentBox = attachment.getBoundingClientRect();
+      const actionBox = action.getBoundingClientRect();
+      const surfaceStyle = getComputedStyle(surface);
+      const attachmentStyle = getComputedStyle(attachment);
+      const actionStyle = getComputedStyle(action);
+      return {
+        actionBottomInset: surfaceBox.bottom - actionBox.bottom,
+        actionRadius: Number.parseFloat(actionStyle.borderTopLeftRadius),
+        actionRightInset: surfaceBox.right - actionBox.right,
+        actionSize: actionBox.width,
+        attachmentBottomInset: surfaceBox.bottom - attachmentBox.bottom,
+        attachmentLeftInset: attachmentBox.left - surfaceBox.left,
+        attachmentRadius: Number.parseFloat(attachmentStyle.borderTopLeftRadius),
+        attachmentSize: attachmentBox.width,
+        composerBottomDelta: Math.abs(viewBox.bottom - composerBox.bottom),
+        editorLeftInset: editorBox.left - surfaceBox.left,
+        editorRightInset: surfaceBox.right - editorBox.right,
+        editorTextLeftInset: editorTextBox.left - surfaceBox.left,
+        editorTextRightInset: surfaceBox.right - editorTextBox.right,
+        surfaceBottomDelta: Math.abs(viewBox.bottom - surfaceBox.bottom),
+        surfaceLeftInset: surfaceBox.left - dockBox.left,
+        surfacePaddingBottom: Number.parseFloat(surfaceStyle.paddingBottom),
+        surfacePaddingLeft: Number.parseFloat(surfaceStyle.paddingLeft),
+        surfacePaddingRight: Number.parseFloat(surfaceStyle.paddingRight),
+        surfaceRightInset: dockBox.right - surfaceBox.right,
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.composerBottomDelta).toBeLessThanOrEqual(1);
+    expect(metrics!.surfaceBottomDelta).toBeLessThanOrEqual(1);
+    expect(metrics!.surfaceLeftInset).toBeLessThanOrEqual(1);
+    expect(metrics!.surfaceRightInset).toBeLessThanOrEqual(1);
+    expect(metrics!.surfacePaddingLeft).toBe(metrics!.surfacePaddingRight);
+    expect(metrics!.surfacePaddingBottom).toBe(metrics!.surfacePaddingRight);
+    expect(metrics!.actionSize).toBe(metrics!.attachmentSize);
+    expect(metrics!.actionRadius).toBeGreaterThanOrEqual(metrics!.actionSize / 2);
+    expect(metrics!.attachmentRadius).toBeGreaterThanOrEqual(metrics!.attachmentSize / 2);
+    expect(Math.abs(metrics!.attachmentLeftInset - metrics!.surfacePaddingLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.attachmentBottomInset - metrics!.surfacePaddingBottom)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.actionRightInset - metrics!.surfacePaddingRight)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.actionBottomInset - metrics!.surfacePaddingBottom)).toBeLessThanOrEqual(1);
+    expect(metrics!.editorLeftInset).toBeLessThanOrEqual(1);
+    expect(metrics!.editorRightInset).toBeLessThanOrEqual(1);
+    expect(metrics!.editorTextLeftInset).toBe(metrics!.editorTextRightInset);
+    expect(metrics!.editorTextLeftInset).toBeGreaterThanOrEqual(metrics!.surfacePaddingLeft);
+  });
+
+  test('reuses the composer slash menu for directly invocable Skills', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('/');
+
+    const menu = page.getByRole('listbox', { name: 'Thread slash commands' });
+    const skill = menu.getByRole('option', { name: /workspace-review/ });
+    await expect(skill).toContainText('Review workspace conventions before automatic use.');
+    await skill.click();
+
+    await expect(composer).toHaveText('/workspace-review ');
+    await expect(composer).toBeFocused();
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'agent_list_all_skills').at(-1)?.args)
+      .toMatchObject({ userInvocableOnly: true });
+  });
+
+  test('keeps Thread actions in an anchored keyboard menu', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 620 });
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const trigger = page.getByRole('button', { name: 'Thread actions' });
+    await trigger.click();
+
+    const menu = page.getByRole('menu', { name: 'Thread actions' });
+    await expect(menu).toBeVisible();
+    const box = await menu.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(760);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(620);
+    await expect(menu.getByRole('menuitem', { name: 'Thread Details' })).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(menu.getByRole('menuitem', { name: 'Rename Thread' })).toBeFocused();
+    await page.keyboard.press('Escape');
+
+    await expect(menu).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+
   test('renames and deletes a Thread through in-app dialogs', async ({ page }) => {
     await page.getByRole('button', { name: 'New Thread' }).last().click();
 
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
-    await page.locator('.thread-header-menu').getByRole('button', { name: 'Rename Thread' }).click();
+    await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Rename Thread' }).click();
     const renameDialog = page.getByRole('dialog', { name: 'Rename Thread' });
     await renameDialog.getByRole('textbox', { name: 'Rename Thread' }).fill('Research notes');
     await renameDialog.getByRole('button', { name: 'Save' }).click();
     await expect(page.locator('.thread-dock-title')).toContainText('Research notes');
 
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
-    await page.locator('.thread-header-menu').getByRole('button', { name: 'Delete Thread' }).click();
+    await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Delete Thread' }).click();
     const deleteDialog = page.getByRole('dialog', { name: 'Delete Thread' });
     await expect(deleteDialog).toContainText('Research notes');
     await deleteDialog.getByRole('button', { name: 'Delete Thread' }).click();
@@ -100,6 +403,660 @@ test.describe('canonical agent Thread surface', () => {
     const calls = (await commandCalls(page)).map((call) => call.cmd);
     expect(calls).toEqual(expect.arrayContaining(['thread/name/set', 'thread/delete']));
   });
+
+  test('changes the canonical Thread model and reasoning from the composer', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+
+    const control = page.getByRole('button', { name: 'Model and reasoning' });
+    await expect(control).toContainText('GPT-5.4');
+    await expect(control).toContainText('Medium');
+    await control.click();
+    await page.getByRole('menu', { name: 'Model and reasoning' })
+      .getByRole('menuitem', { name: 'GPT-5.4' })
+      .click();
+    await page.getByRole('menu', { name: 'Model', exact: true })
+      .getByRole('menuitemradio', { name: 'GPT-5.4 Mini' })
+      .click();
+    await expect(control).toContainText('GPT-5.4 Mini');
+
+    await control.click();
+    await page.getByRole('menu', { name: 'Model and reasoning' })
+      .getByRole('menuitem', { name: /Reasoning/ })
+      .click();
+    await page.getByRole('menu', { name: 'Reasoning' })
+      .getByRole('menuitemradio', { name: 'High' })
+      .click();
+    await expect(control).toContainText('High');
+
+    const updates = (await commandCalls(page)).filter((call) => call.cmd === 'thread/configuration/set');
+    expect(updates.map((call) => call.args)).toEqual([
+      expect.objectContaining({
+        modelProvider: 'openai',
+        model: 'openai/gpt-5.4-mini',
+        reasoningEffort: 'medium',
+      }),
+      expect.objectContaining({
+        modelProvider: 'openai',
+        model: 'openai/gpt-5.4-mini',
+        reasoningEffort: 'high',
+      }),
+    ]);
+
+    await control.click();
+    await expect(page.getByRole('menu', { name: 'Model and reasoning' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu', { name: 'Model and reasoning' })).toHaveCount(0);
+    await expect(control).toBeFocused();
+  });
+
+  test('retains the anchored Thread list dismissal and row-action interactions', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const listButton = page.getByRole('button', { name: 'Show Threads' });
+    await listButton.click();
+
+    const list = page.getByRole('dialog', { name: 'Threads' });
+    const row = list.locator('.thread-list-row').first();
+    await expect(list).toBeVisible();
+    await expect(row.locator('.thread-list-actions')).toHaveCSS('opacity', '0');
+    await row.hover();
+    await expect(row.locator('.thread-list-actions')).toHaveCSS('opacity', '1');
+
+    await page.keyboard.press('Escape');
+    await expect(list).toHaveCount(0);
+    await expect(listButton).toBeFocused();
+
+    await listButton.click();
+    await page.locator('.thread-transcript').click({ position: { x: 12, y: 180 } });
+    await expect(list).toHaveCount(0);
+  });
+
+  test('refreshes provider gating without discarding the composer draft', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Keep this draft.');
+
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: {
+          invoke: <T>(command: string, input?: Record<string, unknown>) => Promise<T>;
+          notifySettingsChanged?: () => Promise<void>;
+        };
+      };
+      await target.lin?.invoke('agent_delete_provider_config', { providerId: 'openai' });
+      await target.lin?.notifySettingsChanged?.();
+    });
+
+    const send = page.getByRole('button', { name: 'Send' });
+    await expect(send).toBeDisabled();
+    await expect(send).toHaveAttribute('title', 'Configure an AI provider before starting a Thread.');
+    await expect(page.getByRole('button', { name: 'Add attachment' })).toBeDisabled();
+    await expect(composer).toHaveText('Keep this draft.');
+  });
+
+  test('keeps Subagent Threads inspectable without exposing a direct composer', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const root = response?.data[0];
+      if (!root) throw new Error('Mock root Thread not found');
+      const child = {
+        ...root,
+        id: '01910000-0000-7000-8000-00000000dd01',
+        parentThreadId: root.id,
+        agentNickname: 'research',
+        agentRole: 'explorer',
+        name: 'Research child',
+        threadSource: 'subagent',
+        updatedAt: Number(root.updatedAt) + 1,
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'thread/started', threadId: child.id, thread: child });
+      const turnId = '01910000-0000-7000-8000-00000000dd02';
+      const itemId = '01910000-0000-7000-8000-00000000dd03';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: root.id,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: itemId,
+            type: 'subAgentActivity',
+            provenance: { originThreadId: root.id, originTurnId: turnId, originItemId: itemId },
+            kind: 'completed',
+            agentThreadId: child.id,
+            agentPath: '/root/research',
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: root.id, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      });
+    });
+
+    await page.getByRole('button', { name: 'Open Subagent Thread /root/research' }).click();
+    await expect(page.locator('.thread-dock-title')).toHaveText('Research child');
+    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await expect(page.getByRole('dialog', { name: 'Threads' }).getByRole('button', { name: /Research child/ })).toBeVisible();
+  });
+
+  test('renders reasoning and grouped tool Items with disclosure and copy interactions', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.evaluate(async () => {
+      const e2eWindow = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await e2eWindow.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000aa01';
+      const item = (suffix: string) => `01910000-0000-7000-8000-00000000${suffix}`;
+      const provenance = (itemId: string) => ({ originThreadId: threadId, originTurnId: turnId, originItemId: itemId });
+      const reasoningId = item('aa02');
+      const commandId = item('aa03');
+      const toolId = item('aa04');
+      const answerId = item('aa05');
+      const turn = {
+        id: turnId,
+        items: [
+          {
+            id: reasoningId,
+            type: 'reasoning',
+            provenance: provenance(reasoningId),
+            summary: ['Inspect the current workspace'],
+            content: ['The workspace has enough evidence.'],
+          },
+          {
+            id: commandId,
+            type: 'commandExecution',
+            provenance: provenance(commandId),
+            command: 'pwd',
+            cwd: '/mock/workspace',
+            processId: null,
+            status: 'completed',
+            commandActions: [],
+            aggregatedOutput: '/mock/workspace',
+            exitCode: 0,
+            durationMs: 4,
+          },
+          {
+            id: toolId,
+            type: 'dynamicToolCall',
+            provenance: provenance(toolId),
+            namespace: 'node',
+            tool: 'read',
+            arguments: { node_id: 'node-alpha' },
+            status: 'completed',
+            contentItems: [{ type: 'json', value: { title: 'Alpha' } }],
+            success: true,
+            durationMs: 8,
+          },
+          {
+            id: answerId,
+            type: 'agentMessage',
+            provenance: provenance(answerId),
+            text: 'Finished with evidence.',
+            phase: 'final_answer',
+            memoryCitation: null,
+          },
+        ],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'completed',
+        error: null,
+        startedAt: 1,
+        completedAt: 13,
+        durationMs: 12,
+      };
+      e2eWindow.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn,
+      });
+    });
+
+    const process = page.getByRole('button', { name: 'Worked for <1s' });
+    await expect(process).toHaveAttribute('aria-expanded', 'false');
+    await process.click();
+
+    const thought = page.getByRole('button', { name: /Thought.*Inspect the current workspace/ });
+    await expect(thought).toBeVisible();
+    await thought.click();
+    await expect(page.getByText('The workspace has enough evidence.')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Ran a command · read a node' }).click();
+    const command = page.getByRole('button', { name: /Ran.*pwd/ });
+    await expect(command).toBeVisible();
+    await command.click();
+    await page.getByRole('button', { name: 'Copy output' }).click();
+    expect(await clipboardText(page)).toBe('/mock/workspace');
+
+    await page.getByRole('button', { name: 'Copy message' }).click();
+    expect(await clipboardText(page)).toBe('Finished with evidence.');
+
+    const disclosureOverrides = await page.evaluate(() => {
+      const key = Object.keys(window.localStorage).find((candidate) => (
+        candidate.startsWith('tenon:thread-disclosure:v1:')
+      ));
+      return key ? JSON.parse(window.localStorage.getItem(key) ?? '{}') : {};
+    });
+    expect(disclosureOverrides).toMatchObject({
+      'process:01910000-0000-7000-8000-00000000aa01': true,
+      'reasoning:01910000-0000-7000-8000-00000000aa02': true,
+      'tool:01910000-0000-7000-8000-00000000aa03': true,
+      'tools:01910000-0000-7000-8000-00000000aa03': true,
+    });
+  });
+
+  test('keeps Node and local-file references interactive in canonical Agent Markdown', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.evaluate(async ({ nodeId }) => {
+      const e2eWindow = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await e2eWindow.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ac01';
+      const answerId = '01910000-0000-7000-8000-00000000ac02';
+      const turn = {
+        id: turnId,
+        items: [{
+          id: answerId,
+          type: 'agentMessage',
+          provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: answerId },
+          text: `Review [[node:Alpha^${nodeId}]] and [[file:notes.md^%2Fmock%2Fnotes.md]].`,
+          phase: 'final_answer',
+          memoryCitation: null,
+        }],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'completed',
+        error: null,
+        startedAt: 1,
+        completedAt: 13,
+        durationMs: 12,
+      };
+      e2eWindow.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn,
+      });
+    }, { nodeId: ids.alpha });
+
+    const message = page.locator('.thread-agent-message').last();
+    await expect(message).not.toContainText('[[node:');
+    const nodeRef = message.locator(`[data-inline-ref="${ids.alpha}"]`);
+    await expect(nodeRef).toHaveText('Alpha');
+    await expect(nodeRef).toHaveAttribute('href', new RegExp(`lin-node:${ids.alpha}`));
+
+    const fileRef = message.locator('[data-inline-ref-kind="local-file"]');
+    await expect(fileRef).toHaveText('notes.md');
+    await fileRef.hover();
+    await expect(page.locator('[data-inline-file-preview]')).toContainText('/mock/notes.md');
+    await fileRef.click();
+    const preview = page.locator('.outline-panel-surface.active-panel.is-file-preview');
+    await expect(preview.locator('.file-preview-content')).toContainText('Mock preview text.');
+  });
+
+  test('keeps loaded Skills compact while isolated Skill runs remain expandable', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.evaluate(async () => {
+      const e2eWindow = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await e2eWindow.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ad01';
+      const loadedId = '01910000-0000-7000-8000-00000000ad02';
+      const isolatedId = '01910000-0000-7000-8000-00000000ad03';
+      const provenance = (itemId: string) => ({ originThreadId: threadId, originTurnId: turnId, originItemId: itemId });
+      const turn = {
+        id: turnId,
+        items: [{
+          id: loadedId,
+          type: 'dynamicToolCall',
+          provenance: provenance(loadedId),
+          namespace: null,
+          tool: 'skill',
+          arguments: { skill: 'review-pr', args: '429 --focus rendering' },
+          status: 'completed',
+          contentItems: [{ type: 'text', text: 'Launching skill: review-pr' }],
+          success: true,
+          durationMs: 2,
+        }, {
+          id: isolatedId,
+          type: 'dynamicToolCall',
+          provenance: provenance(isolatedId),
+          namespace: null,
+          tool: 'skill',
+          arguments: { skill: 'investigate', args: 'render regression' },
+          status: 'completed',
+          contentItems: [{ type: 'text', text: 'Isolated skill result.' }],
+          success: true,
+          durationMs: 8,
+        }],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'completed',
+        error: null,
+        startedAt: 1,
+        completedAt: 13,
+        durationMs: 12,
+      };
+      e2eWindow.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn,
+      });
+    });
+
+    await expect(page.locator('.thread-process-title')).toHaveText('Used 2 skills');
+    const loaded = page.locator('.thread-loaded-skill');
+    await expect(loaded.locator('.thread-loaded-skill-name')).toHaveText('/review-pr');
+    await expect(loaded.locator('.thread-loaded-skill-args')).toHaveText('429 --focus rendering');
+    await expect(loaded.getByRole('button')).toHaveCount(0);
+
+    const isolated = page.locator('.thread-tool-toggle');
+    await expect(isolated).toHaveCount(1);
+    await isolated.click();
+    await expect(page.getByText('Isolated skill result.')).toBeVisible();
+  });
+
+  test('opens a lone terminal reasoning Item when the Turn has no final response', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.evaluate(async () => {
+      const e2eWindow = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await e2eWindow.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ab01';
+      const userMessageId = '01910000-0000-7000-8000-00000000ab02';
+      const reasoningId = '01910000-0000-7000-8000-00000000ab03';
+      const provenance = (itemId: string) => ({ originThreadId: threadId, originTurnId: turnId, originItemId: itemId });
+      const turn = {
+        id: turnId,
+        items: [
+          {
+            id: userMessageId,
+            type: 'userMessage',
+            provenance: provenance(userMessageId),
+            content: [{ type: 'text', text: 'Inspect the outline.' }],
+          },
+          {
+            id: reasoningId,
+            type: 'reasoning',
+            provenance: provenance(reasoningId),
+            summary: ['The outline is currently empty.'],
+            content: [],
+          },
+        ],
+        status: 'completed',
+        error: null,
+        createdAt: Date.now(),
+        completedAt: Date.now(),
+        durationMs: 28,
+      };
+      e2eWindow.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn,
+      });
+    });
+
+    const thought = page.getByRole('button', { name: 'Thought' });
+    await expect(thought).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByText('The outline is currently empty.', { exact: true })).toBeVisible();
+  });
+
+  test('keeps the composer primary action identical to the active Turn state', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.evaluate(async () => {
+      const e2eWindow = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await e2eWindow.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000bb01';
+      e2eWindow.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: 1,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+    });
+
+    await expect(page.getByRole('button', { name: 'Interrupt Turn' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add attachment' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Model and reasoning' })).toBeDisabled();
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Use the shorter path.');
+    await expect(page.getByRole('button', { name: 'Steer' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Interrupt Turn' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Steer' }).click();
+
+    const steer = (await commandCalls(page)).filter((call) => call.cmd === 'turn/steer').at(-1);
+    expect(steer?.args.input).toEqual([{ type: 'text', text: 'Use the shorter path.' }]);
+  });
+
+  test('uses the established step flow for canonical user input without losing the composer draft', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Keep this draft while answering.');
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ab01';
+      const itemId = '01910000-0000-7000-8000-00000000ab02';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'userInput/requested',
+        threadId,
+        turnId,
+        itemId,
+        request: {
+          threadId,
+          turnId,
+          itemId,
+          questions: [
+            {
+              id: 'scope',
+              header: 'Scope',
+              question: 'How broad should the pass be?',
+              options: [
+                { label: 'Focused', description: 'Only the selected module.' },
+                { label: 'Complete', description: 'Cover the full workflow.' },
+              ],
+            },
+            {
+              id: 'schedule',
+              header: 'Schedule',
+              question: 'When should this run?',
+              options: [
+                { label: 'Now', description: 'Run immediately.' },
+                { label: 'Tonight', description: 'Run after work.' },
+              ],
+            },
+          ],
+        },
+      });
+    });
+
+    const form = page.getByRole('form', { name: 'Input needed' });
+    await expect(form).toContainText('1 of 2');
+    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeHidden();
+    await form.getByRole('radio', { name: /Complete/ }).check();
+    await form.getByRole('button', { name: 'Next' }).click();
+    await expect(form).toContainText('2 of 2');
+    await expect(form.getByRole('radio', { name: /Now/ })).toBeFocused();
+
+    await form.getByRole('button', { name: 'Previous question' }).click();
+    await expect(form.getByRole('radio', { name: /Complete/ })).toBeChecked();
+    await form.getByRole('button', { name: 'Next' }).click();
+    await form.getByRole('radio', { name: 'Other' }).check();
+    await form.getByRole('textbox', { name: 'Other' }).fill('Every morning');
+    await form.getByRole('button', { name: 'Submit' }).click();
+
+    const response = (await commandCalls(page)).filter((call) => call.cmd === 'userInput/respond').at(-1);
+    expect(response?.args.answers).toEqual([
+      { questionId: 'scope', optionLabel: 'Complete' },
+      { questionId: 'schedule', otherText: 'Every morning' },
+    ]);
+
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'userInput/resolved',
+        threadId,
+        turnId: '01910000-0000-7000-8000-00000000ab01',
+        itemId: '01910000-0000-7000-8000-00000000ab02',
+        response: {
+          threadId,
+          turnId: '01910000-0000-7000-8000-00000000ab01',
+          itemId: '01910000-0000-7000-8000-00000000ab02',
+          answers: [],
+          autoResolved: false,
+        },
+      });
+    });
+    await expect(composer).toHaveText('Keep this draft while answering.');
+  });
+
+  test('does not pull the transcript down after the reader scrolls upward', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ee01';
+      const itemId = '01910000-0000-7000-8000-00000000ee02';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: itemId,
+            type: 'agentMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
+            text: Array.from({ length: 80 }, (_, index) => `Earlier evidence ${index + 1}`).join('\n\n'),
+            phase: 'final_answer',
+            memoryCitation: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      });
+    });
+
+    const transcript = page.locator('.thread-transcript');
+    await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    await transcript.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event('scroll'));
+    });
+
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ef01';
+      const itemId = '01910000-0000-7000-8000-00000000ef02';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: itemId,
+            type: 'agentMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
+            text: 'New evidence arrived.',
+            phase: 'final_answer',
+            memoryCitation: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 3,
+          completedAt: 4,
+          durationMs: 1,
+        },
+      });
+    });
+
+    await expect(page.getByText('New evidence arrived.')).toHaveCount(1);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(1);
+  });
+});
+
+test('opens provider settings instead of creating a Thread when no provider is usable', async ({ page }) => {
+  await openMockedApp(page, { agentProviderUsable: false });
+
+  await expect(page.getByRole('button', { name: 'New Thread' }).first()).toBeDisabled();
+  await page.getByRole('button', { name: 'Open Providers' }).click();
+
+  const calls = await commandCalls(page);
+  expect(calls).toContainEqual({ cmd: 'open_settings', args: { category: 'providers' } });
+  expect(calls.some((call) => call.cmd === 'thread/start')).toBe(false);
 });
 
 test.describe('structured Thread retries', () => {
@@ -111,7 +1068,7 @@ test.describe('structured Thread retries', () => {
       mimeType: 'image/png',
       buffer: Buffer.from('mock image'),
     });
-    await expect(page.locator('.thread-composer-attachment')).toContainText('diagram.png');
+    await expect(page.locator('.thread-composer-inline-ref')).toContainText('diagram.png');
     await page.getByRole('button', { name: 'Send' }).click();
     await expect(page.getByRole('button', { name: 'Retry response' })).toBeVisible();
 

@@ -53,6 +53,8 @@ interface MockFixtureOptions {
   translationDelayMs?: number;
   /** Completes mock Agent Turns as failed without an assistant message. */
   agentTurnFailure?: boolean;
+  /** Starts with the configured language-model provider disabled and uncredentialed. */
+  agentProviderUsable?: boolean;
 }
 
 type E2EWindow = Window & {
@@ -86,9 +88,21 @@ type E2EWindow = Window & {
     openSettings?: (target?: unknown) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
+    onSettingsChanged?: (listener: () => void) => () => void;
     onSettingsNavigate?: (listener: (target: unknown) => void) => () => void;
     openLocalFile?: (options: { path: string }) => Promise<{ opened: boolean }>;
     previewLocalFile?: (options: { id: string }) => Promise<{ thumbnailDataUrl: string | null }>;
+    prepareLocalFile?: (options: { id: string }) => Promise<{
+      file: {
+        entryKind: 'file' | 'directory';
+        path: string;
+        name: string;
+        mimeType: string;
+        sizeBytes: number;
+        lastModified: number;
+        imageDataBase64?: string;
+      } | null;
+    }>;
     previewLocalFileReference?: (options: { path: string }) => Promise<{
       file: {
         entryKind: 'file' | 'directory';
@@ -274,6 +288,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentCoreListeners: Array<(notification: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
     const oauthListeners: Array<(envelope: unknown) => void> = [];
+    const settingsChangedListeners: Array<() => void> = [];
     const translationLanguageListeners: Array<(language: TranslationLanguage) => void> = [];
     const translationPreferenceListeners: Array<(preferences: UrlPageTranslationPreferences) => void> = [];
     let translationLanguage = options.translationLanguage ?? 'en';
@@ -283,7 +298,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       autoTranslateUrls: false,
     };
     let translationDelayMs = options.translationDelayMs ?? 80;
-    const providerApiKeys = new Map<string, string>([['openai', 'sk-openai-saved']]);
+    const providerApiKeys = new Map<string, string>(
+      options.agentProviderUsable === false ? [] : [['openai', 'sk-openai-saved']],
+    );
     // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
     // the event stream (emitOAuthEvent) and completes it (resolveOAuthLogin), so
     // the flow is fully deterministic — no real provider, timers, or network.
@@ -292,6 +309,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       activeProviderId: 'openai',
       agent: {
         additionalSkillDirectories: [],
+        disabledSkills: [] as string[],
         providerTimeoutMs: null,
         providerMaxRetries: null,
         providerMaxRetryDelayMs: 60_000,
@@ -301,12 +319,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       providers: [{
         providerId: 'openai',
         baseUrl: '',
-        enabled: true,
-        hasApiKey: true,
+        enabled: options.agentProviderUsable !== false,
+        hasApiKey: options.agentProviderUsable !== false,
         hasEnvApiKey: false,
         // Main now always populates the `auth` descriptor (the single
         // `credentialed` signal the renderer reads); the mock mirrors it.
-        auth: { authKind: 'api-key', credentialed: true, hasStoredKey: true },
+        auth: {
+          authKind: 'api-key',
+          credentialed: options.agentProviderUsable !== false,
+          hasStoredKey: options.agentProviderUsable !== false,
+        },
       }],
       availableProviders: [{
         providerId: 'openai',
@@ -486,6 +508,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const mockThreads: MockThread[] = [];
     const mockTurns = new Map<string, MockTurn[]>();
     const mockGoals = new Map<string, unknown>();
+    const mockThreadConfigurations = new Map<string, {
+      modelProvider: string;
+      model: string;
+      reasoningEffort: string;
+    }>();
     const nextCanonicalId = () => `01910000-0000-7000-8000-${(++sequence).toString(16).padStart(12, '0')}`;
     const threadById = (threadId: string) => {
       const thread = mockThreads.find((candidate) => candidate.id === threadId);
@@ -509,7 +536,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ephemeral: input.ephemeral === true,
         source: 'app',
         threadSource: 'user',
-        modelProvider: typeof input.modelProvider === 'string' ? input.modelProvider : 'openai/gpt-5.4',
+        modelProvider: typeof input.modelProvider === 'string' ? input.modelProvider : 'openai',
         cwd: typeof input.cwd === 'string' ? input.cwd : '/mock/workspace',
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -518,6 +545,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       };
       mockThreads.push(thread);
       mockTurns.set(thread.id, []);
+      mockThreadConfigurations.set(thread.id, {
+        modelProvider: thread.modelProvider,
+        model: `${thread.modelProvider}/gpt-5.4`,
+        reasoningEffort: 'medium',
+      });
       return thread;
     };
     const itemProvenance = (threadId: string, turnId: string, itemId: string) => ({
@@ -1461,6 +1493,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const includeCount = boundary?.kind === 'afterTurn' ? boundaryIndex + 1 : boundaryIndex;
           const thread = createMockThread({ name: input.name ?? source.name }, source.id);
           thread.preview = source.preview;
+          mockThreadConfigurations.set(
+            thread.id,
+            clone(mockThreadConfigurations.get(source.id) ?? {
+              modelProvider: source.modelProvider,
+              model: `${source.modelProvider}/gpt-5.4`,
+              reasoningEffort: 'medium',
+            }),
+          );
           mockTurns.set(thread.id, clone(sourceTurns.slice(0, includeCount)));
           emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
           return clone({ thread }) as T;
@@ -1493,8 +1533,25 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           for (const threadId of deleted) {
             mockTurns.delete(threadId);
             mockGoals.delete(threadId);
+            mockThreadConfigurations.delete(threadId);
           }
           return {} as T;
+        }
+        if (method === 'thread/configuration/get') {
+          const thread = threadById(String(input.threadId));
+          return clone({ thread, configuration: mockThreadConfigurations.get(thread.id) }) as T;
+        }
+        if (method === 'thread/configuration/set') {
+          const thread = threadById(String(input.threadId));
+          const configuration = {
+            modelProvider: String(input.modelProvider),
+            model: String(input.model),
+            reasoningEffort: String(input.reasoningEffort),
+          };
+          mockThreadConfigurations.set(thread.id, configuration);
+          thread.modelProvider = configuration.modelProvider;
+          thread.updatedAt = ++now;
+          return clone({ thread, configuration }) as T;
         }
         if (method === 'thread/turns/list') {
           return clone({ data: mockTurns.get(String(input.threadId)) ?? [], nextCursor: null, backwardsCursor: null }) as T;
@@ -1637,20 +1694,91 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         calls.push({ cmd: 'open_settings', args: clone(target ?? {}) });
       },
       closeProviderConfig: async () => {},
-      notifySettingsChanged: async () => {},
+      notifySettingsChanged: async () => {
+        for (const listener of settingsChangedListeners) listener();
+      },
+      onSettingsChanged: (listener) => {
+        settingsChangedListeners.push(listener);
+        return () => {
+          const index = settingsChangedListeners.indexOf(listener);
+          if (index >= 0) settingsChangedListeners.splice(index, 1);
+        };
+      },
       onSettingsNavigate: () => () => {},
       recentLocalFiles: async () => ({
-        files: [{
-          entryKind: 'file',
-          id: 'recent-local-notes',
-          path: '/Users/test/Documents/recent-notes.md',
-          name: 'recent-notes.md',
-          parentPath: '/Users/test/Documents',
-          mimeType: 'text/plain',
-          sizeBytes: 123,
-          lastModified: now - 1_000,
-        }],
+        files: [
+          {
+            entryKind: 'file',
+            id: 'recent-local-notes',
+            path: '/Users/test/Documents/recent-notes.md',
+            name: 'recent-notes.md',
+            parentPath: '/Users/test/Documents',
+            mimeType: 'text/plain',
+            sizeBytes: 123,
+            lastModified: now - 1_000,
+          },
+          {
+            entryKind: 'directory',
+            id: 'recent-local-workspace',
+            path: '/mock/local-root/workspace',
+            name: 'workspace',
+            parentPath: '/mock/local-root',
+            mimeType: 'inode/directory',
+            sizeBytes: 0,
+            lastModified: now - 2_000,
+          },
+          {
+            entryKind: 'file',
+            id: 'recent-local-image',
+            path: '/mock/local-root/reference.png',
+            name: 'reference.png',
+            parentPath: '/mock/local-root',
+            mimeType: 'image/png',
+            sizeBytes: 10,
+            lastModified: now - 3_000,
+          },
+        ],
       }),
+      prepareLocalFile: async ({ id }) => {
+        if (id === 'recent-local-notes') {
+          return {
+            file: {
+              entryKind: 'file',
+              path: '/Users/test/Documents/recent-notes.md',
+              name: 'recent-notes.md',
+              mimeType: 'text/plain',
+              sizeBytes: 123,
+              lastModified: now - 1_000,
+            },
+          };
+        }
+        if (id === 'recent-local-workspace') {
+          return {
+            file: {
+              entryKind: 'directory',
+              path: '/mock/local-root/workspace',
+              name: 'workspace',
+              mimeType: 'inode/directory',
+              sizeBytes: 0,
+              lastModified: now - 2_000,
+            },
+          };
+        }
+        if (id === 'recent-local-image') {
+          return {
+            file: {
+              entryKind: 'file',
+              path: '/mock/local-root/reference.png',
+              name: 'reference.png',
+              mimeType: 'image/png',
+              sizeBytes: 10,
+              lastModified: now - 3_000,
+              imageDataBase64: 'bW9jayBpbWFnZQ==',
+            },
+          };
+        }
+        return { file: null };
+      },
       stageAttachment: async (input) => {
         const safeName = (input.name || 'attachment').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'attachment';
         return {
@@ -1785,7 +1913,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_list_all_skills') {
           if (options.agentSkillsDelayMs) await delay(options.agentSkillsDelayMs);
-          return clone(agentSkills) as T;
+          const skills = args.userInvocableOnly === true
+            ? agentSkills.filter((skill) => (
+              skill.userInvocable && !agentSettings.agent.disabledSkills.includes(skill.name)
+            ))
+            : agentSkills;
+          return clone(skills) as T;
         }
         if (cmd === 'agent_accept_skill') {
           const skillName = String(args.skillName ?? '');

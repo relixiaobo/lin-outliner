@@ -1,4 +1,5 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
+import type { UserMessage } from '@earendil-works/pi-ai';
 import type { TSchema } from 'typebox';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
@@ -16,7 +17,7 @@ import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGene
 import { AgentImportService, visibleImportServiceResult } from '../capabilities/agentImportService';
 import type { AgentLocalWorkspaceContext } from '../capabilities/agentLocalTools';
 import type { OutlinerToolHost } from '../capabilities/agentNodeTools';
-import type { AgentSkillRuntime } from '../capabilities/agentSkills';
+import { createUserSkillPrompt, type AgentSkillRuntime } from '../capabilities/agentSkills';
 import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
 import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
@@ -130,6 +131,24 @@ export class ToolRuntime {
 
   skillListing(context: TurnExecutionContext): Promise<string | null> {
     return this.skillRuntime(context)?.buildSkillListingReminderText() ?? Promise.resolve(null);
+  }
+
+  async prepareUserPrompt(context: TurnExecutionContext, prompt: UserMessage): Promise<UserMessage> {
+    const input = directSkillInput(context);
+    const runtime = this.skillRuntime(context);
+    if (!input || !runtime) return prompt;
+    const prepared = await createUserSkillPrompt(runtime, input, null, {
+      onIsolatedSkillStart: async () => undefined,
+    });
+    if (!prepared) return prompt;
+    const preparedContent = typeof prepared.content === 'string'
+      ? [{ type: 'text' as const, text: prepared.content }]
+      : prepared.content;
+    return {
+      ...prepared,
+      timestamp: prompt.timestamp,
+      content: [...preparedContent, ...additionalContextContent(context)],
+    };
   }
 
   private skillRuntime(context: TurnExecutionContext): AgentSkillRuntime | undefined {
@@ -373,6 +392,29 @@ export class ToolRuntime {
     const { readAgentCapabilityConfig } = await import('../capabilities/agentCapabilityStore');
     return readAgentCapabilityConfig();
   }
+}
+
+function directSkillInput(context: TurnExecutionContext): string | null {
+  const content = context.turn.items
+    .filter((item) => item.type === 'userMessage')
+    .flatMap((item) => item.content);
+  if (content.some((part) => part.type === 'attachment')) return null;
+  const text = content.flatMap((part): string[] => {
+    if (part.type === 'text') return [part.text];
+    if (part.type === 'nodeReference') {
+      return [`[Outliner Node ${part.nodeId}]${part.note ? ` ${part.note}` : ''}`];
+    }
+    return [];
+  }).join('\n').trim();
+  return text || null;
+}
+
+function additionalContextContent(context: TurnExecutionContext): Array<{ type: 'text'; text: string }> {
+  if (!context.additionalContext) return [];
+  return Object.entries(context.additionalContext).map(([key, entry]) => ({
+    type: 'text',
+    text: `[${entry.kind} context: ${key}]\n${entry.value}`,
+  }));
 }
 
 function outlinerWithCausation(

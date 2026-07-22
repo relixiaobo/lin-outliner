@@ -55,6 +55,16 @@ Root Thread creation resolves its selected Profile into one persisted
 `EffectiveThreadConfiguration` snapshot. Later file edits do not rewrite that
 root snapshot or completed Turns.
 
+The renderer may read or atomically replace only the execution selection of a
+root user Thread: `modelProvider`, provider-qualified `model`, and
+`reasoningEffort`. The host validates the provider/model pair and supported
+effort before one SQLite update changes the configuration snapshot and Thread
+catalog metadata. A root Thread with an active Turn rejects the change, so one
+Turn cannot observe two configurations. Tools, Skills, Plugins, MCP servers,
+developer instructions, and capability ceilings remain host-private. Feature
+and child Threads have no renderer-editable configuration. A fork inherits the
+source Thread's effective execution selection.
+
 An `AgentRole` configures a child Thread. Built-in Roles are `default`, `worker`,
 and `explorer`; user and project files may add or deliberately replace Roles.
 Child spawn applies the current parent configuration, the selected Role,

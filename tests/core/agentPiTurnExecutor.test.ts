@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentEvent } from '@earendil-works/pi-agent-core';
-import type { Api, AssistantMessage, Model } from '@earendil-works/pi-ai';
+import type { Api, AssistantMessage, Model, UserMessage } from '@earendil-works/pi-ai';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
 import type { AgentCoreNotification } from '../../src/core/agent/protocol';
 import { ItemRecorder } from '../../src/main/agent/runtime/ItemRecorder';
 import {
   MAX_PERSISTED_TOOL_ARGUMENT_CHARS,
+  MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES,
   MAX_PERSISTED_TOOL_OUTPUT_CHARS,
   MAX_PERSISTED_TOOL_OUTPUT_IMAGES,
   PiEventNormalizer,
@@ -15,6 +16,10 @@ import {
 } from '../../src/main/agent/runtime/PiTurnExecutor';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 import { uuidV7 } from '../../src/main/agent/uuid';
+import {
+  MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS,
+  MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+} from '../../src/main/agent/persistence/ToolPayloadStore';
 
 describe('PiTurnExecutor event normalization', () => {
   test('serializes stream events and records authoritative message and command Items', async () => {
@@ -167,7 +172,7 @@ describe('PiTurnExecutor event normalization', () => {
   });
 
   test('does not create an Agent when Stop arrives during any async initialization stage', async () => {
-    for (const stage of ['runtime', 'tools', 'skills', 'systemPrompt'] as const) {
+    for (const stage of ['runtime', 'tools', 'skills', 'systemPrompt', 'preparePrompt'] as const) {
       const fixture = createContext();
       const controller = new AbortController();
       const entered = deferred<void>();
@@ -195,6 +200,10 @@ describe('PiTurnExecutor event normalization', () => {
           await waitAt('systemPrompt');
           return 'system';
         },
+        preparePrompt: async (_context, prompt) => {
+          await waitAt('preparePrompt');
+          return prompt;
+        },
         createAgent: () => {
           agentCreations += 1;
           throw new Error('Agent must not be created after Stop');
@@ -208,6 +217,47 @@ describe('PiTurnExecutor event normalization', () => {
       await expect(execution).resolves.toEqual({ status: 'interrupted' });
       expect(agentCreations).toBe(0);
     }
+  });
+
+  test('uses a prepared user prompt without changing the canonical Turn input', async () => {
+    const fixture = createContext();
+    const userItemId = uuidV7(1_720_000_000_110);
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      turn: {
+        ...fixture.context.turn,
+        items: [{
+          type: 'userMessage',
+          id: userItemId,
+          provenance: fixture.recorder.localProvenance(userItemId),
+          clientId: null,
+          content: [{ type: 'text', text: 'Hello' }],
+        }],
+      },
+    };
+    let receivedPrompt: UserMessage | null = null;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      preparePrompt: (_context, prompt) => ({
+        ...prompt,
+        content: [{ type: 'text', text: '<skill>prepared</skill>' }],
+      }),
+      createAgent: () => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async (message) => {
+          receivedPrompt = message as UserMessage;
+        },
+      }),
+    });
+
+    await expect(executor.execute(context)).resolves.toEqual({ status: 'completed', tokensUsed: 0 });
+    expect(receivedPrompt?.content).toEqual([{ type: 'text', text: '<skill>prepared</skill>' }]);
+    expect(context.turn.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'userMessage', content: [{ type: 'text', text: 'Hello' }] }),
+    ]));
   });
 
   test('reconstructs canonical tool calls, results, and reasoning for later Turns', () => {
@@ -327,15 +377,36 @@ describe('PiTurnExecutor event normalization', () => {
       result: {
         content: Array.from({ length: MAX_PERSISTED_TOOL_OUTPUT_IMAGES + 5 }, (_, index) => ({
           type: 'image' as const,
-          data: `base64-image-${index}`,
+          data: Buffer.from(`image-${index}`).toString('base64'),
           mimeType: 'image/png',
         })),
       },
       isError: false,
     });
+    const nearLimitImage = 'A'.repeat(Math.floor(MAX_TOOL_PAYLOAD_IMAGE_BYTES / 3) * 4);
+    normalizer.handle({
+      type: 'tool_execution_start',
+      toolCallId: 'call-image-budget-4',
+      toolName: 'inspect_large_images',
+      args: {},
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-image-budget-4',
+      toolName: 'inspect_large_images',
+      result: {
+        content: [
+          { type: 'image', data: 'A'.repeat(MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS + 4), mimeType: 'image/png' },
+          { type: 'image', data: nearLimitImage, mimeType: 'image/png' },
+          { type: 'image', data: nearLimitImage, mimeType: 'image/png' },
+          { type: 'image', data: nearLimitImage, mimeType: 'image/png' },
+        ],
+      },
+      isError: false,
+    });
     await normalizer.flush();
 
-    const [fileRead, command, images] = fixture.recorder.orderedItems();
+    const [fileRead, command, images, budgetedImages] = fixture.recorder.orderedItems();
     expect(fileRead).toMatchObject({
       type: 'dynamicToolCall',
       contentItems: [
@@ -351,9 +422,27 @@ describe('PiTurnExecutor event normalization', () => {
     expect(output.length).toBeLessThanOrEqual(MAX_PERSISTED_TOOL_OUTPUT_CHARS);
     expect(output).toContain('chars omitted');
     expect(images).toMatchObject({ type: 'dynamicToolCall', status: 'completed' });
-    expect((images as Extract<typeof images, { type: 'dynamicToolCall' }>).contentItems)
+    const imageContent = (images as Extract<typeof images, { type: 'dynamicToolCall' }>).contentItems!;
+    expect(imageContent.filter((content) => content.type === 'image'))
       .toHaveLength(MAX_PERSISTED_TOOL_OUTPUT_IMAGES);
-    expect(JSON.stringify(images)).not.toContain('base64-image-');
+    expect(imageContent.at(-1)).toMatchObject({
+      type: 'json',
+      value: { imagesOmitted: 5, reasons: { countLimit: 5 } },
+    });
+    const budgetedContent = (budgetedImages as Extract<typeof budgetedImages, { type: 'dynamicToolCall' }>).contentItems!;
+    expect(budgetedContent.filter((content) => content.type === 'image')).toHaveLength(2);
+    expect(budgetedContent.at(-1)).toMatchObject({
+      type: 'json',
+      value: {
+        imagesOmitted: 2,
+        reasons: { imageByteLimit: 1, callByteLimit: 1 },
+        limits: {
+          maxImageBytes: MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+          maxCallBytes: MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES,
+        },
+      },
+    });
+    expect(JSON.stringify([images, budgetedImages])).not.toContain(nearLimitImage.slice(0, 100));
   });
 });
 

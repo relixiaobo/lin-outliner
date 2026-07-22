@@ -85,6 +85,100 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('updates root Thread model configuration atomically and preserves it through forks', async () => {
+    const validated: string[] = [];
+    const fixture = await createFixture(undefined, {
+      resolveConfiguration: () => ({
+        profileName: 'default',
+        developerInstructions: [],
+        model: 'inherit',
+        reasoningEffort: 'medium',
+        tools: ['node_read'],
+        skills: [],
+        plugins: [],
+        mcpServers: [],
+      }),
+      validateRendererConfiguration: (configuration) => {
+        validated.push(`${configuration.modelProvider}:${configuration.model}:${configuration.reasoningEffort}`);
+      },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    const updated = await fixture.service.request('thread/configuration/set', {
+      threadId: root.id,
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    });
+    expect(updated.thread.modelProvider).toBe('anthropic');
+    expect(updated.configuration).toEqual({
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    });
+    expect(fixture.stores.metadata.require(root.id)).toMatchObject({
+      thread: { modelProvider: 'anthropic' },
+      configuration: { model: 'anthropic/claude-sonnet-4', reasoningEffort: 'high', tools: ['node_read'] },
+    });
+    expect(validated).toEqual(['anthropic:anthropic/claude-sonnet-4:high']);
+
+    const turn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Use the selected model' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    expect(fixture.executor.contexts[0]?.configuration).toMatchObject({
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    });
+    await expect(fixture.service.request('thread/configuration/set', {
+      threadId: root.id,
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-opus-4',
+      reasoningEffort: 'high',
+    })).rejects.toThrow('active Turn');
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(root.id);
+
+    const fork = await fixture.service.forkThread({
+      threadId: root.id,
+      boundary: { kind: 'afterTurn', turnId: turn.turn.id },
+    });
+    expect(fixture.service.getThreadConfiguration(fork.thread.id)).toMatchObject({
+      thread: { modelProvider: 'anthropic' },
+      configuration: {
+        modelProvider: 'anthropic',
+        model: 'anthropic/claude-sonnet-4',
+        reasoningEffort: 'high',
+      },
+    });
+    await fixture.service.close();
+  });
+
+  test('keeps feature and child Thread configuration host-owned', async () => {
+    const fixture = await createFixture();
+    const featureThread = (await fixture.service.startThread({
+      source: 'memory-host',
+      threadSource: 'memory_consolidation',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    expect(() => fixture.service.getThreadConfiguration(featureThread.id)).toThrow('root user Threads');
+    await expect(fixture.service.setThreadConfiguration({
+      threadId: featureThread.id,
+      modelProvider: 'openai',
+      model: 'inherit',
+      reasoningEffort: 'medium',
+    })).rejects.toThrow('root user Threads');
+    await fixture.service.close();
+  });
+
   test('normalizes attachment content before start and steer Items become authoritative', async () => {
     const resolvedPaths: string[] = [];
     const fixture = await createFixture(undefined, {
@@ -1340,7 +1434,11 @@ async function createFixture(
   extensions?: ExtensionRegistry,
   options: Pick<
     ConstructorParameters<typeof ThreadService>[0],
-    'resolveConfiguration' | 'resolveRole' | 'resolveUserContent'
+    | 'resolveConfiguration'
+    | 'resolveRendererStartDefaults'
+    | 'resolveRole'
+    | 'resolveUserContent'
+    | 'validateRendererConfiguration'
   > = {},
 ): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
@@ -1360,7 +1458,11 @@ async function openFixture(
   extensions?: ExtensionRegistry,
   options: Pick<
     ConstructorParameters<typeof ThreadService>[0],
-    'resolveConfiguration' | 'resolveRendererStartDefaults' | 'resolveRole' | 'resolveUserContent'
+    | 'resolveConfiguration'
+    | 'resolveRendererStartDefaults'
+    | 'resolveRole'
+    | 'resolveUserContent'
+    | 'validateRendererConfiguration'
   > = {},
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
   const stores = createStores(root);

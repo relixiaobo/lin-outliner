@@ -118,6 +118,7 @@ import {
   deleteProviderApiKey,
   deleteProviderConfig,
   getActiveProviderRuntimeConfig,
+  getProviderRuntimeConfig,
   getAgentRuntimeSettings,
   getProviderSecretStatus,
   getStoredProviderApiKey,
@@ -131,6 +132,7 @@ import {
   upsertProviderConfig,
   testProviderConnection,
 } from './agent/capabilities/agentSettings';
+import { validateAgentModelSelection } from './agent/capabilities/agentModelResolution';
 import {
   applyAgentCapabilitySettingsPatchView,
   appendAgentCapabilityBlockView,
@@ -447,6 +449,7 @@ const threadService = ThreadService.open(
   resolvedUserDataDir,
   new PiTurnExecutor({
     createTools: (context) => toolRuntime.createTools(context),
+    preparePrompt: (context, prompt) => toolRuntime.prepareUserPrompt(context, prompt),
     skillListing: (context) => toolRuntime.skillListing(context),
   }),
   {
@@ -459,6 +462,11 @@ const threadService = ThreadService.open(
       const provider = await getActiveProviderRuntimeConfig();
       if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
       return { modelProvider: provider.providerId, cwd: agentLocalFileRoot };
+    },
+    validateRendererConfiguration: async (selection) => {
+      const provider = await getProviderRuntimeConfig(selection.modelProvider);
+      if (!provider) throw new Error(`Provider is not configured: ${selection.modelProvider}`);
+      validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
     },
     resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
   },
@@ -2899,7 +2907,9 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
         apiKey: args.apiKey ? String(args.apiKey) : undefined,
       });
     case 'agent_list_all_skills':
-      return skillRuntime.listAllSkills();
+      return args.userInvocableOnly === true
+        ? skillRuntime.listUserInvocableSkills()
+        : skillRuntime.listAllSkills();
     case 'agent_accept_skill': {
       await skillRuntime.acceptSkill(String(args.skillName), String(args.expectedHash ?? ''));
       return skillRuntime.listAllSkills();

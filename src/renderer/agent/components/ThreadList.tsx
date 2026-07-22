@@ -1,31 +1,85 @@
+import { useEffect, useRef, type CSSProperties, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import type { Thread, ThreadId } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
-import { CloseIcon, ICON_SIZE, PencilIcon, TrashIcon } from '../../ui/icons';
+import { AddIcon, ICON_SIZE, PencilIcon, TrashIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
+import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
+import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 
 interface ThreadListProps {
+  readonly anchorRef: RefObject<HTMLElement | null>;
   readonly threads: readonly Thread[];
   readonly selectedThreadId: ThreadId | null;
+  readonly createDisabled: boolean;
+  readonly createTitle: string;
   readonly onClose: () => void;
+  readonly onCreate: () => void;
   readonly onDelete: (thread: Thread) => void;
   readonly onRename: (thread: Thread) => void;
   readonly onSelect: (threadId: ThreadId) => void;
 }
 
 export function ThreadList({
+  anchorRef,
+  createDisabled,
+  createTitle,
   threads,
   selectedThreadId,
   onClose,
+  onCreate,
   onDelete,
   onRename,
   onSelect,
 }: ThreadListProps) {
   const t = useT();
-  return (
-    <section className="thread-list" aria-label={t.agent.thread.title}>
+  const listRef = useRef<HTMLElement>(null);
+  const style = useAnchoredOverlay(listRef, {
+    anchorRef,
+    layoutKey: `${threads.length}:${selectedThreadId ?? ''}`,
+    maxHeight: 420,
+    placement: 'bottom-start',
+    width: 326,
+  });
+  const { onKeyDown } = useMenuKeyboard({
+    active: true,
+    getRestoreTarget: () => anchorRef.current,
+    initialFocus: 'surface',
+    kind: 'dialog',
+    onClose,
+    surfaceRef: listRef,
+  });
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (listRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+      onClose();
+    };
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => document.removeEventListener('pointerdown', handlePointerDown, true);
+  }, [anchorRef, onClose]);
+
+  return createPortal(
+    <section
+      className="thread-list"
+      aria-label={t.agent.thread.title}
+      onKeyDown={onKeyDown}
+      ref={listRef}
+      role="dialog"
+      style={style as CSSProperties}
+    >
       <header>
         <h2>{t.agent.thread.title}</h2>
-        <IconButton icon={CloseIcon} label={t.agent.thread.closeList} onClick={onClose} variant="panel" />
+        <IconButton
+          disabled={createDisabled}
+          icon={AddIcon}
+          label={t.agent.thread.new}
+          onClick={onCreate}
+          title={createTitle}
+          variant="message"
+        />
       </header>
       <div className="thread-list-scroll">
         {threads.length === 0 ? <p className="thread-empty-copy">{t.agent.thread.noThreads}</p> : null}
@@ -45,29 +99,28 @@ export function ThreadList({
                   {formatRelativeTime(thread.updatedAt)}
                 </small>
               </button>
-              {selected ? (
-                <span className="thread-list-actions">
-                  <IconButton
-                    icon={PencilIcon}
-                    iconSize={ICON_SIZE.tiny}
-                    label={t.agent.thread.rename}
-                    onClick={() => onRename(thread)}
-                    variant="message"
-                  />
-                  <IconButton
-                    icon={TrashIcon}
-                    iconSize={ICON_SIZE.tiny}
-                    label={t.agent.thread.delete}
-                    onClick={() => onDelete(thread)}
-                    variant="message"
-                  />
-                </span>
-              ) : null}
+              <span className="thread-list-actions">
+                <IconButton
+                  icon={PencilIcon}
+                  iconSize={ICON_SIZE.tiny}
+                  label={t.agent.thread.rename}
+                  onClick={() => onRename(thread)}
+                  variant="message"
+                />
+                <IconButton
+                  icon={TrashIcon}
+                  iconSize={ICON_SIZE.tiny}
+                  label={t.agent.thread.delete}
+                  onClick={() => onDelete(thread)}
+                  variant="message"
+                />
+              </span>
             </div>
           );
         })}
       </div>
-    </section>
+    </section>,
+    document.body,
   );
 }
 

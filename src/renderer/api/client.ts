@@ -374,6 +374,8 @@ export const api = {
     command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
   agentListAllSkills: () =>
     command<SkillDefinition[]>('agent_list_all_skills'),
+  agentListUserInvocableSkills: () =>
+    command<SkillDefinition[]>('agent_list_all_skills', { userInvocableOnly: true }),
   agentAcceptSkill: (skillName: string, expectedHash: string) =>
     command<SkillDefinition[]>('agent_accept_skill', { skillName, expectedHash }),
   agentRevokeSkillAcceptance: (skillName: string) =>

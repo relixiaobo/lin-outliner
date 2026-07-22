@@ -73,6 +73,7 @@ const stateLayoutDeclarationAllowlist = new Map([
 const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/agent-dock.css|:root[data-window-material] .agent-dock', 'Agent rail chrome material.'],
   ['src/renderer/styles/thread.css|.thread-header-menu', 'Thread action menu.'],
+  ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
   ['src/renderer/styles/code.css|.agent-code-header > span', 'Floating code-block language label chrome.'],
   ['src/renderer/styles/code.css|.agent-code-copy, .code-block-copy', 'Floating code-block copy chrome.'],
   ['src/renderer/styles/code.css|.code-block-language', 'Floating code-block language trigger.'],
@@ -96,6 +97,7 @@ const materialSurfaceSelectors = new Map([
 ]);
 const borderlessOverlaySurfaceSelectors = new Map([
   ['src/renderer/styles/thread.css|.thread-header-menu', 'Thread action menu.'],
+  ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
   ['src/renderer/styles/code.css|.code-block-language-menu', 'Code-block language menu.'],
   ['src/renderer/styles/confirm-dialog.css|.confirm-dialog', 'Confirm dialog level-2 surface.'],
   ['src/renderer/styles/file-preview.css|.document-outline-popover', 'Document outline popover.'],

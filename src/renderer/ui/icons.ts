@@ -30,6 +30,7 @@ export {
   ChevronRight as ChevronRightIcon,
   Clock3 as RecentsIcon,
   Clock as ClockIcon,
+  CircleHelp as QuestionToolIcon,
   Play as PlayIcon,
   Code2 as CodeIcon,
   Command as CommandIcon,

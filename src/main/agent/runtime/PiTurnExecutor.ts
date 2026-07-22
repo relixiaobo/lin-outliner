@@ -27,6 +27,10 @@ import { resolveAgentModelEffort, resolveProviderModel } from '../capabilities/a
 import { getProviderRuntimeConfig } from '../capabilities/agentSettings';
 import { persistedToolResultDetails } from '../capabilities/agentToolResultPersistence';
 import {
+  MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+  measureToolPayloadImage,
+} from '../persistence/ToolPayloadStore';
+import {
   piExternalProviderId,
   piResolveAuthApiKey,
   piStreamSimple,
@@ -36,6 +40,7 @@ import type { TurnExecutionContext, TurnExecutionResult, TurnExecutor } from './
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_IMAGES = 16;
+export const MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_PERSISTED_TOOL_STRING_CHARS = 8_000;
 const MAX_PERSISTED_WEB_RESULTS = 50;
 
@@ -45,6 +50,7 @@ export type ModelRuntimeToolFactory = (
 
 export interface PiTurnExecutorOptions {
   readonly createTools?: ModelRuntimeToolFactory;
+  readonly preparePrompt?: (context: TurnExecutionContext, prompt: UserMessage) => UserMessage | Promise<UserMessage>;
   readonly systemPrompt?: (context: TurnExecutionContext) => string | Promise<string>;
   readonly skillListing?: (context: TurnExecutionContext) => string | null | Promise<string | null>;
   readonly resolveRuntime?: (context: TurnExecutionContext) => Promise<PiRuntimeSelection>;
@@ -83,6 +89,9 @@ export class PiTurnExecutor implements TurnExecutor {
       if (context.signal.aborted) return { status: 'interrupted' };
       const systemPrompt = await this.options.systemPrompt?.(context) ?? defaultSystemPrompt(context, skillListing);
       if (context.signal.aborted) return { status: 'interrupted' };
+      const initialPrompt = currentPrompt(context);
+      const prompt = await this.options.preparePrompt?.(context, initialPrompt) ?? initialPrompt;
+      if (context.signal.aborted) return { status: 'interrupted' };
       const normalizer = new PiEventNormalizer(context);
       agent = (this.options.createAgent ?? ((options) => new Agent(options)))({
         initialState: {
@@ -104,7 +113,7 @@ export class PiTurnExecutor implements TurnExecutor {
       }
       unsubscribe = agent.subscribe((event) => normalizer.handle(event));
       context.onSteer((input) => agent?.steer(modelUserMessage(input.content)));
-      await agent.prompt(currentPrompt(context));
+      await agent.prompt(prompt);
       await normalizer.flush();
       if (context.signal.aborted || normalizer.stopReason === 'aborted') {
         return { status: 'interrupted', tokensUsed: normalizer.tokensUsed };
@@ -800,6 +809,13 @@ async function dynamicOutput(
   let remainingText = MAX_PERSISTED_TOOL_OUTPUT_CHARS;
   let imageIndex = 0;
   let persistedImages = 0;
+  let persistedImageBytes = 0;
+  const omittedImages: Record<ImageOmissionReason, number> = {
+    countLimit: 0,
+    invalidBase64: 0,
+    imageByteLimit: 0,
+    callByteLimit: 0,
+  };
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
     if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
@@ -810,21 +826,47 @@ async function dynamicOutput(
     if (part.type === 'image' && typeof part.data === 'string') {
       const sourceImageIndex = imageIndex;
       imageIndex += 1;
-      if (persistedImages >= MAX_PERSISTED_TOOL_OUTPUT_IMAGES) continue;
+      if (persistedImages >= MAX_PERSISTED_TOOL_OUTPUT_IMAGES) {
+        omittedImages.countLimit += 1;
+        continue;
+      }
       const mimeType = typeof part.mimeType === 'string' ? part.mimeType : 'image/png';
       const existingPath = toolImagePath(item.tool, result, sourceImageIndex);
-      const imageRef = existingPath ?? await context.persistOutputImage(
-        item.id,
-        sourceImageIndex,
-        part.data,
-        mimeType,
-      );
+      let imageRef = existingPath;
+      if (!imageRef) {
+        const measurement = measureToolPayloadImage(part.data);
+        if (!measurement.ok) {
+          omittedImages[measurement.reason] += 1;
+          continue;
+        }
+        if (persistedImageBytes + measurement.byteLength > MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES) {
+          omittedImages.callByteLimit += 1;
+          continue;
+        }
+        imageRef = await context.persistOutputImage(item.id, sourceImageIndex, part.data, mimeType);
+        persistedImageBytes += measurement.byteLength;
+      }
       content.push({
         type: 'image',
         imageRef,
       });
       persistedImages += 1;
     }
+  }
+  const omittedImageCount = Object.values(omittedImages).reduce((total, count) => total + count, 0);
+  if (omittedImageCount > 0) {
+    content.push({
+      type: 'json',
+      value: {
+        imagesOmitted: omittedImageCount,
+        reasons: Object.fromEntries(Object.entries(omittedImages).filter(([, count]) => count > 0)),
+        limits: {
+          maxImages: MAX_PERSISTED_TOOL_OUTPUT_IMAGES,
+          maxImageBytes: MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+          maxCallBytes: MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES,
+        },
+      },
+    });
   }
   const persistedDetails = persistedToolResultDetails({ toolName: item.tool, details: result.details });
   if (persistedDetails !== undefined) {
@@ -834,6 +876,8 @@ async function dynamicOutput(
   }
   return content;
 }
+
+type ImageOmissionReason = 'countLimit' | 'invalidBase64' | 'imageByteLimit' | 'callByteLimit';
 
 function toolImagePath(toolName: string, result: Record<string, unknown>, imageIndex: number): string | null {
   const details = toolDetails(result);

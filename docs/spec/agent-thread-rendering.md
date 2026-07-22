@@ -15,9 +15,9 @@ Child Threads are visibly nested under their parent. Forks remain top-level user
 Threads and expose their source lineage in details rather than masquerading as
 children.
 
-The selected Thread ID is renderer state. Thread catalog, loaded pages, active
-input requests, and Goals live in `threadStore`; components do not maintain
-parallel copies.
+The selected Thread ID is renderer state. Thread catalog, loaded pages, root
+Thread execution selections, active input requests, and Goals live in
+`threadStore`; components do not maintain parallel copies.
 
 ## Item Rendering
 
@@ -26,15 +26,41 @@ parallel copies.
 - user and agent messages render readable text at the same content register as
   the outliner
 - plans render their current step list without becoming a separate work object
-- reasoning is visually quieter and remains distinct from final output
-- command, file, MCP, dynamic-tool, search, and image Items expose the fields on
-  their DTOs
-- collaboration Items link child activity to its child Thread
+- reasoning uses the established `Thinking` / `Thought` disclosure with a
+  one-line gist while collapsed; only the actual tail Item streams
+- consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
+  form one counted activity disclosure without creating another data model
+- each tool row derives a readable summary from its canonical fields and exposes
+  status, arguments, output, copy actions, syntax-highlighted code, and image
+  previews where the Item carries them
+- an ordinary loaded Skill remains the established compact `/skill args` row;
+  isolated Skill execution remains an expandable tool row, and loaded Skills do
+  not disappear inside a counted tool group
+- collaboration Items and Subagent activity link directly to their canonical
+  child Thread
 - compaction renders as a history boundary
+
+A completed Turn with a final answer and known duration folds its process Items
+under the established `Worked for ...` disclosure while leaving the answer
+outside the fold. Live and resultless process timelines remain visible; a live
+timeline uses the established `Working` / `Working for ...` status row. The
+process disclosure contains the independent reasoning, activity-group, and tool
+detail disclosures rather than replacing them.
 
 Unknown Item kinds are protocol errors, not generic fallback cards. Item status
 comes from the Item itself; the renderer never infers completion from missing
 events.
+
+Agent Markdown reuses the shared read-only code surface and dual-theme Shiki
+highlighter. Stable completed blocks are memoized; only the final streaming
+block is repaired and rendered live, with text commits throttled so token deltas
+do not rerender the complete response. Node and local-file reference markers
+render through the same inline reference and preview surfaces as the outliner;
+Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use the app preview
+route. User and final agent messages retain the established hover actions for
+copy, edit, retry, and regenerate. User messages that exceed five reading lines
+retain the established measured Show more / Show less disclosure instead of
+growing the transcript without bound.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn ID.
 Details and diagnostics must show the same Thread, Turn, and Item identities as
@@ -47,23 +73,92 @@ current provider and working directory at the main-process boundary.
 
 For an idle Thread, submit starts a Turn. For an active Thread, submit steers the
 exact active Turn. Stop interrupts that Turn. Buttons remain dimensionally stable
-while their icon and label state changes.
+while their icon and label state changes. The primary composer action is one
+state machine: an active Turn with no draft shows Stop; adding a draft replaces
+Stop with Steer; an idle Thread shows Send. Stop and Send are never presented as
+competing primary actions.
+
+The composer reads the selected root Thread's canonical execution selection and
+the provider catalog. Its established model/reasoning chip, anchored menu,
+flyout submenus, hover behavior, keyboard navigation, focus restoration, and
+viewport clamping are retained. A selection submits one atomic
+`thread/configuration/set` request. The chip is disabled during an active Turn,
+while a request is pending, and for non-root Threads; it never edits another
+agent entity or exposes host-private capability configuration.
+
+Reopening the Agent rail restores focus to the composer of an editable Thread.
+An active `request_user_input` keeps focus in its current step instead; opening
+the rail never steals focus from that blocking form.
+
+Typing `/` opens the established composer command menu. It is populated from
+the current user-invocable Skill catalog and inserts `/<skill> ` without
+flattening other structured composer content. A direct Skill invocation without
+attachments is resolved by the Turn's Skill runtime before the model prompt is
+sent; the canonical userMessage Item retains exactly what the user submitted.
+Messages with attachments and unknown slash text remain ordinary Turn input.
+
+Only a root user Thread exposes the composer. Child, Automation, Memory, and
+other feature Threads remain fully inspectable but are driven through their
+own canonical admission path instead of accepting renderer-authored Turns. A
+user can fork terminal history into a root user Thread before continuing it.
+
+Provider settings distinguish initial loading from a completed unavailable or
+failed read. Loading is neutral; once loaded, the selected Thread provider must
+be enabled and credentialed before Send or attachments are available. Thread
+creation requires any usable active provider. The unavailable empty state opens
+the Providers settings category, and settings-change broadcasts refresh the dock
+without discarding an existing draft.
 
 The composer submits `ThreadUserContent[]` directly. Text, attachments, and
-Outliner Node references remain distinct structured parts. Sending a Node from
-its context menu adds a removable Node-reference part to the composer; it never
-inserts reference markup into text. Edit replaces only the message text, while
-retry and regenerate replay the complete original structured input. An
-attachment-only or Node-reference-only Turn is therefore sendable and retryable.
+Outliner Node references remain distinct structured parts in the same order the
+user placed them in the ProseMirror document. Sending a Node from its context
+menu adds a removable Node-reference part to the composer; it never inserts
+reference markup into text. Edit replaces only the message text, while retry and
+regenerate replay the complete original structured input. An attachment-only or
+Node-reference-only Turn is therefore sendable and retryable.
 
-`request_user_input` renders an in-dock blocking form tied to one Item. It is a
-product-input surface, never a permission prompt. A response includes the exact
-Thread, Turn, and Item IDs and is rejected if the request is no longer active.
+Attachment interaction retains the established source-identity rules. Local
+paths deduplicate by path; pathless files deduplicate by a renderer-only content
+hash, so same-named files from different sources remain distinct. Duplicate and
+attachment-limit skips produce transient feedback. Supported images selected by
+the native picker remain inline model-vision input while their composer reference
+keeps the local path for preview; renderer-only source keys, icons, thumbnails,
+and hashes never enter `ThreadAttachmentContent`.
+
+`request_user_input` replaces the editor inside the existing composer surface
+with an in-dock form tied to one Item. It is a product-input surface, never a
+permission prompt or a modal over the transcript. Multiple questions use the
+established one-at-a-time flow with progress, Back/Next navigation, retained
+answers, and focus moved into each newly shown step. The form adapts only the
+canonical option-or-Other contract. Removed question outcomes and rich-answer
+fields are not part of this contract. A response includes the exact Thread, Turn, and Item IDs
+and is rejected if the request is no longer active.
 
 Rename uses the shared `Dialog`; delete uses `ConfirmDialog`. Browser-native
 prompt and confirm APIs are not used. Fork creates and selects the new Thread
 without mutating the source. Deleting the selected Thread chooses the next
-catalog Thread and loads both its Turns and Goal before presenting it.
+catalog Thread and loads its Turns, Goal, and editable execution selection before
+presenting it.
+
+The Thread list is an anchored popover. It clamps to the viewport, closes on an
+outside pointer or Escape, traps focus while open, restores focus to its trigger,
+and exposes row actions on hover or keyboard focus without moving row geometry.
+The Thread action menu uses the same anchored-overlay contract with native menu
+arrow-key navigation; it is not a CSS-only `focus-within` disclosure.
+
+The transcript follows streaming output only while the reader remains near its
+bottom edge. Scrolling upward or opening a reasoning, tool, plan, or long-message
+disclosure releases that lock, so later Item updates never pull the reader away
+from earlier evidence. A new explicit send restores bottom following.
+
+Process, reasoning, plan, tool-group, and tool-detail disclosures keep per-Thread UI
+overrides in versioned local storage. Their keys use canonical Item identities;
+switching Threads, streaming-to-terminal remounts, and application reloads do not
+discard an explicit user choice. A live reasoning Item is open while streaming.
+A terminal reasoning Item rests folded unless it is the only process Item in a
+Turn without a final agent response, in which case it opens by default. Expanding
+or collapsing a disclosure preserves the clicked row's scroll position while
+releasing transcript bottom-follow.
 
 ## Pagination And Notifications
 
@@ -77,7 +172,15 @@ Each history load carries a per-Thread generation and observes the Thread's live
 notification revision. A superseded request is discarded. If a notification
 lands during an older request, the response is merged monotonically: a terminal
 Turn cannot return to `inProgress`, completed Items cannot be replaced by older
-Items, and live-only Turns remain present.
+Items, a terminal execution Item from either source wins over `inProgress`, and
+live-only Turns remain present. History notifications update only a Thread whose
+history is loading or already loaded; other Threads wait for a canonical page
+read instead of manufacturing partial history.
+
+Turns, Goal, and root Thread execution selection load in parallel. Configuration
+reads and writes carry a separate per-Thread revision: an older read or slower
+write response cannot overwrite a later user selection or roll catalog
+`modelProvider` metadata backward.
 
 Notifications are decoded before entering renderer state. A notification for an
 unloaded Thread updates catalog metadata without manufacturing partial history.
@@ -90,6 +193,9 @@ The Agent dock follows the shared design system:
 - content text uses the outliner reading size and line height
 - chrome uses tokenized neutral states and icon controls
 - dialogs and menus use shared overlay primitives
+- the pre-refactor transcript, composer, disclosure, attachment, and message
+  action geometry remains the visual baseline even though canonical DTOs now
+  drive it directly
 - focus remains visible, motion respects user preference, and hover never moves
   layout
 - the header reserves the global rail-toggle zone so Thread actions do not
