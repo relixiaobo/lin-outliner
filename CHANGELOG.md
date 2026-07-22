@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Codex Agent Core interfaces (PR #428, codex-3)** — defined the canonical
+  Thread / Turn / ThreadItem protocol and codecs, Goal and extension contracts,
+  parent-bounded child configuration, collision-free provider tool identities,
+  and host-only document receipts and protected system-tag definitions. This is
+  the ordered interface unit; the complete runtime, persistence, transport,
+  renderer, and old-model replacement remains next. **Gate (main):** the first
+  review found four contract gaps covering protected-tag command classification,
+  child capability ceilings, flat provider-name ambiguity, and executable Item
+  lifecycle consistency; all four were fixed before merge. Verified with
+  typecheck, the full Core suite (1719 pass), docs check, and diff check.
 - **Codex agent restructure plans (PR #423, codex)** — ratified three plan-only
   designs for a canonical Thread / Turn / ThreadItem core, Memory published as
   editable daily-timeline Nodes, and host-owned Automations. Core remains ordered
