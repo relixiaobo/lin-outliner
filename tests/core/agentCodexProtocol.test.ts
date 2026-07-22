@@ -387,7 +387,7 @@ describe('Codex Agent Core protocol codec', () => {
     const requests: Record<string, unknown> = {
       'thread/list': {},
       'thread/read': { threadId: THREAD_ID, includeTurns: true },
-      'thread/start': { modelProvider: 'openai', cwd: '/tmp/project' },
+      'thread/start': {},
       'thread/resume': { threadId: THREAD_ID },
       'thread/fork': { threadId: THREAD_ID, boundary: { kind: 'beforeTurn', turnId: TURN_ID } },
       'thread/name/set': { threadId: THREAD_ID, name: 'Renamed' },

@@ -757,8 +757,10 @@ function decodeRendererThreadStartRequest(value: unknown): AgentCoreRequestByMet
       : { ephemeral: booleanValue(record.ephemeral, 'thread/start.ephemeral') }),
     ...(record.source === undefined ? {} : { source: 'app' as const }),
     ...(record.threadSource === undefined ? {} : { threadSource: 'user' as const }),
-    modelProvider: stringValue(record.modelProvider, 'thread/start.modelProvider'),
-    cwd: stringValue(record.cwd, 'thread/start.cwd'),
+    ...(record.modelProvider === undefined
+      ? {}
+      : { modelProvider: stringValue(record.modelProvider, 'thread/start.modelProvider') }),
+    ...(record.cwd === undefined ? {} : { cwd: stringValue(record.cwd, 'thread/start.cwd') }),
     ...(record.configurationProfile === undefined
       ? {}
       : { configurationProfile: stringValue(record.configurationProfile, 'thread/start.configurationProfile') }),

@@ -387,9 +387,14 @@ export interface ThreadStartRequest {
   readonly configurationProfile?: string;
 }
 
-export interface RendererThreadStartRequest extends Omit<ThreadStartRequest, 'source' | 'threadSource'> {
+export interface RendererThreadStartRequest extends Omit<
+  ThreadStartRequest,
+  'source' | 'threadSource' | 'modelProvider' | 'cwd'
+> {
   readonly source?: 'app';
   readonly threadSource?: 'user';
+  readonly modelProvider?: string;
+  readonly cwd?: string;
 }
 
 export interface ThreadStartResponse {
