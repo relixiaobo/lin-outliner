@@ -12,6 +12,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Codex Agent Core renderer admission defaults (PR #430, codex-3)** — split
+  the renderer-facing `thread/start` request from the fully resolved privileged
+  request so the host can supply the configured model provider and working
+  directory. This interface-only addendum unblocks the complete Agent Core
+  replacement without weakening privileged admission. **Gate (main):** review
+  found no reportable issues. Verified with typecheck, 12 focused protocol
+  tests, docs check, and diff check.
 - **Codex Agent Core interfaces (PR #428, codex-3)** — defined the canonical
   Thread / Turn / ThreadItem protocol and codecs, Goal and extension contracts,
   parent-bounded child configuration, collision-free provider tool identities,
