@@ -88,6 +88,42 @@ describe('renderer Thread store', () => {
     });
   });
 
+  test('edits the final user input with rollback and a replacement Turn in the same Thread', async () => {
+    const owner = thread('thread-1', 1);
+    const original = turn('turn-original', 'completed', 'old response');
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
+        calls.push({ method, input });
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [original], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/rollback') return { thread: { ...owner, updatedAt: 2 } };
+        if (method === 'turn/start') {
+          return { turn: original, acceptedItemId: 'replacement-item', deduplicated: false };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+
+    await store.rollbackAndSend(owner.id, [{ type: 'text', text: '  revised input  ' }]);
+
+    expect(calls.filter((call) => call.method === 'thread/rollback')).toEqual([{
+      method: 'thread/rollback',
+      input: { threadId: owner.id, numTurns: 1 },
+    }]);
+    expect(calls.filter((call) => call.method === 'turn/start')[0]?.input).toMatchObject({
+      threadId: owner.id,
+      input: [{ type: 'text', text: 'revised input' }],
+    });
+    expect(store.getSnapshot().selectedThreadId).toBe(owner.id);
+    expect(store.getSnapshot().turnsByThread.get(owner.id)).toEqual([]);
+  });
+
   test('does not manufacture partial history from notifications for an unloaded Thread', async () => {
     const selected = thread('thread-1', 2);
     const unloaded = thread('thread-2', 1);

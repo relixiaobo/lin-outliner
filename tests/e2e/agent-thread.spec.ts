@@ -55,7 +55,6 @@ test.describe('canonical agent Thread surface', () => {
     expect(await responseActions.getByRole('button').evaluateAll((buttons) => (
       buttons.map((button) => button.getAttribute('aria-label'))
     ))).toEqual([
-      'Regenerate response',
       'Copy message',
       'Continue in new chat',
       'Details',
@@ -344,8 +343,12 @@ test.describe('canonical agent Thread surface', () => {
     await savedEditor.press('Control+Enter');
 
     await expect(page.locator('.thread-user-message').last()).toContainText('Revised request');
-    const fork = (await commandCalls(page)).filter((call) => call.cmd === 'thread/fork').at(-1);
-    expect(fork?.args.boundary).toMatchObject({ kind: 'beforeTurn' });
+    const calls = await commandCalls(page);
+    expect(calls.filter((call) => call.cmd === 'thread/rollback').at(-1)?.args).toEqual({
+      threadId: expect.any(String),
+      numTurns: 1,
+    });
+    expect(calls.filter((call) => call.cmd === 'thread/fork')).toHaveLength(0);
   });
 
   test('offers Edit only on the latest user message', async ({ page }) => {
@@ -1549,8 +1552,8 @@ test('opens provider settings instead of creating a Thread when no provider is u
   expect(calls.some((call) => call.cmd === 'thread/start')).toBe(false);
 });
 
-test.describe('structured Thread retries', () => {
-  test('retries an attachment-only failed Turn with the original attachment', async ({ page }) => {
+test.describe('terminal Thread history actions', () => {
+  test('revises an attachment-only failed Turn through same-Thread Edit', async ({ page }) => {
     await openMockedApp(page, {
       agentTurnFailure: 'OpenRouter API error (404): {"error":{"message":"No endpoints found for gpt-5.4"},"request_id":"private"}',
     });
@@ -1571,7 +1574,6 @@ test.describe('structured Thread retries', () => {
     expect(await actions.getByRole('button').evaluateAll((buttons) => (
       buttons.map((button) => button.getAttribute('aria-label'))
     ))).toEqual([
-      'Retry response',
       'Copy message',
       'Continue in new chat',
       'Details',
@@ -1583,17 +1585,25 @@ test.describe('structured Thread retries', () => {
     await actions.getByRole('button', { name: 'Copy message' }).click();
     expect(await clipboardText(page)).toBe('HTTP 404 - No endpoints found for gpt-5.4');
 
-    await actions.getByRole('button', { name: 'Retry response' }).click();
+    const userMessage = page.locator('.thread-user-message').last();
+    await userMessage.hover();
+    await userMessage.getByRole('button', { name: 'Edit message' }).click();
+    const editor = userMessage.getByRole('textbox', { name: 'Edit message' });
+    await editor.fill('Try the attachment again');
+    await editor.press('Control+Enter');
 
-    const starts = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start');
+    const calls = await commandCalls(page);
+    const starts = calls.filter((call) => call.cmd === 'turn/start');
     expect(starts).toHaveLength(2);
-    expect(starts[1]?.args.input).toEqual(starts[0]?.args.input);
     expect(starts[1]?.args.input).toEqual([
+      { type: 'text', text: 'Try the attachment again' },
       expect.objectContaining({ type: 'attachment', name: 'diagram.png', mimeType: 'image/png' }),
     ]);
+    expect(calls.filter((call) => call.cmd === 'thread/rollback')).toHaveLength(1);
+    expect(calls.filter((call) => call.cmd === 'thread/fork')).toHaveLength(0);
   });
 
-  test('keeps an interrupted partial response and replaces Regenerate with Retry', async ({ page }) => {
+  test('keeps an interrupted partial response without Retry or Regenerate', async ({ page }) => {
     await openMockedApp(page);
     await createNewThread(page);
     await page.evaluate(async () => {
@@ -1645,7 +1655,8 @@ test.describe('structured Thread retries', () => {
     await expect(response).toContainText('This partial answer remains visible.');
     await expect(response.locator('.thread-response-stopped')).toHaveText('Turn interrupted');
     await response.hover();
-    await expect(response.getByRole('button', { name: 'Retry response' })).toBeVisible();
+    await expect(response.getByRole('button', { name: 'Retry response' })).toHaveCount(0);
     await expect(response.getByRole('button', { name: 'Regenerate response' })).toHaveCount(0);
+    await expect(response.getByRole('button', { name: 'Continue in new chat' })).toBeVisible();
   });
 });

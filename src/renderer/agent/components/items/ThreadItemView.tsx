@@ -321,7 +321,7 @@ function UserMessageItem({
           </UserMessageCollapsibleContent>
           {showMessageActions ? (
             <div className="thread-message-actions">
-              {originalText && canEditUserMessage ? (
+              {canEditUserMessage ? (
                 <IconButton
                   icon={PencilIcon}
                   iconSize={ICON_SIZE.menu}

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import type { EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
+import { createThreadHistoryRollbackContext } from '../../src/core/agent/extensions';
 import type { AgentCoreNotification, Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
@@ -243,6 +244,67 @@ describe('Agent Core persistence', () => {
     rebuilt.close();
   });
 
+  test('replays rollback markers without deleting immutable rollout facts', async () => {
+    const root = await tempRoot();
+    const rollout = new RolloutStore(join(root, 'rollback-rollouts'));
+    const threadId = uuidV7(2_100);
+    const firstLifecycle = lifecycle(threadId, 4_100);
+    for (const notification of firstLifecycle) await rollout.append(threadId, notification);
+
+    const incremental = new ThreadHistoryProjectionStore(
+      join(root, 'rollback-history.sqlite'),
+      testDatabase(join(root, 'rollback-history.sqlite')),
+    );
+    incremental.applyMany(await rollout.read(threadId));
+    const firstTurnId = incremental.listTurns({ threadId }).data[0]!.id;
+    const beforeFirstRollback = incremental.projectionVersion(threadId);
+    const firstMarker = await rollout.appendHistoryRollback(createThreadHistoryRollbackContext(
+      uuidV7(4_200),
+      threadId,
+      [firstTurnId],
+      beforeFirstRollback,
+      beforeFirstRollback + 1,
+    ));
+    incremental.apply(firstMarker);
+    expect(incremental.listTurns({ threadId }).data).toEqual([]);
+
+    for (const notification of lifecycle(threadId, 4_300)) {
+      incremental.apply(await rollout.append(threadId, notification));
+    }
+    const replacementTurnId = incremental.listTurns({ threadId }).data[0]!.id;
+    expect(replacementTurnId).not.toBe(firstTurnId);
+    const beforeSecondRollback = incremental.projectionVersion(threadId);
+    incremental.apply(await rollout.appendHistoryRollback(createThreadHistoryRollbackContext(
+      uuidV7(4_400),
+      threadId,
+      [replacementTurnId],
+      beforeSecondRollback,
+      beforeSecondRollback + 1,
+    )));
+
+    const entries = await rollout.read(threadId);
+    expect(entries.some((entry) => (
+      entry.event.type === 'turn/completed' && entry.event.turnId === firstTurnId
+    ))).toBe(true);
+    expect(entries.filter((entry) => entry.event.type === 'history/rollback')).toHaveLength(2);
+    expect(incremental.rollbackMarkers(threadId).map((marker) => marker.omittedTurnIds)).toEqual([
+      [firstTurnId],
+      [replacementTurnId],
+    ]);
+
+    const rebuilt = new ThreadHistoryProjectionStore(
+      join(root, 'rollback-history-rebuilt.sqlite'),
+      testDatabase(join(root, 'rollback-history-rebuilt.sqlite')),
+    );
+    rebuilt.rebuildThread(threadId, entries);
+    expect(rebuilt.listTurns({ threadId })).toEqual(incremental.listTurns({ threadId }));
+    expect(rebuilt.listItems({ threadId })).toEqual(incremental.listItems({ threadId }));
+    expect(rebuilt.rollbackMarkers(threadId)).toEqual(incremental.rollbackMarkers(threadId));
+    expect(rebuilt.watermark(threadId)).toEqual(incremental.watermark(threadId));
+    incremental.close();
+    rebuilt.close();
+  });
+
   test('replays an interrupted Turn with a completed partial stream exactly', async () => {
     const root = await tempRoot();
     const rollout = new RolloutStore(join(root, 'interrupted-rollouts'));
@@ -301,7 +363,7 @@ describe('Agent Core persistence', () => {
       ordinal: beforeTurnCompletion.length,
       byteOffset: 0,
       byteLength: 1,
-      notification: {
+      event: {
         type: 'item/delta',
         threadId,
         turnId: agentCompletion.turnId,
@@ -316,13 +378,13 @@ describe('Agent Core persistence', () => {
       ordinal: beforeTurnCompletion.length,
       byteOffset: 0,
       byteLength: 1,
-      notification: terminal,
+      event: terminal,
     });
     expect(() => store.apply({
       ordinal: entries.length,
       byteOffset: 1,
       byteLength: 1,
-      notification: terminal,
+      event: terminal,
     })).toThrow('Terminal Turn is immutable');
     store.close();
   });
@@ -348,26 +410,26 @@ describe('Agent Core persistence', () => {
   });
 });
 
-function lifecycle(threadId: string): AgentCoreNotification[] {
-  const turnId = uuidV7(4_000);
+function lifecycle(threadId: string, seed = 4_000): AgentCoreNotification[] {
+  const turnId = uuidV7(seed);
   const userItem: ThreadItem = {
     type: 'userMessage',
-    id: 'item-user',
+    id: `item-user-${seed}`,
     provenance: {
       originThreadId: threadId,
       originTurnId: turnId,
-      originItemId: 'item-user',
+      originItemId: `item-user-${seed}`,
     },
     clientId: 'submit-1',
     content: [{ type: 'text', text: 'Start' }],
   };
   const startedAgentItem: ThreadItem = {
     type: 'agentMessage',
-    id: 'item-agent',
+    id: `item-agent-${seed}`,
     provenance: {
       originThreadId: threadId,
       originTurnId: turnId,
-      originItemId: 'item-agent',
+      originItemId: `item-agent-${seed}`,
     },
     text: '',
     phase: 'final_answer',

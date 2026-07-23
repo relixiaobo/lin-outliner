@@ -1081,8 +1081,6 @@ commandPalette: {
       showMore: '展开',
       showLess: '收起',
       assistantResponding: '智能体正在回复',
-      retryResponse: '重试回复',
-      regenerateResponse: '重新生成回复',
       details: '详情',
       closeDetails: '关闭详情',
       timestamp: '时间',

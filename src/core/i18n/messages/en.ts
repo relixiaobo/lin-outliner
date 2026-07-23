@@ -1147,8 +1147,6 @@ commandPalette: {
       showMore: 'Show more',
       showLess: 'Show less',
       assistantResponding: 'Assistant is responding',
-      retryResponse: 'Retry response',
-      regenerateResponse: 'Regenerate response',
       details: 'Details',
       closeDetails: 'Close details',
       timestamp: 'Timestamp',

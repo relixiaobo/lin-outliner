@@ -752,8 +752,8 @@ The product surface becomes:
 
 A terminal response preserves the established message action geometry but
 exposes one understandable history command: `Continue in new chat`. It forks at
-the inclusive `afterTurn` boundary. `beforeTurn` remains internal to Edit,
-Retry, and Regenerate and is not exposed as a second user-facing fork action.
+the inclusive `afterTurn` boundary. `beforeTurn` remains a host protocol
+boundary and is not exposed as a second user-facing fork action.
 Copy serializes the complete assistant side of the Turn, including full
 content-addressed tool output. Hover/focus on Details shows usage; click and the
 native response context menu open the same canonical execution details.

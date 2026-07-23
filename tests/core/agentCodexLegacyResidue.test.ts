@@ -44,10 +44,6 @@ const LEGACY_PATTERNS: ReadonlyArray<{ readonly label: string; readonly pattern:
     pattern: /\b(?:conversations|runs|principals)\/|\bissue-operations\.jsonl\b/,
   },
   {
-    label: 'deprecated rollback transport',
-    pattern: /\bthread\/rollback\b/,
-  },
-  {
     label: 'legacy model tool',
     pattern: /\b(?:ask_user_question|agent_session_start|agent_session_read|agent_session_send_message|agent_session_stop|past_chats|internal_delegation)\b/,
   },

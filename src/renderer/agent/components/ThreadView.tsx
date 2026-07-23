@@ -47,7 +47,6 @@ import {
   ICON_SIZE,
   InfoIcon,
   LoaderIcon,
-  RedoIcon,
   SendIcon,
   StopIcon,
   WarningIcon,
@@ -106,13 +105,12 @@ interface ThreadViewProps {
   readonly inputRequest: RequestUserInputRequest | null;
   readonly providerRetry: { readonly turnId: string; readonly status: ProviderRetryStatus } | null;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
-  readonly onFork: (turn: Turn, kind: 'beforeTurn' | 'afterTurn') => Promise<void>;
+  readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onInterrupt: () => Promise<void>;
   readonly onConfigurationChange: (configuration: ThreadConfigurationSummary) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
-  readonly onRegenerate: (turn: Turn) => Promise<void>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
 }
@@ -289,13 +287,12 @@ export function ThreadView({
   inputRequest,
   providerRetry,
   onEditUserMessage,
-  onFork,
+  onContinueInNewChat,
   onInterrupt,
   onConfigurationChange,
   onOpenNodeReference,
   onOpenThread,
   onReadToolOutput,
-  onRegenerate,
   onSend,
   onSubmitUserInput,
 }: ThreadViewProps) {
@@ -777,11 +774,10 @@ export function ThreadView({
                     index={index}
                     onDisclosureToggle={handleDisclosureToggle}
                     onEditUserMessage={onEditUserMessage}
-                    onFork={onFork}
+                    onContinueInNewChat={onContinueInNewChat}
                     onOpenNodeReference={onOpenNodeReference}
                     onOpenThread={onOpenThread}
                     onReadToolOutput={onReadToolOutput}
-                    onRegenerate={onRegenerate}
                     turn={turn}
                   />
                 </ThreadTranscriptTurnShell>
@@ -931,11 +927,10 @@ const ThreadTurnView = memo(function ThreadTurnView({
   index,
   onDisclosureToggle,
   onEditUserMessage,
-  onFork,
+  onContinueInNewChat,
   onOpenNodeReference,
   onOpenThread,
   onReadToolOutput,
-  onRegenerate,
   turn,
 }: {
   readonly canEditUserMessage: boolean;
@@ -943,11 +938,10 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly index: DocumentIndex;
   readonly onDisclosureToggle: () => void;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
-  readonly onFork: (turn: Turn, kind: 'beforeTurn' | 'afterTurn') => Promise<void>;
+  readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
-  readonly onRegenerate: (turn: Turn) => Promise<void>;
   readonly turn: Turn;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -958,38 +952,34 @@ const ThreadTurnView = memo(function ThreadTurnView({
     [onEditUserMessage, turn],
   );
   const continueInNewChat = useCallback(
-    () => onFork(turn, 'afterTurn'),
-    [onFork, turn],
+    () => onContinueInNewChat(turn),
+    [onContinueInNewChat, turn],
   );
   const readToolOutput = useCallback(
     (item: ThreadToolItem) => onReadToolOutput(turn.id, item),
     [onReadToolOutput, turn.id],
   );
-  const regenerate = useCallback(() => onRegenerate(turn), [onRegenerate, turn]);
   const copyTurn = useCallback(async () => {
     const text = await buildTurnCopyText(turn, readToolOutput);
     if (text) await navigator.clipboard.writeText(text);
   }, [readToolOutput, turn]);
   const handleResponseContextMenu = useCallback(async (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
-    const failed = turn.status === 'failed' || turn.status === 'interrupted';
     const action = await window.lin?.showThreadMessageContextMenu?.({
       canCopy: hasTurnCopyContent(turn),
-      canRetry: failed,
-      canRegenerate: !failed,
+      canContinueInNewChat: true,
       canShowDetails: true,
     });
     if (action === 'copy') await copyTurn();
-    else if (action === 'retry' || action === 'regenerate') await regenerate();
+    else if (action === 'continueInNewChat') await continueInNewChat();
     else if (action === 'details') setDetailsOpen(true);
-  }, [copyTurn, regenerate, turn]);
+  }, [continueInNewChat, copyTurn, turn]);
   const responseTail = turn.status === 'inProgress' ? null : (
     <ThreadResponseTail
       detailsOpen={detailsOpen}
       onCopy={copyTurn}
       onDetailsOpenChange={setDetailsOpen}
-      onFork={continueInNewChat}
-      onRegenerate={regenerate}
+      onContinueInNewChat={continueInNewChat}
       turn={turn}
     />
   );
@@ -1056,21 +1046,18 @@ function ThreadResponseTail({
   detailsOpen,
   onCopy,
   onDetailsOpenChange,
-  onFork,
-  onRegenerate,
+  onContinueInNewChat,
   turn,
 }: {
   readonly detailsOpen: boolean;
   readonly onCopy: () => Promise<void>;
   readonly onDetailsOpenChange: (open: boolean) => void;
-  readonly onFork: () => Promise<void>;
-  readonly onRegenerate: () => Promise<void>;
+  readonly onContinueInNewChat: () => Promise<void>;
   readonly turn: Turn;
 }) {
   const t = useT();
   const [usageHoverOpen, setUsageHoverOpen] = useState(false);
   const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
-  const failed = turn.status === 'failed';
   const interrupted = turn.status === 'interrupted';
   const errorText = turn.error ? threadErrorMessage(turn.error.message) : '';
   return (
@@ -1088,13 +1075,6 @@ function ThreadResponseTail({
         </div>
       ) : null}
       <div className="thread-message-actions thread-response-actions">
-        <IconButton
-          icon={RedoIcon}
-          iconSize={ICON_SIZE.menu}
-          label={failed || interrupted ? t.agent.message.retryResponse : t.agent.message.regenerateResponse}
-          onClick={() => void onRegenerate()}
-          variant="message"
-        />
         <ThreadMessageCopyButton
           iconSize={ICON_SIZE.menu}
           label={t.agent.message.copyMessage}
@@ -1105,7 +1085,7 @@ function ThreadResponseTail({
           icon={GitForkIcon}
           iconSize={ICON_SIZE.menu}
           label={t.agent.thread.continueInNewChat}
-          onClick={() => void onFork()}
+          onClick={() => void onContinueInNewChat()}
           variant="message"
         />
         <span className="thread-response-details-anchor">

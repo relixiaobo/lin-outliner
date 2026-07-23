@@ -1,12 +1,22 @@
 import { mkdir, open, readFile, rm, stat, truncate } from 'node:fs/promises';
 import { join } from 'node:path';
 import { decodeAgentCoreNotification } from '../../../core/agent/codec';
+import {
+  createThreadHistoryRollbackContext,
+  type ThreadHistoryRollbackContext,
+} from '../../../core/agent/extensions';
 import type { AgentCoreNotification, ThreadId } from '../../../core/agent/protocol';
+
+export interface ThreadHistoryRollbackMarker extends ThreadHistoryRollbackContext {
+  readonly type: 'history/rollback';
+}
+
+export type RolloutEvent = AgentCoreNotification | ThreadHistoryRollbackMarker;
 
 export interface RolloutRecord {
   readonly ordinal: number;
   readonly recordedAt: number;
-  readonly notification: AgentCoreNotification;
+  readonly event: RolloutEvent;
 }
 
 export interface RolloutEntry extends RolloutRecord {
@@ -17,7 +27,7 @@ export interface RolloutEntry extends RolloutRecord {
 interface RolloutEnvelope {
   readonly ordinal: number;
   readonly recordedAt: number;
-  readonly notification: unknown;
+  readonly event: unknown;
 }
 
 const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -33,9 +43,24 @@ export class RolloutStore {
     notificationInput: AgentCoreNotification,
     recordedAt = Date.now(),
   ): Promise<RolloutEntry> {
+    return this.appendEvent(threadId, notificationInput, recordedAt);
+  }
+
+  async appendHistoryRollback(
+    context: ThreadHistoryRollbackContext,
+    recordedAt = Date.now(),
+  ): Promise<RolloutEntry> {
+    return this.appendEvent(context.threadId, { type: 'history/rollback', ...context }, recordedAt);
+  }
+
+  private async appendEvent(
+    threadId: ThreadId,
+    eventInput: RolloutEvent,
+    recordedAt: number,
+  ): Promise<RolloutEntry> {
     assertThreadId(threadId);
-    const notification = decodeAgentCoreNotification(notificationInput);
-    if (notification.threadId !== threadId) throw new Error('Rollout notification Thread does not match its file owner');
+    const event = decodeRolloutEvent(eventInput);
+    if (event.threadId !== threadId) throw new Error('Rollout event Thread does not match its file owner');
     return this.serialized(threadId, async () => {
       await mkdir(this.rootPath, { recursive: true });
       const path = this.pathFor(threadId);
@@ -44,7 +69,7 @@ export class RolloutStore {
         const entries = await readEntries(path, true);
         ordinal = entries.length === 0 ? 0 : entries.at(-1)!.ordinal + 1;
       }
-      const envelope: RolloutEnvelope = { ordinal, recordedAt, notification };
+      const envelope: RolloutEnvelope = { ordinal, recordedAt, event };
       const encoded = `${JSON.stringify(envelope)}\n`;
       const byteOffset = await fileSize(path);
       const handle = await open(path, 'a');
@@ -58,7 +83,7 @@ export class RolloutStore {
       return {
         ordinal,
         recordedAt,
-        notification,
+        event,
         byteOffset,
         byteLength: Buffer.byteLength(encoded),
       };
@@ -149,7 +174,7 @@ function decodeEnvelope(encoded: string, byteOffset: number, byteLength: number)
   }
   if (!isRecord(value)) throw new Error(`Invalid rollout record at byte ${byteOffset}`);
   const keys = Object.keys(value).sort();
-  if (keys.join(',') !== 'notification,ordinal,recordedAt') {
+  if (keys.join(',') !== 'event,ordinal,recordedAt') {
     throw new Error(`Invalid rollout record fields at byte ${byteOffset}`);
   }
   if (!Number.isSafeInteger(value.ordinal) || (value.ordinal as number) < 0) {
@@ -161,10 +186,31 @@ function decodeEnvelope(encoded: string, byteOffset: number, byteLength: number)
   return {
     ordinal: value.ordinal as number,
     recordedAt: value.recordedAt,
-    notification: decodeAgentCoreNotification(value.notification),
+    event: decodeRolloutEvent(value.event),
     byteOffset,
     byteLength,
   };
+}
+
+function decodeRolloutEvent(value: unknown): RolloutEvent {
+  if (!isRecord(value) || value.type !== 'history/rollback') {
+    return decodeAgentCoreNotification(value);
+  }
+  const keys = Object.keys(value).sort();
+  if (keys.join(',') !== 'afterProjectionVersion,beforeProjectionVersion,omittedTurnIds,rollbackId,threadId,type') {
+    throw new Error('Invalid history rollback marker fields');
+  }
+  if (!Array.isArray(value.omittedTurnIds)) throw new Error('Invalid history rollback omitted Turn IDs');
+  assertThreadId(String(value.threadId));
+  for (const turnId of value.omittedTurnIds) assertThreadId(String(turnId));
+  const context = createThreadHistoryRollbackContext(
+    String(value.rollbackId),
+    value.threadId as ThreadId,
+    value.omittedTurnIds as string[],
+    Number(value.beforeProjectionVersion),
+    Number(value.afterProjectionVersion),
+  );
+  return Object.freeze({ type: 'history/rollback', ...context });
 }
 
 async function fileSize(path: string): Promise<number> {

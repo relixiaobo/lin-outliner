@@ -153,11 +153,7 @@ export class ThreadStore {
   }
 
   async send(contentInput: readonly ThreadUserContent[]): Promise<void> {
-    const content = contentInput.flatMap((part): ThreadUserContent[] => {
-      if (part.type !== 'text') return [part];
-      const text = part.text.trim();
-      return text ? [{ ...part, text }] : [];
-    });
+    const content = normalizeUserContent(contentInput);
     const threadId = this.snapshot.selectedThreadId;
     if (!threadId || content.length === 0) return;
     const active = findLastInProgressTurn(this.turns(threadId));
@@ -207,25 +203,36 @@ export class ThreadStore {
     await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId: active.id });
   }
 
-  async fork(threadId: ThreadId, turnId: string, kind: 'beforeTurn' | 'afterTurn'): Promise<Thread> {
+  async continueInNewChat(threadId: ThreadId, turnId: string): Promise<Thread> {
     const response = await this.client.agentCoreRequest('thread/fork', {
       threadId,
-      boundary: { kind, turnId },
+      boundary: { kind: 'afterTurn', turnId },
     });
     this.patch({ threads: sortThreads(upsertById(this.snapshot.threads, response.thread)) });
     await this.selectThread(response.thread.id);
     return response.thread;
   }
 
-  async forkAndSend(
+  async rollbackAndSend(
     threadId: ThreadId,
-    turnId: string,
-    kind: 'beforeTurn' | 'afterTurn',
-    content: readonly ThreadUserContent[],
-  ): Promise<Thread> {
-    const thread = await this.fork(threadId, turnId, kind);
-    await this.send(content);
-    return thread;
+    contentInput: readonly ThreadUserContent[],
+  ): Promise<void> {
+    const content = normalizeUserContent(contentInput);
+    if (content.length === 0) return;
+    const response = await this.client.agentCoreRequest('thread/rollback', { threadId, numTurns: 1 });
+    this.loadGenerations.set(threadId, (this.loadGenerations.get(threadId) ?? 0) + 1);
+    this.historyRevisions.set(threadId, (this.historyRevisions.get(threadId) ?? 0) + 1);
+    const turnsByThread = new Map(this.snapshot.turnsByThread);
+    turnsByThread.set(threadId, (turnsByThread.get(threadId) ?? []).slice(0, -1));
+    this.patch({
+      threads: sortThreads(upsertById(this.snapshot.threads, response.thread)),
+      turnsByThread,
+    });
+    await this.client.agentCoreRequest('turn/start', {
+      threadId,
+      input: content,
+      clientUserMessageId: crypto.randomUUID(),
+    });
   }
 
   async respondToUserInput(
@@ -487,6 +494,14 @@ function threadPreviewFromTurn(turn: Turn): string {
     .filter((item) => item.type === 'userMessage')
     .flatMap((item) => item.content);
   return threadPreviewFromContent(content);
+}
+
+function normalizeUserContent(content: readonly ThreadUserContent[]): ThreadUserContent[] {
+  return content.flatMap((part): ThreadUserContent[] => {
+    if (part.type !== 'text') return [part];
+    const text = part.text.trim();
+    return text ? [{ ...part, text }] : [];
+  });
 }
 
 function upsertById<T extends { readonly id: string }>(values: readonly T[], value: T): T[] {

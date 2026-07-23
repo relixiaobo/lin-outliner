@@ -4,7 +4,11 @@ import { mkdirSync } from 'node:fs';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentCoreExtension, TurnAdmissionContext } from '../../src/core/agent/extensions';
+import type {
+  AgentCoreExtension,
+  ThreadHistoryRollbackContext,
+  TurnAdmissionContext,
+} from '../../src/core/agent/extensions';
 import type { AgentRole, EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../src/core/agent/tools';
 import type { AgentCoreNotification, ThreadItem, Turn } from '../../src/core/agent/protocol';
@@ -502,6 +506,123 @@ describe('ThreadService', () => {
     expect(copied.items[0]?.id).not.toBe(sourceTurn.items[0]?.id);
     expect(copied.items[0]?.provenance).toEqual(sourceTurn.items[0]?.provenance);
     expect(copied.items[0]).toMatchObject({ type: 'userMessage', clientId: null });
+    await fixture.service.close();
+  });
+
+  test('rolls back the terminal Turn in place and retries failed commit hooks without restart', async () => {
+    const extension = new HistoryRollbackProbe('memory-probe', { commitFailures: 1 });
+    const registry = new ExtensionRegistry();
+    registry.register(extension);
+    const fixture = await createFixture(registry);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Replace this input' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    await expect(fixture.service.request('thread/rollback', { threadId: thread.id, numTurns: 1 }))
+      .rejects.toThrow('active Turn');
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+
+    const response = await fixture.service.request('thread/rollback', { threadId: thread.id, numTurns: 1 });
+    expect(response.thread.id).toBe(thread.id);
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns).toEqual([]);
+    const marker = fixture.stores.history.rollbackMarkers(thread.id)[0];
+    expect(marker?.omittedTurnIds).toEqual([accepted.turn.id]);
+    expect(fixture.service.hasHistoryRollbackMarker(marker!.rollbackId)).toBe(true);
+    const audit = await fixture.stores.rollout.read(thread.id);
+    expect(audit.some((entry) => entry.event.type === 'turn/completed' && entry.event.turnId === accepted.turn.id))
+      .toBe(true);
+    await waitUntil(() => extension.events.filter((event) => event === 'commit').length >= 2);
+    expect(extension.events).toEqual(['prepare', 'commit', 'commit']);
+
+    const replacement = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Replacement input' }],
+    });
+    expect(replacement.turn.id).not.toBe(accepted.turn.id);
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns)
+      .toHaveLength(1);
+    await fixture.service.close();
+
+    const startupExtension = new HistoryRollbackProbe('memory-probe');
+    const startupRegistry = new ExtensionRegistry();
+    startupRegistry.register(startupExtension);
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock, startupRegistry);
+    await reopened.service.initialize();
+    expect(startupExtension.events).toEqual(['commit']);
+    await reopened.service.close();
+  });
+
+  test('rejects rollback outside a persistent root user Thread or beyond current history', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await expect(fixture.service.request('thread/rollback', { threadId: root.id, numTurns: 1 }))
+      .rejects.toThrow('exceeds');
+
+    const ephemeral = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      ephemeral: true,
+    })).thread;
+    await expect(fixture.service.request('thread/rollback', { threadId: ephemeral.id, numTurns: 1 }))
+      .rejects.toThrow('persistent root user Threads');
+
+    const feature = (await fixture.service.startThread({
+      source: 'memory-host',
+      threadSource: 'memory_consolidation',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await expect(fixture.service.request('thread/rollback', { threadId: feature.id, numTurns: 1 }))
+      .rejects.toThrow('persistent root user Threads');
+    await fixture.service.close();
+  });
+
+  test('aborts prepared extensions and leaves history unchanged when rollback preparation fails', async () => {
+    const prepared = new HistoryRollbackProbe('prepared-probe');
+    const failing = new HistoryRollbackProbe('failing-probe', { failPrepare: true });
+    const registry = new ExtensionRegistry();
+    registry.register(prepared);
+    registry.register(failing);
+    const fixture = await createFixture(registry);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Keep this input' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+
+    await expect(fixture.service.request('thread/rollback', { threadId: thread.id, numTurns: 1 }))
+      .rejects.toThrow('prepare failed');
+    expect(prepared.events).toEqual(['prepare', 'abort']);
+    expect(failing.events).toEqual(['prepare']);
+    expect(fixture.stores.history.rollbackMarkers(thread.id)).toEqual([]);
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns)
+      .toHaveLength(1);
     await fixture.service.close();
   });
 
@@ -1435,6 +1556,37 @@ class AdmissionProbe implements AgentCoreExtension {
   contributeTurnAdmission(context: TurnAdmissionContext) {
     this.contexts.push(context);
     return { extensionId: this.id, snapshotId: `snapshot-${this.contexts.length}` };
+  }
+}
+
+class HistoryRollbackProbe implements AgentCoreExtension {
+  readonly events: string[] = [];
+  readonly contexts: ThreadHistoryRollbackContext[] = [];
+  private commitFailures: number;
+
+  constructor(
+    readonly id: string,
+    private readonly options: { readonly commitFailures?: number; readonly failPrepare?: boolean } = {},
+  ) {
+    this.commitFailures = options.commitFailures ?? 0;
+  }
+
+  prepareHistoryRollback(context: ThreadHistoryRollbackContext): void {
+    this.events.push('prepare');
+    this.contexts.push(context);
+    if (this.options.failPrepare) throw new Error('prepare failed');
+  }
+
+  abortHistoryRollback(): void {
+    this.events.push('abort');
+  }
+
+  commitHistoryRollback(): void {
+    this.events.push('commit');
+    if (this.commitFailures > 0) {
+      this.commitFailures -= 1;
+      throw new Error('commit failed');
+    }
   }
 }
 

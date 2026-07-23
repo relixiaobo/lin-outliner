@@ -2,10 +2,13 @@ import { join } from 'node:path';
 import {
   createHostRootTurnAdmissionBarrierSnapshot,
   createThreadAdmissionBarrierSnapshot,
+  createThreadHistoryRollbackContext,
+  type AgentCoreExtension,
   type HostRootTurnAdmissionBarrierSnapshot,
   type ThreadAdmissionBarrierSnapshot,
   type ThreadServiceExtensionHost,
   type ExtensionToolContribution,
+  type ThreadHistoryRollbackContext,
 } from '../../core/agent/extensions';
 import {
   decodeAgentCoreNotification,
@@ -49,6 +52,7 @@ import type {
   ThreadConfigurationSetRequest,
   ThreadConfigurationSummary,
   ThreadForkRequest,
+  ThreadRollbackRequest,
   ThreadId,
   ThreadItem,
   ThreadItemOutputReadRequest,
@@ -78,7 +82,7 @@ import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
 import { GoalStore } from './extensions/goal/GoalStore';
 import { KeyedMutex, Mutex } from './Mutex';
-import { RolloutStore } from './persistence/RolloutStore';
+import { RolloutStore, type RolloutEntry } from './persistence/RolloutStore';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
   decodeThreadCursor,
@@ -101,6 +105,7 @@ import {
   defaultEffectiveThreadConfiguration,
 } from './AgentConfigurationLoader';
 import { applyThreadItemDelta } from './itemDelta';
+import { RollbackHookRecoveryQueue, type RollbackHookRecoveryTarget } from './RollbackHookRecoveryQueue';
 
 export interface AgentCorePaths {
   readonly root: string;
@@ -279,6 +284,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly threadMutex = new KeyedMutex();
   private readonly hostRootMutex = new Mutex();
   private readonly threadTreeMutex = new Mutex();
+  private readonly rollbackRecovery = new RollbackHookRecoveryQueue();
   private readonly threadBarrierGenerations = new Map<ThreadId, number>();
   private hostBarrierGeneration = 0;
   private initialized = false;
@@ -354,6 +360,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     for (const pending of this.pendingUserInputs.values()) pending.abort();
     await Promise.all(active.map((turn) => turn.completion));
     await this.rollout.flush();
+    await this.rollbackRecovery.close();
     await Promise.all([...this.ephemeral.keys()].map((threadId) => this.payloads.deleteThread(threadId)));
     this.metadata.close();
     this.history.close();
@@ -401,6 +408,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return await this.resumeThread((decoded as AgentCoreRequestByMethod['thread/resume']).threadId) as AgentCoreResponseByMethod[Method];
       case 'thread/fork':
         return await this.forkThread(decoded as AgentCoreRequestByMethod['thread/fork']) as AgentCoreResponseByMethod[Method];
+      case 'thread/rollback':
+        return await this.rollbackThread(
+          decoded as AgentCoreRequestByMethod['thread/rollback'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'thread/name/set': {
         const request = decoded as AgentCoreRequestByMethod['thread/name/set'];
         await this.setThreadName(request.threadId, request.name);
@@ -652,6 +663,83 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
       return { thread: this.requireThread(thread.id).thread };
     }));
+  }
+
+  async rollbackThread(request: ThreadRollbackRequest): Promise<{ thread: Thread }> {
+    return this.threadMutex.run(request.threadId, async () => {
+      const record = this.requireThread(request.threadId);
+      const thread = record.thread;
+      if (thread.ephemeral || thread.parentThreadId !== null || thread.threadSource !== 'user') {
+        throw new Error('History rollback is available only for persistent root user Threads');
+      }
+      if (record.archived || this.stoppingThreads.has(thread.id)) {
+        throw new ThreadBusyError('Cannot roll back an archived or stopping Thread');
+      }
+      if (this.activeTurns.has(thread.id) || thread.status.type !== 'idle') {
+        throw new ThreadBusyError('Cannot roll back a Thread with an active Turn');
+      }
+      const turns = this.allTurns(thread.id);
+      if (request.numTurns > turns.length) {
+        throw new Error('History rollback exceeds the current Turn count');
+      }
+      const omitted = turns.slice(-request.numTurns);
+      if (omitted.some((turn) => turn.status === 'inProgress')) {
+        throw new ThreadBusyError('History rollback requires terminal Turns');
+      }
+      const beforeProjectionVersion = this.history.projectionVersion(thread.id);
+      const context = createThreadHistoryRollbackContext(
+        uuidV7(this.now()),
+        thread.id,
+        omitted.map((turn) => turn.id),
+        beforeProjectionVersion,
+        beforeProjectionVersion + 1,
+      );
+      const prepared: AgentCoreExtension[] = [];
+      try {
+        for (const extension of this.extensions.historyRollbackExtensions()) {
+          await this.extensions.invokeHistoryRollbackHook(extension, 'prepare', context);
+          prepared.push(extension);
+        }
+      } catch (error) {
+        await this.finalizeHistoryRollbackHooks([...prepared].reverse(), 'abort', context);
+        throw error;
+      }
+
+      let markerEntry: RolloutEntry | undefined;
+      try {
+        markerEntry = await this.rollout.appendHistoryRollback(context, this.now());
+      } catch (error) {
+        markerEntry = (await this.rollout.read(thread.id)).find((entry) => (
+          entry.event.type === 'history/rollback' && entry.event.rollbackId === context.rollbackId
+        ));
+        if (!markerEntry) {
+          await this.finalizeHistoryRollbackHooks([...prepared].reverse(), 'abort', context);
+          throw error;
+        }
+      }
+      let projectionError: unknown = null;
+      try {
+        this.history.apply(markerEntry);
+      } catch {
+        try {
+          this.history.rebuildThread(thread.id, await this.rollout.read(thread.id));
+        } catch (error) {
+          projectionError = error;
+        }
+      }
+      await this.finalizeHistoryRollbackHooks(prepared, 'commit', context);
+      if (projectionError) throw projectionError;
+      return { thread: this.requireThread(thread.id).thread };
+    });
+  }
+
+  historyProjectionVersion(threadId: ThreadId): number {
+    this.requireThread(threadId);
+    return this.history.projectionVersion(threadId);
+  }
+
+  hasHistoryRollbackMarker(rollbackId: string): boolean {
+    return this.history.hasRollbackMarker(rollbackId);
   }
 
   async setThreadName(threadId: ThreadId, name: string | null): Promise<void> {
@@ -1903,6 +1991,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private async reconcileThread(threadId: ThreadId): Promise<void> {
     const entries = await this.rollout.read(threadId);
     this.history.applyMany(entries.filter((entry) => entry.ordinal > this.history.watermark(threadId).ordinal));
+    for (const marker of this.history.rollbackMarkers(threadId)) {
+      await this.finalizeHistoryRollbackHooks(this.extensions.historyRollbackExtensions(), 'commit', marker);
+    }
     let cursor: string | null = null;
     do {
       const page = this.history.listItems({ threadId, cursor, limit: 100 });
@@ -1923,6 +2014,25 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (latest?.status === 'inProgress') await this.finishCrashedTurn(threadId, latest);
     const record = this.metadata.require(threadId);
     if (record.thread.status.type === 'active') await this.setStatus(threadId, { type: 'idle' });
+  }
+
+  private async finalizeHistoryRollbackHooks(
+    extensions: readonly AgentCoreExtension[],
+    target: RollbackHookRecoveryTarget,
+    context: ThreadHistoryRollbackContext,
+  ): Promise<void> {
+    for (const extension of extensions) {
+      try {
+        await this.extensions.invokeHistoryRollbackHook(extension, target, context);
+      } catch {
+        this.rollbackRecovery.enqueue({
+          extensionId: extension.id,
+          rollbackId: context.rollbackId,
+          target,
+          run: () => this.extensions.invokeHistoryRollbackHook(extension, target, context),
+        });
+      }
+    }
   }
 
   private async finishCrashedTurn(threadId: ThreadId, turn: Turn): Promise<void> {

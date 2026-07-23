@@ -140,10 +140,24 @@ descendant Goal, history projection, rollout, catalog row, spawn edge, mailbox,
 pending activity, and barrier state. Concurrent overlapping teardown requests
 fail closed. Archived or stopping Threads cannot admit a Turn.
 
-## Fork Semantics
+## History Replacement And Fork Semantics
 
-Editing earlier input, retrying, and regenerating are history operations. They
-fork at a selected Turn boundary and start new work in the fork.
+Only the latest terminal user Turn can be edited. Edit calls
+`thread/rollback { threadId, numTurns: 1 }`, then starts a replacement Turn with
+fresh Turn and Item identities in the same Thread. Earlier and active Turns are
+not editable. Assistant responses do not expose Retry or Regenerate.
+
+Rollback appends a durable marker to the immutable rollout. The current history
+projection, pagination, and model context omit the marker's exact terminal Turn
+suffix, while audit reads retain every original Turn and Item fact. Extension
+prepare hooks run before the marker; a prepare failure aborts already prepared
+extensions in reverse order and leaves history unchanged. Once the marker is
+durable it cannot be vetoed. Failed commit or abort hooks enter one host-scoped,
+coalescing recovery queue and retry in the current process with bounded backoff;
+startup replays committed markers before admitting new work.
+
+`Continue in new chat` is the only visible fork operation. It copies terminal
+history through the selected Turn into a new top-level root Thread.
 
 A fork copies only terminal history within the boundary. It never calls document
 undo, changes files, stops processes, reverses commands, compensates MCP calls,
@@ -187,7 +201,7 @@ path.
 The renderer uses one request channel and one notification channel. Methods are
 grouped by the concept they own:
 
-- `thread/*`: list, read, start, resume, fork, name, archive, delete, and paged
+- `thread/*`: list, read, start, resume, fork, rollback, name, archive, delete, and paged
   Turn or Item reads
 - `turn/*`: start, steer, and interrupt
 - `goal/*`: get, create, and update

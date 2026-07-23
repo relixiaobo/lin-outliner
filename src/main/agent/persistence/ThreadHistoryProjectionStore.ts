@@ -14,7 +14,11 @@ import type {
   TurnItemsView,
 } from '../../../core/agent/protocol';
 import { decodeCursor, encodeCursor, pageLimit } from './cursor';
-import type { RolloutEntry } from './RolloutStore';
+import type {
+  RolloutEntry,
+  RolloutEvent,
+  ThreadHistoryRollbackMarker,
+} from './RolloutStore';
 import { openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
 import { applyThreadItemDelta } from '../itemDelta';
 
@@ -41,6 +45,15 @@ interface ItemRow {
   item_json: string;
   started_at: number | null;
   completed_at: number | null;
+}
+
+interface RollbackRow {
+  rollback_id: string;
+  thread_id: string;
+  marker_ordinal: number;
+  omitted_turn_ids_json: string;
+  before_projection_version: number;
+  after_projection_version: number;
 }
 
 export interface ProjectionWatermark {
@@ -94,6 +107,17 @@ export class ThreadHistoryProjectionStore {
         ordinal INTEGER NOT NULL,
         byte_offset INTEGER NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS history_rollbacks (
+        rollback_id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL,
+        marker_ordinal INTEGER NOT NULL,
+        omitted_turn_ids_json TEXT NOT NULL,
+        before_projection_version INTEGER NOT NULL,
+        after_projection_version INTEGER NOT NULL,
+        UNIQUE(thread_id, marker_ordinal)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS history_rollbacks_thread_idx
+        ON history_rollbacks(thread_id, marker_ordinal);
     `);
   }
 
@@ -110,6 +134,23 @@ export class ThreadHistoryProjectionStore {
       : { threadId, ordinal: -1, byteOffset: 0 };
   }
 
+  projectionVersion(threadId: ThreadId): number {
+    return this.watermark(threadId).ordinal + 1;
+  }
+
+  rollbackMarkers(threadId: ThreadId): readonly ThreadHistoryRollbackMarker[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM history_rollbacks WHERE thread_id = ? ORDER BY marker_ordinal
+    `).all(threadId) as unknown as RollbackRow[];
+    return rows.map(rollbackMarkerFromRow);
+  }
+
+  hasRollbackMarker(rollbackId: string): boolean {
+    return Boolean(this.db.prepare(`
+      SELECT 1 FROM history_rollbacks WHERE rollback_id = ?
+    `).get(rollbackId));
+  }
+
   apply(entry: RolloutEntry): void {
     this.transaction(() => this.applyInside(entry));
   }
@@ -124,9 +165,10 @@ export class ThreadHistoryProjectionStore {
   rebuildThread(threadId: ThreadId, entries: readonly RolloutEntry[]): void {
     this.transaction(() => {
       this.db.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(threadId);
+      this.db.prepare('DELETE FROM history_rollbacks WHERE thread_id = ?').run(threadId);
       this.db.prepare('DELETE FROM rollout_watermarks WHERE thread_id = ?').run(threadId);
       for (const entry of entries) {
-        if (entry.notification.threadId !== threadId) throw new Error('Cannot rebuild a Thread from another rollout');
+        if (entry.event.threadId !== threadId) throw new Error('Cannot rebuild a Thread from another rollout');
         this.applyInside(entry);
       }
     });
@@ -135,6 +177,7 @@ export class ThreadHistoryProjectionStore {
   deleteThread(threadId: ThreadId): void {
     this.transaction(() => {
       this.db.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(threadId);
+      this.db.prepare('DELETE FROM history_rollbacks WHERE thread_id = ?').run(threadId);
       this.db.prepare('DELETE FROM rollout_watermarks WHERE thread_id = ?').run(threadId);
     });
   }
@@ -239,17 +282,70 @@ export class ThreadHistoryProjectionStore {
   }
 
   private applyInside(entry: RolloutEntry): void {
-    const threadId = entry.notification.threadId;
+    const threadId = entry.event.threadId;
     const watermark = this.watermark(threadId);
     if (entry.ordinal <= watermark.ordinal) return;
     if (entry.ordinal !== watermark.ordinal + 1) {
       throw new Error(`Rollout projection gap for ${threadId}: expected ${watermark.ordinal + 1}, got ${entry.ordinal}`);
     }
-    this.projectNotification(entry.ordinal, entry.notification);
+    this.projectEvent(entry.ordinal, watermark.ordinal + 1, entry.event);
     this.db.prepare(`
       INSERT INTO rollout_watermarks(thread_id, ordinal, byte_offset) VALUES (?, ?, ?)
       ON CONFLICT(thread_id) DO UPDATE SET ordinal = excluded.ordinal, byte_offset = excluded.byte_offset
     `).run(threadId, entry.ordinal, entry.byteOffset + entry.byteLength);
+  }
+
+  private projectEvent(ordinal: number, projectionVersion: number, event: RolloutEvent): void {
+    if (event.type === 'history/rollback') {
+      this.projectRollback(ordinal, projectionVersion, event);
+      return;
+    }
+    this.projectNotification(ordinal, event);
+  }
+
+  private projectRollback(
+    ordinal: number,
+    projectionVersion: number,
+    marker: ThreadHistoryRollbackMarker,
+  ): void {
+    if (marker.beforeProjectionVersion !== projectionVersion) {
+      throw new Error(`History rollback before-version mismatch: ${marker.rollbackId}`);
+    }
+    if (marker.afterProjectionVersion !== projectionVersion + 1) {
+      throw new Error(`History rollback after-version mismatch: ${marker.rollbackId}`);
+    }
+    if (this.hasRollbackMarker(marker.rollbackId)) {
+      throw new Error(`History rollback marker was already applied: ${marker.rollbackId}`);
+    }
+    const suffix = (this.db.prepare(`
+      SELECT * FROM thread_turns WHERE thread_id = ? ORDER BY position DESC LIMIT ?
+    `).all(marker.threadId, marker.omittedTurnIds.length) as unknown as TurnRow[]).reverse();
+    const suffixIds = suffix.map((row) => row.turn_id);
+    if (
+      suffixIds.length !== marker.omittedTurnIds.length
+      || suffixIds.some((turnId, index) => turnId !== marker.omittedTurnIds[index])
+    ) {
+      throw new Error(`History rollback must omit the current Turn suffix: ${marker.rollbackId}`);
+    }
+    if (suffix.some((row) => row.status === 'inProgress')) {
+      throw new Error(`History rollback cannot omit an active Turn: ${marker.rollbackId}`);
+    }
+    this.db.prepare(`
+      INSERT INTO history_rollbacks(
+        rollback_id, thread_id, marker_ordinal, omitted_turn_ids_json,
+        before_projection_version, after_projection_version
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      marker.rollbackId,
+      marker.threadId,
+      ordinal,
+      JSON.stringify(marker.omittedTurnIds),
+      marker.beforeProjectionVersion,
+      marker.afterProjectionVersion,
+    );
+    for (const turnId of marker.omittedTurnIds) {
+      this.db.prepare('DELETE FROM thread_turns WHERE thread_id = ? AND turn_id = ?').run(marker.threadId, turnId);
+    }
   }
 
   private projectNotification(ordinal: number, notification: AgentCoreNotification): void {
@@ -484,6 +580,17 @@ export class ThreadHistoryProjectionStore {
       throw error;
     }
   }
+}
+
+function rollbackMarkerFromRow(row: RollbackRow): ThreadHistoryRollbackMarker {
+  return Object.freeze({
+    type: 'history/rollback',
+    rollbackId: row.rollback_id,
+    threadId: row.thread_id,
+    omittedTurnIds: Object.freeze(JSON.parse(row.omitted_turn_ids_json) as string[]),
+    beforeProjectionVersion: row.before_projection_version,
+    afterProjectionVersion: row.after_projection_version,
+  });
 }
 
 function decodeHistoryCursor(

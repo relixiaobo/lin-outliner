@@ -80,22 +80,20 @@ block is repaired and rendered live, with text commits throttled so token deltas
 do not rerender the complete response. Node and local-file reference markers
 render through the same inline reference and preview surfaces as the outliner;
 Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use the app preview
-route. User and final agent messages retain the established hover actions for
-copy, edit, retry, and regenerate. User messages that exceed five reading lines
+route. User messages retain Copy and, for the latest terminal Turn only, Edit;
+final agent messages retain Copy, Continue in new chat, and Details. User messages that exceed five reading lines
 retain the established measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
 A terminal response owns one action row directly below its visible content.
-Successful responses expose Regenerate, Copy, Continue in new chat, and Details
-in that order; failed and interrupted responses replace Regenerate with Retry
-without moving the row. Continue in new chat is the only user-visible history
-fork action and uses the `afterTurn` boundary. The `beforeTurn` boundary remains
-an internal Edit/Retry/Regenerate mechanism and is never presented as a second
-fork command. There is no separate Turn footer or second action surface. A
+Every terminal response exposes Copy, Continue in new chat, and Details as
+applicable. Continue in new chat is the only user-visible history fork action
+and uses the `afterTurn` boundary. There is no separate Turn footer or second
+action surface. A
 failed response keeps any partial answer first, then shows a bounded, parsed
 error summary, then the same action row. JSON and HTML provider payloads never
 render as unbounded transcript prose. An interrupted response uses the
-established quiet stopped row and the same Retry action. Hover and keyboard
+established quiet stopped row and the same three actions. Hover and keyboard
 focus reveal the row without changing geometry.
 
 Copy on a response copies the complete assistant side of that Turn in order:
@@ -103,7 +101,7 @@ commentary and plan text, tool arguments, full tool results when available, and
 the final response. A partial failed response remains the copy authority; its
 error summary is used only when the Turn has no copyable assistant content.
 Right-clicking the terminal response opens the native message menu with the same
-Copy, Retry/Regenerate, and Details commands.
+Copy, Continue in new chat, and Details commands.
 
 The Details icon preserves the established two-level interaction. Hover or
 keyboard focus shows a non-interactive usage breakdown with token and cost
@@ -175,16 +173,17 @@ The composer submits `ThreadUserContent[]` directly. Text, attachments, and
 Outliner Node references remain distinct structured parts in the same order the
 user placed them in the ProseMirror document. Sending a Node from its context
 menu adds a removable Node-reference part to the composer; it never inserts
-reference markup into text. Edit replaces only the message text, while retry and
-regenerate replay the complete original structured input. An attachment-only or
-Node-reference-only Turn is therefore sendable and retryable.
+reference markup into text. Edit replaces only the message text while preserving
+the complete original structured input. An attachment-only or Node-reference-only
+Turn can add text through Edit without losing its structured content.
 
 Only the latest user message in a terminal Turn exposes Edit; earlier messages
-remain copyable but do not present implicit history branching as an ordinary
-edit, and an active Turn cannot be edited while its response is running. Editing
-autofocuses the existing edit field. Escape cancels and Cmd/Ctrl+Enter saves.
-Saving forks at `beforeTurn` and resubmits the original structured content with
-only its text replaced; it does not mutate the sealed source Turn.
+remain copyable, and an active Turn cannot be edited while its response is
+running. Editing autofocuses the existing edit field. Escape cancels and
+Cmd/Ctrl+Enter saves. Saving appends a `thread/rollback` marker for the final
+Turn, then resubmits the original structured content with only its text replaced
+as a fresh Turn in the same Thread. It does not mutate the sealed source Turn or
+undo any document, file, tool, Goal, or external effect.
 
 Attachment interaction retains the established source-identity rules. Local
 paths deduplicate by path; pathless files deduplicate by a renderer-only content

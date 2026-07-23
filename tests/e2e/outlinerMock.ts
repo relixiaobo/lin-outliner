@@ -1525,6 +1525,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
           return clone({ thread }) as T;
         }
+        if (method === 'thread/rollback') {
+          const thread = threadById(String(input.threadId));
+          const turns = mockTurns.get(thread.id) ?? [];
+          const numTurns = Number(input.numTurns);
+          if (!Number.isSafeInteger(numTurns) || numTurns <= 0 || numTurns > turns.length) {
+            throw new Error('Invalid rollback Turn count.');
+          }
+          turns.splice(turns.length - numTurns, numTurns);
+          thread.updatedAt = ++now;
+          return clone({ thread }) as T;
+        }
         if (method === 'thread/name/set') {
           const thread = threadById(String(input.threadId));
           thread.name = typeof input.name === 'string' ? input.name : null;

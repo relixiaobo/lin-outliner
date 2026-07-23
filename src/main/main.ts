@@ -1734,7 +1734,7 @@ function registerIpc() {
     request?: Partial<ThreadMessageContextMenuRequest>,
   ): Promise<ThreadMessageContextMenuAction | null> => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return null;
-    const labels = getMessages(effectiveLocale()).agent.message;
+    const messages = getMessages(effectiveLocale()).agent;
     let settled = false;
     return new Promise<ThreadMessageContextMenuAction | null>((resolve) => {
       const pick = (action: ThreadMessageContextMenuAction) => {
@@ -1743,17 +1743,18 @@ function registerIpc() {
       };
       const template: Electron.MenuItemConstructorOptions[] = [];
       if (request?.canCopy === true) {
-        template.push({ label: labels.copyMessage, click: () => pick('copy') });
+        template.push({ label: messages.message.copyMessage, click: () => pick('copy') });
       }
-      if (request?.canRetry === true || request?.canRegenerate === true) {
+      if (request?.canContinueInNewChat === true) {
         if (template.length > 0) template.push({ type: 'separator' });
-        template.push(request.canRetry === true
-          ? { label: labels.retryResponse, click: () => pick('retry') }
-          : { label: labels.regenerateResponse, click: () => pick('regenerate') });
+        template.push({
+          label: messages.thread.continueInNewChat,
+          click: () => pick('continueInNewChat'),
+        });
       }
       if (request?.canShowDetails === true) {
         if (template.length > 0) template.push({ type: 'separator' });
-        template.push({ label: labels.details, click: () => pick('details') });
+        template.push({ label: messages.message.details, click: () => pick('details') });
       }
       if (template.length === 0) {
         resolve(null);

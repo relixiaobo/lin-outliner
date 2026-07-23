@@ -7,6 +7,7 @@ import type {
   ThreadContextContribution,
   ToolLifecycleContext,
   ToolLifecycleResult,
+  ThreadHistoryRollbackContext,
   TurnAdmissionContext,
   TurnAdmissionContribution,
 } from '../../core/agent/extensions';
@@ -19,6 +20,14 @@ export class ExtensionRegistry {
     if (!extension.id.trim()) throw new Error('Agent Core extension id must be non-empty');
     if (this.extensions.some((candidate) => candidate.id === extension.id)) {
       throw new Error(`Duplicate Agent Core extension: ${extension.id}`);
+    }
+    const rollbackHookCount = [
+      extension.prepareHistoryRollback,
+      extension.abortHistoryRollback,
+      extension.commitHistoryRollback,
+    ].filter(Boolean).length;
+    if (rollbackHookCount !== 0 && rollbackHookCount !== 3) {
+      throw new Error(`Extension must implement the complete history rollback lifecycle: ${extension.id}`);
     }
     this.extensions.push(extension);
   }
@@ -41,6 +50,28 @@ export class ExtensionRegistry {
 
   async threadStopped(thread: Thread): Promise<void> {
     await this.invoke((extension) => extension.onThreadStopped?.(thread));
+  }
+
+  historyRollbackExtensions(): readonly AgentCoreExtension[] {
+    return this.extensions.filter((extension) => extension.prepareHistoryRollback);
+  }
+
+  async invokeHistoryRollbackHook(
+    extension: AgentCoreExtension,
+    target: 'prepare' | 'abort' | 'commit',
+    context: ThreadHistoryRollbackContext,
+  ): Promise<void> {
+    switch (target) {
+      case 'prepare':
+        await extension.prepareHistoryRollback?.(context);
+        return;
+      case 'abort':
+        await extension.abortHistoryRollback?.(context);
+        return;
+      case 'commit':
+        await extension.commitHistoryRollback?.(context);
+        return;
+    }
   }
 
   async contributeAdmission(context: TurnAdmissionContext): Promise<readonly TurnAdmissionContribution[]> {

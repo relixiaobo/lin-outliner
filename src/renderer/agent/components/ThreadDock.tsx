@@ -21,7 +21,6 @@ import { ResizeHandle } from '../../ui/primitives/ResizeHandle';
 import { ThreadList } from './ThreadList';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
 import { ThreadView } from './ThreadView';
-import { turnUserContent } from '../threadInput';
 import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 
@@ -196,13 +195,6 @@ export function ThreadDock({
     }
   }
 
-  async function regenerate(turn: Turn) {
-    if (!thread) return;
-    const content = turnUserContent(turn);
-    if (content.length === 0) return;
-    await threadStore.forkAndSend(thread.id, turn.id, 'beforeTurn', content);
-  }
-
   return (
     <aside
       aria-label={t.shell.agentDock.ariaLabel}
@@ -260,15 +252,14 @@ export function ThreadDock({
               inputRequest={userInput ?? null}
               key={thread.id}
               onConfigurationChange={(next) => threadStore.setThreadConfiguration(thread.id, next)}
-              onEditUserMessage={(turn, content: readonly ThreadUserContent[]) => (
-                threadStore.forkAndSend(thread.id, turn.id, 'beforeTurn', content).then(() => undefined)
+              onEditUserMessage={(_turn, content: readonly ThreadUserContent[]) => (
+                threadStore.rollbackAndSend(thread.id, content)
               )}
-              onFork={(turn, kind) => threadStore.fork(thread.id, turn.id, kind).then(() => undefined)}
+              onContinueInNewChat={(turn) => threadStore.continueInNewChat(thread.id, turn.id).then(() => undefined)}
               onInterrupt={() => threadStore.interrupt(thread.id)}
               onOpenNodeReference={onOpenNodeReference}
               onOpenThread={(threadId) => threadStore.selectThread(threadId)}
               onReadToolOutput={(turnId, item) => threadStore.readItemOutput(thread.id, turnId, item)}
-              onRegenerate={regenerate}
               onSend={(content) => threadStore.send(content)}
               onSubmitUserInput={(answers) => userInput
                 ? threadStore.respondToUserInput(userInput, answers)
