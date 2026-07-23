@@ -425,6 +425,7 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
   const record = recordValue(value, 'notification');
   const type = enumValue(record.type, [
     'thread/started',
+    'thread/name/updated',
     'thread/status/changed',
     'turn/started',
     'item/started',
@@ -447,6 +448,14 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       result = { type, threadId, thread };
       break;
     }
+    case 'thread/name/updated':
+      exactKeys(record, ['type', 'threadId', 'threadName'], 'notification');
+      result = {
+        type,
+        threadId: uuidV7(record.threadId, 'notification.threadId'),
+        threadName: nullableString(record.threadName, 'notification.threadName'),
+      };
+      break;
     case 'thread/status/changed':
       exactKeys(record, ['type', 'threadId', 'status'], 'notification');
       result = {

@@ -364,6 +364,38 @@ describe('Codex Agent Core protocol codec', () => {
     })).toThrow('must not exceed maxRetries');
   });
 
+  test('validates canonical Thread name update notifications', () => {
+    expect(decodeAgentCoreNotification({
+      type: 'thread/name/updated',
+      threadId: THREAD_ID,
+      threadName: 'Canonical Thread name',
+    })).toEqual({
+      type: 'thread/name/updated',
+      threadId: THREAD_ID,
+      threadName: 'Canonical Thread name',
+    });
+    expect(decodeAgentCoreNotification({
+      type: 'thread/name/updated',
+      threadId: THREAD_ID,
+      threadName: null,
+    })).toEqual({
+      type: 'thread/name/updated',
+      threadId: THREAD_ID,
+      threadName: null,
+    });
+    expect(() => decodeAgentCoreNotification({
+      type: 'thread/name/updated',
+      threadId: THREAD_ID,
+      threadName: '',
+    })).toThrow('expected a string');
+    expect(() => decodeAgentCoreNotification({
+      type: 'thread/name/updated',
+      threadId: THREAD_ID,
+      threadName: 'Name',
+      name: 'legacy alias',
+    })).toThrow('unknown fields');
+  });
+
   test('validates canonical Turn execution details and content-addressed tool output', () => {
     expect(() => decodeTurn({
       ...completedTurn,
