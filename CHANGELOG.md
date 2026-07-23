@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Codex Agent Core renderer interface (PR #431, codex-3)** — defined canonical
+  Thread configuration get/set, immutable Turn execution and token/cost details,
+  content-addressed bounded tool-output reads, provider-retry notifications, and
+  native response context-menu actions for the complete replacement in #429.
+  **Gate (main):** review caught rejection of bare model IDs and incomplete cached
+  token accounting; both were fixed before merge. The runtime-only legacy-colon
+  provider ownership check remains a merge gate for #429. Verified with typecheck,
+  14 focused protocol tests, the full Core suite (1721 pass), docs check, and diff
+  check.
 - **Codex Agent Core renderer admission defaults (PR #430, codex-3)** — split
   the renderer-facing `thread/start` request from the fully resolved privileged
   request so the host can supply the configured model provider and working

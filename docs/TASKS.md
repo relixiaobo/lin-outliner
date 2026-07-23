@@ -268,11 +268,12 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
-- **agent-codex-core** (`in-progress`, interface PRs #428 and #430 landed; plan
-  merged #423) — replace the current agent architecture with one canonical
+- **agent-codex-core** (`in-progress`, interface PRs #428, #430, and #431 landed;
+  plan merged #423) — replace the current agent architecture with one canonical
   TypeScript Thread / Turn / ThreadItem model. The human-led shared protocol,
-  document interface, and host-resolved renderer admission request have landed;
-  the complete runtime, persistence, transport, renderer, and old-model
+  document interface, host-resolved renderer admission request, and renderer-facing
+  configuration, execution, retry, tool-output, and response-menu contracts have
+  landed; the complete runtime, persistence, transport, renderer, and old-model
   replacement PR is next. The full replacement must land before either consumer
   plan starts. See
   `docs/plans/agent-codex-core.md`.
