@@ -123,6 +123,31 @@ export interface TurnError {
   readonly detail?: string;
 }
 
+export interface TurnTokenCost {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly total: number;
+  readonly currency: 'USD';
+}
+
+export interface TurnTokenUsage {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly totalTokens: number;
+  readonly cost: TurnTokenCost | null;
+}
+
+export interface TurnExecutionDetails {
+  readonly modelProvider: string;
+  readonly model: string;
+  readonly reasoningEffort: ReasoningEffort;
+  readonly usage: TurnTokenUsage;
+}
+
 export interface Turn {
   readonly id: TurnId;
   readonly items: readonly ThreadItem[];
@@ -130,6 +155,7 @@ export interface Turn {
   readonly provenance: TurnProvenance;
   readonly status: TurnStatus;
   readonly error: TurnError | null;
+  readonly execution: TurnExecutionDetails;
   readonly startedAt: number;
   readonly completedAt: number | null;
   readonly durationMs: number | null;
@@ -179,6 +205,19 @@ interface ThreadItemBase {
   readonly provenance: ItemProvenance;
 }
 
+export interface ThreadItemOutputReference {
+  /** Content-addressed lowercase SHA-256 digest. */
+  readonly id: string;
+  readonly mimeType: 'text/plain' | 'application/json';
+  readonly byteLength: number;
+  readonly summary: string;
+}
+
+interface ThreadToolItemBase extends ThreadItemBase {
+  readonly status: ItemExecutionStatus;
+  readonly outputRef: ThreadItemOutputReference | null;
+}
+
 export interface UserMessageThreadItem extends ThreadItemBase {
   readonly type: 'userMessage';
   readonly clientId: string | null;
@@ -210,12 +249,11 @@ export interface CommandAction {
   readonly query?: string;
 }
 
-export interface CommandExecutionThreadItem extends ThreadItemBase {
+export interface CommandExecutionThreadItem extends ThreadToolItemBase {
   readonly type: 'commandExecution';
   readonly command: string;
   readonly cwd: string;
   readonly processId: string | null;
-  readonly status: ItemExecutionStatus;
   readonly commandActions: readonly CommandAction[];
   readonly aggregatedOutput: string | null;
   readonly exitCode: number | null;
@@ -229,17 +267,15 @@ export interface FileUpdateChange {
   readonly movedTo?: string;
 }
 
-export interface FileChangeThreadItem extends ThreadItemBase {
+export interface FileChangeThreadItem extends ThreadToolItemBase {
   readonly type: 'fileChange';
   readonly changes: readonly FileUpdateChange[];
-  readonly status: ItemExecutionStatus;
 }
 
-export interface McpToolCallThreadItem extends ThreadItemBase {
+export interface McpToolCallThreadItem extends ThreadToolItemBase {
   readonly type: 'mcpToolCall';
   readonly server: string;
   readonly tool: string;
-  readonly status: ItemExecutionStatus;
   readonly arguments: JsonValue;
   readonly pluginId: string | null;
   readonly result: JsonValue | null;
@@ -252,12 +288,11 @@ export type DynamicToolOutputContent =
   | { readonly type: 'image'; readonly imageRef: string; readonly alt?: string }
   | { readonly type: 'json'; readonly value: JsonValue };
 
-export interface DynamicToolCallThreadItem extends ThreadItemBase {
+export interface DynamicToolCallThreadItem extends ThreadToolItemBase {
   readonly type: 'dynamicToolCall';
   readonly namespace: string | null;
   readonly tool: string;
   readonly arguments: JsonValue;
-  readonly status: ItemExecutionStatus;
   readonly contentItems: readonly DynamicToolOutputContent[] | null;
   readonly success: boolean | null;
   readonly durationMs: number | null;
@@ -279,10 +314,9 @@ export type SubagentExecutionStatus =
   | 'errored'
   | 'notFound';
 
-export interface CollabAgentToolCallThreadItem extends ThreadItemBase {
+export interface CollabAgentToolCallThreadItem extends ThreadToolItemBase {
   readonly type: 'collabAgentToolCall';
   readonly tool: CollaborationToolName;
-  readonly status: ItemExecutionStatus;
   readonly senderThreadId: ThreadId;
   readonly receiverThreadIds: readonly ThreadId[];
   readonly prompt: string | null;
@@ -304,10 +338,9 @@ export interface WebSearchResult {
   readonly snippet?: string;
 }
 
-export interface WebSearchThreadItem extends ThreadItemBase {
+export interface WebSearchThreadItem extends ThreadToolItemBase {
   readonly type: 'webSearch';
   readonly query: string;
-  readonly status: ItemExecutionStatus;
   readonly results: readonly WebSearchResult[];
   readonly error: string | null;
 }
@@ -476,6 +509,26 @@ export interface ThreadItemsListResponse {
   readonly backwardsCursor: string | null;
 }
 
+export interface ThreadItemOutputReadRequest {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly itemId: ThreadItemId;
+  readonly outputId: string;
+}
+
+export interface ThreadItemOutputReadResponse {
+  readonly output: {
+    readonly ref: ThreadItemOutputReference;
+    readonly text: string;
+  } | null;
+}
+
+export interface ProviderRetryStatus {
+  readonly kind: 'request' | 'stream';
+  readonly attempt: number;
+  readonly maxRetries: number;
+}
+
 export interface TurnInputRequest {
   readonly threadId: ThreadId;
   readonly input: readonly ThreadUserContent[];
@@ -571,6 +624,7 @@ export const AGENT_CORE_METHODS = [
   'thread/delete',
   'thread/turns/list',
   'thread/items/list',
+  'thread/item/output/read',
   'turn/start',
   'turn/steer',
   'turn/interrupt',
@@ -596,6 +650,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/delete': ThreadIdentityRequest;
   readonly 'thread/turns/list': ThreadTurnsListRequest;
   readonly 'thread/items/list': ThreadItemsListRequest;
+  readonly 'thread/item/output/read': ThreadItemOutputReadRequest;
   readonly 'turn/start': RendererTurnStartRequest;
   readonly 'turn/steer': RendererTurnSteerRequest;
   readonly 'turn/interrupt': TurnInterruptRequest;
@@ -619,6 +674,7 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/delete': EmptyAgentCoreResponse;
   readonly 'thread/turns/list': ThreadTurnsListResponse;
   readonly 'thread/items/list': ThreadItemsListResponse;
+  readonly 'thread/item/output/read': ThreadItemOutputReadResponse;
   readonly 'turn/start': TurnStartResponse;
   readonly 'turn/steer': TurnSteerResponse;
   readonly 'turn/interrupt': TurnInterruptResponse;
@@ -672,6 +728,12 @@ export type AgentCoreNotification =
       readonly threadId: ThreadId;
       readonly turnId: TurnId;
       readonly turn: Turn;
+    }
+  | {
+      readonly type: 'turn/providerRetry/changed';
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly status: ProviderRetryStatus | null;
     }
   | {
       readonly type: 'userInput/requested';
