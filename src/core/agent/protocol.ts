@@ -473,6 +473,15 @@ export interface ThreadForkResponse {
   readonly thread: Thread;
 }
 
+export interface ThreadRollbackRequest {
+  readonly threadId: ThreadId;
+  readonly numTurns: number;
+}
+
+export interface ThreadRollbackResponse {
+  readonly thread: Thread;
+}
+
 export interface ThreadNameSetRequest {
   readonly threadId: ThreadId;
   readonly name: string | null;
@@ -529,14 +538,22 @@ export interface ProviderRetryStatus {
   readonly maxRetries: number;
 }
 
-export type ThreadMessageContextMenuAction = 'copy' | 'retry' | 'regenerate' | 'details';
+export const THREAD_MESSAGE_CONTEXT_MENU_ACTIONS = Object.freeze([
+  'copy',
+  'continueInNewChat',
+  'details',
+] as const);
+export type ThreadMessageContextMenuAction = typeof THREAD_MESSAGE_CONTEXT_MENU_ACTIONS[number];
 
-export interface ThreadMessageContextMenuRequest {
-  readonly canCopy: boolean;
-  readonly canRetry: boolean;
-  readonly canRegenerate: boolean;
-  readonly canShowDetails: boolean;
-}
+export const THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS = Object.freeze([
+  'canCopy',
+  'canContinueInNewChat',
+  'canShowDetails',
+] as const);
+export type ThreadMessageContextMenuRequest = Readonly<Record<
+  typeof THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS[number],
+  boolean
+>>;
 
 export interface TurnInputRequest {
   readonly threadId: ThreadId;
@@ -625,6 +642,7 @@ export const AGENT_CORE_METHODS = [
   'thread/start',
   'thread/resume',
   'thread/fork',
+  'thread/rollback',
   'thread/name/set',
   'thread/configuration/get',
   'thread/configuration/set',
@@ -651,6 +669,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/start': RendererThreadStartRequest;
   readonly 'thread/resume': ThreadResumeRequest;
   readonly 'thread/fork': ThreadForkRequest;
+  readonly 'thread/rollback': ThreadRollbackRequest;
   readonly 'thread/name/set': ThreadNameSetRequest;
   readonly 'thread/configuration/get': ThreadIdentityRequest;
   readonly 'thread/configuration/set': ThreadConfigurationSetRequest;
@@ -675,6 +694,7 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/start': ThreadStartResponse;
   readonly 'thread/resume': ThreadResumeResponse;
   readonly 'thread/fork': ThreadForkResponse;
+  readonly 'thread/rollback': ThreadRollbackResponse;
   readonly 'thread/name/set': EmptyAgentCoreResponse;
   readonly 'thread/configuration/get': ThreadConfigurationResponse;
   readonly 'thread/configuration/set': ThreadConfigurationResponse;

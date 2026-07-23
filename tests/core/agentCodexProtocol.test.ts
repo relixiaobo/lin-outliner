@@ -19,9 +19,12 @@ import {
 import {
   AGENT_CORE_METHODS,
   THREAD_ITEM_TYPES,
+  THREAD_MESSAGE_CONTEXT_MENU_ACTIONS,
+  THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS,
   threadFeatureSource,
   type Thread,
   type ThreadItem,
+  type ThreadMessageContextMenuRequest,
   type Turn,
 } from '../../src/core/agent/protocol';
 
@@ -455,6 +458,7 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/start': {},
       'thread/resume': { threadId: THREAD_ID },
       'thread/fork': { threadId: THREAD_ID, boundary: { kind: 'beforeTurn', turnId: TURN_ID } },
+      'thread/rollback': { threadId: THREAD_ID, numTurns: 1 },
       'thread/name/set': { threadId: THREAD_ID, name: 'Renamed' },
       'thread/configuration/get': { threadId: THREAD_ID },
       'thread/configuration/set': {
@@ -502,6 +506,7 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/start': { thread },
       'thread/resume': { thread },
       'thread/fork': { thread },
+      'thread/rollback': { thread },
       'thread/name/set': {},
       'thread/configuration/get': {
         thread,
@@ -541,6 +546,48 @@ describe('Codex Agent Core protocol codec', () => {
       expect(Object.isFrozen(decodeAgentCoreRequest(method, requests[method]))).toBe(true);
       expect(Object.isFrozen(decodeAgentCoreResponse(method, responses[method]))).toBe(true);
     }
+  });
+
+  test('requires rollback to remove a positive whole number of Turns', () => {
+    expect(decodeAgentCoreRequest('thread/rollback', {
+      threadId: THREAD_ID,
+      numTurns: 1,
+    })).toEqual({ threadId: THREAD_ID, numTurns: 1 });
+    expect(() => decodeAgentCoreRequest('thread/rollback', {
+      threadId: THREAD_ID,
+      numTurns: 0,
+    })).toThrow('expected a positive safe integer');
+    expect(() => decodeAgentCoreRequest('thread/rollback', {
+      threadId: THREAD_ID,
+      numTurns: 1.5,
+    })).toThrow('expected a positive safe integer');
+    expect(() => decodeAgentCoreRequest('thread/rollback', {
+      threadId: THREAD_ID,
+      numTurns: 1,
+      turnId: TURN_ID,
+    })).toThrow('unknown fields: turnId');
+  });
+
+  test('exposes only the ratified response-menu actions', () => {
+    const request = {
+      canCopy: true,
+      canContinueInNewChat: true,
+      canShowDetails: true,
+    } satisfies ThreadMessageContextMenuRequest;
+
+    expect(THREAD_MESSAGE_CONTEXT_MENU_ACTIONS).toEqual([
+      'copy',
+      'continueInNewChat',
+      'details',
+    ]);
+    expect(Object.isFrozen(THREAD_MESSAGE_CONTEXT_MENU_ACTIONS)).toBe(true);
+    expect(THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS).toEqual([
+      'canCopy',
+      'canContinueInNewChat',
+      'canShowDetails',
+    ]);
+    expect(Object.isFrozen(THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS)).toBe(true);
+    expect(Object.keys(request)).toEqual(THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS);
   });
 
   test('keeps renderer Thread admission and Goal status transitions privileged', () => {

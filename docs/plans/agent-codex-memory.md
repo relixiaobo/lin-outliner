@@ -126,16 +126,19 @@ Memory uses these public concepts only:
 
 Jobs, leases, fingerprints, usage counters, publication generations, feature
 mode generations, reset epochs, evidence cutoffs, immutable Turn admission
-snapshots, active-Turn exclusions, generated-node lineage, and publication
-journals are private pipeline control state. They are not Memory objects and are
-never rendered as Nodes or ThreadItems.
+snapshots, active-Turn exclusions, generated-node lineage, publication journals,
+Memory-visibility generations, and rollback invalidations in `prepared`,
+`committed`, `reconciled`, or `aborted` state are private pipeline control state.
+None of these are Memory objects, and they are never rendered as Nodes or
+ThreadItems.
 
 `memories.sqlite` contains `MemoryFeatureMode` plus that control state: source
 Thread versions, job ownership and retry data, generated Node IDs and hashes,
 selected episode versions, evidence lineage, usage counters, publication and
 feature-mode generations, timeline fingerprints, the current reset epoch,
 per-Thread reset cutoffs, immutable per-Turn Memory admission rows, Reset and
-global-disable active-Turn exclusions, and prepared/finalized operation rows.
+global-disable active-Turn exclusions, Memory-visibility generations, rollback
+invalidations, and prepared/finalized operation rows.
 Published model-readable Memory content is canonical only in Nodes.
 
 ### 2. Canonical daily Memory graph
@@ -251,10 +254,11 @@ afterward.
 Before a root-user Turn is accepted, the Memory extension durably writes an
 immutable admission row keyed by `turnId` with `featureModeAtAdmission`,
 `threadModeAtAdmission`, derived `eligibleAtAdmission`, the current
-`featureModeGeneration`, and the current `resetEpoch`; ThreadService does not
-record its first Item or start side effects until that write commits. A missing
-admission row fails closed as ineligible. Orphan rows prepared for Turns that
-never become durable are removed during startup reconciliation.
+`featureModeGeneration`, current `resetEpoch`, and current
+`memoryVisibilityGeneration`; ThreadService does not record its first Item or
+start side effects until that write commits. A missing admission row fails
+closed as ineligible. Orphan rows prepared for Turns that never become durable
+are removed during startup reconciliation.
 
 `eligibleAtAdmission` is true only when the Thread is an eligible persistent
 interactive root and both feature and Thread modes are `enabled` at that exact
@@ -305,8 +309,45 @@ and does not secretly use the rest of the timeline Memory graph.
 
 ### 4. Phase 1: Thread rollout to daily episodes
 
-Phase 1 reads the canonical rollout and first applies immutable Core provenance.
-It first rejects every Turn whose durable Memory admission row is missing or has
+Phase 1 reads Core's current Thread projection and first applies immutable Core
+provenance. The projection is rebuilt from the canonical append-only rollout
+after applying rollback markers; a rolled-back Turn is absent even though its
+events and provenance remain available to audit lookup. During Core's
+`prepareHistoryRollback` hook, Memory acquires its document-write gate and
+commits a `rollback_prepared` row keyed by Core's `rollbackId`, exact omitted
+Turn IDs, and before/after source-projection versions. In that transaction it
+advances `memoryVisibilityGeneration` and derives the generated Node IDs whose
+terminal evidence lineage would lose all current support after removing those
+Turns. Missing or inconsistent lineage activates an `allGenerated` suppression
+scope rather than failing open. The `prepared` row immediately invalidates
+claims and publications based on the before-version and removes those generated
+Nodes from model-visible Memory. Memory then releases the gate so Core can append
+the marker.
+
+`commitHistoryRollback` uses one SQLite transaction to change the matching row
+from `prepared` to `committed`, mark lineage and citation-usage inputs based on
+the before-version stale, and upsert the durable dirty job for coalesced Phase
+1/2 reconciliation. It then wakes the worker. A retry after an ambiguous failure
+observes the committed row and same dirty job, performs no duplicate transition,
+and wakes the worker again. It does not remove the visibility filter. Only a
+receipt-backed publication that has reconciled every affected canonical Node
+and its control lineage changes the row to `reconciled` and allows the filter to
+retire. `abortHistoryRollback` changes a prepared row to `aborted` when Core
+appended no marker. All transitions are idempotent.
+
+On startup, before ThreadService accepts a Turn and before Memory starts a
+worker, a prepared row is matched by `rollbackId`, omitted IDs, and projection
+versions against Core's rollout: a matching marker advances it to `committed`
+and wakes reconciliation, while an absent marker aborts it. A failed
+`commitHistoryRollback` call therefore leaves the already durable prepared
+filter active while Core's terminal-hook recovery loop retries it in the current
+process. A transient failure progresses to the durable dirty job and
+reconciliation without requiring restart; persistent failures remain safely
+filtered and continue at the capped backoff. A crash before or after either
+cross-store commit has the same deterministic startup recovery without rerunning
+the user's rollback.
+
+Phase 1 first rejects every Turn whose durable Memory admission row is missing or has
 `eligibleAtAdmission=false`, or whose ID is in a retained global-disable
 exclusion; this decision is never recomputed from current feature or Thread
 mode. It then rejects every Turn whose `TurnProvenance.trigger` is
@@ -338,9 +379,11 @@ The source version is a deterministic fingerprint of ordered eligible
 Thread's `updatedAt`: excluded Automation Turns, copied fork prefixes,
 Turns admitted while either Memory mode was disabled, globally excluded active
 Turns, display-only edits, and other irrelevant Thread changes cannot make old
-evidence new. Reset cutoffs remove local Item positions at or before the barrier,
-and retained Reset exclusions remove every Item belonging to a Turn active at
-that barrier regardless of when the Item completed.
+evidence new. Because the fingerprint uses the current projection, rollback
+removes the omitted origins and necessarily changes a previously extracted
+source version. Reset cutoffs remove local Item positions at or before the
+barrier, and retained Reset exclusions remove every Item belonging to a Turn
+active at that barrier regardless of when the Item completed.
 
 One bounded internal extraction Turn produces a high-signal `Stage1Output`
 grouped by source date. Each non-empty group contains an episode summary plus
@@ -362,12 +405,27 @@ prepared row without rerunning extraction; a row without a matching receipt is
 retried from a fresh snapshot. A later user edit is handled after finalization as
 new authoritative input rather than mistaken for a failed Stage 1 publication.
 
+When rollback removes evidence that previously produced generated Memory, the
+next Stage 1 publication replaces that source's lineage from the new current
+projection. Untouched generated Nodes that lose all supporting origins become
+removed episode inputs for Phase 2; Nodes still supported by another current
+origin remain. A user-authored or user-edited Memory Node is authoritative and
+is never automatically deleted solely because old generated lineage was rolled
+back. Phase 2 then removes or revises unsupported generated beliefs, questions,
+guidance, and headlines through its ordinary change-set reconciliation.
+
 Every claim carries the current feature-mode generation and reset epoch. After
 acquiring the Memory document-write gate and immediately before publication, it
 rechecks that global and Thread modes remain enabled, the feature-mode generation
 and reset epoch remain current, and the Thread cutoff and both active-Turn
-exclusion sets still allow every source Turn. Stale extraction work cannot cross
-a mode transition or Reset.
+exclusion sets still allow every source Turn. It also rejects any prepared or
+committed rollback invalidation newer than the claim and recomputes the current
+source-projection version. Because rollback prepare acquires the same gate, a
+Stage 1 publication either commits before rollback prepares or aborts without
+publishing the stale result. This final read uses Core's atomically published
+version snapshot and never reacquires the per-Thread coordinator while holding
+the Memory gate. Stale extraction work cannot cross a mode transition, Reset,
+or rollback.
 
 ### 5. Phase 2: global timeline consolidation
 
@@ -411,8 +469,12 @@ publication and enqueues a fresh bounded attempt; it is never overwritten.
 Before preparing a conflict-free publication, Phase 2 acquires the Memory
 document-write gate and rechecks that `MemoryFeatureMode=enabled`, its
 feature-mode generation and reset epoch remain current, and all selected input
-fingerprints still match. It holds the gate through journal finalization, so a
-global mode transition cannot commit between validation and publication.
+fingerprints still match. It rejects prepared as well as committed rollback
+invalidations relevant to selected lineage. Because rollback prepare must
+acquire the same gate, an in-flight result either completes before rollback
+prepares or cannot publish afterward. Phase 2 holds the gate through journal
+finalization, so a global mode transition or rollback reconciliation cannot
+commit between validation and publication.
 
 A conflict-free result crosses the Loro/SQLite boundary through a durable
 publication journal:
@@ -447,11 +509,33 @@ publication, or second document mutation path.
 
 Only a Turn admitted while both feature and Thread modes are enabled receives a
 bounded derived briefing assembled from current high-ranked `#d-belief` and
-`#d-guidance` Nodes, with Node IDs for provenance. The briefing is recomputed and
-never stored as Summary, a hidden Memory object, or a duplicate Node. Detailed
-implicit recall uses existing `node_search` and `node_read` over the five Memory
-tags inside Daily Notes; the Memory extension defines no parallel
-list/read/search tools or private content backend.
+`#d-guidance` Nodes, with Node IDs for provenance. Before contributing context
+and before each implicit Memory tool projection, Memory creates a fresh
+`MemoryVisibilityView` from control state at a generation no older than the
+Turn's immutable `memoryVisibilityGeneration`; later invalidations can only make
+the view more restrictive. A generated Node is model-visible only when it is
+outside every active `prepared` or `committed` rollback suppression, or its
+complete lineage retains at least one current supporting origin after those
+invalidations are applied. User-authored and user-edited Memory Nodes remain
+authoritative and are not suppressed as generated content. Missing control
+state, incomplete lineage, or an unreadable Memory store contributes no derived
+briefing and suppresses every canonical Memory Node from implicit tool results
+rather than exposing possibly stale Memory.
+
+The briefing is recomputed and never stored as Summary, a hidden Memory object,
+or a duplicate Node. Detailed implicit recall uses existing `node_search` and
+`node_read` over the five Memory tags inside Daily Notes, but their model-visible
+projection uses the same `MemoryVisibilityView`: suppressed canonical Memory
+Nodes and generated descendants are omitted from search results and read
+outlines even when the tool starts from an ordinary ancestor. An authoritative
+user-authored or user-edited descendant remains model-visible and is promoted to
+an annotated root in that tool response rather than being hidden with its
+generated parent; this projection never mutates the Outliner. A Node explicitly
+attached or referenced by the user remains ordinary supplied input and bypasses
+implicit discovery, as defined above. The Memory extension defines no parallel
+list/read/search tools or private content backend. Public Nodes remain visible
+and editable in the Outliner while this model-only filter waits for asynchronous
+reconciliation.
 
 When the user explicitly asks to remember something in a Turn admitted while
 both Memory modes are enabled, the foreground root Thread uses ordinary Node
@@ -483,6 +567,13 @@ exclusion sets. A Turn admitted while either mode is disabled receives a
 structured Memory-disabled result for explicit remember/update/forget; the user
 can still edit the Nodes directly.
 
+An explicit foreground Memory Node mutation that committed before its source
+Turn was rolled back remains an ordinary document side effect. Transcript Edit
+does not delete or rewrite it, just as it does not revert a file or external
+action. Only automatically generated Memory and rebuildable usage/lineage state
+are reconciled from the current Thread projection; an explicit forget request or
+direct Node edit is required to reverse intentional Memory content.
+
 Every Memory-graph mutation, including a direct renderer edit, first acquires the
 Memory document-write gate. Reset and global mode transitions hold that gate
 across their linearization boundaries. Validation occurs before the enclosing
@@ -498,16 +589,24 @@ is re-enabled.
 
 Generated-node lineage in `memories.sqlite` maps each Memory Node to supporting
 `threadId`, `turnId`, and distinct `originItemId` values. It is rebuildable
-provenance/index state, not Memory content. The Outliner can navigate from a
-generated Memory Node to its supporting Threads without embedding an old
-`[[chat:...]]` syntax or creating source child Nodes.
+provenance/index state, not Memory content. Consolidated beliefs, questions,
+guidance, and headlines retain complete terminal evidence lineage rather than
+pointing only to an intermediate episode, so rollback suppression can determine
+whether any current support remains without reading stale Node prose. A durable
+user-authored/user-edited flag moves intentional content out of generated
+suppression. The Outliner can navigate from a generated Memory Node to its
+supporting Threads without embedding an old `[[chat:...]]` syntax or creating
+source child Nodes.
 
 `agentMessage.memoryCitation` entries contain `nodeId` and `note`, plus
 supporting `threadIds`. Clicking a citation opens the Memory Node in its Daily
 Node context and can navigate to source Threads. A completed cited agent message
 updates the referenced evidence's `usageCount` and `lastUsage`; accounting is
 keyed by distinct `originItemId`, so an inherited fork cannot increase ranking a
-second time. List/read/search operations alone do not count as use.
+second time. Citation usage is rebuildable control state: rollback removes
+contributions from omitted citation Items before the next selection, while
+cumulative model and Goal usage remain unchanged. List/read/search operations
+alone do not count as use.
 
 Deleting a Memory Node makes an old citation explicitly unavailable. Reusing an
 ID for unrelated content is forbidden. Supporting Thread IDs remain the durable
@@ -618,13 +717,24 @@ shipping.
 - **Fork-amplified evidence:** inherited Items preserve ultimate origin IDs;
   Phase 1 uses only locally originated Items and usage ranking counts each
   `originItemId` once.
+- **Rolled-back evidence remains Memory:** prepared invalidation linearizes with
+  the Memory write gate before Core commits rollback, current-projection
+  fingerprints drop omitted origins, in-flight publications either commit first
+  or fail their final recheck, and Phase 2 removes unsupported generated
+  conclusions. Until that cleanup commits, the admission-pinned visibility view
+  removes affected generated Nodes from briefings and implicit Node-tool results,
+  including while a failed commit hook is retried in-process. A successful retry
+  durably queues reconciliation without requiring restart; startup still commits
+  or aborts a stranded prepared invalidation by matching Core's rollout.
+  Explicit/user-edited Memory Nodes remain intentional document content rather
+  than being mistaken for derived transcript state.
 - **Prior Memory self-confirms:** generated Memory is a hypothesis graph;
   consolidation requires current Thread evidence or authoritative user edits.
 - **User edits are overwritten:** timeline fingerprints and optimistic
   publication checks abort on any conflict and retry from the user version.
-- **Cross-store crash ambiguity:** prepared SQLite journals and Core system
-  receipts make publication and Reset idempotently reconcilable before workers
-  start.
+- **Cross-store crash ambiguity:** prepared SQLite journals, prepared rollback
+  invalidations, rollout markers, and Core system receipts make rollback,
+  publication, and Reset idempotently reconcilable before workers start.
 - **Reset resurrects forgotten history:** retained cutoffs exclude pre-reset
   positions, retained active-Turn IDs exclude their later completions, and old
   admission epochs reject their delayed reserved-tag mutations.
@@ -650,10 +760,11 @@ shipping.
 
 At drafting time, open PR #422 owned unrelated renderer date-count files. There
 is no overlap. This plan consumes Core's Thread/Turn/MemoryCitation, mutation
-causation, extension admission-barrier, projection-neutral system-receipt, and
-protected system-tag-definition contracts. It uses existing Daily Node, tag,
-search, and Node command machinery plus the already-landed host-only receipt and
-tag-ensure commands; it does not reopen `src/core/types.ts`,
+causation, prepared/aborted/committed rollback lifecycle, extension admission-
+barrier, projection-neutral system-receipt, and protected system-tag-definition
+contracts. It uses existing Daily Node, tag, search, and Node command machinery
+plus the already-landed host-only receipt and tag-ensure commands; it does not
+reopen `src/core/types.ts`,
 `src/core/commands.ts`, the shared ThreadItem union, or Automation files.
 
 ## Open questions
@@ -663,8 +774,11 @@ five-category daily timeline graph, source-date publication, generated daily
 headlines, fixed protected tag identities, global `MemoryFeatureMode` as a
 no-catch-up privacy boundary, admission-time Memory eligibility,
 user-authoritative edits, derived briefing plus Node-tool retrieval, Node/Thread
-citations, canonical-container-only Reset deletion, complete removal of Dream,
-and complete deletion rather than migration of all old Memory data.
+citations, current-projection rollback reconciliation with explicit Memory Node
+side effects retained, fail-closed generated-Memory visibility from rollback
+prepare through reconciliation, canonical-container-only Reset deletion,
+complete removal of Dream, and complete deletion rather than migration of all
+old Memory data.
 
 ## Implementation checklist
 
@@ -673,8 +787,9 @@ and complete deletion rather than migration of all old Memory data.
 - [ ] Define current deterministic tag identities, `MemoryFeatureMode`,
   `ThreadMemoryMode`, Node-backed `MemoryCitation`, tagged hierarchy validation,
   and the control-only `memories.sqlite` schema, including mode generation,
-  journals, lineage, immutable Turn admission, reset cutoffs, and both retained
-  active-Turn exclusion sets.
+  journals, complete terminal-evidence lineage, immutable Turn admission,
+  Memory-visibility generations, rollback invalidation states, reset cutoffs,
+  and both retained active-Turn exclusion sets.
 - [ ] Ensure and lock the five fixed `tag:d-*` definitions through Core's
   host-only system-tag contract before public document mutation; prove same-ID
   restore and public definition-mutation rejection.
@@ -684,19 +799,22 @@ and complete deletion rather than migration of all old Memory data.
 - [ ] Implement bounded Phase 1 eligibility, immutable provenance filtering,
   admission-time global/Thread mode filtering, origin evidence deduplication,
   tagged episode publication, redaction, prepared-receipt reconciliation,
-  source-version idempotence, and pollution handling.
+  source-version idempotence, prepared/committed/reconciled/aborted rollback
+  invalidation, and pollution handling.
 - [ ] Implement bounded Phase 2 selection, tagged Node change sets, isolated
   consolidation, daily headline/category reconciliation, fingerprint conflict
   detection, receipt-based crash recovery, and forgetting.
 - [ ] Integrate the derived bounded briefing and tagged `node_search`/`node_read`
-  recall only when feature and Thread modes are enabled; prove either disabled
-  state contributes neither implicitly.
+  recall only when feature and Thread modes are enabled and through the same
+  fail-closed `MemoryVisibilityView`; prove either disabled state contributes
+  neither implicitly.
 - [ ] Implement explicit foreground remember/update/forget through existing Node
   tools, pre/post Memory-graph causation validation across tag and ancestry
   changes, global mode/generation enforcement, and immediate coalesced
   consolidation wakeup.
 - [ ] Implement Memory citation navigation, source-Thread navigation, and
-  citation-driven evidence usage accounting.
+  citation-driven evidence usage accounting, including rollback removal from
+  rebuildable usage state.
 - [ ] Implement journaled Reset across all daily Memory containers with
   permanent history cutoffs, active-Turn exclusions, stale-epoch mutation
   rejection, and stray-tag preservation; prove restart cannot repopulate Memory
@@ -708,9 +826,17 @@ and complete deletion rather than migration of all old Memory data.
   architecture specs around the canonical timeline graph.
 - [ ] Validate from empty userData with `bun run typecheck`,
   `bun run test:core`, `bun run test:renderer`, focused hierarchy, provenance,
-  fork, Automation/Subagent exclusion, per-Thread and global
-  disable/activity/re-enable, global-disable active-Turn interruption and
-  exclusion, in-flight publication invalidation, user-edit and retention races,
-  active-Turn Reset evidence and Node mutation, stray-tag Reset preservation,
+  fork, rollback before and after Phase 1 publication, rollback racing Phase 1
+  and Phase 2 on both sides of the Memory write gate, crash recovery before and
+  after the rollout marker, immediate replacement-Turn briefing and implicit
+  Node-tool reads after published Memory rollback, a commit hook that fails once
+  while the prepared filter stays active then retries, marks dirty, reconciles,
+  and retires the filter without restart, persistent-failure capped backoff,
+  missing-lineage `allGenerated` suppression, explicit Memory side-effect
+  retention, Automation/Subagent exclusion, per-Thread and global
+  disable/activity/re-enable, global-disable active-Turn
+  interruption and exclusion, in-flight publication invalidation, user-edit and
+  retention races, active-Turn Reset evidence and Node mutation, stray-tag Reset
+  preservation,
   fixed-tag identity/locking, every publication-crash boundary, and E2E coverage,
   `bun run docs:check`, and `git diff --check`.
