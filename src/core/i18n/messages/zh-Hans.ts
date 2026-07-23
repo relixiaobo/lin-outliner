@@ -905,6 +905,12 @@ commandPalette: {
       itemLabel: '项目',
       status: '状态',
       source: '来源',
+      sources: {
+        subagent: '子智能体',
+        memory: '记忆',
+        automation: '自动化',
+        feature: '应用活动',
+      },
       none: '无',
       noTurns: '尚未记录轮次。',
       rename: '重命名线程',

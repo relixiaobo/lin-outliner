@@ -11,6 +11,7 @@ import {
   MAX_PERSISTED_TOOL_OUTPUT_IMAGES,
   PiEventNormalizer,
   PiTurnExecutor,
+  agentProviderPayload,
   historyMessages,
   modelUserMessage,
 } from '../../src/main/agent/runtime/PiTurnExecutor';
@@ -460,6 +461,19 @@ describe('PiTurnExecutor event normalization', () => {
       },
     });
     expect(JSON.stringify([images, budgetedImages])).not.toContain(nearLimitImage.slice(0, 100));
+  });
+});
+
+describe('PiTurnExecutor provider payload', () => {
+  test('requests detailed reasoning summaries from Responses APIs', () => {
+    expect(agentProviderPayload({
+      model: 'test-model',
+      reasoning: { effort: 'high', summary: 'auto' },
+    }, testModel)).toEqual({
+      model: 'test-model',
+      reasoning: { effort: 'high', summary: 'detailed' },
+    });
+    expect(agentProviderPayload({ model: 'test-model' }, testModel)).toBeUndefined();
   });
 });
 

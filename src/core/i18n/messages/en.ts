@@ -967,6 +967,12 @@ commandPalette: {
       itemLabel: 'Item',
       status: 'Status',
       source: 'Source',
+      sources: {
+        subagent: 'Subagent',
+        memory: 'Memory',
+        automation: 'Automation',
+        feature: 'App activity',
+      },
       none: 'None',
       noTurns: 'No Turns recorded.',
       rename: 'Rename Thread',

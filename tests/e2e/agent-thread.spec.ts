@@ -1,6 +1,22 @@
 import { expect, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { MAX_INLINE_IMAGE_BASE64_CHARS, MAX_RAW_INLINE_IMAGE_BYTES } from '../../src/core/agentAttachmentLimits';
 import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
+
+async function createNewThread(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  await page.getByRole('dialog', { name: 'Threads' })
+    .getByRole('button', { name: 'New Thread' })
+    .click();
+}
+
+async function openSelectedThreadActions(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  await page.getByRole('dialog', { name: 'Threads' })
+    .locator('.thread-list-row.is-selected')
+    .getByRole('button', { name: 'Thread actions' })
+    .click();
+}
 
 test.describe('canonical agent Thread surface', () => {
   test.beforeEach(async ({ page }) => {
@@ -13,6 +29,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(composer).toBeFocused();
     await expect(page.locator('.thread-empty-state')).toHaveCount(0);
     await expect(page.locator('.thread-dock-title')).toContainText('Untitled Thread');
+    await expect(page.locator('.thread-dock-header').getByRole('button', { name: 'New Thread' })).toHaveCount(0);
+    await expect(page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' })).toHaveCount(0);
 
     await composer.fill('Summarize current outline.');
     await page.getByRole('button', { name: 'Send' }).click();
@@ -67,7 +85,7 @@ test.describe('canonical agent Thread surface', () => {
       buttons.map((button) => button.getAttribute('aria-label'))
     ))).toEqual(['Edit message', 'Copy message']);
 
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
+    await openSelectedThreadActions(page);
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Thread Details' }).click();
     const details = page.getByRole('dialog', { name: 'Thread Details' });
     await expect(details).toContainText('Thread ID');
@@ -305,7 +323,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('keeps the established keyboard contract when editing a user message', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Original request');
     await page.getByRole('button', { name: 'Send' }).click();
     const userMessage = page.locator('.thread-user-message').first();
@@ -331,7 +349,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('sends an Outliner Node to the Thread as structured input', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await rowBody(page, ids.alpha).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Send to composer' }).click();
 
@@ -347,7 +365,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('preserves inline content order when text surrounds a Node reference', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('Before ');
     await rowBody(page, ids.alpha).click({ button: 'right' });
@@ -364,7 +382,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('keeps same-named files from distinct sources and accepts a regular file above the image limit', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const fileInput = page.locator('.thread-composer-file-input');
     await fileInput.setInputFiles({
       name: 'report.bin',
@@ -403,7 +421,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('skips a pathless file that is already attached by content identity', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const fileInput = page.locator('.thread-composer-file-input');
     const file = {
       name: 'duplicate.txt',
@@ -418,7 +436,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('preserves a directory selected from the composer mention menu', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('@');
     await page.getByRole('option', { name: /workspace.*mock\/local-root/i }).click();
@@ -438,7 +456,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('keeps a native selected image as canonical inline vision input', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('@');
     await page.getByRole('option', { name: /reference\.png.*mock\/local-root/i }).click();
@@ -458,7 +476,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('rejects an image above the raw image limit before decoding it', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.locator('.thread-composer-file-input').setInputFiles({
       name: 'oversized.png',
       mimeType: 'image/png',
@@ -470,7 +488,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('compresses a pathless image to the bounded inline model payload', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const originalSize = await page.locator('.thread-composer-file-input').evaluate(async (element) => {
       const canvas = document.createElement('canvas');
       canvas.width = 1_536;
@@ -511,7 +529,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('retains measured long-message disclosure behavior', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('Line 1');
     for (let line = 2; line <= 9; line += 1) {
@@ -527,7 +545,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('restores composer focus when the Agent rail reopens', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
 
     await page.getByRole('button', { name: 'Collapse agent' }).click();
@@ -537,7 +555,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('retains the established full-bleed composer geometry', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const metrics = await page.locator('.thread-view').evaluate((view) => {
       const dock = view.closest('.thread-dock');
       const composer = view.querySelector('.thread-composer-region');
@@ -608,7 +626,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('reuses the composer slash menu for directly invocable Skills', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('/');
 
@@ -625,8 +643,11 @@ test.describe('canonical agent Thread surface', () => {
 
   test('keeps Thread actions in an anchored keyboard menu', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 620 });
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
-    const trigger = page.getByRole('button', { name: 'Thread actions' });
+    await createNewThread(page);
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    const trigger = page.getByRole('dialog', { name: 'Threads' })
+      .locator('.thread-list-row.is-selected')
+      .getByRole('button', { name: 'Thread actions' });
     await trigger.click();
 
     const menu = page.getByRole('menu', { name: 'Thread actions' });
@@ -646,14 +667,14 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('renames and deletes a Thread through in-app dialogs', async ({ page }) => {
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
+    await openSelectedThreadActions(page);
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Rename Thread' }).click();
     const renameDialog = page.getByRole('dialog', { name: 'Rename Thread' });
     await renameDialog.getByRole('textbox', { name: 'Rename Thread' }).fill('Research notes');
     await renameDialog.getByRole('button', { name: 'Save' }).click();
     await expect(page.locator('.thread-dock-title')).toContainText('Research notes');
 
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
+    await openSelectedThreadActions(page);
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Delete Thread' }).click();
     const deleteDialog = page.getByRole('dialog', { name: 'Delete Thread' });
     await expect(deleteDialog).toContainText('Research notes');
@@ -668,7 +689,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('changes the canonical Thread model and reasoning from the composer', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
 
     const control = page.getByRole('button', { name: 'Model and reasoning' });
     await expect(control).toContainText('GPT-5.4');
@@ -713,16 +734,20 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('retains the anchored Thread list dismissal and row-action interactions', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const listButton = page.getByRole('button', { name: 'Show Threads' });
     await listButton.click();
 
     const list = page.getByRole('dialog', { name: 'Threads' });
-    const row = list.locator('.thread-list-row').first();
+    const row = list.locator('.thread-list-row:not(.is-selected)').first();
+    const selectedRow = list.locator('.thread-list-row.is-selected');
     await expect(list).toBeVisible();
+    await expect(selectedRow.locator('.thread-list-actions')).toHaveCSS('opacity', '1');
     await expect(row.locator('.thread-list-actions')).toHaveCSS('opacity', '0');
     await row.hover();
     await expect(row.locator('.thread-list-actions')).toHaveCSS('opacity', '1');
+    await expect(row.locator('.thread-list-actions').getByRole('button')).toHaveAttribute('aria-label', 'Thread actions');
+    await expect(row.locator('small')).not.toContainText('user');
 
     await page.keyboard.press('Escape');
     await expect(list).toHaveCount(0);
@@ -734,7 +759,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('refreshes provider gating without discarding the composer draft', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('Keep this draft.');
 
@@ -757,7 +782,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('keeps Subagent Threads inspectable without exposing a direct composer', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -809,11 +834,13 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Show Threads' }).click();
-    await expect(page.getByRole('dialog', { name: 'Threads' }).getByRole('button', { name: /Research child/ })).toBeVisible();
+    const childRow = page.getByRole('dialog', { name: 'Threads' }).locator('.thread-list-row').filter({ hasText: 'Research child' });
+    await expect(childRow.getByRole('button', { name: /Research child/ })).toBeVisible();
+    await expect(childRow.locator('small')).toContainText('Subagent · research [explorer]');
   });
 
   test('renders reasoning and grouped tool Items with disclosure and copy interactions', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.evaluate(async () => {
       const e2eWindow = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -896,12 +923,17 @@ test.describe('canonical agent Thread surface', () => {
     const thought = page.getByRole('button', { name: /Thought.*Inspect the current workspace/ });
     await expect(thought).toBeVisible();
     await thought.click();
-    await expect(page.getByText('The workspace has enough evidence.')).toBeVisible();
+    const reasoningBody = page.locator('.thread-reasoning-body');
+    await expect(reasoningBody).toContainText('Inspect the current workspace');
+    await expect(reasoningBody).toContainText('The workspace has enough evidence.');
+    await expect(reasoningBody.locator('p')).toHaveCount(2);
 
     await page.getByRole('button', { name: 'Ran a command · read a node' }).click();
     const command = page.getByRole('button', { name: /Ran.*pwd/ });
     await expect(command).toBeVisible();
     await command.click();
+    await expect(command.locator('xpath=..').getByRole('button', { name: 'Copy output' })).toHaveCount(1);
+    await command.locator('xpath=..').locator('.thread-tool-section').last().locator('.agent-code-block').hover();
     await page.getByRole('button', { name: 'Copy output' }).click();
     expect(await clipboardText(page)).toBe('/mock/workspace');
 
@@ -940,8 +972,69 @@ test.describe('canonical agent Thread surface', () => {
     });
   });
 
+  test('shows web tool arguments and results as direct JSON', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const e2eWindow = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await e2eWindow.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ae01';
+      const toolId = '01910000-0000-7000-8000-00000000ae02';
+      const answerId = '01910000-0000-7000-8000-00000000ae03';
+      e2eWindow.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [
+            {
+              id: toolId,
+              type: 'webSearch',
+              provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: toolId },
+              query: 'Chengdu weather',
+              results: [{ title: 'Forecast', url: 'https://example.com/weather', snippet: 'Sunny' }],
+              status: 'completed',
+              error: null,
+            },
+            {
+              id: answerId,
+              type: 'agentMessage',
+              provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: answerId },
+              text: 'It will be sunny.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 5,
+          durationMs: 4,
+        },
+      });
+    });
+
+    await page.getByRole('button', { name: 'Worked for <1s' }).click();
+    const tool = page.locator('.thread-tool').filter({ hasText: 'Chengdu weather' });
+    await tool.getByRole('button', { name: /Searched the web/ }).click();
+    const sections = tool.locator('.thread-tool-section');
+    await expect(tool.getByRole('button', { name: 'Copy arguments' })).toHaveCount(1);
+    await expect(tool.getByRole('button', { name: 'Copy output' })).toHaveCount(1);
+    await expect(sections.nth(0)).toContainText('Arguments');
+    await expect(sections.nth(0).locator('.agent-code-body')).toContainText('"query": "Chengdu weather"');
+    await expect(sections.nth(1)).toContainText('Result');
+    await expect(sections.nth(1).locator('.agent-code-body')).toContainText('"title": "Forecast"');
+  });
+
   test('keeps Node and local-file references interactive in canonical Agent Markdown', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.evaluate(async ({ nodeId }) => {
       const e2eWindow = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -994,7 +1087,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('keeps loaded Skills compact while isolated Skill runs remain expandable', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.evaluate(async () => {
       const e2eWindow = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -1061,7 +1154,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('opens a lone terminal reasoning Item when the Turn has no final response', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.evaluate(async () => {
       const e2eWindow = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -1111,7 +1204,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('keeps the composer primary action identical to the active Turn state', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.evaluate(async () => {
       const e2eWindow = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -1153,7 +1246,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('uses the established step flow for canonical user input without losing the composer draft', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('Keep this draft while answering.');
     await page.evaluate(async () => {
@@ -1246,7 +1339,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('does not pull the transcript down after the reader scrolls upward', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -1329,8 +1422,8 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('virtualizes long Threads and restores their scroll position after switching', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
+    await createNewThread(page);
+    await openSelectedThreadActions(page);
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Rename Thread' }).click();
     const renameDialog = page.getByRole('dialog', { name: 'Rename Thread' });
     await renameDialog.getByRole('textbox', { name: 'Rename Thread' }).fill('Long history');
@@ -1368,7 +1461,7 @@ test.describe('canonical agent Thread surface', () => {
     });
     expect(savedTop).toBeGreaterThan(0);
 
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.getByRole('button', { name: 'Show Threads' }).click();
     await page.getByRole('dialog', { name: 'Threads' })
       .locator('.thread-list-select')
@@ -1385,7 +1478,10 @@ test.describe('canonical agent Thread surface', () => {
 test('opens provider settings instead of creating a Thread when no provider is usable', async ({ page }) => {
   await openMockedApp(page, { agentProviderUsable: false });
 
-  await expect(page.getByRole('button', { name: 'New Thread' }).first()).toBeDisabled();
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  await expect(page.getByRole('dialog', { name: 'Threads' })
+    .getByRole('button', { name: 'New Thread' })).toBeDisabled();
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Open Providers' }).click();
 
   const calls = await commandCalls(page);
@@ -1398,7 +1494,7 @@ test.describe('structured Thread retries', () => {
     await openMockedApp(page, {
       agentTurnFailure: 'OpenRouter API error (404): {"error":{"message":"No endpoints found for gpt-5.4"},"request_id":"private"}',
     });
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.locator('.thread-composer-file-input').setInputFiles({
       name: 'diagram.png',
       mimeType: 'image/png',
@@ -1439,7 +1535,7 @@ test.describe('structured Thread retries', () => {
 
   test('keeps an interrupted partial response and replaces Regenerate with Retry', async ({ page }) => {
     await openMockedApp(page);
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await createNewThread(page);
     await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };

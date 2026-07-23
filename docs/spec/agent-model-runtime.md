@@ -66,6 +66,10 @@ Provider events are converted as follows:
 - collaboration tools produce collaboration Items
 - web and image activity use their canonical Item kinds
 
+OpenAI Responses requests use the provider's detailed reasoning-summary mode.
+The runtime preserves every delivered summary part in the canonical `reasoning`
+Item; the renderer never substitutes the first line for the expanded body.
+
 An execution Item is recorded with `item/started`, optional typed deltas, and one
 terminal `item/completed`. The recorder validates local provenance and rejects
 completion before start. Tool arguments and visible results use bounded

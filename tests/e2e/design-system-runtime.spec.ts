@@ -323,7 +323,10 @@ async function createAttachmentRowPreview(page: Page) {
 }
 
 async function showComposerAttachmentError(page: Page) {
-  await page.getByRole('button', { name: 'New Thread' }).last().click();
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  await page.getByRole('dialog', { name: 'Threads' })
+    .getByRole('button', { name: 'New Thread' })
+    .click();
   await page.evaluate(() => {
     const win = window as typeof window & {
       lin?: {

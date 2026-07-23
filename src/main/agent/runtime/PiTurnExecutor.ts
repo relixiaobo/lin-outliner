@@ -39,6 +39,7 @@ import {
   piResolveAuthApiKey,
   piStreamSimple,
 } from '../../piModels';
+import { applyCustomOpenAIResponsesPayloadProfile } from '../../openAIResponsesCompat';
 import type { TurnExecutionContext, TurnExecutionResult, TurnExecutor } from './types';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
@@ -111,6 +112,7 @@ export class PiTurnExecutor implements TurnExecutor {
             : null),
         }),
         getApiKey: runtime.getApiKey,
+        onPayload: agentProviderPayload,
         steeringMode: 'all',
         sessionId: context.thread.sessionId,
         toolExecution: 'parallel',
@@ -139,6 +141,28 @@ export class PiTurnExecutor implements TurnExecutor {
       unsubscribe?.();
     }
   }
+}
+
+export function agentProviderPayload(payload: unknown, model: Model<Api>): unknown | undefined {
+  const compatiblePayload = applyCustomOpenAIResponsesPayloadProfile(payload, model);
+  const source = compatiblePayload ?? payload;
+  if (!isRecord(source) || !isOpenAIResponsesApi(model.api) || !isRecord(source.reasoning)) {
+    return compatiblePayload;
+  }
+  if (source.reasoning.summary === 'detailed') return compatiblePayload;
+  return {
+    ...source,
+    reasoning: {
+      ...source.reasoning,
+      summary: 'detailed',
+    },
+  };
+}
+
+function isOpenAIResponsesApi(api: Api): boolean {
+  return api === 'openai-responses'
+    || api === 'openai-codex-responses'
+    || api === 'azure-openai-responses';
 }
 
 async function resolveDefaultRuntime(context: TurnExecutionContext): Promise<PiRuntimeSelection> {

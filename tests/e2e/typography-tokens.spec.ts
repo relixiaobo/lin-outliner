@@ -72,8 +72,11 @@ const stateLayoutDeclarationAllowlist = new Map([
 ]);
 const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/agent-dock.css|:root[data-window-material] .agent-dock', 'Agent rail chrome material.'],
-  ['src/renderer/styles/thread.css|.thread-header-menu', 'Thread action menu.'],
+  ['src/renderer/styles/thread.css|.thread-action-menu', 'Thread action menu.'],
+  ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
+  ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
   ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
+  ['src/renderer/styles/thread.css|.thread-response-details, .thread-response-usage-card', 'Thread response detail and usage overlays.'],
   ['src/renderer/styles/code.css|.agent-code-header > span', 'Floating code-block language label chrome.'],
   ['src/renderer/styles/code.css|.agent-code-copy, .code-block-copy', 'Floating code-block copy chrome.'],
   ['src/renderer/styles/code.css|.code-block-language', 'Floating code-block language trigger.'],
@@ -96,8 +99,11 @@ const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/sidebar.css|:root[data-window-material] .sidebar-dock', 'Sidebar rail chrome material.'],
 ]);
 const borderlessOverlaySurfaceSelectors = new Map([
-  ['src/renderer/styles/thread.css|.thread-header-menu', 'Thread action menu.'],
+  ['src/renderer/styles/thread.css|.thread-action-menu', 'Thread action menu.'],
+  ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
+  ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
   ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
+  ['src/renderer/styles/thread.css|.thread-response-details, .thread-response-usage-card', 'Thread response detail and usage overlays.'],
   ['src/renderer/styles/code.css|.code-block-language-menu', 'Code-block language menu.'],
   ['src/renderer/styles/confirm-dialog.css|.confirm-dialog', 'Confirm dialog level-2 surface.'],
   ['src/renderer/styles/file-preview.css|.document-outline-popover', 'Document outline popover.'],
@@ -130,6 +136,7 @@ const runtimeTokenInputs = new Map([
   ['src/renderer/styles/outliner.css|--flat-indent-guide-height', 'Flat indent guides receive measured geometry from the outliner runtime.'],
   ['src/renderer/styles/outliner.css|--table-columns', 'Table owners provide one live column template to aligned header and body rows.'],
   ['src/renderer/styles/outliner.css|--table-min-width', 'Table owners provide the live horizontal extent derived from configured column widths.'],
+  ['src/renderer/styles/thread.css|--segment-size', 'Thread usage segments receive their live proportional width from response usage.'],
   ['src/renderer/styles/thread.css|--thread-depth', 'Thread rows receive their live lineage depth from the Thread list.'],
 ]);
 const layoutTransitionProperties = new Set([
@@ -1467,7 +1474,6 @@ test.describe('typography tokens', () => {
 
   test('keeps primary reading text aligned across outliner and Thread surfaces', async ({ page }) => {
     await openMockedApp(page);
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
     await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Summarize current outline.');
     await page.getByRole('button', { name: 'Send' }).click();
     await expect(page.getByText('Current outline focuses on design-system work.')).toBeVisible();
@@ -1484,7 +1490,7 @@ test.describe('typography tokens', () => {
       fontSize: '16px',
       lineHeight: '26px',
     });
-    await expect(cssTextMetrics(page, '.thread-composer textarea')).resolves.toEqual({
+    await expect(cssTextMetrics(page, '.thread-composer-editor .ProseMirror')).resolves.toEqual({
       fontSize: '16px',
       lineHeight: '26px',
     });

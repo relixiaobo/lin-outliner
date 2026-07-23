@@ -21,7 +21,6 @@ import { useT } from '../../../i18n/I18nProvider';
 import type { DocumentIndex } from '../../../state/document';
 import { usePreviewObjectUrl } from '../../../ui/preview/usePreviewObjectUrl';
 import { dispatchPreviewTargetOpen } from '../../../ui/preview/previewEvents';
-import { openUrlPreviewFromClick } from '../../../ui/preview/urlPreviewRouting';
 import {
   AgentIcon,
   AddChildIcon,
@@ -587,14 +586,22 @@ function ToolItemDisclosure({
       {expanded ? (
         <div className="thread-tool-body">
           {detail.input ? (
-            <ToolDetailSection copyLabel={t.agent.thread.item.copyArguments} label={t.agent.thread.item.arguments} text={detail.input}>
-              <ReadOnlyCodeBlock code={detail.input} language={detail.inputLanguage} />
+            <ToolDetailSection label={t.agent.thread.item.arguments}>
+              <ReadOnlyCodeBlock
+                code={detail.input}
+                copyLabel={t.agent.thread.item.copyArguments}
+                language={detail.inputLanguage}
+              />
             </ToolDetailSection>
           ) : null}
           {detail.body}
           {output ? (
-            <ToolDetailSection copyLabel={t.agent.thread.item.copyOutput} label={t.agent.thread.item.output} text={output}>
-              <ReadOnlyCodeBlock code={output} language={fullOutput ? outputLanguage(fullOutput) : detail.outputLanguage} />
+            <ToolDetailSection label={detail.outputLabel}>
+              <ReadOnlyCodeBlock
+                code={output}
+                copyLabel={t.agent.thread.item.copyOutput}
+                language={fullOutput ? outputLanguage(fullOutput) : detail.outputLanguage}
+              />
             </ToolDetailSection>
           ) : null}
           {detail.error ? <p className="thread-inline-error">{detail.error}</p> : null}
@@ -644,18 +651,14 @@ function LoadedSkillAffordance({ details }: { readonly details: LoadedSkillDetai
 
 function ToolDetailSection({
   children,
-  copyLabel,
   label,
-  text,
 }: {
   readonly children: ReactNode;
-  readonly copyLabel: string;
   readonly label: string;
-  readonly text: string;
 }) {
   return (
     <section className="thread-tool-section">
-      <header><span>{label}</span><ThreadMessageCopyButton label={copyLabel} text={text} /></header>
+      <header><span>{label}</span></header>
       {children}
     </section>
   );
@@ -705,6 +708,7 @@ interface ToolDetail {
   readonly input: string | null;
   readonly inputLanguage: string;
   readonly output: string | null;
+  readonly outputLabel: string;
   readonly outputLanguage: string;
   readonly error: string | null;
   readonly body: ReactNode;
@@ -715,7 +719,15 @@ function toolDetail(
   t: Messages,
   onOpenThread: (threadId: string) => Promise<void>,
 ): ToolDetail {
-  const empty = { input: null, inputLanguage: 'text', output: null, outputLanguage: 'text', error: null, body: null };
+  const empty = {
+    input: null,
+    inputLanguage: 'text',
+    output: null,
+    outputLanguage: 'text',
+    outputLabel: t.agent.thread.item.output,
+    error: null,
+    body: null,
+  };
   switch (item.type) {
     case 'commandExecution':
       return {
@@ -748,6 +760,7 @@ function toolDetail(
         inputLanguage: 'json',
         output: item.result === null ? null : jsonText(item.result),
         outputLanguage: 'json',
+        outputLabel: t.agent.thread.item.result,
         error: item.error,
       };
     case 'dynamicToolCall': {
@@ -763,6 +776,7 @@ function toolDetail(
         inputLanguage: 'json',
         output: textOutput || null,
         outputLanguage: isJsonText(textOutput) ? 'json' : 'text',
+        outputLabel: t.agent.thread.item.result,
         error: item.success === false && !textOutput ? t.agent.thread.item.status.failed : null,
         body: images.length > 0 ? (
           <div className="thread-tool-images">
@@ -808,29 +822,12 @@ function toolDetail(
     case 'webSearch':
       return {
         ...empty,
-        input: item.query,
+        input: jsonText({ query: item.query }),
+        inputLanguage: 'json',
+        output: item.results.length > 0 ? jsonText(item.results) : null,
+        outputLanguage: 'json',
+        outputLabel: t.agent.thread.item.result,
         error: item.error,
-        body: item.results.length > 0 ? (
-          <ol className="thread-search-results">
-            {item.results.map((result) => (
-              <li key={result.url}>
-                <a
-                  href={result.url}
-                  onClick={(event) => {
-                    if (!openUrlPreviewFromClick(event.nativeEvent, result.url, result.title)) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  {result.title}
-                </a>
-                {result.snippet ? <p>{result.snippet}</p> : null}
-              </li>
-            ))}
-          </ol>
-        ) : null,
       };
     default:
       return assertNever(item);

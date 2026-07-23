@@ -7,7 +7,7 @@ projection or UI-only execution model.
 
 The dock has three stable regions:
 
-1. A Thread list with selection, creation, rename, fork, and delete actions.
+1. A Thread list with selection, creation, details, rename, fork, and delete actions.
 2. A scrollable Thread view containing ordered Turns and Items.
 3. A composer for starting, steering, or interrupting the active Turn.
 
@@ -27,14 +27,16 @@ Thread execution selections, active input requests, and Goals live in
   the outliner
 - plans render their current step list without becoming a separate work object
 - reasoning uses the established `Thinking` / `Thought` disclosure with a
-  one-line gist while collapsed; only the actual tail Item streams
+  one-line gist while collapsed and every provider-supplied summary/content
+  part in the expanded body; only the actual tail Item streams
 - consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes
-  status, arguments, output, copy actions, syntax-highlighted code, and image
-  previews where the Item carries them; a completed row rests on its tool-type
-  icon rather than a generic success check, while only failure carries a status
-  ring
+  status plus direct argument/result data; structured arguments and results render
+  as their JSON rather than a second presentation model, while command output,
+  file interaction, copy actions, and image previews retain their native
+  affordances; a completed row rests on its tool-type icon rather than a generic
+  success check, while only failure carries a status ring
 - bounded tool-result projections render immediately; expanding a row resolves
   its content-addressed `outputRef` once and replaces the projection with the
   full text, while copied Turns use the same full result
@@ -206,9 +208,13 @@ root-Thread path, leaving a focused composer rather than a dead-end empty state.
 
 The Thread list is an anchored popover. It clamps to the viewport, closes on an
 outside pointer or Escape, traps focus while open, restores focus to its trigger,
-and exposes row actions on hover or keyboard focus without moving row geometry.
-The Thread action menu uses the same anchored-overlay contract with native menu
-arrow-key navigation; it is not a CSS-only `focus-within` disclosure.
+and owns New Thread plus every Thread-management action. The dock header contains
+only the list trigger and global dock-close chrome. Each row exposes one More
+control on hover or keyboard focus without moving row geometry; its Details,
+Rename, and Delete menu uses the same anchored-overlay contract with native menu
+arrow-key navigation. Ordinary root-user rows show relative time only. Special
+sources show a localized product label and never expose raw `threadSource` enum
+values.
 
 The transcript follows streaming output only while the reader remains near its
 bottom edge. Scrolling upward or opening a reasoning, tool, plan, or long-message
@@ -273,8 +279,8 @@ The Agent dock follows the shared design system:
   drive it directly
 - focus remains visible, motion respects user preference, and hover never moves
   layout
-- the header reserves the global rail-toggle zone so Thread actions do not
-  overlap window chrome
+- the minimal header reserves the global rail-toggle zone so its list trigger
+  does not overlap window chrome
 
 All user-facing copy comes from typed i18n messages. UI nouns are Thread, Turn,
 Item, Goal, Role, and Subagent.

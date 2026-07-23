@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { createPortal } from 'react-dom';
 import type { Thread, ThreadUserContent, Turn } from '../../../core/agent/protocol';
 import type { AgentProviderSettingsView, AgentSlashCommandView, SkillDefinition } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
@@ -8,25 +7,17 @@ import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import {
-  AddIcon,
   AgentIcon,
   ChevronDownIcon,
   ICON_SIZE,
-  InfoIcon,
-  MoreIcon,
-  PencilIcon,
   SettingsIcon,
-  TrashIcon,
   WarningIcon,
 } from '../../ui/icons';
-import { IconButton } from '../../ui/primitives/IconButton';
 import { Button } from '../../ui/primitives/Button';
 import { ConfirmDialog } from '../../ui/primitives/ConfirmDialog';
 import { Dialog } from '../../ui/primitives/Dialog';
 import { Input } from '../../ui/primitives/Input';
 import { ResizeHandle } from '../../ui/primitives/ResizeHandle';
-import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
-import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 import { ThreadList } from './ThreadList';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
 import { ThreadView } from './ThreadView';
@@ -61,18 +52,15 @@ export function ThreadDock({
   const [renameTarget, setRenameTarget] = useState<Thread | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Thread | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsTarget, setDetailsTarget] = useState<Thread | null>(null);
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [providerSettingsLoaded, setProviderSettingsLoaded] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
   const [composerFocusToken, setComposerFocusToken] = useState(0);
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
-  const [actionsOpen, setActionsOpen] = useState(false);
   const renameTitleId = useId();
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const threadListAnchorRef = useRef<HTMLButtonElement | null>(null);
-  const actionsAnchorRef = useRef<HTMLButtonElement | null>(null);
-  const actionsMenuRef = useRef<HTMLDivElement | null>(null);
   const creatingRef = useRef(false);
   const autoCreateAttemptedRef = useRef(false);
   const providerSettingsRequestRef = useRef(0);
@@ -87,41 +75,10 @@ export function ThreadDock({
   const providerRetry = thread ? snapshot.providerRetryByThread.get(thread.id) ?? null : null;
   const providerBlocksCreation = providerSettingsLoaded
     && (!providerSettings || !resolveUsableActiveProvider(providerSettings));
-  const actionsMenuStyle = useAnchoredOverlay(actionsMenuRef, {
-    anchorRef: actionsAnchorRef,
-    disabled: !actionsOpen,
-    layoutKey: thread?.id ?? '',
-    placement: 'bottom-end',
-    width: 168,
-  });
-  const { onKeyDown: onActionsKeyDown } = useMenuKeyboard({
-    active: actionsOpen,
-    getRestoreTarget: () => actionsAnchorRef.current,
-    kind: 'menu',
-    onClose: () => setActionsOpen(false),
-    surfaceRef: actionsMenuRef,
-  });
-
   useEffect(() => {
     if (open && !openRef.current) setComposerFocusToken((token) => token + 1);
     openRef.current = open;
   }, [open]);
-
-  useEffect(() => {
-    setActionsOpen(false);
-  }, [thread?.id]);
-
-  useEffect(() => {
-    if (!actionsOpen) return undefined;
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (actionsMenuRef.current?.contains(target) || actionsAnchorRef.current?.contains(target)) return;
-      setActionsOpen(false);
-    };
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    return () => document.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [actionsOpen]);
 
   const refreshProviderSettings = useCallback(async () => {
     const request = providerSettingsRequestRef.current + 1;
@@ -223,6 +180,13 @@ export function ThreadDock({
     await runAction(() => threadStore.deleteThread(target.id));
   }
 
+  async function openDetails(target: Thread) {
+    await runAction(async () => {
+      await threadStore.selectThread(target.id);
+      setDetailsTarget(target);
+    });
+  }
+
   async function runAction(action: () => Promise<void>) {
     setActionError(null);
     try {
@@ -263,50 +227,6 @@ export function ThreadDock({
               size={ICON_SIZE.menu}
             />
           </button>
-          <div className="thread-dock-actions">
-            <IconButton
-              className="thread-dock-action"
-              disabled={creating || providerBlocksCreation}
-              icon={AddIcon}
-              label={t.agent.thread.new}
-              onClick={() => void createThread()}
-              title={providerBlocksCreation ? t.agent.thread.providerRequired : t.agent.thread.new}
-              variant="panel"
-            />
-            {thread ? (
-              <div className="thread-header-actions">
-                <IconButton
-                  aria-expanded={actionsOpen}
-                  icon={MoreIcon}
-                  label={t.agent.thread.actions}
-                  onClick={() => setActionsOpen((current) => !current)}
-                  ref={actionsAnchorRef}
-                  variant="panel"
-                />
-                {actionsOpen ? createPortal(
-                  <div
-                    aria-label={t.agent.thread.actions}
-                    className="thread-header-menu"
-                    onKeyDown={onActionsKeyDown}
-                    ref={actionsMenuRef}
-                    role="menu"
-                    style={actionsMenuStyle}
-                  >
-                    <button onClick={() => { setActionsOpen(false); setDetailsOpen(true); }} role="menuitem" type="button">
-                      <InfoIcon size={ICON_SIZE.menu} />{t.agent.thread.details}
-                    </button>
-                    <button onClick={() => { setActionsOpen(false); beginRename(thread); }} role="menuitem" type="button">
-                      <PencilIcon size={ICON_SIZE.menu} />{t.agent.thread.rename}
-                    </button>
-                    <button onClick={() => { setActionsOpen(false); setDeleteTarget(thread); }} role="menuitem" type="button">
-                      <TrashIcon size={ICON_SIZE.menu} />{t.agent.thread.delete}
-                    </button>
-                  </div>,
-                  document.body,
-                ) : null}
-              </div>
-            ) : null}
-          </div>
         </header>
         {actionError || providerError || snapshot.error ? (
           <div className="thread-dock-error" role="alert">
@@ -371,6 +291,7 @@ export function ThreadDock({
             onClose={() => setListOpen(false)}
             onCreate={() => void createThread()}
             onDelete={setDeleteTarget}
+            onDetails={(target) => void openDetails(target)}
             onRename={beginRename}
             onSelect={(threadId) => {
               void runAction(() => threadStore.selectThread(threadId));
@@ -412,8 +333,12 @@ export function ThreadDock({
           </form>
         </Dialog>
       ) : null}
-      {detailsOpen && thread ? (
-        <ThreadDetailsDialog onClose={() => setDetailsOpen(false)} thread={thread} turns={turns} />
+      {detailsTarget ? (
+        <ThreadDetailsDialog
+          onClose={() => setDetailsTarget(null)}
+          thread={detailsTarget}
+          turns={snapshot.turnsByThread.get(detailsTarget.id) ?? []}
+        />
       ) : null}
       {deleteTarget ? (
         <ConfirmDialog

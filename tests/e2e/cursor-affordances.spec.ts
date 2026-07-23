@@ -32,7 +32,7 @@ const helpCursorSelectors = new Map([
   ['src/renderer/styles/outliner.css|.field-value-hint', 'Field-value validation hint uses a native title tooltip.'],
 ]);
 const textCursorSelectors = new Map([
-  ['src/renderer/styles/thread.css|.thread-composer textarea', 'Thread composer text editor.'],
+  ['src/renderer/styles/thread.css|.thread-composer-editor', 'Thread composer text editor.'],
   ['src/renderer/styles/file-preview.css|.file-preview-pdf-text-layer :is(span, br)', 'Selectable PDF text layer glyphs.'],
   ['src/renderer/styles/outliner.css|.field-option-picker-row', 'Field option value opens into an inline filter input.'],
   ['src/renderer/styles/outliner.css|.node-description', 'Outliner node description textarea.'],
@@ -40,13 +40,14 @@ const textCursorSelectors = new Map([
 ]);
 const tooltipSurfaceSelectors = new Map([
   ['.inline-file-preview-popover', 'Pointer-delayed inline file preview tooltip.'],
+  ['.thread-response-usage-card', 'Pointer-delayed Thread response usage tooltip.'],
   ['.view-toolbar-tooltip', 'View toolbar tooltip.'],
 ]);
 const readOnlyTooltipComponents = new Map([
   ['FilePreviewIcon', 'Read-only inline file identity glyph.'],
+  ['ThreadUsageBreakdown', 'Read-only token and cost breakdown.'],
 ]);
 const chromeIconControlSelectors = [
-  '.thread-dock-header .icon-button',
   '.outline-panel-close',
   '.panel-breadcrumb-close',
   '.panel-page-back-button',
@@ -921,7 +922,6 @@ test.describe('cursor affordances', () => {
 
   test('core controls keep the native arrow cursor', async ({ page }) => {
     await openMockedApp(page);
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
 
     const cursors = await page.evaluate((ids) => {
       const cursor = (selector: string) => {
@@ -934,7 +934,7 @@ test.describe('cursor affordances', () => {
         panelMore: cursor('.panel-title-more-button'),
         rowBullet: cursor(`[data-node-id="${ids.alpha}"] .row-bullet-button`),
         composerSend: cursor('.thread-composer .icon-button'),
-        threadList: cursor('.thread-dock-header .icon-button'),
+        threadList: cursor('.thread-dock-title-button'),
       };
     }, ids);
 
@@ -981,9 +981,12 @@ test.describe('cursor affordances', () => {
   test('Thread actions and tag controls never use the hand cursor (A5)', async ({ page }) => {
     await openMockedApp(page);
 
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
-    await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
-    const threadActionCursors = await page.locator('.thread-header-menu button').evaluateAll((buttons) =>
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await page.getByRole('dialog', { name: 'Threads' })
+      .locator('.thread-list-row.is-selected')
+      .getByRole('button', { name: 'Thread actions' })
+      .click();
+    const threadActionCursors = await page.locator('.thread-action-menu button').evaluateAll((buttons) =>
       buttons.map((button) => getComputedStyle(button).cursor));
 
     const tagLabelCursor = await page.evaluate(() => {
