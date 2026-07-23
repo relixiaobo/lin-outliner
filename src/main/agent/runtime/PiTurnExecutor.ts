@@ -14,6 +14,7 @@ import type {
   TextContent,
   ToolCall,
   ToolResultMessage,
+  Usage,
   UserMessage,
 } from '@earendil-works/pi-ai';
 import type {
@@ -21,8 +22,11 @@ import type {
   JsonValue,
   MessagePhase,
   ThreadItem,
+  ThreadItemOutputReference,
+  TurnExecutionDetails,
   ThreadUserContent,
 } from '../../../core/agent/protocol';
+import { createAbortSettledStreamFn } from '../capabilities/agentStreamAbort';
 import { resolveAgentModelEffort, resolveProviderModel } from '../capabilities/agentModelResolution';
 import { getProviderRuntimeConfig } from '../capabilities/agentSettings';
 import { persistedToolResultDetails } from '../capabilities/agentToolResultPersistence';
@@ -101,7 +105,11 @@ export class PiTurnExecutor implements TurnExecutor {
           tools,
           messages: historyMessages(context, runtime.model),
         },
-        streamFn: piStreamSimple,
+        streamFn: createAbortSettledStreamFn(piStreamSimple, {
+          onProviderRetry: (event) => context.onProviderRetry(event.phase === 'retrying'
+            ? { kind: event.kind, attempt: event.attempt, maxRetries: event.maxRetries }
+            : null),
+        }),
         getApiKey: runtime.getApiKey,
         steeringMode: 'all',
         sessionId: context.thread.sessionId,
@@ -116,16 +124,16 @@ export class PiTurnExecutor implements TurnExecutor {
       await agent.prompt(prompt);
       await normalizer.flush();
       if (context.signal.aborted || normalizer.stopReason === 'aborted') {
-        return { status: 'interrupted', tokensUsed: normalizer.tokensUsed };
+        return { status: 'interrupted', execution: executionDetails(context, runtime, normalizer.usage) };
       }
       if (agent.state.errorMessage || normalizer.stopReason === 'error') {
         return {
           status: 'failed',
           error: { message: agent.state.errorMessage ?? normalizer.errorMessage ?? 'Model execution failed' },
-          tokensUsed: normalizer.tokensUsed,
+          execution: executionDetails(context, runtime, normalizer.usage),
         };
       }
-      return { status: 'completed', tokensUsed: normalizer.tokensUsed };
+      return { status: 'completed', execution: executionDetails(context, runtime, normalizer.usage) };
     } finally {
       context.signal.removeEventListener('abort', abort);
       unsubscribe?.();
@@ -153,7 +161,7 @@ async function resolveDefaultRuntime(context: TurnExecutionContext): Promise<PiR
 }
 
 export class PiEventNormalizer {
-  tokensUsed = 0;
+  readonly usage: MutableTurnUsage = emptyTurnUsage();
   stopReason: AssistantMessage['stopReason'] | null = null;
   errorMessage: string | null = null;
   private activeMessageItem: Extract<ThreadItem, { type: 'agentMessage' }> | null = null;
@@ -261,7 +269,7 @@ export class PiEventNormalizer {
           .map((part) => part.thinking),
       });
     }
-    this.tokensUsed += message.usage.totalTokens;
+    addUsage(this.usage, message.usage);
     this.stopReason = message.stopReason;
     this.errorMessage = message.errorMessage ?? null;
     this.activeMessageItem = null;
@@ -297,6 +305,7 @@ function startedToolItem(
   const base = {
     id: itemId,
     provenance: context.recorder.localProvenance(itemId),
+    outputRef: null,
   };
   if (identity.namespace === 'collaboration' && isCollaborationToolName(identity.name)) {
     const input = isRecord(args) ? args : {};
@@ -396,6 +405,7 @@ async function completedToolItem(
   durationMs: number,
 ): Promise<ThreadItem> {
   const status = isError ? 'failed' : 'completed';
+  const outputRef = await persistFullToolOutput(context, item, result, isError);
   switch (item.type) {
     case 'commandExecution': {
       const details = toolDetails(result);
@@ -403,6 +413,7 @@ async function completedToolItem(
       return {
         ...item,
         status,
+        outputRef,
         processId: isRecord(data) && typeof data.processId === 'string' ? data.processId : item.processId,
         aggregatedOutput: boundedText(toolResultText(result), MAX_PERSISTED_TOOL_OUTPUT_CHARS),
         exitCode: isRecord(data) && typeof data.exitCode === 'number' ? data.exitCode : isError ? 1 : 0,
@@ -410,11 +421,12 @@ async function completedToolItem(
       };
     }
     case 'fileChange':
-      return { ...item, status };
+      return { ...item, status, outputRef };
     case 'webSearch':
       return {
         ...item,
         status,
+        outputRef,
         results: webResults(result),
         error: isError
           ? boundedText(toolResultText(result) || 'Web search failed', MAX_PERSISTED_TOOL_STRING_CHARS)
@@ -424,6 +436,7 @@ async function completedToolItem(
       return {
         ...item,
         status,
+        outputRef,
         result: isError ? null : boundedJsonValue(toolDetails(result), MAX_PERSISTED_TOOL_OUTPUT_CHARS),
         error: isError
           ? boundedText(toolResultText(result) || 'MCP tool failed', MAX_PERSISTED_TOOL_STRING_CHARS)
@@ -434,6 +447,7 @@ async function completedToolItem(
       return {
         ...item,
         status,
+        outputRef,
         contentItems: await dynamicOutput(context, item, result),
         success: !isError,
         durationMs,
@@ -448,12 +462,139 @@ async function completedToolItem(
       return {
         ...item,
         status,
+        outputRef,
         receiverThreadIds,
         agentsStates,
       };
     }
     default:
       throw new Error(`Unexpected executable Thread Item: ${item.type}`);
+  }
+}
+
+function executionDetails(
+  context: TurnExecutionContext,
+  runtime: PiRuntimeSelection,
+  usage: TurnExecutionDetails['usage'],
+): TurnExecutionDetails {
+  return {
+    modelProvider: context.thread.modelProvider,
+    model: runtime.model.id,
+    reasoningEffort: context.configuration.reasoningEffort,
+    usage: {
+      ...usage,
+      cost: usage.cost ? { ...usage.cost } : null,
+    },
+  };
+}
+
+interface MutableTurnUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+    currency: 'USD';
+  } | null;
+}
+
+function emptyTurnUsage(): MutableTurnUsage {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: null,
+  };
+}
+
+function addUsage(target: MutableTurnUsage, usage: Usage): void {
+  target.input += usage.input;
+  target.output += usage.output;
+  target.cacheRead += usage.cacheRead;
+  target.cacheWrite += usage.cacheWrite;
+  target.totalTokens += usage.totalTokens;
+  const cost = target.cost ?? {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+    currency: 'USD' as const,
+  };
+  cost.input += usage.cost.input;
+  cost.output += usage.cost.output;
+  cost.cacheRead += usage.cost.cacheRead;
+  cost.cacheWrite += usage.cost.cacheWrite;
+  cost.total += usage.cost.total;
+  target.cost = cost;
+}
+
+async function persistFullToolOutput(
+  context: TurnExecutionContext,
+  item: ThreadItem,
+  result: unknown,
+  isError: boolean,
+): Promise<ThreadItemOutputReference | null> {
+  const output = fullToolOutput(result);
+  if (!output.text) return null;
+  const state = isError ? 'error' : 'output';
+  const tool = toolItemLabel(item);
+  const normalized = output.text.replace(/\s+/g, ' ').trim();
+  const preview = normalized.length > 200 ? `${normalized.slice(0, 200).trim()}...` : normalized;
+  return context.persistOutputText(
+    item.id,
+    output.text,
+    output.mimeType,
+    preview ? `${tool} ${state}: ${preview}` : `${tool} ${state}`,
+  );
+}
+
+function fullToolOutput(result: unknown): {
+  readonly text: string;
+  readonly mimeType: ThreadItemOutputReference['mimeType'];
+} {
+  const text = toolResultText(result);
+  if (text) return { text, mimeType: 'text/plain' };
+  const details = toolDetails(result);
+  if (details === undefined) return { text: '', mimeType: 'text/plain' };
+  return {
+    text: JSON.stringify(withoutInlineBinary(details), null, 2),
+    mimeType: 'application/json',
+  };
+}
+
+function withoutInlineBinary(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutInlineBinary);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
+    if (
+      typeof entry === 'string'
+      && (key.toLowerCase().includes('base64') || key === 'data')
+      && entry.length > MAX_PERSISTED_TOOL_OUTPUT_CHARS
+    ) {
+      return [key, `[binary data omitted: ${entry.length} base64 chars]`];
+    }
+    return [key, withoutInlineBinary(entry)];
+  }));
+}
+
+function toolItemLabel(item: ThreadItem): string {
+  switch (item.type) {
+    case 'commandExecution': return 'Command';
+    case 'fileChange': return 'File change';
+    case 'webSearch': return 'Web search';
+    case 'mcpToolCall': return `${item.server}.${item.tool}`;
+    case 'dynamicToolCall': return item.namespace ? `${item.namespace}.${item.tool}` : item.tool;
+    case 'collabAgentToolCall': return `Collaboration ${item.tool}`;
+    default: return 'Tool';
   }
 }
 

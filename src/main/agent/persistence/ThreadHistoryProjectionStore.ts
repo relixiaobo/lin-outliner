@@ -25,6 +25,7 @@ interface TurnRow {
   provenance_json: string;
   status: string;
   error_json: string;
+  execution_json: string;
   started_at: number;
   completed_at: number | null;
   duration_ms: number | null;
@@ -63,6 +64,7 @@ export class ThreadHistoryProjectionStore {
         provenance_json TEXT NOT NULL,
         status TEXT NOT NULL,
         error_json TEXT NOT NULL,
+        execution_json TEXT NOT NULL,
         started_at INTEGER NOT NULL,
         completed_at INTEGER,
         duration_ms INTEGER,
@@ -329,13 +331,14 @@ export class ThreadHistoryProjectionStore {
     const decoded = decodeTurn(turn);
     this.db.prepare(`
       INSERT INTO thread_turns(
-        thread_id, turn_id, position, provenance_json, status, error_json,
+        thread_id, turn_id, position, provenance_json, status, error_json, execution_json,
         started_at, completed_at, duration_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(thread_id, turn_id) DO UPDATE SET
         provenance_json = excluded.provenance_json,
         status = excluded.status,
         error_json = excluded.error_json,
+        execution_json = excluded.execution_json,
         started_at = excluded.started_at,
         completed_at = excluded.completed_at,
         duration_ms = excluded.duration_ms
@@ -346,6 +349,7 @@ export class ThreadHistoryProjectionStore {
       JSON.stringify(decoded.provenance),
       decoded.status,
       JSON.stringify(decoded.error),
+      JSON.stringify(decoded.execution),
       decoded.startedAt,
       decoded.completedAt,
       decoded.durationMs,
@@ -463,6 +467,7 @@ export class ThreadHistoryProjectionStore {
       provenance: JSON.parse(row.provenance_json),
       status: row.status,
       error: JSON.parse(row.error_json),
+      execution: JSON.parse(row.execution_json),
       startedAt: row.started_at,
       completedAt: row.completed_at,
       durationMs: row.duration_ms,

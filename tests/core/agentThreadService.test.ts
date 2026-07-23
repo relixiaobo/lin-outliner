@@ -60,7 +60,7 @@ class ControlledExecutor implements TurnExecutor {
     return result;
   }
 
-  finish(index = 0, result: TurnExecutionResult = { status: 'completed', tokensUsed: 7 }): void {
+  finish(index = 0, result: TurnExecutionResult = completedExecutionResult()): void {
     const complete = this.completions[index];
     if (!complete) throw new Error(`Executor call ${index} is not waiting`);
     complete(result);
@@ -373,6 +373,7 @@ describe('ThreadService', () => {
       },
       status: 'inProgress',
       error: null,
+      execution: completedExecutionResult(0).execution!,
       startedAt: fixture.clock(),
       completedAt: null,
       durationMs: null,
@@ -1200,7 +1201,7 @@ describe('ThreadService', () => {
       input: [{ type: 'text', text: 'Complete the Goal' }],
     });
     await fixture.executor.waitUntilWaiting();
-    fixture.executor.finish(0, { status: 'completed', tokensUsed: 7 });
+    fixture.executor.finish(0, completedExecutionResult());
     await fixture.service.waitForIdle(thread.id);
 
     expect(fixture.executor.contexts).toHaveLength(1);
@@ -1385,6 +1386,25 @@ class AdmissionProbe implements AgentCoreExtension {
     this.contexts.push(context);
     return { extensionId: this.id, snapshotId: `snapshot-${this.contexts.length}` };
   }
+}
+
+function completedExecutionResult(tokens = 7): TurnExecutionResult {
+  return {
+    status: 'completed',
+    execution: {
+      modelProvider: 'openai',
+      model: 'test-model',
+      reasoningEffort: 'medium',
+      usage: {
+        input: tokens,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: tokens,
+        cost: null,
+      },
+    },
+  };
 }
 
 const AUTOMATION_TOOL_CONTRACT = {

@@ -51,6 +51,8 @@ import type {
   ThreadForkRequest,
   ThreadId,
   ThreadItem,
+  ThreadItemOutputReadRequest,
+  ThreadItemOutputReadResponse,
   ThreadItemEntry,
   ThreadItemsListRequest,
   ThreadItemsListResponse,
@@ -424,6 +426,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return this.listTurns(decoded as AgentCoreRequestByMethod['thread/turns/list']) as AgentCoreResponseByMethod[Method];
       case 'thread/items/list':
         return this.listItems(decoded as AgentCoreRequestByMethod['thread/items/list']) as AgentCoreResponseByMethod[Method];
+      case 'thread/item/output/read':
+        return await this.readItemOutput(
+          decoded as AgentCoreRequestByMethod['thread/item/output/read'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'turn/start':
         return await this.startRendererTurn(decoded as AgentCoreRequestByMethod['turn/start']) as AgentCoreResponseByMethod[Method];
       case 'turn/steer':
@@ -457,6 +463,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
       nextCursor: selected.nextCursor,
       backwardsCursor: selected.backwardsCursor,
     };
+  }
+
+  async readItemOutput(request: ThreadItemOutputReadRequest): Promise<ThreadItemOutputReadResponse> {
+    const turn = this.readTurn(request.threadId, request.turnId);
+    if (!turn) return { output: null };
+    const item = turn.items.find((candidate) => candidate.id === request.itemId);
+    if (!item || !('outputRef' in item) || !item.outputRef || item.outputRef.id !== request.outputId) {
+      return { output: null };
+    }
+    const text = await this.payloads.readText(item.provenance.originThreadId, request.outputId);
+    if (text === null || Buffer.byteLength(text, 'utf8') !== item.outputRef.byteLength) return { output: null };
+    return { output: { ref: item.outputRef, text } };
   }
 
   listItems(request: ThreadItemsListRequest): ThreadItemsListResponse {
@@ -1259,6 +1277,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       },
       status: 'inProgress',
       error: null,
+      execution: initialTurnExecution(record.thread, record.configuration),
       startedAt,
       completedAt: null,
       durationMs: null,
@@ -1343,6 +1362,19 @@ export class ThreadService implements ThreadServiceExtensionHost {
           dataBase64,
           mimeType,
         ),
+        persistOutputText: (itemId, text, mimeType, summary) => this.payloads.writeText(
+          active.threadId,
+          itemId,
+          text,
+          mimeType,
+          summary,
+        ),
+        onProviderRetry: (retryStatus) => this.emitTransientNotification({
+          type: 'turn/providerRetry/changed',
+          threadId: active.threadId,
+          turnId: active.turnId,
+          status: retryStatus,
+        }),
         onSteer: (handler) => {
           active.steeringHandler = handler;
           const queued = active.queuedSteering.splice(0);
@@ -1371,6 +1403,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       error: thrown
         ? { message: thrown.message }
         : result.error ?? null,
+      execution: result.execution ?? initialTurn.execution,
       startedAt: active.startedAt,
       completedAt,
       durationMs: Math.max(0, completedAt - active.startedAt),
@@ -1394,7 +1427,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     });
     await this.goals.addUsage(
       active.threadId,
-      result.tokensUsed ?? 0,
+      turn.execution.usage.totalTokens,
       Math.ceil((turn.durationMs ?? 0) / 1000),
       active.turnId,
     );
@@ -1541,6 +1574,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     for (const listener of this.listeners) listener(decoded);
     await this.extensions.notification(decoded);
+  }
+
+  private emitTransientNotification(notification: AgentCoreNotification): void {
+    const decoded = decodeAgentCoreNotification(notification);
+    this.requireThread(decoded.threadId);
+    for (const listener of this.listeners) listener(decoded);
   }
 
   private applyEphemeralNotification(notification: AgentCoreNotification): void {
@@ -2097,6 +2136,25 @@ function userMessage(
     clientId,
     content,
   });
+}
+
+function initialTurnExecution(
+  thread: Thread,
+  configuration: EffectiveThreadConfiguration,
+): Turn['execution'] {
+  return {
+    modelProvider: thread.modelProvider,
+    model: configuration.model,
+    reasoningEffort: configuration.reasoningEffort,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: null,
+    },
+  };
 }
 
 function copyTurn(source: Turn, targetThreadId: ThreadId, now: number): Turn {

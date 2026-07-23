@@ -71,7 +71,14 @@ describe('PiTurnExecutor event normalization', () => {
         exitCode: 0,
       },
     ]);
-    expect(normalizer.tokensUsed).toBe(7);
+    expect(normalizer.usage).toEqual({
+      input: 3,
+      output: 4,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 7,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, currency: 'USD' },
+    });
     expect(normalizer.stopReason).toBe('stop');
   });
 
@@ -253,7 +260,15 @@ describe('PiTurnExecutor event normalization', () => {
       }),
     });
 
-    await expect(executor.execute(context)).resolves.toEqual({ status: 'completed', tokensUsed: 0 });
+    await expect(executor.execute(context)).resolves.toEqual({
+      status: 'completed',
+      execution: {
+        modelProvider: 'openai',
+        model: 'test-model',
+        reasoningEffort: 'medium',
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
+      },
+    });
     expect(receivedPrompt?.content).toEqual([{ type: 'text', text: '<skill>prepared</skill>' }]);
     expect(context.turn.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'userMessage', content: [{ type: 'text', text: 'Hello' }] }),
@@ -284,6 +299,7 @@ describe('PiTurnExecutor event normalization', () => {
             cwd: '/workspace',
             processId: null,
             status: 'completed',
+            outputRef: null,
             commandActions: [],
             aggregatedOutput: '/workspace',
             exitCode: 0,
@@ -296,6 +312,7 @@ describe('PiTurnExecutor event normalization', () => {
             server: 'docs',
             tool: 'search',
             status: 'completed',
+            outputRef: null,
             arguments: { query: 'Thread' },
             pluginId: null,
             result: { matches: 2 },
@@ -508,6 +525,12 @@ function createContext(): {
     provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
     status: 'inProgress',
     error: null,
+    execution: {
+      modelProvider: 'openai',
+      model: 'test-model',
+      reasoningEffort: 'medium',
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
+    },
     startedAt: 1_720_000_000_100,
     completedAt: null,
     durationMs: null,
@@ -534,6 +557,13 @@ function createContext(): {
     signal: new AbortController().signal,
     recorder,
     persistOutputImage: async () => '/workspace/tool-output.png',
+    persistOutputText: async (_itemId, text, mimeType, summary) => ({
+      id: 'a'.repeat(64),
+      mimeType,
+      byteLength: Buffer.byteLength(text, 'utf8'),
+      summary,
+    }),
+    onProviderRetry: () => undefined,
     onSteer: () => undefined,
   };
   return { context, recorder, notifications };

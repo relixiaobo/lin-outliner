@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ThreadId } from '../../../core/agent/protocol';
+import type {
+  ThreadId,
+  ThreadItemOutputReference,
+} from '../../../core/agent/protocol';
 
 const MIME_EXTENSIONS: Readonly<Record<string, string>> = {
   'image/gif': '.gif',
@@ -9,6 +12,12 @@ const MIME_EXTENSIONS: Readonly<Record<string, string>> = {
   'image/png': '.png',
   'image/webp': '.webp',
 };
+
+const TEXT_MIME_EXTENSIONS = {
+  'text/plain': '.txt',
+  'application/json': '.json',
+} as const satisfies Readonly<Record<ThreadItemOutputReference['mimeType'], string>>;
+const SHA_256_PATTERN = /^[a-f0-9]{64}$/;
 
 export const MAX_TOOL_PAYLOAD_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS = Math.ceil(MAX_TOOL_PAYLOAD_IMAGE_BYTES / 3) * 4;
@@ -19,6 +28,42 @@ export type ToolPayloadImageMeasurement =
 
 export class ToolPayloadStore {
   constructor(private readonly rootPath: string) {}
+
+  async writeText(
+    threadId: ThreadId,
+    _itemId: string,
+    text: string,
+    mimeType: ThreadItemOutputReference['mimeType'],
+    summary: string,
+  ): Promise<ThreadItemOutputReference> {
+    const bytes = Buffer.from(text, 'utf8');
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    const directory = join(this.rootPath, threadId);
+    const path = join(directory, `${digest}${TEXT_MIME_EXTENSIONS[mimeType]}`);
+    await mkdir(directory, { recursive: true });
+    await writeFile(path, bytes, { flag: 'wx' }).catch((error: unknown) => {
+      if (!isAlreadyExists(error)) throw error;
+    });
+    return {
+      id: digest,
+      mimeType,
+      byteLength: bytes.byteLength,
+      summary,
+    };
+  }
+
+  async readText(threadId: ThreadId, outputId: string): Promise<string | null> {
+    if (!SHA_256_PATTERN.test(outputId)) throw new Error('Invalid tool output digest');
+    for (const extension of Object.values(TEXT_MIME_EXTENSIONS)) {
+      const path = join(this.rootPath, threadId, `${outputId}${extension}`);
+      try {
+        return await readFile(path, 'utf8');
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
+    }
+    return null;
+  }
 
   async writeImage(
     threadId: ThreadId,
@@ -72,4 +117,9 @@ export function measureToolPayloadImage(dataBase64: string): ToolPayloadImageMea
 function isAlreadyExists(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error
     && (error as { code?: unknown }).code === 'EEXIST';
+}
+
+function isNotFound(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error
+    && (error as { code?: unknown }).code === 'ENOENT';
 }

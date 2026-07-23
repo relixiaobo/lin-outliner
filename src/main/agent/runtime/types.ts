@@ -2,8 +2,10 @@ import type { EffectiveThreadConfiguration } from '../../../core/agent/configura
 import type {
   AdditionalContext,
   Thread,
+  ThreadItemOutputReference,
   ThreadUserContent,
   Turn,
+  TurnExecutionDetails,
   TurnError,
   TurnStatus,
 } from '../../../core/agent/protocol';
@@ -29,13 +31,20 @@ export interface TurnExecutionContext {
     dataBase64: string,
     mimeType: string,
   ): Promise<string>;
+  persistOutputText(
+    itemId: string,
+    text: string,
+    mimeType: ThreadItemOutputReference['mimeType'],
+    summary: string,
+  ): Promise<ThreadItemOutputReference>;
+  onProviderRetry(status: import('../../../core/agent/protocol').ProviderRetryStatus | null): void;
   onSteer(handler: (input: SteeredTurnInput) => void | Promise<void>): void;
 }
 
 export interface TurnExecutionResult {
   readonly status?: Exclude<TurnStatus, 'inProgress'>;
   readonly error?: TurnError | null;
-  readonly tokensUsed?: number;
+  readonly execution?: TurnExecutionDetails;
 }
 
 export interface TurnExecutor {

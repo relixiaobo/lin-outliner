@@ -46,4 +46,29 @@ describe('Agent tool payload store', () => {
     await expect(store.writeImage(threadId, 'tool-call', 0, 'not base64!', 'image/png'))
       .rejects.toThrow('invalidBase64');
   });
+
+  test('round-trips content-addressed text output and rejects invalid digests', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const output = await store.writeText(threadId, 'tool-call', 'full output', 'text/plain', 'Tool output');
+    const outputId = output.id;
+
+    expect(await store.readText(threadId, outputId)).toBe('full output');
+    expect(output).toMatchObject({
+      id: expect.stringMatching(/^[a-f0-9]{64}$/),
+      mimeType: 'text/plain',
+      byteLength: 11,
+      summary: 'Tool output',
+    });
+    let invalidDigestError: unknown = null;
+    try {
+      await store.readText(threadId, '../outside');
+    } catch (error) {
+      invalidDigestError = error;
+    }
+    expect(invalidDigestError).toBeInstanceOf(Error);
+    expect((invalidDigestError as Error).message).toBe('Invalid tool output digest');
+  });
 });
