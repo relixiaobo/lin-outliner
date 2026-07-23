@@ -324,23 +324,28 @@ claims and publications based on the before-version and removes those generated
 Nodes from model-visible Memory. Memory then releases the gate so Core can append
 the marker.
 
-`commitHistoryRollback` changes the matching row from `prepared` to `committed`,
-marks lineage and citation-usage inputs based on the before-version stale, marks
-the source Thread dirty, and wakes coalesced Phase 1/2 reconciliation. It does
-not remove the visibility filter. Only a receipt-backed publication that has
-reconciled every affected canonical Node and its control lineage changes the row
-to `reconciled` and allows the filter to retire. `abortHistoryRollback` changes a
-prepared row to `aborted` when Core appended no marker. All transitions are
-idempotent.
+`commitHistoryRollback` uses one SQLite transaction to change the matching row
+from `prepared` to `committed`, mark lineage and citation-usage inputs based on
+the before-version stale, and upsert the durable dirty job for coalesced Phase
+1/2 reconciliation. It then wakes the worker. A retry after an ambiguous failure
+observes the committed row and same dirty job, performs no duplicate transition,
+and wakes the worker again. It does not remove the visibility filter. Only a
+receipt-backed publication that has reconciled every affected canonical Node
+and its control lineage changes the row to `reconciled` and allows the filter to
+retire. `abortHistoryRollback` changes a prepared row to `aborted` when Core
+appended no marker. All transitions are idempotent.
 
 On startup, before ThreadService accepts a Turn and before Memory starts a
 worker, a prepared row is matched by `rollbackId`, omitted IDs, and projection
 versions against Core's rollout: a matching marker advances it to `committed`
 and wakes reconciliation, while an absent marker aborts it. A failed
 `commitHistoryRollback` call therefore leaves the already durable prepared
-filter active in the current process and across restart. A crash before or after
-either cross-store commit has a deterministic fail-closed outcome without
-rerunning the user's rollback.
+filter active while Core's terminal-hook recovery loop retries it in the current
+process. A transient failure progresses to the durable dirty job and
+reconciliation without requiring restart; persistent failures remain safely
+filtered and continue at the capped backoff. A crash before or after either
+cross-store commit has the same deterministic startup recovery without rerunning
+the user's rollback.
 
 Phase 1 first rejects every Turn whose durable Memory admission row is missing or has
 `eligibleAtAdmission=false`, or whose ID is in a retained global-disable
@@ -718,10 +723,11 @@ shipping.
   or fail their final recheck, and Phase 2 removes unsupported generated
   conclusions. Until that cleanup commits, the admission-pinned visibility view
   removes affected generated Nodes from briefings and implicit Node-tool results,
-  including when the commit hook fails. Startup commits or aborts a stranded
-  prepared invalidation by matching Core's rollout. Explicit/user-edited Memory
-  Nodes remain intentional document content rather than being mistaken for
-  derived transcript state.
+  including while a failed commit hook is retried in-process. A successful retry
+  durably queues reconciliation without requiring restart; startup still commits
+  or aborts a stranded prepared invalidation by matching Core's rollout.
+  Explicit/user-edited Memory Nodes remain intentional document content rather
+  than being mistaken for derived transcript state.
 - **Prior Memory self-confirms:** generated Memory is a hypothesis graph;
   consolidation requires current Thread evidence or authoritative user edits.
 - **User edits are overwritten:** timeline fingerprints and optimistic
@@ -823,12 +829,14 @@ old Memory data.
   fork, rollback before and after Phase 1 publication, rollback racing Phase 1
   and Phase 2 on both sides of the Memory write gate, crash recovery before and
   after the rollout marker, immediate replacement-Turn briefing and implicit
-  Node-tool reads after published Memory rollback, commit-hook failure with the
-  prepared filter still active, missing-lineage `allGenerated` suppression,
-  explicit Memory side-effect retention, Automation/Subagent exclusion, per-
-  Thread and global disable/activity/re-enable, global-disable active-Turn
+  Node-tool reads after published Memory rollback, a commit hook that fails once
+  while the prepared filter stays active then retries, marks dirty, reconciles,
+  and retires the filter without restart, persistent-failure capped backoff,
+  missing-lineage `allGenerated` suppression, explicit Memory side-effect
+  retention, Automation/Subagent exclusion, per-Thread and global
+  disable/activity/re-enable, global-disable active-Turn
   interruption and exclusion, in-flight publication invalidation, user-edit and
-  retention races,
-  active-Turn Reset evidence and Node mutation, stray-tag Reset preservation,
+  retention races, active-Turn Reset evidence and Node mutation, stray-tag Reset
+  preservation,
   fixed-tag identity/locking, every publication-crash boundary, and E2E coverage,
   `bun run docs:check`, and `git diff --check`.

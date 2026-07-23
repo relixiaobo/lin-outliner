@@ -657,17 +657,27 @@ After every prepare succeeds, Core durably appends the rollback marker and
 updates the current projection. The audit fact is then committed and no
 extension can veto or rewrite it. Core calls `commitHistoryRollback`; failures
 there do not turn the successful rollback into an error, because prepared state
-and the rollout marker provide the recovery record. The response is published
-only after Core has attempted every committed hook. A prepare hook that governs
-derived context must make its invalidation visible to later Turn admission
-before returning; that prepared invalidation remains authoritative even if its
-commit hook fails. The replacement Turn can therefore start immediately after
-the rollback response without waiting for asynchronous derived-state cleanup,
-but it cannot receive context invalidated by the rollback. Startup reconciles a
-prepared rollback against the append-only rollout before accepting a Turn or
-starting extension workers: a matching marker commits the invalidation and
-wakes reconciliation, while no marker aborts it. Repeating prepare, abort, or
-commit for one `rollbackId` is idempotent.
+and the rollout marker provide the recovery record. Before publishing the
+response, Core attempts every commit hook and enqueues each failure in one host-
+scoped terminal-hook recovery loop keyed by `extensionId + rollbackId`; failed
+abort hooks use the same loop with an abort target. Duplicate failures coalesce
+and only one call per key may run at once. The loop retries immediately, then
+uses jittered `250 ms`, `1 s`, `5 s`, and capped `30 s` delays until the hook
+succeeds or orderly host shutdown begins. It uses one scheduler rather than a
+timer per rollback and records bounded diagnostics without changing the
+successful rollback response.
+
+A prepare hook that governs derived context must make its invalidation visible
+to later Turn admission before returning; that prepared invalidation remains
+authoritative while commit retries. The replacement Turn can therefore start
+immediately after the rollback response without waiting for asynchronous
+derived-state cleanup, but it cannot receive context invalidated by the
+rollback. Startup reconciles a prepared rollback against the append-only rollout
+before accepting a Turn or starting extension workers: a matching marker commits
+the invalidation and wakes reconciliation, while no marker aborts it. The queue
+itself is ephemeral because the rollout marker and prepared extension state are
+the durable recovery record. Repeating prepare, abort, or commit for one
+`rollbackId` is idempotent.
 
 An extension publication prepared from Thread evidence must reject a source
 with a pending or committed invalidation and compare its source-projection
@@ -854,8 +864,8 @@ response menu, the fixed
 the exhaustive tool migration, immutable Turn/Item provenance, the retained Full
 Access boundary, the projection-neutral document system-receipt primitive, the
 protected system-tag-definition primitive, the synchronous extension admission
-barriers at per-Thread and host-wide scope, and the interface-first two-PR
-delivery order.
+barriers at per-Thread and host-wide scope, the host-scoped rollback terminal-
+hook recovery loop, and the interface-first two-PR delivery order.
 
 ## Implementation checklist
 
@@ -892,7 +902,13 @@ delivery order.
   edges, the separate current-history projection, pagination, audit lookup, and
   replay equivalence.
 - [ ] Implement Thread/Turn runtimes and make GoalExtension exercise the real
-  lifecycle, private Goal store, deferral, accounting, and tool paths.
+  lifecycle, private Goal store, deferral, accounting, and tool paths; implement
+  the coalesced rollback terminal-hook recovery loop with bounded backoff and
+  orderly-shutdown cancellation.
+- [ ] Prove terminal-hook recovery with a hook that fails once then settles
+  without restart, duplicate-failure coalescing, capped-backoff persistent
+  failure without a tight loop, abort-hook symmetry, and shutdown/startup
+  handoff to durable marker reconciliation.
 - [ ] Replace preload/IPC with canonical operations and notifications.
 - [ ] Replace renderer state and every agent surface with direct protocol
   consumption.
