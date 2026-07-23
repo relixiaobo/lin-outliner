@@ -30,7 +30,12 @@ import {
   piImageModelsForProvider,
   validateImageGenerationOptions,
 } from './piImageModels';
-import type { AgentCoreMethod, AgentCoreRequestByMethod } from '../core/agent/protocol';
+import type {
+  AgentCoreMethod,
+  AgentCoreRequestByMethod,
+  ThreadMessageContextMenuAction,
+  ThreadMessageContextMenuRequest,
+} from '../core/agent/protocol';
 import {
   REASONING_EFFORTS,
   type ReasoningEffort,
@@ -38,6 +43,7 @@ import {
 import {
   AGENT_CORE_NOTIFICATION_CHANNEL,
   AGENT_CORE_REQUEST_CHANNEL,
+  THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,
 } from '../core/agent/transport';
 import {
   ManagedSkillService,
@@ -1722,6 +1728,44 @@ function registerIpc() {
       throw new Error('Agent Core is available only to the main application window.');
     }
     return threadService.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
+  });
+  ipcMain.handle(THREAD_MESSAGE_CONTEXT_MENU_CHANNEL, async (
+    event,
+    request?: Partial<ThreadMessageContextMenuRequest>,
+  ): Promise<ThreadMessageContextMenuAction | null> => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return null;
+    const labels = getMessages(effectiveLocale()).agent.message;
+    let settled = false;
+    return new Promise<ThreadMessageContextMenuAction | null>((resolve) => {
+      const pick = (action: ThreadMessageContextMenuAction) => {
+        settled = true;
+        resolve(action);
+      };
+      const template: Electron.MenuItemConstructorOptions[] = [];
+      if (request?.canCopy === true) {
+        template.push({ label: labels.copyMessage, click: () => pick('copy') });
+      }
+      if (request?.canRetry === true || request?.canRegenerate === true) {
+        if (template.length > 0) template.push({ type: 'separator' });
+        template.push(request.canRetry === true
+          ? { label: labels.retryResponse, click: () => pick('retry') }
+          : { label: labels.regenerateResponse, click: () => pick('regenerate') });
+      }
+      if (request?.canShowDetails === true) {
+        if (template.length > 0) template.push({ type: 'separator' });
+        template.push({ label: labels.details, click: () => pick('details') });
+      }
+      if (template.length === 0) {
+        resolve(null);
+        return;
+      }
+      Menu.buildFromTemplate(template).popup({
+        window: mainWindow!,
+        callback: () => {
+          if (!settled) resolve(null);
+        },
+      });
+    });
   });
   ipcMain.handle('lin:invoke', async (event, command: string, args?: Record<string, unknown>) => {
     const dispatch = () => {

@@ -482,6 +482,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       provenance: { originThreadId: string; originTurnId: string; trigger: { kind: 'user' } };
       status: 'inProgress' | 'completed' | 'interrupted' | 'failed';
       error: { message: string } | null;
+      execution: {
+        modelProvider: string;
+        model: string;
+        reasoningEffort: string;
+        usage: {
+          input: number;
+          output: number;
+          cacheRead: number;
+          cacheWrite: number;
+          totalTokens: number;
+          cost: {
+            input: number;
+            output: number;
+            cacheRead: number;
+            cacheWrite: number;
+            total: number;
+            currency: 'USD';
+          } | null;
+        };
+      };
       startedAt: number;
       completedAt: number | null;
       durationMs: number | null;
@@ -1590,6 +1610,25 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           };
           const startedAt = ++now;
           const provenance = { originThreadId: thread.id, originTurnId: turnId, trigger: { kind: 'user' as const } };
+          const configuration = mockThreadConfigurations.get(thread.id)!;
+          const execution = {
+            ...configuration,
+            usage: {
+              input: 120,
+              output: 48,
+              cacheRead: 32,
+              cacheWrite: 0,
+              totalTokens: 200,
+              cost: {
+                input: 0.0002,
+                output: 0.0004,
+                cacheRead: 0.00001,
+                cacheWrite: 0,
+                total: 0.00061,
+                currency: 'USD' as const,
+              },
+            },
+          };
           const activeTurn: MockTurn = {
             id: turnId,
             items: [userItem],
@@ -1597,6 +1636,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             provenance,
             status: 'inProgress',
             error: null,
+            execution,
             startedAt,
             completedAt: null,
             durationMs: null,

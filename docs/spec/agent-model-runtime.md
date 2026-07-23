@@ -14,6 +14,12 @@ system context, restores prior model messages from canonical Items, and assemble
 the final model-tool registry. Provider messages remain in memory only for the
 duration of execution.
 
+Turn admission snapshots the real provider, model, and reasoning effort into
+`Turn.execution`. Terminalization adds the normalized input, output, cache-read,
+cache-write, total-token, and USD cost breakdown. These canonical execution
+details persist with the Turn and drive renderer Details/usage surfaces; the UI
+does not query a provider SDK or infer the model from current settings.
+
 Cancellation is registered before any asynchronous initialization. The runtime
 checks the Turn signal after provider resolution, tool assembly, Skill listing,
 system-prompt construction, and Agent construction, so Stop cannot cross an
@@ -67,6 +73,16 @@ projections with explicit truncation metadata. Tool-result details pass through
 the shared persistence slimmer before entering an Item. Dynamic image result
 lists also have a fixed maximum length.
 
+Every textual tool completion also writes its complete normalized result to the
+Thread-owned content-addressed payload store. The Item keeps only a bounded
+renderer/history projection plus an immutable `outputRef` containing digest,
+MIME type, byte length, and summary. `thread/item/output/read` validates the
+requested Thread/Turn/Item/ref tuple and byte length before returning text.
+Forked Items retain origin provenance, so copied history resolves the same
+immutable payload without duplicating it. Payload reads never become provider
+history authority; prior model messages are rebuilt from canonical Items and
+their full output references.
+
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
 data URL. Existing readable outputs such as `file_read` and generated-image
 files retain their file path. Other provider images are written under the
@@ -114,3 +130,8 @@ Skills restore compact state through their own structured reminders.
 Provider-specific names, message shapes, cache behavior, and stop reasons are
 normalized at this boundary. Core codecs, persistence, and renderer components
 never depend on a provider SDK DTO.
+
+Retryable provider request/stream failures use bounded Codex-style backoff. The
+executor emits `turn/providerRetry/changed` only as transient notification state
+and clears it on recovery or terminalization; reconnect attempts do not create
+Items or persist as transcript history.

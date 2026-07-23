@@ -341,6 +341,33 @@
   scrollbar-width: thin;
 }
 
+.thread-transcript-turns {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.thread-transcript-turns.is-virtual {
+  position: relative;
+  display: block;
+  gap: 0;
+}
+
+.thread-transcript-flow-turn,
+.thread-transcript-virtual-turn {
+  min-width: 0;
+}
+
+.thread-transcript-virtual-turn {
+  position: absolute;
+  right: 0;
+  left: 0;
+  will-change: transform;
+}
+
 .thread-turn {
   display: flex;
   min-width: 0;
@@ -444,7 +471,21 @@
   opacity: 1;
 }
 
-.thread-message-actions .icon-button,
+.thread-message-actions .icon-button {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-soft);
+}
+
+.thread-message-actions .icon-button:hover:not(:disabled),
+.thread-message-actions .icon-button:focus-visible:not(:disabled) {
+  color: var(--text-strong);
+}
+
 .thread-list .icon-button {
   display: inline-flex;
   width: 26px;
@@ -455,7 +496,6 @@
   color: var(--text-faint);
 }
 
-.thread-message-actions .icon-button:hover:not(:disabled),
 .thread-list .icon-button:hover:not(:disabled) {
   background: var(--control-hover);
   color: var(--text-strong);
@@ -608,6 +648,216 @@
 .thread-response-actions {
   align-self: flex-start;
   margin-top: calc(var(--space-3) * -1);
+}
+
+.thread-response-details-anchor {
+  display: inline-flex;
+}
+
+.thread-response-details,
+.thread-response-usage-card {
+  z-index: var(--z-agent-menu);
+  display: flex;
+  overflow: auto;
+  flex-direction: column;
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+  color: var(--text-strong);
+}
+
+.thread-response-details {
+  gap: var(--space-4);
+  padding: var(--space-5);
+  user-select: text;
+}
+
+.thread-response-details-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.thread-response-details-list > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+.thread-response-details-list dt {
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+}
+
+.thread-response-details-list dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+  overflow-wrap: anywhere;
+}
+
+.thread-response-usage-card {
+  gap: var(--space-3);
+  padding: var(--space-4);
+  pointer-events: none;
+  user-select: none;
+}
+
+.thread-response-usage-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.thread-response-usage-title {
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+}
+
+.thread-response-usage-meta {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  white-space: nowrap;
+}
+
+.thread-response-usage-meta strong {
+  color: var(--text-strong);
+  font-weight: 650;
+}
+
+.thread-response-usage-bar {
+  display: flex;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--fill-1);
+}
+
+.thread-response-usage-bar > span {
+  display: block;
+  width: var(--segment-size);
+  min-width: 0;
+}
+
+.thread-response-usage-bar .is-input,
+.thread-response-usage-breakdown i.is-input {
+  background: var(--usage-input);
+}
+
+.thread-response-usage-bar .is-output,
+.thread-response-usage-breakdown i.is-output {
+  background: var(--usage-output);
+}
+
+.thread-response-usage-bar .is-cache-read,
+.thread-response-usage-breakdown i.is-cache-read {
+  background: var(--usage-cache-read);
+}
+
+.thread-response-usage-bar .is-cache-write,
+.thread-response-usage-breakdown i.is-cache-write {
+  background: var(--usage-cache-write);
+}
+
+.thread-response-usage-breakdown {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.thread-response-usage-breakdown > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 90px) minmax(42px, auto) minmax(58px, auto);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.thread-response-usage-breakdown > div.is-zero {
+  color: var(--text-faint);
+}
+
+.thread-response-usage-breakdown > div.is-total {
+  color: var(--text-strong);
+  font-weight: 650;
+}
+
+.thread-response-usage-breakdown > div > span:first-child {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-response-usage-breakdown i {
+  display: inline-block;
+  width: 12px;
+  height: 7px;
+  flex: 0 0 12px;
+  border-radius: var(--radius-pill);
+}
+
+.thread-response-usage-breakdown i.is-total {
+  background: transparent;
+}
+
+.thread-response-usage-breakdown strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-response-usage-breakdown .is-total strong {
+  font-weight: 650;
+}
+
+.thread-response-usage-breakdown .is-zero strong {
+  color: var(--text-faint);
+}
+
+.thread-provider-retry {
+  display: flex;
+  min-width: 0;
+  min-height: var(--control-size-sm);
+  flex: 0 0 var(--control-size-sm);
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  user-select: none;
+}
+
+.thread-provider-retry svg {
+  flex: 0 0 auto;
+  animation: thread-tool-spin var(--motion-spin-cycle) linear infinite;
 }
 
 .thread-agent-message-body {
@@ -931,10 +1181,24 @@
   transform: rotate(90deg);
 }
 
-.thread-tool-icon {
-  display: inline-flex;
-  flex: 0 0 auto;
+.thread-tool-completed .thread-disclosure-status {
   color: var(--text-faint);
+}
+
+.thread-tool-failed .thread-disclosure-status {
+  top: 50%;
+  bottom: auto;
+  height: 14px;
+  transform: translateY(-50%);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--status-danger) 15%, transparent);
+  color: var(--status-danger);
+}
+
+.thread-tool-failed .thread-disclosure-status svg {
+  width: 9px;
+  height: 9px;
 }
 
 .thread-disclosure-content {
@@ -1279,6 +1543,34 @@ button.thread-inline-activity:focus-visible,
   flex: 0 0 auto;
   color: var(--text-faint);
   font-size: var(--font-ui-xs);
+}
+
+.thread-tool-file-result {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.thread-tool-file-chip {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.thread-tool-file-result > .icon-button {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  color: var(--text-faint);
+}
+
+.thread-tool-file-result > .icon-button:hover:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.thread-tool-file-result > .icon-button:disabled svg {
+  animation: thread-tool-spin var(--motion-spin-cycle) linear infinite;
 }
 
 .thread-compaction::before,

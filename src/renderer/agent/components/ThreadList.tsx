@@ -94,7 +94,7 @@ export function ThreadList({
               <button className="thread-list-select" onClick={() => onSelect(thread.id)} type="button">
                 <span>{thread.name || thread.preview || t.agent.thread.untitled}</span>
                 <small>
-                  {thread.agentRole || thread.threadSource}
+                  {threadIdentity(thread)}
                   {' · '}
                   {formatRelativeTime(thread.updatedAt)}
                 </small>
@@ -122,6 +122,11 @@ export function ThreadList({
     </section>,
     document.body,
   );
+}
+
+function threadIdentity(thread: Thread): string {
+  if (thread.agentNickname && thread.agentRole) return `${thread.agentNickname} [${thread.agentRole}]`;
+  return thread.agentNickname ?? thread.agentRole ?? thread.threadSource;
 }
 
 function lineageDepth(thread: Thread, threads: readonly Thread[]): number {

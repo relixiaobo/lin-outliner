@@ -32,7 +32,14 @@ Thread execution selections, active input requests, and Goals live in
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes
   status, arguments, output, copy actions, syntax-highlighted code, and image
-  previews where the Item carries them
+  previews where the Item carries them; a completed row rests on its tool-type
+  icon rather than a generic success check, while only failure carries a status
+  ring
+- bounded tool-result projections render immediately; expanding a row resolves
+  its content-addressed `outputRef` once and replaces the projection with the
+  full text, while copied Turns use the same full result
+- file-change results reuse the shared local-file preview affordance and expose
+  the established Add to Today action without introducing an artifact DTO
 - an ordinary loaded Skill remains the established compact `/skill args` row;
   isolated Skill execution remains an expandable tool row, and loaded Skills do
   not disappear inside a counted tool group
@@ -63,14 +70,31 @@ retain the established measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
 A terminal response owns one action row directly below its visible content.
-Successful responses expose Regenerate, Copy, and the canonical before/after
-Thread-fork actions in that order; failed and interrupted responses replace
-Regenerate with Retry without moving the row. There is no separate Turn footer
-or second action surface. A failed response keeps any partial answer first,
-then shows a bounded, parsed error summary, then the same action row. JSON and
-HTML provider payloads never render as unbounded transcript prose. An
-interrupted response uses the established quiet stopped row and the same Retry
-action. Hover and keyboard focus reveal the row without changing geometry.
+Successful responses expose Regenerate, Copy, Continue in new chat, and Details
+in that order; failed and interrupted responses replace Regenerate with Retry
+without moving the row. Continue in new chat is the only user-visible history
+fork action and uses the `afterTurn` boundary. The `beforeTurn` boundary remains
+an internal Edit/Retry/Regenerate mechanism and is never presented as a second
+fork command. There is no separate Turn footer or second action surface. A
+failed response keeps any partial answer first, then shows a bounded, parsed
+error summary, then the same action row. JSON and HTML provider payloads never
+render as unbounded transcript prose. An interrupted response uses the
+established quiet stopped row and the same Retry action. Hover and keyboard
+focus reveal the row without changing geometry.
+
+Copy on a response copies the complete assistant side of that Turn in order:
+commentary and plan text, tool arguments, full tool results when available, and
+the final response. A partial failed response remains the copy authority; its
+error summary is used only when the Turn has no copyable assistant content.
+Right-clicking the terminal response opens the native message menu with the same
+Copy, Retry/Regenerate, and Details commands.
+
+The Details icon preserves the established two-level interaction. Hover or
+keyboard focus shows a non-interactive usage breakdown with token and cost
+segments. Click opens the message details popover with timestamp, provider,
+model, reasoning effort, token summary, and cost. The popover is anchored in a
+portal, closes on outside pointer or Escape, and cannot be clipped by transcript
+scrolling.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn ID.
 Details and diagnostics must show the same Thread, Turn, and Item identities as
@@ -127,6 +151,11 @@ reference markup into text. Edit replaces only the message text, while retry and
 regenerate replay the complete original structured input. An attachment-only or
 Node-reference-only Turn is therefore sendable and retryable.
 
+Editing a user message autofocuses the existing edit field. Escape cancels and
+Cmd/Ctrl+Enter saves. Saving forks at `beforeTurn` and resubmits the original
+structured content with only its text replaced; it does not mutate the sealed
+source Turn.
+
 Attachment interaction retains the established source-identity rules. Local
 paths deduplicate by path; pathless files deduplicate by a renderer-only content
 hash, so same-named files from different sources remain distinct. Duplicate and
@@ -160,6 +189,17 @@ The transcript follows streaming output only while the reader remains near its
 bottom edge. Scrolling upward or opening a reasoning, tool, plan, or long-message
 disclosure releases that lock, so later Item updates never pull the reader away
 from earlier evidence. A new explicit send restores bottom following.
+
+Each Thread keeps an ephemeral scroll snapshot across Thread switches. Returning
+to a Thread restores its prior position, or continues following the bottom when
+the snapshot was bottom-locked. Threads above forty Turns reuse the established
+measured-row virtual transcript with viewport overscan; terminal offscreen Turns
+do not remain mounted, while the active viewport and disclosure scroll anchors
+remain stable as measured heights replace estimates.
+
+Provider request and stream retries are transient execution state, not Items.
+The selected Thread shows the established live reconnecting row while retrying
+and removes it when the provider recovers or the Turn becomes terminal.
 
 Process, reasoning, plan, tool-group, and tool-detail disclosures keep per-Thread UI
 overrides in versioned local storage. Their keys use canonical Item identities;

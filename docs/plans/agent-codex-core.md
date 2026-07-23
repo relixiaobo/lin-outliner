@@ -750,6 +750,21 @@ The product surface becomes:
   tool calls, subagent activity, searches, images, and compaction
 - debug/detail views that show the same Thread, Turn, and Item identifiers
 
+A terminal response preserves the established message action geometry but
+exposes one understandable history command: `Continue in new chat`. It forks at
+the inclusive `afterTurn` boundary. `beforeTurn` remains internal to Edit,
+Retry, and Regenerate and is not exposed as a second user-facing fork action.
+Copy serializes the complete assistant side of the Turn, including full
+content-addressed tool output. Hover/focus on Details shows usage; click and the
+native response context menu open the same canonical execution details.
+
+The renderer retains the proven transcript mechanics over canonical DTOs:
+per-Thread scroll snapshots, measured virtualization above forty Turns,
+disclosure scroll anchoring, transient provider-retry status, tool-type success
+icons, local-file result affordances, and the existing composer/edit keyboard
+contracts. These are presentation behaviors, not compatibility projections or
+alternative execution entities.
+
 Normal transcript UI need not print a heading for every Turn, but any exposed
 label or detail uses "Thread", "Turn", "Item", and "Goal". Notifications navigate
 by `threadId`. There are no user-visible Channels, Issues, Agent Runs, Sessions,

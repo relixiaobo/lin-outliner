@@ -35,6 +35,20 @@ const configuration: EffectiveThreadConfiguration = {
   mcpServers: [],
 };
 
+const turnExecution: Turn['execution'] = {
+  modelProvider: 'openai',
+  model: 'openai/test-model',
+  reasoningEffort: 'medium',
+  usage: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: null,
+  },
+};
+
 function testDatabase(path: string): SqliteDatabase {
   return new Database(path) as unknown as SqliteDatabase;
 }
@@ -371,6 +385,7 @@ function lifecycle(threadId: string): AgentCoreNotification[] {
     },
     status: 'inProgress',
     error: null,
+    execution: turnExecution,
     startedAt: 4_000,
     completedAt: null,
     durationMs: null,
@@ -459,6 +474,7 @@ function interruptedLifecycle(
     },
     status: 'inProgress',
     error: null,
+    execution: turnExecution,
     startedAt: 4_500,
     completedAt: null,
     durationMs: null,

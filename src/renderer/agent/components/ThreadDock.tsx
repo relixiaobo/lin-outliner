@@ -9,8 +9,8 @@ import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import {
   AddIcon,
+  AgentIcon,
   ChevronDownIcon,
-  HashIcon,
   ICON_SIZE,
   InfoIcon,
   MoreIcon,
@@ -82,6 +82,7 @@ export function ThreadDock({
   const goal = thread ? snapshot.goalsByThread.get(thread.id) ?? null : null;
   const configuration = thread ? snapshot.configurationsByThread.get(thread.id) ?? null : null;
   const userInput = thread ? snapshot.userInputByThread.get(thread.id) ?? null : null;
+  const providerRetry = thread ? snapshot.providerRetryByThread.get(thread.id) ?? null : null;
   const providerBlocksCreation = providerSettingsLoaded
     && (!providerSettings || !resolveUsableActiveProvider(providerSettings));
   const actionsMenuStyle = useAnchoredOverlay(actionsMenuRef, {
@@ -234,7 +235,7 @@ export function ThreadDock({
             ref={threadListAnchorRef}
             type="button"
           >
-            <HashIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
+            <AgentIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
             <span className="thread-dock-title">{thread ? title : t.agent.thread.title}</span>
             <ChevronDownIcon
               className={`thread-title-chevron${listOpen ? ' is-open' : ''}`}
@@ -330,6 +331,7 @@ export function ThreadDock({
               onInterrupt={() => threadStore.interrupt(thread.id)}
               onOpenNodeReference={onOpenNodeReference}
               onOpenThread={(threadId) => threadStore.selectThread(threadId)}
+              onReadToolOutput={(turnId, item) => threadStore.readItemOutput(thread.id, turnId, item)}
               onRegenerate={regenerate}
               onSend={(content) => threadStore.send(content)}
               onSubmitUserInput={(answers) => userInput
@@ -337,6 +339,7 @@ export function ThreadDock({
                 : Promise.resolve()}
               providerSettings={providerSettings}
               providerSettingsLoaded={providerSettingsLoaded}
+              providerRetry={providerRetry}
               slashCommands={slashCommands}
               threadId={thread.id}
               threadModelProvider={thread.modelProvider}

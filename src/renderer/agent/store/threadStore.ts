@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { ThreadGoal } from '../../../core/agent/goal';
 import type {
   AgentCoreNotification,
+  ProviderRetryStatus,
   RequestUserInputAnswer,
   RequestUserInputRequest,
   Thread,
@@ -23,6 +24,7 @@ export interface ThreadStoreSnapshot {
   readonly configurationsByThread: ReadonlyMap<ThreadId, ThreadConfigurationSummary>;
   readonly goalsByThread: ReadonlyMap<ThreadId, ThreadGoal>;
   readonly userInputByThread: ReadonlyMap<ThreadId, RequestUserInputRequest>;
+  readonly providerRetryByThread: ReadonlyMap<ThreadId, { readonly turnId: string; readonly status: ProviderRetryStatus }>;
   readonly loading: boolean;
   readonly error: string | null;
 }
@@ -34,9 +36,12 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   configurationsByThread: new Map(),
   goalsByThread: new Map(),
   userInputByThread: new Map(),
+  providerRetryByThread: new Map(),
   loading: true,
   error: null,
 };
+
+const MAX_CACHED_TOOL_OUTPUTS = 64;
 
 export class ThreadStore {
   private snapshot = EMPTY_SNAPSHOT;
@@ -46,6 +51,7 @@ export class ThreadStore {
   private readonly loadGenerations = new Map<ThreadId, number>();
   private readonly historyRevisions = new Map<ThreadId, number>();
   private readonly configurationRevisions = new Map<ThreadId, number>();
+  private readonly outputTextCache = new Map<string, Promise<string | null>>();
 
   constructor(private readonly client: Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'> = api) {}
 
@@ -118,12 +124,14 @@ export class ThreadStore {
     const configurationsByThread = new Map(this.snapshot.configurationsByThread);
     const goalsByThread = new Map(this.snapshot.goalsByThread);
     const userInputByThread = new Map(this.snapshot.userInputByThread);
+    const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
     for (const deletedId of deletedIds) {
       this.loadGenerations.set(deletedId, (this.loadGenerations.get(deletedId) ?? 0) + 1);
       turnsByThread.delete(deletedId);
       configurationsByThread.delete(deletedId);
       goalsByThread.delete(deletedId);
       userInputByThread.delete(deletedId);
+      providerRetryByThread.delete(deletedId);
     }
     const selectedThreadWasDeleted = Boolean(
       this.snapshot.selectedThreadId && deletedIds.has(this.snapshot.selectedThreadId),
@@ -137,6 +145,7 @@ export class ThreadStore {
       configurationsByThread,
       goalsByThread,
       userInputByThread,
+      providerRetryByThread,
       selectedThreadId: replacementThreadId,
     });
     if (selectedThreadWasDeleted && replacementThreadId) await this.loadTurns(replacementThreadId);
@@ -229,6 +238,30 @@ export class ThreadStore {
       answers,
       autoResolved: false,
     });
+  }
+
+  readItemOutput(threadId: ThreadId, turnId: string, item: ThreadItem): Promise<string | null> {
+    if (!('outputRef' in item) || !item.outputRef) return Promise.resolve(null);
+    const key = `${item.provenance.originThreadId}:${item.outputRef.id}`;
+    let pending = this.outputTextCache.get(key);
+    if (!pending) {
+      pending = this.client.agentCoreRequest('thread/item/output/read', {
+        threadId,
+        turnId,
+        itemId: item.id,
+        outputId: item.outputRef.id,
+      }).then((response) => response.output?.text ?? null).catch(() => {
+        this.outputTextCache.delete(key);
+        return null;
+      });
+      this.outputTextCache.set(key, pending);
+      while (this.outputTextCache.size > MAX_CACHED_TOOL_OUTPUTS) {
+        const oldestKey = this.outputTextCache.keys().next().value;
+        if (oldestKey === undefined) break;
+        this.outputTextCache.delete(oldestKey);
+      }
+    }
+    return pending;
   }
 
   turns(threadId: ThreadId): readonly Turn[] {
@@ -327,9 +360,29 @@ export class ThreadStore {
         this.updateThread(notification.threadId, (thread) => ({ ...thread, status: notification.status }));
         return;
       case 'turn/started':
-      case 'turn/completed':
         this.updateTurn(notification.threadId, notification.turn);
         return;
+      case 'turn/completed': {
+        const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
+        if (providerRetryByThread.get(notification.threadId)?.turnId === notification.turnId) {
+          providerRetryByThread.delete(notification.threadId);
+        }
+        this.updateTurn(notification.threadId, notification.turn, { providerRetryByThread });
+        return;
+      }
+      case 'turn/providerRetry/changed': {
+        const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
+        if (notification.status) {
+          providerRetryByThread.set(notification.threadId, {
+            turnId: notification.turnId,
+            status: notification.status,
+          });
+        } else if (providerRetryByThread.get(notification.threadId)?.turnId === notification.turnId) {
+          providerRetryByThread.delete(notification.threadId);
+        }
+        this.patch({ providerRetryByThread });
+        return;
+      }
       case 'item/started':
       case 'item/completed':
         this.updateItem(notification.threadId, notification.turnId, notification.item);
@@ -368,10 +421,14 @@ export class ThreadStore {
     this.patch({ threads: sortThreads(this.snapshot.threads.map((thread) => thread.id === threadId ? update(thread) : thread)) });
   }
 
-  private updateTurn(threadId: ThreadId, turn: Turn): void {
+  private updateTurn(
+    threadId: ThreadId,
+    turn: Turn,
+    patch: Partial<ThreadStoreSnapshot> = {},
+  ): void {
     const turnsByThread = new Map(this.snapshot.turnsByThread);
     turnsByThread.set(threadId, upsertById(turnsByThread.get(threadId) ?? [], turn));
-    this.patch({ turnsByThread });
+    this.patch({ ...patch, turnsByThread });
   }
 
   private updateItem(threadId: ThreadId, turnId: string, item: ThreadItem): void {

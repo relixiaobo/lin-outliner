@@ -211,6 +211,110 @@ describe('renderer Thread store', () => {
       content: ['Need evidence'],
     });
   });
+
+  test('keeps provider retry state transient and clears it when the Turn settles', async () => {
+    const owner = thread('thread-1', 1);
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    const active = turn('turn-1', 'inProgress', 'partial');
+    notify({ type: 'turn/started', threadId: owner.id, turnId: active.id, turn: active });
+    notify({
+      type: 'turn/providerRetry/changed',
+      threadId: owner.id,
+      turnId: active.id,
+      status: { kind: 'stream', attempt: 2, maxRetries: 4 },
+    });
+
+    expect(store.getSnapshot().providerRetryByThread.get(owner.id)).toEqual({
+      turnId: active.id,
+      status: { kind: 'stream', attempt: 2, maxRetries: 4 },
+    });
+
+    const completed = turn(active.id, 'completed', 'done');
+    notify({ type: 'turn/completed', threadId: owner.id, turnId: active.id, turn: completed });
+    expect(store.getSnapshot().providerRetryByThread.has(owner.id)).toBe(false);
+  });
+
+  test('deduplicates full tool output reads by immutable output identity', async () => {
+    const owner = thread('thread-1', 1);
+    const requests: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
+        requests.push({ method, input });
+        if (method === 'thread/item/output/read') {
+          return {
+            output: {
+              ref: { id: 'a'.repeat(64), mimeType: 'text/plain', byteLength: 11, summary: 'full output' },
+              text: 'full output',
+            },
+          };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    const item = {
+      ...commandTurn('turn-1', 'completed').items[0]!,
+      outputRef: { id: 'a'.repeat(64), mimeType: 'text/plain' as const, byteLength: 11, summary: 'full output' },
+    };
+
+    expect(await Promise.all([
+      store.readItemOutput(owner.id, 'turn-1', item),
+      store.readItemOutput(owner.id, 'turn-1', item),
+    ])).toEqual(['full output', 'full output']);
+    expect(requests).toEqual([{
+      method: 'thread/item/output/read',
+      input: {
+        threadId: owner.id,
+        turnId: 'turn-1',
+        itemId: item.id,
+        outputId: 'a'.repeat(64),
+      },
+    }]);
+  });
+
+  test('retries a full tool output read after a transient request failure', async () => {
+    const owner = thread('thread-1', 1);
+    let attempts = 0;
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string) => {
+        if (method !== 'thread/item/output/read') throw new Error(`Unexpected method: ${method}`);
+        attempts += 1;
+        if (attempts === 1) throw new Error('temporary read failure');
+        return {
+          output: {
+            ref: { id: 'b'.repeat(64), mimeType: 'text/plain', byteLength: 6, summary: 'output' },
+            text: 'output',
+          },
+        };
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    const item = {
+      ...commandTurn('turn-1', 'completed').items[0]!,
+      outputRef: { id: 'b'.repeat(64), mimeType: 'text/plain' as const, byteLength: 6, summary: 'output' },
+    };
+
+    expect(await store.readItemOutput(owner.id, 'turn-1', item)).toBeNull();
+    expect(await store.readItemOutput(owner.id, 'turn-1', item)).toBe('output');
+    expect(attempts).toBe(2);
+  });
 });
 
 function thread(id: string, updatedAt: number): Thread {

@@ -25,13 +25,21 @@ test.describe('canonical agent Thread surface', () => {
     await response.hover();
     const responseActions = response.locator('.thread-response-actions');
     await expect(responseActions).toHaveCSS('opacity', '1');
+    expect(await responseActions.getByRole('button').first().evaluate((button) => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--text-soft)';
+      document.body.append(probe);
+      const expected = getComputedStyle(probe).color;
+      probe.remove();
+      return getComputedStyle(button).color === expected;
+    })).toBe(true);
     expect(await responseActions.getByRole('button').evaluateAll((buttons) => (
       buttons.map((button) => button.getAttribute('aria-label'))
     ))).toEqual([
       'Regenerate response',
       'Copy message',
-      'Fork before Turn',
-      'Fork after Turn',
+      'Continue in new chat',
+      'Details',
     ]);
     const [responseBodyBox, responseActionsBox] = await Promise.all([
       response.locator('.thread-agent-message-body').boundingBox(),
@@ -40,6 +48,18 @@ test.describe('canonical agent Thread surface', () => {
     expect(responseBodyBox).toBeTruthy();
     expect(responseActionsBox).toBeTruthy();
     expect(responseActionsBox!.y).toBeGreaterThanOrEqual(responseBodyBox!.y + responseBodyBox!.height - 1);
+
+    const messageDetailsButton = responseActions.getByRole('button', { name: 'Details' });
+    await messageDetailsButton.hover();
+    const usage = page.getByRole('tooltip');
+    await expect(usage).toContainText('Usage details');
+    await expect(usage).toContainText('Input120');
+    await messageDetailsButton.click();
+    const messageDetails = page.getByRole('dialog', { name: 'Details' });
+    await expect(messageDetails).toContainText('openai/gpt-5.4');
+    await expect(messageDetails).toContainText('Total 200');
+    await page.keyboard.press('Escape');
+    await expect(messageDetails).toHaveCount(0);
 
     await userMessage.hover();
     expect(await userMessage.locator('.thread-message-actions').getByRole('button').evaluateAll((buttons) => (
@@ -77,7 +97,7 @@ test.describe('canonical agent Thread surface', () => {
 
     const turn = page.locator('.thread-turn').first();
     await turn.hover();
-    await turn.getByRole('button', { name: 'Fork after Turn' }).click();
+    await turn.getByRole('button', { name: 'Continue in new chat' }).click();
 
     await expect(page.locator('.thread-turn')).toHaveCount(1);
     await expect(page.locator('.thread-user-message')).toContainText('Keep this history.');
@@ -90,6 +110,32 @@ test.describe('canonical agent Thread surface', () => {
       '1',
     );
     expect((await commandCalls(page)).map((call) => call.cmd)).toContain('thread/fork');
+  });
+
+  test('keeps the established keyboard contract when editing a user message', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Original request');
+    await page.getByRole('button', { name: 'Send' }).click();
+    const userMessage = page.locator('.thread-user-message').first();
+
+    await userMessage.hover();
+    await userMessage.getByRole('button', { name: 'Edit message' }).click();
+    const editor = userMessage.getByRole('textbox', { name: 'Edit message' });
+    await expect(editor).toBeFocused();
+    await editor.fill('Discard this edit');
+    await editor.press('Escape');
+    await expect(editor).toHaveCount(0);
+    await expect(userMessage).toContainText('Original request');
+
+    await userMessage.hover();
+    await userMessage.getByRole('button', { name: 'Edit message' }).click();
+    const savedEditor = userMessage.getByRole('textbox', { name: 'Edit message' });
+    await savedEditor.fill('Revised request');
+    await savedEditor.press('Control+Enter');
+
+    await expect(page.locator('.thread-user-message').last()).toContainText('Revised request');
+    const fork = (await commandCalls(page)).filter((call) => call.cmd === 'thread/fork').at(-1);
+    expect(fork?.args.boundary).toMatchObject({ kind: 'beforeTurn' });
   });
 
   test('sends an Outliner Node to the Thread as structured input', async ({ page }) => {
@@ -667,7 +713,25 @@ test.describe('canonical agent Thread surface', () => {
     expect(await clipboardText(page)).toBe('/mock/workspace');
 
     await page.getByRole('button', { name: 'Copy message' }).click();
-    expect(await clipboardText(page)).toBe('Finished with evidence.');
+    expect(await clipboardText(page)).toBe([
+      '```tool bash',
+      JSON.stringify({ command: 'pwd', cwd: '/mock/workspace' }, null, 2),
+      '```',
+      '',
+      '```tool-result',
+      '/mock/workspace',
+      '```',
+      '',
+      '```tool node.read',
+      JSON.stringify({ node_id: 'node-alpha' }, null, 2),
+      '```',
+      '',
+      '```tool-result',
+      JSON.stringify({ title: 'Alpha' }, null, 2),
+      '```',
+      '',
+      'Finished with evidence.',
+    ].join('\n'));
 
     const disclosureOverrides = await page.evaluate(() => {
       const key = Object.keys(window.localStorage).find((candidate) => (
@@ -1070,6 +1134,59 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByText('New evidence arrived.')).toHaveCount(1);
     await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(1);
   });
+
+  test('virtualizes long Threads and restores their scroll position after switching', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
+    await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Rename Thread' }).click();
+    const renameDialog = page.getByRole('dialog', { name: 'Rename Thread' });
+    await renameDialog.getByRole('textbox', { name: 'Rename Thread' }).fill('Long history');
+    await renameDialog.getByRole('button', { name: 'Save' }).click();
+
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data.find((thread) => thread.id)?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      for (let index = 0; index < 45; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Long history message ${index + 1}` }],
+          clientUserMessageId: `long-history-${index + 1}`,
+        });
+        if (index % 5 === 4) {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        }
+      }
+    });
+
+    const transcript = page.locator('.thread-transcript');
+    const turns = page.locator('.thread-transcript-turns');
+    await expect(turns).toHaveAttribute('data-virtualized', 'true');
+    await expect.poll(() => page.locator('[data-thread-turn-row]').count()).toBeLessThan(45);
+    const savedTop = await transcript.evaluate((element) => {
+      const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+      const top = Math.max(1, Math.min(480, Math.floor(maximum / 2)));
+      element.scrollTop = top;
+      element.dispatchEvent(new Event('scroll'));
+      return element.scrollTop;
+    });
+    expect(savedTop).toBeGreaterThan(0);
+
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await page.getByRole('dialog', { name: 'Threads' })
+      .locator('.thread-list-select')
+      .filter({ hasText: 'Long history' })
+      .click();
+
+    await expect(page.locator('.thread-dock-title')).toContainText('Long history');
+    await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeGreaterThan(savedTop - 2);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThan(savedTop + 2);
+  });
 });
 
 test('opens provider settings instead of creating a Thread when no provider is usable', async ({ page }) => {
@@ -1107,8 +1224,8 @@ test.describe('structured Thread retries', () => {
     ))).toEqual([
       'Retry response',
       'Copy message',
-      'Fork before Turn',
-      'Fork after Turn',
+      'Continue in new chat',
+      'Details',
     ]);
     const [errorBox, actionsBox] = await Promise.all([error.boundingBox(), actions.boundingBox()]);
     expect(errorBox).toBeTruthy();

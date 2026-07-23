@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -6,10 +7,14 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type ChangeEvent,
   type DragEvent,
+  type MouseEvent,
   type ReactNode,
+  type RefObject,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   MAX_INLINE_IMAGE_BASE64_CHARS,
   MAX_RAW_INLINE_IMAGE_BYTES,
@@ -19,6 +24,7 @@ import type { Messages } from '../../../core/i18n';
 import type {
   RequestUserInputAnswer,
   RequestUserInputRequest,
+  ProviderRetryStatus,
   ThreadAttachmentContent,
   ThreadConfigurationSummary,
   ThreadItem,
@@ -28,7 +34,7 @@ import type {
 import type { ThreadGoal } from '../../../core/agent/goal';
 import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
-import { useT } from '../../i18n/I18nProvider';
+import { useI18n, useT } from '../../i18n/I18nProvider';
 import {
   acknowledgeThreadComposerNodeReferenceRequest,
   onThreadComposerNodeReferenceRequest,
@@ -38,6 +44,7 @@ import {
   ChevronRightIcon,
   GitForkIcon,
   ICON_SIZE,
+  InfoIcon,
   LoaderIcon,
   RedoIcon,
   SendIcon,
@@ -80,6 +87,8 @@ import {
   nearestScrollContainer,
   usePendingDisclosureAnchor,
 } from '../../ui/interactions/disclosureScrollAnchor';
+import { formatDateTime, formatNumber } from '../../ui/formatting';
+import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 
 interface ThreadViewProps {
   readonly composerEnabled: boolean;
@@ -94,12 +103,14 @@ interface ThreadViewProps {
   readonly threadId: string;
   readonly turns: readonly Turn[];
   readonly inputRequest: RequestUserInputRequest | null;
+  readonly providerRetry: { readonly turnId: string; readonly status: ProviderRetryStatus } | null;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onFork: (turn: Turn, kind: 'beforeTurn' | 'afterTurn') => Promise<void>;
   readonly onInterrupt: () => Promise<void>;
   readonly onConfigurationChange: (configuration: ThreadConfigurationSummary) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly onRegenerate: (turn: Turn) => Promise<void>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
@@ -109,6 +120,11 @@ const MAX_ATTACHMENTS = 6;
 const ATTACHMENT_ERROR_TIMEOUT_MS = 5_000;
 const INLINE_IMAGE_MAX_DIMENSION = 2_000;
 const INLINE_IMAGE_JPEG_QUALITIES = [0.8, 0.7, 0.55, 0.4];
+const TRANSCRIPT_ROW_GAP_PX = 12;
+const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
+const TRANSCRIPT_VIRTUAL_MIN_TURNS = 40;
+const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
+const MAX_CACHED_THREAD_UI_STATES = 32;
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/jpg',
@@ -122,6 +138,134 @@ const EMPTY_COMPOSER_DRAFT: ThreadComposerDraft = {
   fileRefs: [],
   text: '',
 };
+
+interface ThreadScrollSnapshot {
+  readonly stickToBottom: boolean;
+  readonly top: number;
+}
+
+interface VirtualTurnItem {
+  readonly height: number;
+  readonly top: number;
+}
+
+interface VirtualTurnLayout {
+  readonly items: readonly VirtualTurnItem[];
+  readonly totalHeight: number;
+}
+
+const threadScrollSnapshots = new Map<string, ThreadScrollSnapshot>();
+const threadTurnHeights = new Map<string, Map<string, number>>();
+
+function setBoundedThreadValue<Value>(map: Map<string, Value>, threadId: string, value: Value): void {
+  map.delete(threadId);
+  map.set(threadId, value);
+  while (map.size > MAX_CACHED_THREAD_UI_STATES) {
+    const oldestThreadId = map.keys().next().value;
+    if (oldestThreadId === undefined) return;
+    map.delete(oldestThreadId);
+  }
+}
+
+function cachedTurnHeights(threadId: string): Map<string, number> {
+  const existing = threadTurnHeights.get(threadId);
+  if (existing) {
+    setBoundedThreadValue(threadTurnHeights, threadId, existing);
+    return existing;
+  }
+  const created = new Map<string, number>();
+  setBoundedThreadValue(threadTurnHeights, threadId, created);
+  return created;
+}
+
+function cacheThreadScrollSnapshot(threadId: string, snapshot: ThreadScrollSnapshot): void {
+  setBoundedThreadValue(threadScrollSnapshots, threadId, snapshot);
+}
+
+function shouldStickToTranscriptBottom(element: HTMLDivElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= 56;
+}
+
+function estimateTurnHeight(turn: Turn): number {
+  let textLength = 0;
+  let blockCount = 0;
+  for (const item of turn.items) {
+    blockCount += 1;
+    switch (item.type) {
+      case 'userMessage':
+        textLength += item.content.reduce((total, content) => (
+          total + (content.type === 'text' ? content.text.length : 48)
+        ), 0);
+        break;
+      case 'agentMessage':
+      case 'plan':
+        textLength += item.text.length;
+        break;
+      case 'reasoning':
+        textLength += [...item.summary, ...item.content].join('\n').length;
+        break;
+      default:
+        textLength += 48;
+        break;
+    }
+  }
+  return Math.max(
+    TRANSCRIPT_ROW_ESTIMATE_PX,
+    Math.ceil(textLength / 84) * 24 + Math.max(1, blockCount) * 24 + 40,
+  );
+}
+
+function buildVirtualTurnLayout(
+  turns: readonly Turn[],
+  measuredHeights: ReadonlyMap<string, number>,
+): VirtualTurnLayout {
+  const items: VirtualTurnItem[] = [];
+  let top = 0;
+  for (const turn of turns) {
+    const height = measuredHeights.get(turn.id) ?? estimateTurnHeight(turn);
+    items.push({ height, top });
+    top += height + TRANSCRIPT_ROW_GAP_PX;
+  }
+  return {
+    items,
+    totalHeight: turns.length > 0 ? top - TRANSCRIPT_ROW_GAP_PX : 0,
+  };
+}
+
+function firstTurnEndingAfter(items: readonly VirtualTurnItem[], y: number): number {
+  let low = 0;
+  let high = items.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const item = items[middle]!;
+    if (item.top + item.height < y) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function firstTurnStartingAfter(items: readonly VirtualTurnItem[], y: number): number {
+  let low = 0;
+  let high = items.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (items[middle]!.top <= y) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function visibleTurnRange(
+  layout: VirtualTurnLayout,
+  scrollTop: number,
+  viewportHeight: number,
+): { readonly end: number; readonly start: number } {
+  const minimumY = Math.max(0, scrollTop - TRANSCRIPT_VIRTUAL_OVERSCAN_PX);
+  const maximumY = scrollTop + viewportHeight + TRANSCRIPT_VIRTUAL_OVERSCAN_PX;
+  const start = Math.max(0, firstTurnEndingAfter(layout.items, minimumY) - 1);
+  const end = Math.min(layout.items.length, firstTurnStartingAfter(layout.items, maximumY) + 1);
+  return { end: Math.max(end, start + 1), start };
+}
 interface PreparedComposerAttachment {
   readonly content: ThreadAttachmentContent;
   readonly previewUrl?: string;
@@ -142,12 +286,14 @@ export function ThreadView({
   threadId,
   turns,
   inputRequest,
+  providerRetry,
   onEditUserMessage,
   onFork,
   onInterrupt,
   onConfigurationChange,
   onOpenNodeReference,
   onOpenThread,
+  onReadToolOutput,
   onRegenerate,
   onSend,
   onSubmitUserInput,
@@ -165,6 +311,7 @@ export function ThreadView({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
   const bottomScrollFrameRef = useRef<number | null>(null);
+  const scrollMetricsFrameRef = useRef<number | null>(null);
   const stickToBottomRef = useRef(true);
   const attachmentsRef = useRef<ThreadAttachmentContent[]>([]);
   const attachmentPreviewUrlsRef = useRef(new Map<string, string>());
@@ -172,6 +319,10 @@ export function ThreadView({
   const draftRef = useRef<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
   const handledFocusTokenRef = useRef(0);
   const sendingRef = useRef(false);
+  const restoredThreadIdRef = useRef<string | null>(null);
+  const measuredTurnHeights = useMemo(() => cachedTurnHeights(threadId), [threadId]);
+  const [measureVersion, setMeasureVersion] = useState(0);
+  const [scrollMetrics, setScrollMetrics] = useState({ height: 0, top: 0 });
   const subscribeToDisclosures = useCallback(
     (onChange: () => void) => subscribeThreadDisclosure(threadId, onChange),
     [threadId],
@@ -210,6 +361,71 @@ export function ThreadView({
   const hasUsableProvider = Boolean(providerSettings?.providers.some(
     (provider) => isProviderUsable(providerSettings, provider),
   ));
+  const virtualLayout = useMemo(
+    () => buildVirtualTurnLayout(turns, measuredTurnHeights),
+    [measureVersion, measuredTurnHeights, turns],
+  );
+  const virtualized = turns.length > TRANSCRIPT_VIRTUAL_MIN_TURNS;
+  const virtualRange = virtualized
+    ? visibleTurnRange(virtualLayout, scrollMetrics.top, scrollMetrics.height)
+    : { end: turns.length, start: 0 };
+  const visibleTurns = turns.slice(virtualRange.start, virtualRange.end);
+
+  const updateScrollMetrics = useCallback((element: HTMLDivElement) => {
+    const next = { height: element.clientHeight, top: element.scrollTop };
+    setScrollMetrics((current) => (
+      Math.abs(current.height - next.height) < 1 && Math.abs(current.top - next.top) < 1
+        ? current
+        : next
+    ));
+  }, []);
+
+  const scheduleScrollMetrics = useCallback((element: HTMLDivElement) => {
+    if (scrollMetricsFrameRef.current !== null) return;
+    scrollMetricsFrameRef.current = window.requestAnimationFrame(() => {
+      scrollMetricsFrameRef.current = null;
+      updateScrollMetrics(element);
+    });
+  }, [updateScrollMetrics]);
+
+  const handleDisclosureToggle = useCallback(() => {
+    stickToBottomRef.current = false;
+  }, []);
+
+  const measureTurn = useCallback((turnId: string, height: number) => {
+    const current = measuredTurnHeights.get(turnId);
+    if (current !== undefined && Math.abs(current - height) < 1) return;
+    measuredTurnHeights.set(turnId, height);
+    setMeasureVersion((version) => version + 1);
+  }, [measuredTurnHeights]);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return undefined;
+    updateScrollMetrics(element);
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => updateScrollMetrics(element));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [updateScrollMetrics]);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element || restoredThreadIdRef.current === threadId) return;
+    const snapshot = threadScrollSnapshots.get(threadId);
+    const maximumTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    const nextTop = snapshot?.stickToBottom === false
+      ? Math.min(snapshot.top, maximumTop)
+      : maximumTop;
+    element.scrollTop = nextTop;
+    stickToBottomRef.current = snapshot?.stickToBottom ?? true;
+    restoredThreadIdRef.current = threadId;
+    cacheThreadScrollSnapshot(threadId, {
+      stickToBottom: stickToBottomRef.current,
+      top: nextTop,
+    });
+    updateScrollMetrics(element);
+  }, [threadId, updateScrollMetrics, virtualLayout.totalHeight]);
 
   useLayoutEffect(() => {
     if (!stickToBottomRef.current || bottomScrollFrameRef.current !== null) return undefined;
@@ -218,9 +434,11 @@ export function ThreadView({
       const scroll = scrollRef.current;
       if (!scroll || !stickToBottomRef.current) return;
       scroll.scrollTop = scroll.scrollHeight;
+      cacheThreadScrollSnapshot(threadId, { stickToBottom: true, top: scroll.scrollTop });
+      updateScrollMetrics(scroll);
     });
     return undefined;
-  }, [itemCount, turns]);
+  }, [itemCount, threadId, turns, updateScrollMetrics, virtualLayout.totalHeight]);
 
   useLayoutEffect(() => restorePendingAnchor(), [disclosureOverrides, restorePendingAnchor]);
 
@@ -228,7 +446,17 @@ export function ThreadView({
     if (bottomScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(bottomScrollFrameRef.current);
     }
-  }, []);
+    if (scrollMetricsFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollMetricsFrameRef.current);
+    }
+    const scroll = scrollRef.current;
+    if (scroll) {
+      cacheThreadScrollSnapshot(threadId, {
+        stickToBottom: shouldStickToTranscriptBottom(scroll),
+        top: scroll.scrollTop,
+      });
+    }
+  }, [threadId]);
 
   useEffect(() => () => {
     for (const previewUrl of attachmentPreviewUrlsRef.current.values()) URL.revokeObjectURL(previewUrl);
@@ -516,74 +744,50 @@ export function ThreadView({
         className="thread-transcript"
         onScroll={(event) => {
           const scroll = event.currentTarget;
-          stickToBottomRef.current = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 56;
+          const stickToBottom = shouldStickToTranscriptBottom(scroll);
+          stickToBottomRef.current = stickToBottom;
+          cacheThreadScrollSnapshot(threadId, { stickToBottom, top: scroll.scrollTop });
+          scheduleScrollMetrics(scroll);
         }}
         ref={scrollRef}
       >
         {goal ? <ThreadGoalView goal={goal} /> : null}
         {turns.length === 0 ? <p className="thread-empty-copy">{t.agent.thread.empty}</p> : null}
-        {turns.map((turn) => {
-          const responseItem = lastAgentResponse(turn);
-          const responseTail = turn.status === 'inProgress' ? null : (
-            <ThreadResponseTail
-              onFork={(kind) => onFork(turn, kind)}
-              onRegenerate={() => onRegenerate(turn)}
-              responseText={responseItem?.text ?? ''}
-              turn={turn}
-            />
-          );
-          const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
-            <ThreadItemView
-              agentResponseTail={item.id === responseItem?.id ? responseTail : null}
-              defaultReasoningExpanded={isSoloResultlessReasoning(turn, item)}
-              expandState={expandState}
-              index={index}
-              item={item}
-              key={item.id}
-              onEditUserMessage={(content) => onEditUserMessage(turn, content)}
-              onDisclosureToggle={() => {
-                stickToBottomRef.current = false;
-              }}
-              onOpenNodeReference={onOpenNodeReference}
-              onOpenThread={onOpenThread}
-              showMessageActions={showMessageActions}
-              streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
-            />
-          );
-          return (
-          <section className={`thread-turn thread-turn-${turn.status}`} key={turn.id}>
-            {groupTurnContent(turn.items).map((block) => {
-              if (block.kind === 'process') {
-                return (
-                  <ThreadProcessBlock
+        {turns.length > 0 ? (
+          <div
+            className={`thread-transcript-turns${virtualized ? ' is-virtual' : ''}`}
+            data-virtualized={virtualized ? 'true' : 'false'}
+            style={virtualized ? { height: virtualLayout.totalHeight } : undefined}
+          >
+            {visibleTurns.map((turn, offset) => {
+              const turnIndex = virtualRange.start + offset;
+              const layoutItem = virtualLayout.items[turnIndex];
+              return (
+                <ThreadTranscriptTurnShell
+                  key={turn.id}
+                  onMeasure={measureTurn}
+                  style={virtualized && layoutItem ? { transform: `translateY(${layoutItem.top}px)` } : undefined}
+                  turnId={turn.id}
+                  virtualized={virtualized}
+                >
+                  <ThreadTurnView
                     expandState={expandState}
-                    hasFinalResponse={responseItem !== null}
-                    items={block.items}
-                    key={`process:${block.items[0]?.id ?? turn.id}`}
+                    index={index}
+                    onDisclosureToggle={handleDisclosureToggle}
+                    onEditUserMessage={onEditUserMessage}
+                    onFork={onFork}
+                    onOpenNodeReference={onOpenNodeReference}
+                    onOpenThread={onOpenThread}
+                    onReadToolOutput={onReadToolOutput}
+                    onRegenerate={onRegenerate}
                     turn={turn}
-                  >
-                    {groupTurnItems(block.items).map((group) => group.kind === 'tools' ? (
-                      <ThreadToolActivityGroup
-                        expandState={expandState}
-                        items={group.items}
-                        key={group.items[0]?.id}
-                        onOpenThread={onOpenThread}
-                      />
-                    ) : renderItem(group.item, false))}
-                  </ThreadProcessBlock>
-                );
-              }
-              const item = block.item;
-              return renderItem(item, turn.status !== 'inProgress' && item.type === 'userMessage');
+                  />
+                </ThreadTranscriptTurnShell>
+              );
             })}
-            {responseItem === null && responseTail ? (
-              <article className="thread-item thread-agent-message thread-agent-message-response">
-                {responseTail}
-              </article>
-            ) : null}
-          </section>
-          );
-        })}
+          </div>
+        ) : null}
+        {providerRetry ? <ThreadProviderRetryStatus status={providerRetry.status} /> : null}
       </div>
       {composerEnabled ? <div className="thread-composer-region thread-composer">
         <div
@@ -683,18 +887,182 @@ export function ThreadView({
   );
 }
 
-function ThreadResponseTail({
+function ThreadTranscriptTurnShell({
+  children,
+  onMeasure,
+  style,
+  turnId,
+  virtualized,
+}: {
+  readonly children: ReactNode;
+  readonly onMeasure: (turnId: string, height: number) => void;
+  readonly style?: CSSProperties;
+  readonly turnId: string;
+  readonly virtualized: boolean;
+}) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const element = rowRef.current;
+    if (!element) return undefined;
+    const measure = () => onMeasure(turnId, element.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onMeasure, turnId]);
+  return (
+    <div
+      className={virtualized ? 'thread-transcript-virtual-turn' : 'thread-transcript-flow-turn'}
+      data-thread-turn-row={turnId}
+      ref={rowRef}
+      style={style}
+    >
+      {children}
+    </div>
+  );
+}
+
+const ThreadTurnView = memo(function ThreadTurnView({
+  expandState,
+  index,
+  onDisclosureToggle,
+  onEditUserMessage,
   onFork,
+  onOpenNodeReference,
+  onOpenThread,
+  onReadToolOutput,
   onRegenerate,
-  responseText,
   turn,
 }: {
-  readonly onFork: (kind: 'beforeTurn' | 'afterTurn') => Promise<void>;
+  readonly expandState: ThreadDisclosureState;
+  readonly index: DocumentIndex;
+  readonly onDisclosureToggle: () => void;
+  readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
+  readonly onFork: (turn: Turn, kind: 'beforeTurn' | 'afterTurn') => Promise<void>;
+  readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
+  readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
+  readonly onRegenerate: (turn: Turn) => Promise<void>;
+  readonly turn: Turn;
+}) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const responseItem = lastAgentResponse(turn);
+  const editUserMessage = useCallback(
+    (content: readonly ThreadUserContent[]) => onEditUserMessage(turn, content),
+    [onEditUserMessage, turn],
+  );
+  const continueInNewChat = useCallback(
+    () => onFork(turn, 'afterTurn'),
+    [onFork, turn],
+  );
+  const readToolOutput = useCallback(
+    (item: ThreadToolItem) => onReadToolOutput(turn.id, item),
+    [onReadToolOutput, turn.id],
+  );
+  const regenerate = useCallback(() => onRegenerate(turn), [onRegenerate, turn]);
+  const copyTurn = useCallback(async () => {
+    const text = await buildTurnCopyText(turn, readToolOutput);
+    if (text) await navigator.clipboard.writeText(text);
+  }, [readToolOutput, turn]);
+  const handleResponseContextMenu = useCallback(async (event: MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    const failed = turn.status === 'failed' || turn.status === 'interrupted';
+    const action = await window.lin?.showThreadMessageContextMenu?.({
+      canCopy: hasTurnCopyContent(turn),
+      canRetry: failed,
+      canRegenerate: !failed,
+      canShowDetails: true,
+    });
+    if (action === 'copy') await copyTurn();
+    else if (action === 'retry' || action === 'regenerate') await regenerate();
+    else if (action === 'details') setDetailsOpen(true);
+  }, [copyTurn, regenerate, turn]);
+  const responseTail = turn.status === 'inProgress' ? null : (
+    <ThreadResponseTail
+      detailsOpen={detailsOpen}
+      onCopy={copyTurn}
+      onDetailsOpenChange={setDetailsOpen}
+      onFork={continueInNewChat}
+      onRegenerate={regenerate}
+      turn={turn}
+    />
+  );
+  const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
+    <ThreadItemView
+      agentResponseTail={item.id === responseItem?.id ? responseTail : null}
+      defaultReasoningExpanded={isSoloResultlessReasoning(turn, item)}
+      expandState={expandState}
+      index={index}
+      item={item}
+      key={item.id}
+      onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
+      onEditUserMessage={editUserMessage}
+      onDisclosureToggle={onDisclosureToggle}
+      onOpenNodeReference={onOpenNodeReference}
+      onOpenThread={onOpenThread}
+      onReadToolOutput={readToolOutput}
+      showMessageActions={showMessageActions}
+      streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
+    />
+  );
+  return (
+    <section className={`thread-turn thread-turn-${turn.status}`}>
+      {groupTurnContent(turn.items).map((block) => {
+        if (block.kind === 'process') {
+          return (
+            <ThreadProcessBlock
+              expandState={expandState}
+              hasFinalResponse={responseItem !== null}
+              items={block.items}
+              key={`process:${block.items[0]?.id ?? turn.id}`}
+              turn={turn}
+            >
+              {groupTurnItems(block.items).map((group) => group.kind === 'tools' ? (
+                <ThreadToolActivityGroup
+                  expandState={expandState}
+                  items={group.items}
+                  key={group.items[0]?.id}
+                  onOpenThread={onOpenThread}
+                  onReadToolOutput={readToolOutput}
+                />
+              ) : renderItem(group.item, false))}
+            </ThreadProcessBlock>
+          );
+        }
+        const item = block.item;
+        return renderItem(item, turn.status !== 'inProgress' && item.type === 'userMessage');
+      })}
+      {responseItem === null && responseTail ? (
+        <article
+          className="thread-item thread-agent-message thread-agent-message-response"
+          onContextMenu={handleResponseContextMenu}
+        >
+          {responseTail}
+        </article>
+      ) : null}
+    </section>
+  );
+});
+
+function ThreadResponseTail({
+  detailsOpen,
+  onCopy,
+  onDetailsOpenChange,
+  onFork,
+  onRegenerate,
+  turn,
+}: {
+  readonly detailsOpen: boolean;
+  readonly onCopy: () => Promise<void>;
+  readonly onDetailsOpenChange: (open: boolean) => void;
+  readonly onFork: () => Promise<void>;
   readonly onRegenerate: () => Promise<void>;
-  readonly responseText: string;
   readonly turn: Turn;
 }) {
   const t = useT();
+  const [usageHoverOpen, setUsageHoverOpen] = useState(false);
+  const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
   const failed = turn.status === 'failed';
   const interrupted = turn.status === 'interrupted';
   const errorText = turn.error ? threadErrorMessage(turn.error.message) : '';
@@ -723,25 +1091,318 @@ function ThreadResponseTail({
         <ThreadMessageCopyButton
           iconSize={ICON_SIZE.menu}
           label={t.agent.message.copyMessage}
-          text={errorText || responseText}
+          onCopy={onCopy}
+          text=""
         />
         <IconButton
           icon={GitForkIcon}
           iconSize={ICON_SIZE.menu}
-          label={t.agent.thread.forkBefore}
-          onClick={() => void onFork('beforeTurn')}
+          label={t.agent.thread.continueInNewChat}
+          onClick={() => void onFork()}
           variant="message"
         />
-        <IconButton
-          icon={GitForkIcon}
-          iconSize={ICON_SIZE.menu}
-          label={t.agent.thread.forkAfter}
-          onClick={() => void onFork('afterTurn')}
-          variant="message"
-        />
+        <span className="thread-response-details-anchor">
+          <IconButton
+            icon={InfoIcon}
+            iconSize={ICON_SIZE.menu}
+            label={t.agent.message.details}
+            onBlur={() => setUsageHoverOpen(false)}
+            onClick={() => onDetailsOpenChange(!detailsOpen)}
+            onFocus={() => setUsageHoverOpen(true)}
+            onMouseEnter={() => setUsageHoverOpen(true)}
+            onMouseLeave={() => setUsageHoverOpen(false)}
+            ref={detailsButtonRef}
+            title=""
+            variant="message"
+          />
+          {usageHoverOpen && !detailsOpen ? (
+            <ThreadUsageHoverCard anchorRef={detailsButtonRef} turn={turn} />
+          ) : null}
+          {detailsOpen ? (
+            <ThreadResponseDetails
+              anchorRef={detailsButtonRef}
+              onClose={() => onDetailsOpenChange(false)}
+              turn={turn}
+            />
+          ) : null}
+        </span>
       </div>
     </>
   );
+}
+
+function ThreadResponseDetails({
+  anchorRef,
+  onClose,
+  turn,
+}: {
+  readonly anchorRef: RefObject<HTMLElement | null>;
+  readonly onClose: () => void;
+  readonly turn: Turn;
+}) {
+  const t = useT();
+  const { locale } = useI18n();
+  const detailsRef = useRef<HTMLDivElement | null>(null);
+  const usage = turn.execution.usage;
+  const cost = usage.cost?.total;
+  const style = useAnchoredOverlay(detailsRef, {
+    anchorRef,
+    gap: 8,
+    layoutKey: `${turn.id}:${turn.completedAt ?? turn.startedAt}`,
+    maxHeight: 360,
+    placement: 'top-end',
+    width: 320,
+  });
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (detailsRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+      onClose();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [anchorRef, onClose]);
+  return createPortal(
+    <div
+      aria-label={t.agent.message.details}
+      className="thread-response-details"
+      ref={detailsRef}
+      role="dialog"
+      style={style}
+    >
+      <dl className="thread-response-details-list">
+        <div><dt>{t.agent.message.timestamp}</dt><dd>{formatTimestamp(turn.completedAt ?? turn.startedAt, locale)}</dd></div>
+        <div><dt>{t.agent.message.provider}</dt><dd>{turn.execution.modelProvider}</dd></div>
+        <div><dt>{t.agent.message.model}</dt><dd>{turn.execution.model}</dd></div>
+        <div><dt>{t.agent.message.reasoningEffort}</dt><dd>{turn.execution.reasoningEffort}</dd></div>
+        <div><dt>{t.agent.message.tokens}</dt><dd>{usageSummary(turn, t.agent.message.tokenLabels)}</dd></div>
+        {cost !== undefined && cost !== null ? (
+          <div><dt>{t.agent.message.cost}</dt><dd>{formatCost(cost)}</dd></div>
+        ) : null}
+      </dl>
+    </div>,
+    document.body,
+  );
+}
+
+function ThreadUsageHoverCard({
+  anchorRef,
+  turn,
+}: {
+  readonly anchorRef: RefObject<HTMLElement | null>;
+  readonly turn: Turn;
+}) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const usage = turn.execution.usage;
+  const style = useAnchoredOverlay(cardRef, {
+    anchorRef,
+    gap: 8,
+    layoutKey: `${usage.input}:${usage.output}:${usage.cacheRead}:${usage.cacheWrite}:${usage.totalTokens}:${usage.cost?.total ?? 0}`,
+    maxHeight: 280,
+    placement: 'top-end',
+    width: 248,
+  });
+  return createPortal(
+    <div className="thread-response-usage-card" ref={cardRef} role="tooltip" style={style}>
+      <ThreadUsageBreakdown turn={turn} />
+    </div>,
+    document.body,
+  );
+}
+
+function ThreadUsageBreakdown({ turn }: { readonly turn: Turn }) {
+  const t = useT();
+  const usage = turn.execution.usage;
+  const cost = usage.cost;
+  const rows = [
+    { cost: cost?.input, kind: 'input', label: t.agent.message.tokenLabels.input, tokens: usage.input },
+    { cost: cost?.output, kind: 'output', label: t.agent.message.tokenLabels.output, tokens: usage.output },
+    { cost: cost?.cacheRead, kind: 'cache-read', label: t.agent.message.tokenLabels.cacheRead, tokens: usage.cacheRead },
+    { cost: cost?.cacheWrite, kind: 'cache-write', label: t.agent.message.tokenLabels.cacheWrite, tokens: usage.cacheWrite },
+  ] as const;
+  const cachedShare = formatCachedShare(usage.input, usage.cacheRead, usage.cacheWrite);
+  return (
+    <>
+      <div className="thread-response-usage-title-row">
+        <div className="thread-response-usage-title">{t.agent.message.usageDetails}</div>
+        {cachedShare ? (
+          <div className="thread-response-usage-meta">
+            {t.agent.message.cachedShare}: <strong>{cachedShare}</strong>
+          </div>
+        ) : null}
+      </div>
+      <div aria-hidden className="thread-response-usage-bar">
+        {rows.map((row) => (
+          <span
+            className={`is-${row.kind}`}
+            key={row.kind}
+            style={usageSegmentStyle(row.tokens, usage.totalTokens)}
+          />
+        ))}
+      </div>
+      <div aria-label={t.agent.message.usageDetails} className="thread-response-usage-breakdown">
+        {[...rows, {
+          cost: cost?.total,
+          kind: 'total' as const,
+          label: t.agent.message.tokenLabels.total,
+          tokens: usage.totalTokens,
+        }].map((row) => (
+          <div
+            className={`${row.kind === 'total' ? 'is-total' : ''}${row.tokens === 0 && !row.cost ? ' is-zero' : ''}`.trim() || undefined}
+            key={row.kind}
+          >
+            <span><i className={`is-${row.kind}`} />{row.label}</span>
+            <strong>{formatNumber(row.tokens)}</strong>
+            <strong>{row.cost === undefined ? t.agent.message.usageUnavailable : formatCost(row.cost)}</strong>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function ThreadProviderRetryStatus({ status }: { readonly status: ProviderRetryStatus }) {
+  const t = useT();
+  return (
+    <div aria-atomic="true" aria-live="polite" className="thread-provider-retry" role="status">
+      <LoaderIcon aria-hidden size={ICON_SIZE.tiny} />
+      <span>{t.agent.thread.reconnecting({ attempt: status.attempt, maxRetries: status.maxRetries })}</span>
+    </div>
+  );
+}
+
+function hasTurnCopyContent(turn: Turn): boolean {
+  return turn.items.some((item) => (
+    item.type === 'agentMessage' && Boolean(item.text.trim())
+  ) || item.type === 'plan' || isThreadToolItem(item)) || Boolean(turn.error?.message);
+}
+
+async function buildTurnCopyText(
+  turn: Turn,
+  readToolOutput: (item: ThreadToolItem) => Promise<string | null>,
+): Promise<string> {
+  const parts: string[] = [];
+  for (const item of turn.items) {
+    if (item.type === 'agentMessage' || item.type === 'plan') {
+      const text = item.text.trim();
+      if (text) parts.push(text);
+      continue;
+    }
+    if (!isThreadToolItem(item)) continue;
+    parts.push(`\`\`\`tool ${toolCopyName(item)}\n${toolCopyArguments(item)}\n\`\`\``);
+    const output = await readToolOutput(item) ?? projectedToolOutput(item);
+    if (output.trim()) {
+      const tag = item.status === 'failed' ? 'tool-error' : 'tool-result';
+      parts.push(`\`\`\`${tag}\n${output.trim()}\n\`\`\``);
+    }
+  }
+  if (parts.length === 0 && turn.error?.message) parts.push(threadErrorMessage(turn.error.message));
+  return parts.join('\n\n');
+}
+
+function toolCopyName(item: ThreadToolItem): string {
+  switch (item.type) {
+    case 'commandExecution': return 'bash';
+    case 'fileChange': return 'file_change';
+    case 'mcpToolCall': return `${item.server}.${item.tool}`;
+    case 'dynamicToolCall': return [item.namespace, item.tool].filter(Boolean).join('.');
+    case 'collabAgentToolCall': return `collaboration.${item.tool}`;
+    case 'webSearch': return 'web_search';
+    default: return assertNever(item);
+  }
+}
+
+function toolCopyArguments(item: ThreadToolItem): string {
+  switch (item.type) {
+    case 'commandExecution': return jsonText({ command: item.command, cwd: item.cwd });
+    case 'fileChange': return jsonText({ changes: item.changes });
+    case 'mcpToolCall':
+    case 'dynamicToolCall': return jsonText(item.arguments);
+    case 'collabAgentToolCall': return jsonText({
+      tool: item.tool,
+      prompt: item.prompt,
+      model: item.model,
+      reasoningEffort: item.reasoningEffort,
+      receiverThreadIds: item.receiverThreadIds,
+    });
+    case 'webSearch': return jsonText({ query: item.query });
+    default: return assertNever(item);
+  }
+}
+
+function projectedToolOutput(item: ThreadToolItem): string {
+  switch (item.type) {
+    case 'commandExecution': return item.aggregatedOutput ?? '';
+    case 'fileChange': return '';
+    case 'mcpToolCall': return item.error ?? (item.result === null ? '' : jsonText(item.result));
+    case 'dynamicToolCall': return (item.contentItems ?? []).flatMap((content) => (
+      content.type === 'text' ? [content.text] : content.type === 'json' ? [jsonText(content.value)] : []
+    )).join('\n');
+    case 'collabAgentToolCall': return jsonText(item.agentsStates);
+    case 'webSearch': return item.error ?? jsonText(item.results);
+    default: return assertNever(item);
+  }
+}
+
+function jsonText(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function usageSummary(
+  turn: Turn,
+  labels: Messages['agent']['message']['tokenLabels'],
+): string {
+  const usage = turn.execution.usage;
+  const rows: ReadonlyArray<readonly [string, number]> = [
+    [labels.input, usage.input],
+    [labels.output, usage.output],
+    [labels.cacheRead, usage.cacheRead],
+    [labels.cacheWrite, usage.cacheWrite],
+    [labels.total, usage.totalTokens],
+  ];
+  return rows.map(([label, value]) => `${label} ${formatNumber(value)}`).join(' · ');
+}
+
+function formatCachedShare(input: number, cacheRead: number, cacheWrite: number): string | null {
+  const cacheActivity = cacheRead + cacheWrite;
+  const inputContext = input + cacheActivity;
+  if (cacheActivity <= 0 || inputContext <= 0) return null;
+  return `${Math.round((cacheRead / inputContext) * 100)}%`;
+}
+
+function usageSegmentStyle(value: number, total: number): CSSProperties {
+  const share = total > 0 ? value / total : 0;
+  return {
+    '--segment-size': `${Math.max(share * 100, value > 0 ? 2 : 0)}%`,
+  } as CSSProperties;
+}
+
+function formatTimestamp(timestamp: number, locale: string): string {
+  return formatDateTime(timestamp, locale, {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+  });
+}
+
+function formatCost(value: number): string {
+  if (value <= 0) return '$0.0000';
+  return value < 0.01 ? `$${value.toFixed(5)}` : `$${value.toFixed(4)}`;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled Thread Item: ${JSON.stringify(value)}`);
 }
 
 function findActiveTurn(turns: readonly Turn[]): Turn | null {

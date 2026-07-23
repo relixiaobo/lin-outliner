@@ -1,9 +1,11 @@
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type MouseEventHandler,
   type ReactNode,
 } from 'react';
 import type {
@@ -22,6 +24,7 @@ import { dispatchPreviewTargetOpen } from '../../../ui/preview/previewEvents';
 import { openUrlPreviewFromClick } from '../../../ui/preview/urlPreviewRouting';
 import {
   AgentIcon,
+  AddChildIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -54,7 +57,7 @@ import {
   WebFetchToolIcon,
   WebSearchToolIcon,
 } from '../../../ui/icons';
-import { ReadOnlyCodeBlock, useCodeBlockCopy } from '../../../ui/editor/CodeBlockSurface';
+import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { IconButton } from '../../../ui/primitives/IconButton';
 import { ButtonControl } from '../../../ui/primitives/ButtonControl';
 import { replaceUserContentText } from '../../threadInput';
@@ -66,6 +69,8 @@ import {
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
 import { ThreadMarkdown } from '../ThreadMarkdown';
+import { InlineFileReference } from '../../../ui/editor/InlineFileReference';
+import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIngest';
 
 export type ThreadToolItem = Extract<ThreadItem, {
   type:
@@ -87,8 +92,10 @@ interface ThreadItemViewProps {
   readonly streaming: boolean;
   readonly onDisclosureToggle: () => void;
   readonly onEditUserMessage: (content: readonly ThreadUserContent[]) => Promise<void>;
+  readonly onAgentMessageContextMenu?: MouseEventHandler<HTMLElement>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
 }
 
 export interface ThreadDisclosureState {
@@ -116,7 +123,10 @@ export function ThreadItemView(props: ThreadItemViewProps) {
       return <UserMessageItem {...props} item={props.item} />;
     case 'agentMessage':
       return (
-        <article className={`thread-item thread-agent-message thread-agent-message-${props.item.phase ?? 'response'}`}>
+        <article
+          className={`thread-item thread-agent-message thread-agent-message-${props.item.phase ?? 'response'}`}
+          onContextMenu={props.onAgentMessageContextMenu}
+        >
           <div className="thread-agent-message-body">
             <ThreadMarkdown
               index={props.index}
@@ -178,6 +188,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
         <ToolItemDisclosure
           expandState={props.expandState}
           item={props.item}
+          onReadOutput={props.onReadToolOutput}
           onOpenThread={props.onOpenThread}
         />
       );
@@ -209,17 +220,18 @@ export function ThreadItemView(props: ThreadItemViewProps) {
 export function ThreadToolActivityGroup({
   expandState,
   items,
+  onReadToolOutput,
   onOpenThread,
 }: {
   readonly expandState: ThreadDisclosureState;
   readonly items: readonly ThreadToolItem[];
+  readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
 }) {
   const t = useT();
   const disclosureId = `tools:${items[0]?.id ?? 'empty'}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const status = groupStatus(items);
-  const StatusIcon = executionStatusIcon(status);
   const label = summarizeThreadToolActivity(items, t.agent.thread.activity);
   return (
     <div className={`thread-item thread-tool-activity-group thread-tool-${status}`}>
@@ -229,7 +241,7 @@ export function ThreadToolActivityGroup({
         data-thread-disclosure-id={disclosureId}
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
-        <DisclosureIndicator expanded={expanded} status={<StatusIcon size={ICON_SIZE.tiny} />} />
+        <DisclosureIndicator expanded={expanded} status={executionStatusNode(status, <GenericToolIcon size={ICON_SIZE.tiny} />)} />
         <span className="thread-tool-activity-summary">{label}</span>
       </ButtonControl>
       {expanded ? (
@@ -239,6 +251,7 @@ export function ThreadToolActivityGroup({
               expandState={expandState}
               item={item}
               key={item.id}
+              onReadOutput={onReadToolOutput}
               onOpenThread={onOpenThread}
             />
           ))}
@@ -278,8 +291,13 @@ function UserMessageItem({
       {editing ? (
         <div className="thread-message-editor">
           <textarea
+            autoFocus
             aria-label={t.agent.message.editMessage}
             onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setEditing(false);
+              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void save();
+            }}
             rows={3}
             value={text}
           />
@@ -529,19 +547,32 @@ function TextDisclosure({
 function ToolItemDisclosure({
   expandState,
   item,
+  onReadOutput,
   onOpenThread,
 }: {
   readonly expandState: ThreadDisclosureState;
   readonly item: ThreadToolItem;
+  readonly onReadOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
 }) {
   const t = useT();
   const loadedSkill = loadedSkillDetails(item);
-  if (loadedSkill) return <LoadedSkillAffordance details={loadedSkill} />;
   const disclosureId = `tool:${item.id}`;
   const expanded = expandState.isExpanded(disclosureId, false);
-  const StatusIcon = executionStatusIcon(item.status);
   const detail = toolDetail(item, t, onOpenThread);
+  const [fullOutput, setFullOutput] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!expanded || !item.outputRef || fullOutput !== undefined) return undefined;
+    let cancelled = false;
+    void onReadOutput(item).then((text) => {
+      if (!cancelled) setFullOutput(text);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, fullOutput, item, onReadOutput]);
+  if (loadedSkill) return <LoadedSkillAffordance details={loadedSkill} />;
+  const output = fullOutput ?? detail.output;
   return (
     <div className={`thread-item thread-tool thread-tool-${item.status}`}>
       <ButtonControl
@@ -550,8 +581,7 @@ function ToolItemDisclosure({
         data-thread-disclosure-id={disclosureId}
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
-        <DisclosureIndicator expanded={expanded} status={<StatusIcon size={ICON_SIZE.tiny} />} />
-        <span className="thread-tool-icon">{toolIcon(item)}</span>
+        <DisclosureIndicator expanded={expanded} status={executionStatusNode(item.status, toolIcon(item))} />
         <span className="thread-tool-label">{summarizeThreadToolItem(item, t.agent.thread.activity)}</span>
       </ButtonControl>
       {expanded ? (
@@ -562,9 +592,9 @@ function ToolItemDisclosure({
             </ToolDetailSection>
           ) : null}
           {detail.body}
-          {detail.output ? (
-            <ToolDetailSection copyLabel={t.agent.thread.item.copyOutput} label={t.agent.thread.item.output} text={detail.output}>
-              <ReadOnlyCodeBlock code={detail.output} language={detail.outputLanguage} />
+          {output ? (
+            <ToolDetailSection copyLabel={t.agent.thread.item.copyOutput} label={t.agent.thread.item.output} text={output}>
+              <ReadOnlyCodeBlock code={output} language={fullOutput ? outputLanguage(fullOutput) : detail.outputLanguage} />
             </ToolDetailSection>
           ) : null}
           {detail.error ? <p className="thread-inline-error">{detail.error}</p> : null}
@@ -643,20 +673,29 @@ function DisclosureIndicator({ expanded, status }: { readonly expanded: boolean;
 export function ThreadMessageCopyButton({
   iconSize = ICON_SIZE.tiny,
   label,
+  onCopy,
   text,
 }: {
   readonly iconSize?: number;
   readonly label: string;
+  readonly onCopy?: () => Promise<void>;
   readonly text: string;
 }) {
-  const { copied, copyCode } = useCodeBlockCopy(text);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    if (onCopy) await onCopy();
+    else if (text) await navigator.clipboard.writeText(text);
+    else return;
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_200);
+  };
   return (
     <IconButton
-      disabled={!text}
+      disabled={!text && !onCopy}
       icon={copied ? CheckIcon : CopyIcon}
       iconSize={iconSize}
       label={label}
-      onClick={copyCode}
+      onClick={() => void copy()}
       variant="message"
     />
   );
@@ -694,7 +733,7 @@ function toolDetail(
             {item.changes.map((change, index) => (
               <li key={`${change.path}:${index}`}>
                 <span>{change.kind}</span>
-                <code>{change.path}</code>
+                <ToolFileResult path={change.path} removable={change.kind !== 'delete'} />
                 {change.movedTo ? <code>{change.movedTo}</code> : null}
                 {change.diff ? <ReadOnlyCodeBlock code={change.diff} language="diff" /> : null}
               </li>
@@ -1094,11 +1133,11 @@ function dynamicToolArgument(
   return (item.arguments as { readonly [argument: string]: unknown })[key];
 }
 
-function executionStatusIcon(status: ItemExecutionStatus) {
-  if (status === 'inProgress') return LoaderIcon;
-  if (status === 'failed') return ToolErrorIcon;
-  if (status === 'interrupted') return StopIcon;
-  return CheckIcon;
+function executionStatusNode(status: ItemExecutionStatus, completed: ReactNode): ReactNode {
+  if (status === 'inProgress') return <LoaderIcon size={ICON_SIZE.tiny} />;
+  if (status === 'failed') return <ToolErrorIcon size={ICON_SIZE.tiny} />;
+  if (status === 'interrupted') return <StopIcon size={ICON_SIZE.tiny} />;
+  return completed;
 }
 
 function ToolOutputImage({ image }: { readonly image: Extract<DynamicToolOutputContent, { type: 'image' }> }) {
@@ -1163,8 +1202,61 @@ function ThreadAttachment({ content }: { readonly content: ThreadAttachmentConte
       <small>{formatBytes(content.sizeBytes)}</small>
     </span>
   );
+  if (content.source.kind === 'localFile' && !imageSource) {
+    return (
+      <div className="thread-attachment">
+        <InlineFileReference
+          className="thread-attachment-chip"
+          file={{
+            entryKind: content.mimeType === 'inode/directory' ? 'directory' : 'file',
+            mimeType: content.mimeType,
+            name: content.name,
+            path: content.source.path,
+            ref: content.name,
+            sizeBytes: content.sizeBytes,
+          }}
+        />
+      </div>
+    );
+  }
   if (!target) return <div className="thread-attachment">{body}</div>;
   return <button className="thread-attachment" onClick={() => dispatchPreviewTargetOpen({ presentation: 'reader', target })} type="button">{body}</button>;
+}
+
+function ToolFileResult({ path, removable }: { readonly path: string; readonly removable: boolean }) {
+  const t = useT();
+  const [state, setState] = useState<'idle' | 'adding' | 'added'>('idle');
+  const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  const add = async () => {
+    if (state === 'adding') return;
+    setState('adding');
+    const added = await requestAddPreviewTargetToOutline({
+      target: { kind: 'local-file', path, entryKind: 'file', label: name },
+    }).catch(() => false);
+    setState(added ? 'added' : 'idle');
+  };
+  return (
+    <span className="thread-tool-file-result">
+      <InlineFileReference
+        className="thread-tool-file-chip"
+        file={{ entryKind: 'file', mimeType: 'application/octet-stream', name, path, ref: name }}
+      />
+      {removable ? (
+        <IconButton
+          disabled={state === 'adding'}
+          icon={state === 'added' ? CheckIcon : state === 'adding' ? LoaderIcon : AddChildIcon}
+          iconSize={ICON_SIZE.tiny}
+          label={state === 'added' ? t.agent.filePreview.addedToToday : t.agent.filePreview.addToToday}
+          onClick={() => void add()}
+          variant="message"
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function outputLanguage(text: string): string {
+  return isJsonText(text) ? 'json' : 'text';
 }
 
 function reasoningGist(text: string): string {

@@ -5,10 +5,13 @@ import type {
   AgentCoreNotification,
   AgentCoreRequestByMethod,
   AgentCoreResponseByMethod,
+  ThreadMessageContextMenuAction,
+  ThreadMessageContextMenuRequest,
 } from '../core/agent/protocol';
 import {
   AGENT_CORE_NOTIFICATION_CHANNEL,
   AGENT_CORE_REQUEST_CHANNEL,
+  THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,
 } from '../core/agent/transport';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
@@ -238,6 +241,8 @@ const api = {
     ipcRenderer.on(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
     return () => ipcRenderer.removeListener(AGENT_CORE_NOTIFICATION_CHANNEL, handler);
   },
+  showThreadMessageContextMenu: (request: ThreadMessageContextMenuRequest) =>
+    ipcRenderer.invoke(THREAD_MESSAGE_CONTEXT_MENU_CHANNEL, request) as Promise<ThreadMessageContextMenuAction | null>,
   recordNodeAccess: (nodeId: string) =>
     ipcRenderer.invoke('lin:record-node-access', nodeId) as Promise<void>,
   onAgentOAuthEvent: (listener: (envelope: OAuthLoginEventEnvelope) => void) => {
