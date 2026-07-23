@@ -529,6 +529,15 @@ export interface ProviderRetryStatus {
   readonly maxRetries: number;
 }
 
+export type ThreadMessageContextMenuAction = 'copy' | 'retry' | 'regenerate' | 'details';
+
+export interface ThreadMessageContextMenuRequest {
+  readonly canCopy: boolean;
+  readonly canRetry: boolean;
+  readonly canRegenerate: boolean;
+  readonly canShowDetails: boolean;
+}
+
 export interface TurnInputRequest {
   readonly threadId: ThreadId;
   readonly input: readonly ThreadUserContent[];
