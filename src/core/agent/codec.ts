@@ -880,8 +880,17 @@ function decodeThreadConfigurationSummary(
   exactKeys(record, ['modelProvider', 'model', 'reasoningEffort'], path);
   const modelProvider = nonEmptyTrimmedString(record.modelProvider, `${path}.modelProvider`);
   const model = nonEmptyTrimmedString(record.model, `${path}.model`);
-  if ((model !== 'inherit' && !model.startsWith(`${modelProvider}/`)) || model === `${modelProvider}/`) {
-    fail(`${path}.model`, 'expected inherit or a model qualified by modelProvider');
+  const modelQualifier = model.indexOf('/');
+  if (model !== 'inherit' && modelQualifier >= 0) {
+    const qualifiedProvider = model.slice(0, modelQualifier);
+    const qualifiedModel = model.slice(modelQualifier + 1);
+    if (
+      qualifiedProvider !== modelProvider
+      || !qualifiedModel
+      || qualifiedModel !== qualifiedModel.trim()
+    ) {
+      fail(`${path}.model`, 'expected a bare model id, inherit, or a model qualified by modelProvider');
+    }
   }
   return deepFreeze({
     modelProvider,
@@ -1380,21 +1389,25 @@ function decodeTurnExecution(value: unknown): Turn['execution'] {
   const usage = recordValue(record.usage, 'turn.execution.usage');
   exactKeys(usage, ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens', 'cost'], 'turn.execution.usage');
   const cost = usage.cost === null ? null : decodeTurnTokenCost(usage.cost);
+  const input = nonNegativeInteger(usage.input, 'turn.execution.usage.input');
+  const output = nonNegativeInteger(usage.output, 'turn.execution.usage.output');
+  const cacheRead = nonNegativeInteger(usage.cacheRead, 'turn.execution.usage.cacheRead');
+  const cacheWrite = nonNegativeInteger(usage.cacheWrite, 'turn.execution.usage.cacheWrite');
   const result: Turn['execution'] = {
     modelProvider: stringValue(record.modelProvider, 'turn.execution.modelProvider'),
     model: stringValue(record.model, 'turn.execution.model'),
     reasoningEffort: enumValue(record.reasoningEffort, REASONING_EFFORTS, 'turn.execution.reasoningEffort'),
     usage: {
-      input: nonNegativeInteger(usage.input, 'turn.execution.usage.input'),
-      output: nonNegativeInteger(usage.output, 'turn.execution.usage.output'),
-      cacheRead: nonNegativeInteger(usage.cacheRead, 'turn.execution.usage.cacheRead'),
-      cacheWrite: nonNegativeInteger(usage.cacheWrite, 'turn.execution.usage.cacheWrite'),
+      input,
+      output,
+      cacheRead,
+      cacheWrite,
       totalTokens: nonNegativeInteger(usage.totalTokens, 'turn.execution.usage.totalTokens'),
       cost,
     },
   };
-  if (result.usage.totalTokens < result.usage.input + result.usage.output) {
-    fail('turn.execution.usage.totalTokens', 'must cover input and output tokens');
+  if (result.usage.totalTokens < input + output + cacheRead + cacheWrite) {
+    fail('turn.execution.usage.totalTokens', 'must cover input, output, cache-read, and cache-write tokens');
   }
   return deepFreeze(result);
 }

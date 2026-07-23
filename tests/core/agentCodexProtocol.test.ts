@@ -187,7 +187,7 @@ const completedTurn: Turn = {
       output: 20,
       cacheRead: 50,
       cacheWrite: 0,
-      totalTokens: 120,
+      totalTokens: 170,
       cost: {
         input: 0.001,
         output: 0.002,
@@ -366,9 +366,9 @@ describe('Codex Agent Core protocol codec', () => {
       ...completedTurn,
       execution: {
         ...completedTurn.execution,
-        usage: { ...completedTurn.execution.usage, totalTokens: 100 },
+        usage: { ...completedTurn.execution.usage, totalTokens: 169 },
       },
-    })).toThrow('must cover input and output tokens');
+    })).toThrow('must cover input, output, cache-read, and cache-write tokens');
     expect(() => decodeThreadItem({
       ...allItems[4],
       outputRef: { id: 'not-a-digest', mimeType: 'text/plain', byteLength: 2, summary: 'Output' },
@@ -583,6 +583,28 @@ describe('Codex Agent Core protocol codec', () => {
       model: 'anthropic/claude-sonnet-4',
       reasoningEffort: 'medium',
     })).toThrow('qualified by modelProvider');
+    expect(() => decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: 'openai',
+      model: 'openai/',
+      reasoningEffort: 'medium',
+    })).toThrow('qualified by modelProvider');
+    expect(decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: 'openai',
+      model: 'project-model',
+      reasoningEffort: 'medium',
+    })).toMatchObject({ modelProvider: 'openai', model: 'project-model' });
+    expect(decodeAgentCoreResponse('thread/configuration/get', {
+      thread,
+      configuration: {
+        modelProvider: 'openai',
+        model: 'user-model',
+        reasoningEffort: 'high',
+      },
+    })).toMatchObject({
+      configuration: { modelProvider: 'openai', model: 'user-model', reasoningEffort: 'high' },
+    });
     expect(decodeAgentCoreRequest('thread/configuration/set', {
       threadId: THREAD_ID,
       modelProvider: 'openai',
