@@ -42,6 +42,38 @@ export function createHostRootTurnAdmissionBarrierSnapshot(
   return Object.freeze({ kind: 'hostRootTurns', generation: barrierGeneration(generation) });
 }
 
+export interface ThreadHistoryRollbackContext {
+  readonly rollbackId: string;
+  readonly threadId: ThreadId;
+  readonly omittedTurnIds: readonly TurnId[];
+  readonly beforeProjectionVersion: number;
+  readonly afterProjectionVersion: number;
+}
+
+export function createThreadHistoryRollbackContext(
+  rollbackId: string,
+  threadId: ThreadId,
+  omittedTurnIds: readonly TurnId[],
+  beforeProjectionVersion: number,
+  afterProjectionVersion: number,
+): ThreadHistoryRollbackContext {
+  if (omittedTurnIds.length === 0) throw new Error('omittedTurnIds must not be empty');
+  const frozenTurnIds = Object.freeze(omittedTurnIds.map((turnId) => nonEmpty(turnId, 'omittedTurnIds')));
+  if (new Set(frozenTurnIds).size !== frozenTurnIds.length) {
+    throw new Error('omittedTurnIds must not contain duplicates');
+  }
+  const before = projectionVersion(beforeProjectionVersion, 'beforeProjectionVersion');
+  const after = projectionVersion(afterProjectionVersion, 'afterProjectionVersion');
+  if (after <= before) throw new Error('afterProjectionVersion must be greater than beforeProjectionVersion');
+  return Object.freeze({
+    rollbackId: nonEmpty(rollbackId, 'rollbackId'),
+    threadId: nonEmpty(threadId, 'threadId'),
+    omittedTurnIds: frozenTurnIds,
+    beforeProjectionVersion: before,
+    afterProjectionVersion: after,
+  });
+}
+
 export interface TurnAdmissionContext {
   readonly thread: Thread;
   readonly turnId: TurnId;
@@ -91,6 +123,12 @@ export interface AgentCoreExtension {
   onThreadResumed?(thread: Thread): void | Promise<void>;
   onThreadIdle?(thread: Thread): void | Promise<void>;
   onThreadStopped?(thread: Thread): void | Promise<void>;
+  /** May reject rollback before its rollout marker; idempotent by rollbackId. */
+  prepareHistoryRollback?(context: ThreadHistoryRollbackContext): void | Promise<void>;
+  /** Releases prepared extension state when Core did not append a marker. */
+  abortHistoryRollback?(context: ThreadHistoryRollbackContext): void | Promise<void>;
+  /** Finalizes extension state after the rollback marker is durable. */
+  commitHistoryRollback?(context: ThreadHistoryRollbackContext): void | Promise<void>;
   contributeTurnAdmission?(context: TurnAdmissionContext): TurnAdmissionContribution | Promise<TurnAdmissionContribution>;
   onTurnStarted?(thread: Thread, turn: Turn): void | Promise<void>;
   onTurnStopped?(thread: Thread, turn: Turn): void | Promise<void>;
@@ -129,6 +167,13 @@ export interface ExtensionStateStore<T> {
 
 function barrierGeneration(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error('Barrier generation must be a non-negative safe integer');
+  return value;
+}
+
+function projectionVersion(value: number, field: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${field} must be a non-negative safe integer`);
+  }
   return value;
 }
 

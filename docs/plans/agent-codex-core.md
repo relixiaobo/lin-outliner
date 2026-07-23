@@ -99,6 +99,7 @@ The following mapping is destructive and exhaustive:
 | Issue Activity | Derived chronology of `ThreadItem`s and goal updates |
 | Delegated run or sub-run | Child `Thread` with `parentThreadId` |
 | Message branch | Forked `Thread` with `forkedFromId` |
+| Latest user-message edit | Same-Thread `thread/rollback` followed by a new `Turn` |
 | RecurringIssue | Removed; a later `Automation` creates or resumes Threads |
 | Dream runtime, schedule, and extraction path | Removed; a later Memory extension publishes Codex Memory as canonical `#d-*` Nodes on the daily timeline |
 
@@ -276,18 +277,45 @@ error, and timing.
 Only one Turn may be active in a Thread. Starting, steering, interrupting, and
 resuming all require both the Thread identity and the relevant Turn precondition
 where applicable. Steering can append input only to the active Turn. Completed
-Turns and completed ThreadItems are immutable transcript facts: editing an old
-user message, retrying a Turn, or regenerating a response forks the Thread at the
-selected Turn boundary and starts a new Turn in the fork. Tenon does not expose
-or implement Codex's deprecated `thread/rollback` operation.
+Turns and completed ThreadItems are immutable recorded facts: no operation
+patches a completed record in place or reuses its identity. The append-only
+rollout is the audit history. The current Thread history and model context are a
+replay projection of that audit history after applying any later rollback
+markers.
 
-A fork changes only agent history and model context. It never reverts document
-commands, file changes, shell effects, processes, MCP calls, or external actions
-performed by omitted Turns. The default Edit, Retry, and Regenerate flows create
-the fork while leaving the current world unchanged. Any future revert operation
-is a separate explicit command with its own preview, conflict detection, and
-audit record; it is not a Thread operation and cannot promise to reverse unknown
-or external effects.
+Tenon implements Codex's `thread/rollback { threadId, numTurns }` semantics for
+persistent interactive root Threads. The operation runs under the per-Thread
+admission barrier, requires the Thread to be idle, requires every targeted Turn
+to be terminal, rejects zero or more Turns than currently exist, appends one
+durable marker containing the exact omitted Turn IDs and rollout boundary, and
+returns the updated Thread projection. A successful marker survives a crash
+before any replacement Turn starts. Replay, pagination, model-history assembly,
+and projection rebuild all omit those Turns while retaining their original
+events for audit. The installed Codex desktop client uses `numTurns=1` to edit
+the latest user Turn in the current projection; Tenon's renderer exposes only
+that case and never offers Edit on an earlier Turn or while a Turn is active. Although upstream
+app-server marks the operation deprecated because of its legacy-history
+complexity, Tenon has one paginated history mode and adopts the current desktop
+behavior without its compatibility paths.
+
+After rollback, the replacement is an ordinary new user Turn on the same
+`threadId`, with fresh Turn and Item identities. The removed identities remain
+reserved and auditable. The user-facing response surface has no Retry or
+Regenerate history action; a failed latest Turn can be revised through Edit.
+`Continue in new chat` is the only transcript action that calls `thread/fork`,
+creates a new top-level Thread, and records `forkedFromId`.
+
+Rollback and fork change only agent history and model context. Neither reverts
+document commands, Memory Node edits, file changes, shell effects, processes,
+MCP calls, Goal state, or external actions performed by omitted Turns. Those
+effects retain their original `threadId`/`turnId`/`itemId` causation and resolve
+through the audit rollout even when their Turn is absent from the current
+projection. Token usage, Goal accounting, and elapsed execution time remain
+cumulative and are never refunded. Payload references remain retained under the
+Thread's normal audit/GC lifetime. Any future world-state revert is a separate
+explicit command with its own preview, conflict detection, and audit record; it
+is not a Thread rollback and cannot promise to reverse unknown or external
+effects.
 
 `TurnProvenance` is written by `ThreadService` before the Turn starts and is
 persisted in the rollout and history projection:
@@ -334,10 +362,12 @@ Every completed ThreadItem also has immutable `ItemProvenance` containing
 `originThreadId`, `originTurnId`, and `originItemId`. A newly recorded Item points
 to itself. When a fork materializes inherited history, it assigns local IDs for
 the copied records but preserves their ultimate origin IDs and the original
-Turn trigger; a fork of a fork does not create another origin. The first edited,
-retried, regenerated, or newly submitted Item after the fork boundary is locally
-originated. This gives Memory and audit consumers one stable evidence identity
-without making fork history mutable or coupling it to world-state rollback.
+Turn trigger; a fork of a fork does not create another origin. The first newly
+submitted Item after the fork boundary is locally originated. Rollback copies or
+rewrites no provenance: the omitted facts keep their IDs in the audit rollout,
+and replacement facts receive new local origins in the same Thread. This gives
+Memory and audit consumers one stable evidence identity without making recorded
+history mutable or coupling transcript rollback to world-state rollback.
 
 The core protocol defines Codex's optional `MemoryCitation` on `agentMessage`
 even before the Memory extension is installed. Tenon's Node-backed citation
@@ -372,7 +402,9 @@ commands record it in transaction metadata, file mutations remain represented
 by `fileChange` Items, and command/MCP/dynamic-tool Items retain the audit edge
 for effects that cannot be reversed. This provenance supports inspection and a
 future explicit undo surface without coupling world-state rollback to history
-forking.
+forking or transcript rollback. Audit lookup reads the append-only rollout, not
+only the current Thread projection, so a rolled-back source identity never
+becomes dangling.
 
 #### Full Access host boundary
 
@@ -522,16 +554,22 @@ as current audit data, or shown in current UI/specs after the replacement.
 ### 4. Rollout source of truth and rebuildable projections
 
 Each persistent Thread owns an append-only rollout JSONL under the new agent data
-root. The rollout is the canonical Thread/Turn/Item history. It records lifecycle
-events and completed item values in replay order; writes use one sequenced
-recorder and flush before terminal notifications are published.
+root. The rollout is the canonical audit history. It records lifecycle events,
+completed item values, and rollback markers in replay order; writes use one
+sequenced recorder and flush before terminal notifications or rollback responses
+are published. The canonical current Thread history is the deterministic replay
+projection after rollback markers are applied, not a rewritten rollout prefix.
+Every committed change to that projection advances a non-negative, monotonic
+projection version. Core exposes an immutable history snapshot paired with that
+version to internal consumers; reading it does not acquire the admission
+coordinator.
 
 Match Codex's current ownership split instead of creating one universal
 database:
 
 | Store | Owner | Contents | Recovery contract |
 |---|---|---|---|
-| Thread rollout JSONL | Core | canonical Turn/Item history | append-only source |
+| Thread rollout JSONL | Core | canonical Turn/Item audit history and rollback markers | append-only source |
 | `state.sqlite` | Core | Thread catalog, mutable metadata, spawn edges | authoritative catalog state |
 | `thread_history.sqlite` | Core | `thread_turns`, `thread_items`, projection offsets | disposable and rebuilt from rollouts |
 | `goals.sqlite` | Goal extension | current ThreadGoal, accounting, continuation deferrals | private extension state |
@@ -545,10 +583,12 @@ There is no schema upgrade path, imported old data, compatibility table, or
 dual-read period in this pre-release replacement.
 
 The history projection stores rollout ordinals, Turn status/timing/errors,
-completed item JSON/type, and byte-offset/ordinal watermarks. Deleting
-`thread_history.sqlite` and replaying rollouts must reproduce identical
-Thread/Turn/Item pages. Tests compare normal incremental projection with a
-from-zero rebuild.
+completed item JSON/type, rollback visibility, and byte-offset/ordinal
+watermarks. Deleting `thread_history.sqlite` and replaying rollouts must
+reproduce identical current Thread/Turn/Item pages while audit lookup still
+resolves omitted identities from the rollout. Tests compare normal incremental
+projection with a from-zero rebuild, including multiple rollback markers and a
+crash after rollback but before replacement Turn admission.
 
 `goals.sqlite` is authoritative for current Goal state. Goal updates also emit
 typed `thread/goal/updated` or `thread/goal/cleared` notifications and rollout
@@ -574,6 +614,8 @@ continue work without racing user input.
 A typed `ExtensionRegistry` provides only real lifecycle seams:
 
 - Thread start, resume, idle, and stop
+- prepared, aborted, and committed Thread-history rollback with the exact
+  omitted Turn IDs and source-projection versions
 - Turn admission, start, stop, abort, and error
 - Thread context contribution
 - tool contribution and tool lifecycle
@@ -601,6 +643,38 @@ not a persisted agent entity or a user-visible Session. Extensions do not mutate
 renderer projections or write rollout JSON directly; they call the host API,
 which records canonical protocol events.
 
+Rollback acquires the same per-Thread coordinator as Turn admission and assigns
+a unique `rollbackId`, the exact omitted Turn IDs, and the before/after source-
+projection versions. Before appending the marker, the host calls each registered
+`prepareHistoryRollback` hook in deterministic order. A derived-state extension
+uses that hook to durably invalidate publications based on the before-version;
+it does not mutate public product state. If any prepare fails before the marker
+is durable, Core appends no marker, invokes `abortHistoryRollback` for prepared
+participants in reverse prepare order, and leaves the current projection
+unchanged.
+
+After every prepare succeeds, Core durably appends the rollback marker and
+updates the current projection. The audit fact is then committed and no
+extension can veto or rewrite it. Core calls `commitHistoryRollback`; failures
+there do not turn the successful rollback into an error, because prepared state
+and the rollout marker provide the recovery record. The response is published
+only after Core has attempted every committed hook. Startup reconciles a
+prepared rollback against the append-only rollout before accepting a Turn or
+starting extension workers: a matching marker finalizes the invalidation and
+wakes reconciliation, while no marker aborts it. Repeating prepare, abort, or
+commit for one `rollbackId` is idempotent.
+
+An extension publication prepared from Thread evidence must reject a source
+with a pending or committed invalidation and compare its source-projection
+version immediately before commit. Publication and rollback therefore have one
+order: a publication already holding its extension write gate commits before
+rollback prepares, or rollback prepares first and the stale publication aborts.
+There is no interval in which a publication based on the before-version can
+commit after the rollback marker. The current source-projection version is an
+atomically published read snapshot; extension code never acquires the per-Thread
+coordinator while holding an extension write gate. The fixed lock order is
+per-Thread coordinator before extension gate.
+
 The `ThreadGoal` extension is the first required consumer and proves the seam is
 real. `ThreadGoal` is keyed one-to-one by `threadId` and contains objective,
 status, optional token budget, tokens used, time used, and timestamps. Its
@@ -617,7 +691,9 @@ Thread idle, an active goal may enqueue a continuation through
 state backed by `goals.sqlite`, not Turn subtypes. A private goal generation ID
 prevents stale continuations after replacement, and a private deferral row
 prevents repeated idle callbacks from spinning while continuation is temporarily
-inadmissible.
+inadmissible. Transcript rollback never decrements token/time usage, rewinds Goal
+status, or reopens a completed Goal; those are durable execution and extension
+facts with their own explicit mutation surfaces.
 
 Child work always starts a child Thread. It shares the root `sessionId`, stores
 `parentThreadId`, may store `agentRole`/`agentNickname`, receives a deliberately
@@ -634,9 +710,9 @@ it does not revive an AgentSession or look up a durable Agent object.
 
 Preload exposes request/response methods named for the canonical operations, for
 example `threadList`, `threadRead`, `threadStart`, `threadResume`, `threadFork`,
-`threadNameSet`, `threadArchive`, `threadUnarchive`, `threadDelete`, `turnStart`,
-`turnSteer`, `turnInterrupt`, and goal operations. One typed event subscription
-carries canonical notifications. Old `agent_*conversation*`,
+`threadRollback`, `threadNameSet`, `threadArchive`, `threadUnarchive`,
+`threadDelete`, `turnStart`, `turnSteer`, `turnInterrupt`, and goal operations.
+One typed event subscription carries canonical notifications. Old `agent_*conversation*`,
 `agent_*run*`, `agent_*issue*`, and Channel-config IPC is deleted, not wrapped.
 
 Thread/Turn/Goal operations use this dedicated protocol. Agent node tools still
@@ -663,6 +739,15 @@ Normal transcript UI need not print a heading for every Turn, but any exposed
 label or detail uses "Thread", "Turn", "Item", and "Goal". Notifications navigate
 by `threadId`. There are no user-visible Channels, Issues, Agent Runs, Sessions,
 Activities, or Dreams.
+
+Only the user message belonging to the Thread's final Turn exposes Edit, and
+only while that Turn is terminal. The editor keeps the original structured
+`ThreadUserContent[]`, replaces only the submitted text, then calls
+`thread/rollback` with `numTurns=1` and starts the replacement Turn on the same
+Thread. Earlier user messages and active Turns are not editable.
+Assistant responses expose Copy, Continue in new chat, and Details as applicable;
+they do not expose Retry or Regenerate. Continue in new chat alone forks, and the
+fork remains a top-level user Thread rather than a nested child.
 
 ### 7. Destructive removal and documentation authority
 
@@ -730,7 +815,12 @@ both a zero-result active-repository scan and a zero-result fresh-storage scan;
   Full Access audit/block, attachment, compaction, retry, and notification path
   and prove each through the canonical protocol before deleting its old consumer.
 - **Projection drift:** compare incremental pages against a clean rollout replay,
-  including interrupted Turns and partially streamed Items.
+  including interrupted Turns, partially streamed Items, repeated rollback,
+  audit lookup of omitted IDs, and rollback committed without a replacement
+  Turn.
+- **Rollback is mistaken for world-state undo:** UI copy calls it history edit,
+  not undo; causation, payloads, cumulative usage, Goal state, and every external
+  effect remain authoritative and auditable.
 - **Terminology residue:** run an allowlist-based repository guard over current
   source/docs/i18n/storage keys, not a hand-reviewed rename list.
 
@@ -748,8 +838,9 @@ abandoned.
 
 None. Ratifying this plan ratifies the destructive vocabulary mapping, one
 ThreadGoal per Thread, no durable Agent membership/execution entity, the
-Profile/Role/child-Thread split, history-only fork semantics, separate
-core/history/Goal stores, rollout-as-history-source, the fixed
+Profile/Role/child-Thread split, append-only audit plus same-Thread rollback for
+the latest-message Edit, explicit-fork-only branching, separate core/history/Goal
+stores, rollout-as-audit-source, the fixed
 `collaboration.*` v2 tool namespace, the exact `request_user_input` replacement,
 the exhaustive tool migration, immutable Turn/Item provenance, the retained Full
 Access boundary, the projection-neutral document system-receipt primitive, the
@@ -763,9 +854,11 @@ delivery order.
   to `docs/TASKS.md`; open the Draft PR claim before implementation.
 - [ ] In the human-led interface-only PR, define and contract-test the canonical
   protocol and extension interfaces, including ThreadSource strings, immutable
-  Turn/Item provenance, paginated-only history, immutable completed Items, client
-  input idempotency, Node-backed MemoryCitation, configuration profiles, agent
-  roles, per-Thread and host-wide admission-barrier snapshots,
+  Turn/Item provenance, paginated-only current history over append-only audit,
+  immutable completed records, `thread/rollback` and its prepared/aborted/
+  committed extension lifecycle, client input idempotency, Node-backed
+  MemoryCitation, configuration profiles, agent roles, per-Thread and host-wide
+  admission-barrier snapshots,
   additional-context trust, Full Access exclusions, and the generic
   projection-neutral `DocumentSystemReceipt` plus host-only atomic mutation.
 - [ ] In that interface PR, define and contract-test
@@ -785,8 +878,9 @@ delivery order.
   reload, projection/search/model exclusion, and no user undo entry.
 - [ ] Implement the protected system-tag ownership map and host-only ensure path,
   including fixed-ID creation/restore and public definition-mutation rejection.
-- [ ] Implement rollout recording, Thread metadata/spawn edges, the separate
-  history projection, pagination, and replay equivalence.
+- [ ] Implement rollout recording, rollback markers, Thread metadata/spawn
+  edges, the separate current-history projection, pagination, audit lookup, and
+  replay equivalence.
 - [ ] Implement Thread/Turn runtimes and make GoalExtension exercise the real
   lifecycle, private Goal store, deferral, accounting, and tool paths.
 - [ ] Replace preload/IPC with canonical operations and notifications.
@@ -795,9 +889,10 @@ delivery order.
 - [ ] Move retained capabilities behind the new runtime and delete every old
   model, reader, tool/questionnaire DTO, event, adapter, test, i18n key, and CSS
   selector.
-- [ ] Thread causation metadata through document commands and prove that Edit,
-  Retry, Regenerate, and fork omit history without reverting Node, file, shell,
-  MCP, process, or external effects.
+- [ ] Thread causation metadata through document commands and prove that Edit
+  rolls back only current transcript/model history, Continue in new chat forks,
+  neither operation reverts Node, Memory, file, shell, MCP, process, Goal, usage,
+  or external effects, and no Retry/Regenerate history action remains.
 - [ ] Rewrite the current agent specs and prepare old active plans for main-gate
   archival.
 - [ ] Add a legacy-residue guard covering active source, tests, specs/plans, IPC,
