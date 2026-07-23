@@ -318,7 +318,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(rows).toHaveCount(2);
     const selectedFork = page.locator('.thread-list-row.is-selected');
     await expect(selectedFork).toContainText('Keep this history.');
-    await expect(selectedFork).toHaveCSS('--thread-depth', '1');
+    await expect(selectedFork).toHaveCSS('--thread-depth', '0');
     expect((await commandCalls(page)).map((call) => call.cmd)).toContain('thread/fork');
   });
 
@@ -346,6 +346,23 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-user-message').last()).toContainText('Revised request');
     const fork = (await commandCalls(page)).filter((call) => call.cmd === 'thread/fork').at(-1);
     expect(fork?.args.boundary).toMatchObject({ kind: 'beforeTurn' });
+  });
+
+  test('offers Edit only on the latest user message', async ({ page }) => {
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('First request');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await composer.fill('Latest request');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const messages = page.locator('.thread-user-message');
+    await expect(messages).toHaveCount(2);
+    await messages.first().hover();
+    await expect(messages.first().getByRole('button', { name: 'Edit message' })).toHaveCount(0);
+    await expect(messages.first().getByRole('button', { name: 'Copy message' })).toBeVisible();
+    await messages.last().hover();
+    await expect(messages.last().getByRole('button', { name: 'Edit message' })).toBeVisible();
   });
 
   test('sends an Outliner Node to the Thread as structured input', async ({ page }) => {
@@ -836,6 +853,7 @@ test.describe('canonical agent Thread surface', () => {
     await page.getByRole('button', { name: 'Show Threads' }).click();
     const childRow = page.getByRole('dialog', { name: 'Threads' }).locator('.thread-list-row').filter({ hasText: 'Research child' });
     await expect(childRow.getByRole('button', { name: /Research child/ })).toBeVisible();
+    await expect(childRow).toHaveCSS('--thread-depth', '1');
     await expect(childRow.locator('small')).toContainText('Subagent · research [explorer]');
   });
 
@@ -855,7 +873,8 @@ test.describe('canonical agent Thread surface', () => {
       const reasoningId = item('aa02');
       const commandId = item('aa03');
       const toolId = item('aa04');
-      const answerId = item('aa05');
+      const summaryOnlyReasoningId = item('aa05');
+      const answerId = item('aa06');
       const turn = {
         id: turnId,
         items: [
@@ -892,6 +911,13 @@ test.describe('canonical agent Thread surface', () => {
             durationMs: 8,
           },
           {
+            id: summaryOnlyReasoningId,
+            type: 'reasoning',
+            provenance: provenance(summaryOnlyReasoningId),
+            summary: [],
+            content: ['Preparing the final response'],
+          },
+          {
             id: answerId,
             type: 'agentMessage',
             provenance: provenance(answerId),
@@ -920,17 +946,51 @@ test.describe('canonical agent Thread surface', () => {
     await expect(process).toHaveAttribute('aria-expanded', 'false');
     await process.click();
 
-    const thought = page.getByRole('button', { name: /Thought.*Inspect the current workspace/ });
+    const thought = page.locator('.thread-reasoning-toggle').first();
     await expect(thought).toBeVisible();
+    await expect(thought).toHaveAccessibleName(/Thought.*Inspect the current workspace/);
+    const thoughtChevron = thought.locator('.thread-reasoning-chevron');
+    await expect(thoughtChevron).toHaveCSS('opacity', '0');
+    const activity = page.getByRole('button', { name: 'Ran a command · read a node' });
+    const [thoughtBox, activityBox] = await Promise.all([thought.boundingBox(), activity.boundingBox()]);
+    expect(thoughtBox).toBeTruthy();
+    expect(activityBox).toBeTruthy();
+    expect(Math.abs(thoughtBox!.x - activityBox!.x)).toBeLessThan(1);
+    await thought.hover();
+    await expect(thoughtChevron).toHaveCSS('opacity', '1');
     await thought.click();
+    await expect(thought).toHaveAttribute('aria-expanded', 'true');
+    await expect(thoughtChevron).toHaveCSS('opacity', '1');
     const reasoningBody = page.locator('.thread-reasoning-body');
     await expect(reasoningBody).toContainText('Inspect the current workspace');
     await expect(reasoningBody).toContainText('The workspace has enough evidence.');
     await expect(reasoningBody.locator('p')).toHaveCount(2);
+    const summaryOnlyReasoning = page.locator('.thread-reasoning-summary');
+    await expect(summaryOnlyReasoning).toHaveText('Thought· Preparing the final response');
+    await expect(summaryOnlyReasoning.getByRole('button')).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Ran a command · read a node' }).click();
+    const activityStatus = activity.locator('.thread-disclosure-status');
+    const activityChevron = activity.locator('.thread-disclosure-chevron');
+    await expect(activityStatus).toHaveCSS('opacity', '1');
+    await expect(activityChevron).toHaveCSS('opacity', '0');
+    await activity.hover();
+    await expect(activityStatus).toHaveCSS('opacity', '0');
+    await expect(activityChevron).toHaveCSS('opacity', '1');
+    await activity.click();
+    await expect(activity).toHaveAttribute('aria-expanded', 'true');
     const command = page.getByRole('button', { name: /Ran.*pwd/ });
     await expect(command).toBeVisible();
+    const commandAlignment = await command.evaluate((element) => {
+      const icon = element.querySelector<HTMLElement>('.thread-disclosure-status svg');
+      const label = element.querySelector<HTMLElement>('.thread-tool-label');
+      if (!icon || !label) return null;
+      const iconBox = icon.getBoundingClientRect();
+      const labelBox = label.getBoundingClientRect();
+      const lineHeight = Number.parseFloat(getComputedStyle(label).lineHeight);
+      return Math.abs((iconBox.top + iconBox.height / 2) - (labelBox.top + lineHeight / 2));
+    });
+    expect(commandAlignment).not.toBeNull();
+    expect(commandAlignment!).toBeLessThan(1);
     await command.click();
     await expect(command.locator('xpath=..').getByRole('button', { name: 'Copy output' })).toHaveCount(1);
     await command.locator('xpath=..').locator('.thread-tool-section').last().locator('.agent-code-block').hover();

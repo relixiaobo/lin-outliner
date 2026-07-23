@@ -350,6 +350,7 @@ export function ThreadView({
     },
   }), [capturePendingAnchor, disclosureOverrides, threadId]);
   const activeTurn = useMemo(() => findActiveTurn(turns), [turns]);
+  const editableTurnId = useMemo(() => latestUserMessageTurnId(turns), [turns]);
   const hasDraft = !draft.empty;
   const itemCount = turns.reduce((count, turn) => count + turn.items.length, 0);
   const selectedProviderId = configuration?.modelProvider ?? threadModelProvider;
@@ -771,6 +772,7 @@ export function ThreadView({
                   virtualized={virtualized}
                 >
                   <ThreadTurnView
+                    canEditUserMessage={turn.id === editableTurnId && turn.status !== 'inProgress'}
                     expandState={expandState}
                     index={index}
                     onDisclosureToggle={handleDisclosureToggle}
@@ -924,6 +926,7 @@ function ThreadTranscriptTurnShell({
 }
 
 const ThreadTurnView = memo(function ThreadTurnView({
+  canEditUserMessage,
   expandState,
   index,
   onDisclosureToggle,
@@ -935,6 +938,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   onRegenerate,
   turn,
 }: {
+  readonly canEditUserMessage: boolean;
   readonly expandState: ThreadDisclosureState;
   readonly index: DocumentIndex;
   readonly onDisclosureToggle: () => void;
@@ -992,6 +996,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
     <ThreadItemView
       agentResponseTail={item.id === responseItem?.id ? responseTail : null}
+      canEditUserMessage={canEditUserMessage && showMessageActions}
       defaultReasoningExpanded={isSoloResultlessReasoning(turn, item)}
       expandState={expandState}
       index={index}
@@ -1411,6 +1416,14 @@ function findActiveTurn(turns: readonly Turn[]): Turn | null {
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index];
     if (turn?.status === 'inProgress') return turn;
+  }
+  return null;
+}
+
+function latestUserMessageTurnId(turns: readonly Turn[]): string | null {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn?.items.some((item) => item.type === 'userMessage')) return turn.id;
   }
   return null;
 }

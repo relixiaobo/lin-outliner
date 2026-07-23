@@ -201,8 +201,8 @@ function lineageDepth(thread: Thread, threads: readonly Thread[]): number {
   const seen = new Set<string>();
   let current = thread;
   let depth = 0;
-  while (current.parentThreadId || current.forkedFromId) {
-    const parentId = current.parentThreadId ?? current.forkedFromId;
+  while (current.parentThreadId) {
+    const parentId = current.parentThreadId;
     if (!parentId || seen.has(parentId)) break;
     seen.add(parentId);
     const parent = byId.get(parentId);

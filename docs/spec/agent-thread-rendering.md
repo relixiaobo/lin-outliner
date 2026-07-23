@@ -28,7 +28,9 @@ Thread execution selections, active input requests, and Goals live in
 - plans render their current step list without becoming a separate work object
 - reasoning uses the established `Thinking` / `Thought` disclosure with a
   one-line gist while collapsed and every provider-supplied summary/content
-  part in the expanded body; only the actual tail Item streams
+  part in the expanded body; a terminal single-part, single-line provider
+  summary renders as a static Thought row because there is no additional body
+  to disclose; only the actual tail Item streams
 - consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes
@@ -177,10 +179,12 @@ reference markup into text. Edit replaces only the message text, while retry and
 regenerate replay the complete original structured input. An attachment-only or
 Node-reference-only Turn is therefore sendable and retryable.
 
-Editing a user message autofocuses the existing edit field. Escape cancels and
-Cmd/Ctrl+Enter saves. Saving forks at `beforeTurn` and resubmits the original
-structured content with only its text replaced; it does not mutate the sealed
-source Turn.
+Only the latest user message in a terminal Turn exposes Edit; earlier messages
+remain copyable but do not present implicit history branching as an ordinary
+edit, and an active Turn cannot be edited while its response is running. Editing
+autofocuses the existing edit field. Escape cancels and Cmd/Ctrl+Enter saves.
+Saving forks at `beforeTurn` and resubmits the original structured content with
+only its text replaced; it does not mutate the sealed source Turn.
 
 Attachment interaction retains the established source-identity rules. Local
 paths deduplicate by path; pathless files deduplicate by a renderer-only content

@@ -20,9 +20,7 @@ export function resolveAgentModelOverride(
   requested: string,
   providerConfig: AgentProviderRuntimeConfig,
 ): Model<Api> | null {
-  const parsed = parseProviderQualifiedModel(requested, isKnownProviderId);
-  const providerId = parsed?.providerId ?? providerConfig.providerId;
-  const modelId = parsed?.modelId ?? requested;
+  const { providerId, modelId } = modelIdentityForProvider(requested, providerConfig.providerId);
   const knownModel = findKnownModel(providerId, modelId);
   if (providerId === providerConfig.providerId && providerConfig.baseUrl) {
     return createCustomEndpointModel(providerConfig, modelId, knownModel);
@@ -137,6 +135,22 @@ function isKnownProviderId(providerId: string): boolean {
   if (isLocalGatewayProviderId(providerId)) return true;
   if (!knownProviderIdsCache) knownProviderIdsCache = new Set(piProviders());
   return knownProviderIdsCache.has(providerId);
+}
+
+function modelIdentityForProvider(
+  requested: string,
+  providerId: string,
+): { providerId: string; modelId: string } {
+  const qualified = parseProviderQualifiedModel(requested, isKnownProviderId);
+  if (qualified && qualified.providerId !== providerId) {
+    throw new Error(
+      `Model provider ${qualified.providerId} does not match the selected provider ${providerId}`,
+    );
+  }
+  return {
+    providerId,
+    modelId: qualified?.modelId ?? requested,
+  };
 }
 
 function findKnownModel(providerId: string, modelId: string): Model<Api> | null {

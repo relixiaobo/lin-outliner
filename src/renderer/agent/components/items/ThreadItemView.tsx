@@ -83,6 +83,7 @@ export type ThreadToolItem = Extract<ThreadItem, {
 
 interface ThreadItemViewProps {
   readonly agentResponseTail: ReactNode;
+  readonly canEditUserMessage: boolean;
   readonly defaultReasoningExpanded: boolean;
   readonly expandState: ThreadDisclosureState;
   readonly index: DocumentIndex;
@@ -173,8 +174,8 @@ export function ThreadItemView(props: ThreadItemViewProps) {
           expandState={props.expandState}
           index={props.index}
           onOpenNodeReference={props.onOpenNodeReference}
+          parts={[...props.item.summary, ...props.item.content]}
           streaming={props.streaming}
-          text={[...props.item.summary, ...props.item.content].join('\n\n')}
         />
       );
     case 'commandExecution':
@@ -261,6 +262,7 @@ export function ThreadToolActivityGroup({
 }
 
 function UserMessageItem({
+  canEditUserMessage,
   index,
   item,
   onDisclosureToggle,
@@ -319,7 +321,7 @@ function UserMessageItem({
           </UserMessageCollapsibleContent>
           {showMessageActions ? (
             <div className="thread-message-actions">
-              {originalText ? (
+              {originalText && canEditUserMessage ? (
                 <IconButton
                   icon={PencilIcon}
                   iconSize={ICON_SIZE.menu}
@@ -460,20 +462,34 @@ function ReasoningDisclosure({
   expandState,
   index,
   onOpenNodeReference,
+  parts,
   streaming,
-  text,
 }: {
   readonly defaultExpanded: boolean;
   readonly disclosureId: string;
   readonly expandState: ThreadDisclosureState;
   readonly index: DocumentIndex;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
+  readonly parts: readonly string[];
   readonly streaming: boolean;
-  readonly text: string;
 }) {
   const t = useT();
+  const text = parts.join('\n\n');
   const trimmed = text.trim();
   if (!trimmed) return streaming ? <div className="thread-reasoning is-thinking">{t.agent.thinking.thinking}</div> : null;
+  const hasDetails = streaming
+    || defaultExpanded
+    || parts.filter((part) => part.trim()).length > 1
+    || trimmed.includes('\n');
+  if (!hasDetails) {
+    const gist = reasoningGist(trimmed);
+    return (
+      <div className="thread-item thread-reasoning thread-reasoning-summary">
+        <span className="thread-reasoning-headline">{t.agent.thinking.thought}</span>
+        {gist ? <span className="thread-reasoning-gist" title={gist}>· {gist}</span> : null}
+      </div>
+    );
+  }
   const expanded = expandState.isExpanded(disclosureId, defaultExpanded || streaming);
   const gist = expanded ? '' : reasoningGist(trimmed);
   return (

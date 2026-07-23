@@ -1392,7 +1392,8 @@
   color: var(--text-faint);
 }
 
-.thread-reasoning-toggle {
+.thread-reasoning-toggle,
+.thread-reasoning-summary {
   display: flex;
   max-width: min(100%, 520px);
   min-width: 0;
@@ -1401,6 +1402,9 @@
   color: inherit;
   font: inherit;
   text-align: left;
+}
+
+.thread-reasoning-toggle {
   transition: color var(--motion-fast);
 }
 
