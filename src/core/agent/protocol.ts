@@ -726,7 +726,7 @@ export type AgentCoreNotification =
   | {
       readonly type: 'thread/name/updated';
       readonly threadId: ThreadId;
-      readonly threadName: string | null;
+      readonly threadName?: string;
     }
   | {
       readonly type: 'thread/status/changed';

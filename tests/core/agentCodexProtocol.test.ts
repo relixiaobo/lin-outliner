@@ -381,7 +381,13 @@ describe('Codex Agent Core protocol codec', () => {
     })).toEqual({
       type: 'thread/name/updated',
       threadId: THREAD_ID,
-      threadName: null,
+    });
+    expect(decodeAgentCoreNotification({
+      type: 'thread/name/updated',
+      threadId: THREAD_ID,
+    })).toEqual({
+      type: 'thread/name/updated',
+      threadId: THREAD_ID,
     });
     expect(() => decodeAgentCoreNotification({
       type: 'thread/name/updated',

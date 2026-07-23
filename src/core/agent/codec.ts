@@ -448,14 +448,18 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       result = { type, threadId, thread };
       break;
     }
-    case 'thread/name/updated':
+    case 'thread/name/updated': {
       exactKeys(record, ['type', 'threadId', 'threadName'], 'notification');
+      const threadId = uuidV7(record.threadId, 'notification.threadId');
       result = {
         type,
-        threadId: uuidV7(record.threadId, 'notification.threadId'),
-        threadName: nullableString(record.threadName, 'notification.threadName'),
+        threadId,
+        ...(record.threadName === undefined || record.threadName === null
+          ? {}
+          : { threadName: stringValue(record.threadName, 'notification.threadName') }),
       };
       break;
+    }
     case 'thread/status/changed':
       exactKeys(record, ['type', 'threadId', 'status'], 'notification');
       result = {
