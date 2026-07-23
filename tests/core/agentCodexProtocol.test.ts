@@ -29,6 +29,7 @@ const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
 const SESSION_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
 const TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abe';
 const CHILD_THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abf';
+const OUTPUT_ID = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 const itemProvenance = createLocalItemProvenance(THREAD_ID, TURN_ID, 'item-1');
 const turnProvenance = createLocalTurnProvenance(THREAD_ID, TURN_ID, { kind: 'user' });
@@ -88,6 +89,7 @@ const allItems: readonly ThreadItem[] = [
     aggregatedOutput: 'ok',
     exitCode: 0,
     durationMs: 10,
+    outputRef: { id: OUTPUT_ID, mimeType: 'text/plain', byteLength: 2, summary: 'Command output' },
   },
   {
     type: 'fileChange',
@@ -95,6 +97,7 @@ const allItems: readonly ThreadItem[] = [
     provenance: { ...itemProvenance, originItemId: 'item-6' },
     changes: [{ path: 'src/a.ts', kind: 'update', diff: '+export {}' }],
     status: 'completed',
+    outputRef: null,
   },
   {
     type: 'mcpToolCall',
@@ -108,6 +111,7 @@ const allItems: readonly ThreadItem[] = [
     result: { title: 'PR' },
     error: null,
     durationMs: 20,
+    outputRef: null,
   },
   {
     type: 'dynamicToolCall',
@@ -120,6 +124,7 @@ const allItems: readonly ThreadItem[] = [
     contentItems: [{ type: 'text', text: 'Node text' }],
     success: true,
     durationMs: 3,
+    outputRef: null,
   },
   {
     type: 'collabAgentToolCall',
@@ -133,6 +138,7 @@ const allItems: readonly ThreadItem[] = [
     model: null,
     reasoningEffort: null,
     agentsStates: { [CHILD_THREAD_ID]: 'running' },
+    outputRef: null,
   },
   {
     type: 'subAgentActivity',
@@ -150,6 +156,7 @@ const allItems: readonly ThreadItem[] = [
     status: 'completed',
     results: [{ title: 'Result', url: 'https://example.com', snippet: 'Summary' }],
     error: null,
+    outputRef: null,
   },
   {
     type: 'imageView',
@@ -171,6 +178,26 @@ const completedTurn: Turn = {
   provenance: turnProvenance,
   status: 'completed',
   error: null,
+  execution: {
+    modelProvider: 'openai',
+    model: 'openai/gpt-5',
+    reasoningEffort: 'high',
+    usage: {
+      input: 100,
+      output: 20,
+      cacheRead: 50,
+      cacheWrite: 0,
+      totalTokens: 170,
+      cost: {
+        input: 0.001,
+        output: 0.002,
+        cacheRead: 0.0001,
+        cacheWrite: 0,
+        total: 0.0031,
+        currency: 'USD',
+      },
+    },
+  },
   startedAt: 100,
   completedAt: 200,
   durationMs: 100,
@@ -314,6 +341,44 @@ describe('Codex Agent Core protocol codec', () => {
         completedAt: null,
       },
     })).toThrow('requires a terminal Turn');
+
+    expect(decodeAgentCoreNotification({
+      type: 'turn/providerRetry/changed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      status: { kind: 'request', attempt: 2, maxRetries: 4 },
+    })).toEqual({
+      type: 'turn/providerRetry/changed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      status: { kind: 'request', attempt: 2, maxRetries: 4 },
+    });
+    expect(() => decodeAgentCoreNotification({
+      type: 'turn/providerRetry/changed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      status: { kind: 'request', attempt: 5, maxRetries: 4 },
+    })).toThrow('must not exceed maxRetries');
+  });
+
+  test('validates canonical Turn execution details and content-addressed tool output', () => {
+    expect(() => decodeTurn({
+      ...completedTurn,
+      execution: {
+        ...completedTurn.execution,
+        usage: { ...completedTurn.execution.usage, totalTokens: 169 },
+      },
+    })).toThrow('must cover input, output, cache-read, and cache-write tokens');
+    expect(() => decodeThreadItem({
+      ...allItems[4],
+      outputRef: { id: 'not-a-digest', mimeType: 'text/plain', byteLength: 2, summary: 'Output' },
+    })).toThrow('lowercase SHA-256');
+    expect(() => decodeAgentCoreResponse('thread/item/output/read', {
+      output: {
+        ref: allItems[4]?.type === 'commandExecution' ? allItems[4].outputRef : null,
+        text: 'wrong length',
+      },
+    })).toThrow('byte length must match');
   });
 
   test('enforces executable Item status at Item and terminal Turn boundaries', () => {
@@ -391,11 +456,24 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/resume': { threadId: THREAD_ID },
       'thread/fork': { threadId: THREAD_ID, boundary: { kind: 'beforeTurn', turnId: TURN_ID } },
       'thread/name/set': { threadId: THREAD_ID, name: 'Renamed' },
+      'thread/configuration/get': { threadId: THREAD_ID },
+      'thread/configuration/set': {
+        threadId: THREAD_ID,
+        modelProvider: 'openai',
+        model: 'openai/gpt-5',
+        reasoningEffort: 'high',
+      },
       'thread/archive': { threadId: THREAD_ID },
       'thread/unarchive': { threadId: THREAD_ID },
       'thread/delete': { threadId: THREAD_ID },
       'thread/turns/list': { threadId: THREAD_ID, limit: 20, itemsView: 'summary' },
       'thread/items/list': { threadId: THREAD_ID, turnId: TURN_ID, sortDirection: 'asc' },
+      'thread/item/output/read': {
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        itemId: 'item-5',
+        outputId: OUTPUT_ID,
+      },
       'turn/start': {
         threadId: THREAD_ID,
         input: [{ type: 'text', text: 'Start' }],
@@ -425,6 +503,14 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/resume': { thread },
       'thread/fork': { thread },
       'thread/name/set': {},
+      'thread/configuration/get': {
+        thread,
+        configuration: { modelProvider: 'openai', model: 'openai/gpt-5', reasoningEffort: 'high' },
+      },
+      'thread/configuration/set': {
+        thread,
+        configuration: { modelProvider: 'openai', model: 'openai/gpt-5', reasoningEffort: 'high' },
+      },
       'thread/archive': {},
       'thread/unarchive': {},
       'thread/delete': {},
@@ -433,6 +519,12 @@ describe('Codex Agent Core protocol codec', () => {
         data: [{ turnId: TURN_ID, item: allItems[0] }],
         nextCursor: null,
         backwardsCursor: null,
+      },
+      'thread/item/output/read': {
+        output: {
+          ref: allItems[4]?.type === 'commandExecution' ? allItems[4].outputRef : null,
+          text: 'ok',
+        },
       },
       'turn/start': { turn: completedTurn, acceptedItemId: 'item-1', deduplicated: false },
       'turn/steer': { turnId: TURN_ID, acceptedItemId: 'item-1', deduplicated: true },
@@ -462,6 +554,63 @@ describe('Codex Agent Core protocol codec', () => {
       threadId: THREAD_ID,
       status: 'paused',
     })).toThrow('complete, blocked');
+  });
+
+  test('validates Thread configuration as one canonical execution selection', () => {
+    expect(() => decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: 'openai',
+      model: 'openai/gpt-5',
+      reasoningEffort: 'extreme',
+    })).toThrow('off, minimal, low, medium, high, xhigh, max');
+    expect(() => decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: ' openai ',
+      model: 'openai/gpt-5',
+      reasoningEffort: 'medium',
+    })).toThrow('trimmed');
+    expect(() => decodeAgentCoreResponse('thread/configuration/get', {
+      thread,
+      configuration: {
+        modelProvider: 'openai',
+        model: '',
+        reasoningEffort: 'medium',
+      },
+    })).toThrow('non-empty');
+    expect(() => decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: 'openai',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'medium',
+    })).toThrow('qualified by modelProvider');
+    expect(() => decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: 'openai',
+      model: 'openai/',
+      reasoningEffort: 'medium',
+    })).toThrow('qualified by modelProvider');
+    expect(decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: 'openai',
+      model: 'project-model',
+      reasoningEffort: 'medium',
+    })).toMatchObject({ modelProvider: 'openai', model: 'project-model' });
+    expect(decodeAgentCoreResponse('thread/configuration/get', {
+      thread,
+      configuration: {
+        modelProvider: 'openai',
+        model: 'user-model',
+        reasoningEffort: 'high',
+      },
+    })).toMatchObject({
+      configuration: { modelProvider: 'openai', model: 'user-model', reasoningEffort: 'high' },
+    });
+    expect(decodeAgentCoreRequest('thread/configuration/set', {
+      threadId: THREAD_ID,
+      modelProvider: 'openai',
+      model: 'inherit',
+      reasoningEffort: 'medium',
+    })).toMatchObject({ modelProvider: 'openai', model: 'inherit' });
   });
 
   test('keeps user-input requests in the control plane with matching ids', () => {

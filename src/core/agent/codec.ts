@@ -26,6 +26,7 @@ import {
   type ThreadAttachmentContent,
   type ThreadItem,
   type ThreadItemDelta,
+  type ThreadItemOutputReference,
   type ThreadNodeReferenceContent,
   type ThreadSource,
   type ThreadStatus,
@@ -39,6 +40,7 @@ import {
   THREAD_GOAL_STATUSES,
   type ThreadGoal,
 } from './goal';
+import { REASONING_EFFORTS } from './configuration';
 
 export class AgentProtocolCodecError extends Error {
   constructor(message: string) {
@@ -48,6 +50,7 @@ export class AgentProtocolCodecError extends Error {
 }
 
 const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA_256_PATTERN = /^[0-9a-f]{64}$/;
 const ITEM_EXECUTION_STATUSES = new Set(['inProgress', 'completed', 'failed', 'interrupted']);
 export function decodeThreadSource(value: unknown, path = 'threadSource'): ThreadSource {
   const source = stringValue(value, path);
@@ -124,6 +127,7 @@ export function decodeTurn(value: unknown): Turn {
     'provenance',
     'status',
     'error',
+    'execution',
     'startedAt',
     'completedAt',
     'durationMs',
@@ -136,6 +140,7 @@ export function decodeTurn(value: unknown): Turn {
     provenance: decodeTurnProvenance(record.provenance),
     status,
     error: decodeTurnError(record.error),
+    execution: decodeTurnExecution(record.execution),
     startedAt: finiteNumber(record.startedAt, 'turn.startedAt'),
     completedAt: nullableNumber(record.completedAt, 'turn.completedAt'),
     durationMs: nullableNumber(record.durationMs, 'turn.durationMs'),
@@ -208,7 +213,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'commandExecution':
       exactKeys(record, [
         'type', 'id', 'provenance', 'command', 'cwd', 'processId', 'status', 'commandActions',
-        'aggregatedOutput', 'exitCode', 'durationMs',
+        'aggregatedOutput', 'exitCode', 'durationMs', 'outputRef',
       ], 'item');
       result = {
         ...base,
@@ -217,6 +222,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         cwd: stringValue(record.cwd, 'item.cwd'),
         processId: nullableString(record.processId, 'item.processId'),
         status: itemExecutionStatus(record.status, 'item.status'),
+        outputRef: decodeThreadItemOutputReference(record.outputRef),
         commandActions: arrayValue(record.commandActions, 'item.commandActions').map(decodeCommandAction),
         aggregatedOutput: nullableString(record.aggregatedOutput, 'item.aggregatedOutput', true),
         exitCode: nullableInteger(record.exitCode, 'item.exitCode'),
@@ -224,18 +230,19 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       };
       break;
     case 'fileChange':
-      exactKeys(record, ['type', 'id', 'provenance', 'changes', 'status'], 'item');
+      exactKeys(record, ['type', 'id', 'provenance', 'changes', 'status', 'outputRef'], 'item');
       result = {
         ...base,
         type,
         changes: arrayValue(record.changes, 'item.changes').map(decodeFileChange),
         status: itemExecutionStatus(record.status, 'item.status'),
+        outputRef: decodeThreadItemOutputReference(record.outputRef),
       };
       break;
     case 'mcpToolCall':
       exactKeys(record, [
         'type', 'id', 'provenance', 'server', 'tool', 'status', 'arguments', 'pluginId', 'result',
-        'error', 'durationMs',
+        'error', 'durationMs', 'outputRef',
       ], 'item');
       result = {
         ...base,
@@ -243,6 +250,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         server: stringValue(record.server, 'item.server'),
         tool: stringValue(record.tool, 'item.tool'),
         status: itemExecutionStatus(record.status, 'item.status'),
+        outputRef: decodeThreadItemOutputReference(record.outputRef),
         arguments: jsonValue(record.arguments, 'item.arguments'),
         pluginId: nullableString(record.pluginId, 'item.pluginId'),
         result: record.result === null ? null : jsonValue(record.result, 'item.result'),
@@ -253,7 +261,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'dynamicToolCall':
       exactKeys(record, [
         'type', 'id', 'provenance', 'namespace', 'tool', 'arguments', 'status', 'contentItems',
-        'success', 'durationMs',
+        'success', 'durationMs', 'outputRef',
       ], 'item');
       result = {
         ...base,
@@ -262,6 +270,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         tool: stringValue(record.tool, 'item.tool'),
         arguments: jsonValue(record.arguments, 'item.arguments'),
         status: itemExecutionStatus(record.status, 'item.status'),
+        outputRef: decodeThreadItemOutputReference(record.outputRef),
         contentItems: record.contentItems === null
           ? null
           : arrayValue(record.contentItems, 'item.contentItems').map(decodeDynamicToolOutput),
@@ -272,7 +281,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'collabAgentToolCall': {
       exactKeys(record, [
         'type', 'id', 'provenance', 'tool', 'status', 'senderThreadId', 'receiverThreadIds', 'prompt',
-        'model', 'reasoningEffort', 'agentsStates',
+        'model', 'reasoningEffort', 'agentsStates', 'outputRef',
       ], 'item');
       const states = recordValue(record.agentsStates, 'item.agentsStates');
       const decodedStates: Record<string, 'pendingInit' | 'running' | 'interrupted' | 'completed' | 'errored' | 'notFound'> = {};
@@ -292,6 +301,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
           'item.tool',
         ),
         status: itemExecutionStatus(record.status, 'item.status'),
+        outputRef: decodeThreadItemOutputReference(record.outputRef),
         senderThreadId: uuidV7(record.senderThreadId, 'item.senderThreadId'),
         receiverThreadIds: arrayValue(record.receiverThreadIds, 'item.receiverThreadIds')
           .map((entry, index) => uuidV7(entry, `item.receiverThreadIds[${index}]`)),
@@ -313,12 +323,13 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       };
       break;
     case 'webSearch':
-      exactKeys(record, ['type', 'id', 'provenance', 'query', 'status', 'results', 'error'], 'item');
+      exactKeys(record, ['type', 'id', 'provenance', 'query', 'status', 'results', 'error', 'outputRef'], 'item');
       result = {
         ...base,
         type,
         query: stringValue(record.query, 'item.query'),
         status: itemExecutionStatus(record.status, 'item.status'),
+        outputRef: decodeThreadItemOutputReference(record.outputRef),
         results: arrayValue(record.results, 'item.results').map((entry, index) => {
           const item = recordValue(entry, `item.results[${index}]`);
           exactKeys(item, ['title', 'url', 'snippet'], `item.results[${index}]`);
@@ -420,6 +431,7 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
     'item/delta',
     'item/completed',
     'turn/completed',
+    'turn/providerRetry/changed',
     'userInput/requested',
     'userInput/resolved',
     'goal/updated',
@@ -456,6 +468,27 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
         fail('notification.turn', 'turn/completed requires a terminal Turn');
       }
       result = { type, threadId: uuidV7(record.threadId, 'notification.threadId'), turnId, turn };
+      break;
+    }
+    case 'turn/providerRetry/changed': {
+      exactKeys(record, ['type', 'threadId', 'turnId', 'status'], 'notification');
+      const statusRecord = record.status === null
+        ? null
+        : recordValue(record.status, 'notification.status');
+      if (statusRecord) exactKeys(statusRecord, ['kind', 'attempt', 'maxRetries'], 'notification.status');
+      result = {
+        type,
+        threadId: uuidV7(record.threadId, 'notification.threadId'),
+        turnId: uuidV7(record.turnId, 'notification.turnId'),
+        status: statusRecord === null ? null : {
+          kind: enumValue(statusRecord.kind, ['request', 'stream'], 'notification.status.kind'),
+          attempt: positiveInteger(statusRecord.attempt, 'notification.status.attempt'),
+          maxRetries: positiveInteger(statusRecord.maxRetries, 'notification.status.maxRetries'),
+        },
+      };
+      if (result.status && result.status.attempt > result.status.maxRetries) {
+        fail('notification.status.attempt', 'must not exceed maxRetries');
+      }
       break;
     }
     case 'item/started':
@@ -578,6 +611,7 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
       decoded = decodeRendererThreadStartRequest(value);
       break;
     case 'thread/resume':
+    case 'thread/configuration/get':
     case 'thread/archive':
     case 'thread/unarchive':
     case 'thread/delete':
@@ -589,11 +623,17 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/name/set':
       decoded = decodeThreadNameSetRequest(value);
       break;
+    case 'thread/configuration/set':
+      decoded = decodeThreadConfigurationSetRequest(value);
+      break;
     case 'thread/turns/list':
       decoded = decodeThreadTurnsListRequest(value);
       break;
     case 'thread/items/list':
       decoded = decodeThreadItemsListRequest(value);
+      break;
+    case 'thread/item/output/read':
+      decoded = decodeThreadItemOutputReadRequest(value);
       break;
     case 'turn/start':
       decoded = decodeRendererTurnStartRequest(value);
@@ -644,6 +684,10 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
     case 'thread/fork':
       decoded = decodeThreadResponse(value);
       break;
+    case 'thread/configuration/get':
+    case 'thread/configuration/set':
+      decoded = decodeThreadConfigurationResponse(value);
+      break;
     case 'thread/name/set':
     case 'thread/archive':
     case 'thread/unarchive':
@@ -656,6 +700,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'thread/items/list':
       decoded = decodeThreadItemsListResponse(value);
+      break;
+    case 'thread/item/output/read':
+      decoded = decodeThreadItemOutputReadResponse(value);
       break;
     case 'turn/start':
       decoded = decodeTurnStartResponse(value);
@@ -797,6 +844,61 @@ function decodeThreadNameSetRequest(value: unknown): AgentCoreRequestByMethod['t
   });
 }
 
+function decodeThreadConfigurationSetRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/configuration/set'] {
+  const record = recordValue(value, 'thread/configuration/set');
+  exactKeys(record, ['threadId', 'modelProvider', 'model', 'reasoningEffort'], 'thread/configuration/set');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'thread/configuration/set.threadId'),
+    ...decodeThreadConfigurationSummary({
+      modelProvider: record.modelProvider,
+      model: record.model,
+      reasoningEffort: record.reasoningEffort,
+    }, 'thread/configuration/set'),
+  });
+}
+
+function decodeThreadConfigurationResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/configuration/get'] {
+  const record = recordValue(value, 'thread/configuration response');
+  exactKeys(record, ['thread', 'configuration'], 'thread/configuration response');
+  return deepFreeze({
+    thread: decodeThread(record.thread),
+    configuration: decodeThreadConfigurationSummary(
+      recordValue(record.configuration, 'thread/configuration response.configuration'),
+      'thread/configuration response.configuration',
+    ),
+  });
+}
+
+function decodeThreadConfigurationSummary(
+  record: Record<string, unknown>,
+  path: string,
+): AgentCoreResponseByMethod['thread/configuration/get']['configuration'] {
+  exactKeys(record, ['modelProvider', 'model', 'reasoningEffort'], path);
+  const modelProvider = nonEmptyTrimmedString(record.modelProvider, `${path}.modelProvider`);
+  const model = nonEmptyTrimmedString(record.model, `${path}.model`);
+  const modelQualifier = model.indexOf('/');
+  if (model !== 'inherit' && modelQualifier >= 0) {
+    const qualifiedProvider = model.slice(0, modelQualifier);
+    const qualifiedModel = model.slice(modelQualifier + 1);
+    if (
+      qualifiedProvider !== modelProvider
+      || !qualifiedModel
+      || qualifiedModel !== qualifiedModel.trim()
+    ) {
+      fail(`${path}.model`, 'expected a bare model id, inherit, or a model qualified by modelProvider');
+    }
+  }
+  return deepFreeze({
+    modelProvider,
+    model,
+    reasoningEffort: enumValue(record.reasoningEffort, REASONING_EFFORTS, `${path}.reasoningEffort`),
+  });
+}
+
 function decodeThreadTurnsListRequest(value: unknown): AgentCoreRequestByMethod['thread/turns/list'] {
   const record = recordValue(value, 'thread/turns/list');
   exactKeys(record, ['threadId', 'cursor', 'limit', 'sortDirection', 'itemsView'], 'thread/turns/list');
@@ -818,6 +920,23 @@ function decodeThreadItemsListRequest(value: unknown): AgentCoreRequestByMethod[
     ...(record.turnId === undefined
       ? {}
       : { turnId: nullableUuidV7(record.turnId, 'thread/items/list.turnId') }),
+  });
+}
+
+function decodeThreadItemOutputReadRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/item/output/read'] {
+  const record = recordValue(value, 'thread/item/output/read');
+  exactKeys(record, ['threadId', 'turnId', 'itemId', 'outputId'], 'thread/item/output/read');
+  const outputId = stringValue(record.outputId, 'thread/item/output/read.outputId');
+  if (!SHA_256_PATTERN.test(outputId)) {
+    fail('thread/item/output/read.outputId', 'expected a lowercase SHA-256 digest');
+  }
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'thread/item/output/read.threadId'),
+    turnId: uuidV7(record.turnId, 'thread/item/output/read.turnId'),
+    itemId: stringValue(record.itemId, 'thread/item/output/read.itemId'),
+    outputId,
   });
 }
 
@@ -921,6 +1040,23 @@ function decodeThreadItemsListResponse(value: unknown): AgentCoreResponseByMetho
     nextCursor: nullableString(record.nextCursor, 'thread/items/list response.nextCursor'),
     backwardsCursor: nullableString(record.backwardsCursor, 'thread/items/list response.backwardsCursor'),
   });
+}
+
+function decodeThreadItemOutputReadResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/item/output/read'] {
+  const record = recordValue(value, 'thread/item/output/read response');
+  exactKeys(record, ['output'], 'thread/item/output/read response');
+  if (record.output === null) return deepFreeze({ output: null });
+  const output = recordValue(record.output, 'thread/item/output/read response.output');
+  exactKeys(output, ['ref', 'text'], 'thread/item/output/read response.output');
+  const ref = decodeThreadItemOutputReference(output.ref);
+  if (ref === null) fail('thread/item/output/read response.output.ref', 'expected an output reference');
+  const text = stringValue(output.text, 'thread/item/output/read response.output.text', true);
+  if (new TextEncoder().encode(text).byteLength !== ref.byteLength) {
+    fail('thread/item/output/read response.output.text', 'byte length must match the output reference');
+  }
+  return deepFreeze({ output: { ref, text } });
 }
 
 function decodeTurnStartResponse(value: unknown): AgentCoreResponseByMethod['turn/start'] {
@@ -1247,6 +1383,62 @@ function decodeTurnError(value: unknown): Turn['error'] {
   });
 }
 
+function decodeTurnExecution(value: unknown): Turn['execution'] {
+  const record = recordValue(value, 'turn.execution');
+  exactKeys(record, ['modelProvider', 'model', 'reasoningEffort', 'usage'], 'turn.execution');
+  const usage = recordValue(record.usage, 'turn.execution.usage');
+  exactKeys(usage, ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens', 'cost'], 'turn.execution.usage');
+  const cost = usage.cost === null ? null : decodeTurnTokenCost(usage.cost);
+  const input = nonNegativeInteger(usage.input, 'turn.execution.usage.input');
+  const output = nonNegativeInteger(usage.output, 'turn.execution.usage.output');
+  const cacheRead = nonNegativeInteger(usage.cacheRead, 'turn.execution.usage.cacheRead');
+  const cacheWrite = nonNegativeInteger(usage.cacheWrite, 'turn.execution.usage.cacheWrite');
+  const result: Turn['execution'] = {
+    modelProvider: stringValue(record.modelProvider, 'turn.execution.modelProvider'),
+    model: stringValue(record.model, 'turn.execution.model'),
+    reasoningEffort: enumValue(record.reasoningEffort, REASONING_EFFORTS, 'turn.execution.reasoningEffort'),
+    usage: {
+      input,
+      output,
+      cacheRead,
+      cacheWrite,
+      totalTokens: nonNegativeInteger(usage.totalTokens, 'turn.execution.usage.totalTokens'),
+      cost,
+    },
+  };
+  if (result.usage.totalTokens < input + output + cacheRead + cacheWrite) {
+    fail('turn.execution.usage.totalTokens', 'must cover input, output, cache-read, and cache-write tokens');
+  }
+  return deepFreeze(result);
+}
+
+function decodeTurnTokenCost(value: unknown): NonNullable<Turn['execution']['usage']['cost']> {
+  const record = recordValue(value, 'turn.execution.usage.cost');
+  exactKeys(record, ['input', 'output', 'cacheRead', 'cacheWrite', 'total', 'currency'], 'turn.execution.usage.cost');
+  return deepFreeze({
+    input: nonNegativeNumber(record.input, 'turn.execution.usage.cost.input'),
+    output: nonNegativeNumber(record.output, 'turn.execution.usage.cost.output'),
+    cacheRead: nonNegativeNumber(record.cacheRead, 'turn.execution.usage.cost.cacheRead'),
+    cacheWrite: nonNegativeNumber(record.cacheWrite, 'turn.execution.usage.cost.cacheWrite'),
+    total: nonNegativeNumber(record.total, 'turn.execution.usage.cost.total'),
+    currency: enumValue(record.currency, ['USD'], 'turn.execution.usage.cost.currency'),
+  });
+}
+
+function decodeThreadItemOutputReference(value: unknown): ThreadItemOutputReference | null {
+  if (value === null) return null;
+  const record = recordValue(value, 'item.outputRef');
+  exactKeys(record, ['id', 'mimeType', 'byteLength', 'summary'], 'item.outputRef');
+  const id = stringValue(record.id, 'item.outputRef.id');
+  if (!SHA_256_PATTERN.test(id)) fail('item.outputRef.id', 'expected a lowercase SHA-256 digest');
+  return deepFreeze({
+    id,
+    mimeType: enumValue(record.mimeType, ['text/plain', 'application/json'], 'item.outputRef.mimeType'),
+    byteLength: nonNegativeInteger(record.byteLength, 'item.outputRef.byteLength'),
+    summary: stringValue(record.summary, 'item.outputRef.summary'),
+  });
+}
+
 function decodeCommandAction(value: unknown): CommandAction {
   const record = recordValue(value, 'commandAction');
   exactKeys(record, ['kind', 'command', 'path', 'query'], 'commandAction');
@@ -1353,6 +1545,14 @@ function stringArray(value: unknown, path: string): string[] {
 function stringValue(value: unknown, path: string, allowEmpty = false): string {
   if (typeof value !== 'string' || (!allowEmpty && value.length === 0)) fail(path, 'expected a string');
   return value;
+}
+
+function nonEmptyTrimmedString(value: unknown, path: string): string {
+  if (typeof value !== 'string') fail(path, 'expected a string');
+  const result = value;
+  if (!result.trim()) fail(path, 'expected a non-empty string');
+  if (result !== result.trim()) fail(path, 'expected a trimmed string');
+  return result;
 }
 
 function nullableString(value: unknown, path: string, allowEmpty = false): string | null {
