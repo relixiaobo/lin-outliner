@@ -620,6 +620,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/fork':
       decoded = decodeThreadForkRequest(value);
       break;
+    case 'thread/rollback':
+      decoded = decodeThreadRollbackRequest(value);
+      break;
     case 'thread/name/set':
       decoded = decodeThreadNameSetRequest(value);
       break;
@@ -682,6 +685,7 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
     case 'thread/start':
     case 'thread/resume':
     case 'thread/fork':
+    case 'thread/rollback':
       decoded = decodeThreadResponse(value);
       break;
     case 'thread/configuration/get':
@@ -832,6 +836,15 @@ function decodeThreadForkRequest(value: unknown): AgentCoreRequestByMethod['thre
       turnId: uuidV7(boundary.turnId, 'thread/fork.boundary.turnId'),
     },
     ...(record.name === undefined ? {} : { name: stringValue(record.name, 'thread/fork.name') }),
+  });
+}
+
+function decodeThreadRollbackRequest(value: unknown): AgentCoreRequestByMethod['thread/rollback'] {
+  const record = recordValue(value, 'thread/rollback');
+  exactKeys(record, ['threadId', 'numTurns'], 'thread/rollback');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'thread/rollback.threadId'),
+    numTurns: positiveInteger(record.numTurns, 'thread/rollback.numTurns'),
   });
 }
 
