@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Codex Agent Core rollback interface (PR #432, codex-3)** — defined
+  append-only audit plus same-Thread `thread/rollback`, exact omitted-Turn
+  extension hooks, current-history projection semantics, cumulative side-effect
+  and usage accounting, and the exhaustive Copy / Continue in new chat / Details
+  response menu for the complete replacement in #429. Memory now invalidates
+  generated context synchronously at rollback prepare, filters replacement-Turn
+  briefings and implicit Node-tool reads until receipt-backed reconciliation, and
+  retries failed terminal hooks in-process through one coalesced capped-backoff
+  loop. **Gate (main):** iterative review caught the stale Retry/Regenerate shared
+  contract, a replacement Turn that could observe rolled-back generated Memory,
+  and commit-hook failure that could suppress Memory until restart; all three were
+  fixed before merge. Verified with typecheck, 20 focused protocol/extension
+  tests, the full Core suite (1725 pass), docs check, and diff check.
 - **Codex Agent Core renderer interface (PR #431, codex-3)** — defined canonical
   Thread configuration get/set, immutable Turn execution and token/cost details,
   content-addressed bounded tool-output reads, provider-retry notifications, and
