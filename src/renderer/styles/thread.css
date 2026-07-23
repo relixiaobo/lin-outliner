@@ -287,8 +287,7 @@
   margin-top: var(--space-5);
 }
 
-.thread-dock-error,
-.thread-turn-error {
+.thread-dock-error {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
@@ -429,37 +428,22 @@
   }
 }
 
-.thread-turn-footer {
-  display: flex;
-  min-height: 20px;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--text-faint);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
-}
-
-.thread-turn-actions,
 .thread-message-actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-.thread-turn-actions,
 .thread-message-actions {
   opacity: 0;
   transition: opacity var(--motion-fast);
 }
 
-.thread-turn:hover .thread-turn-actions,
-.thread-turn:focus-within .thread-turn-actions,
 .thread-item:hover .thread-message-actions,
 .thread-item:focus-within .thread-message-actions {
   opacity: 1;
 }
 
-.thread-turn-actions .icon-button,
 .thread-message-actions .icon-button,
 .thread-list .icon-button {
   display: inline-flex;
@@ -471,7 +455,6 @@
   color: var(--text-faint);
 }
 
-.thread-turn-actions .icon-button:hover:not(:disabled),
 .thread-message-actions .icon-button:hover:not(:disabled),
 .thread-list .icon-button:hover:not(:disabled) {
   background: var(--control-hover);
@@ -586,8 +569,45 @@
   min-width: 0;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-3);
+  gap: var(--space-5);
   color: var(--text-strong);
+}
+
+.thread-response-error {
+  display: flex;
+  max-width: 100%;
+  align-items: flex-start;
+  gap: var(--space-4);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger);
+  padding: var(--space-5) var(--space-6);
+}
+
+.thread-response-error span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.thread-response-error svg,
+.thread-response-stopped svg {
+  flex: 0 0 auto;
+  margin-top: 0.18em;
+}
+
+.thread-response-stopped {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.thread-response-actions {
+  align-self: flex-start;
+  margin-top: calc(var(--space-3) * -1);
 }
 
 .thread-agent-message-body {
@@ -1997,7 +2017,6 @@ button.thread-inline-activity:focus-visible,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .thread-turn-actions,
   .thread-message-actions,
   .thread-list-actions {
     transition: none;

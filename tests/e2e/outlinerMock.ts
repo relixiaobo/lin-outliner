@@ -52,7 +52,7 @@ interface MockFixtureOptions {
   /** Keeps translated blocks pending long enough for loader assertions. */
   translationDelayMs?: number;
   /** Completes mock Agent Turns as failed without an assistant message. */
-  agentTurnFailure?: boolean;
+  agentTurnFailure?: boolean | string;
   /** Starts with the configured language-model provider disabled and uncredentialed. */
   agentProviderUsable?: boolean;
 }
@@ -480,8 +480,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       items: MockThreadItem[];
       itemsView: 'full';
       provenance: { originThreadId: string; originTurnId: string; trigger: { kind: 'user' } };
-      status: 'inProgress' | 'completed' | 'interrupted';
-      error: null;
+      status: 'inProgress' | 'completed' | 'interrupted' | 'failed';
+      error: { message: string } | null;
       startedAt: number;
       completedAt: number | null;
       durationMs: number | null;
@@ -1601,11 +1601,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             completedAt: null,
             durationMs: null,
           };
+          const failureMessage = typeof options.agentTurnFailure === 'string'
+            ? options.agentTurnFailure
+            : 'Mock provider failure';
           const completedTurn: MockTurn = {
             ...activeTurn,
             items: options.agentTurnFailure ? [userItem] : [userItem, responseItem],
             status: options.agentTurnFailure ? 'failed' : 'completed',
-            error: options.agentTurnFailure ? { message: 'Mock provider failure' } : null,
+            error: options.agentTurnFailure ? { message: failureMessage } : null,
             completedAt: startedAt + 24,
             durationMs: 24,
           };

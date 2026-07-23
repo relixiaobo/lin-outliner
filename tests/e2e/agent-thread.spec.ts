@@ -18,9 +18,33 @@ test.describe('canonical agent Thread surface', () => {
     await page.getByRole('button', { name: 'Send' }).click();
 
     const turn = page.locator('.thread-turn').first();
-    await expect(turn.locator('.thread-user-message')).toContainText('Summarize current outline.');
-    await expect(turn.locator('.thread-agent-message')).toContainText('Current outline focuses on design-system work.');
-    await expect(turn.locator('.thread-turn-footer')).toContainText('24 ms');
+    const userMessage = turn.locator('.thread-user-message');
+    const response = turn.locator('.thread-agent-message');
+    await expect(userMessage).toContainText('Summarize current outline.');
+    await expect(response).toContainText('Current outline focuses on design-system work.');
+    await response.hover();
+    const responseActions = response.locator('.thread-response-actions');
+    await expect(responseActions).toHaveCSS('opacity', '1');
+    expect(await responseActions.getByRole('button').evaluateAll((buttons) => (
+      buttons.map((button) => button.getAttribute('aria-label'))
+    ))).toEqual([
+      'Regenerate response',
+      'Copy message',
+      'Fork before Turn',
+      'Fork after Turn',
+    ]);
+    const [responseBodyBox, responseActionsBox] = await Promise.all([
+      response.locator('.thread-agent-message-body').boundingBox(),
+      responseActions.boundingBox(),
+    ]);
+    expect(responseBodyBox).toBeTruthy();
+    expect(responseActionsBox).toBeTruthy();
+    expect(responseActionsBox!.y).toBeGreaterThanOrEqual(responseBodyBox!.y + responseBodyBox!.height - 1);
+
+    await userMessage.hover();
+    expect(await userMessage.locator('.thread-message-actions').getByRole('button').evaluateAll((buttons) => (
+      buttons.map((button) => button.getAttribute('aria-label'))
+    ))).toEqual(['Edit message', 'Copy message']);
 
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Thread Details' }).click();
@@ -1061,7 +1085,9 @@ test('opens provider settings instead of creating a Thread when no provider is u
 
 test.describe('structured Thread retries', () => {
   test('retries an attachment-only failed Turn with the original attachment', async ({ page }) => {
-    await openMockedApp(page, { agentTurnFailure: true });
+    await openMockedApp(page, {
+      agentTurnFailure: 'OpenRouter API error (404): {"error":{"message":"No endpoints found for gpt-5.4"},"request_id":"private"}',
+    });
     await page.getByRole('button', { name: 'New Thread' }).last().click();
     await page.locator('.thread-composer-file-input').setInputFiles({
       name: 'diagram.png',
@@ -1070,9 +1096,28 @@ test.describe('structured Thread retries', () => {
     });
     await expect(page.locator('.thread-composer-inline-ref')).toContainText('diagram.png');
     await page.getByRole('button', { name: 'Send' }).click();
-    await expect(page.getByRole('button', { name: 'Retry response' })).toBeVisible();
+    const response = page.locator('.thread-agent-message-response');
+    const error = response.locator('.thread-response-error');
+    await expect(error).toHaveText('HTTP 404 - No endpoints found for gpt-5.4');
+    await expect(response).not.toContainText('request_id');
+    await response.hover();
+    const actions = response.locator('.thread-response-actions');
+    expect(await actions.getByRole('button').evaluateAll((buttons) => (
+      buttons.map((button) => button.getAttribute('aria-label'))
+    ))).toEqual([
+      'Retry response',
+      'Copy message',
+      'Fork before Turn',
+      'Fork after Turn',
+    ]);
+    const [errorBox, actionsBox] = await Promise.all([error.boundingBox(), actions.boundingBox()]);
+    expect(errorBox).toBeTruthy();
+    expect(actionsBox).toBeTruthy();
+    expect(actionsBox!.y).toBeGreaterThanOrEqual(errorBox!.y + errorBox!.height - 1);
+    await actions.getByRole('button', { name: 'Copy message' }).click();
+    expect(await clipboardText(page)).toBe('HTTP 404 - No endpoints found for gpt-5.4');
 
-    await page.getByRole('button', { name: 'Retry response' }).click();
+    await actions.getByRole('button', { name: 'Retry response' }).click();
 
     const starts = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start');
     expect(starts).toHaveLength(2);
@@ -1080,5 +1125,61 @@ test.describe('structured Thread retries', () => {
     expect(starts[1]?.args.input).toEqual([
       expect.objectContaining({ type: 'attachment', name: 'diagram.png', mimeType: 'image/png' }),
     ]);
+  });
+
+  test('keeps an interrupted partial response and replaces Regenerate with Retry', async ({ page }) => {
+    await openMockedApp(page);
+    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000fa01';
+      const userItemId = '01910000-0000-7000-8000-00000000fa02';
+      const responseItemId = '01910000-0000-7000-8000-00000000fa03';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [
+            {
+              id: userItemId,
+              type: 'userMessage',
+              provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: userItemId },
+              clientId: null,
+              content: [{ type: 'text', text: 'Stop after a partial answer.' }],
+            },
+            {
+              id: responseItemId,
+              type: 'agentMessage',
+              provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: responseItemId },
+              text: 'This partial answer remains visible.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'interrupted',
+          error: null,
+          startedAt: 10,
+          completedAt: 20,
+          durationMs: 10,
+        },
+      });
+    });
+
+    const response = page.locator('.thread-agent-message').last();
+    await expect(response).toContainText('This partial answer remains visible.');
+    await expect(response.locator('.thread-response-stopped')).toHaveText('Turn interrupted');
+    await response.hover();
+    await expect(response.getByRole('button', { name: 'Retry response' })).toBeVisible();
+    await expect(response.getByRole('button', { name: 'Regenerate response' })).toHaveCount(0);
   });
 });

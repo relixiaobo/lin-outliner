@@ -39,7 +39,7 @@ import {
   GitForkIcon,
   ICON_SIZE,
   LoaderIcon,
-  RefreshIcon,
+  RedoIcon,
   SendIcon,
   StopIcon,
   WarningIcon,
@@ -63,10 +63,12 @@ import {
   summarizeThreadToolActivity,
   summarizeThreadToolItem,
   ThreadItemView,
+  ThreadMessageCopyButton,
   ThreadToolActivityGroup,
   type ThreadDisclosureState,
   type ThreadToolItem,
 } from './items/ThreadItemView';
+import { threadErrorMessage } from '../threadErrorMessage';
 import {
   setThreadDisclosureOverride,
   subscribeThreadDisclosure,
@@ -521,8 +523,18 @@ export function ThreadView({
         {goal ? <ThreadGoalView goal={goal} /> : null}
         {turns.length === 0 ? <p className="thread-empty-copy">{t.agent.thread.empty}</p> : null}
         {turns.map((turn) => {
+          const responseItem = lastAgentResponse(turn);
+          const responseTail = turn.status === 'inProgress' ? null : (
+            <ThreadResponseTail
+              onFork={(kind) => onFork(turn, kind)}
+              onRegenerate={() => onRegenerate(turn)}
+              responseText={responseItem?.text ?? ''}
+              turn={turn}
+            />
+          );
           const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
             <ThreadItemView
+              agentResponseTail={item.id === responseItem?.id ? responseTail : null}
               defaultReasoningExpanded={isSoloResultlessReasoning(turn, item)}
               expandState={expandState}
               index={index}
@@ -534,12 +546,10 @@ export function ThreadView({
               }}
               onOpenNodeReference={onOpenNodeReference}
               onOpenThread={onOpenThread}
-              onRegenerate={() => onRegenerate(turn)}
               showMessageActions={showMessageActions}
               streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
             />
           );
-          const processItemCount = turn.items.filter(isThreadProcessItem).length;
           return (
           <section className={`thread-turn thread-turn-${turn.status}`} key={turn.id}>
             {groupTurnContent(turn.items).map((block) => {
@@ -547,7 +557,7 @@ export function ThreadView({
                 return (
                   <ThreadProcessBlock
                     expandState={expandState}
-                    hasFinalResponse={lastAgentResponseId(turn) !== null}
+                    hasFinalResponse={responseItem !== null}
                     items={block.items}
                     key={`process:${block.items[0]?.id ?? turn.id}`}
                     turn={turn}
@@ -564,49 +574,13 @@ export function ThreadView({
                 );
               }
               const item = block.item;
-              return renderItem(item, turn.status !== 'inProgress' && (
-                item.type === 'userMessage'
-                || (item.type === 'agentMessage' && lastAgentResponseId(turn) === item.id)
-              ));
+              return renderItem(item, turn.status !== 'inProgress' && item.type === 'userMessage');
             })}
-            {turn.error ? (
-              <div className="thread-turn-error" role="alert">
-                <WarningIcon size={ICON_SIZE.menu} />
-                <span>{turn.error.message}</span>
-              </div>
+            {responseItem === null && responseTail ? (
+              <article className="thread-item thread-agent-message thread-agent-message-response">
+                {responseTail}
+              </article>
             ) : null}
-            <footer className="thread-turn-footer">
-              <span>{turnStatusLabel(turn, t.agent.thread, processItemCount === 0)}</span>
-              <span className="thread-turn-actions">
-                {turn.status !== 'inProgress' ? (
-                  <>
-                    {turn.status === 'failed' || turn.status === 'interrupted' ? (
-                      <IconButton
-                        icon={RefreshIcon}
-                        iconSize={ICON_SIZE.tiny}
-                        label={t.agent.message.retryResponse}
-                        onClick={() => void onRegenerate(turn)}
-                        variant="message"
-                      />
-                    ) : null}
-                    <IconButton
-                      icon={GitForkIcon}
-                      iconSize={ICON_SIZE.tiny}
-                      label={t.agent.thread.forkBefore}
-                      onClick={() => void onFork(turn, 'beforeTurn')}
-                      variant="message"
-                    />
-                    <IconButton
-                      icon={GitForkIcon}
-                      iconSize={ICON_SIZE.tiny}
-                      label={t.agent.thread.forkAfter}
-                      onClick={() => void onFork(turn, 'afterTurn')}
-                      variant="message"
-                    />
-                  </>
-                ) : null}
-              </span>
-            </footer>
           </section>
           );
         })}
@@ -706,6 +680,67 @@ export function ThreadView({
         </div>
       </div> : null}
     </div>
+  );
+}
+
+function ThreadResponseTail({
+  onFork,
+  onRegenerate,
+  responseText,
+  turn,
+}: {
+  readonly onFork: (kind: 'beforeTurn' | 'afterTurn') => Promise<void>;
+  readonly onRegenerate: () => Promise<void>;
+  readonly responseText: string;
+  readonly turn: Turn;
+}) {
+  const t = useT();
+  const failed = turn.status === 'failed';
+  const interrupted = turn.status === 'interrupted';
+  const errorText = turn.error ? threadErrorMessage(turn.error.message) : '';
+  return (
+    <>
+      {errorText ? (
+        <div className="thread-response-error" role="alert">
+          <WarningIcon size={ICON_SIZE.menu} />
+          <span>{errorText}</span>
+        </div>
+      ) : null}
+      {interrupted ? (
+        <div className="thread-response-stopped">
+          <StopIcon aria-hidden size={ICON_SIZE.menu} />
+          <span>{t.agent.thread.turnInterrupted}</span>
+        </div>
+      ) : null}
+      <div className="thread-message-actions thread-response-actions">
+        <IconButton
+          icon={RedoIcon}
+          iconSize={ICON_SIZE.menu}
+          label={failed || interrupted ? t.agent.message.retryResponse : t.agent.message.regenerateResponse}
+          onClick={() => void onRegenerate()}
+          variant="message"
+        />
+        <ThreadMessageCopyButton
+          iconSize={ICON_SIZE.menu}
+          label={t.agent.message.copyMessage}
+          text={errorText || responseText}
+        />
+        <IconButton
+          icon={GitForkIcon}
+          iconSize={ICON_SIZE.menu}
+          label={t.agent.thread.forkBefore}
+          onClick={() => void onFork('beforeTurn')}
+          variant="message"
+        />
+        <IconButton
+          icon={GitForkIcon}
+          iconSize={ICON_SIZE.menu}
+          label={t.agent.thread.forkAfter}
+          onClick={() => void onFork('afterTurn')}
+          variant="message"
+        />
+      </div>
+    </>
   );
 }
 
@@ -909,10 +944,10 @@ function groupTurnItems(items: readonly ThreadItem[]): ThreadItemGroup[] {
   return groups;
 }
 
-function lastAgentResponseId(turn: Turn): string | null {
+function lastAgentResponse(turn: Turn): Extract<ThreadItem, { type: 'agentMessage' }> | null {
   for (let index = turn.items.length - 1; index >= 0; index -= 1) {
     const item = turn.items[index];
-    if (item?.type === 'agentMessage' && item.phase !== 'commentary') return item.id;
+    if (item?.type === 'agentMessage' && item.phase !== 'commentary') return item;
   }
   return null;
 }
@@ -929,28 +964,6 @@ function isSoloResultlessReasoning(turn: Turn, item: ThreadItem): boolean {
     return candidate.type !== 'agentMessage' || candidate.phase === 'commentary';
   });
   return processItems.length === 1 && processItems[0]?.id === item.id;
-}
-
-function turnStatusLabel(
-  turn: Turn,
-  labels: {
-    readonly working: string;
-    readonly turnFailed: string;
-    readonly turnInterrupted: string;
-  },
-  includeCompletedDuration: boolean,
-): string {
-  if (turn.status === 'inProgress') return labels.working;
-  if (turn.status === 'failed') return labels.turnFailed;
-  if (turn.status === 'interrupted') return labels.turnInterrupted;
-  if (!includeCompletedDuration || turn.durationMs === null) return '';
-  return formatDuration(turn.durationMs);
-}
-
-function formatDuration(durationMs: number): string {
-  if (durationMs < 1_000) return `${durationMs} ms`;
-  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(1)} s`;
-  return `${Math.floor(durationMs / 60_000)}m ${Math.round((durationMs % 60_000) / 1_000)}s`;
 }
 
 function errorMessage(error: unknown): string {

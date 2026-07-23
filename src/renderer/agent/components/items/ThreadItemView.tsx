@@ -46,7 +46,6 @@ import {
   OutlineUndoStackToolIcon,
   PencilIcon,
   QuestionToolIcon,
-  RefreshIcon,
   RestoreIcon,
   SkillIcon,
   StopIcon,
@@ -79,6 +78,7 @@ export type ThreadToolItem = Extract<ThreadItem, {
 }>;
 
 interface ThreadItemViewProps {
+  readonly agentResponseTail: ReactNode;
   readonly defaultReasoningExpanded: boolean;
   readonly expandState: ThreadDisclosureState;
   readonly index: DocumentIndex;
@@ -89,7 +89,6 @@ interface ThreadItemViewProps {
   readonly onEditUserMessage: (content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
-  readonly onRegenerate: () => Promise<void>;
 }
 
 export interface ThreadDisclosureState {
@@ -143,18 +142,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
               </div>
             ) : null}
           </div>
-          {props.showMessageActions && props.item.phase !== 'commentary' ? (
-            <div className="thread-message-actions">
-              <CopyButton label={t.agent.message.copyMessage} text={props.item.text} />
-              <IconButton
-                icon={RefreshIcon}
-                iconSize={ICON_SIZE.tiny}
-                label={t.agent.message.regenerateResponse}
-                onClick={() => void props.onRegenerate()}
-                variant="message"
-              />
-            </div>
-          ) : null}
+          {props.item.phase !== 'commentary' ? props.agentResponseTail : null}
         </article>
       );
     case 'plan':
@@ -314,16 +302,20 @@ function UserMessageItem({
           </UserMessageCollapsibleContent>
           {showMessageActions ? (
             <div className="thread-message-actions">
-              <CopyButton label={t.agent.message.copyMessage} text={originalText} />
               {originalText ? (
                 <IconButton
                   icon={PencilIcon}
-                  iconSize={ICON_SIZE.tiny}
+                  iconSize={ICON_SIZE.menu}
                   label={t.agent.message.editMessage}
                   onClick={() => setEditing(true)}
                   variant="message"
                 />
               ) : null}
+              <ThreadMessageCopyButton
+                iconSize={ICON_SIZE.menu}
+                label={t.agent.message.copyMessage}
+                text={originalText}
+              />
             </div>
           ) : null}
         </>
@@ -633,7 +625,7 @@ function ToolDetailSection({
 }) {
   return (
     <section className="thread-tool-section">
-      <header><span>{label}</span><CopyButton label={copyLabel} text={text} /></header>
+      <header><span>{label}</span><ThreadMessageCopyButton label={copyLabel} text={text} /></header>
       {children}
     </section>
   );
@@ -648,13 +640,21 @@ function DisclosureIndicator({ expanded, status }: { readonly expanded: boolean;
   );
 }
 
-function CopyButton({ label, text }: { readonly label: string; readonly text: string }) {
+export function ThreadMessageCopyButton({
+  iconSize = ICON_SIZE.tiny,
+  label,
+  text,
+}: {
+  readonly iconSize?: number;
+  readonly label: string;
+  readonly text: string;
+}) {
   const { copied, copyCode } = useCodeBlockCopy(text);
   return (
     <IconButton
       disabled={!text}
       icon={copied ? CheckIcon : CopyIcon}
-      iconSize={ICON_SIZE.tiny}
+      iconSize={iconSize}
       label={label}
       onClick={copyCode}
       variant="message"

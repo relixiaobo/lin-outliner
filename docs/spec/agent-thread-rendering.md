@@ -62,6 +62,16 @@ copy, edit, retry, and regenerate. User messages that exceed five reading lines
 retain the established measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
+A terminal response owns one action row directly below its visible content.
+Successful responses expose Regenerate, Copy, and the canonical before/after
+Thread-fork actions in that order; failed and interrupted responses replace
+Regenerate with Retry without moving the row. There is no separate Turn footer
+or second action surface. A failed response keeps any partial answer first,
+then shows a bounded, parsed error summary, then the same action row. JSON and
+HTML provider payloads never render as unbounded transcript prose. An
+interrupted response uses the established quiet stopped row and the same Retry
+action. Hover and keyboard focus reveal the row without changing geometry.
+
 Normal Thread UI may visually group Items by Turn without printing every Turn ID.
 Details and diagnostics must show the same Thread, Turn, and Item identities as
 the transport.
