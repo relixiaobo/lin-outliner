@@ -658,9 +658,14 @@ updates the current projection. The audit fact is then committed and no
 extension can veto or rewrite it. Core calls `commitHistoryRollback`; failures
 there do not turn the successful rollback into an error, because prepared state
 and the rollout marker provide the recovery record. The response is published
-only after Core has attempted every committed hook. Startup reconciles a
+only after Core has attempted every committed hook. A prepare hook that governs
+derived context must make its invalidation visible to later Turn admission
+before returning; that prepared invalidation remains authoritative even if its
+commit hook fails. The replacement Turn can therefore start immediately after
+the rollback response without waiting for asynchronous derived-state cleanup,
+but it cannot receive context invalidated by the rollback. Startup reconciles a
 prepared rollback against the append-only rollout before accepting a Turn or
-starting extension workers: a matching marker finalizes the invalidation and
+starting extension workers: a matching marker commits the invalidation and
 wakes reconciliation, while no marker aborts it. Repeating prepare, abort, or
 commit for one `rollbackId` is idempotent.
 
@@ -747,7 +752,10 @@ only while that Turn is terminal. The editor keeps the original structured
 Thread. Earlier user messages and active Turns are not editable.
 Assistant responses expose Copy, Continue in new chat, and Details as applicable;
 they do not expose Retry or Regenerate. Continue in new chat alone forks, and the
-fork remains a top-level user Thread rather than a nested child.
+fork remains a top-level user Thread rather than a nested child. The shared
+context-menu protocol is exhaustive: actions are `copy`, `continueInNewChat`,
+and `details`, and its capability request contains only `canCopy`,
+`canContinueInNewChat`, and `canShowDetails`.
 
 ### 7. Destructive removal and documentation authority
 
@@ -840,7 +848,8 @@ None. Ratifying this plan ratifies the destructive vocabulary mapping, one
 ThreadGoal per Thread, no durable Agent membership/execution entity, the
 Profile/Role/child-Thread split, append-only audit plus same-Thread rollback for
 the latest-message Edit, explicit-fork-only branching, separate core/history/Goal
-stores, rollout-as-audit-source, the fixed
+stores, rollout-as-audit-source, the exhaustive Copy/Continue in new chat/Details
+response menu, the fixed
 `collaboration.*` v2 tool namespace, the exact `request_user_input` replacement,
 the exhaustive tool migration, immutable Turn/Item provenance, the retained Full
 Access boundary, the projection-neutral document system-receipt primitive, the
@@ -858,8 +867,9 @@ delivery order.
   immutable completed records, `thread/rollback` and its prepared/aborted/
   committed extension lifecycle, client input idempotency, Node-backed
   MemoryCitation, configuration profiles, agent roles, per-Thread and host-wide
-  admission-barrier snapshots,
-  additional-context trust, Full Access exclusions, and the generic
+  admission-barrier snapshots, and the exhaustive response-menu actions and
+  capability request, additional-context trust, Full Access exclusions, and the
+  generic
   projection-neutral `DocumentSystemReceipt` plus host-only atomic mutation.
 - [ ] In that interface PR, define and contract-test
   `DocumentSystemTagDefinition` and host-only

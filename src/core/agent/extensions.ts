@@ -123,11 +123,11 @@ export interface AgentCoreExtension {
   onThreadResumed?(thread: Thread): void | Promise<void>;
   onThreadIdle?(thread: Thread): void | Promise<void>;
   onThreadStopped?(thread: Thread): void | Promise<void>;
-  /** May reject rollback before its rollout marker; idempotent by rollbackId. */
+  /** Durably prepares extension invalidation before the marker; idempotent by rollbackId. */
   prepareHistoryRollback?(context: ThreadHistoryRollbackContext): void | Promise<void>;
   /** Releases prepared extension state when Core did not append a marker. */
   abortHistoryRollback?(context: ThreadHistoryRollbackContext): void | Promise<void>;
-  /** Finalizes extension state after the rollback marker is durable. */
+  /** Records that the marker is durable; derived cleanup may remain pending. */
   commitHistoryRollback?(context: ThreadHistoryRollbackContext): void | Promise<void>;
   contributeTurnAdmission?(context: TurnAdmissionContext): TurnAdmissionContribution | Promise<TurnAdmissionContribution>;
   onTurnStarted?(thread: Thread, turn: Turn): void | Promise<void>;

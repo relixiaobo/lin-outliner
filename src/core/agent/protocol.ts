@@ -538,14 +538,22 @@ export interface ProviderRetryStatus {
   readonly maxRetries: number;
 }
 
-export type ThreadMessageContextMenuAction = 'copy' | 'retry' | 'regenerate' | 'details';
+export const THREAD_MESSAGE_CONTEXT_MENU_ACTIONS = Object.freeze([
+  'copy',
+  'continueInNewChat',
+  'details',
+] as const);
+export type ThreadMessageContextMenuAction = typeof THREAD_MESSAGE_CONTEXT_MENU_ACTIONS[number];
 
-export interface ThreadMessageContextMenuRequest {
-  readonly canCopy: boolean;
-  readonly canRetry: boolean;
-  readonly canRegenerate: boolean;
-  readonly canShowDetails: boolean;
-}
+export const THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS = Object.freeze([
+  'canCopy',
+  'canContinueInNewChat',
+  'canShowDetails',
+] as const);
+export type ThreadMessageContextMenuRequest = Readonly<Record<
+  typeof THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS[number],
+  boolean
+>>;
 
 export interface TurnInputRequest {
   readonly threadId: ThreadId;

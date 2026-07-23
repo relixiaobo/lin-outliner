@@ -19,9 +19,12 @@ import {
 import {
   AGENT_CORE_METHODS,
   THREAD_ITEM_TYPES,
+  THREAD_MESSAGE_CONTEXT_MENU_ACTIONS,
+  THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS,
   threadFeatureSource,
   type Thread,
   type ThreadItem,
+  type ThreadMessageContextMenuRequest,
   type Turn,
 } from '../../src/core/agent/protocol';
 
@@ -563,6 +566,28 @@ describe('Codex Agent Core protocol codec', () => {
       numTurns: 1,
       turnId: TURN_ID,
     })).toThrow('unknown fields: turnId');
+  });
+
+  test('exposes only the ratified response-menu actions', () => {
+    const request = {
+      canCopy: true,
+      canContinueInNewChat: true,
+      canShowDetails: true,
+    } satisfies ThreadMessageContextMenuRequest;
+
+    expect(THREAD_MESSAGE_CONTEXT_MENU_ACTIONS).toEqual([
+      'copy',
+      'continueInNewChat',
+      'details',
+    ]);
+    expect(Object.isFrozen(THREAD_MESSAGE_CONTEXT_MENU_ACTIONS)).toBe(true);
+    expect(THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS).toEqual([
+      'canCopy',
+      'canContinueInNewChat',
+      'canShowDetails',
+    ]);
+    expect(Object.isFrozen(THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS)).toBe(true);
+    expect(Object.keys(request)).toEqual(THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS);
   });
 
   test('keeps renderer Thread admission and Goal status transitions privileged', () => {
