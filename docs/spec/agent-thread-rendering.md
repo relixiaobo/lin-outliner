@@ -50,9 +50,21 @@ Thread execution selections, active input requests, and Goals live in
 A completed Turn with a final answer and known duration folds its process Items
 under the established `Worked for ...` disclosure while leaving the answer
 outside the fold. Live and resultless process timelines remain visible; a live
-timeline uses the established `Working` / `Working for ...` status row. The
-process disclosure contains the independent reasoning, activity-group, and tool
-detail disclosures rather than replacing them.
+timeline uses the established `Working` / `Working for ...` status row even
+before its first process Item arrives. Rendering builds one Turn-level process
+projection from every reasoning, commentary, plan, image-view, Subagent, and
+tool Item. That block is placed before the first final response regardless of
+the Items' persisted arrival order, so a late reasoning Item cannot appear
+below the answer. The process disclosure contains the independent reasoning,
+activity-group, and tool detail disclosures rather than replacing them.
+
+An active Turn ends with one rose shape indicator after all currently visible
+process and response content. It is the stable generating affordance for both
+empty and streaming responses; Markdown does not add a second caret. The
+indicator disappears only when the Turn becomes terminal and stops animating
+under reduced-motion preferences. A failed or interrupted Turn with partial
+response prose keeps its process presentation neutral because the response tail
+already owns the terminal error or stopped state.
 
 Unknown Item kinds are protocol errors, not generic fallback cards. Item status
 comes from the Item itself; the renderer never infers completion from missing
@@ -102,8 +114,20 @@ the transport.
 
 ## Interaction States
 
-An empty dock offers immediate Thread creation. Starting a Thread resolves the
-current provider and working directory at the main-process boundary.
+When the provider catalog is loaded, at least one provider is usable, and the
+catalog has no Thread, the dock automatically starts and selects one root user
+Thread. The first usable surface is therefore the focused composer, not an
+explanatory empty state followed by a second creation click. Provider loading is
+neutral. When no provider is usable, the dock creates nothing and offers the
+Providers settings action instead. Starting a Thread resolves the current
+provider and working directory at the main-process boundary.
+
+The first accepted user input sets a Thread's empty preview from the first
+non-empty text part, then an attachment name, then a Node-reference note. The
+preview is whitespace-normalized and bounded. `turn/started` updates the local
+catalog immediately, while the host persists the same value for both persistent
+and ephemeral Threads. Explicit names remain authoritative and later Turns do
+not replace the initial preview.
 
 For an idle Thread, submit starts a Turn. For an active Thread, submit steers the
 exact active Turn. Stop interrupts that Turn. Buttons remain dimensionally stable
@@ -177,7 +201,8 @@ Rename uses the shared `Dialog`; delete uses `ConfirmDialog`. Browser-native
 prompt and confirm APIs are not used. Fork creates and selects the new Thread
 without mutating the source. Deleting the selected Thread chooses the next
 catalog Thread and loads its Turns, Goal, and editable execution selection before
-presenting it.
+presenting it. Deleting the final Thread returns through the same automatic
+root-Thread path, leaving a focused composer rather than a dead-end empty state.
 
 The Thread list is an anchored popover. It clamps to the viewport, closes on an
 outside pointer or Escape, traps focus while open, restores focus to its trigger,

@@ -99,13 +99,19 @@ client message ID.
 Starting a Turn follows this order:
 
 1. Resolve the Thread and reject an incompatible active state.
-2. Allocate the Turn and initial user Item identities.
+2. Resolve structured user content, derive the Thread's bounded initial preview
+   when it is still empty, and allocate the Turn and initial user Item identities.
 3. Commit extension admission snapshots under the relevant barriers.
 4. Persist `turn/started` and the completed user Item.
 5. Return acceptance before starting model side effects.
 6. Execute the Turn and persist Item events as they occur.
 7. Finish every remaining open Item, persist the terminal Turn, and set the
    Thread back to `idle` or `systemError`.
+
+Initial preview selection is deterministic: first non-empty text, then an
+attachment name, then a Node-reference note. Whitespace is normalized and the
+result is bounded before it is stored. The write happens once for persistent and
+ephemeral Threads; later Turns never rewrite an existing preview.
 
 Extension `turnStarted` hooks are part of the same launch boundary as executor
 startup. A hook exception terminalizes the accepted Turn as failed, releases

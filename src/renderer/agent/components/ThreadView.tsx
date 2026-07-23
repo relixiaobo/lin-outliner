@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -752,7 +753,6 @@ export function ThreadView({
         ref={scrollRef}
       >
         {goal ? <ThreadGoalView goal={goal} /> : null}
-        {turns.length === 0 ? <p className="thread-empty-copy">{t.agent.thread.empty}</p> : null}
         {turns.length > 0 ? (
           <div
             className={`thread-transcript-turns${virtualized ? ' is-virtual' : ''}`}
@@ -948,6 +948,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const responseItem = lastAgentResponse(turn);
+  const contentBlocks = groupTurnContent(turn);
   const editUserMessage = useCallback(
     (content: readonly ThreadUserContent[]) => onEditUserMessage(turn, content),
     [onEditUserMessage, turn],
@@ -1008,7 +1009,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   );
   return (
     <section className={`thread-turn thread-turn-${turn.status}`}>
-      {groupTurnContent(turn.items).map((block) => {
+      {contentBlocks.map((block) => {
         if (block.kind === 'process') {
           return (
             <ThreadProcessBlock
@@ -1033,6 +1034,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
         const item = block.item;
         return renderItem(item, turn.status !== 'inProgress' && item.type === 'userMessage');
       })}
+      {turn.status === 'inProgress' ? <ThreadStreamingIndicator /> : null}
       {responseItem === null && responseTail ? (
         <article
           className="thread-item thread-agent-message thread-agent-message-response"
@@ -1434,11 +1436,13 @@ function ThreadProcessBlock({
     && hasFinalResponse
     && turn.durationMs !== null
     && items.length > 0;
+  const terminalResponseOwnsStatus = hasFinalResponse
+    && (turn.status === 'failed' || turn.status === 'interrupted');
   const summary = threadProcessSummary(turn, items, hasFinalResponse, liveElapsedMs, t);
   const timelineVisible = !collapsible || expanded;
   return (
-    <div className={`thread-process-block${turn.status === 'failed' ? ' is-error' : ''}`}>
-      {collapsible ? (
+    <div className={`thread-process-block${turn.status === 'failed' && !hasFinalResponse ? ' is-error' : ''}`}>
+      {terminalResponseOwnsStatus ? null : collapsible ? (
         <ButtonControl
           aria-expanded={expanded}
           className="thread-work-divider thread-process-toggle"
@@ -1462,6 +1466,25 @@ function ThreadProcessBlock({
       )}
       {turn.status === 'inProgress' || collapsible ? <div aria-hidden className="thread-process-rule" /> : null}
       {timelineVisible ? <div className="thread-process-timeline">{children}</div> : null}
+    </div>
+  );
+}
+
+function ThreadStreamingIndicator() {
+  const t = useT();
+  const gradientId = `thread-shape-${useId().replaceAll(':', '')}`;
+  return (
+    <div className="thread-streaming-indicator" aria-label={t.agent.message.assistantResponding}>
+      <svg aria-hidden className="thread-streaming-shape" viewBox="0 0 48 48">
+        <defs>
+          <linearGradient className="thread-shape-gradient" id={gradientId} x1="0" x2="0" y1="0" y2="1">
+            <stop className="thread-shape-stop-0" offset="0%" />
+            <stop className="thread-shape-stop-1" offset="55%" />
+            <stop className="thread-shape-stop-2" offset="100%" />
+          </linearGradient>
+        </defs>
+        <path fill={`url(#${gradientId})`} />
+      </svg>
     </div>
   );
 }
@@ -1491,9 +1514,9 @@ function threadProcessSummary(
       ? t.agent.thread.workingFor({ duration: formatProcessDuration(liveElapsedMs) })
       : t.agent.thread.working;
   }
-  if (turn.status === 'failed') return t.agent.thread.turnFailed;
-  if (turn.status === 'interrupted') return t.agent.thread.turnInterrupted;
-  if (hasFinalResponse && turn.durationMs !== null) {
+  if (turn.status === 'failed' && !hasFinalResponse) return t.agent.thread.turnFailed;
+  if (turn.status === 'interrupted' && !hasFinalResponse) return t.agent.thread.turnInterrupted;
+  if (turn.status === 'completed' && hasFinalResponse && turn.durationMs !== null) {
     return t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) });
   }
 
@@ -1542,24 +1565,28 @@ type ThreadContentBlock =
   | { readonly kind: 'item'; readonly item: ThreadItem }
   | { readonly kind: 'process'; readonly items: readonly ThreadItem[] };
 
-function groupTurnContent(items: readonly ThreadItem[]): ThreadContentBlock[] {
-  const blocks: ThreadContentBlock[] = [];
-  for (let index = 0; index < items.length;) {
-    const item = items[index];
-    if (!item) break;
-    if (!isThreadProcessItem(item)) {
-      blocks.push({ kind: 'item', item });
-      index += 1;
-      continue;
-    }
-    const processItems: ThreadItem[] = [item];
-    index += 1;
-    while (index < items.length && isThreadProcessItem(items[index]!)) {
-      processItems.push(items[index]!);
-      index += 1;
-    }
-    blocks.push({ kind: 'process', items: processItems });
-  }
+function groupTurnContent(turn: Turn): ThreadContentBlock[] {
+  const processItems = turn.items.filter(isThreadProcessItem);
+  const itemBlocks = turn.items
+    .filter((item) => !isThreadProcessItem(item))
+    .map((item) => ({ kind: 'item' as const, item }));
+  const hasFinalResponse = itemBlocks.some((block) => (
+    block.item.type === 'agentMessage' && block.item.phase !== 'commentary'
+  ));
+  const needsProcessBlock = processItems.length > 0
+    || turn.status === 'inProgress'
+    || (turn.status === 'completed' && hasFinalResponse && turn.durationMs !== null);
+  if (!needsProcessBlock) return itemBlocks;
+
+  const firstResponseIndex = itemBlocks.findIndex((block) => (
+    block.item.type === 'agentMessage' && block.item.phase !== 'commentary'
+  ));
+  const blocks: ThreadContentBlock[] = [...itemBlocks];
+  blocks.splice(
+    firstResponseIndex < 0 ? blocks.length : firstResponseIndex,
+    0,
+    { kind: 'process', items: processItems },
+  );
   return blocks;
 }
 

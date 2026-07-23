@@ -85,7 +85,6 @@ export function ThreadMarkdown({
           />
         );
       })}
-      {streaming ? <span aria-hidden="true" className="thread-stream-caret" /> : null}
     </div>
   );
 }

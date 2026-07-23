@@ -73,6 +73,8 @@ export function ThreadDock({
   const threadListAnchorRef = useRef<HTMLButtonElement | null>(null);
   const actionsAnchorRef = useRef<HTMLButtonElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const creatingRef = useRef(false);
+  const autoCreateAttemptedRef = useRef(false);
   const providerSettingsRequestRef = useRef(0);
   const slashCommandsRequestRef = useRef(0);
   const open = railState === 'open';
@@ -169,19 +171,38 @@ export function ThreadDock({
 
   const title = useMemo(() => thread?.name || thread?.preview || t.agent.thread.untitled, [t, thread]);
 
-  async function createThread() {
-    if (creating || providerBlocksCreation) return;
+  const createThread = useCallback(async () => {
+    if (creatingRef.current || providerBlocksCreation) return;
+    creatingRef.current = true;
     setCreating(true);
     setActionError(null);
     try {
       await threadStore.createThread();
       setListOpen(false);
+      setComposerFocusToken((token) => token + 1);
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
+      creatingRef.current = false;
       setCreating(false);
     }
-  }
+  }, [providerBlocksCreation]);
+
+  useEffect(() => {
+    if (thread) {
+      autoCreateAttemptedRef.current = false;
+      return;
+    }
+    if (
+      snapshot.loading
+      || snapshot.error !== null
+      || !providerSettingsLoaded
+      || providerBlocksCreation
+      || autoCreateAttemptedRef.current
+    ) return;
+    autoCreateAttemptedRef.current = true;
+    void createThread();
+  }, [createThread, providerBlocksCreation, providerSettingsLoaded, snapshot.error, snapshot.loading, thread]);
 
   function beginRename(target: Thread) {
     setRenameTarget(target);
@@ -294,22 +315,17 @@ export function ThreadDock({
           </div>
         ) : null}
         {snapshot.loading ? <p className="thread-empty-copy">{t.agent.thread.loading}</p> : null}
-        {!snapshot.loading && !thread ? (
+        {!snapshot.loading && !thread && providerSettingsLoaded && providerBlocksCreation ? (
           <div className="thread-empty-state">
-            <p>{providerBlocksCreation ? t.agent.thread.providerRequired : t.agent.thread.empty}</p>
+            <p>{t.agent.thread.providerRequired}</p>
             <button
               className="button button-primary"
               disabled={creating}
-              onClick={() => {
-                if (providerBlocksCreation) void window.lin?.openSettings?.({ category: 'providers' });
-                else void createThread();
-              }}
+              onClick={() => void window.lin?.openSettings?.({ category: 'providers' })}
               type="button"
             >
-              {providerBlocksCreation
-                ? <SettingsIcon size={ICON_SIZE.menu} />
-                : <AddIcon size={ICON_SIZE.menu} />}
-              {providerBlocksCreation ? t.agent.thread.openSettings : t.agent.thread.new}
+              <SettingsIcon size={ICON_SIZE.menu} />
+              {t.agent.thread.openSettings}
             </button>
           </div>
         ) : null}

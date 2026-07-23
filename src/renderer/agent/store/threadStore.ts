@@ -15,6 +15,7 @@ import type {
   ThreadTurnsListResponse,
   Turn,
 } from '../../../core/agent/protocol';
+import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
 import { api } from '../../api/client';
 
 export interface ThreadStoreSnapshot {
@@ -359,14 +360,25 @@ export class ThreadStore {
       case 'thread/status/changed':
         this.updateThread(notification.threadId, (thread) => ({ ...thread, status: notification.status }));
         return;
-      case 'turn/started':
+      case 'turn/started': {
+        const preview = threadPreviewFromTurn(notification.turn);
+        this.updateThread(notification.threadId, (thread) => ({
+          ...thread,
+          preview: thread.preview.trim() ? thread.preview : preview,
+          updatedAt: Math.max(thread.updatedAt, notification.turn.startedAt),
+        }));
         this.updateTurn(notification.threadId, notification.turn);
         return;
+      }
       case 'turn/completed': {
         const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
         if (providerRetryByThread.get(notification.threadId)?.turnId === notification.turnId) {
           providerRetryByThread.delete(notification.threadId);
         }
+        this.updateThread(notification.threadId, (thread) => ({
+          ...thread,
+          updatedAt: Math.max(thread.updatedAt, notification.turn.completedAt ?? notification.turn.startedAt),
+        }));
         this.updateTurn(notification.threadId, notification.turn, { providerRetryByThread });
         return;
       }
@@ -468,6 +480,13 @@ export const threadStore = new ThreadStore();
 
 export function useThreadStore(): ThreadStoreSnapshot {
   return useSyncExternalStore(threadStore.subscribe, threadStore.getSnapshot, threadStore.getSnapshot);
+}
+
+function threadPreviewFromTurn(turn: Turn): string {
+  const content = turn.items
+    .filter((item) => item.type === 'userMessage')
+    .flatMap((item) => item.content);
+  return threadPreviewFromContent(content);
 }
 
 function upsertById<T extends { readonly id: string }>(values: readonly T[], value: T): T[] {

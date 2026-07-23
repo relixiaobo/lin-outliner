@@ -8,14 +8,15 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('creates an empty Thread and renders canonical Turn Items', async ({ page }) => {
-    await expect(page.getByText('Start a Thread to work with the agent.')).toBeVisible();
-
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await expect(composer).toBeVisible();
+    await expect(composer).toBeFocused();
+    await expect(page.locator('.thread-empty-state')).toHaveCount(0);
     await expect(page.locator('.thread-dock-title')).toContainText('Untitled Thread');
 
-    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('Summarize current outline.');
     await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.locator('.thread-dock-title')).toContainText('Summarize current outline.');
 
     const turn = page.locator('.thread-turn').first();
     const userMessage = turn.locator('.thread-user-message');
@@ -90,8 +91,200 @@ test.describe('canonical agent Thread surface', () => {
     ]));
   });
 
+  test('projects live and settled Turn process before the final response', async ({ page }) => {
+    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
+    const ids = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const settledTurnId = '01910000-0000-7000-8000-00000000c101';
+      const userId = '01910000-0000-7000-8000-00000000c102';
+      const answerId = '01910000-0000-7000-8000-00000000c103';
+      const reasoningId = '01910000-0000-7000-8000-00000000c104';
+      const provenance = { originThreadId: threadId, originTurnId: settledTurnId, trigger: { kind: 'user' } };
+      const itemProvenance = (itemId: string) => ({
+        originThreadId: threadId,
+        originTurnId: settledTurnId,
+        originItemId: itemId,
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId: settledTurnId,
+        turn: {
+          id: settledTurnId,
+          items: [
+            {
+              id: userId,
+              type: 'userMessage',
+              provenance: itemProvenance(userId),
+              clientId: null,
+              content: [{ type: 'text', text: 'Inspect the rollout order.' }],
+            },
+            {
+              id: answerId,
+              type: 'agentMessage',
+              provenance: itemProvenance(answerId),
+              text: 'The final response arrived first.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+            {
+              id: reasoningId,
+              type: 'reasoning',
+              provenance: itemProvenance(reasoningId),
+              summary: ['Checked the canonical evidence.'],
+              content: [],
+            },
+          ],
+          itemsView: 'full',
+          provenance,
+          status: 'completed',
+          error: null,
+          execution: {
+            modelProvider: 'openai',
+            model: 'openai/gpt-5.4',
+            reasoningEffort: 'medium',
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: null,
+            },
+          },
+          startedAt: Date.now() - 2_400,
+          completedAt: Date.now(),
+          durationMs: 2_400,
+        },
+      });
+
+      const liveTurnId = '01910000-0000-7000-8000-00000000c201';
+      return { liveTurnId, settledTurnId, threadId };
+    });
+
+    const settledTurn = page.locator(`[data-thread-turn-row="${ids.settledTurnId}"]`);
+    const process = settledTurn.locator('.thread-process-block');
+    await expect(process).toHaveCount(1);
+    await expect(process.getByRole('button', { name: 'Worked for 2s' })).toBeVisible();
+    expect(await settledTurn.locator('.thread-process-block, .thread-agent-message-final_answer')
+      .evaluateAll((elements) => elements.map((element) => element.className))).toEqual([
+      'thread-process-block',
+      'thread-item thread-agent-message thread-agent-message-final_answer',
+    ]);
+    await process.getByRole('button', { name: 'Worked for 2s' }).click();
+    await expect(settledTurn.getByText('Checked the canonical evidence.')).toBeVisible();
+
+    await page.evaluate(({ liveTurnId, threadId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const userId = '01910000-0000-7000-8000-00000000c202';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId: liveTurnId,
+        turn: {
+          id: liveTurnId,
+          items: [{
+            id: userId,
+            type: 'userMessage',
+            provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: userId },
+            clientId: null,
+            content: [{ type: 'text', text: 'Show the live state.' }],
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: liveTurnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          execution: {
+            modelProvider: 'openai',
+            model: 'openai/gpt-5.4',
+            reasoningEffort: 'medium',
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: null,
+            },
+          },
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+    }, ids);
+
+    const liveTurn = page.locator(`[data-thread-turn-row="${ids.liveTurnId}"]`);
+    await expect(liveTurn.locator('.thread-process-block')).toHaveCount(1);
+    await expect(liveTurn.locator('.thread-process-title')).toHaveText('Working');
+    await expect(liveTurn.getByLabel('Assistant is responding')).toBeVisible();
+
+    await page.evaluate(({ liveTurnId, threadId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const userId = '01910000-0000-7000-8000-00000000c202';
+      const answerId = '01910000-0000-7000-8000-00000000c203';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId: liveTurnId,
+        turn: {
+          id: liveTurnId,
+          items: [
+            {
+              id: userId,
+              type: 'userMessage',
+              provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: userId },
+              clientId: null,
+              content: [{ type: 'text', text: 'Show the live state.' }],
+            },
+            {
+              id: answerId,
+              type: 'agentMessage',
+              provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: answerId },
+              text: 'The live state is complete.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: liveTurnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          execution: {
+            modelProvider: 'openai',
+            model: 'openai/gpt-5.4',
+            reasoningEffort: 'medium',
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: null,
+            },
+          },
+          startedAt: Date.now() - 1_400,
+          completedAt: Date.now(),
+          durationMs: 1_400,
+        },
+      });
+    }, ids);
+
+    await expect(liveTurn.getByLabel('Assistant is responding')).toHaveCount(0);
+    await expect(liveTurn.locator('.thread-process-title')).toHaveText('Worked for 1s');
+  });
+
   test('forks history without changing the source Thread', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
     await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Keep this history.');
     await page.getByRole('button', { name: 'Send' }).click();
 
@@ -105,10 +298,9 @@ test.describe('canonical agent Thread surface', () => {
 
     const rows = page.locator('.thread-list-row');
     await expect(rows).toHaveCount(2);
-    await expect(rows.filter({ has: page.locator('.thread-list-select').getByText('Keep this history.') })).toHaveCSS(
-      '--thread-depth',
-      '1',
-    );
+    const selectedFork = page.locator('.thread-list-row.is-selected');
+    await expect(selectedFork).toContainText('Keep this history.');
+    await expect(selectedFork).toHaveCSS('--thread-depth', '1');
     expect((await commandCalls(page)).map((call) => call.cmd)).toContain('thread/fork');
   });
 
@@ -454,8 +646,6 @@ test.describe('canonical agent Thread surface', () => {
   });
 
   test('renames and deletes a Thread through in-app dialogs', async ({ page }) => {
-    await page.getByRole('button', { name: 'New Thread' }).last().click();
-
     await page.locator('.thread-dock-header').getByRole('button', { name: 'Thread actions' }).click();
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Rename Thread' }).click();
     const renameDialog = page.getByRole('dialog', { name: 'Rename Thread' });
@@ -469,9 +659,12 @@ test.describe('canonical agent Thread surface', () => {
     await expect(deleteDialog).toContainText('Research notes');
     await deleteDialog.getByRole('button', { name: 'Delete Thread' }).click();
 
-    await expect(page.getByText('Start a Thread to work with the agent.')).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
+    await expect(page.locator('.thread-dock-title')).toContainText('Untitled Thread');
+    await expect(page.locator('.thread-empty-state')).toHaveCount(0);
     const calls = (await commandCalls(page)).map((call) => call.cmd);
     expect(calls).toEqual(expect.arrayContaining(['thread/name/set', 'thread/delete']));
+    expect(calls.filter((command) => command === 'thread/start')).toHaveLength(2);
   });
 
   test('changes the canonical Thread model and reasoning from the composer', async ({ page }) => {

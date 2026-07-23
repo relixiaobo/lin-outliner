@@ -73,6 +73,7 @@ import type {
   TurnSteerRequest,
   TurnSteerResponse,
 } from '../../core/agent/protocol';
+import { threadPreviewFromContent } from '../../core/agent/threadPreview';
 import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
 import { GoalStore } from './extensions/goal/GoalStore';
@@ -1265,6 +1266,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       threadId: record.thread.id,
       cwd: record.thread.cwd,
     });
+    const preview = threadPreviewFromContent(input);
     const item = userMessage(request.threadId, turnId, input, request.clientUserMessageId ?? null);
     const turn = decodeTurn({
       id: turnId,
@@ -1296,6 +1298,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
       hostBarrier,
     });
 
+    if (!record.thread.preview.trim() && preview) {
+      this.setInitialPreview(request.threadId, preview, startedAt);
+    }
     await this.setStatus(request.threadId, { type: 'active', activeFlags: [] });
     await this.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn });
     const recorder = new ItemRecorder(
@@ -1561,6 +1566,20 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.metadata.setStatus(threadId, status, now);
     }
     await this.recordNotification({ type: 'thread/status/changed', threadId, status });
+  }
+
+  private setInitialPreview(threadId: ThreadId, preview: string, updatedAt: number): void {
+    const state = this.ephemeral.get(threadId);
+    if (state) {
+      if (state.record.thread.preview.trim()) return;
+      state.record = {
+        ...state.record,
+        thread: decodeThread({ ...state.record.thread, preview, updatedAt }),
+      };
+      return;
+    }
+    if (this.metadata.require(threadId).thread.preview.trim()) return;
+    this.metadata.setPreview(threadId, preview, updatedAt);
   }
 
   private async recordNotification(notification: AgentCoreNotification): Promise<void> {

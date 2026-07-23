@@ -114,6 +114,58 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().turnsByThread.has(unloaded.id)).toBe(false);
   });
 
+  test('updates an untitled Thread preview and activity time from Turn notifications', async () => {
+    const owner = { ...thread('thread-1', 1), name: null };
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    const active = turn('turn-preview', 'inProgress', '');
+    const userItemId = 'turn-preview-user';
+    const started: Turn = {
+      ...active,
+      items: [{
+        type: 'userMessage',
+        id: userItemId,
+        provenance: {
+          originThreadId: owner.id,
+          originTurnId: active.id,
+          originItemId: userItemId,
+        },
+        clientId: null,
+        content: [{ type: 'text', text: '  Compare\nthese designs.  ' }],
+      }],
+      startedAt: 10,
+    };
+    notify({ type: 'turn/started', threadId: owner.id, turnId: started.id, turn: started });
+
+    expect(store.getSnapshot().threads[0]).toMatchObject({
+      preview: 'Compare these designs.',
+      updatedAt: 10,
+    });
+
+    const completed: Turn = {
+      ...started,
+      status: 'completed',
+      completedAt: 25,
+      durationMs: 15,
+    };
+    notify({ type: 'turn/completed', threadId: owner.id, turnId: completed.id, turn: completed });
+    expect(store.getSnapshot().threads[0]?.updatedAt).toBe(25);
+  });
+
   test('does not let a stale configuration read overwrite a newer selection', async () => {
     const owner = thread('thread-1', 1);
     const staleConfiguration = deferred<ReturnType<typeof configurationResponse>>();

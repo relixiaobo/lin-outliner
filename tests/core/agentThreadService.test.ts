@@ -85,6 +85,56 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('derives the initial Thread preview for persistent and ephemeral Threads', async () => {
+    const fixture = await createFixture();
+    const persistent = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: persistent.id,
+      input: [{ type: 'text', text: '  Summarize\n\nthis outline.  ' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    expect(fixture.service.readThread({ threadId: persistent.id }).thread.preview)
+      .toBe('Summarize this outline.');
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(persistent.id);
+
+    const ephemeral = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      ephemeral: true,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: ephemeral.id,
+      input: [{
+        type: 'attachment',
+        id: 'preview-attachment',
+        name: 'research-notes.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 12,
+        source: { kind: 'asset', assetId: 'preview-asset' },
+      }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    expect(fixture.service.readThread({ threadId: ephemeral.id }).thread.preview)
+      .toBe('research-notes.pdf');
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(ephemeral.id);
+    await fixture.service.close();
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    expect(reopened.service.readThread({ threadId: persistent.id }).thread.preview)
+      .toBe('Summarize this outline.');
+    await reopened.service.close();
+  });
+
   test('updates root Thread model configuration atomically and preserves it through forks', async () => {
     const validated: string[] = [];
     const fixture = await createFixture(undefined, {
