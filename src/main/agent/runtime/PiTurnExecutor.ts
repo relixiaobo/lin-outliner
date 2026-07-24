@@ -119,16 +119,21 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
     const abort = () => agent?.abort();
     context.signal.addEventListener('abort', abort, { once: true });
     try {
+      const internalMemory = context.thread.threadSource === 'memory_consolidation';
       const runtime = await (this.options.resolveRuntime ?? resolveDefaultRuntime)(context);
       if (context.signal.aborted) return { status: 'interrupted' };
-      const tools = [...(await this.options.createTools?.(context) ?? [])];
+      const tools = internalMemory ? [] : [...(await this.options.createTools?.(context) ?? [])];
       if (context.signal.aborted) return { status: 'interrupted' };
-      const skillListing = await this.options.skillListing?.(context) ?? null;
+      const skillListing = internalMemory ? null : await this.options.skillListing?.(context) ?? null;
       if (context.signal.aborted) return { status: 'interrupted' };
-      const systemPrompt = await this.options.systemPrompt?.(context) ?? defaultSystemPrompt(context, skillListing);
+      const systemPrompt = internalMemory
+        ? context.configuration.developerInstructions.join('\n\n')
+        : await this.options.systemPrompt?.(context) ?? defaultSystemPrompt(context, skillListing);
       if (context.signal.aborted) return { status: 'interrupted' };
       const initialPrompt = currentPrompt(context);
-      const prompt = await this.options.preparePrompt?.(context, initialPrompt) ?? initialPrompt;
+      const prompt = internalMemory
+        ? initialPrompt
+        : await this.options.preparePrompt?.(context, initialPrompt) ?? initialPrompt;
       if (context.signal.aborted) return { status: 'interrupted' };
       const normalizer = new PiEventNormalizer(context);
       agent = (this.options.createAgent ?? ((options) => new Agent(options)))({

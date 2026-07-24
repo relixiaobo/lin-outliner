@@ -553,6 +553,75 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('isolates hidden internal Memory Turns from renderer and extension lifecycles', async () => {
+    const extensionEvents: string[] = [];
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'internal-isolation-probe',
+      onThreadStarted: () => { extensionEvents.push('thread-started'); },
+      onThreadIdle: () => { extensionEvents.push('thread-idle'); },
+      onThreadStopped: () => { extensionEvents.push('thread-stopped'); },
+      contributeTurnAdmission: () => {
+        extensionEvents.push('turn-admission');
+        return { extensionId: 'internal-isolation-probe', snapshotId: 'probe' };
+      },
+      onTurnStarted: () => { extensionEvents.push('turn-started'); },
+      contributeThreadContext: () => {
+        extensionEvents.push('thread-context');
+        return { extensionId: 'internal-isolation-probe', additionalContext: {} };
+      },
+      contributeTurnItems: () => {
+        extensionEvents.push('turn-items');
+        return [];
+      },
+      onTurnStopped: () => { extensionEvents.push('turn-stopped'); },
+      onNotification: () => { extensionEvents.push('notification'); },
+    });
+    const fixture = await createFixture(registry);
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    extensionEvents.length = 0;
+    const notifications: AgentCoreNotification[] = [];
+    const unsubscribe = fixture.service.subscribe((notification) => notifications.push(notification));
+    const controller = new AbortController();
+    const execution = fixture.service.runInternalMemoryTurn({
+      sourceThreadId: source.id,
+      name: 'Memory extraction',
+      systemPrompt: 'Return exact JSON.',
+      prompt: '{"task":"extract"}',
+      signal: controller.signal,
+    });
+
+    await fixture.executor.waitUntilWaiting();
+    expect(fixture.executor.contexts[0]).toMatchObject({
+      thread: { threadSource: 'memory_consolidation', ephemeral: true },
+      configuration: {
+        developerInstructions: ['Return exact JSON.'],
+        tools: [],
+        skills: [],
+        plugins: [],
+        mcpServers: [],
+      },
+      historyBeforeTurn: [],
+      systemContext: [],
+    });
+    expect(await fixture.service.extensionToolContributions(fixture.executor.contexts[0]!.thread.id)).toEqual([]);
+    expect(extensionEvents).toEqual([]);
+    expect(notifications).toEqual([]);
+
+    fixture.executor.finish();
+    await expect(execution).resolves.toBe('Done');
+    expect(fixture.service.listThreads().data.map((thread) => thread.id)).toEqual([source.id]);
+    expect(extensionEvents).toEqual([]);
+    expect(notifications).toEqual([]);
+    unsubscribe();
+    await fixture.service.close();
+  });
+
   test('normalizes attachment content before start and steer Items become authoritative', async () => {
     const resolvedPaths: string[] = [];
     const fixture = await createFixture(undefined, {
@@ -935,6 +1004,37 @@ describe('ThreadService', () => {
     const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock, startupRegistry);
     await reopened.service.initialize();
     expect(startupExtension.events).toEqual(['commit']);
+    await reopened.service.close();
+  });
+
+  test('runs startup recovery before initial idle extensions can admit Turns', async () => {
+    const fixture = await createFixture();
+    await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    });
+    await fixture.service.close();
+
+    const events: string[] = [];
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'startup-order-probe',
+      onThreadIdle: () => {
+        events.push('thread-idle');
+      },
+    });
+    const reopened = await openFixture(
+      fixture.root,
+      new ControlledExecutor(),
+      fixture.clock,
+      registry,
+      { beforeInitialTurnAdmission: () => { events.push('startup-recovery'); } },
+    );
+    await reopened.service.initialize();
+
+    expect(events).toEqual(['startup-recovery', 'thread-idle']);
     await reopened.service.close();
   });
 
@@ -2037,6 +2137,7 @@ async function createFixture(
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
     | 'nameGenerator'
+    | 'beforeInitialTurnAdmission'
   > = {},
 ): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
@@ -2062,6 +2163,7 @@ async function openFixture(
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
     | 'nameGenerator'
+    | 'beforeInitialTurnAdmission'
   > = {},
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
   const stores = createStores(root);

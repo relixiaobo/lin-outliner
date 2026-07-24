@@ -13,17 +13,19 @@ Read these in order when changing Agent Core:
 1. [`agent-core.md`](agent-core.md)
 2. [`agent-thread-rendering.md`](agent-thread-rendering.md)
 3. [`agent-subagent-threads.md`](agent-subagent-threads.md)
-4. [`agent-model-runtime.md`](agent-model-runtime.md)
-5. [`agent-tool-design.md`](agent-tool-design.md)
-6. [`agent-tool-permissions.md`](agent-tool-permissions.md)
-7. [`agent-skills.md`](agent-skills.md)
-8. [`agent-integration.md`](agent-integration.md)
+4. [`agent-memory.md`](agent-memory.md)
+5. [`agent-model-runtime.md`](agent-model-runtime.md)
+6. [`agent-tool-design.md`](agent-tool-design.md)
+7. [`agent-tool-permissions.md`](agent-tool-permissions.md)
+8. [`agent-skills.md`](agent-skills.md)
+9. [`agent-integration.md`](agent-integration.md)
 
 | File | Owns |
 | --- | --- |
 | `agent-core.md` | Thread, Turn, Item, Goal, lifecycle, provenance, storage, transport, extensions, and trusted document transactions. |
 | `agent-thread-rendering.md` | Canonical DTO rendering, dock state, pagination, interaction states, and visual behavior. |
 | `agent-subagent-threads.md` | Child Thread lineage, Roles, capability ceilings, collaboration tools, and fork distinction. |
+| `agent-memory.md` | Daily Timeline Memory Nodes, admission, extraction, consolidation, retrieval, citations, rollback, Reset, and crash recovery. |
 | `agent-model-runtime.md` | Provider execution, stream normalization, Item recording, steering, cancellation, and compaction. |
 | `agent-tool-design.md` | Canonical model-tool registry, catalog, schemas, results, execution, and audit. |
 | `agent-tool-permissions.md` | Full Access, explicit blocks, native failures, capability selection, and capability audit. |

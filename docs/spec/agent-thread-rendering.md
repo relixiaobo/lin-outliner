@@ -51,6 +51,8 @@ Thread execution selections, active input requests, and Goals live in
   not disappear inside a counted tool group
 - collaboration Items and Subagent activity link directly to their canonical
   child Thread
+- Memory citation Items render the cited Daily Timeline Nodes and supporting
+  source Threads without introducing a second message or Memory view model
 - compaction renders as a history boundary
 
 A completed Turn with a final answer and known duration folds its process Items
@@ -124,6 +126,11 @@ focuses it.
 Normal Thread UI may visually group Items by Turn without printing every Turn
 ID. Run Details and diagnostics must show the same Thread, Turn, and Item
 identities as the transport.
+
+Thread Details exposes `ThreadMemoryMode` only for persistent root user Threads.
+Its loading, disabled, busy, and error states reuse the existing switch and
+diagnostic typography. Global Memory settings, Reset, and timeline navigation
+are owned by [`agent-memory.md`](agent-memory.md).
 
 ## Interaction States
 

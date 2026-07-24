@@ -149,6 +149,15 @@ export function ThreadItemView(props: ThreadItemViewProps) {
                     {entry.note}
                   </a>
                 ))}
+                {props.item.memoryCitation.threadIds.map((threadId, index) => (
+                  <button
+                    key={threadId}
+                    onClick={() => void props.onOpenThread(threadId)}
+                    type="button"
+                  >
+                    {t.agent.thread.memorySource({ index: index + 1 })}
+                  </button>
+                ))}
               </div>
             ) : null}
           </div>

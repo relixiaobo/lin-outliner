@@ -44,7 +44,10 @@ export interface OutlinerToolHost {
     meta: OutlinerToolMutationMeta,
     options?: { yieldEveryNodes?: number; commitEveryNodes?: number },
   ): Promise<{ focus?: FocusHint }>;
-  operationHistory?(query: OperationHistoryParams): Promise<OperationHistoryData> | OperationHistoryData;
+  operationHistory?(
+    query: OperationHistoryParams,
+    meta?: OutlinerToolMutationMeta,
+  ): Promise<OperationHistoryData> | OperationHistoryData;
 }
 
 export interface TransactionProjectionChanges {
