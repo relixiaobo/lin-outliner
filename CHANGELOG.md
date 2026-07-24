@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Canonical Thread Agent Core replacement (PR #429, codex-3)** — replaced the
+  former Conversation / Channel / Run / Issue agent stack with one canonical
+  TypeScript Thread / Turn / ThreadItem implementation across persistence,
+  runtime execution, IPC/preload, renderer state, Goals, Subagent collaboration,
+  tool output, and history controls. The clean pre-release replacement provides
+  append-only audit history, same-Thread Edit rollback, explicit Continue in new
+  chat forks, host-resolved admission, bounded Thread-owned payloads, automatic
+  Thread naming, and the retained Full Access capability boundary without
+  migration or compatibility readers. **Gate (main):** two review rounds caught
+  source-owned fork payload loss, forbidden `agent-debug` residue, dropped
+  catalog metadata for unloaded Threads, and transient renderer Threads after a
+  failed fork; all four were fixed before merge. Final head `c4ff101` passed
+  typecheck, the full Core suite (1250 pass, 6 environment-dependent skips), the
+  full renderer suite (734 pass), Agent Thread E2E (36 pass), docs check, diff
+  check, and the PR-recorded light/dark visual probe (3 pass).
 - **Codex Agent Core Thread-name notification interface (PR #433, codex-3)** —
   added the Codex-aligned `thread/name/updated` contract for the complete
   replacement in #429, carrying `threadId` plus an optional non-empty

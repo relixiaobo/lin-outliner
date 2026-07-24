@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (authored Codex agent restructure plans #423; shipped agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410) |
-| Codex 3 | `lin-outliner-codex-3/` | `codex-3/agent-codex-core-runtime` | update complete Agent Core replacement PR #429 onto the landed interface sequence through #433 |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-codex-core #429 and its interface sequence #428/#430–#433) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped url-preview-bilingual-translation #396, url-video-bilingual-subtitles #399, epub-bilingual-translation #403, preview-translation-persistent-cache #408, remove-data-import-adapter #425) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,12 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-24).** Open PR queue: #429
-(`codex-3/agent-codex-core-runtime`), which must update onto the interface sequence
-through #433 before the main gate. Recently merged: #433
-(`codex-3/thread-name-notification-interface`) after iterative main review and
-#432 (`codex-3/agent-thread-rollback-interface`) after iterative main review; see
-*Agent capabilities*. #423 (`codex/codex-agent-restructure-plans`, plan-only) merged 2026-07-21 after
+**In flight (2026-07-24).** Open PR queue: none. Recently merged: #429
+(`codex-3/agent-codex-core-runtime`) after iterative main review, completing the
+interface sequence #428/#430–#433; see *Recently completed*. #423
+(`codex/codex-agent-restructure-plans`, plan-only) merged 2026-07-21 after
 iterative main review; its three implementation plans remain `draft` below. #427
 (`codex/tag-selector-active-tag-index`) merged 2026-07-21 after
 main review; see *Recently completed*. #426 (`codex/field-name-reuse-candidate-index`) merged 2026-07-21 after
@@ -272,24 +270,13 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
-- **agent-codex-core** (`in-progress`, interface PRs #428 and #430–#433 landed;
-  plan merged #423) — replace the current agent architecture with one canonical
-  TypeScript Thread / Turn / ThreadItem model. The human-led shared protocol,
-  document interface, host-resolved renderer admission request, and renderer-facing
-  configuration, execution, provider-retry, tool-output, exhaustive response-menu,
-  same-Thread rollback, derived-state invalidation, and Thread-name update contracts
-  have landed. The complete runtime, persistence, transport, renderer, and old-model
-  replacement is
-  open as #429 and must update onto #433 before the main gate. The full replacement
-  must land before either consumer plan starts. See
-  `docs/plans/agent-codex-core.md`.
-- **agent-codex-memory** (`draft`, plan merged #423; depends on the complete
-  `agent-codex-core` replacement) — add Codex-style Memory as one complete
+- **agent-codex-memory** (`draft`, plan merged #423; unblocked by the complete
+  `agent-codex-core` replacement shipped in #429) — add Codex-style Memory as one complete
   extension in one PR, publishing canonical editable `#d-*` Memory Nodes on the
   daily timeline. It may proceed independently of Automations after Core lands.
   See `docs/plans/agent-codex-memory.md`.
-- **agent-codex-automations** (`draft`, plan merged #423; depends on the complete
-  `agent-codex-core` replacement) — add one host-owned Codex-style Automation
+- **agent-codex-automations** (`draft`, plan merged #423; unblocked by the complete
+  `agent-codex-core` replacement shipped in #429) — add one host-owned Codex-style Automation
   scheduler as a complete feature in one PR, with canonical Threads and Turns as
   the execution record. It may proceed independently of Memory after Core lands.
   See `docs/plans/agent-codex-automations.md`.
@@ -597,6 +584,26 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-codex-core**
+  (`codex-3/agent-codex-core-runtime`, PR #429, codex-3, merged 2026-07-24,
+  plan-track) — replaced the former Conversation / Channel / Run / Issue agent
+  stack with one canonical TypeScript Thread / Turn / ThreadItem runtime across
+  persistence, execution, IPC, preload, renderer state, Goals, Subagent
+  collaboration, tool output, and history controls. The clean replacement keeps
+  append-only audit history, same-Thread rollback, explicit Continue-in-new-chat
+  forks, host-resolved admission, bounded Thread-owned payloads, and the retained
+  Full Access capability boundary without migration or compatibility readers.
+  The shipped design is folded into the current Agent specs; the plan is archived
+  at `docs/plans/archive/agent-codex-core.md`.
+  **Gate (main):** two review rounds caught four issues: forked payloads depended
+  on source-Thread deletion, forbidden `agent-debug` residue remained, unloaded
+  Thread notifications lost catalog metadata, and failed forks left transient
+  renderer Threads. Codex-3 fixed all four before merge; final head `c4ff101`
+  had no reportable findings. Verified with typecheck, `docs:check`, diff check,
+  full `test:core` (1250 pass, 6 environment-dependent skips), full
+  `test:renderer` (734 pass), Agent Thread E2E (36 pass), and the PR-recorded
+  light/dark visual probe (3 pass).
 
 - **tag-selector-active-tag-index**
   (`codex/tag-selector-active-tag-index`, PR #427, codex, merged 2026-07-21,
