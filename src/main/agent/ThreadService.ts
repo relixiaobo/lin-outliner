@@ -90,12 +90,14 @@ import {
   threadFollowsCursor,
   ThreadMetadataStore,
   type ThreadCatalogRecord,
+  type ThreadNameOrigin,
 } from './persistence/ThreadMetadataStore';
 import { ToolPayloadStore } from './persistence/ToolPayloadStore';
 import { ItemRecorder } from './runtime/ItemRecorder';
 import { decodeCursor, encodeCursor, pageLimit } from './persistence/cursor';
 import type {
   SteeredTurnInput,
+  ThreadNameGenerator,
   TurnExecutionResult,
   TurnExecutor,
 } from './runtime/types';
@@ -127,6 +129,7 @@ export interface ThreadServiceStores {
 export interface ThreadServiceOptions {
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
+  readonly nameGenerator?: ThreadNameGenerator;
   readonly extensions?: ExtensionRegistry;
   readonly resolveConfiguration?: (
     request: ThreadStartRequest,
@@ -231,6 +234,12 @@ interface PendingSubagentActivity {
   readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
 }
 
+interface PendingThreadNameGeneration {
+  readonly turnId: string;
+  readonly controller: AbortController;
+  readonly completion: Promise<void>;
+}
+
 interface CollaborationActivityState {
   pending: boolean;
   readonly waiters: Set<() => void>;
@@ -250,6 +259,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly rollout: RolloutStore;
   private readonly payloads: ToolPayloadStore;
   private readonly executor: TurnExecutor;
+  private readonly nameGenerator: ThreadNameGenerator | null;
   private readonly extensions: ExtensionRegistry;
   private readonly resolveConfiguration: (
     request: ThreadStartRequest,
@@ -269,6 +279,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly goalStore: GoalStore;
   private readonly ephemeral = new Map<ThreadId, EphemeralThreadState>();
   private readonly activeTurns = new Map<ThreadId, ActiveTurn>();
+  private readonly pendingThreadNames = new Map<ThreadId, PendingThreadNameGeneration>();
   private readonly pendingUserInputs = new Map<ThreadId, PendingUserInput>();
   private readonly mailbox = new Map<ThreadId, SteeredTurnInput[]>();
   private readonly ephemeralSpawnEdges = new Map<ThreadId, {
@@ -288,6 +299,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly threadBarrierGenerations = new Map<ThreadId, number>();
   private hostBarrierGeneration = 0;
   private initialized = false;
+  private closing = false;
 
   constructor(options: ThreadServiceOptions) {
     this.metadata = options.stores.metadata;
@@ -295,6 +307,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.rollout = options.stores.rollout;
     this.payloads = options.stores.payloads;
     this.executor = options.executor;
+    this.nameGenerator = options.nameGenerator ?? null;
     this.extensions = options.extensions ?? new ExtensionRegistry();
     this.resolveConfiguration = options.resolveConfiguration ?? defaultConfiguration;
     this.resolveRendererStartDefaults = options.resolveRendererStartDefaults ?? missingRendererStartDefaults;
@@ -355,10 +368,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
     const active = [...this.activeTurns.values()];
+    const pendingNames = [...this.pendingThreadNames.values()];
     for (const turn of active) turn.controller.abort();
+    for (const pending of pendingNames) pending.controller.abort();
     for (const pending of this.pendingUserInputs.values()) pending.abort();
-    await Promise.all(active.map((turn) => turn.completion));
+    await Promise.allSettled([
+      ...active.map((turn) => turn.completion),
+      ...pendingNames.map((pending) => pending.completion),
+    ]);
     await this.rollout.flush();
     await this.rollbackRecovery.close();
     await Promise.all([...this.ephemeral.keys()].map((threadId) => this.payloads.deleteThread(threadId)));
@@ -637,8 +656,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
       const inherited = turns.slice(0, request.boundary.kind === 'afterTurn' ? boundaryIndex + 1 : boundaryIndex);
       if (inherited.some((turn) => turn.status === 'inProgress')) throw new Error('Cannot fork through an active Turn');
       const now = this.now();
+      const name = request.name ?? this.nextForkName(source);
       const thread = await this.createThread({
-        name: request.name ?? source.name ?? undefined,
+        name,
         ephemeral: source.ephemeral,
         source: 'app',
         threadSource: 'user',
@@ -651,6 +671,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         agentRole: null,
         agentNickname: null,
         configuration: sourceRecord.configuration,
+        nameOrigin: request.name === undefined ? 'derived' : 'manual',
       });
       for (const inheritedTurn of inherited) {
         const copied = copyTurn(inheritedTurn, thread.id, now);
@@ -729,6 +750,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
       await this.finalizeHistoryRollbackHooks(prepared, 'commit', context);
       if (projectionError) throw projectionError;
+      if (request.numTurns === turns.length) this.clearAutomaticThreadName(thread.id);
       return { thread: this.requireThread(thread.id).thread };
     });
   }
@@ -743,14 +765,23 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   async setThreadName(threadId: ThreadId, name: string | null): Promise<void> {
+    this.pendingThreadNames.get(threadId)?.controller.abort();
     await this.threadMutex.run(threadId, async () => {
       const state = this.ephemeral.get(threadId);
-      const now = this.now();
       if (state) {
-        state.record = { ...state.record, thread: decodeThread({ ...state.record.thread, name, updatedAt: now }) };
+        state.record = {
+          ...state.record,
+          nameOrigin: 'manual',
+          thread: decodeThread({ ...state.record.thread, name }),
+        };
       } else {
-        this.metadata.setName(threadId, name, now);
+        this.metadata.setManualName(threadId, name);
       }
+      this.emitTransientNotification({
+        type: 'thread/name/updated',
+        threadId,
+        ...(name === null ? {} : { threadName: name }),
+      });
     });
   }
 
@@ -819,13 +850,22 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   private async stopThreadSubtree(threadIds: readonly ThreadId[]): Promise<void> {
+    const pendingNames = threadIds.flatMap((id) => {
+      const pending = this.pendingThreadNames.get(id);
+      if (!pending) return [];
+      pending.controller.abort();
+      return [pending];
+    });
     for (const id of threadIds) {
       await this.threadMutex.run(id, async () => {
         this.activeTurns.get(id)?.controller.abort();
         this.pendingUserInputs.get(id)?.abort();
       });
     }
-    await Promise.all(threadIds.map((id) => this.waitForIdle(id)));
+    await Promise.all([
+      ...threadIds.map((id) => this.waitForIdle(id)),
+      ...pendingNames.map((pending) => pending.completion),
+    ]);
   }
 
   private finishThreadSubtreeStop(threadIds: readonly ThreadId[]): void {
@@ -1518,6 +1558,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.activeTurns.delete(active.threadId);
       await this.setStatus(active.threadId, { type: 'idle' });
     });
+    this.scheduleAutomaticThreadName(
+      this.requireThread(active.threadId).thread,
+      turn,
+      active.configuration,
+    );
     await this.goals.addUsage(
       active.threadId,
       turn.execution.usage.totalTokens,
@@ -1539,6 +1584,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     await active.recorder.finishOpenItems('failed').catch(() => undefined);
     const initial = this.readTurn(active.threadId, active.turnId);
+    let failedTurn: Turn | null = null;
     if (initial) {
       const completedAt = this.now();
       const failed = decodeTurn({
@@ -1549,6 +1595,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         completedAt,
         durationMs: Math.max(0, completedAt - active.startedAt),
       });
+      failedTurn = failed;
       await this.recordNotification({
         type: 'turn/completed',
         threadId: active.threadId,
@@ -1560,6 +1607,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.activeTurns.delete(active.threadId);
     await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
     const thread = this.ephemeral.get(active.threadId)?.record.thread ?? this.metadata.read(active.threadId)?.thread;
+    if (thread && failedTurn) this.scheduleAutomaticThreadName(thread, failedTurn, active.configuration);
     if (thread) this.queueChildTurnActivity(thread, 'failed');
   }
 
@@ -1576,6 +1624,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       modelOverride?: string | null;
       reasoningEffortOverride?: EffectiveThreadConfiguration['reasoningEffort'] | null;
       taskPath?: string;
+      nameOrigin?: ThreadNameOrigin;
     },
   ): Promise<Thread> {
     const now = this.now();
@@ -1602,6 +1651,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const configuration = lineage.configuration ?? await this.resolveConfiguration(request);
     const record = {
       thread,
+      nameOrigin: lineage.nameOrigin ?? (thread.name === null ? 'none' : 'manual'),
       archived: false,
       configuration,
       toolCeiling: lineage.toolCeiling ?? null,
@@ -1668,6 +1718,118 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     if (this.metadata.require(threadId).thread.preview.trim()) return;
     this.metadata.setPreview(threadId, preview, updatedAt);
+  }
+
+  private nextForkName(source: Thread): string {
+    const sourceRecord = this.requireThread(source.id);
+    const displayed = source.name?.trim() || source.preview.trim() || 'Untitled Thread';
+    const base = sourceRecord.nameOrigin === 'derived'
+      ? displayed.replace(/\s+\(([1-9]\d*)\)$/, '').trim() || displayed
+      : displayed;
+    const names = source.ephemeral
+      ? this.ephemeralForkFamilyNames(source.id)
+      : this.metadata.forkFamilyNames(source.id);
+    let highest = 0;
+    for (const candidateValue of names) {
+      const candidate = candidateValue?.trim();
+      if (!candidate) continue;
+      if (candidate === base) {
+        highest = Math.max(highest, 0);
+        continue;
+      }
+      if (!candidate.startsWith(`${base} (`) || !candidate.endsWith(')')) continue;
+      const suffix = candidate.slice(base.length + 2, -1);
+      const index = Number(suffix);
+      if (/^[1-9]\d*$/.test(suffix) && Number.isSafeInteger(index)) highest = Math.max(highest, index);
+    }
+    return `${base} (${highest + 1})`;
+  }
+
+  private ephemeralForkFamilyNames(threadId: ThreadId): readonly (string | null)[] {
+    let root = this.requireThread(threadId).thread;
+    const visited = new Set<ThreadId>();
+    while (root.forkedFromId) {
+      if (visited.has(root.id)) throw new Error('Thread fork lineage contains a cycle');
+      visited.add(root.id);
+      root = this.requireThread(root.forkedFromId).thread;
+    }
+    const family = [root.id];
+    for (let index = 0; index < family.length; index += 1) {
+      const parentId = family[index]!;
+      for (const [candidateId, state] of this.ephemeral) {
+        if (state.record.thread.forkedFromId === parentId) family.push(candidateId);
+      }
+    }
+    return family.map((id) => this.requireThread(id).thread.name);
+  }
+
+  private scheduleAutomaticThreadName(
+    thread: Thread,
+    turn: Turn,
+    configuration: EffectiveThreadConfiguration,
+  ): void {
+    if (
+      !this.nameGenerator
+      || this.closing
+      || this.stoppingThreads.has(thread.id)
+      || thread.ephemeral
+      || thread.parentThreadId !== null
+      || thread.threadSource !== 'user'
+      || turn.status === 'inProgress'
+      || turn.provenance.trigger.kind !== 'user'
+      || this.pendingThreadNames.has(thread.id)
+    ) return;
+    const record = this.requireThread(thread.id);
+    const turns = this.allTurns(thread.id);
+    if (record.thread.name !== null || record.nameOrigin !== 'none' || turns.length !== 1 || turns[0]?.id !== turn.id) {
+      return;
+    }
+    const controller = new AbortController();
+    let pending!: PendingThreadNameGeneration;
+    const completion = Promise.resolve()
+      .then(() => this.generateAutomaticThreadName(thread.id, turn, configuration, controller.signal))
+      .catch((error) => {
+        if (!controller.signal.aborted) console.warn('[agent] automatic Thread name generation failed', error);
+      })
+      .finally(() => {
+        if (this.pendingThreadNames.get(thread.id) === pending) this.pendingThreadNames.delete(thread.id);
+      });
+    pending = { turnId: turn.id, controller, completion };
+    this.pendingThreadNames.set(thread.id, pending);
+  }
+
+  private async generateAutomaticThreadName(
+    threadId: ThreadId,
+    turn: Turn,
+    configuration: EffectiveThreadConfiguration,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const thread = this.requireThread(threadId).thread;
+    const name = await this.nameGenerator!.generateName({ thread, turn, configuration, signal });
+    if (!name || signal.aborted) return;
+    await this.threadMutex.run(threadId, async () => {
+      if (
+        signal.aborted
+        || this.stoppingThreads.has(threadId)
+        || this.pendingThreadNames.get(threadId)?.turnId !== turn.id
+      ) return;
+      const record = this.requireThread(threadId);
+      const turns = this.allTurns(threadId);
+      if (
+        record.thread.name !== null
+        || record.nameOrigin !== 'none'
+        || turns.length !== 1
+        || turns[0]?.id !== turn.id
+        || turns[0]?.status === 'inProgress'
+      ) return;
+      if (!this.metadata.setAutomaticNameIfEligible(threadId, name)) return;
+      this.emitTransientNotification({ type: 'thread/name/updated', threadId, threadName: name });
+    });
+  }
+
+  private clearAutomaticThreadName(threadId: ThreadId): void {
+    if (!this.metadata.clearAutomaticName(threadId)) return;
+    this.emitTransientNotification({ type: 'thread/name/updated', threadId });
   }
 
   private async recordNotification(notification: AgentCoreNotification): Promise<void> {
@@ -2013,6 +2175,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const latest = this.history.listTurns({ threadId, limit: 1, sortDirection: 'desc', itemsView: 'full' }).data[0];
     if (latest?.status === 'inProgress') await this.finishCrashedTurn(threadId, latest);
     const record = this.metadata.require(threadId);
+    if (record.nameOrigin === 'automatic' && this.allTurns(threadId).length === 0) {
+      this.clearAutomaticThreadName(threadId);
+    }
     if (record.thread.status.type === 'active') await this.setStatus(threadId, { type: 'idle' });
   }
 

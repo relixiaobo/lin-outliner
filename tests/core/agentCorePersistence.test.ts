@@ -94,6 +94,7 @@ describe('Agent Core persistence', () => {
     const ids = [uuidV7(100), uuidV7(200), uuidV7(300)];
     store.create({
       thread: thread(ids[0]!, 100),
+      nameOrigin: 'manual',
       archived: false,
       configuration,
       toolCeiling: null,
@@ -102,6 +103,7 @@ describe('Agent Core persistence', () => {
     });
     store.create({
       thread: thread(ids[1]!, 200),
+      nameOrigin: 'manual',
       archived: false,
       configuration,
       toolCeiling: null,
@@ -110,6 +112,7 @@ describe('Agent Core persistence', () => {
     });
     store.create({
       thread: thread(ids[2]!, 300, { threadSource: 'memory_consolidation' }),
+      nameOrigin: 'manual',
       archived: false,
       configuration,
       toolCeiling: null,
@@ -132,6 +135,7 @@ describe('Agent Core persistence', () => {
         threadSource: 'subagent',
         agentRole: 'worker',
       }),
+      nameOrigin: 'manual',
       archived: false,
       configuration,
       toolCeiling: ['node_read'],
@@ -164,6 +168,7 @@ describe('Agent Core persistence', () => {
         threadSource: 'subagent',
         agentRole: 'worker',
       }),
+      nameOrigin: 'manual',
       archived: false,
       configuration,
       toolCeiling: null,

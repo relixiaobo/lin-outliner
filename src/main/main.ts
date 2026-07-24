@@ -451,14 +451,16 @@ const attachmentResolver = new AttachmentResolver({
   scratchRoot: agentScratchRoot,
   resolveAssetPath: (assetId) => assetService.pathFor(assetId),
 });
+const turnExecutor = new PiTurnExecutor({
+  createTools: (context) => toolRuntime.createTools(context),
+  preparePrompt: (context, prompt) => toolRuntime.prepareUserPrompt(context, prompt),
+  skillListing: (context) => toolRuntime.skillListing(context),
+});
 const threadService = ThreadService.open(
   resolvedUserDataDir,
-  new PiTurnExecutor({
-    createTools: (context) => toolRuntime.createTools(context),
-    preparePrompt: (context, prompt) => toolRuntime.prepareUserPrompt(context, prompt),
-    skillListing: (context) => toolRuntime.skillListing(context),
-  }),
+  turnExecutor,
   {
+    nameGenerator: turnExecutor,
     resolveConfiguration: (request) => agentConfigurationLoader.resolveProfile(
       request.configurationProfile,
       request.cwd,

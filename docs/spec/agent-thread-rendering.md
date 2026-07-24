@@ -131,6 +131,14 @@ catalog immediately, while the host persists the same value for both persistent
 and ephemeral Threads. Explicit names remain authoritative and later Turns do
 not replace the initial preview.
 
+After the first Turn becomes terminal, the preview remains visible while the
+host asynchronously generates a short name with the current Thread model.
+`thread/name/updated` atomically refreshes both the dock header and Thread list;
+it does not change Thread activity time or reorder the list. Generation failure
+keeps the preview. Rename and explicit clear permanently take precedence. A
+Continue-in-new-chat fork appears as `Title (1)`, `Title (2)`, and so on across
+the same fork lineage, including when continuing from an already suffixed fork.
+
 For an idle Thread, submit starts a Turn. For an active Thread, submit steers the
 exact active Turn. Stop interrupts that Turn. Buttons remain dimensionally stable
 while their icon and label state changes. The primary composer action is one

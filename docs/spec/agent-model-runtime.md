@@ -14,6 +14,14 @@ system context, restores prior model messages from canonical Items, and assemble
 the final model-tool registry. Provider messages remain in memory only for the
 duration of execution.
 
+The same runtime also implements auxiliary Thread naming after the first user
+Turn becomes terminal. It resolves that Thread's current provider/model,
+requests the lowest supported reasoning level, disables prompt-cache retention,
+and bounds the request to 64 output tokens. Only normalized plain text returns
+to `ThreadService`; provider content is never persisted as a message, Item, or
+second history authority. The request has its own abort signal and is awaited on
+orderly shutdown.
+
 Turn admission snapshots the real provider, model, and reasoning effort into
 `Turn.execution`. Terminalization adds the normalized input, output, cache-read,
 cache-write, total-token, and USD cost breakdown. These canonical execution

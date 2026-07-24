@@ -14,6 +14,7 @@ import {
   agentProviderPayload,
   historyMessages,
   modelUserMessage,
+  normalizeThreadName,
 } from '../../src/main/agent/runtime/PiTurnExecutor';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 import { uuidV7 } from '../../src/main/agent/uuid';
@@ -474,6 +475,62 @@ describe('PiTurnExecutor provider payload', () => {
       reasoning: { effort: 'high', summary: 'detailed' },
     });
     expect(agentProviderPayload({ model: 'test-model' }, testModel)).toBeUndefined();
+  });
+});
+
+describe('PiTurnExecutor Thread naming', () => {
+  test('normalizes model output into one bounded plain-text name', () => {
+    expect(normalizeThreadName('  **Title: "Refactor the Agent runtime"**\nExtra explanation  '))
+      .toBe('Refactor the Agent runtime');
+    expect(normalizeThreadName('标题：\u201c整理每日记忆\u201d')).toBe('整理每日记忆');
+    expect(normalizeThreadName('   ')).toBeNull();
+    expect(Array.from(normalizeThreadName('a'.repeat(100)) ?? '')).toHaveLength(80);
+  });
+
+  test('uses the current Thread runtime without mutating the terminal Turn', async () => {
+    const fixture = createContext();
+    const userItemId = uuidV7(1_720_000_000_110);
+    const agentItemId = uuidV7(1_720_000_000_120);
+    const turn = decodeTurn({
+      ...fixture.context.turn,
+      items: [
+        {
+          type: 'userMessage',
+          id: userItemId,
+          provenance: fixture.recorder.localProvenance(userItemId),
+          clientId: null,
+          content: [{ type: 'text', text: 'Refactor the Thread runtime' }],
+        },
+        {
+          type: 'agentMessage',
+          id: agentItemId,
+          provenance: fixture.recorder.localProvenance(agentItemId),
+          text: 'Implemented the canonical runtime.',
+          phase: 'final_answer',
+          memoryCitation: null,
+        },
+      ],
+      status: 'completed',
+      completedAt: 1_720_000_000_200,
+      durationMs: 100,
+    });
+    let receivedTurn = turn;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      completeName: async (context, runtime) => {
+        receivedTurn = context.turn;
+        expect(runtime.model.id).toBe('test-model');
+        return '\n### Conversation title: `Canonical Thread model`\n';
+      },
+    });
+
+    await expect(executor.generateName({
+      thread: fixture.context.thread,
+      turn,
+      configuration: fixture.context.configuration,
+      signal: new AbortController().signal,
+    })).resolves.toBe('Canonical Thread model');
+    expect(receivedTurn).toBe(turn);
   });
 });
 

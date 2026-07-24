@@ -20,12 +20,15 @@ import { openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
 
 export interface ThreadCatalogRecord {
   readonly thread: Thread;
+  readonly nameOrigin: ThreadNameOrigin;
   readonly archived: boolean;
   readonly configuration: EffectiveThreadConfiguration;
   readonly toolCeiling: readonly string[] | null;
   readonly modelOverride: string | null;
   readonly reasoningEffortOverride: EffectiveThreadConfiguration['reasoningEffort'] | null;
 }
+
+export type ThreadNameOrigin = 'none' | 'automatic' | 'manual' | 'derived';
 
 export interface ClientInputBinding {
   readonly threadId: ThreadId;
@@ -51,6 +54,7 @@ interface ThreadRow {
   agent_nickname: string | null;
   agent_role: string | null;
   name: string | null;
+  name_origin: string;
   preview: string;
   ephemeral: number;
   source: string;
@@ -83,6 +87,7 @@ export class ThreadMetadataStore {
         agent_nickname TEXT,
         agent_role TEXT,
         name TEXT,
+        name_origin TEXT NOT NULL CHECK (name_origin IN ('none', 'automatic', 'manual', 'derived')),
         preview TEXT NOT NULL,
         ephemeral INTEGER NOT NULL CHECK (ephemeral IN (0, 1)),
         source TEXT NOT NULL,
@@ -133,10 +138,10 @@ export class ThreadMetadataStore {
     this.db.prepare(`
       INSERT INTO threads (
         id, session_id, parent_thread_id, forked_from_id, agent_nickname, agent_role,
-        name, preview, ephemeral, source, thread_source, model_provider, cwd,
+        name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
         created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json,
         model_override, reasoning_effort_override
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       thread.id,
       thread.sessionId,
@@ -145,6 +150,7 @@ export class ThreadMetadataStore {
       thread.agentNickname,
       thread.agentRole,
       thread.name,
+      record.nameOrigin,
       thread.preview,
       thread.ephemeral ? 1 : 0,
       thread.source,
@@ -182,14 +188,14 @@ export class ThreadMetadataStore {
     this.db.prepare(`
       INSERT INTO threads (
         id, session_id, parent_thread_id, forked_from_id, agent_nickname, agent_role,
-        name, preview, ephemeral, source, thread_source, model_provider, cwd,
+        name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
         created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json,
         model_override, reasoning_effort_override
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       thread.id, thread.sessionId, thread.parentThreadId, thread.forkedFromId,
-      thread.agentNickname, thread.agentRole, thread.name, thread.preview,
-      thread.ephemeral ? 1 : 0, thread.source, thread.threadSource, thread.modelProvider,
+      thread.agentNickname, thread.agentRole, thread.name, record.nameOrigin,
+      thread.preview, thread.ephemeral ? 1 : 0, thread.source, thread.threadSource, thread.modelProvider,
       thread.cwd, thread.createdAt, thread.updatedAt, JSON.stringify(thread.status),
       record.archived ? 1 : 0, JSON.stringify(record.configuration),
       record.toolCeiling === null ? null : JSON.stringify(record.toolCeiling),
@@ -244,8 +250,34 @@ export class ThreadMetadataStore {
     };
   }
 
-  setName(threadId: ThreadId, name: string | null, updatedAt: number): void {
-    this.updateOne('UPDATE threads SET name = ?, updated_at = ? WHERE id = ?', [name, updatedAt, threadId], threadId);
+  setManualName(threadId: ThreadId, name: string | null): void {
+    this.updateOne(
+      "UPDATE threads SET name = ?, name_origin = 'manual' WHERE id = ?",
+      [name, threadId],
+      threadId,
+    );
+  }
+
+  setAutomaticNameIfEligible(threadId: ThreadId, name: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE threads
+      SET name = ?, name_origin = 'automatic'
+      WHERE id = ? AND name IS NULL AND name_origin = 'none'
+    `).run(name, threadId);
+    if (result.changes === 1) return true;
+    if (!this.read(threadId)) throw new Error(`Thread not found: ${threadId}`);
+    return false;
+  }
+
+  clearAutomaticName(threadId: ThreadId): boolean {
+    const result = this.db.prepare(`
+      UPDATE threads
+      SET name = NULL, name_origin = 'none'
+      WHERE id = ? AND name_origin = 'automatic'
+    `).run(threadId);
+    if (result.changes === 1) return true;
+    if (!this.read(threadId)) throw new Error(`Thread not found: ${threadId}`);
+    return false;
   }
 
   setPreview(threadId: ThreadId, preview: string, updatedAt: number): void {
@@ -374,6 +406,30 @@ export class ThreadMetadataStore {
     return row ? spawnEdgeFromRow(row) : null;
   }
 
+  forkFamilyNames(threadId: ThreadId): readonly (string | null)[] {
+    const rows = this.db.prepare(`
+      WITH RECURSIVE
+        ancestors(id, forked_from_id) AS (
+          SELECT id, forked_from_id FROM threads WHERE id = ?
+          UNION ALL
+          SELECT parent.id, parent.forked_from_id
+          FROM threads parent JOIN ancestors child ON parent.id = child.forked_from_id
+        ),
+        root(id) AS (
+          SELECT id FROM ancestors WHERE forked_from_id IS NULL LIMIT 1
+        ),
+        family(id, name) AS (
+          SELECT thread.id, thread.name FROM threads thread JOIN root ON thread.id = root.id
+          UNION ALL
+          SELECT child.id, child.name
+          FROM threads child JOIN family parent ON child.forked_from_id = parent.id
+        )
+      SELECT name FROM family
+    `).all(threadId) as unknown as Array<{ name: string | null }>;
+    if (rows.length === 0) throw new Error(`Thread not found: ${threadId}`);
+    return rows.map((row) => row.name);
+  }
+
   private updateOne(sql: string, params: readonly SqliteValue[], threadId: ThreadId): void {
     const result = this.db.prepare(sql).run(...params);
     if (result.changes !== 1) throw new Error(`Thread not found: ${threadId}`);
@@ -431,6 +487,7 @@ function recordFromRow(row: ThreadRow): ThreadCatalogRecord {
   });
   return {
     thread,
+    nameOrigin: decodeThreadNameOrigin(row.name_origin),
     archived: row.archived === 1,
     configuration: JSON.parse(row.configuration_json) as EffectiveThreadConfiguration,
     toolCeiling: row.tool_ceiling_json === null
@@ -439,6 +496,11 @@ function recordFromRow(row: ThreadRow): ThreadCatalogRecord {
     modelOverride: row.model_override,
     reasoningEffortOverride: decodeReasoningEffortOverride(row.reasoning_effort_override),
   };
+}
+
+function decodeThreadNameOrigin(value: string): ThreadNameOrigin {
+  if (value === 'none' || value === 'automatic' || value === 'manual' || value === 'derived') return value;
+  throw new Error(`Invalid persisted Thread name origin: ${value}`);
 }
 
 function decodeReasoningEffortOverride(

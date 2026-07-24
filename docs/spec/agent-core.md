@@ -113,6 +113,16 @@ attachment name, then a Node-reference note. Whitespace is normalized and the
 result is bounded before it is stored. The write happens once for persistent and
 ephemeral Threads; later Turns never rewrite an existing preview.
 
+For an unnamed persistent root user Thread, the first terminal user Turn starts
+one non-blocking automatic-name request through the current Thread model. The
+request uses the lowest supported reasoning level, bounded input, at most 64
+output tokens, and normalizes one plain-text name to at most 80 characters. It
+does not delay `turn/completed`, enter rollout history, or count toward Goal
+usage. Failure or cancellation leaves the deterministic preview in place.
+Persistent internal name origin makes manual rename or clear authoritative over
+an in-flight request and across restart. Rolling back the complete history
+clears only an automatic name so the replacement first Turn can be named again.
+
 Extension `turnStarted` hooks are part of the same launch boundary as executor
 startup. A hook exception terminalizes the accepted Turn as failed, releases
 the active-Turn lock, and cannot strand a Thread in `inProgress`.
@@ -158,6 +168,11 @@ startup replays committed markers before admitting new work.
 
 `Continue in new chat` is the only visible fork operation. It copies terminal
 history through the selected Turn into a new top-level root Thread.
+Its default name uses the source name or preview plus the next numeric suffix
+across the complete `forkedFromId` family. One trailing suffix is removed from a
+fork-derived name before allocation, so `Title`, `Title (1)`, and `Title (2)`
+remain siblings rather than forming nested suffix text. A root title such as
+`Annual plan (2024)` remains intact. Explicit fork names remain authoritative.
 
 A fork copies only terminal history within the boundary. It never calls document
 undo, changes files, stops processes, reverses commands, compensates MCP calls,

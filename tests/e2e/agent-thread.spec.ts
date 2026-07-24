@@ -41,6 +41,22 @@ test.describe('canonical agent Thread surface', () => {
     const response = turn.locator('.thread-agent-message');
     await expect(userMessage).toContainText('Summarize current outline.');
     await expect(response).toContainText('Current outline focuses on design-system work.');
+    await page.evaluate(async () => {
+      const target = window as unknown as {
+        lin?: { agentCoreRequest: (method: string, input: unknown) => Promise<{ data: Array<{ id: string }> }> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const threads = await target.lin!.agentCoreRequest('thread/list', {});
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'thread/name/updated',
+        threadId: threads.data[0]!.id,
+        threadName: 'Current outline summary',
+      });
+    });
+    await expect(page.locator('.thread-dock-title')).toContainText('Current outline summary');
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await expect(page.locator('.thread-list-row.is-selected')).toContainText('Current outline summary');
+    await page.keyboard.press('Escape');
     await response.hover();
     const responseActions = response.locator('.thread-response-actions');
     await expect(responseActions).toHaveCSS('opacity', '1');
@@ -315,9 +331,17 @@ test.describe('canonical agent Thread surface', () => {
 
     const rows = page.locator('.thread-list-row');
     await expect(rows).toHaveCount(2);
-    const selectedFork = page.locator('.thread-list-row.is-selected');
-    await expect(selectedFork).toContainText('Keep this history.');
+    let selectedFork = page.locator('.thread-list-row.is-selected');
+    await expect(selectedFork).toContainText('Keep this history. (1)');
     await expect(selectedFork).toHaveCSS('--thread-depth', '0');
+
+    await page.keyboard.press('Escape');
+    await page.locator('.thread-turn').first().hover();
+    await page.locator('.thread-turn').first().getByRole('button', { name: 'Continue in new chat' }).click();
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    selectedFork = page.locator('.thread-list-row.is-selected');
+    await expect(selectedFork).toContainText('Keep this history. (2)');
+    await expect(page.locator('.thread-list-row')).toHaveCount(3);
     expect((await commandCalls(page)).map((call) => call.cmd)).toContain('thread/fork');
   });
 

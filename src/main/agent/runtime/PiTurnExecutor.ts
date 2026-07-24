@@ -8,6 +8,7 @@ import {
 import type {
   Api,
   AssistantMessage,
+  Context,
   ImageContent,
   Message,
   Model,
@@ -27,8 +28,17 @@ import type {
   ThreadUserContent,
 } from '../../../core/agent/protocol';
 import { createAbortSettledStreamFn } from '../capabilities/agentStreamAbort';
-import { resolveAgentModelEffort, resolveProviderModel } from '../capabilities/agentModelResolution';
-import { getProviderRuntimeConfig } from '../capabilities/agentSettings';
+import {
+  lowestThinkingLevel,
+  resolveAgentModelEffort,
+  resolveProviderModel,
+} from '../capabilities/agentModelResolution';
+import { awaitWithAbort } from '../capabilities/agentAwaitWithAbort';
+import {
+  getAgentRuntimeSettings,
+  getProviderRuntimeConfig,
+  providerStreamOptionsFromRuntimeSettings,
+} from '../capabilities/agentSettings';
 import { persistedToolResultDetails } from '../capabilities/agentToolResultPersistence';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
@@ -36,11 +46,21 @@ import {
 } from '../persistence/ToolPayloadStore';
 import {
   piExternalProviderId,
+  piCompleteSimple,
   piResolveAuthApiKey,
   piStreamSimple,
 } from '../../piModels';
-import { applyCustomOpenAIResponsesPayloadProfile } from '../../openAIResponsesCompat';
-import type { TurnExecutionContext, TurnExecutionResult, TurnExecutor } from './types';
+import {
+  applyCustomOpenAIResponsesPayloadProfile,
+  customOpenAIResponsesPayloadProfileOption,
+} from '../../openAIResponsesCompat';
+import type {
+  ThreadNameGenerationContext,
+  ThreadNameGenerator,
+  TurnExecutionContext,
+  TurnExecutionResult,
+  TurnExecutor,
+} from './types';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
@@ -48,6 +68,13 @@ export const MAX_PERSISTED_TOOL_OUTPUT_IMAGES = 16;
 export const MAX_PERSISTED_TOOL_OUTPUT_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_PERSISTED_TOOL_STRING_CHARS = 8_000;
 const MAX_PERSISTED_WEB_RESULTS = 50;
+export const MAX_THREAD_NAME_CHARS = 80;
+const MAX_THREAD_NAME_INPUT_CHARS = 16_000;
+const MAX_THREAD_NAME_OUTPUT_TOKENS = 64;
+const THREAD_NAME_SYSTEM_PROMPT = `Generate a concise title for this conversation.
+Use the same language as the user's request when practical.
+Return only the title, with no quotes, Markdown, label, or explanation.
+Keep it specific and brief.`;
 
 export type ModelRuntimeToolFactory = (
   context: TurnExecutionContext,
@@ -58,9 +85,15 @@ export interface PiTurnExecutorOptions {
   readonly preparePrompt?: (context: TurnExecutionContext, prompt: UserMessage) => UserMessage | Promise<UserMessage>;
   readonly systemPrompt?: (context: TurnExecutionContext) => string | Promise<string>;
   readonly skillListing?: (context: TurnExecutionContext) => string | null | Promise<string | null>;
-  readonly resolveRuntime?: (context: TurnExecutionContext) => Promise<PiRuntimeSelection>;
+  readonly resolveRuntime?: (context: PiRuntimeContext) => Promise<PiRuntimeSelection>;
   readonly createAgent?: (options: AgentOptions) => PiAgentRuntime;
+  readonly completeName?: (
+    context: ThreadNameGenerationContext,
+    runtime: PiRuntimeSelection,
+  ) => Promise<string | null>;
 }
+
+export type PiRuntimeContext = Pick<TurnExecutionContext, 'thread' | 'configuration'>;
 
 export interface PiRuntimeSelection {
   readonly model: Model<Api>;
@@ -76,7 +109,7 @@ export interface PiAgentRuntime {
   prompt(message: Message): Promise<void>;
 }
 
-export class PiTurnExecutor implements TurnExecutor {
+export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
   constructor(private readonly options: PiTurnExecutorOptions = {}) {}
 
   async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
@@ -141,6 +174,14 @@ export class PiTurnExecutor implements TurnExecutor {
       unsubscribe?.();
     }
   }
+
+  async generateName(context: ThreadNameGenerationContext): Promise<string | null> {
+    if (context.signal.aborted) return null;
+    const runtime = await (this.options.resolveRuntime ?? resolveDefaultRuntime)(context);
+    if (context.signal.aborted) return null;
+    const raw = await (this.options.completeName ?? completeThreadName)(context, runtime);
+    return raw === null ? null : normalizeThreadName(raw);
+  }
 }
 
 export function agentProviderPayload(payload: unknown, model: Model<Api>): unknown | undefined {
@@ -165,7 +206,7 @@ function isOpenAIResponsesApi(api: Api): boolean {
     || api === 'azure-openai-responses';
 }
 
-async function resolveDefaultRuntime(context: TurnExecutionContext): Promise<PiRuntimeSelection> {
+async function resolveDefaultRuntime(context: PiRuntimeContext): Promise<PiRuntimeSelection> {
   const provider = await getProviderRuntimeConfig(context.thread.modelProvider);
   if (!provider) throw new Error(`Provider is not configured: ${context.thread.modelProvider}`);
   const { model, thinkingLevel } = resolveAgentModelEffort(
@@ -182,6 +223,96 @@ async function resolveDefaultRuntime(context: TurnExecutionContext): Promise<PiR
       return provider.apiKey ?? piResolveAuthApiKey(model);
     },
   };
+}
+
+async function completeThreadName(
+  context: ThreadNameGenerationContext,
+  runtime: PiRuntimeSelection,
+): Promise<string | null> {
+  const prompt = threadNamePrompt(context);
+  if (!prompt) return null;
+  const runtimeSettings = await getAgentRuntimeSettings();
+  if (context.signal.aborted) return null;
+  const apiKey = await runtime.getApiKey(runtime.model.provider);
+  if (context.signal.aborted) return null;
+  const reasoning = lowestThinkingLevel(runtime.model);
+  const modelContext: Context = {
+    systemPrompt: THREAD_NAME_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: prompt, timestamp: Date.now() }],
+    tools: [],
+  };
+  const response = await awaitWithAbort(piCompleteSimple(runtime.model, modelContext, {
+    ...providerStreamOptionsFromRuntimeSettings(runtimeSettings, runtime.model),
+    ...customOpenAIResponsesPayloadProfileOption(),
+    ...(apiKey ? { apiKey } : {}),
+    cacheRetention: 'none',
+    maxTokens: Math.min(runtime.model.maxTokens, MAX_THREAD_NAME_OUTPUT_TOKENS),
+    ...(reasoning === 'off' ? {} : { reasoning }),
+    sessionId: context.thread.sessionId,
+    signal: context.signal,
+  }), { signal: context.signal });
+  if (response.stopReason === 'error') throw new Error(response.errorMessage || 'Thread name generation failed');
+  if (response.stopReason === 'aborted') return null;
+  const text = response.content
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+  return text || null;
+}
+
+function threadNamePrompt(context: ThreadNameGenerationContext): string | null {
+  const user = context.turn.items
+    .filter((item) => item.type === 'userMessage')
+    .flatMap((item) => item.content.map((part) => {
+      if (part.type === 'text') return part.text;
+      if (part.type === 'attachment') return `[Attachment: ${part.name}]`;
+      return `[Node: ${part.note?.trim() || part.nodeId}]`;
+    }))
+    .join('\n')
+    .trim();
+  const assistant = context.turn.items
+    .filter((item) => item.type === 'agentMessage')
+    .map((item) => item.text)
+    .join('\n')
+    .trim();
+  const body = [
+    user ? `User request:\n${user}` : '',
+    assistant ? `Assistant response:\n${assistant}` : '',
+  ].filter(Boolean).join('\n\n');
+  if (!body) return null;
+  return body.slice(0, MAX_THREAD_NAME_INPUT_CHARS);
+}
+
+export function normalizeThreadName(value: string): string | null {
+  let title = value.trim().split(/\r?\n/, 1)[0]?.trim() ?? '';
+  title = title
+    .replace(/^\*\*(.*)\*\*$/, '$1')
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^(?:thread\s+title|conversation\s+title|title|标题)\s*[:：-]\s*/i, '')
+    .trim();
+  for (let index = 0; index < 2; index += 1) {
+    const unwrapped = unwrapThreadName(title);
+    if (unwrapped === title) break;
+    title = unwrapped.trim();
+  }
+  title = title.replace(/\s+/g, ' ').trim();
+  if (!title) return null;
+  const characters = Array.from(title);
+  return characters.length <= MAX_THREAD_NAME_CHARS
+    ? title
+    : characters.slice(0, MAX_THREAD_NAME_CHARS).join('').trim();
+}
+
+function unwrapThreadName(value: string): string {
+  const pairs: ReadonlyArray<readonly [string, string]> = [
+    ['"', '"'],
+    ["'", "'"],
+    ['`', '`'],
+    ['\u201c', '\u201d'],
+    ['\u2018', '\u2019'],
+  ];
+  const pair = pairs.find(([start, end]) => value.startsWith(start) && value.endsWith(end));
+  return pair && value.length >= 2 ? value.slice(pair[0].length, -pair[1].length) : value;
 }
 
 export class PiEventNormalizer {

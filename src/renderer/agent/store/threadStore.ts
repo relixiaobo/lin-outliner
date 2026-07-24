@@ -364,6 +364,12 @@ export class ThreadStore {
           selectedThreadId: this.snapshot.selectedThreadId ?? notification.thread.id,
         });
         return;
+      case 'thread/name/updated':
+        this.updateThread(notification.threadId, (thread) => ({
+          ...thread,
+          name: notification.threadName ?? null,
+        }));
+        return;
       case 'thread/status/changed':
         this.updateThread(notification.threadId, (thread) => ({ ...thread, status: notification.status }));
         return;

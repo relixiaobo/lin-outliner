@@ -202,6 +202,36 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().threads[0]?.updatedAt).toBe(25);
   });
 
+  test('applies canonical Thread name updates without changing activity time', async () => {
+    const owner = { ...thread('thread-1', 10), name: null, preview: 'Immediate preview' };
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+
+    notify({
+      type: 'thread/name/updated',
+      threadId: owner.id,
+      threadName: 'Generated title',
+    });
+    expect(store.getSnapshot().threads[0]).toMatchObject({ name: 'Generated title', updatedAt: 10 });
+
+    notify({ type: 'thread/name/updated', threadId: owner.id });
+    expect(store.getSnapshot().threads[0]).toMatchObject({ name: null, updatedAt: 10 });
+  });
+
   test('does not let a stale configuration read overwrite a newer selection', async () => {
     const owner = thread('thread-1', 1);
     const staleConfiguration = deferred<ReturnType<typeof configurationResponse>>();

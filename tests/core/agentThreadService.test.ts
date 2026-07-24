@@ -20,7 +20,13 @@ import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/T
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
-import type { TurnExecutionContext, TurnExecutionResult, TurnExecutor } from '../../src/main/agent/runtime/types';
+import type {
+  ThreadNameGenerationContext,
+  ThreadNameGenerator,
+  TurnExecutionContext,
+  TurnExecutionResult,
+  TurnExecutor,
+} from '../../src/main/agent/runtime/types';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { Core } from '../../src/core/core';
 import { createNodeTools, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
@@ -68,6 +74,32 @@ class ControlledExecutor implements TurnExecutor {
     const complete = this.completions[index];
     if (!complete) throw new Error(`Executor call ${index} is not waiting`);
     complete(result);
+  }
+
+  async waitUntilWaiting(index = 0): Promise<void> {
+    while (!this.completions[index]) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+class ControlledNameGenerator implements ThreadNameGenerator {
+  readonly contexts: ThreadNameGenerationContext[] = [];
+  private readonly completions: Array<(name: string | null) => void> = [];
+
+  constructor(private readonly ignoreAbort = false) {}
+
+  async generateName(context: ThreadNameGenerationContext): Promise<string | null> {
+    this.contexts.push(context);
+    return new Promise<string | null>((resolve) => {
+      this.completions.push(resolve);
+      if (context.signal.aborted) resolve(null);
+      else if (!this.ignoreAbort) context.signal.addEventListener('abort', () => resolve(null), { once: true });
+    });
+  }
+
+  finish(name: string | null, index = 0): void {
+    const complete = this.completions[index];
+    if (!complete) throw new Error(`Name generator call ${index} is not waiting`);
+    complete(name);
   }
 
   async waitUntilWaiting(index = 0): Promise<void> {
@@ -137,6 +169,253 @@ describe('ThreadService', () => {
     expect(reopened.service.readThread({ threadId: persistent.id }).thread.preview)
       .toBe('Summarize this outline.');
     await reopened.service.close();
+  });
+
+  test('generates the first root user Thread name asynchronously after its first completed Turn', async () => {
+    const nameGenerator = new ControlledNameGenerator();
+    const fixture = await createFixture(undefined, { nameGenerator });
+    const notifications: AgentCoreNotification[] = [];
+    fixture.service.subscribe((notification) => notifications.push(notification));
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Refactor the Agent runtime' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await nameGenerator.waitUntilWaiting();
+
+    expect(fixture.service.readThread({ threadId: thread.id }).thread).toMatchObject({
+      name: null,
+      preview: 'Refactor the Agent runtime',
+      status: { type: 'idle' },
+    });
+    nameGenerator.finish('Canonical Agent runtime');
+    await waitUntil(() => fixture.service.readThread({ threadId: thread.id }).thread.name !== null);
+
+    expect(fixture.service.readThread({ threadId: thread.id }).thread.name).toBe('Canonical Agent runtime');
+    expect(fixture.stores.metadata.require(thread.id).nameOrigin).toBe('automatic');
+    expect(notifications).toContainEqual({
+      type: 'thread/name/updated',
+      threadId: thread.id,
+      threadName: 'Canonical Agent runtime',
+    });
+    await fixture.service.close();
+  });
+
+  test('falls back to the preview when terminal Turn name generation returns no name', async () => {
+    const nameGenerator = new ControlledNameGenerator();
+    const fixture = await createFixture(undefined, { nameGenerator });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Keep this preview' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider failed' } });
+    await nameGenerator.waitUntilWaiting();
+    nameGenerator.finish(null);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(fixture.service.readThread({ threadId: thread.id }).thread).toMatchObject({
+      name: null,
+      preview: 'Keep this preview',
+    });
+    expect(nameGenerator.contexts[0]?.turn.status).toBe('failed');
+    await fixture.service.close();
+  });
+
+  test('does not start automatic naming when close interrupts the first Turn', async () => {
+    const nameGenerator = new ControlledNameGenerator();
+    const fixture = await createFixture(undefined, { nameGenerator });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Host is closing' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+
+    await fixture.service.close();
+    expect(nameGenerator.contexts).toHaveLength(0);
+  });
+
+  test('never lets an in-flight automatic name replace a manual rename or clear', async () => {
+    const nameGenerator = new ControlledNameGenerator(true);
+    const fixture = await createFixture(undefined, { nameGenerator });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Keep my title choice' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await nameGenerator.waitUntilWaiting();
+
+    await fixture.service.setThreadName(thread.id, 'My title');
+    nameGenerator.finish('Stale generated title');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(fixture.service.readThread({ threadId: thread.id }).thread.name).toBe('My title');
+    expect(fixture.stores.metadata.require(thread.id).nameOrigin).toBe('manual');
+
+    await fixture.service.setThreadName(thread.id, null);
+    expect(fixture.service.readThread({ threadId: thread.id }).thread.name).toBeNull();
+    expect(fixture.stores.metadata.require(thread.id).nameOrigin).toBe('manual');
+    await fixture.service.close();
+  });
+
+  test('keeps a manual clear authoritative across restart when the first Turn completes later', async () => {
+    const nameGenerator = new ControlledNameGenerator();
+    const fixture = await createFixture(undefined, { nameGenerator });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.setThreadName(thread.id, null);
+    await fixture.service.close();
+    const reopened = await openFixture(fixture.root, fixture.executor, fixture.clock, undefined, { nameGenerator });
+    await reopened.service.initialize();
+    await reopened.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Do not generate a title' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await reopened.service.waitForIdle(thread.id);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(nameGenerator.contexts).toHaveLength(0);
+    expect(reopened.stores.metadata.require(thread.id).nameOrigin).toBe('manual');
+    await reopened.service.close();
+  });
+
+  test('clears an automatic name when rolling back the first Turn and names its replacement', async () => {
+    const nameGenerator = new ControlledNameGenerator();
+    const fixture = await createFixture(undefined, { nameGenerator });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Old request' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await nameGenerator.waitUntilWaiting(0);
+    nameGenerator.finish('Old automatic name', 0);
+    await waitUntil(() => fixture.service.readThread({ threadId: thread.id }).thread.name !== null);
+
+    const rolledBack = await fixture.service.rollbackThread({ threadId: thread.id, numTurns: 1 });
+    expect(rolledBack.thread.name).toBeNull();
+    expect(fixture.stores.metadata.require(thread.id).nameOrigin).toBe('none');
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Replacement request' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await nameGenerator.waitUntilWaiting(1);
+    nameGenerator.finish('Replacement automatic name', 1);
+    await waitUntil(() => fixture.service.readThread({ threadId: thread.id }).thread.name === 'Replacement automatic name');
+    await fixture.service.close();
+  });
+
+  test('numbers Continue-in-new-chat names across the complete fork lineage', async () => {
+    const fixture = await createFixture();
+    const source = (await fixture.service.startThread({
+      name: 'Agent structure',
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const sourceTurn = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Compare Thread models' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(source.id);
+
+    const first = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: sourceTurn.turn.id },
+    })).thread;
+    const firstTurn = fixture.service.readThread({ threadId: first.id, includeTurns: true }).thread.turns![0]!;
+    const second = (await fixture.service.forkThread({
+      threadId: first.id,
+      boundary: { kind: 'afterTurn', turnId: firstTurn.id },
+    })).thread;
+    const third = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: sourceTurn.turn.id },
+    })).thread;
+
+    expect([first.name, second.name, third.name]).toEqual([
+      'Agent structure (1)',
+      'Agent structure (2)',
+      'Agent structure (3)',
+    ]);
+    expect(fixture.stores.metadata.require(second.id).nameOrigin).toBe('derived');
+
+    await fixture.service.setThreadName(source.id, 'Annual plan (2024)');
+    const renamedFork = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: sourceTurn.turn.id },
+    })).thread;
+    expect(renamedFork.name).toBe('Annual plan (2024) (1)');
+    await fixture.service.close();
+  });
+
+  test('uses the deterministic preview as the fork name base while no generated name exists', async () => {
+    const fixture = await createFixture();
+    const source = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const sourceTurn = await fixture.service.startRendererTurn({
+      threadId: source.id,
+      input: [{ type: 'text', text: 'Preview title base' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(source.id);
+    const fork = (await fixture.service.forkThread({
+      threadId: source.id,
+      boundary: { kind: 'afterTurn', turnId: sourceTurn.turn.id },
+    })).thread;
+
+    expect(fork.name).toBe('Preview title base (1)');
+    await fixture.service.close();
   });
 
   test('updates root Thread model configuration atomically and preserves it through forks', async () => {
@@ -1661,6 +1940,7 @@ async function createFixture(
     | 'resolveRole'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
+    | 'nameGenerator'
   > = {},
 ): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
@@ -1685,6 +1965,7 @@ async function openFixture(
     | 'resolveRole'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
+    | 'nameGenerator'
   > = {},
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
   const stores = createStores(root);

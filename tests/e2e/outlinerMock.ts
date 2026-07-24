@@ -572,6 +572,31 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       });
       return thread;
     };
+    const nextMockForkName = (source: MockThread) => {
+      const displayed = source.name?.trim() || source.preview.trim() || 'Untitled Thread';
+      const base = source.forkedFromId
+        ? displayed.replace(/\s+\(([1-9]\d*)\)$/, '').trim() || displayed
+        : displayed;
+      let root = source;
+      while (root.forkedFromId) root = threadById(root.forkedFromId);
+      const familyIds = [root.id];
+      for (let index = 0; index < familyIds.length; index += 1) {
+        const parentId = familyIds[index]!;
+        for (const candidate of mockThreads) {
+          if (candidate.forkedFromId === parentId) familyIds.push(candidate.id);
+        }
+      }
+      let highest = 0;
+      for (const id of familyIds) {
+        const candidate = threadById(id).name?.trim();
+        if (!candidate || candidate === base) continue;
+        if (!candidate.startsWith(`${base} (`) || !candidate.endsWith(')')) continue;
+        const suffix = candidate.slice(base.length + 2, -1);
+        const index = Number(suffix);
+        if (/^[1-9]\d*$/.test(suffix) && Number.isSafeInteger(index)) highest = Math.max(highest, index);
+      }
+      return `${base} (${highest + 1})`;
+    };
     const itemProvenance = (threadId: string, turnId: string, itemId: string) => ({
       originThreadId: threadId,
       originTurnId: turnId,
@@ -1511,7 +1536,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const boundaryIndex = sourceTurns.findIndex((turn) => turn.id === boundary?.turnId);
           if (boundaryIndex < 0) throw new Error('Fork boundary Turn not found.');
           const includeCount = boundary?.kind === 'afterTurn' ? boundaryIndex + 1 : boundaryIndex;
-          const thread = createMockThread({ name: input.name ?? source.name }, source.id);
+          const thread = createMockThread({
+            name: typeof input.name === 'string' ? input.name : nextMockForkName(source),
+          }, source.id);
           thread.preview = source.preview;
           mockThreadConfigurations.set(
             thread.id,

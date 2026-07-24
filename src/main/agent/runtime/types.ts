@@ -50,3 +50,14 @@ export interface TurnExecutionResult {
 export interface TurnExecutor {
   execute(context: TurnExecutionContext): Promise<TurnExecutionResult>;
 }
+
+export interface ThreadNameGenerationContext {
+  readonly thread: Thread;
+  readonly turn: Turn;
+  readonly configuration: EffectiveThreadConfiguration;
+  readonly signal: AbortSignal;
+}
+
+export interface ThreadNameGenerator {
+  generateName(context: ThreadNameGenerationContext): Promise<string | null>;
+}
