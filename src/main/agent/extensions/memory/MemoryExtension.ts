@@ -22,7 +22,7 @@ import type {
   Turn,
   TurnId,
 } from '../../../../core/agent/protocol';
-import type { DocumentProjection, NodeProjection } from '../../../../core/types';
+import { TAG_DAY_ID, type DocumentProjection, type NodeProjection } from '../../../../core/types';
 import type { DocumentMutationMeta } from '../../../documentService';
 import { uuidV7 } from '../../uuid';
 import {
@@ -442,7 +442,8 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     meta: DocumentMutationMeta,
     projection: DocumentProjection,
   ): void {
-    if (!memoryGraphMayChange(command, args, projection, this.timeline)) return;
+    const generatedNodeIds = new Set(this.control.generatedNodes().map((entry) => entry.nodeId));
+    if (!memoryGraphMayChange(command, args, projection, this.timeline, generatedNodeIds)) return;
     const origin = meta.origin ?? 'user';
     if (origin === 'user' && !meta.causation) {
       return;
@@ -598,6 +599,7 @@ function memoryGraphMayChange(
   args: Readonly<Record<string, unknown>>,
   projection: DocumentProjection,
   timeline: TimelineMemoryStore,
+  generatedNodeIds: ReadonlySet<string>,
 ): boolean {
   const reservedTagIds = new Set<string>(MEMORY_TAG_DEFINITIONS.map((entry) => entry.tagId));
   const argumentStrings = deepStrings(args);
@@ -641,6 +643,13 @@ function memoryGraphMayChange(
   const createsInsideMemory = (parentId: string | null) => parentId !== null && owned.has(parentId);
   const changesOwnedArray = (key: string) => directArray(key).some((nodeId) => changesOwned(nodeId));
   const changesStructureArray = (key: string) => directArray(key).some((nodeId) => changesStructure(nodeId));
+  const changesDayIdentity = (...nodeIds: Array<string | null>) => direct('tagId') === TAG_DAY_ID
+    && nodeIds.some((nodeId) => nodeId !== null && protectedAncestors.has(nodeId));
+  const historyNodeIsProtected = (nodeId: string) => owned.has(nodeId)
+    || reservedTaggedIds.has(nodeId)
+    || protectedAncestors.has(nodeId)
+    || reservedTagIds.has(nodeId)
+    || generatedNodeIds.has(nodeId);
 
   switch (command) {
     case 'get_projection':
@@ -743,11 +752,12 @@ function memoryGraphMayChange(
     case 'batch_cycle_done_state':
     case 'batch_move_nodes_up':
     case 'batch_move_nodes_down':
-    case 'batch_apply_tag':
       return changesOwnedArray('nodeIds');
+    case 'batch_apply_tag':
+      return changesOwnedArray('nodeIds') || changesDayIdentity(...directArray('nodeIds'));
     case 'apply_tag':
     case 'remove_tag':
-      return changesOwned(direct('nodeId'));
+      return changesOwned(direct('nodeId')) || changesDayIdentity(direct('nodeId'));
     case 'set_tag_config':
       return changesOwned(direct('tagId'));
     case 'set_field_config':
@@ -788,12 +798,43 @@ function memoryGraphMayChange(
       return changesStructure(direct('referenceId'));
     case 'undo':
     case 'redo':
-      // History entries can restore or remove Memory that is absent from the
-      // current projection, so an Agent history mutation always fails closed.
-      return true;
+      return historyMutationMayChangeMemory(args.historyMutation, historyNodeIsProtected);
     default:
       return true;
   }
+}
+
+function historyMutationMayChangeMemory(
+  value: unknown,
+  nodeIsProtected: (nodeId: string) => boolean,
+): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return true;
+  const context = value as Record<string, unknown>;
+  if (context.status === 'none') {
+    return !Array.isArray(context.targets) || context.targets.length > 0;
+  }
+  if (context.status !== 'known' || !Array.isArray(context.targets)) return true;
+  if (context.targets.length === 0) return true;
+
+  for (const valueTarget of context.targets) {
+    if (!valueTarget || typeof valueTarget !== 'object' || Array.isArray(valueTarget)) return true;
+    const target = valueTarget as Record<string, unknown>;
+    if (
+      typeof target.operationId !== 'string'
+      || !Array.isArray(target.affectedNodeIds)
+      || !target.affectedNodeIds.every((nodeId) => typeof nodeId === 'string')
+      || typeof target.affectedNodeCount !== 'number'
+      || !Number.isInteger(target.affectedNodeCount)
+      || target.affectedNodeCount < 0
+      || target.affectedNodeCount !== target.affectedNodeIds.length
+      || (target.affectedNodeIdsTruncated !== undefined && typeof target.affectedNodeIdsTruncated !== 'boolean')
+      || target.affectedNodeIdsTruncated === true
+    ) {
+      return true;
+    }
+    if ((target.affectedNodeIds as string[]).some(nodeIsProtected)) return true;
+  }
+  return false;
 }
 
 function deepStrings(value: unknown): string[] {

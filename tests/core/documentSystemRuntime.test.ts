@@ -267,20 +267,29 @@ describe('Document system runtime', () => {
   test('routes mutating operation history through coordination and the Memory guard with causation', async () => {
     const instance = await service();
     const causation = { threadId: uuidV7(), turnId: uuidV7(), itemId: uuidV7() };
-    await instance.handle('create_node', {
+    const created = await instance.handle('create_node', {
       parentId: instance.getProjection().rootId,
       index: null,
       text: 'Undo target',
-    }, { origin: 'agent', tool: 'node_create', causation });
+    }, { origin: 'agent', tool: 'node_create', causation }) as { focus?: { nodeId?: string } };
+    const targetNodeId = created.focus?.nodeId;
+    expect(targetNodeId).toBeDefined();
     const sequence: string[] = [];
     instance.setMutationCoordinator(async (meta, operation) => {
       expect(meta.causation).toEqual(causation);
       sequence.push('coordinator');
       return operation();
     });
-    instance.setMutationGuard((command, _args, meta) => {
+    instance.setMutationGuard((command, args, meta) => {
       expect(command).toBe('undo');
       expect(meta.causation).toEqual(causation);
+      expect(args.historyMutation).toMatchObject({
+        status: 'known',
+        targets: [{ affectedNodeCount: 2 }],
+      });
+      expect((args.historyMutation as {
+        targets: Array<{ affectedNodeIds: string[] }>;
+      }).targets[0]?.affectedNodeIds).toContain(targetNodeId);
       sequence.push('guard');
     });
 
@@ -290,6 +299,37 @@ describe('Document system runtime', () => {
     );
     expect(result.count).toBe(1);
     expect(sequence).toEqual(['coordinator', 'guard']);
+  });
+
+  test('resolves every exact undo and redo target before mutation authorization', async () => {
+    const instance = await service();
+    const rootId = instance.getProjection().rootId;
+    const first = await instance.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'First target',
+    }, { origin: 'agent', tool: 'node_create' }) as { focus?: { nodeId?: string } };
+    const second = await instance.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Second target',
+    }, { origin: 'agent', tool: 'node_create' }) as { focus?: { nodeId?: string } };
+    const observedTargets: string[][][] = [];
+    instance.setMutationGuard((_command, args) => {
+      observedTargets.push((args.historyMutation as {
+        targets: Array<{ affectedNodeIds: string[] }>;
+      }).targets.map((target) => target.affectedNodeIds));
+    });
+
+    expect((await instance.operationHistory({ action: 'undo', origin: 'agent', steps: 2 })).count).toBe(2);
+    expect(observedTargets[0]).toHaveLength(2);
+    expect(observedTargets[0]?.[0]).toContain(second.focus?.nodeId);
+    expect(observedTargets[0]?.[1]).toContain(first.focus?.nodeId);
+
+    expect((await instance.operationHistory({ action: 'redo', origin: 'agent', steps: 2 })).count).toBe(2);
+    expect(observedTargets[1]).toHaveLength(2);
+    expect(observedTargets[1]?.[0]).toContain(first.focus?.nodeId);
+    expect(observedTargets[1]?.[1]).toContain(second.focus?.nodeId);
   });
 
   test('ensures deterministic protected tags and permits only ordinary tag application', async () => {

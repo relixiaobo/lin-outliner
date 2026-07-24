@@ -193,9 +193,14 @@ Node mutation carries exact Thread, Turn, and Item causation. The mutation
 classifier evaluates command owners, targets, and destination parents: creating
 an ordinary sibling directly under a Daily Note is not a Memory mutation, while
 writing beneath a canonical container or changing a container/date ancestor is.
-Agent `outline_undo_stack` undo/redo carries the same causation and passes through
-the same coordinator and fail-closed guard because history can restore Memory
-that is absent from the current projection.
+Applying or removing `#day` is protected only on an ancestor of reserved-tagged
+Memory, where it can create or destroy canonical identity. Agent
+`outline_undo_stack` undo/redo carries the same causation and passes through the
+same coordinator. Before execution, DocumentService resolves the actual stack
+targets and their exact affected Node IDs; ordinary history remains available,
+while a target involving canonical, generated, reserved, or protected-ancestor
+Memory requires explicit Memory authorization. Missing or truncated target
+metadata fails closed.
 
 When a final response used derived Memory, Core appends a canonical commentary
 Item containing `memoryCitation`. The renderer treats it as a dedicated,

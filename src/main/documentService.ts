@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DocumentCommand } from '../core/commands';
 import { Core, type CoreTransactionMetadata, type OperationHistoryQuery } from '../core/core';
+import type { OperationHistoryItem, OperationHistoryScope } from '../core/operationJournal';
 import {
   DocumentSystemContractError,
   documentCommandMutatesProtectedSystemTagDefinition,
@@ -101,6 +102,18 @@ export type DocumentMutationCoordinator = <T>(
   meta: DocumentMutationMeta,
   operation: () => Promise<T>,
 ) => Promise<T>;
+
+interface HistoryMutationTarget {
+  operationId: string;
+  affectedNodeIds: readonly string[];
+  affectedNodeCount: number;
+  affectedNodeIdsTruncated?: boolean;
+}
+
+type HistoryMutationGuardContext =
+  | { status: 'none'; targets: readonly [] }
+  | { status: 'known'; targets: readonly HistoryMutationTarget[] }
+  | { status: 'unknown'; targets: readonly [] };
 
 export class DocumentService implements DocumentSystemHost {
   private core = Core.new();
@@ -295,10 +308,12 @@ export class DocumentService implements DocumentSystemHost {
     return this.coordinateMutation(effectiveMeta, async () => {
       const task = this.mutationQueue.then(async () => {
         await this.flushTextEditGroupNow();
+        const origin = query.origin ?? 'agent';
         this.mutationGuard?.(mutationAction, {
           historyOrigin: query.origin,
           steps: query.steps,
           operationId: query.operationId,
+          historyMutation: this.historyMutationGuardContext(mutationAction, origin, query),
         }, effectiveMeta, this.core.projection());
         const result = this.core.operationHistory(query);
         if (mutatesHistory && result.count > 0) {
@@ -311,6 +326,43 @@ export class DocumentService implements DocumentSystemHost {
       this.mutationQueue = task.then(() => undefined, () => undefined);
       return task;
     });
+  }
+
+  private historyMutationGuardContext(
+    action: 'undo' | 'redo',
+    origin: OperationHistoryScope,
+    query: OperationHistoryQuery,
+  ): HistoryMutationGuardContext {
+    const history = this.core.operationHistory({ action: 'list', origin, limit: 100 });
+    const topOperationId = action === 'undo'
+      ? history.cursor?.topUndoOperationId
+      : history.cursor?.topRedoOperationId;
+    if (!topOperationId || (query.operationId && query.operationId !== topOperationId)) {
+      return { status: 'none', targets: [] };
+    }
+
+    const items = history.items ?? [];
+    const topIndex = items.findIndex((item) => item.operationId === topOperationId);
+    if (topIndex < 0) return { status: 'unknown', targets: [] };
+
+    const requestedSteps = boundedHistorySteps(query.steps);
+    if (requestedSteps === 0) return { status: 'none', targets: [] };
+    const direction = action === 'undo' ? 1 : -1;
+    const targets: OperationHistoryItem[] = [];
+    for (let step = 0; step < requestedSteps; step += 1) {
+      const item = items[topIndex + (step * direction)];
+      if (!item) break;
+      targets.push(item);
+    }
+    return {
+      status: 'known',
+      targets: targets.map((item) => ({
+        operationId: item.operationId,
+        affectedNodeIds: item.affectedNodeIds,
+        affectedNodeCount: item.affectedNodeCount,
+        ...(item.affectedNodeIdsTruncated ? { affectedNodeIdsTruncated: true } : {}),
+      })),
+    };
   }
 
   async flushPendingChanges() {
@@ -1243,6 +1295,12 @@ function historyOrigin(value: unknown, fallback?: DocumentMutationMeta['origin']
   if (fallback === 'agent') return 'agent';
   if (fallback === 'user') return 'user';
   return 'all';
+}
+
+function boundedHistorySteps(value: number | undefined) {
+  if (value === undefined) return 1;
+  const bounded = Math.max(1, Math.min(value, 10));
+  return Number.isNaN(bounded) ? 0 : Math.ceil(bounded);
 }
 
 function historyChangeOrigin(value: unknown): DocumentProjectionChangedEvent['origin'] {

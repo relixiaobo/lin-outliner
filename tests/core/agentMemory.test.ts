@@ -500,6 +500,8 @@ describe('Codex Memory contracts', () => {
   test('classifies Memory mutations by command targets instead of Daily Note ancestors', () => {
     const store = memoryStore();
     const projection = memoryProjection();
+    projection.nodes.find((entry) => entry.id === WORKSPACE_ID)!.children.push('ordinary:2');
+    projection.nodes.push(node('ordinary:2', WORKSPACE_ID, [], [], 'Ordinary outline node'));
     const automation = rootThread([userTurn(
       'Maintain the daily note',
       undefined,
@@ -539,7 +541,82 @@ describe('Codex Memory contracts', () => {
     expect(() => extension.authorizeMutation('undo', {
       historyOrigin: 'agent',
       steps: 1,
+      historyMutation: {
+        status: 'known',
+        targets: [{
+          operationId: 'op:ordinary',
+          affectedNodeIds: ['ordinary:2'],
+          affectedNodeCount: 1,
+        }],
+      },
+    }, meta, projection)).not.toThrow();
+    expect(() => extension.authorizeMutation('undo', {
+      historyOrigin: 'agent',
+      steps: 1,
+      historyMutation: {
+        status: 'known',
+        targets: [{
+          operationId: 'op:memory',
+          affectedNodeIds: [MEMORY_NODE_ID],
+          affectedNodeCount: 1,
+        }],
+      },
     }, meta, projection)).toThrow('not authorized');
+    expect(() => extension.authorizeMutation('undo', {
+      historyOrigin: 'agent',
+      steps: 1,
+    }, meta, projection)).toThrow('not authorized');
+    expect(() => extension.authorizeMutation('redo', {
+      historyOrigin: 'agent',
+      steps: 1,
+      historyMutation: {
+        status: 'known',
+        targets: [{
+          operationId: 'op:truncated',
+          affectedNodeIds: ['ordinary:2'],
+          affectedNodeCount: 2,
+          affectedNodeIdsTruncated: true,
+        }],
+      },
+    }, meta, projection)).toThrow('not authorized');
+  });
+
+  test('protects the day tag only when it can change canonical Memory identity', () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    projection.nodes.find((entry) => entry.id === WORKSPACE_ID)!.children.push('ordinary:2');
+    projection.nodes.push(node('ordinary:2', WORKSPACE_ID, [], [], 'Ordinary outline node'));
+    const automation = rootThread([userTurn(
+      'Maintain Daily Notes',
+      undefined,
+      { kind: 'feature', feature: 'automation' },
+      'turn:automation-day-tag',
+      'item:automation-day-tag',
+    )]);
+    const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
+    extension.bindHost(memoryThreadHost(automation));
+    extension.contributeTurnAdmission(admissionContext(automation, automation.turns![0]!));
+    const meta = {
+      origin: 'agent' as const,
+      causation: {
+        threadId: THREAD_ID,
+        turnId: 'turn:automation-day-tag',
+        itemId: 'item:automation-day-tag',
+      },
+    };
+
+    expect(() => extension.authorizeMutation('remove_tag', {
+      nodeId: 'day',
+      tagId: TAG_DAY_ID,
+    }, meta, projection)).toThrow('not authorized');
+    expect(() => extension.authorizeMutation('apply_tag', {
+      nodeId: 'ordinary:1',
+      tagId: TAG_DAY_ID,
+    }, meta, projection)).toThrow('not authorized');
+    expect(() => extension.authorizeMutation('apply_tag', {
+      nodeId: 'ordinary:2',
+      tagId: TAG_DAY_ID,
+    }, meta, projection)).not.toThrow();
   });
 
   test('invalidates polluted origins before global reconciliation', () => {

@@ -581,8 +581,10 @@ or destination applies/removes a reserved tag, mutates a descendant of a
 canonical container, or changes ancestry so content enters or leaves the
 canonical hierarchy. Creating an ordinary sibling directly under the Daily Note
 is not a Memory mutation merely because that Daily Note contains a Memory
-container. The Node command path preflights that entire change set and validates
-command causation: direct renderer/user edits, explicit
+container. Applying or removing `#day` is a Memory-graph mutation only when its
+target is an ancestor of reserved-tagged Memory and can therefore create or
+destroy canonical identity. The Node command path preflights that entire change
+set and validates command causation: direct renderer/user edits, explicit
 foreground root-user Turns, and host-owned MemoryExtension publications are
 valid; Automation, Subagent, and unrelated feature Turns cannot mutate Memory or
 turn a stray tagged Node into canonical Memory. This is a content-integrity
@@ -600,8 +602,13 @@ can still edit the Nodes directly.
 
 `outline_undo_stack` undo/redo uses the same DocumentService mutation
 coordinator and causation metadata as every other Agent Node mutation. History
-mutation fails closed through the Memory guard because it can restore or remove
-Memory that is absent from the current projection; list remains read-only.
+list remains read-only. Before mutation, DocumentService resolves the actual
+origin-specific undo/redo stack targets and passes each target's complete
+`affectedNodeIds` to the Memory guard. Ordinary outline history remains
+available; only a target involving canonical, generated, reserved, or
+protected-ancestor Memory requires explicit Memory authorization. A missing or
+truncated target entry fails closed because it can restore Memory that is absent
+from the current projection.
 
 An explicit foreground Memory Node mutation that committed before its source
 Turn was rolled back remains an ordinary document side effect. Transcript Edit
