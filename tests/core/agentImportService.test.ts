@@ -5,17 +5,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
-import type { ImportPack } from '../../src/main/agentDataImportPack';
-import { AgentImportApiServer, type ImportApiDescriptor, type ImportApiResponse } from '../../src/main/agentImportApi';
-import { AgentImportService, importYieldEveryNodesForStats, resolvePackFilePath } from '../../src/main/agentImportService';
-import { createAgentLocalWorkspaceContext } from '../../src/main/agentLocalTools';
+import type { ImportPack } from '../../src/main/agent/capabilities/agentDataImportPack';
+import { AgentImportApiServer, type ImportApiDescriptor, type ImportApiResponse } from '../../src/main/agent/capabilities/agentImportApi';
+import { AgentImportService, importYieldEveryNodesForStats, resolvePackFilePath } from '../../src/main/agent/capabilities/agentImportService';
+import { createAgentLocalWorkspaceContext } from '../../src/main/agent/capabilities/agentLocalTools';
 import {
   checkedState,
   fieldReads,
   indexProjection,
   normalChildIds,
-} from '../../src/main/agentNodeToolProjection';
-import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
+} from '../../src/main/agent/capabilities/agentNodeToolProjection';
+import type { OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 
 function hostFor(core: Core): OutlinerToolHost {
   return {
@@ -172,7 +172,7 @@ describe('Tenon import service', () => {
     expect(importYieldEveryNodesForStats({ nodes: 5_000, fields: 10_000 })).toBe(10);
   });
 
-  test('resolves absolute pack files outside the Run workdir under Full Access', async () => {
+  test('resolves absolute pack files outside the Thread working directory under Full Access', async () => {
     const workdir = await mkdtemp(path.join(tmpdir(), 'tenon-data-import-workdir-'));
     const sourceDir = await mkdtemp(path.join(tmpdir(), 'tenon-data-import-source-'));
     try {

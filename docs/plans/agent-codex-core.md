@@ -258,6 +258,18 @@ the only Tenon-owned waiting interaction rather than inventing a parallel status
 `source` records the host/session origin while `threadSource` classifies the
 workload; neither is a UI-only tag.
 
+An unnamed persistent root user Thread exposes its deterministic `preview`
+immediately after the first accepted input. After that first Turn becomes
+terminal, the host asynchronously asks the same configured model for one short
+plain-text Thread name. The auxiliary request uses the lowest supported
+reasoning level, a bounded prompt and output, and never delays Turn completion,
+creates a ThreadItem, or contributes to Goal usage. Failure leaves the preview
+authoritative. A private persisted name origin distinguishes `automatic`,
+`manual`, and fork-`derived` names: any explicit rename or clear permanently
+wins over an in-flight generator. Removing the first Turn through rollback
+clears only its automatic name and makes the replacement first Turn eligible;
+manual and derived names are never rewritten.
+
 `ThreadSource` has Codex's exact string representation: the reserved values are
 `user`, `subagent`, and `memory_consolidation`; every other non-empty string is
 an app-owned feature label. For example, the Automation feature persists
@@ -304,6 +316,12 @@ reserved and auditable. The user-facing response surface has no Retry or
 Regenerate history action; a failed latest Turn can be revised through Edit.
 `Continue in new chat` is the only transcript action that calls `thread/fork`,
 creates a new top-level Thread, and records `forkedFromId`.
+Without an explicit request name, it derives a base from the source name or
+preview, removes one trailing numeric suffix only from a fork-derived name, and
+allocates the next suffix across the complete fork lineage under the host root
+lock. `Title` therefore
+produces `Title (1)`, and continuing from either the source or `Title (1)` next
+produces `Title (2)` rather than `Title (1) (1)`.
 
 Rollback and fork change only agent history and model context. Neither reverts
 document commands, Memory Node edits, file changes, shell effects, processes,
@@ -749,6 +767,21 @@ The product surface becomes:
 - item-specific presentation for messages, reasoning, commands, file changes,
   tool calls, subagent activity, searches, images, and compaction
 - debug/detail views that show the same Thread, Turn, and Item identifiers
+
+A terminal response preserves the established message action geometry but
+exposes one understandable history command: `Continue in new chat`. It forks at
+the inclusive `afterTurn` boundary. `beforeTurn` remains a host protocol
+boundary and is not exposed as a second user-facing fork action.
+Copy serializes the complete assistant side of the Turn, including full
+content-addressed tool output. Hover/focus on Details shows usage; click and the
+native response context menu open the same canonical execution details.
+
+The renderer retains the proven transcript mechanics over canonical DTOs:
+per-Thread scroll snapshots, measured virtualization above forty Turns,
+disclosure scroll anchoring, transient provider-retry status, tool-type success
+icons, local-file result affordances, and the existing composer/edit keyboard
+contracts. These are presentation behaviors, not compatibility projections or
+alternative execution entities.
 
 Normal transcript UI need not print a heading for every Turn, but any exposed
 label or detail uses "Thread", "Turn", "Item", and "Goal". Notifications navigate

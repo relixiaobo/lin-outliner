@@ -11,7 +11,7 @@ import {
   materializePathBackedAttachment,
   pruneAgentScratch,
   pruneOldAgentAttachments,
-} from '../../src/main/agentAttachmentMaterialization';
+} from '../../src/main/agent/capabilities/agentAttachmentMaterialization';
 
 describe('agent attachment materialization', () => {
   const roots: string[] = [];
@@ -101,7 +101,7 @@ describe('agent attachment materialization', () => {
     await expect(materializePathBackedAttachment(localRoot, scratchRoot, {
       name: 'outside-dir',
       path: sourceRoot,
-    })).rejects.toThrow('Directory attachments outside the Run workdir');
+    })).rejects.toThrow('Directory attachments outside the Thread working directory');
   });
 
   test('prunes expired staged attachments', async () => {

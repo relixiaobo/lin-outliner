@@ -193,11 +193,11 @@ const componentContracts = [
 // Specialized native controls that are implementation details, not new visual
 // languages. Keep this list small and name the reason for each exception.
 const nativeControlExceptions: Record<string, string> = {
-  'src/renderer/ui/agent/AgentComposer.tsx': 'Hidden file input plus editor-owned buttons inside the composer surface.',
-  'src/renderer/ui/agent/AgentComposerControls.tsx': 'Hidden file input delegated to the composer attachment flow.',
-  'src/renderer/ui/agent/AgentEditor.tsx': 'Native textarea used by the agent-profile editor draft model.',
-  'src/renderer/ui/agent/AgentMarkdown.tsx': 'Checkbox input inside rendered markdown/task-list content.',
-  'src/renderer/ui/agent/AgentMessageRow.tsx': 'Textarea used for in-place message editing.',
+  'src/renderer/agent/components/ThreadDock.tsx': 'Native buttons inside compact Thread action and empty-state surfaces.',
+  'src/renderer/agent/components/ThreadList.tsx': 'Native row button owns full-width Thread selection semantics.',
+  'src/renderer/agent/components/ThreadView.tsx': 'Native textarea and hidden file input own the persistent Thread composer and attachment fallback.',
+  'src/renderer/agent/components/UserInputRequest.tsx': 'Native radio, checkbox, text, and submit controls preserve form semantics.',
+  'src/renderer/agent/components/items/ThreadItemView.tsx': 'Native controls support Item references, details, and in-place editing.',
   'src/renderer/ui/outliner/CodeBlockRow.tsx': 'Textarea/select pair required for the code-block editor overlay.',
   'src/renderer/ui/outliner/DateValuePicker.tsx': 'Native date/time controls inside the date picker.',
   'src/renderer/ui/outliner/NodeDescriptionSurface.tsx': 'Textarea follows the outliner description editing model.',
@@ -205,11 +205,6 @@ const nativeControlExceptions: Record<string, string> = {
 };
 
 const rawColorExceptions: Record<string, { name: string; reason: string; sourcePattern: RegExp }> = {
-  'src/renderer/ui/agent/AgentComposer.tsx:#ffffff': {
-    name: 'Model-upload JPEG alpha matting may force a white canvas.',
-    reason: 'Transparent image pixels are composited against white before JPEG encoding for model upload.',
-    sourcePattern: /\bcontext\.fillStyle\s*=\s*['"]#ffffff['"]/,
-  },
   'src/renderer/ui/preview/urlPageTranslationGuest.ts:rgb(0 0 0 / 0.72)': {
     name: 'Remote video captions use fixed contrast colors.',
     reason: 'Caption CSS is injected into untrusted remote pages and cannot inherit the renderer token tree.',

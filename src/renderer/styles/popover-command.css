@@ -124,24 +124,6 @@
   line-height: var(--line-ui-xs-relaxed);
 }
 
-.agent-composer-file-name-middle {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-}
-
-.agent-composer-file-name-start {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-composer-file-name-end {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
 .popover-item-meta {
   overflow: hidden;
   color: var(--text-tertiary);

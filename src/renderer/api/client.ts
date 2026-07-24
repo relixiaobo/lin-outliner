@@ -7,27 +7,8 @@ import type {
   AgentProviderSettingsView,
   AgentImageGenerationSettingsInput,
   AgentRuntimeSettingsInput,
-  AgentConversation,
-  AgentCreateConversationOptions,
-  AgentConversationListMeta,
-  AgentDreamReadiness,
-  AgentRenderDreamRunEntity,
-  AgentRunListEntry,
-  IssueReadInput,
-  IssueReadResult,
-  IssueSearchInput,
-  IssueSearchResult,
-  TenonAgentToolResult,
-  AgentSessionReadInput,
-  AgentSessionReadResult,
-  AgentSessionTranscriptResult,
-  AgentSlashCommandView,
   AgentCapabilitySettingsPatchInput,
   AgentCapabilitySettingsView,
-  AgentDefinition,
-  AgentDefinitionView,
-  AgentAuthoringInput,
-  AgentStorageLocation,
   SkillDefinition,
   ManagedSkillCatalogView,
   ManagedSkillCommandResult,
@@ -56,15 +37,11 @@ import type {
 } from './types';
 import { replaceAllRichTextPatch } from './types';
 import type {
-  AgentDebugConversation,
-  AgentDebugRun,
-  AgentMessageAttachmentInput,
-  AgentRunActionResult,
-  AgentRunDetailPayload,
-  AgentRunTranscriptPayload,
-  AgentUserViewContext,
-  AskUserQuestionResult,
-} from '../../core/agentTypes';
+  AgentCoreMethod,
+  AgentCoreNotification,
+  AgentCoreRequestByMethod,
+  AgentCoreResponseByMethod,
+} from '../../core/agent/protocol';
 import type {
   PreviewListDirectoryResult,
   PreviewReadBytesResult,
@@ -108,6 +85,16 @@ function bridge<T>(fn: (lin: NonNullable<typeof window.lin>) => Promise<T>): Pro
 }
 
 export const api = {
+  agentCoreRequest: <Method extends AgentCoreMethod>(
+    method: Method,
+    input: AgentCoreRequestByMethod[Method],
+  ): Promise<AgentCoreResponseByMethod[Method]> => {
+    if (window.lin) return window.lin.agentCoreRequest(method, input);
+    return Promise.reject(new Error('Tenon desktop bridge is unavailable'));
+  },
+  onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => (
+    window.lin?.onAgentCoreNotification(listener) ?? (() => undefined)
+  ),
   initWorkspace: () => command<ProjectionSnapshot>('init_workspace'),
   recordNodeAccess: (nodeId: string) => bridge((lin) => lin.recordNodeAccess(nodeId)),
   getProjection: () => command<ProjectionSnapshot>('get_projection'),
@@ -347,101 +334,6 @@ export const api = {
   backlinks: (targetId: string) => command<Backlink[]>('backlinks', { targetId }),
   undo: () => command<CommandResult>('undo'),
   redo: () => command<CommandResult>('redo'),
-  agentRestoreLatestConversation: () => command<AgentConversation>('agent_restore_latest_conversation'),
-  agentRestoreConversation: (conversationId: string) => (
-    command<AgentConversation>('agent_restore_conversation', { conversationId })
-  ),
-  // Dedicated channel (not the agent-command union): durably mark a conversation
-  // read when the user genuinely opens/views it. No-ops without the desktop bridge.
-  agentMarkConversationRead: (conversationId: string): Promise<void> =>
-    window.lin?.agentMarkConversationRead(conversationId) ?? Promise.resolve(),
-  agentCreateConversation: (options: AgentCreateConversationOptions) =>
-    command<AgentConversation>('agent_create_conversation', { ...options }),
-  agentListConversations: () => command<AgentConversationListMeta[]>('agent_list_conversations'),
-  agentRenameConversation: (conversationId: string, title: string) =>
-    command<AgentConversationListMeta | null>('agent_rename_conversation', { conversationId, title }),
-  agentSetConversationIncludeInDreamData: (conversationId: string, includeInDreamData: boolean) =>
-    command<AgentConversationListMeta | null>('agent_set_conversation_include_in_dream_data', { conversationId, includeInDreamData }),
-  agentDeleteConversation: (conversationId: string) =>
-    command<void>('agent_delete_conversation', { conversationId }),
-  agentListRuns: (options: { limit?: number; perConversationLimit?: number } = {}) =>
-    command<AgentRunListEntry[]>('agent_list_runs', options),
-  agentIssueSearch: (input: IssueSearchInput = {}) =>
-    command<IssueSearchResult>('agent_issue_search', input as Record<string, unknown>),
-  agentIssueRead: (input: IssueReadInput) =>
-    command<IssueReadResult>('agent_issue_read', input as unknown as Record<string, unknown>),
-  agentIssueCompleteHumanReview: (issueId: string, expectedRevision: string) =>
-    command<TenonAgentToolResult>('agent_issue_complete_human_review', { issueId, expectedRevision }),
-  agentSessionRead: (input: AgentSessionReadInput) =>
-    command<AgentSessionReadResult | null>('agent_session_read', input as unknown as Record<string, unknown>),
-  agentSessionTranscript: (agentSessionId: string) =>
-    command<AgentSessionTranscriptResult | null>('agent_session_transcript', { agentSessionId }),
-  agentListDreamHistory: (options: { limit?: number } = {}) =>
-    command<AgentRenderDreamRunEntity[]>('agent_list_dream_history', options),
-  agentDreamReadiness: () =>
-    command<AgentDreamReadiness>('agent_dream_readiness', {}),
-  agentRunDreamNow: (options: { limit?: number; startDate?: string; endDate?: string; guidance?: string } = {}) =>
-    command<AgentRenderDreamRunEntity[]>('agent_run_dream_now', options),
-  agentDebugView: (conversationId: string) =>
-    command<AgentDebugConversation>('agent_debug_view', { conversationId }),
-  agentDebugRun: (conversationId: string, runId: string) =>
-    command<AgentDebugRun | null>('agent_debug_run', { conversationId, runId }),
-  agentPayloadText: (conversationId: string, payloadId: string) =>
-    command<string | null>('agent_payload_text', { conversationId, payloadId }),
-  agentRunDetail: (conversationId: string, runId: string) =>
-    command<AgentRunDetailPayload | null>('agent_run_detail', { conversationId, runId }),
-  agentRunTranscript: (conversationId: string, runId: string) =>
-    command<AgentRunTranscriptPayload | null>('agent_run_transcript', { conversationId, runId }),
-  agentRunConversationId: (runId: string) =>
-    command<string | null>('agent_run_conversation_id', { runId }),
-  agentRunStatus: (conversationId: string, runId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
-    command<AgentRunActionResult>('agent_run_status', { conversationId, runId, ...options }),
-  agentRunSteer: (conversationId: string, runId: string, message: string) =>
-    command<AgentRunActionResult>('agent_run_steer', { conversationId, runId, message }),
-  agentRunAmend: (conversationId: string, runId: string, changes: unknown) =>
-    command<AgentRunActionResult>('agent_run_amend', { conversationId, runId, changes }),
-  agentRunStop: (conversationId: string, runId: string) =>
-    command<AgentRunActionResult>('agent_run_stop', { conversationId, runId }),
-  agentSendMessage: (
-    conversationId: string,
-    message: string,
-    attachments: AgentMessageAttachmentInput[] = [],
-    userViewContext?: AgentUserViewContext | null,
-  ) => command<void>('agent_send_message', { conversationId, message, attachments, userViewContext }),
-  agentEditMessage: (conversationId: string, nodeId: string, message: string) =>
-    command<void>('agent_edit_message', { conversationId, nodeId, message }),
-  agentRegenerateMessage: (conversationId: string, nodeId: string) =>
-    command<void>('agent_regenerate_message', { conversationId, nodeId }),
-  agentRetryMessage: (conversationId: string, nodeId: string) =>
-    command<void>('agent_retry_message', { conversationId, nodeId }),
-  agentSwitchBranch: (conversationId: string, nodeId: string) =>
-    command<void>('agent_switch_branch', { conversationId, nodeId }),
-  agentQueueFollowUp: (
-    conversationId: string,
-    message: string,
-    userViewContext?: AgentUserViewContext | null,
-  ) => command<{ queued: boolean }>('agent_queue_follow_up', { conversationId, message, userViewContext }),
-  agentClearFollowUp: (conversationId: string) =>
-    command<void>('agent_clear_follow_up', { conversationId }),
-  agentSteerConversation: (conversationId: string, message: string) =>
-    command<{ queued: boolean }>('agent_steer_conversation', { conversationId, message }),
-  agentClearSteer: (conversationId: string) =>
-    command<void>('agent_clear_steer', { conversationId }),
-  agentResolveUserQuestion: (
-    conversationId: string,
-    requestId: string,
-    result: AskUserQuestionResult,
-  ) => command<{ resolved: boolean }>('agent_resolve_user_question', { conversationId, requestId, result }),
-  agentStopRun: (conversationId: string, runId: string) =>
-    command<{ stopped: boolean }>('agent_stop_run', { conversationId, runId }),
-  agentStopConversation: (conversationId: string) =>
-    command<void>('agent_stop_conversation', { conversationId }),
-  agentResetConversation: (conversationId: string) =>
-    command<void>('agent_reset_conversation', { conversationId }),
-  agentCloseConversation: (conversationId: string) =>
-    command<void>('agent_close_conversation', { conversationId }),
-  agentListSlashCommands: (conversationId: string) =>
-    command<AgentSlashCommandView[]>('agent_list_slash_commands', { conversationId }),
   agentGetProviderSettings: () =>
     command<AgentProviderSettingsView>('agent_get_provider_settings'),
   agentRefreshProviderModels: (providerId: string) =>
@@ -478,18 +370,18 @@ export const api = {
     command<void>('agent_oauth_respond', { requestId, value }),
   agentOAuthCancel: (providerId: string) =>
     command<void>('agent_oauth_cancel', { providerId }),
-  agentListAllDefinitions: (conversationId: string) =>
-    command<AgentDefinitionView[]>('agent_list_all_definitions', { conversationId }),
   agentTestProviderConnection: (options: { providerId: string; baseUrl?: string; apiKey?: string }) =>
     command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
-  agentListAllSkills: (conversationId: string) =>
-    command<SkillDefinition[]>('agent_list_all_skills', { conversationId }),
-  agentAcceptSkill: (conversationId: string, skillName: string, expectedHash: string) =>
-    command<SkillDefinition[]>('agent_accept_skill', { conversationId, skillName, expectedHash }),
-  agentRevokeSkillAcceptance: (conversationId: string, skillName: string) =>
-    command<SkillDefinition[]>('agent_revoke_skill_acceptance', { conversationId, skillName }),
-  agentUndoSkillAgentEdit: (conversationId: string, skillName: string) =>
-    command<SkillDefinition[]>('agent_undo_skill_agent_edit', { conversationId, skillName }),
+  agentListAllSkills: () =>
+    command<SkillDefinition[]>('agent_list_all_skills'),
+  agentListUserInvocableSkills: () =>
+    command<SkillDefinition[]>('agent_list_all_skills', { userInvocableOnly: true }),
+  agentAcceptSkill: (skillName: string, expectedHash: string) =>
+    command<SkillDefinition[]>('agent_accept_skill', { skillName, expectedHash }),
+  agentRevokeSkillAcceptance: (skillName: string) =>
+    command<SkillDefinition[]>('agent_revoke_skill_acceptance', { skillName }),
+  agentUndoSkillAgentEdit: (skillName: string) =>
+    command<SkillDefinition[]>('agent_undo_skill_agent_edit', { skillName }),
   agentManagedSkillCatalog: () =>
     managedCommand<ManagedSkillCatalogView>('agent_managed_skill_catalog'),
   agentManagedSkillDiscover: (input: { sourceUrl?: string; catalogId?: string }) =>
@@ -514,8 +406,4 @@ export const api = {
     managedCommand<ManagedSkillView>('agent_managed_skill_rollback', { skillId, expectedActiveHash, expectedPreviousHash }),
   agentManagedSkillUninstall: (skillId: string, expectedActiveHash: string) =>
     managedCommand<ManagedSkillView[]>('agent_managed_skill_uninstall', { skillId, expectedActiveHash }),
-  agentUpdateAgentDefinition: (conversationId: string, agentId: string, input: AgentAuthoringInput) =>
-    command<AgentDefinitionView[]>('agent_update_agent_definition', { conversationId, agentId, input }),
-  agentReloadAgentDefinitions: (conversationId: string) =>
-    command<AgentDefinitionView[]>('agent_reload_agent_definitions', { conversationId }),
 };

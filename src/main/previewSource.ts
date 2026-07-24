@@ -1,8 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import type { AssetService } from './assetService';
-import type { AgentRuntime } from './agentRuntime';
-import type { AgentPayloadRef } from '../core/agentEventLog';
 import { assetUrl } from '../core/assets';
 import type { PreviewCommand } from '../core/commands';
 import {
@@ -42,7 +40,6 @@ export interface PreviewCommandContext {
   // Relative generated-image references are model-authored shortcuts for files
   // created by the app, so they resolve only under the generated-image roots.
   agentGeneratedImageRoots: readonly string[];
-  agentRuntime: Pick<AgentRuntime, 'previewPayload' | 'previewPayloadBytes'>;
   assetService: Pick<AssetService, 'lookup' | 'pathFor'>;
   assetFileStreamUrl?: (filePath: string, mimeType: string) => Promise<string | null>;
   inferMimeType: (filePath: string) => string;
@@ -149,23 +146,6 @@ async function previewSourceForTarget(
     };
   }
 
-  if (target.kind === 'agent-payload') {
-    const payload = await context.agentRuntime.previewPayload(target.conversationId, target.payloadId, target.runId);
-    if (!payload) return null;
-    const name = previewLabel(target.label) ?? agentPayloadPreviewName(payload);
-    return {
-      kind: 'file',
-      sourceKind: 'agent-payload',
-      id: previewTargetKey(target),
-      target,
-      name,
-      ext: previewExtension(name, payload.mimeType),
-      mimeType: payload.mimeType,
-      entryKind: 'file',
-      sizeBytes: payload.byteLength,
-    };
-  }
-
   const url = normalizePreviewHttpUrl(target.url);
   if (!url) return null;
   return {
@@ -228,18 +208,6 @@ async function previewBytesBufferForTarget(
     return {
       bytes: await readFile(filePath),
       mimeType: metadata.mimeType,
-    };
-  }
-
-  if (target.kind === 'agent-payload') {
-    const payload = await context.agentRuntime.previewPayload(target.conversationId, target.payloadId, target.runId);
-    if (!payload) return { error: 'missing' };
-    if (payload.byteLength > limitBytes) return { error: 'too-large' };
-    const bytes = await context.agentRuntime.previewPayloadBytes(target.conversationId, target.payloadId, target.runId);
-    if (!bytes) return { error: 'missing' };
-    return {
-      bytes,
-      mimeType: payload.mimeType,
     };
   }
 
@@ -337,10 +305,4 @@ function extensionForMimeType(mimeType: string): string {
   if (normalized === 'application/pdf') return '.pdf';
   if (normalized === 'application/epub+zip') return '.epub';
   return '';
-}
-
-function agentPayloadPreviewName(payload: AgentPayloadRef): string {
-  const summary = payload.summary?.replace(/\s+/gu, ' ').trim();
-  if (summary) return summary;
-  return `${payload.id}${extensionForMimeType(payload.mimeType)}`;
 }

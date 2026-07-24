@@ -1,6 +1,6 @@
 import { app } from 'electron';
 
-import { createAgentTools, isToolEnvelope, type ToolEnvelope } from '../src/main/agentTools';
+import { createAgentTools, isToolEnvelope, type ToolEnvelope } from '../src/main/agent/capabilities/agentTools';
 
 interface ProbeResult {
   name: string;

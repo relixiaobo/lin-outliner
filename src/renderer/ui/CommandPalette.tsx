@@ -27,6 +27,7 @@ interface CommandPaletteProps {
   onEnsureToday: () => Promise<NodeId | null>;
   onFocus: (nodeId: NodeId | null) => void;
   onRoot: (nodeId: NodeId) => void;
+  restoreFocus: () => HTMLElement | null;
   run: CommandRunner;
 }
 
@@ -185,6 +186,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       label={t.commandPalette.dialogLabel}
       onBackdropMouseDown={props.onClose}
       onEscapeKeyDown={props.onClose}
+      restoreFocus={props.restoreFocus}
       surfaceClassName="command-palette"
     >
       <Input

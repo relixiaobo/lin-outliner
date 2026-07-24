@@ -1,5 +1,4 @@
 import {
-  formatChatSourceReferenceMarker,
   formatFileReferenceMarker,
   formatNodeReferenceMarker,
 } from './referenceMarkup';
@@ -81,17 +80,13 @@ export function richTextToMarkdownReferenceMarkup(
 
 function referenceDisplayFallback(target: ReferenceTarget): string {
   if (target.kind === 'node') return target.nodeId;
-  if (target.kind === 'local-file') return target.path.split('/').filter(Boolean).at(-1) ?? target.path;
-  return 'Referenced source';
+  return target.path.split('/').filter(Boolean).at(-1) ?? target.path;
 }
 
 function inlineRefMarker(ref: RichText['inlineRefs'][number]): string {
   const displayName = ref.displayName?.trim();
   if (ref.target.kind === 'node') {
     return formatNodeReferenceMarker(displayName || ref.target.nodeId, ref.target.nodeId);
-  }
-  if (ref.target.kind === 'chat-source') {
-    return formatChatSourceReferenceMarker(displayName || 'Referenced source', ref.target);
   }
   const path = ref.target.path;
   return formatFileReferenceMarker(displayName || referenceDisplayFallback(ref.target), path, ref.target.entryKind);

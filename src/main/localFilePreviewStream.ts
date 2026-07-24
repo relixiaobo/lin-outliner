@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { Readable } from 'node:stream';
-import { isPathInside } from './agentAttachmentMaterialization';
+import { isPathInside } from './agent/capabilities/agentAttachmentMaterialization';
 import { setBoundedMapEntry } from './boundedMap';
 import type { TrustedLocalFileReference } from './localFileReferenceSecurity';
 

@@ -3,7 +3,7 @@ import type {
   NodeProjection,
   ProjectionUpdate,
 } from '../core/types';
-import type { ProjectionIndex } from './agentNodeToolTypes';
+import type { ProjectionIndex } from './agent/capabilities/agentNodeToolTypes';
 
 function projectionViewFrom(projection: DocumentProjection): DocumentProjection {
   return {

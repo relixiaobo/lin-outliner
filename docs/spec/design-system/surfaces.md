@@ -29,7 +29,7 @@ workspace tree. Product Settings stays pinned at the bottom.
 
 - left: traffic lights + sidebar toggle;
 - center: each pane breadcrumb header and its close affordance;
-- right: agent conversation header when open plus the fixed agent toggle.
+- right: selected Thread header when open plus the fixed agent toggle.
 
 Everything shares the traffic-light centreline. Header controls follow
 [patterns.md → Header Chrome](./patterns.md#header-chrome): fixed position,
@@ -44,7 +44,7 @@ only the rail slides away.
 **Agent rail shell.** The agent rail floats on the right. Open makes it the
 rightmost column and squeezes the workspace; closed hides it. Default width is
 `330px`, range `300px–520px`. Its header is a compact title trigger: DM avatar +
-name, or Channel hash + title + member count. It carries no static brand mark.
+name or selected Thread title. It carries no static brand mark.
 
 **Navigation.** There are no main-window back/forward buttons. Page history is
 owned by pane breadcrumbs and keyboard shortcuts; date steppers inside outliners
@@ -228,75 +228,37 @@ The agent dock is a right glass rail subordinate to the outliner workspace. It i
 toggled by the fixed top-right control; open squeezes the layout, closed hides the
 rail. Motion follows [foundations.md → Motion](./foundations.md#motion).
 
-**Header and conversation menu.** A DM header shows avatar + agent name. A Channel
-header shows hash icon + Channel name + member count including the user. No header
-subtitle, decorative status dot, model line, member stack, or DM-to-Channel action
-appears in the title row. The title trigger follows the Header Chrome pattern.
+**Header and Thread list.** The header shows the selected Thread title and compact
+actions. It carries no provider line, decorative status dot, or member chrome.
+The Thread list is scan-first and single-line. Child Threads are visibly nested;
+ordinary rows expose a compact actions menu for fork, rename, and delete.
 
-The conversation menu is a single Channels list with one section-header
-`New Channel` affordance rather than a fake row. Rows are scan-first and
-single-line; Channels show hash + name, active rows suppress unread badges, and
-ordinary Channel rows show trailing edit/delete icon actions for inline rename
-and confirmed deletion. Protected default Channels do not show rename or delete
-controls.
+Creating a Thread is immediate and focuses the composer. Rename uses the shared
+dialog and delete uses the shared confirmation surface. The selected row is a
+neutral functional state and does not use accent colour.
 
-**Config and inline edits.** Agent authoring uses a dedicated native child window
-(`?surface=agent-config`) opened through the main process. Channel creation is
-inline-lightweight: the Channels `+` creates an untitled Channel immediately and
-focuses the composer. Ordinary Channel rows expose a trailing edit icon for inline
-rename and a trailing trash icon for confirmed deletion; protected default
-Channels do not show rename or delete controls. Channel settings surfaces, when
-opened directly, use the settings sheet/inset-list language for remaining
-per-Channel settings such as Dream-data inclusion. Agent and Channel config
-windows render their header, field structure, and footer actions before their
-agent/conversation IPC data resolves; the body carries `aria-busy` and disables
-mutable controls instead of replacing the child window with a generic loading
-state.
-
-**Transcript.** Agent UI uses Tenon foundations: neutral text, translucent chrome,
+**History.** Agent UI uses Tenon foundations: neutral text, translucent chrome,
 opaque content surfaces, sparse semantic colour, low elevation, and compact
 controls. Assistant prose, user bubbles, and composer input use
-`--font-content / --line-content`. Empty agent conversations stay visually blank
+`--font-content / --line-content`. Empty Threads stay visually blank
 when a provider is ready; the provider-missing state shows one quiet settings CTA.
-Long user messages collapse after roughly five content lines while copy/edit still
-operate on the full message. Submitting a local user message creates a one-shot
-scroll target for that newly rendered user row, even when the reader was inspecting
-older history. Later assistant streaming does not keep taking the scroll position;
-ordinary near-bottom following resumes only after the user scrolls again.
-Root Issue completion and failure appear as a compact, unboxed transcript status
-row between turns. It spans the content column, aligns left, and reads title-first
-(`"Compile the report" completed`, or the localized equivalent). It has no leading
-concept or status icon; the neutral text carries the result, and an inline
-chevron uses the same size and placement as adjacent process disclosures. The row
-opens canonical Issue detail directly over the current chat instead of routing
-through the Work list. Closing the detail returns to the same conversation and
-scroll position. The row remains present when the Agent chooses to handle the
-notification without a visible reply.
+Submitting a user message scrolls that row into view once. Later streaming does
+not keep stealing scroll position from a reader inspecting earlier history.
+Command, file, tool, reasoning, collaboration, and Goal facts render from their
+canonical Items without nested decorative cards.
 
-**Identity and attribution.** Agent identity is a circular initial chip
-(`AgentIdentityAvatar`) with deterministic hue from the stable principal/agent id.
-It is identity only: no functional state colour, no square hover fill, no
-generated image dependency. Channel assistant rows show the speaking agent from
-recorded message actor/member metadata; attribution is avatar + speaker name above
-a full-width reply body aligned to the avatar's left edge.
-
-**Activity and process.** In-flight work appears as the Agent Conversation Flow in
-[patterns.md](./patterns.md#agent-conversation-flow): an in-flow presence row above
-the composer, shared overlay primitives for the activity menu, stable measured
-status/action slots, and unboxed dense stop controls. Process summaries, thinking
-rows, and tool summaries use `--font-meta / --line-meta`. Process/tool disclosures
-use the shared measured disclosure/status slot.
+**Activity and process.** In-flight work follows the Agent Thread Flow in
+[patterns.md](./patterns.md#agent-thread-flow): stable status/action slots and
+unboxed dense controls. Tool and reasoning metadata uses
+`--font-meta / --line-meta`.
 
 **Composer.** The composer is a flush full-bleed input region at the rail bottom,
 not an inset card. It uses neutral fill (`--fill-1`, focus/drag `--fill-2`), top
 corners at the rail radius, and text inset to the shared agent content column. Its
 toolbar is visually unified with the textarea; attach/send controls are capsules.
-The footer model/effort chip is a profile shortcut only, never provider settings,
-conversation identity, or a per-message override. Capability and user-question
-states render as in-composer blocking cards above the editor/toolbar, not as
-floating overlays. Their primary/submit action uses the neutral filled-default
-idiom; secondary, deny, and discussion actions stay neutral filled. The details
-disclosure stays local to the card.
+Structured user-input requests render above the editor as bounded in-dock forms,
+not permission prompts or floating overlays. The submit action uses the neutral
+filled-default idiom; secondary actions remain neutral.
 
 ### Settings Window
 
@@ -315,7 +277,7 @@ inside one neutral `--radius-pill` capsule with a center divider. The content
 scrollport starts below fixed chrome via margin, not scroll padding.
 
 **Category rail and content.** The left rail lists categories: General,
-Providers, Security, Skills, Agent Profiles. The content pane is a flat opaque
+Providers, Security, Skills, Configuration Profiles. The content pane is a flat opaque
 Preferences base with constrained grouped content (`--settings-content-max-width`,
 920px). There is no permanent detail pane; per-provider config opens a native
 child window. Categories, not providers, are top-level rail rows. The rail,
@@ -350,7 +312,7 @@ trailing More button is icon-only and unboxed at rest.
 (`?surface=provider-config`) and owns connection only. It has no traffic lights,
 no in-renderer backdrop, and closes through Cancel / Save / Escape. One inset card
 holds credential mode, key/base URL/provider id as needed, and async
-non-blocking validation. Model and effort belong to the agent profile, not the
+non-blocking validation. Model and effort belong to the Thread Configuration Profile, not the
 provider connection. Saved user-pasted keys stay masked until explicit show/copy;
 externally managed keys such as CC Switch registry keys are never shown or copied.
 Raw-key show/copy is available only inside the provider config child window, and

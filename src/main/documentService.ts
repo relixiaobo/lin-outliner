@@ -5,6 +5,17 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DocumentCommand } from '../core/commands';
 import { Core, type CoreTransactionMetadata, type OperationHistoryQuery } from '../core/core';
+import {
+  DocumentSystemContractError,
+  documentCommandMutatesProtectedSystemTagDefinition,
+  validateHostDocumentCommandInvocation,
+  type DocumentSystemHost,
+  type DocumentSystemReceipt,
+  type DocumentSystemTagDefinition,
+  type DocumentSystemTransaction,
+  type DocumentSystemTransactionContext,
+  type HostDocumentCommandArguments,
+} from '../core/documentSystem';
 import { CoreError } from '../core/errors';
 import {
   buildTextSearchIndex,
@@ -41,10 +52,11 @@ import type {
   TagConfigPatch,
   ViewMode,
 } from '../core/types';
+import type { AgentMutationCausation } from '../core/agent/protocol';
 import type { CreateCaptureInput } from '../core/launcher/sources';
-import { parseLinOutline } from './agentOutlineParser';
-import { indexProjection } from './agentNodeToolProjection';
-import { resolveSearchSpecFromOutlineNode } from './agentNodeToolSearch';
+import { parseLinOutline } from './agent/capabilities/agentOutlineParser';
+import { indexProjection } from './agent/capabilities/agentNodeToolProjection';
+import { resolveSearchSpecFromOutlineNode } from './agent/capabilities/agentNodeToolSearch';
 import { DocumentReadModel } from './documentReadModel';
 import { atomicWriteFile } from './jsonFileStore';
 import { loadOrCreateInstallationId } from './installationIdentity';
@@ -59,6 +71,7 @@ export interface DocumentMutationMeta {
   command?: string;
   tool?: string;
   summary?: string;
+  causation?: AgentMutationCausation;
 }
 
 interface TextEditGroup {
@@ -75,7 +88,7 @@ export interface ProjectionChangedDelivery {
 
 type ProjectionChangedListener = (delivery: ProjectionChangedDelivery) => void;
 
-export class DocumentService {
+export class DocumentService implements DocumentSystemHost {
   private core = Core.new();
   private mutationQueue = Promise.resolve();
   private projectionChangedListeners = new Set<ProjectionChangedListener>();
@@ -262,21 +275,51 @@ export class DocumentService {
     return task;
   }
 
-  async transaction<T>(meta: DocumentMutationMeta, fn: () => Promise<T>) {
+  async transaction<T>(
+    context: DocumentSystemTransactionContext,
+    operation: (transaction: DocumentSystemTransaction) => Promise<T>,
+  ): Promise<T>;
+  async transaction<T>(meta: DocumentMutationMeta, operation: () => Promise<T>): Promise<T>;
+  async transaction<T>(
+    contextOrMeta: DocumentSystemTransactionContext | DocumentMutationMeta,
+    operation: ((transaction: DocumentSystemTransaction) => Promise<T>) | (() => Promise<T>),
+  ): Promise<T> {
+    const systemContext = isDocumentSystemTransactionContext(contextOrMeta) ? contextOrMeta : null;
+    const meta: DocumentMutationMeta = systemContext
+      ? {
+          origin: 'system',
+          operationId: systemContext.operationId,
+          command: `system:${systemContext.namespace}`,
+          summary: `Applied ${systemContext.namespace} document transaction.`,
+          causation: systemContext.causation,
+        }
+      : contextOrMeta;
     const task = this.mutationQueue.then(async () => {
       await this.flushTextEditGroupNow();
       const revisionBefore = this.core.revision();
+      const persistenceRevisionBefore = this.core.persistenceRevision();
+      const trustedTransaction = systemContext ? this.createDocumentSystemTransaction(systemContext) : null;
       const result = await this.core.transaction(meta.origin ?? 'user', async () =>
-        this.transactionContext.run(true, fn), transactionMetadata(meta));
+        this.transactionContext.run(true, () => trustedTransaction
+          ? (operation as (transaction: DocumentSystemTransaction) => Promise<T>)(trustedTransaction)
+          : (operation as () => Promise<T>)()), transactionMetadata(meta));
+      if (this.core.persistenceRevision() !== persistenceRevisionBefore) this.scheduleCoreSave();
       if (this.core.revision() !== revisionBefore) {
         this.refreshTextSearchIndexFromCoreDelta();
-        this.scheduleCoreSave();
         this.emitProjectionChanged(meta.origin ?? 'user', meta.sourceWebContentsId);
       }
       return result;
     });
     this.mutationQueue = task.then(() => undefined, () => undefined);
     return task;
+  }
+
+  async readDocumentSystemReceipt(namespace: string, scopeId: string): Promise<DocumentSystemReceipt | null> {
+    return this.mutationQueue.then(() => this.core.readDocumentSystemReceipt(namespace, scopeId));
+  }
+
+  async readDocumentSystemTagDefinition(tagId: string): Promise<DocumentSystemTagDefinition | null> {
+    return this.mutationQueue.then(() => this.core.readDocumentSystemTagDefinition(tagId));
   }
 
   async createNodesFromTreeYielding(
@@ -465,6 +508,13 @@ export class DocumentService {
   }
 
   private runMutation(command: DocumentCommand, args: Record<string, unknown>, meta: DocumentMutationMeta) {
+    if (documentCommandMutatesProtectedSystemTagDefinition(
+      command,
+      args,
+      this.core.protectedDocumentSystemTagIds(),
+    )) {
+      throw new DocumentSystemContractError('document command targets a protected system tag definition');
+    }
     switch (command) {
       case 'create_node':
         return this.core.createNode(
@@ -737,6 +787,34 @@ export class DocumentService {
       default:
         throw new Error(`Unknown command: ${command}`);
     }
+  }
+
+  private createDocumentSystemTransaction(
+    context: DocumentSystemTransactionContext,
+  ): DocumentSystemTransaction {
+    return Object.freeze({
+      executeDocumentCommand: async (command: DocumentCommand, args: Readonly<Record<string, unknown>>) =>
+        this.runMutation(command, { ...args }, {
+          origin: 'system',
+          operationId: context.operationId,
+          command,
+          summary: `Applied ${context.namespace} document mutation.`,
+        }),
+      executeHostCommand: async <Command extends keyof HostDocumentCommandArguments>(
+        command: Command,
+        args: HostDocumentCommandArguments[Command],
+      ) => {
+        const invocation = validateHostDocumentCommandInvocation(context, command, args);
+        switch (invocation.command) {
+          case 'put_document_system_receipt':
+            this.core.putDocumentSystemReceipt(invocation.args.receipt);
+            return;
+          case 'ensure_document_system_tag_definition':
+            this.core.ensureDocumentSystemTagDefinition(invocation.args.definition);
+            return;
+        }
+      },
+    });
   }
 
   private searchNodes(query: string) {
@@ -1044,6 +1122,12 @@ function isNotFound(error: unknown) {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }
 
+function isDocumentSystemTransactionContext(
+  value: DocumentSystemTransactionContext | DocumentMutationMeta,
+): value is DocumentSystemTransactionContext {
+  return 'namespace' in value;
+}
+
 function nullableString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   return String(value);
@@ -1082,6 +1166,7 @@ function transactionMetadata(meta: DocumentMutationMeta): CoreTransactionMetadat
     command: meta.command,
     tool: meta.tool,
     summary: meta.summary,
+    causation: meta.causation,
   };
 }
 

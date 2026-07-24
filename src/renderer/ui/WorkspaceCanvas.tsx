@@ -3,13 +3,13 @@ import type { NodeId } from '../api/types';
 import type { DocumentIndex, UiState } from '../state/document';
 import { NodePanel } from './NodePanel';
 import { WorkspacePanelSurface } from './WorkspacePanelSurface';
-import { AgentDebugPanel } from './agent/AgentDebugPanel';
 import { FilePreviewPanel } from './preview/FilePreviewPanel';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared';
 import type { FilePreviewNavigationOptions, WorkspacePanelState } from './workspaceLayoutTypes';
 import type { PreviewTarget } from '../../core/preview';
 import { useT } from '../i18n/I18nProvider';
+import { ThreadRunDetailsPanel } from '../agent/components/ThreadRunDetailsPanel';
 
 interface WorkspaceCanvasProps {
   activePanelId: string | null;
@@ -114,14 +114,12 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 trigger={props.trigger}
                 ui={props.ui}
               />
-            ) : panel.type === 'agent-debug' ? (
-              <AgentDebugPanel
-                canGoBack={false}
-                conversationId={panel.conversationId}
-                onBack={() => undefined}
+            ) : panel.type === 'thread-run-details' ? (
+              <ThreadRunDetailsPanel
                 onClose={() => props.onClosePanel(panel.id)}
-                runId={panel.runId}
                 showClose={activePanels.length > 1}
+                threadId={panel.threadId}
+                turnId={panel.turnId}
               />
             ) : (
               null

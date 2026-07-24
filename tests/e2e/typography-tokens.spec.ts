@@ -2,23 +2,7 @@ import { expect, test } from '@playwright/test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import * as ts from 'typescript';
-import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
-import { emitAgentProjection, ids, openMockedApp } from './outlinerMock';
-
-const usage = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    total: 0,
-  },
-};
+import { ids, openMockedApp } from './outlinerMock';
 
 async function cssTextMetrics(page: import('@playwright/test').Page, selector: string) {
   return page.locator(selector).first().evaluate((element) => {
@@ -57,13 +41,15 @@ const colorSchemeDeclarationFiles = new Map([
 ]);
 const reducedMotionRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central reduced-motion baseline.'],
+  ['src/renderer/styles/thread-run-details.css', 'Run Details disclosures and usage overlay become immediate.'],
   ['src/renderer/styles/feedback-state.css', 'Loading spinner becomes a static loading state.'],
-  ['src/renderer/styles/agent-message.css', 'Working dots become a static working state.'],
   ['src/renderer/styles/outliner.css', 'Command run spinner becomes a static processing state.'],
   ['src/renderer/styles/file-preview.css', 'URL translation header spinner becomes a static loading state.'],
+  ['src/renderer/styles/thread.css', 'Thread action affordances become immediately visible.'],
 ]);
 const reducedTransparencyRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central material fallback token layer.'],
+  ['src/renderer/styles/thread-run-details.css', 'Run Details usage material becomes opaque.'],
   ['src/renderer/styles/launcher.css', 'System launcher transparent glass collapses to an opaque elevated surface.'],
 ]);
 const contrastRuleFiles = new Map([
@@ -87,14 +73,13 @@ const stateLayoutDeclarationAllowlist = new Map([
   ['src/renderer/styles/outliner.css|.row.selected:not(.drop-before):not(.drop-after)::before|left', 'Absolute selection overlay insets within the existing row box.'],
 ]);
 const materialSurfaceSelectors = new Map([
-  ['src/renderer/styles/agent-composer.css|.agent-composer-file-preview-popover', 'Inline file preview popover.'],
-  ['src/renderer/styles/agent-composer.css|.agent-composer-model-popover', 'Composer model/effort overlay.'],
-  ['src/renderer/styles/agent-debug.css|.agent-debug-cost::after', 'Debug cost tooltip.'],
-  ['src/renderer/styles/agent-debug.css|.agent-debug-usage-popover', 'Debug usage tooltip.'],
   ['src/renderer/styles/agent-dock.css|:root[data-window-material] .agent-dock', 'Agent rail chrome material.'],
-  ['src/renderer/styles/agent-dock.css|.agent-conversation-menu', 'Agent conversation section menu.'],
-  ['src/renderer/styles/agent-message.css|.agent-message-details-popover', 'Agent message details popover.'],
-  ['src/renderer/styles/agent-message.css|.agent-message-usage-hover-card', 'Agent message usage tooltip.'],
+  ['src/renderer/styles/thread.css|.thread-action-menu', 'Thread action menu.'],
+  ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
+  ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
+  ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
+  ['src/renderer/styles/thread.css|.thread-response-usage-card', 'Thread response usage overlay.'],
+  ['src/renderer/styles/thread-run-details.css|.thread-run-details-usage-popover', 'Run Details usage overlay.'],
   ['src/renderer/styles/code.css|.agent-code-header > span', 'Floating code-block language label chrome.'],
   ['src/renderer/styles/code.css|.agent-code-copy, .code-block-copy', 'Floating code-block copy chrome.'],
   ['src/renderer/styles/code.css|.code-block-language', 'Floating code-block language trigger.'],
@@ -117,14 +102,12 @@ const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/sidebar.css|:root[data-window-material] .sidebar-dock', 'Sidebar rail chrome material.'],
 ]);
 const borderlessOverlaySurfaceSelectors = new Map([
-  ['src/renderer/styles/agent-composer.css|.agent-composer-file-preview-popover', 'Inline file preview popover.'],
-  ['src/renderer/styles/agent-composer.css|.agent-composer-model-popover', 'Composer model/effort overlay.'],
-  ['src/renderer/styles/agent-debug.css|.agent-debug-cost::after', 'Debug cost tooltip.'],
-  ['src/renderer/styles/agent-debug.css|.agent-debug-usage-popover', 'Debug usage tooltip.'],
-  ['src/renderer/styles/agent-dock.css|.agent-conversation-menu', 'Agent conversation section menu.'],
-  ['src/renderer/styles/agent-message.css|.agent-message-details-popover', 'Agent message details popover.'],
-  ['src/renderer/styles/agent-message.css|.agent-message-usage-hover-card', 'Agent message usage tooltip.'],
-  ['src/renderer/styles/agent-run-detail.css|.agent-run-detail-drawer', 'Agent run detail level-2 drawer.'],
+  ['src/renderer/styles/thread.css|.thread-action-menu', 'Thread action menu.'],
+  ['src/renderer/styles/thread.css|.thread-composer-file-preview-popover', 'Thread composer file preview popover.'],
+  ['src/renderer/styles/thread.css|.thread-composer-model-popover', 'Thread composer model menu.'],
+  ['src/renderer/styles/thread.css|.thread-list', 'Thread history popover.'],
+  ['src/renderer/styles/thread.css|.thread-response-usage-card', 'Thread response usage overlay.'],
+  ['src/renderer/styles/thread-run-details.css|.thread-run-details-usage-popover', 'Run Details usage overlay.'],
   ['src/renderer/styles/code.css|.code-block-language-menu', 'Code-block language menu.'],
   ['src/renderer/styles/confirm-dialog.css|.confirm-dialog', 'Confirm dialog level-2 surface.'],
   ['src/renderer/styles/file-preview.css|.document-outline-popover', 'Document outline popover.'],
@@ -149,7 +132,6 @@ const previewHudBackdropSelectors = new Map([
   ['src/renderer/styles/file-preview.css|.file-preview-pill-more', 'Preview HUD more action over arbitrary document/media pixels.'],
 ]);
 const runtimeTokenInputs = new Map([
-  ['src/renderer/styles/agent-message.css|--segment-size', 'Usage hover bars receive per-segment widths from the message usage renderer.'],
   ['src/renderer/styles/code.css|--shiki-light', 'Generated Shiki token colour stream for light code themes.'],
   ['src/renderer/styles/code.css|--shiki-dark', 'Generated Shiki token colour stream for dark code themes.'],
   ['src/renderer/styles/file-preview.css|--file-preview-resized-height', 'File preview resizing writes the live split-pane height.'],
@@ -158,6 +140,8 @@ const runtimeTokenInputs = new Map([
   ['src/renderer/styles/outliner.css|--flat-indent-guide-height', 'Flat indent guides receive measured geometry from the outliner runtime.'],
   ['src/renderer/styles/outliner.css|--table-columns', 'Table owners provide one live column template to aligned header and body rows.'],
   ['src/renderer/styles/outliner.css|--table-min-width', 'Table owners provide the live horizontal extent derived from configured column widths.'],
+  ['src/renderer/styles/thread.css|--segment-size', 'Thread usage segments receive their live proportional width from response usage.'],
+  ['src/renderer/styles/thread.css|--thread-depth', 'Thread rows receive their live lineage depth from the Thread list.'],
 ]);
 const layoutTransitionProperties = new Set([
   'all',
@@ -1121,7 +1105,7 @@ test.describe('typography tokens', () => {
 
   test('keeps level-2 focused overlays on the opaque elevated tier', () => {
     const violations = collectCssRuleDeclarationViolations(
-      /(?:^|,\s*)(?:\.command-palette|\.confirm-dialog|\.agent-run-detail-drawer)(?:$|[\s,:])/,
+      /(?:^|,\s*)(?:\.command-palette|\.confirm-dialog)(?:$|[\s,:])/,
       /\b(background(?:-color)?|(?:-webkit-)?backdrop-filter|box-shadow):\s*([^;]+);/g,
       (value, property) => {
         if (property === 'background' || property === 'background-color') return value === 'var(--bg-elevated)';
@@ -1396,8 +1380,6 @@ test.describe('typography tokens', () => {
       'accent-brand',
       'agent-collapsed-width',
       'agent-side-panel-shadow',
-      'agent-composer-radius',
-      'agent-composer-corner-radius',
       'danger',
       'outline-panel-ideal-width',
       'status-info',
@@ -1494,65 +1476,27 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
-  test('keeps primary reading text aligned across outliner and agent surfaces', async ({ page }) => {
+  test('keeps primary reading text aligned across outliner and Thread surfaces', async ({ page }) => {
     await openMockedApp(page);
-
-    const user = {
-      role: 'user',
-      content: [{ type: 'text', text: 'Summarize current outline.' }],
-      timestamp: 1_800_000_000_200,
-    };
-    const assistant = {
-      role: 'assistant',
-      api: 'responses',
-      provider: 'openai',
-      model: 'gpt-5.4',
-      usage,
-      stopReason: 'stop',
-      timestamp: 1_800_000_000_201,
-      content: [
-        { type: 'thinking', thinking: 'Identify relevant outline nodes.' },
-        { type: 'text', text: 'Current outline focuses on design-system work.' },
-      ],
-    };
-
-    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
-      conversationTitle: 'Agent System',
-      systemPrompt: '',
-      model: { id: 'gpt-5.4', provider: 'openai' },
-      thinkingLevel: 'medium',
-      messages: [user, assistant],
-      conversation: [
-        { nodeId: 'user-node', message: user, branches: null },
-        { nodeId: 'assistant-node', message: assistant, branches: null, runDurationMs: 3_000 },
-      ],
-      streamingMessage: null,
-      isStreaming: false,
-      pendingToolCallIds: [],
-      errorMessage: null,
-    });
-
+    await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Summarize current outline.');
+    await page.getByRole('button', { name: 'Send' }).click();
     await expect(page.getByText('Current outline focuses on design-system work.')).toBeVisible();
 
     await expect(cssTextMetrics(page, `[data-node-id="${ids.alpha}"] .row-editor`)).resolves.toEqual({
       fontSize: '16px',
       lineHeight: '26px',
     });
-    await expect(cssTextMetrics(page, '.agent-assistant-content')).resolves.toEqual({
+    await expect(cssTextMetrics(page, '.thread-agent-message')).resolves.toEqual({
       fontSize: '16px',
       lineHeight: '26px',
     });
-    await expect(cssTextMetrics(page, '.agent-user-bubble')).resolves.toEqual({
+    await expect(cssTextMetrics(page, '.thread-user-message')).resolves.toEqual({
       fontSize: '16px',
       lineHeight: '26px',
     });
-    await expect(cssTextMetrics(page, '.agent-composer-editor')).resolves.toEqual({
+    await expect(cssTextMetrics(page, '.thread-composer-editor .ProseMirror')).resolves.toEqual({
       fontSize: '16px',
       lineHeight: '26px',
-    });
-    await expect(cssTextMetrics(page, '.agent-work-divider')).resolves.toEqual({
-      fontSize: '12px',
-      lineHeight: '18px',
     });
     await expect(cssTextMetrics(page, '.panel-title-editor .row-editor')).resolves.toEqual({
       fontSize: '24px',

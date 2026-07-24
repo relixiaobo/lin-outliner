@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { AGENT_GENERATED_IMAGE_DIR } from '../../src/main/agentAttachmentMaterialization';
+import { AGENT_GENERATED_IMAGE_DIR } from '../../src/main/agent/capabilities/agentAttachmentMaterialization';
 import { resolveGeneratedImageReadPath } from '../../src/main/generatedImagePaths';
 
 describe('generated image paths', () => {

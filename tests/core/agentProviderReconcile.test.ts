@@ -47,7 +47,7 @@ const {
   ensureProviderConfig,
   setProviderApiKey,
   persistOAuthCredential,
-} = await import('../../src/main/agentSettings');
+} = await import('../../src/main/agent/capabilities/agentSettings');
 
 const providerPath = () => path.join(currentUserData, 'agent-providers.json');
 const secretPath = () => path.join(currentUserData, 'agent-secrets.json');

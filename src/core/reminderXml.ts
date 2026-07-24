@@ -4,8 +4,8 @@
 // Apostrophes are intentionally left untouched — they are common in prose and need no
 // escaping inside double-quoted attributes or element text.
 //
-// Lives in core (not main) so both the renderer-agnostic POV flatten (`agentChannel.ts`)
-// and the main-process reminder builders escape display names the same way.
+// Lives in core (not main) so renderer-agnostic context builders and main-process
+// reminder builders escape display names the same way.
 export function escapeXml(value: string): string {
   return value
     .replace(/&/g, '&amp;')

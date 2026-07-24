@@ -111,7 +111,7 @@ interface LooseBreadcrumbSegment {
 }
 
 /**
- * The unified file surface. A loose source (agent payload / trusted local file /
+ * The unified file surface. A loose source (trusted local file /
  * url) and an ingested file node share this same mounted frame: read-only filename,
  * breadcrumb, preview hero, and optional children outline.
  */
@@ -672,7 +672,6 @@ function looseBreadcrumbFor(
     ? state.source.displayPath
     : target.kind === 'local-file' ? target.path : null;
   if (path) return collapsePathSegments(path);
-  if (target.kind === 'agent-payload') return [{ key: 'agent-payload', label: labels.sourceAgentPayload }];
   if (target.kind === 'url') {
     const title = state.status === 'ready' && state.source.kind === 'url'
       ? state.source.title
@@ -886,7 +885,6 @@ function translationShortcutLabel(): string {
 
 function previewTargetFallbackKey(target: PreviewTarget): string {
   if (target.kind === 'asset') return target.assetId;
-  if (target.kind === 'agent-payload') return target.payloadId;
   if (target.kind === 'local-file') return target.path;
   return target.url;
 }

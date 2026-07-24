@@ -13,21 +13,18 @@ The main process owns the reporting choke point:
 reportError({ domain, severity, code?, message, context?, error? })
 ```
 
-`domain` identifies the subsystem (`dream`, `command`, `agent-tool`, `provider`,
+`domain` identifies the subsystem (`memory`, `command`, `agent-tool`, `provider`,
 `persistence`, `render`, `runtime`, `uncaught`, or a later string). `severity` is
 `warn`, `error`, or `fatal`. `context` is small structured metadata only: ids,
 counts, status codes, operation names, timestamps, and other allow-listed scalar
-fields. Conversation/document content, prompts, credentials, free-form text, and
+fields. Thread/document content, prompts, credentials, free-form text, and
 raw payloads are not valid diagnostic context.
 
-Foreground agent errors still emit the existing conversation `type: 'error'`
-event so the user sees the failure in place. The same `emitError` path also
-reports a diagnostic record. Unclassified foreground failures use the `runtime`
-domain; callers pass a narrower domain such as `command`, `provider`, or
-`persistence` when the failing boundary is known. Background paths that previously
-only warned in the terminal, including Dream extraction, Issue scheduler
-failures, child-run ledger append failures, memory reminder failures, and agent
-storage sentinel/probe failures, report through the same diagnostic path.
+Foreground agent errors complete the active Turn and remain visible in Thread
+history. The same boundary also reports a diagnostic record. Unclassified
+foreground failures use the `runtime` domain; callers pass a narrower domain
+such as `command`, `provider`, `memory`, or `persistence` when known. Background
+extension reconciliation and storage failures report through the same path.
 
 ## Safety Nets
 

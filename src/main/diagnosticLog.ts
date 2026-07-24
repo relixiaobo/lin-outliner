@@ -28,12 +28,10 @@ const MAX_CONTEXT_STRING_CHARS = 240;
 const MAX_CONTEXT_ARRAY_ITEMS = 20;
 
 const ALLOWED_CONTEXT_KEYS = new Set([
-  'agentId',
   'attempt',
   'backoffMs',
   'code',
   'column',
-  'conversationId',
   'count',
   'currentVersion',
   'delayMs',
@@ -50,14 +48,15 @@ const ALLOWED_CONTEXT_KEYS = new Set([
   'modelId',
   'nodeId',
   'operation',
-  'principalKey',
   'providerId',
   'rootKind',
-  'runId',
   'source',
   'stackHash',
   'status',
   'statusCode',
+  'threadId',
+  'turnId',
+  'itemId',
 ]);
 
 export interface DiagnosticLogCounters {

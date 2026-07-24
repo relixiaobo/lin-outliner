@@ -42,13 +42,13 @@ export interface WorkspaceContentPanelState extends WorkspacePanelBase {
   forwardStack: PanelView[];
 }
 
-export interface AgentDebugPanelState extends WorkspacePanelBase {
-  type: 'agent-debug';
-  conversationId: string | null;
-  runId: string | null;
+export interface ThreadRunDetailsPanelState extends WorkspacePanelBase {
+  type: 'thread-run-details';
+  threadId: string;
+  turnId: string;
 }
 
-export type WorkspacePanelState = WorkspaceContentPanelState | AgentDebugPanelState;
+export type WorkspacePanelState = WorkspaceContentPanelState | ThreadRunDetailsPanelState;
 
 export interface WorkspaceLayout {
   activePanelId: string;

@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   AGENT_GENERATED_IMAGE_DIR,
   isPathInside,
-} from './agentAttachmentMaterialization';
+} from './agent/capabilities/agentAttachmentMaterialization';
 
 export interface GeneratedImageReadWorkspace {
   scratchRoot: string;

@@ -34,32 +34,6 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(keys).toContain('skill');
   });
 
-  test('has no legacy aliases or removed Issue and AgentSession tools', () => {
-    const removedNames = [
-      'issue_search',
-      'issue_read',
-      'issue_create',
-      'issue_update',
-      'agent_session_start',
-      'agent_session_read',
-      'agent_session_send_message',
-      'agent_session_stop',
-      'past_chats',
-      'ask_user_question',
-      'internal_delegation',
-      'send_input',
-      'resume_agent',
-      'close_agent',
-      'assign_task',
-    ];
-    for (const name of removedNames) expect(modelToolContract(name)).toBeNull();
-    const serialized = JSON.stringify(MODEL_TOOL_CATALOG);
-    expect(serialized).not.toContain('waitingOnApproval');
-    expect(serialized).not.toContain('approvalPolicy');
-    expect(serialized).not.toContain('sandboxPolicy');
-    expect(serialized).not.toContain('permissionProfile');
-  });
-
   test('round-trips canonical and flat provider encodings without aliases', () => {
     const identity = { namespace: COLLABORATION_NAMESPACE, name: 'spawn_agent' } as const;
     expect(encodeProviderToolName(identity, 'canonical')).toBe('collaboration.spawn_agent');

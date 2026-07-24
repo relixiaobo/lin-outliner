@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { agentToolResult } from '../../src/main/agentToolEnvelope';
+import { agentToolResult } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import {
   buildWebFetchSuccessEnvelope,
   isWebFetchUrl,
@@ -11,7 +11,7 @@ import {
   type WebFetchData,
   type WebSearchData,
   type WebParamResult,
-} from '../../src/main/agentWebTools';
+} from '../../src/main/agent/capabilities/agentWebTools';
 import {
   WEB_FETCH_DESCRIPTION,
   WEB_FETCH_FORMAT_PARAMETER_DESCRIPTION,
@@ -19,7 +19,7 @@ import {
   WEB_SEARCH_DESCRIPTION,
   WEB_SEARCH_QUERY_PARAMETER_DESCRIPTION,
   WEB_SEARCH_RECENCY_PARAMETER_DESCRIPTION,
-} from '../../src/main/agentWebToolGuidance';
+} from '../../src/main/agent/capabilities/agentWebToolGuidance';
 
 function expectParams<T>(result: WebParamResult<T>): T {
   expect(result.ok).toBe(true);

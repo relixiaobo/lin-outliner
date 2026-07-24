@@ -8,12 +8,11 @@ import {
   emitDocumentEvent,
   ids,
   openMockedApp,
-  openMockRunDetailsFromAssistantDetailsButton,
   row,
   rowBody,
 } from './outlinerMock';
 
-const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v4';
+const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v6';
 const WORKSPACE_PINNED_NODES_STORAGE_KEY = 'lin-outliner:workspace-layout:v3:pinned';
 const OUTLINE_VIEW_STATE_STORAGE_KEY = 'lin-outliner:outline-view-state:v1';
 
@@ -234,13 +233,6 @@ test.describe('workspace layout resizing', () => {
       .toBeGreaterThanOrEqual(preferredWidth - 1);
   });
 
-  test('debug panel capacity failures show feedback instead of silently no-oping', async ({ page }) => {
-    await page.setViewportSize({ width: 760, height: 900 });
-    await openMockRunDetailsFromAssistantDetailsButton(page);
-
-    await expect(page.locator('.outline-panel-surface')).toHaveCount(1);
-    await expect(page.locator('.error')).toContainText('Window is too narrow to open another pane.');
-  });
 
   test('page title tag bars wrap instead of overflowing in narrow windows', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 900 });
@@ -265,16 +257,11 @@ test.describe('workspace layout resizing', () => {
 
     const tagBar = page.locator('.panel-title-toolbar-row .tag-bar');
     await expect(tagBar.locator('.tag-badge')).toHaveCount(11);
-    const metrics = await tagBar.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return {
-        clientWidth: element.clientWidth,
-        height: rect.height,
-        scrollWidth: element.scrollWidth,
-      };
-    });
-    expect(metrics.height).toBeGreaterThan(20);
-    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+    // Badge projection can settle before the narrow-rail clamp transition.
+    await expect.poll(async () => tagBar.evaluate((element) => (
+      element.scrollWidth <= element.clientWidth + 1
+    ))).toBe(true);
+    expect(await tagBar.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThan(20);
   });
 
   test('inline row tag bars wrap without overflowing plain text rows', async ({ page }) => {
@@ -300,24 +287,15 @@ test.describe('workspace layout resizing', () => {
 
     const inlineTagBar = row(page, ids.alpha).locator('.row-inline-tag-slot .tag-bar').first();
     await expect(inlineTagBar.locator('.tag-badge')).toHaveCount(10);
-    const metrics = await inlineTagBar.evaluate((element, betaId) => {
+    await expect.poll(async () => inlineTagBar.evaluate((element, betaId) => {
       const rect = element.getBoundingClientRect();
       const nextRowRect = document.querySelector(`[data-node-id="${betaId}"] > .row`)?.getBoundingClientRect();
       const rowRect = element.closest('[data-node-id]')?.getBoundingClientRect();
-      return {
-        bottom: rect.bottom,
-        clientWidth: element.clientWidth,
-        height: rect.height,
-        nextRowTop: nextRowRect?.top ?? rect.bottom,
-        right: rect.right,
-        rowRight: rowRect?.right ?? rect.right,
-        scrollWidth: element.scrollWidth,
-      };
-    }, ids.beta);
-    expect(metrics.height).toBeGreaterThan(20);
-    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
-    expect(metrics.right).toBeLessThanOrEqual(metrics.rowRight + 1);
-    expect(metrics.bottom).toBeLessThanOrEqual(metrics.nextRowTop + 1);
+      return rect.height > 20
+        && element.scrollWidth <= element.clientWidth + 1
+        && rect.right <= (rowRect?.right ?? rect.right) + 1
+        && rect.bottom <= (nextRowRect?.top ?? rect.bottom) + 1;
+    }, ids.beta)).toBe(true);
   });
 
   test('window chrome toggles align to the traffic lights and stay icon-only', async ({ page }) => {
@@ -814,7 +792,7 @@ test.describe('workspace layout resizing', () => {
         String(date.getDate()).padStart(2, '0'),
       ].join('-');
       window.localStorage.setItem(layoutStorageKey, JSON.stringify({
-        version: 3,
+        version: 6,
         localDate,
         activePanelId: 'panel-root',
         panels: [{
@@ -854,7 +832,7 @@ test.describe('workspace layout resizing', () => {
         String(date.getDate()).padStart(2, '0'),
       ].join('-');
       window.localStorage.setItem(layoutStorageKey, JSON.stringify({
-        version: 3,
+        version: 6,
         localDate,
         activePanelId: 'panel-daily',
         panels: [{
@@ -908,8 +886,8 @@ test.describe('workspace layout resizing', () => {
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
     await page.evaluate(() => {
-      window.localStorage.setItem('lin-outliner:workspace-layout:v4', JSON.stringify({
-        version: 3,
+      window.localStorage.setItem('lin-outliner:workspace-layout:v6', JSON.stringify({
+        version: 6,
         localDate: '1999-01-01',
         activePanelId: 'panel-stale',
         panels: [{

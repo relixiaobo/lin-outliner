@@ -9,7 +9,7 @@ import { cx } from '../primitives/cx';
 // hairline ladders (B9); see settings-inset-list.css.
 //
 // This is the reusable A7 foundation shared by providers, security, skills,
-// memory, and agent-profile panes.
+// memory, and Configuration Profile panes.
 
 interface InsetGroupProps {
   /** Sentence-case section header above the card (e.g. "Configured"). */

@@ -5,7 +5,7 @@ import { closeSmokeApp, launchSmokeApp } from './electronApp';
 
 // Per-clone userData isolation (CLAUDE.md A5 / stage 6): the host resolves
 // userData from ELECTRON_USER_DATA_DIR before any service reads it, so each
-// clone (and each smoke run) keeps its own documents/agent conversations/assets.
+// clone (and each smoke execution) keeps its own documents/Agent Threads/assets.
 // These tests pin that contract against the built host.
 const realpath = (p: string) => realpathSync(p);
 

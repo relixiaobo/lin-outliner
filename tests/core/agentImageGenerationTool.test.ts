@@ -3,8 +3,8 @@ import {
   createGenerateImageTool,
   type AgentImageGenerationRuntime,
   type GenerateImageData,
-} from '../../src/main/agentImageGenerationTool';
-import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
+} from '../../src/main/agent/capabilities/agentImageGenerationTool';
+import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { formatLocalFileReferenceUrl } from '../../src/core/referenceMarkup';
 
 const ONE_PIXEL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==';

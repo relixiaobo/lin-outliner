@@ -2,8 +2,8 @@
 import { request as httpRequest } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { validateImportPack } from '../../../agentDataImportPack';
-import { errorMessage } from '../../../agentNodeToolUtils';
+import { validateImportPack } from '../../../agent/capabilities/agentDataImportPack';
+import { errorMessage } from '../../../agent/capabilities/agentNodeToolUtils';
 import {
   optionFlag,
   optionValue,

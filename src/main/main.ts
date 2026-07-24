@@ -1,23 +1,58 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, session, shell } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
-import { AssetService, mimeTypeForFilename } from './assetService';
-import { AgentRuntime } from './agentRuntime';
+import { AssetService, mimeTypeForFilename, sniffMimeType } from './assetService';
+import { ThreadService } from './agent/ThreadService';
+import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
+import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
+import { ToolRuntime } from './agent/runtime/ToolRuntime';
+import { AttachmentResolver } from './agent/tools/attachments';
+import { AgentSkillRuntime } from './agent/capabilities/agentSkills';
+import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
+import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
+import {
+  createAgentLocalWorkspaceContext,
+  resolveAgentLocalReadPath,
+  type AgentLocalWorkspaceContext,
+} from './agent/capabilities/agentLocalTools';
+import type { AgentImageGenerationRuntime } from './agent/capabilities/agentImageGenerationTool';
+import { resolveGeneratedImageReadPath } from './generatedImagePaths';
+import {
+  piFindImageModel,
+  piGenerateImages,
+  piImageModelsForProvider,
+  validateImageGenerationOptions,
+} from './piImageModels';
+import type {
+  AgentCoreMethod,
+  AgentCoreRequestByMethod,
+  ThreadMessageContextMenuAction,
+  ThreadMessageContextMenuRequest,
+} from '../core/agent/protocol';
+import {
+  REASONING_EFFORTS,
+  type ReasoningEffort,
+} from '../core/agent/configuration';
+import {
+  AGENT_CORE_NOTIFICATION_CHANNEL,
+  AGENT_CORE_REQUEST_CHANNEL,
+  THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,
+} from '../core/agent/transport';
 import {
   ManagedSkillService,
   ManagedSkillServiceError,
   managedSkillErrorView,
 } from './managedSkillService';
 import { ManagedSkillStore } from './managedSkillStore';
-import { AgentImportService } from './agentImportService';
-import { AgentImportApiServer } from './agentImportApi';
+import { AgentImportService } from './agent/capabilities/agentImportService';
+import { AgentImportApiServer } from './agent/capabilities/agentImportApi';
 import { configureTenonImportRuntime } from './tenonImportRuntime';
 import { isRendererPermissionAllowed } from './rendererPermissions';
 import {
@@ -32,28 +67,15 @@ import { applyMacWindowCorner } from './nativeWindowCorner';
 import {
   LIN_SETTINGS_CHANGED_CHANNEL,
   LIN_SETTINGS_NAVIGATE_CHANNEL,
-  AGENT_CONFIG_AGENT_PARAM,
-  CHANNEL_CONFIG_CONVERSATION_PARAM,
-  CHANNEL_CONFIG_MODE_PARAM,
-  SETTINGS_AGENT_PARAM,
   SETTINGS_CATEGORY_PARAM,
   PROVIDER_CONFIG_MODE_PARAM,
   PROVIDER_CONFIG_PROVIDER_PARAM,
   WINDOW_SURFACE_QUERY_PARAM,
   isSettingsCategoryTarget,
-  type ChannelConfigMode,
   type ProviderConfigMode,
   type SettingsOpenTarget,
 } from '../core/settingsWindow';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
-import {
-  LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL,
-  LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL,
-  type AgentMessageContextMenuAction,
-  type AgentMessageContextMenuRequest,
-} from '../core/agentTypes';
-import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
-import type { AgentSessionReadInput, IssueReadInput, IssueSearchInput } from '../core/agentIssue';
 import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
 import { normalizePreviewHttpUrl } from '../core/preview';
 import {
@@ -101,6 +123,9 @@ import {
 import {
   deleteProviderApiKey,
   deleteProviderConfig,
+  getActiveProviderRuntimeConfig,
+  getProviderRuntimeConfig,
+  getAgentRuntimeSettings,
   getProviderSecretStatus,
   getStoredProviderApiKey,
   getProviderSettings,
@@ -112,12 +137,13 @@ import {
   updateAgentRuntimeSettings,
   upsertProviderConfig,
   testProviderConnection,
-} from './agentSettings';
+} from './agent/capabilities/agentSettings';
+import { validateAgentModelSelection } from './agent/capabilities/agentModelResolution';
 import {
   applyAgentCapabilitySettingsPatchView,
   appendAgentCapabilityBlockView,
   readAgentCapabilitySettingsView,
-} from './agentCapabilityStore';
+} from './agent/capabilities/agentCapabilityStore';
 import {
   isAgentCommand,
   isAssetCommand,
@@ -127,10 +153,10 @@ import {
   type AssetCommand,
   type PreviewCommand,
 } from '../core/commands';
-import { oauthLoginManager } from './agentOAuthManager';
+import { oauthLoginManager } from './agent/capabilities/agentOAuthManager';
 import { IPC_TRACE_ENABLED, traceIpc } from './ipcTrace';
-import { resolveRipgrepCommand } from './agentRipgrep';
-import { buildAgentLocalToolProcessEnv } from './agentToolProcess';
+import { resolveRipgrepCommand } from './agent/capabilities/agentRipgrep';
+import { buildAgentLocalToolProcessEnv } from './agent/capabilities/agentToolProcess';
 import type {
   AgentImageGenerationSettingsInput,
   AgentProviderConfigInput,
@@ -157,7 +183,12 @@ import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
 import { MAX_RAW_INLINE_IMAGE_BYTES, MAX_STAGED_ATTACHMENT_BYTES } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
-import { agentAttachmentDir, pruneAgentScratch, pruneOldAgentAttachments } from './agentAttachmentMaterialization';
+import {
+  AGENT_GENERATED_IMAGE_DIR,
+  agentAttachmentDir,
+  pruneAgentScratch,
+  pruneOldAgentAttachments,
+} from './agent/capabilities/agentAttachmentMaterialization';
 import {
   isSafeLocalFileOpenTarget,
   resolveTrustedLocalFileReference,
@@ -192,7 +223,7 @@ import {
   hasExplicitAgentLocalRoot,
   resolveAgentScratchRoot,
   resolveAgentWorkdir,
-} from './agentLocalRoot';
+} from './agent/capabilities/agentLocalRoot';
 import { DiagnosticLogStore } from './diagnosticLog';
 import { NodeAccessStore } from './nodeAccessStore';
 import { resolveUserDataDir } from './userDataPath';
@@ -324,8 +355,6 @@ const assetService = new AssetService(assetRoot);
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let providerConfigWindow: BrowserWindow | null = null;
-let agentConfigWindow: BrowserWindow | null = null;
-let channelConfigWindow: BrowserWindow | null = null;
 let urlPreviewSession: Electron.Session | null = null;
 const urlPreviewGuests = new Set<Electron.WebContents>();
 let quitAfterFlush = false;
@@ -333,12 +362,6 @@ let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
 const DEFAULT_LOCAL_FILE_SEARCH_LIMIT = 8;
 const DEFAULT_RECENT_LOCAL_FILE_LIMIT = 6;
-const AGENT_CHANNEL_CONFIG_WINDOW_BOUNDS = {
-  width: 620,
-  height: 680,
-  minWidth: 520,
-  minHeight: 560,
-} as const;
 const LOCAL_FILE_SEARCH_TIMEOUT_MS = 1200;
 const LOCAL_FILE_ICON_TIMEOUT_MS = 250;
 const LOCAL_FILE_ICON_SIZE: Electron.FileIconOptions['size'] = 'normal';
@@ -374,13 +397,26 @@ if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
 }
 ensureAgentDir(agentScratchRoot);
 const managedSkillStore = new ManagedSkillStore(resolvedUserDataDir);
+let skillRuntime!: AgentSkillRuntime;
+const turnSkillRuntimes = new Map<string, AgentSkillRuntime>();
 const managedSkillService: ManagedSkillService = new ManagedSkillService({
   appVersion: app.getVersion(),
   store: managedSkillStore,
-  onChanged: (): Promise<void> => agentRuntime.managedSkillsChanged(),
-  findNameConflict: (name, excludingManagedSkillId) => (
-    agentRuntime.findSkillNameConflict(name, excludingManagedSkillId)
-  ),
+  onChanged: async (): Promise<void> => {
+    await Promise.all(
+      [skillRuntime, ...turnSkillRuntimes.values()].map((runtime) => runtime.notifySkillContentWritten([])),
+    );
+  },
+  findNameConflict: async (name, excludingManagedSkillId) => {
+    const normalized = name.trim();
+    if (!normalized) return null;
+    const skills = await skillRuntime.listAllSkills();
+    const conflict = skills.find((skill) => (
+      skill.name === normalized
+      && !(skill.source === 'managed' && skill.name === excludingManagedSkillId)
+    ));
+    return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
+  },
 });
 // Scratch holds only ephemeral, app-owned data (materialized attachments, web-fetch binaries,
 // bash overflow logs, PDF page images). Reclaim anything past the TTL once per launch; failures
@@ -388,14 +424,235 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
 void pruneAgentScratch(agentScratchRoot).catch((error) => {
   console.error('[agent] failed to prune scratch root at startup', error);
 });
-const agentRuntime: AgentRuntime = new AgentRuntime(() => mainWindow, documentService, {
-  localFileRoot: agentLocalFileRoot,
-  scratchRoot: agentScratchRoot,
-  managedSkillService,
-  assetResolver: assetService,
-  dreamMemoryExtractionEnabled: true,
-  errorReporter: reportError,
+skillRuntime = new AgentSkillRuntime({
+  localRoot: agentLocalFileRoot,
+  provenanceStore: createAgentSkillProvenanceStore(),
+  managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
+  managedSkillContentRoot: managedSkillService.contentRoot,
+  assertManagedSkillInvocable: (skillId, expectedContentHash) => (
+    managedSkillService.assertInvocable(skillId, expectedContentHash)
+  ),
+  executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
+    command,
+    localRoot: agentLocalFileRoot,
+    scratchRoot: agentScratchRoot,
+    signal,
+  }),
 });
+void getAgentRuntimeSettings().then((settings) => {
+  for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {
+    runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
+    runtime.updateDisabledSkills(settings.disabledSkills ?? []);
+  }
+}).catch((error) => console.error('[agent] failed to load skill settings', error));
+let toolRuntime!: ToolRuntime;
+const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
+const attachmentResolver = new AttachmentResolver({
+  scratchRoot: agentScratchRoot,
+  resolveAssetPath: (assetId) => assetService.pathFor(assetId),
+});
+const turnExecutor = new PiTurnExecutor({
+  createTools: (context) => toolRuntime.createTools(context),
+  preparePrompt: (context, prompt) => toolRuntime.prepareUserPrompt(context, prompt),
+  skillListing: (context) => toolRuntime.skillListing(context),
+});
+const threadService = ThreadService.open(
+  resolvedUserDataDir,
+  turnExecutor,
+  {
+    nameGenerator: turnExecutor,
+    resolveConfiguration: (request) => agentConfigurationLoader.resolveProfile(
+      request.configurationProfile,
+      request.cwd,
+    ),
+    resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
+    resolveRendererStartDefaults: async () => {
+      const provider = await getActiveProviderRuntimeConfig();
+      if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
+      return { modelProvider: provider.providerId, cwd: agentLocalFileRoot };
+    },
+    validateRendererConfiguration: async (selection) => {
+      const provider = await getProviderRuntimeConfig(selection.modelProvider);
+      if (!provider) throw new Error(`Provider is not configured: ${selection.modelProvider}`);
+      validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
+    },
+    resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
+  },
+);
+function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentSkillRuntime {
+  const existing = turnSkillRuntimes.get(context.turn.id);
+  if (existing) return existing;
+  const runtime = new AgentSkillRuntime({
+    localRoot: agentLocalFileRoot,
+    threadId: context.thread.id,
+    provenanceStore: createAgentSkillProvenanceStore(),
+    managedSkillRoots: () => managedSkillService.activeRuntimeRoots(),
+    managedSkillContentRoot: managedSkillService.contentRoot,
+    assertManagedSkillInvocable: (skillId, expectedContentHash) => (
+      managedSkillService.assertInvocable(skillId, expectedContentHash)
+    ),
+    executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
+      command,
+      localRoot: agentLocalFileRoot,
+      scratchRoot: agentScratchRoot,
+      signal,
+    }),
+    executeIsolatedSkill: async ({
+      skill,
+      renderedContent,
+      parentToolCallId,
+      readOnlyIsolated,
+    }) => {
+      if (!parentToolCallId) throw new Error('An isolated Skill requires its parent dynamic-tool Item identity.');
+      const spawned = await threadService.spawnIsolatedSkillThread({
+        parentThreadId: context.thread.id,
+        parentTurnId: context.turn.id,
+        parentItemId: parentToolCallId,
+        skillName: skill.name,
+        prompt: renderedContent,
+        allowedTools: skill.allowedTools,
+        readOnly: readOnlyIsolated === true,
+        ...(skill.model === undefined ? {} : { model: skill.model }),
+        ...(skill.effort === undefined ? {} : { reasoningEffort: parseSkillReasoningEffort(skill.effort) }),
+      });
+      await threadService.waitForIdle(spawned.thread.id);
+      const completed = threadService.readThread({
+        threadId: spawned.thread.id,
+        includeTurns: true,
+      }).thread.turns?.find((turn) => turn.id === spawned.turn.id);
+      if (!completed || completed.status === 'inProgress') {
+        throw new Error(`Isolated Skill child Thread did not reach a terminal Turn: ${spawned.thread.id}`);
+      }
+      const result = completed.items
+        .filter((item) => item.type === 'agentMessage')
+        .map((item) => item.text.trim())
+        .filter(Boolean)
+        .join('\n\n');
+      return {
+        threadId: spawned.thread.id,
+        agentRole: spawned.thread.agentRole ?? (readOnlyIsolated ? 'explorer' : 'worker'),
+        status: completed.status,
+        ...(result ? { result } : {}),
+        ...(completed.error?.message ? { error: completed.error.message } : {}),
+      };
+    },
+  });
+  turnSkillRuntimes.set(context.turn.id, runtime);
+  void getAgentRuntimeSettings().then((settings) => {
+    runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
+    runtime.updateDisabledSkills(settings.disabledSkills ?? []);
+  }).catch((error) => console.error('[agent] failed to load Turn skill settings', error));
+  return runtime;
+}
+
+function parseSkillReasoningEffort(value: string): ReasoningEffort {
+  const normalized = value.trim().toLowerCase();
+  if ((REASONING_EFFORTS as readonly string[]).includes(normalized)) return normalized as ReasoningEffort;
+  throw new Error(`Unsupported isolated Skill reasoning effort: ${value}`);
+}
+
+function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentLocalWorkspaceContext {
+  return createAgentLocalWorkspaceContext(
+    agentLocalFileRoot,
+    agentScratchRoot,
+    skillRuntimeForTurn(context),
+  );
+}
+
+toolRuntime = new ToolRuntime(threadService, {
+  outliner: documentService,
+  localWorkspace: localWorkspaceForTurn,
+  skillRuntime: skillRuntimeForTurn,
+  imageGeneration: (context) => createThreadImageGenerationRuntime(
+    context.turn.id,
+    localWorkspaceForTurn(context),
+  ),
+});
+threadService.subscribe((notification) => {
+  if (notification.type === 'turn/completed') turnSkillRuntimes.delete(notification.turnId);
+  liveWindow(mainWindow)?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, notification);
+});
+
+function createThreadImageGenerationRuntime(
+  turnId: string,
+  workspace: AgentLocalWorkspaceContext,
+): AgentImageGenerationRuntime {
+  return {
+    listModels: async () => {
+      const settings = await getProviderSettings();
+      const activeProviderId = (await getActiveProviderRuntimeConfig().catch(() => null))?.providerId
+        ?? settings.activeProviderId
+        ?? null;
+      const priority = [...new Set([
+        activeProviderId,
+        'openai',
+        'google',
+        'openrouter',
+      ].filter((value): value is string => Boolean(value)))];
+      return settings.providers
+        .filter((provider) => provider.enabled && (provider.auth?.credentialed ?? (provider.hasApiKey || provider.hasEnvApiKey)))
+        .sort((left, right) => imageProviderPriority(priority, left.providerId) - imageProviderPriority(priority, right.providerId))
+        .flatMap((provider) => piImageModelsForProvider(provider.providerId).map((model) => ({
+          providerId: provider.providerId,
+          id: model.id,
+          name: model.name,
+          input: [...model.input],
+          output: [...model.output],
+        })));
+    },
+    getActiveProviderId: async () => (
+      await getActiveProviderRuntimeConfig().catch(() => null)
+    )?.providerId ?? null,
+    getDefaultModel: async () => (await getProviderSettings()).imageGeneration.defaultModel ?? null,
+    validateOptions: ({ providerId, modelId, options }) => (
+      validateImageGenerationOptions(providerId, modelId, options)
+    ),
+    readLocalImage: async ({ filePath }) => {
+      const resolvedPath = await resolveGeneratedImageReadPath(workspace, filePath)
+        ?? resolveAgentLocalReadPath(workspace, filePath);
+      const data = await readFile(resolvedPath);
+      const mimeType = sniffMimeType(data, resolvedPath);
+      if (!mimeType?.startsWith('image/')) throw new Error(`File is not a supported image: ${filePath}`);
+      return { data, mimeType, label: basename(resolvedPath) };
+    },
+    writeGeneratedImage: async ({ toolCallId, index, data, mimeType }) => {
+      const turnPart = shortGeneratedImagePathPart(turnId, 'turn');
+      const directory = join(workspace.scratchRoot, AGENT_GENERATED_IMAGE_DIR, turnPart);
+      await mkdir(directory, { recursive: true });
+      const callDigest = createHash('sha256').update(toolCallId).digest('hex').slice(0, 6);
+      const fileName = `image-${index}-${callDigest}${generatedImageExtension(mimeType)}`;
+      await writeFile(join(directory, fileName), data);
+      return { path: posix.join(AGENT_GENERATED_IMAGE_DIR, turnPart, fileName) };
+    },
+    generateImages: async ({ providerId, modelId, context, options }) => {
+      const model = piFindImageModel(providerId, modelId);
+      if (!model) throw new Error(`Unknown image model: ${providerId}:${modelId}`);
+      const settings = await getProviderSettings();
+      const provider = settings.providers.find((candidate) => candidate.providerId === providerId);
+      return piGenerateImages(model, context, { ...options, baseUrl: provider?.baseUrl });
+    },
+  };
+}
+
+function imageProviderPriority(priority: readonly string[], providerId: string): number {
+  const index = priority.indexOf(providerId);
+  return index >= 0 ? index : priority.length;
+}
+
+function shortGeneratedImagePathPart(value: string, fallback: string): string {
+  const safe = safeAttachmentFileName(value).slice(0, 10).replace(/[._-]+$/u, '') || fallback;
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 6);
+  return `${safe}-${digest}`;
+}
+
+function generatedImageExtension(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'image/jpeg') return '.jpg';
+  if (normalized === 'image/webp') return '.webp';
+  if (normalized === 'image/gif') return '.gif';
+  return '.png';
+}
+
 const previewTranslationCache = new PreviewTranslationCacheStore(
   join(app.getPath('userData'), 'preview-translation-cache'),
   {
@@ -482,31 +739,6 @@ function descendantProjectionIds(rootIds: readonly string[], nodes: readonly Nod
   }
   return descendants;
 }
-
-// Opt-in OS notifications for off-floor task delivery. Default OFF; the durable
-// in-app delivery is unaffected. The preference is read synchronously at call time
-// (no async cache that could fail closed and stay OFF for the process). The banner
-// is suppressed only when the user is actually LOOKING at THIS task's conversation
-// (window focused AND the renderer reports it as the viewed conversation — i.e. the
-// dock is open showing it). A completion in a background channel, or while the dock
-// is collapsed, still escalates.
-agentRuntime.setOsNotifier(({ title, body, conversationId }) => {
-  if (!loadAppPreferences().osNotificationsEnabled) return;
-  if (!Notification.isSupported()) return;
-  const lookingAtThisConversation =
-    mainWindow?.isFocused() && agentRuntime.getViewedConversation() === conversationId;
-  if (lookingAtThisConversation) return;
-  const notification = new Notification({ title, body: body ?? '' });
-  notification.on('click', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-    // Route the click to the originating conversation, not whatever was last active.
-    mainWindow.webContents.send(LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL, conversationId);
-  });
-  notification.show();
-});
 
 // ─── Security shell (the native host owns navigation + capabilities) ───
 
@@ -1003,9 +1235,6 @@ function createWindow() {
     mainWindow = null;
   });
   mainWindow.webContents.on('did-start-loading', () => pageTranslationService.dispose());
-  mainWindow.webContents.once('did-finish-load', () => {
-    agentRuntime.ready();
-  });
   // A launcher "open node" that had to spin up the main window — or that arrived
   // during a renderer reload — waits for the renderer to load before the navigate
   // can land. `on` (not `once`) so it re-arms across reloads (dev HMR full reload,
@@ -1215,22 +1444,17 @@ function executeLauncherCommand(id: unknown): LauncherExecuteResult {
 // region. It isn't persisted across launches.
 function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
   if (!raw || typeof raw !== 'object') return {};
-  const input = raw as { category?: unknown; agentId?: unknown };
+  const input = raw as { category?: unknown };
   const category = isSettingsCategoryTarget(input.category) ? input.category : undefined;
-  const agentId = typeof input.agentId === 'string' && input.agentId.trim()
-    ? input.agentId.trim()
-    : undefined;
   return {
     ...(category ? { category } : {}),
-    ...(agentId ? { agentId } : {}),
   };
 }
 
 function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
   return {
     [WINDOW_SURFACE_QUERY_PARAM]: 'settings',
-    ...(target.agentId ? { [SETTINGS_CATEGORY_PARAM]: 'agents', [SETTINGS_AGENT_PARAM]: target.agentId } : {}),
-    ...(!target.agentId && target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
+    ...(target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
   };
 }
 
@@ -1486,74 +1710,12 @@ function createConfigChildWindow(options: {
 function configChildWindowParent(excluded: BrowserWindow | null = null): BrowserWindow | undefined {
   const focused = BrowserWindow.getFocusedWindow();
   if (isLiveWindow(focused) && focused !== excluded) {
-    if (focused === providerConfigWindow || focused === agentConfigWindow || focused === channelConfigWindow) {
+    if (focused === providerConfigWindow) {
       return liveWindow(focused.getParentWindow()) ?? liveWindow(settingsWindow) ?? liveWindow(mainWindow);
     }
     return focused;
   }
   return liveWindow(settingsWindow) ?? liveWindow(mainWindow);
-}
-
-// Agent and Channel create/edit are their own native config windows, like the
-// provider config child. Settings owns the list; these child windows own the
-// create/edit process.
-function openAgentConfigWindow(agentId: string) {
-  const previous = agentConfigWindow;
-  if (isLiveWindow(previous)) {
-    previous.close();
-  }
-  agentConfigWindow = null;
-
-  const { width, height, minWidth, minHeight } = AGENT_CHANNEL_CONFIG_WINDOW_BOUNDS;
-  const parent = configChildWindowParent(previous);
-  const target = createConfigChildWindow({
-    title: getMessages(effectiveLocale()).window.agentConfigTitle,
-    width,
-    height,
-    minWidth,
-    minHeight,
-    resizable: true,
-    parent,
-    query: {
-      [WINDOW_SURFACE_QUERY_PARAM]: 'agent-config',
-      [AGENT_CONFIG_AGENT_PARAM]: agentId,
-    },
-  });
-  agentConfigWindow = target;
-
-  target.on('closed', () => {
-    if (agentConfigWindow === target) agentConfigWindow = null;
-  });
-}
-
-function openChannelConfigWindow(conversationId: string, mode: ChannelConfigMode) {
-  const previous = channelConfigWindow;
-  if (isLiveWindow(previous)) {
-    previous.close();
-  }
-  channelConfigWindow = null;
-
-  const { width, height, minWidth, minHeight } = AGENT_CHANNEL_CONFIG_WINDOW_BOUNDS;
-  const parent = configChildWindowParent(previous);
-  const target = createConfigChildWindow({
-    title: getMessages(effectiveLocale()).window.channelConfigTitle,
-    width,
-    height,
-    minWidth,
-    minHeight,
-    resizable: true,
-    parent,
-    query: {
-      [WINDOW_SURFACE_QUERY_PARAM]: 'channel-config',
-      [CHANNEL_CONFIG_CONVERSATION_PARAM]: conversationId,
-      [CHANNEL_CONFIG_MODE_PARAM]: mode,
-    },
-  });
-  channelConfigWindow = target;
-
-  target.on('closed', () => {
-    if (channelConfigWindow === target) channelConfigWindow = null;
-  });
 }
 
 function trustedLocalFileReferenceOptions() {
@@ -1563,6 +1725,51 @@ function trustedLocalFileReferenceOptions() {
 }
 
 function registerIpc() {
+  ipcMain.handle(AGENT_CORE_REQUEST_CHANNEL, async (event, method: AgentCoreMethod, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('Agent Core is available only to the main application window.');
+    }
+    return threadService.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
+  });
+  ipcMain.handle(THREAD_MESSAGE_CONTEXT_MENU_CHANNEL, async (
+    event,
+    request?: Partial<ThreadMessageContextMenuRequest>,
+  ): Promise<ThreadMessageContextMenuAction | null> => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return null;
+    const messages = getMessages(effectiveLocale()).agent;
+    let settled = false;
+    return new Promise<ThreadMessageContextMenuAction | null>((resolve) => {
+      const pick = (action: ThreadMessageContextMenuAction) => {
+        settled = true;
+        resolve(action);
+      };
+      const template: Electron.MenuItemConstructorOptions[] = [];
+      if (request?.canCopy === true) {
+        template.push({ label: messages.message.copyMessage, click: () => pick('copy') });
+      }
+      if (request?.canContinueInNewChat === true) {
+        if (template.length > 0) template.push({ type: 'separator' });
+        template.push({
+          label: messages.thread.continueInNewChat,
+          click: () => pick('continueInNewChat'),
+        });
+      }
+      if (request?.canShowDetails === true) {
+        if (template.length > 0) template.push({ type: 'separator' });
+        template.push({ label: messages.message.details, click: () => pick('details') });
+      }
+      if (template.length === 0) {
+        resolve(null);
+        return;
+      }
+      Menu.buildFromTemplate(template).popup({
+        window: mainWindow!,
+        callback: () => {
+          if (!settled) resolve(null);
+        },
+      });
+    });
+  });
   ipcMain.handle('lin:invoke', async (event, command: string, args?: Record<string, unknown>) => {
     const dispatch = () => {
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
@@ -1577,7 +1784,6 @@ function registerIpc() {
         return handlePreviewCommand(command, args ?? {}, {
           agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
           agentGeneratedImageRoots: [agentScratchRoot],
-          agentRuntime,
           assetService,
           assetFileStreamUrl: async (filePath, mimeType) => {
             const token = await localFilePreviewStreams.issuePath(filePath, mimeType);
@@ -1630,46 +1836,6 @@ function registerIpc() {
   ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
   ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, clearUrlPreviewWebsiteData);
   ipcMain.handle(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL, clearPreviewTranslationCache);
-  ipcMain.handle(LIN_AGENT_MESSAGE_CONTEXT_MENU_CHANNEL, async (
-    event,
-    request?: Partial<AgentMessageContextMenuRequest>,
-  ): Promise<AgentMessageContextMenuAction | null> => {
-    const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
-    const messages = getMessages(effectiveLocale()).agent.message;
-    let settled = false;
-    return new Promise<AgentMessageContextMenuAction | null>((resolve) => {
-      const pick = (action: AgentMessageContextMenuAction) => {
-        settled = true;
-        resolve(action);
-      };
-      const template: Electron.MenuItemConstructorOptions[] = [];
-      if (request?.canCopy) {
-        template.push({ label: messages.copy, click: () => pick('copy') });
-      }
-      if (request?.canRetry || request?.canRegenerate) {
-        if (template.length > 0) template.push({ type: 'separator' });
-        if (request.canRetry) {
-          template.push({ label: messages.retry, click: () => pick('retry') });
-        } else if (request.canRegenerate) {
-          template.push({ label: messages.regenerate, click: () => pick('regenerate') });
-        }
-      }
-      if (request?.canShowDetails) {
-        if (template.length > 0) template.push({ type: 'separator' });
-        template.push({ label: messages.details, click: () => pick('details') });
-      }
-      if (template.length === 0) {
-        resolve(null);
-        return;
-      }
-      Menu.buildFromTemplate(template).popup({
-        ...(window ? { window } : {}),
-        callback: () => {
-          if (!settled) resolve(null);
-        },
-      });
-    });
-  });
   // Launcher window IPC (the prewarmed global launcher).
   ipcMain.handle('launcher:hide', () => {
     dismissLauncher();
@@ -1787,17 +1953,6 @@ function registerIpc() {
     saveOsNotificationsPreference(enabled);
     return { osNotificationsEnabled: enabled };
   });
-  // Durable attention-clear: the user opened/viewed a conversation. Dedicated channel
-  // (off the command union) — see markConversationRead. A config reload never hits this.
-  ipcMain.handle('lin:agent-mark-conversation-read', (_event, conversationId: unknown) => {
-    if (typeof conversationId !== 'string' || !conversationId) return;
-    return agentRuntime.markConversationRead(conversationId);
-  });
-  // The renderer reports which conversation the user can actually see (dock open),
-  // or null (dock collapsed). Authoritative for OS-banner suppression.
-  ipcMain.handle('lin:agent-set-viewed-conversation', (_event, conversationId: unknown) => {
-    agentRuntime.setViewedConversation(typeof conversationId === 'string' && conversationId ? conversationId : null);
-  });
   // Language preference. Read synchronously so preload can seed the renderer's first
   // paint without a flash; setting it persists, broadcasts to every window (open
   // windows re-render via I18nProvider without a reload), and rebuilds the native
@@ -1847,8 +2002,6 @@ function registerIpc() {
     const messages = getMessages(raw);
     liveWindow(settingsWindow)?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
     liveWindow(providerConfigWindow)?.setTitle(messages.window.providerConfigTitle);
-    liveWindow(agentConfigWindow)?.setTitle(messages.window.agentConfigTitle);
-    liveWindow(channelConfigWindow)?.setTitle(messages.window.channelConfigTitle);
   });
   // Open the per-provider config as its own native (modal child) window.
   ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
@@ -1863,22 +2016,7 @@ function registerIpc() {
     }
     return getStoredProviderApiKey(String(args?.providerId ?? ''));
   });
-  ipcMain.handle('lin:open-agent-config', (_event, args?: { agentId?: unknown }) => {
-    const agentId = typeof args?.agentId === 'string' ? args.agentId : '';
-    openAgentConfigWindow(agentId);
-  });
-  ipcMain.handle('lin:close-agent-config', () => liveWindow(agentConfigWindow)?.close());
-  ipcMain.handle('lin:open-channel-config', (_event, args?: { conversationId?: unknown; mode?: unknown }) => {
-    const conversationId = typeof args?.conversationId === 'string' ? args.conversationId : '';
-    const mode: ChannelConfigMode = args?.mode === 'create' ? 'create' : 'configure';
-    openChannelConfigWindow(conversationId, mode);
-  });
-  ipcMain.handle('lin:close-channel-config', () => liveWindow(channelConfigWindow)?.close());
-  ipcMain.handle('lin:agent-navigate-conversation', (_event, conversationId?: unknown) => {
-    if (typeof conversationId !== 'string' || !conversationId.trim()) return;
-    liveWindow(mainWindow)?.webContents.send(LIN_AGENT_NAVIGATE_CONVERSATION_CHANNEL, conversationId.trim());
-  });
-  // A provider/agent setting changed (from the settings window OR its config child).
+  // A provider setting changed in the settings window or its config child.
   // Tell BOTH the main window (stale provider state) and the settings window (its
   // list reflects the new configured provider row) to re-fetch.
   ipcMain.handle('lin:settings-changed', () => {
@@ -2754,145 +2892,20 @@ async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<
   }
 }
 
-async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
-  const conversationId = () => String(args.conversationId);
+async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
-    case 'agent_restore_latest_conversation':
-      return agentRuntime.restoreLatestConversation();
-    case 'agent_restore_conversation':
-      return agentRuntime.restoreConversation(conversationId());
-    case 'agent_create_conversation':
-      return agentRuntime.createConversation({
-        title: typeof args.title === 'string'
-          ? args.title
-          : typeof args.goal === 'string'
-            ? args.goal
-            : undefined,
-      });
-    case 'agent_list_conversations':
-      return agentRuntime.listConversations();
-    case 'agent_rename_conversation':
-      return agentRuntime.renameConversation(conversationId(), String(args.title ?? ''));
-    case 'agent_set_conversation_include_in_dream_data':
-      return agentRuntime.setConversationIncludeInDreamData(conversationId(), args.includeInDreamData === true);
-    case 'agent_delete_conversation':
-      return agentRuntime.deleteConversation(conversationId());
-    case 'agent_list_runs':
-      return agentRuntime.listRuns({
-        limit: typeof args.limit === 'number' ? args.limit : undefined,
-        perConversationLimit: typeof args.perConversationLimit === 'number' ? args.perConversationLimit : undefined,
-      });
-    case 'agent_issue_search':
-      return agentRuntime.searchIssues(args as IssueSearchInput);
-    case 'agent_issue_read':
-      return agentRuntime.readIssue(args as unknown as IssueReadInput);
-    case 'agent_issue_complete_human_review':
-      return agentRuntime.completeHumanReview(
-        String(args.issueId ?? ''),
-        typeof args.expectedRevision === 'string' ? args.expectedRevision : undefined,
-      );
-    case 'agent_session_read':
-      return agentRuntime.readAgentSession(args as unknown as AgentSessionReadInput);
-    case 'agent_session_transcript':
-      return agentRuntime.agentSessionTranscript(String(args.agentSessionId ?? ''));
-    case 'agent_list_dream_history':
-      return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
-    case 'agent_dream_readiness':
-      return agentRuntime.previewDreamReadiness();
-    case 'agent_run_dream_now':
-      await agentRuntime.runDreamNow({
-        startDate: typeof args.startDate === 'string' ? args.startDate : undefined,
-        endDate: typeof args.endDate === 'string' ? args.endDate : undefined,
-        guidance: typeof args.guidance === 'string' ? args.guidance : undefined,
-      });
-      return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
-    case 'agent_debug_view':
-      return agentRuntime.agentDebugView(conversationId());
-    case 'agent_debug_run':
-      return agentRuntime.agentDebugRun(conversationId(), String(args.runId));
-    case 'agent_payload_text':
-      return agentRuntime.payloadText(conversationId(), String(args.payloadId));
-    case 'agent_run_detail':
-      return typeof args.conversationId === 'string'
-        ? agentRuntime.agentRunDetail(String(args.runId), args.conversationId)
-        : null;
-    case 'agent_run_transcript':
-      return typeof args.conversationId === 'string'
-        ? agentRuntime.agentRunTranscript(args.conversationId, String(args.runId))
-        : null;
-    case 'agent_run_conversation_id':
-      // Run ids are global, so this resolver needs no conversation context.
-      return agentRuntime.runConversationId(String(args.runId));
-    case 'agent_run_status':
-      return agentRuntime.runStatus(conversationId(), String(args.runId), {
-        wait: args.wait === true,
-        timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
-      });
-    case 'agent_run_steer':
-      return agentRuntime.runSteer(conversationId(), String(args.runId), String(args.message ?? ''));
-    case 'agent_run_amend':
-      return agentRuntime.runAmend(conversationId(), String(args.runId), args.changes);
-    case 'agent_run_stop':
-      return agentRuntime.runStop(conversationId(), String(args.runId));
-    case 'agent_send_message':
-      return agentRuntime.sendMessage(
-        conversationId(),
-        String(args.message ?? ''),
-        args.attachments,
-        args.userViewContext,
-      );
-    case 'agent_edit_message':
-      return agentRuntime.editMessage(
-        conversationId(),
-        String(args.nodeId),
-        String(args.message ?? ''),
-      );
-    case 'agent_regenerate_message':
-      return agentRuntime.regenerateMessage(conversationId(), String(args.nodeId));
-    case 'agent_retry_message':
-      return agentRuntime.retryMessage(conversationId(), String(args.nodeId));
-    case 'agent_switch_branch':
-      return agentRuntime.switchBranch(conversationId(), String(args.nodeId));
-    case 'agent_queue_follow_up':
-      return agentRuntime.queueFollowUp(
-        conversationId(),
-        String(args.message ?? ''),
-        args.userViewContext,
-      );
-    case 'agent_clear_follow_up':
-      return agentRuntime.clearFollowUp(conversationId());
-    case 'agent_steer_conversation':
-      return agentRuntime.steerConversation(
-        conversationId(),
-        String(args.message ?? ''),
-      );
-    case 'agent_clear_steer':
-      return agentRuntime.clearSteer(conversationId());
-    case 'agent_resolve_user_question':
-      return agentRuntime.resolveUserQuestion(
-        conversationId(),
-        String(args.requestId),
-        args.result,
-      );
-    case 'agent_stop_run':
-      return agentRuntime.stopRun(
-        conversationId(),
-        String(args.runId),
-      );
-    case 'agent_stop_conversation':
-      return agentRuntime.stopConversation(conversationId());
-    case 'agent_reset_conversation':
-      return agentRuntime.resetConversation(conversationId());
-    case 'agent_close_conversation':
-      return agentRuntime.closeConversation(conversationId());
-    case 'agent_list_slash_commands':
-      return agentRuntime.listSlashCommands(conversationId());
     case 'agent_get_provider_settings':
       return getProviderSettings();
     case 'agent_refresh_provider_models':
       return refreshProviderModels(String(args.providerId));
-    case 'agent_update_runtime_settings':
-      return updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
+    case 'agent_update_runtime_settings': {
+      const settings = await updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
+      for (const runtime of [skillRuntime, ...turnSkillRuntimes.values()]) {
+        runtime.updateAdditionalSkillDirectories(settings.agent.additionalSkillDirectories);
+        runtime.updateDisabledSkills(settings.agent.disabledSkills ?? []);
+      }
+      return settings;
+    }
     case 'agent_update_image_generation_settings':
       return updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput);
     case 'agent_get_capability_settings':
@@ -2934,8 +2947,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_oauth_cancel':
       oauthLoginManager.cancel(String(args.providerId));
       return undefined;
-    case 'agent_list_all_definitions':
-      return agentRuntime.listAllAgentDefinitions(conversationId());
     case 'agent_test_provider_connection':
       return testProviderConnection({
         providerId: String(args.providerId),
@@ -2943,13 +2954,21 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         apiKey: args.apiKey ? String(args.apiKey) : undefined,
       });
     case 'agent_list_all_skills':
-      return agentRuntime.listAllSkills(conversationId());
-    case 'agent_accept_skill':
-      return agentRuntime.acceptSkill(conversationId(), String(args.skillName), String(args.expectedHash ?? ''));
-    case 'agent_revoke_skill_acceptance':
-      return agentRuntime.revokeSkillAcceptance(conversationId(), String(args.skillName));
-    case 'agent_undo_skill_agent_edit':
-      return agentRuntime.undoLastAgentSkillEdit(conversationId(), String(args.skillName));
+      return args.userInvocableOnly === true
+        ? skillRuntime.listUserInvocableSkills()
+        : skillRuntime.listAllSkills();
+    case 'agent_accept_skill': {
+      await skillRuntime.acceptSkill(String(args.skillName), String(args.expectedHash ?? ''));
+      return skillRuntime.listAllSkills();
+    }
+    case 'agent_revoke_skill_acceptance': {
+      await skillRuntime.revokeSkillAcceptance(String(args.skillName));
+      return skillRuntime.listAllSkills();
+    }
+    case 'agent_undo_skill_agent_edit': {
+      await skillRuntime.undoLastAgentSkillEdit(String(args.skillName));
+      return skillRuntime.listAllSkills();
+    }
     case 'agent_managed_skill_catalog':
       return managedSkillCommand(() => managedSkillService.loadCatalog());
     case 'agent_managed_skill_discover':
@@ -3002,14 +3021,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         skillId: String(args.skillId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
       }));
-    case 'agent_update_agent_definition':
-      return agentRuntime.updateAgentDefinition(
-        conversationId(),
-        String(args.agentId),
-        args.input as AgentAuthoringInput,
-      );
-    case 'agent_reload_agent_definitions':
-      return agentRuntime.reloadAgentDefinitions(conversationId());
     default:
       throw new Error(`Unknown agent command: ${command}`);
   }
@@ -3056,6 +3067,7 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   app.whenReady().then(async () => {
+    await threadService.initialize();
     await nodeAccessStore.load().catch((error) => {
       reportError({
         domain: 'node-access',
@@ -3106,10 +3118,6 @@ if (!app.requestSingleInstanceLock()) {
     configureUrlPreviewSession(urlPreviewSession);
     registerIpc();
     createWindow();
-    // Anacron catch-up on system wake belongs to Issue triggers.
-    powerMonitor.on('resume', () => {
-      agentRuntime.runIssueCatchUp();
-    });
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     createLauncherWindow({
       preloadPath: join(__dirname, '../preload/index.cjs'),
@@ -3161,16 +3169,15 @@ if (!app.requestSingleInstanceLock()) {
     // graceful re-quit lingers for seconds before the process actually exits, so ⌘Q
     // reads as "didn't quit, press again". But a bare exit would truncate in-flight
     // async writes, so we first drain them — the document mutation queue and the
-    // agent runtime's conversation event-log appends — bounded by a hard timeout so a
-    // slow/hung write (e.g. an in-flight Dream LLM call, which is crash-safe and
-    // re-fires next launch) can't block the quit.
+    // Thread rollout/state writes — bounded by a hard timeout so a slow write
+    // cannot block quit indefinitely.
     void Promise.race([
       Promise.allSettled([
         documentService.flushPendingChanges(),
         nodeAccessStore.flushNow(),
         previewTranslationCache.flushNow(),
         importApiServer.stop(),
-        agentRuntime.drainPendingWrites(),
+        threadService.close(),
         diagnosticLog.flushNow({ reason: 'before-quit' }),
         flushUrlPreviewSession(urlPreviewSession),
       ]),

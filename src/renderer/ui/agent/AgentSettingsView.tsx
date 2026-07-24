@@ -5,9 +5,6 @@ import type {
   AgentProviderConfigView,
   AgentProviderOption,
   AgentProviderSettingsView,
-  AgentDefinitionView,
-  AgentDreamReadiness,
-  AgentRenderDreamRunEntity,
   AgentCapabilitySettingsView,
   SkillDefinition,
 } from '../../api/types';
@@ -15,8 +12,6 @@ import { api } from '../../api/client';
 import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import {
   AddIcon,
-  AgentIcon,
-  BrainIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   DatabaseIcon,
@@ -42,14 +37,11 @@ import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
-import { Input } from '../primitives/Input';
 import { SegmentedControl } from '../primitives/SegmentedControl';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
-import { formatDateTime, formatLocaleDateTime } from '../formatting';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
-import { DreamHistoryGroup } from './DreamHistoryGroup';
 import {
   ProviderAvatar,
   formatProviderName,
@@ -67,30 +59,18 @@ import {
 interface AgentSettingsViewProps {
   onClose: () => void;
   onApplied: () => Promise<void>;
-  conversationId?: string;
   initialTarget?: SettingsOpenTarget;
 }
 
 type SettingsCategory = SettingsCategoryTarget;
 type SettingsRoute = { type: 'category'; category: SettingsCategory };
-type RequestScope = 'settings' | 'section' | 'mutation' | 'dream';
+type RequestScope = 'settings' | 'section' | 'mutation';
 type CapabilityRuleListKind = 'blocks';
-const SETTINGS_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-};
-
 interface DraftConfig {
   providerId: string;
   baseUrl: string;
   enabled: boolean;
-  automaticSkillsEnabled: boolean;
-  slashSkillsEnabled: boolean;
-  compactEnabled: boolean;
-  dreamSchedule: string;
-  additionalSkillDirectoriesText: string;
   disabledSkills: string[];
-  disabledAgents: string[];
 }
 
 interface ProviderChoice {
@@ -218,27 +198,19 @@ const EMPTY_DRAFT: DraftConfig = {
   providerId: '',
   baseUrl: '',
   enabled: true,
-  automaticSkillsEnabled: true,
-  slashSkillsEnabled: true,
-  compactEnabled: true,
-  dreamSchedule: '',
-  additionalSkillDirectoriesText: '',
   disabledSkills: [],
-  disabledAgents: [],
 };
 
 // Theme segment values and category rail order; their visible labels + hints are
 // localized at render (settings.general.theme* and settings.categories.*).
 const THEME_VALUES: readonly ThemeMode[] = ['system', 'light', 'dark'];
-const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'security', 'memory', 'skills', 'agents'];
+const SETTINGS_CATEGORY_IDS: readonly SettingsCategory[] = ['general', 'providers', 'security', 'skills'];
 const SETTINGS_CATEGORY_ICONS = {
   general: SettingsIcon,
   providers: DatabaseIcon,
   security: PasswordIcon,
-  memory: BrainIcon,
   skills: SkillIcon,
-  agents: AgentIcon,
-} satisfies Record<SettingsCategory, AppIcon>;
+} satisfies Partial<Record<SettingsCategory, AppIcon>>;
 
 const PREFERRED_PROVIDER_ORDER = [
   'anthropic',
@@ -249,8 +221,9 @@ const PREFERRED_PROVIDER_ORDER = [
 ];
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
-  if (target?.agentId?.trim()) return { type: 'category', category: 'agents' };
-  if (target?.category) return { type: 'category', category: target.category };
+  if (target?.category && SETTINGS_CATEGORY_IDS.includes(target.category)) {
+    return { type: 'category', category: target.category };
+  }
   return { type: 'category', category: 'providers' };
 }
 
@@ -266,15 +239,12 @@ function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
   return left.category === right.category;
 }
 
-export function AgentSettingsView({ onApplied, onClose, conversationId, initialTarget }: AgentSettingsViewProps) {
+export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSettingsViewProps) {
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
   const [capabilitySettings, setCapabilitySettings] = useState<AgentCapabilitySettingsView | null>(null);
   const [capabilityDraft, setCapabilityDraft] = useState<AgentCapabilitySettingsView | null>(null);
   const [draft, setDraft] = useState<DraftConfig>(EMPTY_DRAFT);
-  // Route navigation history, so the window can offer macOS System Settings'
-  // back / forward (‹ ›) chrome. Top-level categories and drill-down pages share
-  // the same stack; Agent Profiles details are a child route, not flat content on
-  // the category page.
+  // Route navigation history for macOS System Settings-style back/forward chrome.
   const [nav, setNav] = useState<{ stack: SettingsRoute[]; index: number }>({
     stack: [routeFromOpenTarget(initialTarget)],
     index: 0,
@@ -292,28 +262,12 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const settingsRequestRef = useRef(0);
   const sectionRequestRef = useRef(0);
   const mutationRequestRef = useRef(0);
-  // Dream gets its OWN request scope, not the shared 'mutation' one: a manual
-  // Dream awaits a readiness pre-check and then a full model round-trip, and any
-  // unrelated settings mutation that bumps the 'mutation' ref while it is in
-  // flight would invalidate its requestId and leave the isCurrentRequest-guarded
-  // finally from ever clearing dreamRunBusy — sticking "Dreaming…" forever.
-  const dreamRequestRef = useRef(0);
-
   const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
   // Skill trust actions (accept / revoke / undo) round-trip through main and return
   // the refreshed skill list; one shared busy flag keeps the row controls quiet
   // while a mutation is in flight.
   const [skillTrustBusy, setSkillTrustBusy] = useState(false);
-  const [allAgents, setAllAgents] = useState<AgentDefinitionView[]>([]);
-  const [loadingAgents, setLoadingAgents] = useState(false);
-  const [dreamHistory, setDreamHistory] = useState<AgentRenderDreamRunEntity[]>([]);
-  const [loadingDreams, setLoadingDreams] = useState(false);
-  const [dreamRunBusy, setDreamRunBusy] = useState(false);
-  // When a manual "Dream now" pre-check finds too little new evidence, we hold the
-  // readiness here and surface an advisory + a "Dream anyway" override instead of
-  // running. Cleared once the user forces a run or new data clears the bar.
-  const [dreamAdvisory, setDreamAdvisory] = useState<AgentDreamReadiness | null>(null);
   // The per-row ⋯ actions menu (only one open at a time, keyed by providerId). The
   // per-provider config opens in its own native window, not an in-renderer sheet.
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
@@ -342,7 +296,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
       settingsRequestRef.current += 1;
       sectionRequestRef.current += 1;
       mutationRequestRef.current += 1;
-      dreamRequestRef.current += 1;
     };
   }, []);
 
@@ -352,12 +305,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     setOpenRowMenu(null);
     setError(null);
     setNotice(null);
-    openAgentTarget(target);
   }), []);
-
-  useEffect(() => {
-    openAgentTarget(initialTarget);
-  }, [initialTarget]);
 
   // Load the current appearance preference once so the General pane's segmented
   // control reflects the active theme. Best-effort: if the bridge is unavailable
@@ -439,7 +387,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   function requestRefFor(scope: RequestScope) {
     if (scope === 'settings') return settingsRequestRef;
     if (scope === 'section') return sectionRequestRef;
-    if (scope === 'dream') return dreamRequestRef;
     return mutationRequestRef;
   }
 
@@ -467,14 +414,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     navigateRoute({ type: 'category', category: next });
   }
 
-  function openAgentConfig(agentId: string) {
-    void window.lin?.openAgentConfig?.({ agentId });
-  }
-
-  function openAgentTarget(target: SettingsOpenTarget | undefined) {
-    const agentId = target?.agentId?.trim();
-    if (agentId) openAgentConfig(agentId);
-  }
 
   function goBack() {
     setNav((current) => (current.index > 0 ? { ...current, index: current.index - 1 } : current));
@@ -536,7 +475,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
       setLoadingSkills(true);
       setError(null);
       setNotice(null);
-      api.agentListAllSkills(conversationId || 'workspace')
+      api.agentListAllSkills()
         .then((skills) => {
           if (isCurrentRequest('section', id)) setAllSkills(skills);
         })
@@ -545,40 +484,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         })
         .finally(() => {
           if (isCurrentRequest('section', id)) setLoadingSkills(false);
-        });
-    } else if (category === 'memory') {
-      const id = beginRequest('section');
-      setError(null);
-      setNotice(null);
-      setLoadingDreams(true);
-      api.agentListDreamHistory({ limit: 50 })
-        .then((entries) => {
-          if (isCurrentRequest('section', id)) setDreamHistory(entries);
-        })
-        .catch((caught) => {
-          if (isCurrentRequest('section', id)) setError(caught instanceof Error ? caught.message : String(caught));
-        })
-        .finally(() => {
-          if (isCurrentRequest('section', id)) setLoadingDreams(false);
-        });
-    } else if (category === 'agents') {
-      const id = beginRequest('section');
-      setLoadingAgents(true);
-      setError(null);
-      setNotice(null);
-      // The editor's Skills toggle list needs the installed skills, so load both.
-      void api.agentListAllSkills(conversationId || 'workspace')
-        .then((skills) => { if (isCurrentRequest('section', id)) setAllSkills(skills); })
-        .catch(() => { /* the editor degrades to no skill list */ });
-      api.agentListAllDefinitions(conversationId || 'workspace')
-        .then((agents) => {
-          if (isCurrentRequest('section', id)) setAllAgents(agents);
-        })
-        .catch((caught) => {
-          if (isCurrentRequest('section', id)) setError(caught instanceof Error ? caught.message : String(caught));
-        })
-        .finally(() => {
-          if (isCurrentRequest('section', id)) setLoadingAgents(false);
         });
     }
   }, [category]);
@@ -622,7 +527,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   );
   const showFooterActions = category === 'security'
     ? capabilityDraftDirty || runtimeDraftDirty
-    : (category === 'skills' || category === 'agents') && runtimeDraftDirty;
+    : category === 'skills' && runtimeDraftDirty;
 
   // Custom (OpenAI-compatible) providers are configured in the same native window,
   // in 'custom' mode (the window enters the provider id + model itself).
@@ -664,8 +569,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     ));
   }
 
-  // The footer Save persists ONLY what this pane owns — runtime (security /
-  // skills / agents) settings. It never creates or edits a provider row: row
+  // The footer Save persists only skill runtime settings and explicit blocks.
+  // It never creates or edits a provider row: row
   // creation lives solely in the per-provider config window and the OAuth login
   // (provider-config-cleanup A1). Materializing a keyless row here for whatever
   // provider the draft happened to default to was the root of the "Add key" yet
@@ -677,13 +582,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     setNotice(null);
     try {
       await api.agentUpdateRuntimeSettings({
-        automaticSkillsEnabled: draft.automaticSkillsEnabled,
-        slashSkillsEnabled: draft.slashSkillsEnabled,
-        compactEnabled: draft.compactEnabled,
-        dreamSchedule: draft.dreamSchedule,
-        additionalSkillDirectories: parseDirectoryListInput(draft.additionalSkillDirectoriesText),
         disabledSkills: draft.disabledSkills,
-        disabledAgents: draft.disabledAgents,
       });
       const nextCapabilities = capabilityDraftDirty && capabilityPatch
         ? await api.agentApplyCapabilitySettingsPatch(capabilityPatch)
@@ -790,45 +689,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     });
   };
 
-  const isAgentDisabled = (agentId: string) => draft.disabledAgents.includes(agentId);
-  const toggleAgent = (agentId: string) => {
-    setDraft((current) => {
-      const disabled = current.disabledAgents.includes(agentId)
-        ? current.disabledAgents.filter((id) => id !== agentId)
-        : [...current.disabledAgents, agentId];
-      return { ...current, disabledAgents: disabled };
-    });
-  };
-
-  async function runDreamNow(options?: { force?: boolean }) {
-    const requestId = beginRequest('dream');
-    setDreamRunBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      // Pre-check: a manual Dream over too little new evidence is a wasted model
-      // round-trip that just no-ops. Advise and let the user override, unless the
-      // user already chose "Dream anyway".
-      if (!options?.force) {
-        const readiness = await api.agentDreamReadiness();
-        if (!isCurrentRequest('dream', requestId)) return;
-        if (readiness.belowThreshold) {
-          setDreamAdvisory(readiness);
-          return;
-        }
-      }
-      setDreamAdvisory(null);
-      const dreams = await api.agentRunDreamNow({ limit: 50 });
-      if (!isCurrentRequest('dream', requestId)) return;
-      setDreamHistory(dreams);
-      setNotice(t.settings.memory.dreamRunNotice);
-    } catch (caught) {
-      if (isCurrentRequest('dream', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      if (isCurrentRequest('dream', requestId)) setDreamRunBusy(false);
-    }
-  }
-
   // Open the per-provider config in its OWN native window (a modal child of
   // settings — the macOS idiom), not an in-renderer overlay. Clicking a row or
   // "Configure…" asks the main process to open it; the window commits via IPC and
@@ -907,7 +767,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
           <nav className="settings-nav" aria-label={t.settings.categoriesAriaLabel}>
             {SETTINGS_CATEGORY_IDS.map((id) => {
               const cat = t.settings.categories[id];
-              const CategoryIcon = SETTINGS_CATEGORY_ICONS[id];
+              const CategoryIcon = SETTINGS_CATEGORY_ICONS[id]!;
               return (
                 <ButtonControl
                   aria-current={category === id ? 'page' : undefined}
@@ -1114,105 +974,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   />
                 </InsetGroup>
               </section>
-            ) : category === 'memory' ? (
-              <section className="agent-settings-section settings-memory-section" aria-label={t.settings.memory.sectionAriaLabel}>
-                <InsetGroup ariaLabel={t.settings.memory.dreamControlsAriaLabel} label={t.settings.memory.dreamControlsGroup}>
-                  <InsetRow
-                    label={t.settings.memory.dreamScheduleLabel}
-                    sublabel={t.settings.memory.dreamScheduleSublabel}
-                    trailing={(
-                      <Input
-                        className="settings-sheet-row-input"
-                        label={t.settings.memory.dreamScheduleLabel}
-                        value={draft.dreamSchedule}
-                        onChange={(event) => setDraft((current) => ({ ...current, dreamSchedule: event.target.value }))}
-                        variant="bare"
-                      />
-                    )}
-                    wrap
-                  />
-                  <InsetRow
-                    label={t.settings.memory.dreamRunNowLabel}
-                    sublabel={t.settings.memory.dreamRunNowSublabel}
-                    trailing={(
-                      <Button disabled={dreamRunBusy} onClick={() => void runDreamNow()} size="sm" variant="secondary">
-                        {dreamRunBusy ? <LoaderIcon size={ICON_SIZE.menu} /> : <BrainIcon size={ICON_SIZE.menu} />}
-                        <span>{dreamRunBusy ? t.settings.memory.dreamRunNowBusy : t.settings.memory.dreamRunNowButton}</span>
-                      </Button>
-                    )}
-                    wrap
-                  />
-                  {dreamAdvisory ? (
-                    <InsetRow
-                      label={t.settings.memory.dreamThinTitle}
-                      sublabel={t.settings.memory.dreamThinDetail({
-                        messages: dreamAdvisory.newMessageCount,
-                        chars: dreamAdvisory.newCharCount,
-                      })}
-                      trailing={(
-                        <Button disabled={dreamRunBusy} onClick={() => void runDreamNow({ force: true })} size="sm" variant="secondary">
-                          {dreamRunBusy ? <LoaderIcon size={ICON_SIZE.menu} /> : <BrainIcon size={ICON_SIZE.menu} />}
-                          <span>{dreamRunBusy ? t.settings.memory.dreamRunNowBusy : t.settings.memory.dreamRunAnywayButton}</span>
-                        </Button>
-                      )}
-                      wrap
-                    />
-                  ) : null}
-                </InsetGroup>
-                <DreamHistoryGroup
-                  entries={dreamHistory}
-                  formatDate={formatSettingsDate}
-                  loading={loadingDreams}
-                  t={t}
-                />
-              </section>
-            ) : category === 'skills' ? (
+            ) : (
               <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
-                <InsetGroup ariaLabel={t.settings.skills.behaviorRulesAriaLabel} label={t.settings.skills.behaviorRulesGroup}>
-                  <InsetRow
-                    label={t.settings.skills.automaticSkillsLabel}
-                    sublabel={t.settings.skills.automaticSkillsSublabel}
-                    trailing={(
-                      <SwitchControl
-                        checked={draft.automaticSkillsEnabled}
-                        onCheckedChange={(automaticSkillsEnabled) => setDraft((current) => ({ ...current, automaticSkillsEnabled }))}
-                        label={t.settings.skills.automaticSkillsLabel}
-                      >
-                        <SwitchMark checked={draft.automaticSkillsEnabled} />
-                      </SwitchControl>
-                    )}
-                    wrap
-                  />
-                  <InsetRow
-                    label={t.settings.skills.slashSkillsLabel}
-                    sublabel={t.settings.skills.slashSkillsSublabel}
-                    trailing={(
-                      <SwitchControl
-                        checked={draft.slashSkillsEnabled}
-                        onCheckedChange={(slashSkillsEnabled) => setDraft((current) => ({ ...current, slashSkillsEnabled }))}
-                        label={t.settings.skills.slashSkillsLabel}
-                      >
-                        <SwitchMark checked={draft.slashSkillsEnabled} />
-                      </SwitchControl>
-                    )}
-                    wrap
-                  />
-                  <InsetRow
-                    label={t.settings.skills.compactLabel}
-                    sublabel={t.settings.skills.compactSublabel}
-                    trailing={(
-                      <SwitchControl
-                        checked={draft.compactEnabled}
-                        onCheckedChange={(compactEnabled) => setDraft((current) => ({ ...current, compactEnabled }))}
-                        label={t.settings.skills.compactLabel}
-                      >
-                        <SwitchMark checked={draft.compactEnabled} />
-                      </SwitchControl>
-                    )}
-                    wrap
-                  />
-                </InsetGroup>
-
                 <ManagedSkillsSettings onApplied={onApplied} />
 
                 {loadingSkills ? (
@@ -1231,14 +994,14 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                         trustActions.push({
                           label: t.settings.skills.revokeAcceptance,
                           disabled: skillTrustBusy,
-                          onSelect: () => runSkillTrustAction(() => api.agentRevokeSkillAcceptance(conversationId || 'workspace', skill.name)),
+                          onSelect: () => runSkillTrustAction(() => api.agentRevokeSkillAcceptance(skill.name)),
                         });
                       }
                       if (skill.canUndoLastAgentEdit) {
                         trustActions.push({
                           label: t.settings.skills.undoAgentEdit,
                           disabled: skillTrustBusy,
-                          onSelect: () => runSkillTrustAction(() => api.agentUndoSkillAgentEdit(conversationId || 'workspace', skill.name)),
+                          onSelect: () => runSkillTrustAction(() => api.agentUndoSkillAgentEdit(skill.name)),
                         });
                       }
                       return (
@@ -1268,7 +1031,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                                   aria-label={t.settings.skills.acceptSkill({ name: skill.name })}
                                   className="settings-skill-accept"
                                   disabled={skillTrustBusy}
-                                  onClick={() => runSkillTrustAction(() => api.agentAcceptSkill(conversationId || 'workspace', skill.name, skill.contentHash ?? ''))}
+                                  onClick={() => runSkillTrustAction(() => api.agentAcceptSkill(skill.name, skill.contentHash ?? ''))}
                                   size="sm"
                                   variant="secondary"
                                 >
@@ -1297,44 +1060,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                       );
                     })}
                   </InsetGroup>
-                )}
-              </section>
-            ) : (
-              <section className="agent-settings-section settings-agents-section" aria-label={t.settings.agents.sectionAriaLabel}>
-                {loadingAgents ? (
-                  <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" size="inline" title={t.settings.agents.loadingProfiles} />
-                ) : (
-                  <>
-                    <InsetGroup ariaLabel={t.settings.agents.profilesAriaLabel}>
-                      {allAgents.map((agent) => {
-                        const label = agent.displayName || agent.name;
-                        return (
-                          <InsetRow
-                            ariaLabel={label}
-                            dimmed={agent.source !== 'built-in' && isAgentDisabled(agent.agentId)}
-                            key={agent.agentId}
-                            label={(
-                              <>
-                                {label}
-                                <span className="settings-chip">{agent.source}</span>
-                              </>
-                            )}
-                            onSelect={() => openAgentConfig(agent.agentId)}
-                            sublabel={agent.description}
-                            trailing={agent.source === 'built-in' ? null : (
-                              <SwitchControl
-                                checked={!isAgentDisabled(agent.agentId)}
-                                onCheckedChange={() => toggleAgent(agent.agentId)}
-                                label={t.settings.agents.toggleAgent({ name: agent.name })}
-                              >
-                                <SwitchMark checked={!isAgentDisabled(agent.agentId)} />
-                              </SwitchControl>
-                            )}
-                          />
-                        );
-                      })}
-                    </InsetGroup>
-                  </>
                 )}
               </section>
             )}
@@ -1383,8 +1108,6 @@ function resolveInitialDraft(settings: AgentProviderSettingsView): DraftConfig {
     baseUrl: '',
     enabled: true,
     disabledSkills: settings.agent.disabledSkills ?? [],
-    disabledAgents: settings.agent.disabledAgents ?? [],
-    ...runtimeSettingsToDraft(settings),
   };
 }
 
@@ -1531,14 +1254,6 @@ function emptyCapabilitySettings(): AgentCapabilitySettingsView {
   return { blocks: [], diagnostics: [] };
 }
 
-function formatSettingsDate(timestamp: number): string {
-  try {
-    return formatDateTime(timestamp, undefined, SETTINGS_DATE_OPTIONS);
-  } catch {
-    return formatLocaleDateTime(timestamp);
-  }
-}
-
 function preferredProviderIndex(providerId: string): number {
   const index = PREFERRED_PROVIDER_ORDER.indexOf(providerId);
   return index >= 0 ? index : PREFERRED_PROVIDER_ORDER.length;
@@ -1550,45 +1265,15 @@ function providerToDraft(provider: AgentProviderConfigView, settings: AgentProvi
     baseUrl: provider.baseUrl ?? '',
     enabled: provider.enabled,
     disabledSkills: settings.agent.disabledSkills ?? [],
-    disabledAgents: settings.agent.disabledAgents ?? [],
-    ...runtimeSettingsToDraft(settings),
-  };
-}
-
-function runtimeSettingsToDraft(settings: AgentProviderSettingsView): Pick<
-  DraftConfig,
-  'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'dreamSchedule' | 'additionalSkillDirectoriesText'
-> {
-  return {
-    automaticSkillsEnabled: settings.agent.automaticSkillsEnabled,
-    slashSkillsEnabled: settings.agent.slashSkillsEnabled,
-    compactEnabled: settings.agent.compactEnabled,
-    dreamSchedule: settings.agent.dreamSchedule ?? '',
-    additionalSkillDirectoriesText: settings.agent.additionalSkillDirectories.join(', '),
   };
 }
 
 function hasRuntimeDraftChanged(draft: DraftConfig, settings: AgentProviderSettingsView): boolean {
-  const runtime = runtimeSettingsToDraft(settings);
-  return draft.automaticSkillsEnabled !== runtime.automaticSkillsEnabled
-    || draft.slashSkillsEnabled !== runtime.slashSkillsEnabled
-    || draft.compactEnabled !== runtime.compactEnabled
-    || draft.dreamSchedule !== runtime.dreamSchedule
-    || draft.additionalSkillDirectoriesText !== runtime.additionalSkillDirectoriesText
-    || !sameStringSet(draft.disabledSkills, settings.agent.disabledSkills ?? [])
-    || !sameStringSet(draft.disabledAgents, settings.agent.disabledAgents ?? []);
+  return !sameStringSet(draft.disabledSkills, settings.agent.disabledSkills ?? []);
 }
 
 function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
   if (left.length !== right.length) return false;
   const rightSet = new Set(right);
   return left.every((value) => rightSet.has(value));
-}
-
-function parseDirectoryListInput(value: string): string[] {
-  return [...new Set(value
-    .split(/[,\n]/g)
-    .map((item) => item.trim())
-    .filter(Boolean))]
-    .slice(0, 20);
 }

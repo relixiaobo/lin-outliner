@@ -13,8 +13,8 @@ The authoritative list lives in [`src/core/commands.ts`](../../src/core/commands
   `FocusHint`; the main-process boundary persists the workspace snapshot and
   converts the core revision delta into the renderer-facing `CommandResult.update`
   (`ProjectionUpdate`).
-- `AGENT_COMMANDS` — agent session lifecycle, message send/edit/regenerate,
-  follow-ups, steering, provider settings, debug snapshots, child-run control.
+- `AGENT_COMMANDS` — provider, capability, OAuth, and Skill-management settings.
+  Thread/Turn/Goal lifecycle uses the separate strict Agent Core transport below.
 - `ASSET_COMMANDS` — asset ingest, lookup, native pickers, safe system file
   actions, and external URL opening. Asset commands never mutate document state;
   renderer flows pair them with document commands when a picked/dropped file
@@ -136,13 +136,9 @@ field type or command surface.
 
 Sending an outliner node to the agent composer is a renderer-only draft action.
 It inserts the node as a structured composer reference, equivalent to an
-`@node` mention, and does not mutate the document, create an Issue, or start
-execution.
-
-The composer remains the intent surface. If the user or agent wants work to
-exist durably, the agent creates or updates an Issue or Recurring Issue through
-the agent work tools. If execution should start, an Agent Session starts from the
-Issue trigger or from an explicit `agent_session_start` call.
+`@node` mention, and does not mutate the document or start a Turn. The composer
+remains the intent surface; a submitted draft starts or steers the selected
+Thread through Agent Core.
 
 ### Document — history
 `undo`, `redo`.
@@ -179,78 +175,23 @@ uses the local-file open policy before handing the file to the OS. `reveal_asset
 reveals the asset copy in Finder; `copy_asset_file` copies both a text path and,
 where supported, a native file URL/file-list flavor to the clipboard.
 
-### Agent — conversations and persistence
-`agent_restore_latest_conversation`, `agent_restore_conversation`,
-`agent_create_conversation`, `agent_list_conversations`,
-`agent_rename_conversation`, `agent_delete_conversation`,
-`agent_close_conversation`, `agent_reset_conversation`.
+### Agent Core
 
-The conversation surface is product-shaped around one Channels list:
-`agent_list_conversations` returns `#General`, protected `#Dream`, and
-user-created named Channels. The reserved `#General` Channel
-(`lin-agent-channel-general`, `title/goal = General`) is ensured by the runtime
-and sorted first. It stores no conversation `kind` and cannot be renamed,
-deleted, or manually membership-edited through ordinary conversation commands.
-The protected `#Dream` Channel is likewise immutable and rejects ordinary chat.
-The Agent Dock default selection restores a remembered valid Channel first, then
-falls back to `#General`.
-`agent_create_conversation` is the user-facing New Channel command: title is
-optional, blank creation stores the untitled display sentinel, and creation does
-not accept an opening message. `agent_rename_conversation` accepts a blank title
-and restores the untitled display sentinel. Ordinary Channels can be renamed and
-deleted when they have no active Run and are not referenced by active Issue
-routing; protected default Channels cannot be deleted.
+The renderer sends one strict `agentCoreRequest(method, input)` request through
+preload and subscribes to `onAgentCoreNotification`. The canonical methods are:
 
-### Agent — messaging
-`agent_send_message`, `agent_edit_message`, `agent_regenerate_message`,
-`agent_retry_message`, `agent_switch_branch`, `agent_queue_follow_up`,
-`agent_clear_follow_up`, `agent_steer_conversation`, `agent_clear_steer`,
-`agent_stop_conversation`.
+- `thread/list`, `thread/read`, `thread/start`, `thread/resume`, `thread/fork`,
+  `thread/name/set`, `thread/archive`, `thread/unarchive`, and `thread/delete`
+- `thread/turns/list` and `thread/items/list`
+- `turn/start`, `turn/steer`, and `turn/interrupt`
+- `goal/get`, `goal/create`, and `goal/update`
+- `userInput/respond`
 
-In a **DM**, `agent_send_message` resolves when the serial run settles (the
-command spans the turn). In a **Channel** it **resolves on
-acceptance**: it persists the user message and enqueues the addressed turns, then
-returns without awaiting them — the runs drain asynchronously (`scheduleChannelIdleEmit`
-emits the final idle projection on drain). `agent_edit_message`/`agent_regenerate_message`/
-`agent_retry_message` follow the same DM-vs-Channel contract. `agent_steer_conversation`
-is DM-only; Channels have no steer (a send while runs work dispatches a new addressed
-turn). See `agent-architecture.md` (Channel runtime).
-
-### Agent — Issue work
-`agent_issue_search`, `agent_issue_read`, `agent_issue_complete_human_review`,
-`agent_session_read`, `agent_session_transcript`.
-
-These renderer IPC commands back the Issue-first Work surface.
-`agent_issue_search` returns lightweight Issue and Recurring Issue rows;
-`agent_issue_read` loads one durable work object and explicitly requested detail
-slices; and `agent_session_read` returns bounded Agent Session state and
-Activity. The renderer requests those commands through the ordinary preload
-bridge and does not read the Issue store directly.
-
-`agent_issue_complete_human_review` is the narrow renderer-to-main mutation for
-the Work detail `Accept and complete` action. It accepts an Issue id plus expected
-revision, records the local user actor, and succeeds only for a human-review Issue
-with a completed execution Session. It is not a model-facing agent tool.
-
-`agent_session_transcript` is a renderer-only drill-in command. It accepts an
-Agent Session id, resolves the internal execution binding in the main process,
-and returns the bound Run detail and transcript needed by the existing
-conversation turn renderer. It is not an agent tool. The model-facing
-`agent_session_read` tool cannot request or receive a transcript or Run id.
-
-### Agent — delegated runs
-`agent_run_detail`, `agent_run_transcript`, `agent_run_status`,
-`agent_run_steer`, `agent_run_amend`, `agent_run_stop`.
-`agent_run_transcript` replays the run's own ledger for the drill-in transcript.
-`agent_run_detail` reads Run meta, ancestor breadcrumb metadata, the latest result
-submission, and direct sub-run metadata from the Run index.
-Runtime control surfaces use only the `agent_run_*` command names; the older
-pre-release child-run command aliases are not accepted.
-
-### Agent — debug
-`agent_debug_view` (the conversation's run list + rollups), `agent_debug_run`
-(one run's model-facing context, process, usage, and per-run snapshot),
-`agent_payload_text`.
+The main process owns `ThreadService`; the renderer never reads rollout or SQLite
+stores directly. Every request and notification passes the Agent Core codec.
+History reads are paginated, Turn operations require exact identity
+preconditions, and editing earlier history forks rather than mutating completed
+Items. See [`agent-core.md`](agent-core.md).
 
 ### Agent — providers and runtime settings
 `agent_get_provider_settings`, `agent_update_runtime_settings`,
@@ -275,9 +216,10 @@ pre-release child-run command aliases are not accepted.
   id sample with total count/hash metadata instead of an unbounded id list. See
   `src/core/loroDocument.ts` and `src/core/operationJournal.ts`.
 - `NodeType` is content-oriented. It does not include a work/execution node type;
-  scheduling and execution are owned by Issue / Recurring Issue / Agent Session
-  runtime state.
+  Agent execution is owned by the Thread, Turn, Item, and Goal stores outside the
+  document model.
 - When adding or renaming a command, update `DOCUMENT_COMMANDS` or
   `AGENT_COMMANDS` and the matching dispatcher in `src/main/documentService.ts`
-  (and `src/main/agentRuntime.ts` for agent commands). Update this category
-  list when adding a whole new category, not for individual additions.
+  or `src/main/main.ts`. Agent Core methods instead update its transport codecs
+  and `ThreadService`. Update this category list when adding a whole new category,
+  not for individual additions.

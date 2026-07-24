@@ -12,7 +12,6 @@ import {
 import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
 import { EMPTY_RICH_TEXT, nodeReferenceTarget, plainText } from '../api/types';
-import { requestRevealChatSource } from '../agent/agentReveal';
 import { flattenVisibleRows, resolveReferenceTargetId, type DocumentIndex, type UiState } from '../state/document';
 import { dayNoteIsoDateForNode } from '../state/dayNoteCounts';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
@@ -668,7 +667,6 @@ export function NodePanel(props: NodePanelProps) {
                       });
                       return;
                     }
-                    if (target.kind === 'chat-source') void requestRevealChatSource(target);
                   }}
                   onEscape={() => {
                     replaceLocalTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);

@@ -46,13 +46,11 @@
    below. Net: the icon always travels with the start of the name; the name still
    wraps at its spaces (and mid-word for a long no-space name via the editor's
    `overflow-wrap`). */
-.inline-ref[data-inline-ref-kind="local-file"],
-.inline-ref[data-inline-ref-kind="chat-source"] {
+.inline-ref[data-inline-ref-kind="local-file"] {
   white-space: nowrap;
 }
 
-.inline-ref-file-name,
-.inline-ref-chat-label {
+.inline-ref-file-name {
   white-space: normal;
 }
 
@@ -77,22 +75,6 @@
   mask-size: contain;
 }
 
-.inline-ref-chat-icon {
-  display: inline-block;
-  width: 0.95em;
-  height: 0.95em;
-  margin-right: 0.18em;
-  vertical-align: -0.16em;
-  background-color: currentColor;
-  -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/></svg>");
-  mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z'/></svg>");
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-size: contain;
-  mask-size: contain;
-}
 
 .inline-ref-file-icon[data-file-icon-kind="folder"] {
   -webkit-mask-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/></svg>");

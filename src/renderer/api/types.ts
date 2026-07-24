@@ -18,7 +18,6 @@ export type {
   ProviderAuthView,
   OAuthLoginEvent,
   OAuthLoginEventEnvelope,
-  AgentDefinition,
   SkillDefinition,
   ManagedSkillCatalogView,
   ManagedSkillCommandResult,
@@ -28,9 +27,6 @@ export type {
   ManagedSkillErrorView,
   ManagedSkillUpdatePreviewView,
   ManagedSkillView,
-  AgentConversation,
-  AgentCreateConversationOptions,
-  AgentConversationListMeta,
   Backlink,
   BatchMoveNodeInput,
   CommandResult,
@@ -73,35 +69,23 @@ export type {
 } from '../../core/types';
 
 export type {
-  AgentAuthoringInput,
-  AgentDefinitionView,
-  AgentRunDetailPayload,
-  AgentRunListEntry,
-  AgentRunTranscriptPayload,
-  AgentStorageLocation,
-} from '../../core/agentTypes';
+  AgentCoreMethod,
+  AgentCoreNotification,
+  AgentCoreRequestByMethod,
+  AgentCoreResponseByMethod,
+  AdditionalContext,
+  RequestUserInputRequest,
+  RequestUserInputResponse,
+  Thread,
+  ThreadId,
+  ThreadItem,
+  ThreadItemEntry,
+  ThreadSource,
+  Turn,
+  TurnId,
+} from '../../core/agent/protocol';
 
-export type {
-  Activity,
-  AgentIssue,
-  AgentRecurringIssue,
-  AgentSession,
-  AgentSessionReadInput,
-  AgentSessionReadResult,
-  AgentSessionTranscriptResult,
-  IssueReadInput,
-  IssueReadResult,
-  IssueSearchInput,
-  IssueSearchResult,
-  IssueSearchRow,
-  IssueTargetRef,
-  TenonAgentToolResult,
-} from '../../core/agentIssue';
-
-export type {
-  AgentDreamReadiness,
-  AgentRenderDreamRunEntity,
-} from '../../core/agentRenderProjection';
+export type { ThreadGoal, ThreadGoalStatus } from '../../core/agent/goal';
 
 export interface AgentCapabilitySettingsView {
   blocks: string[];

@@ -616,21 +616,21 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   }, [rows, byId, props.parentId, ui.expanded]);
 
   const searchKey = searchParentIds.join('|');
+  const searchRefreshInFlightRef = useRef(new Set<NodeId>());
   useEffect(() => {
     const ids = searchKey ? searchKey.split('|') : [];
     const rootSearchVisible = ids.includes(props.parentId);
     if (!rootSearchVisible) setRootSearchRefreshing(false);
-    let active = true;
     for (const id of ids) {
+      if (searchRefreshInFlightRef.current.has(id)) continue;
+      searchRefreshInFlightRef.current.add(id);
       if (id === props.parentId) setRootSearchRefreshing(true);
       void props.run(() => api.refreshSearchNodeResults(id), { applyFocus: false })
         .finally(() => {
-          if (active && id === props.parentId) setRootSearchRefreshing(false);
+          searchRefreshInFlightRef.current.delete(id);
+          if (id === props.parentId) setRootSearchRefreshing(false);
         });
     }
-    return () => {
-      active = false;
-    };
   }, [searchKey, index.projection, props.parentId, props.run]);
 
   const renderRow = (row: VisualRow, rowIndex: number): ReactNode => {

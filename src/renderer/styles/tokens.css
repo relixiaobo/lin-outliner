@@ -165,12 +165,6 @@
   --usage-output: var(--identity-tint-6);
   --usage-cache-read: var(--identity-tint-3);
   --usage-cache-write: var(--identity-tint-2);
-  /* The keyed avatar's hairline ring — the tint hue mixed toward transparent so it
-     reads as a soft 1px definition, never a hard border. A token (not an inline
-     box-shadow) so the consumer stays tokenized (B11); like --inline-ref-focus-shadow
-     it nests an accent var, --avatar-accent, resolved at the avatar by its is-tint-*. */
-  --avatar-tint-ring: inset 0 0 0 1px color-mix(in srgb, var(--avatar-accent) 26%, transparent);
-
   --inline-code-bg: rgb(var(--ink) / 0.06);
   --highlight-mark: rgba(247, 236, 139, 0.6);
 
@@ -205,8 +199,8 @@
   --typed-field-section-shadow: inset 0 1px 0 var(--separator);
   --segmented-track-shadow: inset 0 0 0 1px var(--separator);
   /* Grouped-card edge: a 0.5px inset hairline instead of a heavy border, so a
-     card reads as its own region by surface + hairline (settings inset groups,
-     the agent-profile detail card). */
+     card reads as its own region by surface + hairline (settings inset groups
+     and canonical Thread details). */
   --inset-hairline: inset 0 0 0 0.5px var(--separator);
   --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.14);
   --shadow-thumb-strong: 0 1px 2px rgba(0, 0, 0, 0.18);
@@ -310,12 +304,12 @@
   /* The agent rail's TEXT reading column. --rail-pad is the
      concentric BLOCK edge (where the composer card, hover fills and rail ring sit) —
      prose placed directly on it reads as glued to the edge. The composer's INPUT text
-     already sits one reading gutter further in (card inset --agent-composer-corner-inset
+     already sits one reading gutter further in (card inset --thread-composer-corner-inset
      + input pad --space-2). This token reproduces that exact x so the title, the
      transcript messages, and the composer input all share ONE text column, instead of
      the title/messages hugging the block edge while the composer breathes. */
   --agent-content-x: calc(
-    var(--rail-pad) + var(--agent-composer-corner-inset) + var(--space-2)
+    var(--rail-pad) + var(--thread-composer-corner-inset) + var(--space-2)
   );
   --outline-panel-min-width: 360px;
   /* Control box sizes — a tight 4-step ladder (20 / 22 / 24 / 28). */
@@ -364,7 +358,7 @@
      with the rail and reuses --panel-radius instead of a nested-card radius. */
   --workspace-surface-radius: calc(var(--radius-window) - var(--layout-gap));
   --panel-radius: var(--workspace-surface-radius);
-  --agent-composer-corner-inset: var(--space-3);
+  --thread-composer-corner-inset: var(--space-3);
   --motion-fast: 120ms ease;
   --motion-slow: 180ms ease;
   --motion-layout-duration: 160ms;

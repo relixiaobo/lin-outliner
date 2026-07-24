@@ -142,8 +142,8 @@ without hiding a full rebuild behind `Core.revision()`.
 
 The text normalization, query analysis, CJK/Latin tokenization, snippet building,
 and label ranking described above are one shared pure module
-(`src/core/textSearchAnalyzer.ts`), consumed by the node text index, the agent
-internal conversation-history lookup, and the renderer field/slash/file pickers
+(`src/core/textSearchAnalyzer.ts`), consumed by the node text index and the
+renderer field/slash/file pickers
 so every surface agrees on whitespace, punctuation, CJK grams, and stop-word
 handling. Node lookups go through a single indexed evaluator path -- document
 search and agent `node_search` both call the main-side `NodeRetrievalService`

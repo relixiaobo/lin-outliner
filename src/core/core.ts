@@ -1,4 +1,16 @@
 import { autoInitStrategiesForFieldType } from './autoInit';
+import {
+  DocumentSystemContractError,
+  decodeDocumentSystemReceipt,
+  documentSystemReceiptKey,
+  encodeDocumentSystemReceipt,
+  resolveDocumentSystemTagEnsure,
+  validateDocumentSystemReceipt,
+  validateDocumentSystemTagDefinition,
+  type DocumentSystemReceipt,
+  type DocumentSystemTagDefinition,
+  type DocumentSystemTagObservedState,
+} from './documentSystem';
 import { CoreError } from './errors';
 import { LoroOutlinerDocument, type SharedLoroDocumentState } from './loroDocument';
 import { freshNodeId, isClientNodeId } from './nodeId';
@@ -324,6 +336,7 @@ export class Core {
   // service layer compares it before/after a command for O(1) change detection
   // instead of stringifying the whole document.
   private revisionValue = 0;
+  private persistenceRevisionValue = 0;
   private lastRevisionDelta: CoreRevisionDelta = {
     revision: 0,
     changedNodeIds: [],
@@ -469,6 +482,7 @@ export class Core {
   applyReplicationUpdates(updates: readonly Uint8Array[]): CoreReplicationImportResult {
     this.assertReplicationIdle();
     const importResult = this.loro.importUpdates(updates);
+    if (importResult.persistenceChanged) this.persistenceRevisionValue += 1;
     if (importResult.requiresFullStateDiff) {
       const after = this.loro.materializeState();
       const changedNodeIds = changedNodeIdsBetweenStates(this.stateValue, after);
@@ -558,6 +572,105 @@ export class Core {
   // the caller can detect "did anything change" without comparing snapshots.
   revision(): number {
     return this.revisionValue;
+  }
+
+  persistenceRevision(): number {
+    return this.persistenceRevisionValue;
+  }
+
+  readDocumentSystemReceipt(namespace: string, scopeId: string): DocumentSystemReceipt | null {
+    const encoded = this.loro.readDocumentSystemReceipt(documentSystemReceiptKey(namespace, scopeId));
+    return encoded === null ? null : decodeDocumentSystemReceipt(encoded);
+  }
+
+  putDocumentSystemReceipt(receiptInput: DocumentSystemReceipt): void {
+    this.requireHostDocumentTransaction();
+    const receipt = validateDocumentSystemReceipt(receiptInput);
+    this.loro.writeDocumentSystemReceipt(
+      documentSystemReceiptKey(receipt.namespace, receipt.scopeId),
+      encodeDocumentSystemReceipt(receipt),
+    );
+  }
+
+  readDocumentSystemTagDefinition(tagId: string): DocumentSystemTagDefinition | null {
+    const encoded = this.loro.readDocumentSystemTagClaim(tagId);
+    if (encoded === null) return null;
+    let value: unknown;
+    try {
+      value = JSON.parse(encoded);
+    } catch {
+      throw new DocumentSystemContractError(`invalid system tag ownership claim: ${tagId}`);
+    }
+    return validateDocumentSystemTagDefinition(value as DocumentSystemTagDefinition);
+  }
+
+  protectedDocumentSystemTagIds(): ReadonlySet<string> {
+    return new Set(this.loro.documentSystemTagIds());
+  }
+
+  ensureDocumentSystemTagDefinition(definitionInput: DocumentSystemTagDefinition): DocumentSystemTagDefinition {
+    this.requireHostDocumentTransaction();
+    const definition = validateDocumentSystemTagDefinition(definitionInput);
+    const state = this.snapshot();
+    const node = state.nodes[definition.tagId];
+    const claim = this.readDocumentSystemTagDefinition(definition.tagId) ?? undefined;
+    for (const claimedTagId of this.loro.documentSystemTagIds()) {
+      const existingClaim = this.readDocumentSystemTagDefinition(claimedTagId);
+      if (
+        existingClaim
+        && existingClaim.tagId !== definition.tagId
+        && existingClaim.namespace === definition.namespace
+        && existingClaim.name === definition.name
+      ) {
+        throw new DocumentSystemContractError('system tag name is already owned by another identity');
+      }
+    }
+    const duplicate = Object.values(state.nodes).find((candidate) =>
+      candidate.id !== definition.tagId
+      && candidate.type === 'tagDef'
+      && candidate.content.text === definition.name
+      && !isInTrash(state, candidate.id));
+    if (duplicate) throw new DocumentSystemContractError('system tag name conflicts with an existing tag definition');
+
+    const tag: DocumentSystemTagObservedState = !node
+      ? { kind: 'missing' }
+      : {
+          kind: isInTrash(state, node.id) ? 'trashed' : 'active',
+          tagId: node.id,
+          name: node.content.text,
+          nodeType: node.type ?? null,
+        };
+    if (node && tag.kind === 'active' && node.parentId !== SCHEMA_ID) {
+      throw new DocumentSystemContractError('system tag definition must be a direct child of Schema');
+    }
+    const resolution = resolveDocumentSystemTagEnsure(definition, { claim, tag });
+    this.loro.writeDocumentSystemTagClaim(definition.tagId, JSON.stringify(resolution.definition));
+    if (resolution.action === 'create') {
+      this.loro.createNodeWithId(definition.tagId, SCHEMA_ID, undefined, 'tagDef', (created) => {
+        created.content = plainText(definition.name);
+        created.locked = true;
+      });
+    } else if (resolution.action === 'restore') {
+      const restored = clone(requiredNode(this.snapshot(), definition.tagId));
+      delete restored.trashedFromParentId;
+      delete restored.trashedFromIndex;
+      restored.locked = true;
+      restored.updatedAt = nowMs();
+      this.loro.writeNode(restored);
+      this.loro.moveNode(definition.tagId, SCHEMA_ID, undefined);
+    } else if (node && !node.locked) {
+      const locked = clone(node);
+      locked.locked = true;
+      locked.updatedAt = nowMs();
+      this.loro.writeNode(locked);
+    }
+    return resolution.definition;
+  }
+
+  private requireHostDocumentTransaction(): void {
+    if (!this.activeTransaction || !this.activeTransaction.origin.startsWith('system:')) {
+      throw new DocumentSystemContractError('host document commands require a trusted system transaction');
+    }
   }
 
   revisionDelta(): CoreRevisionDelta {
@@ -688,6 +801,7 @@ export class Core {
     if (this.activeTransaction) return fn();
     const rollbackFrontiers = this.loro.frontiers();
     this.loro.clearTouchedNodeIds();
+    this.loro.clearSystemDataChanged();
     this.activeTransaction = {
       origin,
       metadata,
@@ -705,6 +819,7 @@ export class Core {
     } catch (error) {
       this.loro.revertTo(rollbackFrontiers, SYSTEM_COMMIT_ORIGIN);
       this.loro.clearTouchedNodeIds();
+      this.loro.clearSystemDataChanged();
       this.activeTransaction = undefined;
       // The revert rewrites the tree wholesale; drop the projection cache so the
       // next read rebuilds it from the rolled-back state.
@@ -2896,10 +3011,11 @@ export class Core {
 
   private finalizeActiveTransaction(transaction: CoreTransaction): boolean {
     this.patchActiveTransactionTouchedNodes(transaction);
-    if (!transaction.changed) return false;
+    const systemChanged = this.loro.drainSystemDataChanged();
+    if (!transaction.changed && !systemChanged) return false;
     const affectedNodeIds = [...transaction.affectedNodeIds].sort();
     this.commitCurrentTransaction(transaction.origin, transaction.metadata, affectedNodeIds);
-    this.bumpRevision(affectedNodeIds, false);
+    if (transaction.changed) this.bumpRevision(affectedNodeIds, false);
     return true;
   }
 
@@ -2993,6 +3109,7 @@ export class Core {
   ) {
     const entry = this.history.createEntry(origin, metadata, affectedNodeIds);
     this.loro.commit(origin, entry);
+    this.persistenceRevisionValue += 1;
     if (entry) {
       this.history.record(entry);
       this.loro.clearRedo();
