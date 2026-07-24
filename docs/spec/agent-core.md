@@ -253,6 +253,11 @@ The host assembles extension and capability contracts into one executable
 registry, validates provider-name uniqueness and runtime schemas, and fails
 closed if an enabled extension contract has no runtime implementation.
 
+Memory is the first durable extension using this boundary. Its immutable Turn
+admission, terminal citation Items, history-rollback invalidation, and private
+pipeline state are specified in [`agent-memory.md`](agent-memory.md); published
+Memory remains ordinary document Nodes rather than a Core entity.
+
 ## Renderer Diagnostics
 
 The Thread Details dialog is the canonical diagnostic surface. It renders the
@@ -266,6 +271,11 @@ Projection-neutral system receipts and deterministic protected tag definitions
 use `DocumentSystemHost`. One trusted transaction may atomically commit document
 commands plus a receipt. System-only commits persist without emitting a Node
 projection update and are excluded from user undo.
+
+Internal projection-change delivery retains the originating operation ID, while
+the public renderer event remains the canonical projection event. This lets a
+cross-store extension distinguish its own committed Node transaction from a
+later user edit before its private journal finalizes.
 
 Protected tag definitions have host-owned identity and lifecycle. Public
 commands may apply or remove a protected tag from content, but cannot mutate its

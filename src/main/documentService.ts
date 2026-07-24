@@ -32,6 +32,7 @@ import type {
   CommandResult,
   BatchMoveNodeInput,
   CreateNodeTree,
+  DocumentProjection,
   DocumentProjectionChangedEvent,
   FocusHint,
   ProjectionSnapshot,
@@ -84,9 +85,22 @@ interface TextEditGroup {
 export interface ProjectionChangedDelivery {
   event: DocumentProjectionChangedEvent;
   sourceWebContentsId?: number;
+  operationId?: string;
 }
 
 type ProjectionChangedListener = (delivery: ProjectionChangedDelivery) => void;
+
+export type DocumentMutationGuard = (
+  command: DocumentCommand,
+  args: Readonly<Record<string, unknown>>,
+  meta: DocumentMutationMeta,
+  projection: DocumentProjection,
+) => void;
+
+export type DocumentMutationCoordinator = <T>(
+  meta: DocumentMutationMeta,
+  operation: () => Promise<T>,
+) => Promise<T>;
 
 export class DocumentService implements DocumentSystemHost {
   private core = Core.new();
@@ -118,13 +132,17 @@ export class DocumentService implements DocumentSystemHost {
   }>();
   private transientSearchOptionsProvider?: () => TransientSearchOptions;
   private nodeAccessRecorder?: (nodeIds: readonly string[], source: NodeAccessSource) => void | Promise<void>;
+  private mutationGuard?: DocumentMutationGuard;
+  private mutationCoordinator?: DocumentMutationCoordinator;
   private readonly nodeRetrieval = new NodeRetrievalService({
     getProjection: () => this.core.projection(),
     getTextSearchIndex: () => this.getTextSearchIndex(),
   });
   private documentReadModel?: DocumentReadModel;
+  private initialized = false;
 
   async initWorkspace(): Promise<ProjectionSnapshot> {
+    if (this.initialized) return this.projectionSnapshot();
     this.core = await this.loadCore();
     this.documentReadModel = undefined;
     // The constructor lazily mints today's date node (and seeds system nodes) in
@@ -134,6 +152,7 @@ export class DocumentService implements DocumentSystemHost {
     if (this.core.requiresInitialPersist()) await this.saveCore();
     const projection = this.core.projection();
     this.rebuildTextSearchIndex(projection);
+    this.initialized = true;
     return this.projectionSnapshot();
   }
 
@@ -224,6 +243,14 @@ export class DocumentService implements DocumentSystemHost {
     this.nodeAccessRecorder = recorder;
   }
 
+  setMutationGuard(guard: DocumentMutationGuard): void {
+    this.mutationGuard = guard;
+  }
+
+  setMutationCoordinator(coordinator: DocumentMutationCoordinator): void {
+    this.mutationCoordinator = coordinator;
+  }
+
   recordNodeAccess(nodeIds: readonly string[], source: NodeAccessSource): void | Promise<void> {
     return this.nodeAccessRecorder?.(nodeIds, source);
   }
@@ -294,24 +321,26 @@ export class DocumentService implements DocumentSystemHost {
           causation: systemContext.causation,
         }
       : contextOrMeta;
-    const task = this.mutationQueue.then(async () => {
-      await this.flushTextEditGroupNow();
-      const revisionBefore = this.core.revision();
-      const persistenceRevisionBefore = this.core.persistenceRevision();
-      const trustedTransaction = systemContext ? this.createDocumentSystemTransaction(systemContext) : null;
-      const result = await this.core.transaction(meta.origin ?? 'user', async () =>
-        this.transactionContext.run(true, () => trustedTransaction
-          ? (operation as (transaction: DocumentSystemTransaction) => Promise<T>)(trustedTransaction)
-          : (operation as () => Promise<T>)()), transactionMetadata(meta));
-      if (this.core.persistenceRevision() !== persistenceRevisionBefore) this.scheduleCoreSave();
-      if (this.core.revision() !== revisionBefore) {
-        this.refreshTextSearchIndexFromCoreDelta();
-        this.emitProjectionChanged(meta.origin ?? 'user', meta.sourceWebContentsId);
-      }
-      return result;
+    return this.coordinateMutation(meta, async () => {
+      const task = this.mutationQueue.then(async () => {
+        await this.flushTextEditGroupNow();
+        const revisionBefore = this.core.revision();
+        const persistenceRevisionBefore = this.core.persistenceRevision();
+        const trustedTransaction = systemContext ? this.createDocumentSystemTransaction(systemContext) : null;
+        const result = await this.core.transaction(meta.origin ?? 'user', async () =>
+          this.transactionContext.run(true, () => trustedTransaction
+            ? (operation as (transaction: DocumentSystemTransaction) => Promise<T>)(trustedTransaction)
+            : (operation as () => Promise<T>)()), transactionMetadata(meta));
+        if (this.core.persistenceRevision() !== persistenceRevisionBefore) this.scheduleCoreSave();
+        if (this.core.revision() !== revisionBefore) {
+          this.refreshTextSearchIndexFromCoreDelta();
+          this.emitProjectionChanged(meta.origin ?? 'user', meta.sourceWebContentsId, meta.operationId);
+        }
+        return result;
+      });
+      this.mutationQueue = task.then(() => undefined, () => undefined);
+      return task;
     });
-    this.mutationQueue = task.then(() => undefined, () => undefined);
-    return task;
   }
 
   async readDocumentSystemReceipt(namespace: string, scopeId: string): Promise<DocumentSystemReceipt | null> {
@@ -328,29 +357,32 @@ export class DocumentService implements DocumentSystemHost {
     meta: DocumentMutationMeta,
     options: { yieldEveryNodes?: number; commitEveryNodes?: number } = {},
   ): Promise<{ focus?: FocusHint }> {
-    const task = this.mutationQueue.then(async () => {
-      await this.flushTextEditGroupNow();
-      const revisionBefore = this.core.revision();
-      const undoGroupStarted = this.core.beginUndoGroup();
-      let focus: FocusHint | undefined;
-      try {
-        focus = await this.core.transaction(meta.origin ?? 'agent', async () =>
-          this.core.createNodesFromTreeYieldingFocus(parentId, nodes, {
-            yieldEveryNodes: options.yieldEveryNodes,
-            commitEveryNodes: options.commitEveryNodes,
-          }), transactionMetadata({ ...meta, command: meta.command ?? 'create_nodes_from_tree' }));
-      } finally {
-        if (undoGroupStarted) this.core.endUndoGroup();
-      }
-      if (this.core.revision() !== revisionBefore) {
-        await this.refreshTextSearchIndexFromCoreDeltaYielding({ yieldEveryNodes: options.yieldEveryNodes });
-        this.scheduleCoreSave();
-        this.emitProjectionChanged(meta.origin ?? 'agent', meta.sourceWebContentsId);
-      }
-      return focus ? { focus } : {};
+    return this.coordinateMutation(meta, async () => {
+      const task = this.mutationQueue.then(async () => {
+        await this.flushTextEditGroupNow();
+        this.mutationGuard?.('create_nodes_from_tree', { parentId, nodes }, meta, this.core.projection());
+        const revisionBefore = this.core.revision();
+        const undoGroupStarted = this.core.beginUndoGroup();
+        let focus: FocusHint | undefined;
+        try {
+          focus = await this.core.transaction(meta.origin ?? 'agent', async () =>
+            this.core.createNodesFromTreeYieldingFocus(parentId, nodes, {
+              yieldEveryNodes: options.yieldEveryNodes,
+              commitEveryNodes: options.commitEveryNodes,
+            }), transactionMetadata({ ...meta, command: meta.command ?? 'create_nodes_from_tree' }));
+        } finally {
+          if (undoGroupStarted) this.core.endUndoGroup();
+        }
+        if (this.core.revision() !== revisionBefore) {
+          await this.refreshTextSearchIndexFromCoreDeltaYielding({ yieldEveryNodes: options.yieldEveryNodes });
+          this.scheduleCoreSave();
+          this.emitProjectionChanged(meta.origin ?? 'agent', meta.sourceWebContentsId, meta.operationId);
+        }
+        return focus ? { focus } : {};
+      });
+      this.mutationQueue = task.then(() => undefined, () => undefined);
+      return task;
     });
-    this.mutationQueue = task.then(() => undefined, () => undefined);
-    return task;
   }
 
   async handle(command: DocumentCommand, args: Record<string, unknown> = {}, meta: DocumentMutationMeta = {}) {
@@ -383,42 +415,52 @@ export class DocumentService implements DocumentSystemHost {
     const isMaterialize = command === 'create_node'
       && args.materialize === true
       && typeof args.id === 'string';
-    const task = this.mutationQueue.then(async () => {
-      if (command !== 'apply_node_text_patch') await this.flushTextEditGroupNow();
-      if (command === 'apply_node_text_patch' || isMaterialize) {
-        await this.flushCoreSaveNow();
-      }
-      const revisionBefore = this.core.revision();
-      const effectiveMeta = command === 'apply_node_text_patch'
-        ? await this.textEditMetadata(String(args.nodeId), mutationMeta)
-        : isMaterialize
-          ? this.beginMaterializeGroup(String(args.id), mutationMeta)
-          : mutationMeta;
-      const outcome = this.core.withOrigin(
-        effectiveMeta.origin ?? 'user',
-        () => this.runMutation(command, args, effectiveMeta),
-        transactionMetadata({ ...effectiveMeta, command }),
-      );
-      const changed = this.core.revision() !== revisionBefore;
-      if (command === 'apply_node_text_patch') {
-        if (changed) this.scheduleTextEditFlush();
-      } else if (isMaterialize) {
-        // Keep the group open for the following text patches when the node was
-        // created; close it immediately if the create was an idempotent retry.
-        if (changed) this.scheduleTextEditFlush();
-        else await this.flushTextEditGroupNow();
-      } else if (changed) {
-        this.refreshTextSearchIndexFromCoreDelta();
-        this.scheduleCoreSave();
-      }
-      if (changed && (command === 'apply_node_text_patch' || isMaterialize)) this.refreshTextSearchIndexFromCoreDelta();
-      if (changed) this.emitProjectionChanged(effectiveMeta.origin ?? 'user', effectiveMeta.sourceWebContentsId);
-      const focus = 'focus' in outcome ? outcome.focus : undefined;
-      const result: CommandResult = { update: this.buildProjectionUpdate(), ...(focus ? { focus } : {}) };
-      return result;
+    return this.coordinateMutation(mutationMeta, async () => {
+      const task = this.mutationQueue.then(async () => {
+        if (command !== 'apply_node_text_patch') await this.flushTextEditGroupNow();
+        if (command === 'apply_node_text_patch' || isMaterialize) {
+          await this.flushCoreSaveNow();
+        }
+        const revisionBefore = this.core.revision();
+        const effectiveMeta = command === 'apply_node_text_patch'
+          ? await this.textEditMetadata(String(args.nodeId), mutationMeta)
+          : isMaterialize
+            ? this.beginMaterializeGroup(String(args.id), mutationMeta)
+            : mutationMeta;
+        const outcome = this.core.withOrigin(
+          effectiveMeta.origin ?? 'user',
+          () => this.runMutation(command, args, effectiveMeta),
+          transactionMetadata({ ...effectiveMeta, command }),
+        );
+        const changed = this.core.revision() !== revisionBefore;
+        if (command === 'apply_node_text_patch') {
+          if (changed) this.scheduleTextEditFlush();
+        } else if (isMaterialize) {
+          // Keep the group open for the following text patches when the node was
+          // created; close it immediately if the create was an idempotent retry.
+          if (changed) this.scheduleTextEditFlush();
+          else await this.flushTextEditGroupNow();
+        } else if (changed) {
+          this.refreshTextSearchIndexFromCoreDelta();
+          this.scheduleCoreSave();
+        }
+        if (changed && (command === 'apply_node_text_patch' || isMaterialize)) this.refreshTextSearchIndexFromCoreDelta();
+        if (changed) this.emitProjectionChanged(
+          effectiveMeta.origin ?? 'user',
+          effectiveMeta.sourceWebContentsId,
+          effectiveMeta.operationId,
+        );
+        const focus = 'focus' in outcome ? outcome.focus : undefined;
+        const result: CommandResult = { update: this.buildProjectionUpdate(), ...(focus ? { focus } : {}) };
+        return result;
+      });
+      this.mutationQueue = task.then(() => undefined, () => undefined);
+      return task;
     });
-    this.mutationQueue = task.then(() => undefined, () => undefined);
-    return task;
+  }
+
+  private coordinateMutation<T>(meta: DocumentMutationMeta, operation: () => Promise<T>): Promise<T> {
+    return this.mutationCoordinator ? this.mutationCoordinator(meta, operation) : operation();
   }
 
   private async textEditMetadata(nodeId: string, meta: DocumentMutationMeta): Promise<DocumentMutationMeta> {
@@ -482,7 +524,7 @@ export class DocumentService implements DocumentSystemHost {
     this.textEditGroup = undefined;
     this.core.endUndoGroup();
     await this.saveCore();
-    this.emitProjectionChanged(group.origin);
+    this.emitProjectionChanged(group.origin, undefined, group.operationId);
   }
 
   private scheduleCoreSave() {
@@ -515,6 +557,7 @@ export class DocumentService implements DocumentSystemHost {
     )) {
       throw new DocumentSystemContractError('document command targets a protected system tag definition');
     }
+    this.mutationGuard?.(command, args, meta, this.core.projection());
     switch (command) {
       case 'create_node':
         return this.core.createNode(
@@ -1086,6 +1129,7 @@ export class DocumentService implements DocumentSystemHost {
   private emitProjectionChanged(
     origin: DocumentProjectionChangedEvent['origin'],
     sourceWebContentsId?: number,
+    operationId?: string,
   ) {
     const update = this.buildProjectionUpdate();
     if (this.projectionChangedListeners.size === 0) return;
@@ -1098,6 +1142,7 @@ export class DocumentService implements DocumentSystemHost {
     const delivery: ProjectionChangedDelivery = {
       event,
       ...(sourceWebContentsId !== undefined ? { sourceWebContentsId } : {}),
+      ...(operationId !== undefined ? { operationId } : {}),
     };
     for (const listener of this.projectionChangedListeners) listener(delivery);
   }

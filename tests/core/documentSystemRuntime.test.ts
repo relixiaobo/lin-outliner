@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SCHEMA_ID, TRASH_ID } from '../../src/core/types';
+import { LIBRARY_ID, SCHEMA_ID, TRASH_ID } from '../../src/core/types';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 let electronUserDataRoot = '';
@@ -69,8 +69,39 @@ describe('Document system runtime', () => {
     expect(JSON.stringify(reloaded.getProjection())).not.toContain('publish-1');
   });
 
+  test('holds the host mutation coordinator through validation and document commit', async () => {
+    const instance = await service();
+    const sequence: string[] = [];
+    let coordinated = false;
+    instance.setMutationCoordinator(async (_meta, operation) => {
+      sequence.push('coordinator-enter');
+      coordinated = true;
+      try {
+        return await operation();
+      } finally {
+        coordinated = false;
+        sequence.push('coordinator-exit');
+      }
+    });
+    instance.setMutationGuard(() => {
+      expect(coordinated).toBe(true);
+      sequence.push('guard');
+    });
+
+    await instance.handle('create_node', {
+      id: `node:${uuidV7()}`,
+      parentId: LIBRARY_ID,
+      index: null,
+      text: 'Coordinated mutation',
+    });
+
+    expect(sequence).toEqual(['coordinator-enter', 'guard', 'coordinator-exit']);
+  });
+
   test('commits Node changes and a receipt atomically and rolls both back on failure', async () => {
     const instance = await service();
+    const events: Array<{ operationId?: string }> = [];
+    instance.onProjectionChanged((delivery) => events.push(delivery));
     const rootId = instance.getProjection().rootId;
     const receipt = {
       namespace: 'memory',
@@ -90,6 +121,7 @@ describe('Document system runtime', () => {
       createdId = outcome.focus?.nodeId ?? '';
       await transaction.executeHostCommand('put_document_system_receipt', { receipt });
     });
+    expect(events.at(-1)?.operationId).toBe('publish-2');
     expect(instance.getProjection().nodes.some((node) => node.id === createdId)).toBe(true);
     expect(await instance.readDocumentSystemReceipt('memory', 'daily-notes')).toEqual(receipt);
 

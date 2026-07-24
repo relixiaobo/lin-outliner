@@ -72,6 +72,7 @@ import type {
   ThreadUserContent,
   JsonValue,
   Turn,
+  TurnId,
   TurnInputRequest,
   TurnStartResponse,
   TurnSteerRequest,
@@ -82,7 +83,11 @@ import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
 import { GoalStore } from './extensions/goal/GoalStore';
 import { KeyedMutex, Mutex } from './Mutex';
-import { RolloutStore, type RolloutEntry } from './persistence/RolloutStore';
+import {
+  RolloutStore,
+  type RolloutEntry,
+  type ThreadHistoryRollbackMarker,
+} from './persistence/RolloutStore';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
   decodeThreadCursor,
@@ -145,6 +150,7 @@ export interface ThreadServiceOptions {
     context: ThreadUserContentResolutionContext,
   ) => readonly ThreadUserContent[] | Promise<readonly ThreadUserContent[]>;
   readonly resolveRole?: (name: string, cwd: string) => AgentRole;
+  readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
   readonly now?: () => number;
 }
 
@@ -274,6 +280,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     context: ThreadUserContentResolutionContext,
   ) => readonly ThreadUserContent[] | Promise<readonly ThreadUserContent[]>;
   private readonly resolveRole: (name: string, cwd: string) => AgentRole;
+  private readonly beforeInitialTurnAdmission: () => void | Promise<void>;
   private readonly now: () => number;
   private readonly goals: GoalExtension;
   private readonly goalStore: GoalStore;
@@ -289,6 +296,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     createdAt: number;
   }>();
   private readonly pendingSubagentActivities = new Map<ThreadId, PendingSubagentActivity[]>();
+  private readonly hiddenEphemeralThreads = new Set<ThreadId>();
   private readonly collaborationActivity = new Map<ThreadId, CollaborationActivityState>();
   private readonly stoppingThreads = new Set<ThreadId>();
   private readonly listeners = new Set<NotificationListener>();
@@ -298,6 +306,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly rollbackRecovery = new RollbackHookRecoveryQueue();
   private readonly threadBarrierGenerations = new Map<ThreadId, number>();
   private hostBarrierGeneration = 0;
+  private hostRootAdmissionBarrierActive = false;
   private initialized = false;
   private closing = false;
 
@@ -314,6 +323,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.validateRendererConfiguration = options.validateRendererConfiguration ?? (() => undefined);
     this.resolveUserContent = options.resolveUserContent ?? ((content) => content);
     this.resolveRole = options.resolveRole ?? defaultAgentRole;
+    this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
     this.goalStore = options.stores.goals;
     this.goals = new GoalExtension(this.goalStore, (notification) => this.recordNotification(notification));
@@ -359,6 +369,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       const { thread } = await this.resumeThread(threadId);
       resumableThreads.push(thread);
     }
+    await this.beforeInitialTurnAdmission();
     this.initialized = true;
     for (const thread of resumableThreads) {
       if (thread.status.type === 'idle') {
@@ -378,12 +389,27 @@ export class ThreadService implements ThreadServiceExtensionHost {
       ...active.map((turn) => turn.completion),
       ...pendingNames.map((pending) => pending.completion),
     ]);
-    await this.rollout.flush();
-    await this.rollbackRecovery.close();
-    await Promise.all([...this.ephemeral.keys()].map((threadId) => this.payloads.deleteThread(threadId)));
-    this.metadata.close();
-    this.history.close();
-    this.goalStore.close();
+    const failures: unknown[] = [];
+    const operations = await Promise.allSettled([
+      this.rollout.flush(),
+      this.rollbackRecovery.close(),
+      Promise.all([...this.ephemeral.keys()].map((threadId) => this.payloads.deleteThread(threadId))),
+    ]);
+    for (const result of operations) {
+      if (result.status === 'rejected') failures.push(result.reason);
+    }
+    for (const close of [
+      () => this.metadata.close(),
+      () => this.history.close(),
+      () => this.goalStore.close(),
+    ]) {
+      try {
+        close();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'ThreadService failed to close cleanly');
   }
 
   subscribe(listener: NotificationListener): () => void {
@@ -399,7 +425,111 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
   }
 
+  persistentRootThreads(): readonly Thread[] {
+    const threads: Thread[] = [];
+    for (const archived of [false, true]) {
+      let cursor: string | null = null;
+      do {
+        const page = this.metadata.list({ archived, cursor, limit: 100 });
+        threads.push(...page.data.filter((thread) => thread.parentThreadId === null && !thread.ephemeral));
+        cursor = page.nextCursor;
+      } while (cursor);
+    }
+    return threads;
+  }
+
+  activeRootUserTurns(): readonly { threadId: ThreadId; turnId: TurnId }[] {
+    const result: Array<{ threadId: ThreadId; turnId: TurnId }> = [];
+    for (const active of this.activeTurns.values()) {
+      const thread = this.requireThread(active.threadId).thread;
+      if (thread.parentThreadId === null && thread.threadSource === 'user' && !thread.ephemeral) {
+        result.push({ threadId: active.threadId, turnId: active.turnId });
+      }
+    }
+    return result;
+  }
+
+  terminalItemPosition(threadId: ThreadId): number {
+    return this.allTurns(threadId)
+      .filter((turn) => turn.status !== 'inProgress')
+      .reduce((count, turn) => count + turn.items.length, 0);
+  }
+
+  async interruptRootTurns(turns: readonly { threadId: ThreadId; turnId: TurnId }[]): Promise<void> {
+    await Promise.all(turns.map(async ({ threadId, turnId }) => {
+      const active = this.activeTurns.get(threadId);
+      if (active?.turnId === turnId) active.controller.abort();
+    }));
+    await Promise.all(turns.map(({ threadId }) => this.waitForIdle(threadId)));
+  }
+
+  async runInternalMemoryTurn(input: {
+    readonly sourceThreadId: ThreadId;
+    readonly name: string;
+    readonly systemPrompt: string;
+    readonly prompt: string;
+    readonly signal: AbortSignal;
+  }): Promise<string> {
+    const source = this.requireThread(input.sourceThreadId);
+    const configuration: EffectiveThreadConfiguration = Object.freeze({
+      ...source.configuration,
+      developerInstructions: Object.freeze([input.systemPrompt]),
+      tools: Object.freeze([]),
+      skills: Object.freeze([]),
+      plugins: Object.freeze([]),
+      mcpServers: Object.freeze([]),
+    });
+    const id = uuidV7(this.now());
+    const thread = await this.createThread({
+      id,
+      name: input.name,
+      ephemeral: true,
+      source: 'agent.memory',
+      threadSource: 'memory_consolidation',
+      modelProvider: source.thread.modelProvider,
+      cwd: source.thread.cwd,
+    }, {
+      sessionId: id,
+      parentThreadId: null,
+      forkedFromId: null,
+      agentRole: null,
+      agentNickname: null,
+      configuration,
+      hidden: true,
+    });
+    let acceptedTurnId: string | null = null;
+    const interrupt = () => {
+      if (acceptedTurnId) void this.interruptTurn(thread.id, acceptedTurnId).catch(() => undefined);
+    };
+    input.signal.addEventListener('abort', interrupt, { once: true });
+    try {
+      if (input.signal.aborted) throw createAbortError('Internal Memory Turn was interrupted');
+      const accepted = await this.startPrivilegedTurn({
+        threadId: thread.id,
+        input: [{ type: 'text', text: input.prompt }],
+        trigger: { kind: 'feature', feature: 'memory' },
+      });
+      acceptedTurnId = accepted.turn.id;
+      if (input.signal.aborted) interrupt();
+      await this.waitForIdle(thread.id);
+      const completed = this.readTurn(thread.id, accepted.turn.id);
+      if (!completed || completed.status !== 'completed') {
+        throw new Error(completed?.error?.message ?? 'Internal Memory Turn did not complete');
+      }
+      return completed.items
+        .flatMap((item) => item.type === 'agentMessage' && (item.phase === 'final_answer' || item.phase === null)
+          ? [item.text]
+          : [])
+        .join('\n')
+        .trim();
+    } finally {
+      input.signal.removeEventListener('abort', interrupt);
+      await this.deleteThread(thread.id).catch(() => undefined);
+    }
+  }
+
   async extensionToolContributions(threadId: ThreadId): Promise<readonly ExtensionToolContribution[]> {
+    if (this.hiddenEphemeralThreads.has(threadId)) return [];
     return this.extensions.tools(this.requireThread(threadId).thread);
   }
 
@@ -525,6 +655,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const cursor = decodeThreadCursor(request.cursor, direction);
     const persisted = this.metadata.list({ ...request, limit });
     const ephemeral = request.archived === true ? [] : [...this.ephemeral.values()]
+      .filter((state) => !this.hiddenEphemeralThreads.has(state.record.thread.id))
       .filter((state) => state.record.archived === (request.archived ?? false))
       .map((state) => state.record.thread)
       .filter((thread) => !request.threadSources || request.threadSources.includes(thread.threadSource))
@@ -811,6 +942,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return this.history.hasRollbackMarker(rollbackId);
   }
 
+  historyRollbackMarker(rollbackId: string): ThreadHistoryRollbackMarker | null {
+    return this.history.rollbackMarker(rollbackId);
+  }
+
   async setThreadName(threadId: ThreadId, name: string | null): Promise<void> {
     this.pendingThreadNames.get(threadId)?.controller.abort();
     await this.threadMutex.run(threadId, async () => {
@@ -845,6 +980,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         this.clearThreadCoordinationState(subtree.threadIds);
       });
       for (const record of [...subtree.records].reverse()) {
+        if (this.hiddenEphemeralThreads.has(record.thread.id)) continue;
         await this.extensions.threadStopped(record.thread);
       }
     } finally {
@@ -863,6 +999,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         await this.payloads.deleteThread(descendantId);
       }
       for (const record of [...subtree.records].reverse()) {
+        if (this.hiddenEphemeralThreads.has(record.thread.id)) continue;
         await this.extensions.threadStopped(record.thread);
       }
       await this.threadTreeMutex.run(async () => {
@@ -870,6 +1007,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           for (const descendantId of [...subtree.threadIds].reverse()) {
             this.ephemeralSpawnEdges.delete(descendantId);
             this.ephemeral.delete(descendantId);
+            this.hiddenEphemeralThreads.delete(descendantId);
           }
         } else {
           this.metadata.delete(threadId);
@@ -1126,6 +1264,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     args: JsonValue,
   ): Promise<void> {
     this.requireActiveTurn(threadId, turnId);
+    if (this.hiddenEphemeralThreads.has(threadId)) return;
     await this.extensions.toolStarted({ threadId, turnId, itemId, identity, arguments: args });
   }
 
@@ -1138,6 +1277,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     result: JsonValue | null,
     error: string | null,
   ): Promise<void> {
+    if (this.hiddenEphemeralThreads.has(threadId)) return;
     await this.extensions.toolCompleted({
       threadId,
       turnId,
@@ -1380,7 +1520,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ): Promise<T> {
     return this.hostRootMutex.run(async () => {
       this.hostBarrierGeneration += 1;
-      return operation(createHostRootTurnAdmissionBarrierSnapshot(this.hostBarrierGeneration));
+      this.hostRootAdmissionBarrierActive = true;
+      try {
+        return await operation(createHostRootTurnAdmissionBarrierSnapshot(this.hostBarrierGeneration));
+      } finally {
+        this.hostRootAdmissionBarrierActive = false;
+      }
     });
   }
 
@@ -1389,6 +1534,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     onlyIfIdle = false,
   ): Promise<AcceptedTurn> {
     const record = this.requireThread(request.threadId);
+    if (onlyIfIdle && record.thread.parentThreadId === null && this.hostRootAdmissionBarrierActive) {
+      throw new ThreadBusyError('Root Turn admission is temporarily paused');
+    }
     const accept = () => this.threadMutex.run(request.threadId, () => this.acceptTurn(request, onlyIfIdle));
     const accepted = record.thread.parentThreadId === null
       ? await this.hostRootMutex.run(accept)
@@ -1406,7 +1554,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   private async launchActiveTurn(accepted: AcceptedTurn): Promise<void> {
     if (!accepted.active) return;
-    await this.extensions.turnStarted(accepted.thread, accepted.response.turn);
+    if (!this.hiddenEphemeralThreads.has(accepted.thread.id)) {
+      await this.extensions.turnStarted(accepted.thread, accepted.response.turn);
+    }
     await this.executeActiveTurn(accepted.active);
   }
 
@@ -1464,14 +1614,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.threadBarrierGenerations.get(request.threadId) ?? 0,
     );
     const hostBarrier = createHostRootTurnAdmissionBarrierSnapshot(this.hostBarrierGeneration);
-    await this.extensions.contributeAdmission({
-      thread: record.thread,
-      turnId,
-      provenance: turn.provenance,
-      configuration: record.configuration,
-      threadBarrier,
-      hostBarrier,
-    });
+    if (!this.hiddenEphemeralThreads.has(request.threadId)) {
+      await this.extensions.contributeAdmission({
+        thread: record.thread,
+        turnId,
+        provenance: turn.provenance,
+        configuration: record.configuration,
+        threadBarrier,
+        hostBarrier,
+      });
+    }
 
     if (!record.thread.preview.trim() && preview) {
       this.setInitialPreview(request.threadId, preview, startedAt);
@@ -1520,8 +1672,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     let thrown: Error | null = null;
     const initialTurn = this.readTurn(active.threadId, active.turnId)!;
     const thread = this.requireThread(active.threadId).thread;
+    const hidden = this.hiddenEphemeralThreads.has(active.threadId);
     try {
-      const systemContext = (await this.extensions.threadContext(thread))
+      const systemContext = (hidden ? [] : await this.extensions.threadContext(thread))
         .map((contribution) => Object.entries(contribution.additionalContext)
           .map(([key, entry]) => `${key}: ${entry.value}`)
           .join('\n'))
@@ -1588,7 +1741,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       completedAt,
       durationMs: Math.max(0, completedAt - active.startedAt),
     });
-    const contributions = await this.extensions.turnItems(thread, turn);
+    const contributions = hidden ? [] : await this.extensions.turnItems(thread, turn);
     for (const contribution of contributions) {
       await active.recorder.completedImmediately(contribution.item, completedAt);
     }
@@ -1610,17 +1763,19 @@ export class ThreadService implements ThreadServiceExtensionHost {
       turn,
       active.configuration,
     );
-    await this.goals.addUsage(
-      active.threadId,
-      turn.execution.usage.totalTokens,
-      Math.ceil((turn.durationMs ?? 0) / 1000),
-      active.turnId,
-    );
-    if (status === 'interrupted') await this.extensions.turnAborted(thread, turn);
-    else if (thrown) await this.extensions.turnError(thread, turn, thrown);
-    else await this.extensions.turnStopped(thread, turn);
+    if (!hidden) {
+      await this.goals.addUsage(
+        active.threadId,
+        turn.execution.usage.totalTokens,
+        Math.ceil((turn.durationMs ?? 0) / 1000),
+        active.turnId,
+      );
+      if (status === 'interrupted') await this.extensions.turnAborted(thread, turn);
+      else if (thrown) await this.extensions.turnError(thread, turn, thrown);
+      else await this.extensions.turnStopped(thread, turn);
+    }
     this.queueChildTurnActivity(thread, status);
-    await this.extensions.threadIdle(this.requireThread(active.threadId).thread);
+    if (!hidden) await this.extensions.threadIdle(this.requireThread(active.threadId).thread);
   }
 
   private async failActiveTurn(active: ActiveTurn, error: Error): Promise<void> {
@@ -1649,7 +1804,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
         turnId: active.turnId,
         turn: failed,
       }).catch(() => undefined);
-      await this.extensions.turnError(this.requireThread(active.threadId).thread, failed, error).catch(() => undefined);
+      if (!this.hiddenEphemeralThreads.has(active.threadId)) {
+        await this.extensions.turnError(this.requireThread(active.threadId).thread, failed, error).catch(() => undefined);
+      }
     }
     this.activeTurns.delete(active.threadId);
     await this.setStatus(active.threadId, { type: 'systemError', message: error.message }).catch(() => undefined);
@@ -1672,6 +1829,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       reasoningEffortOverride?: EffectiveThreadConfiguration['reasoningEffort'] | null;
       taskPath?: string;
       nameOrigin?: ThreadNameOrigin;
+      hidden?: boolean;
     },
   ): Promise<Thread> {
     const now = this.now();
@@ -1707,6 +1865,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
     if (thread.ephemeral) {
       this.ephemeral.set(thread.id, { record, turns: [], completedItemIds: new Set() });
+      if (lineage.hidden) this.hiddenEphemeralThreads.add(thread.id);
       if (thread.parentThreadId) {
         this.ephemeralSpawnEdges.set(thread.id, {
           sessionId: thread.sessionId,
@@ -1727,7 +1886,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.metadata.create(record);
     }
     await this.recordNotification({ type: 'thread/started', threadId: thread.id, thread });
-    await this.extensions.threadStarted(thread);
+    if (!this.hiddenEphemeralThreads.has(thread.id)) await this.extensions.threadStarted(thread);
     return thread;
   }
 
@@ -1888,14 +2047,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
       const entry = await this.rollout.append(decoded.threadId, decoded);
       this.history.apply(entry);
     }
-    for (const listener of this.listeners) listener(decoded);
-    await this.extensions.notification(decoded);
+    if (!this.hiddenEphemeralThreads.has(decoded.threadId)) {
+      for (const listener of this.listeners) listener(decoded);
+      await this.extensions.notification(decoded);
+    }
   }
 
   private emitTransientNotification(notification: AgentCoreNotification): void {
     const decoded = decodeAgentCoreNotification(notification);
     this.requireThread(decoded.threadId);
-    for (const listener of this.listeners) listener(decoded);
+    if (!this.hiddenEphemeralThreads.has(decoded.threadId)) {
+      for (const listener of this.listeners) listener(decoded);
+    }
   }
 
   private applyEphemeralNotification(notification: AgentCoreNotification): void {
@@ -2283,6 +2446,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     });
   }
 
+}
+
+function createAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
 }
 
 export class ThreadBusyError extends Error {

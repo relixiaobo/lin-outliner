@@ -277,6 +277,78 @@ describe('PiTurnExecutor event normalization', () => {
     ]));
   });
 
+  test('runs internal Memory Turns with only their exact prompt and model runtime', async () => {
+    const fixture = createContext();
+    const userItemId = uuidV7(1_720_000_000_111);
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      thread: decodeThread({
+        ...fixture.context.thread,
+        source: 'agent.memory',
+        threadSource: 'memory_consolidation',
+      }),
+      turn: decodeTurn({
+        ...fixture.context.turn,
+        items: [{
+          type: 'userMessage',
+          id: userItemId,
+          provenance: fixture.recorder.localProvenance(userItemId),
+          clientId: null,
+          content: [{ type: 'text', text: '{"task":"extract"}' }],
+        }],
+      }),
+      configuration: {
+        ...fixture.context.configuration,
+        developerInstructions: ['Return exact Memory JSON.'],
+        tools: ['bash'],
+        skills: ['repo-skill'],
+        plugins: ['app-plugin'],
+        mcpServers: ['docs'],
+      },
+      systemContext: ['unrelated extension context'],
+    };
+    const capabilityCallbacks: string[] = [];
+    let initialState: { systemPrompt: string; tools: readonly unknown[] } | null = null;
+    let receivedPrompt: UserMessage | null = null;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      createTools: async () => {
+        capabilityCallbacks.push('tools');
+        return [];
+      },
+      skillListing: async () => {
+        capabilityCallbacks.push('skills');
+        return 'skill listing';
+      },
+      systemPrompt: async () => {
+        capabilityCallbacks.push('system');
+        return 'ordinary system prompt';
+      },
+      preparePrompt: async (_turn, prompt) => {
+        capabilityCallbacks.push('prepare');
+        return prompt;
+      },
+      createAgent: (options) => {
+        initialState = options.initialState;
+        return {
+          state: { errorMessage: undefined },
+          subscribe: () => () => undefined,
+          abort: () => undefined,
+          steer: () => undefined,
+          prompt: async (message) => {
+            receivedPrompt = message as UserMessage;
+          },
+        };
+      },
+    });
+
+    await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
+    expect(capabilityCallbacks).toEqual([]);
+    expect(initialState?.systemPrompt).toBe('Return exact Memory JSON.');
+    expect(initialState?.tools).toEqual([]);
+    expect(receivedPrompt?.content).toEqual([{ type: 'text', text: '{"task":"extract"}' }]);
+  });
+
   test('reconstructs canonical tool calls, results, and reasoning for later Turns', () => {
     const fixture = createContext();
     const threadId = fixture.context.thread.id;

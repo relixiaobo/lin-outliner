@@ -19,6 +19,12 @@ are all implemented in TypeScript.
 The TypeScript core is the only document writer. React keeps UI-only state such
 as focus, expanded rows, selection, popovers, and transient editor drafts.
 
+Agent Memory keeps published content in ordinary Daily Notes Nodes. Electron
+main owns its local control database under `userData/agent/memories.sqlite` and
+uses trusted receipt-bearing document transactions to reconcile SQLite with the
+Loro document. The control database is not portable workspace content. See
+[`agent-memory.md`](agent-memory.md).
+
 Binary assets are outside the CRDT document. The document stores stable asset
 ids and derived metadata on `image` / `attachment` nodes; `src/main/assetService`
 owns bytes and sidecar metadata under the workspace asset directory. Renderer

@@ -190,8 +190,9 @@ preload and subscribes to `onAgentCoreNotification`. The canonical methods are:
 The main process owns `ThreadService`; the renderer never reads rollout or SQLite
 stores directly. Every request and notification passes the Agent Core codec.
 History reads are paginated, Turn operations require exact identity
-preconditions, and editing earlier history forks rather than mutating completed
-Items. See [`agent-core.md`](agent-core.md).
+preconditions, and editing the latest terminal input appends a rollback marker
+before starting its replacement Turn in the same Thread. Continue in new chat is
+the explicit fork path. See [`agent-core.md`](agent-core.md).
 
 ### Agent — providers and runtime settings
 `agent_get_provider_settings`, `agent_update_runtime_settings`,

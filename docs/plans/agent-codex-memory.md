@@ -204,8 +204,9 @@ hierarchy. A canonical `#d-memory` container is the Reset ownership boundary, so
 everything intentionally nested beneath it moves and is deleted with that
 container even when a child is untagged or has a malformed category placement.
 A reserved-tag placement outside every canonical container remains ordinary
-non-Memory outline content and is surfaced in diagnostics; the pipeline neither
-ingests, deletes, nor silently relocates it.
+non-Memory outline content. Memory status surfaces its current count without
+exposing Node IDs; the pipeline neither ingests, deletes, nor silently relocates
+it.
 
 Memory consumes Core's generic projection-neutral `DocumentSystemReceipt`. Its
 receipt is scoped by namespace `agent.memory` and `DAILY_NOTES_ID`, but lives in
@@ -453,18 +454,29 @@ spending a model Turn.
 When work exists, Phase 2 starts an ephemeral internal Thread with
 `threadSource=memory_consolidation`. It disables Memory, collaboration,
 subagents, apps, plugins, network, and unrelated tools. The consolidation Turn
-works against an isolated in-memory copy of the selected daily Memory graph
-through the same Node read/create/edit/move/delete semantics as the product. It
-may merge duplicate episodes, update beliefs, expose or resolve questions,
-revise guidance, remove unsupported generated Memory, and regenerate affected
-daily headlines. A user-edited headline is authoritative input and is not
-blindly regenerated. The Turn cannot mutate ordinary Nodes outside the selected
-`#d-memory` containers.
+does not publish renderer notifications or invoke ordinary extension admission,
+context, Item, lifecycle, or tool hooks. Its model receives only the exact
+Memory system prompt and bounded input, without Skill preparation or the general
+interactive-agent prompt. It may merge duplicate episodes, update beliefs,
+expose or resolve questions, revise guidance, remove unsupported generated
+Memory, and regenerate affected daily headlines. A user-edited headline is
+authoritative input and is not blindly regenerated.
 
 After the Turn succeeds, the host validates the tagged hierarchy, computes its
 canonical Node command set, and checks that every live selected Memory Node
 fingerprint still matches the snapshot. A conflicting user edit aborts
 publication and enqueues a fresh bounded attempt; it is never overwritten.
+Every create or update cites selected source Nodes with current evidence, and
+finalization replaces the affected Node's complete lineage rather than retaining
+stale intermediate support.
+
+Unsupported generated Nodes rank ahead of ordinary consolidation input and are
+cleaned in bounded deepest-first batches. Generated ancestors inherit current
+descendant evidence when possible. If an ordinary or user-authoritative
+descendant prevents structural deletion, the ancestor relinquishes generated
+ownership and becomes authoritative. Partial cleanup journals a distinct
+follow-up job, and rollback reconciliation remains active until no canonical
+generated Node lacks current support.
 
 Before preparing a conflict-free publication, Phase 2 acquires the Memory
 document-write gate and rechecks that `MemoryFeatureMode=enabled`, its
@@ -609,8 +621,9 @@ cumulative model and Goal usage remain unchanged. List/read/search operations
 alone do not count as use.
 
 Deleting a Memory Node makes an old citation explicitly unavailable. Reusing an
-ID for unrelated content is forbidden. Supporting Thread IDs remain the durable
-route back to rollout evidence.
+ID for unrelated content is forbidden. Deleting a source Thread does not delete
+already published Memory Nodes or their retained evidence; later citations omit
+the unavailable Thread ID while continuing to link the Memory Node.
 
 ### 7. Reset and user surface
 

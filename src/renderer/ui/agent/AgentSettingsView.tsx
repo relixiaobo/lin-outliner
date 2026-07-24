@@ -52,6 +52,7 @@ import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import { WebsiteDataSettingsGroup } from './WebsiteDataSettingsGroup';
 import { TranslationDataSettingsGroup } from './TranslationDataSettingsGroup';
 import { ManagedSkillsSettings } from './ManagedSkillsSettings';
+import { MemorySettingsGroup } from './MemorySettingsGroup';
 import {
   capabilitySettingsRemovalPatch,
 } from './agentCapabilitySettings';
@@ -841,6 +842,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                     wrap
                   />
                 </InsetGroup>
+                <MemorySettingsGroup onError={setError} onNotice={setNotice} />
                 <WebsiteDataSettingsGroup onError={setError} onNotice={setNotice} />
                 <TranslationDataSettingsGroup onError={setError} onNotice={setNotice} />
                 <InsetGroup

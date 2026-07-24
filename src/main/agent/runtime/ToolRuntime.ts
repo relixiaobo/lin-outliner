@@ -13,6 +13,7 @@ import {
 } from '../../../core/agent/tools';
 import type { AgentMutationCausation, JsonValue } from '../../../core/agent/protocol';
 import type { ReasoningEffort } from '../../../core/agent/configuration';
+import type { DocumentProjection } from '../../../core/types';
 import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGenerationTool';
 import { AgentImportService, visibleImportServiceResult } from '../capabilities/agentImportService';
 import type { AgentLocalWorkspaceContext } from '../capabilities/agentLocalTools';
@@ -36,6 +37,10 @@ export interface ToolRuntimeOptions {
   readonly assembleRegistry?: boolean;
   readonly dynamicTools?: (context: TurnExecutionContext) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
   readonly capabilityConfig?: AgentCapabilityConfig | (() => AgentCapabilityConfig | Promise<AgentCapabilityConfig>);
+  readonly filterOutlinerProjection?: (
+    projection: DocumentProjection,
+    causation: AgentMutationCausation,
+  ) => DocumentProjection;
 }
 
 export class ToolRuntime {
@@ -48,7 +53,11 @@ export class ToolRuntime {
     private readonly options: ToolRuntimeOptions = {},
   ) {
     this.outliner = options.outliner
-      ? outlinerWithCausation(options.outliner, () => this.mutationCausation.getStore())
+      ? outlinerWithCausation(
+          options.outliner,
+          () => this.mutationCausation.getStore(),
+          options.filterOutlinerProjection,
+        )
       : undefined;
     this.importService = this.outliner ? new AgentImportService(this.outliner) : null;
   }
@@ -420,18 +429,23 @@ function additionalContextContent(context: TurnExecutionContext): Array<{ type: 
 function outlinerWithCausation(
   host: OutlinerToolHost,
   causation: () => AgentMutationCausation | undefined,
+  filterProjection?: (projection: DocumentProjection, causation: AgentMutationCausation) => DocumentProjection,
 ): OutlinerToolHost {
   const mutationMeta = (meta: Parameters<OutlinerToolHost['handle']>[2]) => ({
     ...meta,
     ...(causation() ? { causation: causation() } : {}),
   });
   return {
-    getProjection: () => host.getProjection(),
-    getDocumentReadModel: host.getDocumentReadModel ? () => host.getDocumentReadModel!() : undefined,
+    getProjection: () => {
+      const current = causation();
+      const projection = host.getProjection();
+      return current && filterProjection ? filterProjection(projection, current) : projection;
+    },
+    getDocumentReadModel: host.getDocumentReadModel && !filterProjection ? () => host.getDocumentReadModel!() : undefined,
     drainTransactionProjectionChanges: host.drainTransactionProjectionChanges
       ? () => host.drainTransactionProjectionChanges!()
       : undefined,
-    getTextSearchIndex: host.getTextSearchIndex ? () => host.getTextSearchIndex!() : undefined,
+    getTextSearchIndex: host.getTextSearchIndex && !filterProjection ? () => host.getTextSearchIndex!() : undefined,
     getTransientSearchOptions: host.getTransientSearchOptions ? () => host.getTransientSearchOptions!() : undefined,
     recordNodeAccess: host.recordNodeAccess
       ? (nodeIds, source) => host.recordNodeAccess!(nodeIds, source)

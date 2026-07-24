@@ -151,6 +151,13 @@ export class ThreadHistoryProjectionStore {
     `).get(rollbackId));
   }
 
+  rollbackMarker(rollbackId: string): ThreadHistoryRollbackMarker | null {
+    const row = this.db.prepare(`
+      SELECT * FROM history_rollbacks WHERE rollback_id = ?
+    `).get(rollbackId) as unknown as RollbackRow | undefined;
+    return row ? rollbackMarkerFromRow(row) : null;
+  }
+
   apply(entry: RolloutEntry): void {
     this.transaction(() => this.applyInside(entry));
   }

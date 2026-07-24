@@ -10,6 +10,11 @@ import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService, mimeTypeForFilename, sniffMimeType } from './assetService';
 import { ThreadService } from './agent/ThreadService';
+import { closeAgentServices } from './agent/closeAgentServices';
+import { ExtensionRegistry } from './agent/ExtensionRegistry';
+import { MemoryControlStore } from './agent/extensions/memory/MemoryControlStore';
+import { MemoryExtension } from './agent/extensions/memory/MemoryExtension';
+import { TimelineMemoryStore } from './agent/extensions/memory/TimelineMemoryStore';
 import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
 import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
@@ -17,6 +22,11 @@ import { AttachmentResolver } from './agent/tools/attachments';
 import { AgentSkillRuntime } from './agent/capabilities/agentSkills';
 import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
+import {
+  decodeMemoryFeatureMode,
+  decodeThreadMemoryMode,
+  memoryTagId,
+} from '../core/agent/memory';
 import {
   createAgentLocalWorkspaceContext,
   resolveAgentLocalReadPath,
@@ -103,6 +113,7 @@ import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
   LIN_DOCUMENT_EVENT_CHANNEL,
+  DAILY_NOTES_ID,
   TRASH_ID,
   type AssetIngestInput,
   type CommandResult,
@@ -331,6 +342,10 @@ const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(__dirname, '../../build/icon.png');
 const documentService = new DocumentService();
+const extensionRegistry = new ExtensionRegistry();
+const memoryControlStore = new MemoryControlStore(join(app.getPath('userData'), 'agent', 'memories.sqlite'));
+const timelineMemoryStore = new TimelineMemoryStore(documentService);
+const memoryExtension = new MemoryExtension(memoryControlStore, timelineMemoryStore);
 const importService = new AgentImportService(documentService, { toolName: 'tenon-import' });
 const importApiServer = new AgentImportApiServer(importService, { userDataDir: app.getPath('userData') });
 configureTenonImportRuntime({
@@ -477,8 +492,20 @@ const threadService = ThreadService.open(
       validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
     },
     resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
+    extensions: extensionRegistry,
+    beforeInitialTurnAdmission: () => memoryExtension.prepareForTurnAdmission(),
   },
 );
+memoryExtension.bindHost(threadService);
+extensionRegistry.register(memoryExtension);
+documentService.setMutationGuard((command, args, meta, projection) => {
+  memoryExtension.authorizeMutation(command, args, meta, projection);
+});
+documentService.setMutationCoordinator((meta, operation) => (
+  meta.origin === 'system' && meta.operationId?.startsWith('memory:')
+    ? operation()
+    : timelineMemoryStore.withWriteGate(operation)
+));
 function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentSkillRuntime {
   const existing = turnSkillRuntimes.get(context.turn.id);
   if (existing) return existing;
@@ -561,6 +588,7 @@ function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0
 
 toolRuntime = new ToolRuntime(threadService, {
   outliner: documentService,
+  filterOutlinerProjection: (projection, causation) => memoryExtension.filterProjection(projection, causation),
   localWorkspace: localWorkspaceForTurn,
   skillRuntime: skillRuntimeForTurn,
   imageGeneration: (context) => createThreadImageGenerationRuntime(
@@ -675,12 +703,13 @@ const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
   assetRoot(),
 ]);
 
-documentService.onProjectionChanged(({ event, sourceWebContentsId }) => {
+documentService.onProjectionChanged(({ event, sourceWebContentsId, operationId }) => {
   const target = liveWindow(mainWindow)?.webContents;
   if (target && target.id !== sourceWebContentsId) {
     target.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
   }
   pruneNodeAccessForProjectionUpdate(event.update);
+  memoryExtension.documentChanged(operationId);
 });
 
 documentService.setTransientSearchOptionsProvider(() => ({
@@ -1772,6 +1801,7 @@ function registerIpc() {
   });
   ipcMain.handle('lin:invoke', async (event, command: string, args?: Record<string, unknown>) => {
     const dispatch = () => {
+      if (command.startsWith('memory_')) return handleMemoryCommand(command, args ?? {});
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
       if (isAssetCommand(command)) return handleAssetCommand(command, args ?? {});
       if (isUrlPageTranslationCommand(command)) {
@@ -2207,6 +2237,37 @@ function registerIpc() {
       sizeBytes: bytes.byteLength,
     };
   });
+}
+
+async function handleMemoryCommand(command: string, args: Record<string, unknown>) {
+  switch (command) {
+    case 'memory_settings_get':
+      return memoryExtension.settings(typeof args.threadId === 'string' ? args.threadId : null);
+    case 'memory_feature_mode_set':
+      return memoryExtension.setFeatureMode(decodeMemoryFeatureMode(args.mode));
+    case 'memory_thread_mode_set':
+      return memoryExtension.setThreadMode(
+        requiredNonEmptyString(args.threadId, 'threadId'),
+        decodeThreadMemoryMode(args.mode),
+      );
+    case 'memory_open':
+      {
+        const outcome = await documentService.handle('ensure_tag_search', {
+          tagId: memoryTagId('memory'),
+        }) as CommandResult;
+        navigateMainToNode(outcome.focus?.nodeId ?? DAILY_NOTES_ID);
+      }
+      return memoryExtension.settings();
+    case 'memory_reset':
+      return memoryExtension.reset();
+    default:
+      throw new Error(`Unknown Memory command: ${command}`);
+  }
+}
+
+function requiredNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} must be a non-empty string`);
+  return value;
 }
 
 function stagedAttachmentBuffer(value: unknown): Buffer | null {
@@ -3067,7 +3128,9 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   app.whenReady().then(async () => {
+    await documentService.initWorkspace();
     await threadService.initialize();
+    await memoryExtension.startWorker();
     await nodeAccessStore.load().catch((error) => {
       reportError({
         domain: 'node-access',
@@ -3177,7 +3240,7 @@ if (!app.requestSingleInstanceLock()) {
         nodeAccessStore.flushNow(),
         previewTranslationCache.flushNow(),
         importApiServer.stop(),
-        threadService.close(),
+        closeAgentServices(memoryExtension, threadService),
         diagnosticLog.flushNow({ reason: 'before-quit' }),
         flushUrlPreviewSession(urlPreviewSession),
       ]),

@@ -47,6 +47,13 @@ normal Node references rather than internal edit syntax.
 `outline_undo_stack` is an explicit world-state operation. Thread forking never
 invokes it.
 
+Memory adds no parallel model tools. Eligible root-user Turns use the same Node
+catalog for explicit remember, update, and forget requests. Implicit
+`node_search` and `node_read` projections filter canonical Daily Timeline Memory
+through the admission-pinned visibility view; explicit user-supplied Node
+references remain ordinary input. Memory graph writes are causation-checked as
+specified in [`agent-memory.md`](agent-memory.md).
+
 ### Local Files And Commands
 
 - `file_read`, `file_glob`, and `file_grep`
