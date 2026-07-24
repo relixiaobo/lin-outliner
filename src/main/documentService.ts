@@ -91,12 +91,16 @@ export interface ProjectionChangedDelivery {
 
 type ProjectionChangedListener = (delivery: ProjectionChangedDelivery) => void;
 
+export interface DocumentMutationGuardResult {
+  affectsMemory: boolean;
+}
+
 export type DocumentMutationGuard = (
   command: DocumentCommand,
   args: Readonly<Record<string, unknown>>,
   meta: DocumentMutationMeta,
   projection: DocumentProjection,
-) => void;
+) => DocumentMutationGuardResult | void;
 
 export type DocumentMutationCoordinator = <T>(
   meta: DocumentMutationMeta,
@@ -108,6 +112,7 @@ interface HistoryMutationTarget {
   affectedNodeIds: readonly string[];
   affectedNodeCount: number;
   affectedNodeIdsTruncated?: boolean;
+  affectsMemory?: boolean;
 }
 
 type HistoryMutationGuardContext =
@@ -125,7 +130,7 @@ export class DocumentService implements DocumentSystemHost {
   // (often suppressed) event for the same mutation deliver the identical update.
   private lastEmittedProjectionRevision = -1;
   private builtProjectionUpdate: { revision: number; update: ProjectionUpdate } | null = null;
-  private transactionContext = new AsyncLocalStorage<boolean>();
+  private transactionContext = new AsyncLocalStorage<CoreTransactionMetadata>();
   private textEditGroup?: TextEditGroup;
   private readonly textEditFlushDelayMs = 700;
   private coreSavePending = false;
@@ -309,7 +314,7 @@ export class DocumentService implements DocumentSystemHost {
       const task = this.mutationQueue.then(async () => {
         await this.flushTextEditGroupNow();
         const origin = query.origin ?? 'agent';
-        this.mutationGuard?.(mutationAction, {
+        this.guardMutation(mutationAction, {
           historyOrigin: query.origin,
           steps: query.steps,
           operationId: query.operationId,
@@ -337,9 +342,16 @@ export class DocumentService implements DocumentSystemHost {
     const topOperationId = action === 'undo'
       ? history.cursor?.topUndoOperationId
       : history.cursor?.topRedoOperationId;
-    if (!topOperationId || (query.operationId && query.operationId !== topOperationId)) {
+    const canExecute = action === 'undo' ? history.canUndo : history.canRedo;
+    if (!canExecute) {
       return { status: 'none', targets: [] };
     }
+    if (!topOperationId) {
+      return query.operationId
+        ? { status: 'none', targets: [] }
+        : { status: 'unknown', targets: [] };
+    }
+    if (query.operationId && query.operationId !== topOperationId) return { status: 'none', targets: [] };
 
     const items = history.items ?? [];
     const topIndex = items.findIndex((item) => item.operationId === topOperationId);
@@ -361,6 +373,7 @@ export class DocumentService implements DocumentSystemHost {
         affectedNodeIds: item.affectedNodeIds,
         affectedNodeCount: item.affectedNodeCount,
         ...(item.affectedNodeIdsTruncated ? { affectedNodeIdsTruncated: true } : {}),
+        ...(typeof item.affectsMemory === 'boolean' ? { affectsMemory: item.affectsMemory } : {}),
       })),
     };
   }
@@ -399,10 +412,11 @@ export class DocumentService implements DocumentSystemHost {
         const revisionBefore = this.core.revision();
         const persistenceRevisionBefore = this.core.persistenceRevision();
         const trustedTransaction = systemContext ? this.createDocumentSystemTransaction(systemContext) : null;
+        const coreMetadata = transactionMetadata(meta);
         const result = await this.core.transaction(meta.origin ?? 'user', async () =>
-          this.transactionContext.run(true, () => trustedTransaction
+          this.transactionContext.run(coreMetadata, () => trustedTransaction
             ? (operation as (transaction: DocumentSystemTransaction) => Promise<T>)(trustedTransaction)
-            : (operation as () => Promise<T>)()), transactionMetadata(meta));
+            : (operation as () => Promise<T>)()), coreMetadata);
         if (this.core.persistenceRevision() !== persistenceRevisionBefore) {
           if (systemContext) await this.saveCore();
           else this.scheduleCoreSave();
@@ -435,16 +449,19 @@ export class DocumentService implements DocumentSystemHost {
     return this.coordinateMutation(meta, async () => {
       const task = this.mutationQueue.then(async () => {
         await this.flushTextEditGroupNow();
-        this.mutationGuard?.('create_nodes_from_tree', { parentId, nodes }, meta, this.core.projection());
         const revisionBefore = this.core.revision();
         const undoGroupStarted = this.core.beginUndoGroup();
         let focus: FocusHint | undefined;
+        const coreMetadata = transactionMetadata({ ...meta, command: meta.command ?? 'create_nodes_from_tree' });
         try {
-          focus = await this.core.transaction(meta.origin ?? 'agent', async () =>
-            this.core.createNodesFromTreeYieldingFocus(parentId, nodes, {
-              yieldEveryNodes: options.yieldEveryNodes,
-              commitEveryNodes: options.commitEveryNodes,
-            }), transactionMetadata({ ...meta, command: meta.command ?? 'create_nodes_from_tree' }));
+          focus = await this.transactionContext.run(coreMetadata, async () => {
+            this.guardMutation('create_nodes_from_tree', { parentId, nodes }, meta, this.core.projection());
+            return this.core.transaction(meta.origin ?? 'agent', async () =>
+              this.core.createNodesFromTreeYieldingFocus(parentId, nodes, {
+                yieldEveryNodes: options.yieldEveryNodes,
+                commitEveryNodes: options.commitEveryNodes,
+              }), coreMetadata);
+          });
         } finally {
           if (undoGroupStarted) this.core.endUndoGroup();
         }
@@ -502,10 +519,11 @@ export class DocumentService implements DocumentSystemHost {
           : isMaterialize
             ? this.beginMaterializeGroup(String(args.id), mutationMeta)
             : mutationMeta;
+        const coreMetadata = transactionMetadata({ ...effectiveMeta, command });
         const outcome = this.core.withOrigin(
           effectiveMeta.origin ?? 'user',
-          () => this.runMutation(command, args, effectiveMeta),
-          transactionMetadata({ ...effectiveMeta, command }),
+          () => this.transactionContext.run(coreMetadata, () => this.runMutation(command, args, effectiveMeta)),
+          coreMetadata,
         );
         const changed = this.core.revision() !== revisionBefore;
         if (command === 'apply_node_text_patch') {
@@ -632,7 +650,7 @@ export class DocumentService implements DocumentSystemHost {
     )) {
       throw new DocumentSystemContractError('document command targets a protected system tag definition');
     }
-    this.mutationGuard?.(command, args, meta, this.core.projection());
+    this.guardMutation(command, args, meta, this.core.projection());
     switch (command) {
       case 'create_node':
         return this.core.createNode(
@@ -905,6 +923,20 @@ export class DocumentService implements DocumentSystemHost {
       default:
         throw new Error(`Unknown command: ${command}`);
     }
+  }
+
+  private guardMutation(
+    command: DocumentCommand,
+    args: Readonly<Record<string, unknown>>,
+    meta: DocumentMutationMeta,
+    projection: DocumentProjection,
+  ) {
+    const result = this.mutationGuard?.(command, args, meta, projection);
+    if (result?.affectsMemory) {
+      const metadata = this.transactionContext.getStore();
+      if (metadata) metadata.affectsMemory = true;
+    }
+    return result;
   }
 
   private createDocumentSystemTransaction(
@@ -1287,6 +1319,7 @@ function transactionMetadata(meta: DocumentMutationMeta): CoreTransactionMetadat
     tool: meta.tool,
     summary: meta.summary,
     causation: meta.causation,
+    affectsMemory: false,
   };
 }
 

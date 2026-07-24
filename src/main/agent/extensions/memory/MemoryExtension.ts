@@ -81,7 +81,7 @@ export interface MemoryDocumentPolicy {
     args: Readonly<Record<string, unknown>>,
     meta: DocumentMutationMeta,
     projection: DocumentProjection,
-  ): void;
+  ): boolean;
   filterProjection(projection: DocumentProjection, causation: AgentMutationCausation): DocumentProjection;
   documentChanged(operationId?: string): void;
 }
@@ -441,14 +441,14 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     args: Readonly<Record<string, unknown>>,
     meta: DocumentMutationMeta,
     projection: DocumentProjection,
-  ): void {
+  ): boolean {
     const generatedNodeIds = new Set(this.control.generatedNodes().map((entry) => entry.nodeId));
-    if (!memoryGraphMayChange(command, args, projection, this.timeline, generatedNodeIds)) return;
+    if (!memoryGraphMayChange(command, args, projection, this.timeline, generatedNodeIds)) return false;
     const origin = meta.origin ?? 'user';
     if (origin === 'user' && !meta.causation) {
-      return;
+      return true;
     }
-    if (origin === 'system' && meta.operationId?.startsWith('memory:')) return;
+    if (origin === 'system' && meta.operationId?.startsWith('memory:')) return true;
     const causation = meta.causation;
     if (!causation) throw new Error('Memory Nodes can be changed only by the user or an authorized foreground Turn');
     const admission = this.control.admission(causation.turnId);
@@ -468,6 +468,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     ) {
       throw new Error('This Turn is not authorized to change Memory Nodes');
     }
+    return true;
   }
 
   filterProjection(projection: DocumentProjection, causation: AgentMutationCausation): DocumentProjection {
@@ -829,10 +830,11 @@ function historyMutationMayChangeMemory(
       || target.affectedNodeCount !== target.affectedNodeIds.length
       || (target.affectedNodeIdsTruncated !== undefined && typeof target.affectedNodeIdsTruncated !== 'boolean')
       || target.affectedNodeIdsTruncated === true
+      || typeof target.affectsMemory !== 'boolean'
     ) {
       return true;
     }
-    if ((target.affectedNodeIds as string[]).some(nodeIsProtected)) return true;
+    if (target.affectsMemory || (target.affectedNodeIds as string[]).some(nodeIsProtected)) return true;
   }
   return false;
 }

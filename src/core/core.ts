@@ -838,7 +838,10 @@ export class Core {
   }
 
   private chunkUndoValueForTransaction(transaction: CoreTransaction): OperationHistoryEntry | undefined {
-    if (transaction.chunkUndoValue) return transaction.chunkUndoValue;
+    if (transaction.chunkUndoValue) {
+      transaction.chunkUndoValue.affectsMemory ||= transaction.metadata.affectsMemory === true;
+      return transaction.chunkUndoValue;
+    }
     const origin = operationHistoryOriginForCommitOrigin(transaction.origin);
     if (origin === 'system') return undefined;
     transaction.metadata.operationId ??= `op:${crypto.randomUUID()}`;
@@ -852,6 +855,7 @@ export class Core {
       summary: transaction.metadata.summary ?? summarizeOperationHistoryAction(origin, action),
       affectedNodeIds: [],
       affectedNodeCount: 0,
+      affectsMemory: transaction.metadata.affectsMemory === true,
       createdAt: new Date().toISOString(),
     };
     return transaction.chunkUndoValue;

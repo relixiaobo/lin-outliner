@@ -106,6 +106,29 @@ describe('OperationJournal', () => {
     expect(JSON.stringify(serialized).length).toBeLessThan(4_000);
   });
 
+  test('persists and monotonically merges Memory-sensitive operation metadata', () => {
+    const journal = new OperationJournal(undefined, { maxEntries: 10 });
+    const ordinary = journal.createEntry('user:edit', {
+      operationId: 'op:memory-sensitive',
+      command: 'apply_node_text_patch',
+      affectsMemory: false,
+    }, ['node:ordinary']);
+    const memory = journal.createEntry('user:edit', {
+      operationId: 'op:memory-sensitive',
+      command: 'remove_tag',
+      affectsMemory: true,
+    }, ['node:memory']);
+    journal.record(ordinary!);
+    journal.record(memory!);
+
+    expect(journal.findByOperationId('op:memory-sensitive')).toMatchObject({
+      affectsMemory: true,
+      affectedNodeIds: ['node:memory', 'node:ordinary'],
+    });
+    const restored = new OperationJournal(journal.entriesForSerialization(10), { maxEntries: 10 });
+    expect(restored.findByOperationId('op:memory-sensitive')?.affectsMemory).toBe(true);
+  });
+
   test('normalizes legacy and overlong restored affected-node metadata', () => {
     const legacyEntry = {
       operationId: 'op:legacy',

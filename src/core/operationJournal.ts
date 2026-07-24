@@ -17,6 +17,7 @@ export interface OperationHistoryEntry {
   affectedNodeCount: number;
   affectedNodeIdsTruncated?: boolean;
   affectedNodeIdsHash?: string;
+  affectsMemory?: boolean;
   createdAt: string;
 }
 
@@ -58,6 +59,7 @@ export interface OperationHistoryMetadata {
   tool?: string;
   causation?: AgentMutationCausation;
   summary?: string;
+  affectsMemory?: boolean;
 }
 
 export interface OperationStackState {
@@ -110,6 +112,7 @@ export class OperationJournal {
       causation: metadata.causation,
       action,
       summary: metadata.summary ?? summarizeOperation(origin, action),
+      affectsMemory: metadata.affectsMemory === true,
       ...affected,
       createdAt: new Date().toISOString(),
     };
@@ -124,6 +127,7 @@ export class OperationJournal {
       existing.causation ??= entry.causation;
       existing.action = entry.action;
       existing.summary = entry.summary;
+      existing.affectsMemory = existing.affectsMemory === true || entry.affectsMemory === true;
       return;
     }
     this.appendEntry(entry);
@@ -195,6 +199,7 @@ export function isOperationHistoryEntry(value: unknown): value is OperationHisto
     && (entry.affectedNodeCount == null || isNonNegativeInteger(entry.affectedNodeCount))
     && (entry.affectedNodeIdsTruncated == null || typeof entry.affectedNodeIdsTruncated === 'boolean')
     && (entry.affectedNodeIdsHash == null || typeof entry.affectedNodeIdsHash === 'string')
+    && (entry.affectsMemory == null || typeof entry.affectsMemory === 'boolean')
     && typeof entry.createdAt === 'string';
 }
 

@@ -332,6 +332,56 @@ describe('Document system runtime', () => {
     expect(observedTargets[1]?.[1]).toContain(second.focus?.nodeId);
   });
 
+  test('fails closed when an executable all-origin stack item has no journal metadata', async () => {
+    const instance = await service();
+    const created = await instance.handle('create_node', {
+      parentId: instance.getProjection().rootId,
+      index: null,
+      text: 'Scoped undo target',
+    }, { origin: 'agent', tool: 'node_create' }) as { focus?: { nodeId?: string } };
+    const statuses: unknown[] = [];
+    instance.setMutationGuard((_command, args) => {
+      statuses.push((args.historyMutation as { status?: unknown }).status);
+    });
+
+    expect((await instance.operationHistory({ action: 'undo', origin: 'agent' })).count).toBe(1);
+    expect(instance.getProjection().nodes.some((node) => node.id === created.focus?.nodeId)).toBe(false);
+    expect((await instance.operationHistory({ action: 'undo', origin: 'all' })).count).toBe(1);
+    expect(instance.getProjection().nodes.some((node) => node.id === created.focus?.nodeId)).toBe(true);
+    expect(statuses).toEqual(['known', 'unknown']);
+  });
+
+  test('persists Memory sensitivity from a guarded transaction into undo metadata', async () => {
+    const instance = await service();
+    const definition = { namespace: 'memory', tagId: 'tag:memory-history', name: 'memory-history' } as const;
+    await instance.transaction({ namespace: 'memory', operationId: 'ensure-history-tag' }, async (transaction) => {
+      await transaction.executeHostCommand('ensure_document_system_tag_definition', { definition });
+    });
+    const created = await instance.handle('create_node', {
+      parentId: instance.getProjection().rootId,
+      index: null,
+      text: 'Historical Memory',
+    }, { origin: 'user' }) as { focus?: { nodeId?: string } };
+    const nodeId = created.focus?.nodeId ?? '';
+    await instance.handle('apply_tag', { nodeId, tagId: definition.tagId }, { origin: 'user' });
+
+    let historyTarget: unknown;
+    instance.setMutationGuard((command, args) => {
+      if (command === 'undo') historyTarget = (args.historyMutation as { targets?: unknown[] }).targets?.[0];
+      return { affectsMemory: command === 'remove_tag' };
+    });
+    await instance.transaction({ origin: 'user', tool: 'memory_edit' }, async () => {
+      await instance.handle('remove_tag', { nodeId, tagId: definition.tagId }, { origin: 'user' });
+    });
+    expect(instance.getProjection().nodes.find((node) => node.id === nodeId)?.tags).not.toContain(definition.tagId);
+
+    const history = await instance.operationHistory({ action: 'list', origin: 'user' });
+    expect(history.items?.[0]).toMatchObject({ tool: 'memory_edit', affectsMemory: true });
+    expect((await instance.operationHistory({ action: 'undo', origin: 'user' })).count).toBe(1);
+    expect(historyTarget).toMatchObject({ affectsMemory: true });
+    expect(instance.getProjection().nodes.find((node) => node.id === nodeId)?.tags).toContain(definition.tagId);
+  });
+
   test('ensures deterministic protected tags and permits only ordinary tag application', async () => {
     const instance = await service();
     const definition = { namespace: 'memory', tagId: 'tag:memory-episode', name: 'episode' } as const;

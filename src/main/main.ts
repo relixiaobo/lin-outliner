@@ -499,7 +499,7 @@ const threadService = ThreadService.open(
 memoryExtension.bindHost(threadService);
 extensionRegistry.register(memoryExtension);
 documentService.setMutationGuard((command, args, meta, projection) => {
-  memoryExtension.authorizeMutation(command, args, meta, projection);
+  return { affectsMemory: memoryExtension.authorizeMutation(command, args, meta, projection) };
 });
 documentService.setMutationCoordinator((meta, operation) => (
   meta.origin === 'system' && meta.operationId?.startsWith('memory:')

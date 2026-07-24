@@ -417,17 +417,17 @@ describe('Codex Memory contracts', () => {
     const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
     extension.bindHost(memoryThreadHost(thread));
     extension.contributeTurnAdmission(admissionContext(thread, thread.turns![0]!));
-    expect(() => extension.authorizeMutation('apply_tag', {
+    expect(extension.authorizeMutation('apply_tag', {
       nodeId: 'ordinary:1',
       tagId: 'tag:d-memory',
-    }, {}, projection)).not.toThrow();
-    expect(() => extension.authorizeMutation('apply_tag', {
+    }, {}, projection)).toBe(true);
+    expect(extension.authorizeMutation('apply_tag', {
       nodeId: 'ordinary:1',
       tagId: 'tag:d-memory',
     }, {
       origin: 'agent',
       causation: { threadId: THREAD_ID, turnId: TURN_ID, itemId: ITEM_ID },
-    }, projection)).not.toThrow();
+    }, projection)).toBe(true);
 
     const automation = rootThread([userTurn(
       'remember this preference',
@@ -521,12 +521,12 @@ describe('Codex Memory contracts', () => {
       },
     };
 
-    expect(() => extension.authorizeMutation('create_node', {
+    expect(extension.authorizeMutation('create_node', {
       id: 'node:018f0f24-7b2e-7a3f-8a4b-123456789a01',
       parentId: 'day',
       index: null,
       text: 'Ordinary Daily Note sibling',
-    }, meta, projection)).not.toThrow();
+    }, meta, projection)).toBe(false);
     expect(() => extension.authorizeMutation('create_node', {
       id: 'node:018f0f24-7b2e-7a3f-8a4b-123456789a02',
       parentId: MEMORY_NODE_ID,
@@ -547,6 +547,7 @@ describe('Codex Memory contracts', () => {
           operationId: 'op:ordinary',
           affectedNodeIds: ['ordinary:2'],
           affectedNodeCount: 1,
+          affectsMemory: false,
         }],
       },
     }, meta, projection)).not.toThrow();
@@ -559,12 +560,30 @@ describe('Codex Memory contracts', () => {
           operationId: 'op:memory',
           affectedNodeIds: [MEMORY_NODE_ID],
           affectedNodeCount: 1,
+          affectsMemory: true,
         }],
       },
     }, meta, projection)).toThrow('not authorized');
     expect(() => extension.authorizeMutation('undo', {
       historyOrigin: 'agent',
       steps: 1,
+    }, meta, projection)).toThrow('not authorized');
+    expect(() => extension.authorizeMutation('undo', {
+      historyOrigin: 'all',
+      steps: 1,
+      historyMutation: { status: 'unknown', targets: [] },
+    }, meta, projection)).toThrow('not authorized');
+    expect(() => extension.authorizeMutation('undo', {
+      historyOrigin: 'agent',
+      steps: 1,
+      historyMutation: {
+        status: 'known',
+        targets: [{
+          operationId: 'op:legacy',
+          affectedNodeIds: ['ordinary:2'],
+          affectedNodeCount: 1,
+        }],
+      },
     }, meta, projection)).toThrow('not authorized');
     expect(() => extension.authorizeMutation('redo', {
       historyOrigin: 'agent',
@@ -576,9 +595,54 @@ describe('Codex Memory contracts', () => {
           affectedNodeIds: ['ordinary:2'],
           affectedNodeCount: 2,
           affectedNodeIdsTruncated: true,
+          affectsMemory: false,
         }],
       },
     }, meta, projection)).toThrow('not authorized');
+  });
+
+  test('uses persisted history semantics after Memory is no longer canonical', () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const removedIds = new Set([EPISODE_NODE_ID, 'belief:1']);
+    projection.nodes = projection.nodes
+      .filter((entry) => !removedIds.has(entry.id))
+      .map((entry) => entry.id === MEMORY_NODE_ID
+        ? { ...entry, children: [], tags: [] }
+        : entry);
+    expect(canonicalMemoryGraph(projection).containers).toEqual([]);
+
+    const automation = rootThread([userTurn(
+      'Undo an ordinary outline change',
+      undefined,
+      { kind: 'feature', feature: 'automation' },
+      'turn:automation-history',
+      'item:automation-history',
+    )]);
+    const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
+    extension.bindHost(memoryThreadHost(automation));
+    extension.contributeTurnAdmission(admissionContext(automation, automation.turns![0]!));
+
+    expect(() => extension.authorizeMutation('undo', {
+      historyOrigin: 'user',
+      steps: 1,
+      historyMutation: {
+        status: 'known',
+        targets: [{
+          operationId: 'op:removed-memory-tag',
+          affectedNodeIds: [MEMORY_NODE_ID],
+          affectedNodeCount: 1,
+          affectsMemory: true,
+        }],
+      },
+    }, {
+      origin: 'agent',
+      causation: {
+        threadId: THREAD_ID,
+        turnId: 'turn:automation-history',
+        itemId: 'item:automation-history',
+      },
+    }, projection)).toThrow('not authorized');
   });
 
   test('protects the day tag only when it can change canonical Memory identity', () => {

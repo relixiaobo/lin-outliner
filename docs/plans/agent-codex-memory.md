@@ -604,11 +604,16 @@ can still edit the Nodes directly.
 coordinator and causation metadata as every other Agent Node mutation. History
 list remains read-only. Before mutation, DocumentService resolves the actual
 origin-specific undo/redo stack targets and passes each target's complete
-`affectedNodeIds` to the Memory guard. Ordinary outline history remains
-available; only a target involving canonical, generated, reserved, or
-protected-ancestor Memory requires explicit Memory authorization. A missing or
-truncated target entry fails closed because it can restore Memory that is absent
-from the current projection.
+`affectedNodeIds` to the Memory guard. Every original document commit also
+persists an internal boolean `affectsMemory` in its journal entry and Loro undo
+value. Transaction and text-edit grouping merge this bit monotonically: one
+Memory-sensitive child makes the complete undo step sensitive. Execution checks
+both the persisted bit and current canonical/generated/reserved/ancestor
+identity, covering Nodes that were deleted or de-canonicalized after commit and
+Nodes that entered Memory later. Ordinary outline history remains available. If
+the selected UndoManager can execute but has no resolvable top metadata, the
+target entry lacks `affectsMemory`, or its affected IDs are missing/truncated,
+authorization fails closed.
 
 An explicit foreground Memory Node mutation that committed before its source
 Turn was rolled back remains an ordinary document side effect. Transcript Edit
